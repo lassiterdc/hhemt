@@ -212,6 +212,49 @@ def test_validate_sensitivity_fails_when_block_present_but_no_csv(tmp_path: Path
         validate_sensitivity_independent_vars(cfg, None)
 
 
+def test_test_reference_report_scoping_passes_and_guard_intact():
+    """analysis.test()'s _test/ reference scopes the inherited benchmarking report
+    block (sensitivity=None, reporting_set='default'), so a non-sensitivity single
+    run passes validate_active_reporting_set -- WHILE the validator's real
+    sensitivity-config<->sensitivity-analysis guard still fires for an UN-scoped
+    benchmarking report on a non-sensitivity run.
+
+    This pins the _build_test_subanalyses overlay-scoping recipe (analysis.py:
+    2725-2733) at the validator layer: the fix nulls report.sensitivity and resets
+    report.reporting_set to the 'default' sentinel for the reference sub.
+    """
+    from hhemt.config.report import (
+        SensitivityReportConfig,
+        report_config,
+        validate_active_reporting_set,
+    )
+    from hhemt.exceptions import ConfigurationError
+
+    # Pre-fix state: a sub-analysis cfg inherits the sensitivity master's report
+    # block verbatim onto a non-sensitivity reference (explicit benchmarking-validator
+    # reporting_set + a sensitivity: benchmarking block). The guard MUST still fire
+    # here -- Option A does NOT mask it.
+    unscoped = report_config(
+        reporting_set="benchmarking",
+        sensitivity=SensitivityReportConfig(independent_vars=["n_devices"]),
+    )
+    with pytest.raises(ConfigurationError, match="not a sensitivity analysis"):
+        validate_active_reporting_set(
+            unscoped, is_sensitivity=False, sensitivity_csv_path=None
+        )
+
+    # Post-fix state: the overlay-scoping recipe nulls sensitivity and resets
+    # reporting_set to the 'default' sentinel. A non-sensitivity reference now
+    # resolves to the standard set and passes validation.
+    scoped = report_config.model_validate(
+        {**unscoped.model_dump(), "sensitivity": None, "reporting_set": "default"}
+    )
+    resolved = validate_active_reporting_set(
+        scoped, is_sensitivity=False, sensitivity_csv_path=None
+    )
+    assert resolved == "default"
+
+
 # ---------------------------------------------------------------------------
 # Phase 1 (P1a) — named-reporting-sets: registry + reporting_set selector + D4
 # ---------------------------------------------------------------------------

@@ -123,9 +123,13 @@ def _render(tmp_path: Path, *, doc: dict | None = None, slurm_csv: str | None = 
     if doc is not None:
         (analysis_dir / "ro-crate-metadata.json").write_text(json.dumps(doc))
     if slurm_csv is not None:
+        # Faithful to snakemake-executor-plugin-slurm: --slurm-efficiency-report-path
+        # is treated as a DIRECTORY, so the driver's `.csv`-suffixed path materializes
+        # on disk as a directory that CONTAINS the real efficiency_report_{uuid}.csv.
         eff_dir = analysis_dir / "logs" / "slurm_efficiency_report"
-        eff_dir.mkdir(parents=True, exist_ok=True)
-        (eff_dir / "slurm_efficiency_report_20260101T000000.csv").write_text(slurm_csv)
+        nested = eff_dir / "slurm_efficiency_report_20260101T000000.csv"
+        nested.mkdir(parents=True, exist_ok=True)
+        (nested / "efficiency_report_deadbeef.csv").write_text(slurm_csv)
 
     output_path = analysis_dir / "plots" / "metadata.html"
     metadata.render(_fake_analysis(analysis_dir), report_config(), output_path)
@@ -423,3 +427,32 @@ def test_type_may_be_a_list(tmp_path):
     # The workflow entity carries no sha256 and must not be listed as an input digest.
     assert "Input digests not captured" in html
     assert 'id="provenance"' in html
+
+
+# --- R5 regression (Q8): efficiency report is a `.csv`-named DIRECTORY ---------
+
+
+def test_slurm_report_path_is_a_directory_not_a_file(tmp_path):
+    """Regression (Q8): the plugin writes efficiency_report_{uuid}.csv INSIDE a
+    `.csv`-named directory; the renderer must descend to the inner file and must
+    NOT raise IsADirectoryError on read_text()."""
+    csv_text = "rule,job_id,cpu_efficiency\nplot_metadata,12345,91.2%\n"
+    html, manifest, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=csv_text)
+    assert "cpu_efficiency" in html and "91.2%" in html
+    declared = manifest["source_paths_relative"]
+    assert any(p.endswith("efficiency_report_deadbeef.csv") for p in declared), declared
+
+
+def test_resolve_latest_efficiency_csv_flat_nested_and_absent(tmp_path):
+    """Unit: resolver returns None when empty, the inner file for the nested
+    plugin layout, and a flat file for the hypothetical future layout."""
+    from hhemt.report_renderers.metadata import _resolve_latest_efficiency_csv
+
+    eff = tmp_path / "logs" / "slurm_efficiency_report"
+    eff.mkdir(parents=True)
+    assert _resolve_latest_efficiency_csv(eff) is None
+    nested = eff / "slurm_efficiency_report_20260101T000000.csv"
+    nested.mkdir()
+    (nested / "efficiency_report_uuid.csv").write_text("a,b\n1,2\n")
+    got = _resolve_latest_efficiency_csv(eff)
+    assert got is not None and got.is_file() and got.name == "efficiency_report_uuid.csv"

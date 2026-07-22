@@ -135,7 +135,7 @@ Note: `environment.yaml` at the repo root and the `conda:` directives in generat
 ## Testing Quick Reference
 
 - `test_PC_*.py` — local; `test_UVA_*.py` — UVA HPC; `test_frontier_*.py` — Frontier. Tests auto-skip by platform.
-- Fixtures use `GetTS_TestCases` from `examples.py`. Use `start_from_scratch=False` for cached/fast iteration.
+- Fixtures use `GetTS_TestCases` from `tests/fixtures/test_case_catalog.py`. Use `start_from_scratch=False` for cached/fast iteration.
 - Use assertion helpers from `tests/utils_for_testing.py` (`assert_scenarios_run`, `assert_model_outputs_exist`, etc.) — not raw property checks.
 
 ---

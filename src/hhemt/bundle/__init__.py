@@ -28,6 +28,7 @@ from hhemt.bundle._emit import (
     _get_toolkit_git_sha,
     emit_bundle,
 )
+from hhemt.exceptions import BundleSchemaError  # re-export (moved to exceptions.py)
 
 if TYPE_CHECKING:
     from hhemt.eda import EdaReportResult
@@ -48,12 +49,6 @@ __all__ = [
     "BUNDLE_MANIFEST_FILENAME",
     "BUNDLE_SCHEMA_VERSION",
 ]
-
-
-class BundleSchemaError(ValueError):
-    """A bundle's bundle_schema_version does not match the locally-installed
-    toolkit's BUNDLE_SCHEMA_VERSION. Distinct from generic malformed-manifest
-    errors so callers can branch on schema-version mismatch specifically."""
 
 
 class Bundle:

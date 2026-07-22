@@ -34,7 +34,7 @@ from hhemt.analysis import TRITONSWMM_analysis
 from hhemt.config.analysis import analysis_config
 
 # Import from production package
-from hhemt.examples import TRITON_SWMM_example
+from hhemt.experiments import TRITON_SWMM_experiment
 from hhemt.system import TRITONSWMM_system
 from tests.fixtures import worktree_slug
 
@@ -78,7 +78,7 @@ class retrieve_TRITON_SWMM_test_case:
     # LOADING FROM SYSTEM CONFIG
     def __init__(
         self,
-        example: TRITON_SWMM_example,
+        example: TRITON_SWMM_experiment,
         # cfg_system_yaml: Path,
         analysis_name: str,
         n_events: int,
@@ -139,7 +139,7 @@ class retrieve_TRITON_SWMM_test_case:
         self.system = TRITONSWMM_system(new_system_config_yaml)
 
         # load single sime analysis
-        # single_sim_anlysys_yaml = NorfolkIreneExample.load_analysis_template()
+        # single_sim_anlysys_yaml = NorfolkIreneExperiment.load_analysis_template()
         cfg_analysis = example.analysis.cfg_analysis.model_copy()
 
         # update analysis attributes

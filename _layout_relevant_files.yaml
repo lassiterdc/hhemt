@@ -175,7 +175,11 @@ non_breaking_allowlist:
       values (units/long_name/cell_methods) and the crate's variableMeasured block; no
       variable is renamed, added, or removed from any dataset, and no path, group,
       _version.json, or datatree structure changes. Existing on-disk analyses open and
-      re-consolidate unchanged.
+      re-consolidate unchanged. CHANGE-SCOPED via layout_signature: this exemption covers
+      ONLY the current file content; cf_conventions.py also carries apply_grid_mapping /
+      apply_provenance_core, whose future edits could be layout-bearing, so any content
+      drift re-fires Check B rather than inheriting a path-permanent pass.
+    layout_signature: "5d987e2a3b81db9a27ba577199504add7e810fdb807fb7239df74fef65bf5662"
   - path: src/hhemt/config/experiment_bundle.py
     justification: >
       Input-schema module only (the estate's experiment.yaml descriptor). Adds no

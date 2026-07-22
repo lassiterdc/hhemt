@@ -67,6 +67,7 @@ nav:
       - Synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md
       - Publishing and fetching: how-to/publishing.md
       - Reprex round-trip: how-to/reprex-roundtrip.md
+      - DOI round-trip (operator): how-to/doi-roundtrip-e2e.md
   - Reference:
       - reference/index.md
       - API Reference: reference/api.md

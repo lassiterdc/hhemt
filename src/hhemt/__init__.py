@@ -38,4 +38,4 @@ __all__ = [
 ]
 
 # from .hhemt import run_model
-# from .hhemt import examples
+# from .hhemt import experiments

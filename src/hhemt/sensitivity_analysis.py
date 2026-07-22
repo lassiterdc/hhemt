@@ -1081,6 +1081,7 @@ class TRITONSWMM_sensitivity_analysis:
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,
+        container_defs: "list[Path] | None" = None,
     ) -> "Path":
         """Emit a portable render bundle for the sensitivity master analysis.
 
@@ -1092,15 +1093,22 @@ class TRITONSWMM_sensitivity_analysis:
 
         Args:
             output_path: Optional target path for the bundle tar.
+            container_defs: ADR-19 (multi-SIF) — one Apptainer .def per distinct arch to
+                carry. Required (repeatable) for a container-mode analysis (nothing in the
+                config names one); ignored for native.
 
         Returns:
             Path to the emitted bundle tar.
         """
         from hhemt.bundle import emit_bundle
 
-        return emit_bundle(self, output_path)
+        return emit_bundle(self, output_path, container_defs=container_defs)
 
-    def reprex_bundle(self, output_path: "Path | None" = None) -> "Path":
+    def reprex_bundle(
+        self,
+        output_path: "Path | None" = None,
+        container_defs: "list[Path] | None" = None,
+    ) -> "Path":
         """Emit a reprex-ready Workflow-Run-Crate bundle for the sensitivity master and
         return its extracted directory root (ADR-10, D3).
 
@@ -1111,13 +1119,20 @@ class TRITONSWMM_sensitivity_analysis:
         directory so the round-trip consumes a directory root directly
         (``Bundle.from_directory(...).reprex(...)``). Opt-in only.
 
+        Args:
+            container_defs: ADR-19 (multi-SIF) — one Apptainer .def per distinct arch to
+                carry. Required (repeatable) for a container-mode analysis (nothing in the
+                config names one); ignored for native.
+
         Returns:
             Path to the extracted reprex-bundle directory.
         """
         from hhemt.bundle import emit_bundle
         from hhemt.bundle._reprex import extract_reprex_bundle
 
-        return extract_reprex_bundle(emit_bundle(self, output_path))
+        return extract_reprex_bundle(
+            emit_bundle(self, output_path, container_defs=container_defs)
+        )
 
     def publish(
         self,
@@ -1141,6 +1156,32 @@ class TRITONSWMM_sensitivity_analysis:
             override_dataset_license=override_dataset_license,
             software_doi=software_doi,
             consolidated_zarr_relpath="sensitivity_datatree.zarr",
+        )
+
+    def publish_reprex_bundle(
+        self,
+        target: "Literal['hydroshare', 'zenodo']",
+        *,
+        exclude_config: "Path | None" = None,
+        override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
+        software_doi: "str | None" = None,
+        container_defs: "list[Path] | None" = None,
+    ) -> dict:
+        """Deposit the RUNNABLE reprex bundle for the sensitivity master (D6, R5).
+
+        Sensitivity parallel of ``TRITONSWMM_analysis.publish_reprex_bundle`` — the emit
+        half of the DOI round-trip. Opt-in only; NEVER invoked from ``run()``.
+
+        Args:
+            exclude_config: The ADR-20 governed opt-out (see the analysis-tier facade).
+                Omit it and the deposited bundle is SELF-CONTAINED.
+        """
+        return self.master_analysis.publish_reprex_bundle(
+            target,
+            exclude_config=exclude_config,
+            override_dataset_license=override_dataset_license,
+            software_doi=software_doi,
+            container_defs=container_defs,
         )
 
     def run_all_sims(

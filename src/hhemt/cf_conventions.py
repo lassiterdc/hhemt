@@ -11,7 +11,6 @@ from typing import Any
 
 import xarray as xr
 
-
 CF_CONVENTIONS_VERSION = "CF-1.13"
 
 
@@ -83,13 +82,19 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
         "cell_methods": "time: maximum",
     },
     # EMITTED names -- constants.LST_COL_HEADERS_LINK_FLOW_SUMMARY, consumed live by
-    # per_sim_conduit_flow.py:120,555 and _figure_emission.py:579. A key here is NOT inert:
-    # metadata.py iterates this whole map to emit `variableMeasured` PropertyValues on the
-    # DEPOSITED zarr's Dataset node, so an entry naming a variable the pipeline does not emit
-    # is published as a false claim about the data. Ground every new key against
-    # `list(ds.data_vars)` of a real summary zarr -- never against a plausible-looking name.
-    # Removed 2026-07-21: `max_full_flow_ratio` / `max_full_depth_ratio` (never emitted;
-    # the emitted conduit-capacity names are max_over_full_flow / max_over_full_depth).
+    # per_sim_conduit_flow.py:120,555. A key here is NOT inert: metadata.py:204 iterates
+    # this whole map to emit `variableMeasured` PropertyValues on the DEPOSITED zarr's
+    # Dataset node, so an entry naming a variable the pipeline does not emit is published
+    # as a false claim about the data. Ground every new key against `list(ds.data_vars)`
+    # of a real summary zarr -- never against a plausible-looking name.
+    #
+    # Removed 2026-07-21: `max_full_flow_ratio` / `max_full_depth_ratio`, plus the SWMM
+    # node-tier `max_lat_inflow_cms` / `max_tot_inflow_cms` / `flood_vol_10e6_ltr` /
+    # `max_flood_cms` / `max_depth_m` / `max_hgl_m`. All 8 were introduced by b5e56c9 (the
+    # CF-conventions commit) into this file ONLY and were emitted NOWHERE -- guessed names,
+    # not an unfinished rename (`git log -S` shows no producer for any of them at any
+    # commit). A real crate measured before removal advertised 18 variables of which 11
+    # were absent from the deposited zarr.
     "max_over_full_flow": {
         "standard_name": None,
         "long_name": "Maximum flow-to-full-flow ratio",

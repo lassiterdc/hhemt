@@ -122,33 +122,46 @@ def test_sidecar_compare_and_write_idempotent(tmp_path):
 
 
 def _advertised_var_names(crate) -> set[str]:
-    """The variable names the deposited-store Dataset advertises via variableMeasured."""
+    """Names of the `#var-*` PropertyValue entities in a built crate."""
     doc = json.loads(metadata.canonical_jsonld(crate))
-    by_id = {e["@id"]: e for e in doc["@graph"]}
-    ds = next(e for e in doc["@graph"] if e.get("encodingFormat") == "application/x-zarr")
-    return {by_id[ref["@id"]]["name"] for ref in ds.get("variableMeasured", [])}
+    return {
+        n["name"]
+        for n in doc["@graph"]
+        if isinstance(n, dict) and str(n.get("@id", "")).startswith("#var-") and "name" in n
+    }
 
 
-def test_variable_measured_advertises_only_emitted_vars():
-    # RELEASE-BLOCKING (VMS-2, 2026-07-21): variableMeasured is a claim about the
-    # DEPOSITED store, so build_analysis_crate must advertise only the variables the
-    # store actually contains. A prior whole-map iteration published every _CF_VARIABLE_MAP
-    # key as a claim (measured: 18 advertised / 11 absent on a real sensitivity crate).
-    # This guards the emitter fix directly; test_no_phantom_swmm_keys_in_cf_variable_map
-    # guards the MAP, not the emitter's filtering — the two are distinct regressions.
+def test_variable_measured_advertises_only_emitted_variables():
+    """`variableMeasured` is a claim about the DEPOSITED store, not about the CF map.
+
+    Regression guard for the 2026-07-21 over-claim defect: `build_analysis_crate`
+    iterated `_CF_VARIABLE_MAP` unconditionally, so every map key was published as a
+    PropertyValue asserting the deposited zarr contains that variable. Measured on a
+    real sensitivity crate at the time: 18 advertised, 11 absent from the zarr.
+
+    THIS TEST IS THE ONLY COVERAGE OF THE GATED PATH. Every other test in this file
+    calls `_build()` without `emitted_vars`, so they exercise only the legacy `None`
+    branch, where bytes are unchanged BY CONSTRUCTION — a green suite there is not
+    evidence the gate works. That gap is exactly how the original defect survived.
+    """
     from hhemt.cf_conventions import _CF_VARIABLE_MAP
 
-    # emitted_vars=None -> legacy whole-map behavior preserved (callers that cannot see
-    # the dataset, e.g. a doc-level upgrade path, still advertise the full crosswalk).
-    whole = _advertised_var_names(_build())
-    assert whole == set(_CF_VARIABLE_MAP)
+    # Legacy branch: emitted_vars=None preserves the whole-map advertisement.
+    legacy = _advertised_var_names(_build())
+    assert legacy == set(_CF_VARIABLE_MAP), (
+        f"emitted_vars=None must preserve legacy whole-map behavior; got {sorted(legacy)}"
+    )
 
-    # A real emitted set advertises exactly those variables — nothing the store lacks.
-    subset = {"max_wlevel_m", "max_flow_cms"}
-    filtered = _advertised_var_names(_build(emitted_vars=subset))
-    assert filtered == subset
-    assert filtered < whole  # strictly fewer than the whole map: the over-claim is gone
+    # Gated branch: advertise the intersection with the store's real variables ONLY.
+    real = {"max_wlevel_m", "max_flow_cms"}
+    gated = _advertised_var_names(_build(emitted_vars=real))
+    assert gated == real & set(_CF_VARIABLE_MAP), f"gated advertisement wrong: {sorted(gated)}"
+    assert gated < legacy, "the gated advertisement must SHRINK relative to the whole map"
 
-    # A name not present in the crosswalk is silently dropped (advertise ⊆ crosswalk ∩ emitted).
-    over = _advertised_var_names(_build(emitted_vars={"max_wlevel_m", "not_a_real_var"}))
-    assert over == {"max_wlevel_m"}
+    # The defect itself: a MAPPED variable absent from the store must NOT be advertised.
+    absent = sorted(set(_CF_VARIABLE_MAP) - real)
+    assert absent, "fixture precondition: the map must carry a variable outside `real`"
+    for var in absent:
+        assert var not in gated, (
+            f"{var!r} is absent from the deposited store but is advertised as present"
+        )

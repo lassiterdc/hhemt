@@ -1,7 +1,7 @@
 """Command-line interface for H&H Ensemble Modeling Toolkit.
 
 Provides a Snakemake-first single-command CLI for running TRITON-SWMM
-workflows with support for production, testcase, and case-study profiles.
+workflows.
 """
 
 import json
@@ -19,11 +19,6 @@ from .exceptions import (
     SimulationError,
     WorkflowError,
     WorkflowPlanningError,
-)
-from .profile_catalog import (
-    list_case_studies,
-    list_testcases,
-    load_profile_catalog,
 )
 from .recompute import RecomputeScope  # typer reads the --scope enum annotation at import time
 
@@ -83,13 +78,8 @@ console_err = Console(stderr=True)
 @app.command(name="run")
 def run_command(
     # ═══════════════════════════════════════════════════════════════
-    # Required Arguments (unless using list actions)
+    # Required Arguments
     # ═══════════════════════════════════════════════════════════════
-    profile: str | None = typer.Option(
-        None,
-        "--profile",
-        help="Execution profile: production, testcase, or case-study",
-    ),
     system_config: Path | None = typer.Option(
         None,
         "--system-config",
@@ -186,38 +176,6 @@ def run_command(
         "--event-range",
         help="Event range START:END (e.g., '0:100', inclusive start, exclusive end)",
     ),
-    # ═══════════════════════════════════════════════════════════════
-    # Profile-Specific Options
-    # ═══════════════════════════════════════════════════════════════
-    testcase: str | None = typer.Option(
-        None,
-        "--testcase",
-        help="Testcase name (required when --profile testcase)",
-    ),
-    case_study: str | None = typer.Option(
-        None,
-        "--case-study",
-        help="Case study name (required when --profile case-study)",
-    ),
-    tests_case_config: Path | None = typer.Option(
-        None,
-        "--tests-case-config",
-        help="Path to tests_and_case_studies.yaml profile catalog",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
-    ),
-    list_testcases_flag: bool = typer.Option(
-        False,
-        "--list-testcases",
-        help="Print available testcases and exit",
-    ),
-    list_case_studies_flag: bool = typer.Option(
-        False,
-        "--list-case-studies",
-        help="Print available case studies and exit",
-    ),
     status_flag: bool = typer.Option(
         False,
         "--status",
@@ -284,49 +242,32 @@ def run_command(
         help="Python logging level: DEBUG, INFO, WARNING, ERROR",
     ),
 ):
-    """Run TRITON-SWMM workflow with specified profile and configuration.
+    """Run TRITON-SWMM workflow from a system and analysis configuration.
 
     This command orchestrates the full TRITON-SWMM workflow including system
     setup, scenario preparation, simulation execution, and output processing.
 
     Examples:
 
-        # Production run with default resume behavior
-        $ triton-swmm run --profile production \\
+        # Run with default resume behavior
+        $ triton-swmm run \\
             --system-config system.yaml --analysis-config analysis.yaml
 
         # Fresh run with selected events
-        $ triton-swmm run --profile production \\
+        $ triton-swmm run \\
             --system-config system.yaml --analysis-config analysis.yaml \\
             --from-scratch --event-ilocs 0,1,2
 
-        # Testcase with HPC overrides
-        $ triton-swmm run --profile testcase --testcase norfolk_smoke \\
+        # Run with HPC overrides
+        $ triton-swmm run \\
             --system-config system.yaml --analysis-config analysis.yaml \\
             --partition debug --walltime 00:20:00
 
     """
     try:
         # ═══════════════════════════════════════════════════════════════
-        # Stage 1: Action Flags (Early Exit)
+        # Stage 1: Required Argument Check
         # ═══════════════════════════════════════════════════════════════
-        if list_testcases_flag:
-            _handle_list_testcases(tests_case_config)
-            raise typer.Exit(0)
-
-        if list_case_studies_flag:
-            _handle_list_case_studies(tests_case_config)
-            raise typer.Exit(0)
-
-        # ═══════════════════════════════════════════════════════════════
-        # Stage 2: Required Argument Check (for non-list actions)
-        # ═══════════════════════════════════════════════════════════════
-        if not profile:
-            raise CLIValidationError(
-                argument="--profile",
-                message="--profile is required",
-                fix_hint="Specify production, testcase, or case-study",
-            )
         if not system_config:
             raise CLIValidationError(
                 argument="--system-config",
@@ -341,18 +282,15 @@ def run_command(
             )
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 3: Argument Validation
+        # Stage 2: Argument Validation
         # ═══════════════════════════════════════════════════════════════
         _validate_cli_arguments(
-            profile=profile,
             from_scratch=from_scratch,
             resume=resume,
             verbose=verbose,
             quiet=quiet,
             event_ilocs=event_ilocs,
             event_range=event_range,
-            testcase=testcase,
-            case_study=case_study,
             model=model,
             which=which,
             redownload=redownload,
@@ -361,22 +299,7 @@ def run_command(
         )
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 4: Profile Resolution (if applicable)
-        # ═══════════════════════════════════════════════════════════════
-        # Note: Profile resolution for testcase/case-study profiles is
-        # deferred to future phases. For now, production profiles use
-        # config files directly without merging profile catalog entries.
-
-        if profile in ["testcase", "case-study"]:
-            # Future: Load catalog, resolve profile entry, merge with configs
-            raise CLIValidationError(
-                argument="--profile",
-                message=f"Profile type '{profile}' not yet implemented",
-                fix_hint="Use --profile production for now",
-            )
-
-        # ═══════════════════════════════════════════════════════════════
-        # Stage 5: Config Loading & System/Analysis Instantiation
+        # Stage 3: Config Loading & System/Analysis Instantiation
         # ═══════════════════════════════════════════════════════════════
         if not quiet:
             console.print("[cyan]Loading configurations...[/cyan]")
@@ -392,7 +315,7 @@ def run_command(
             console.print("[green]✓[/green] Configurations loaded")
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 6: Preflight Validation
+        # Stage 4: Preflight Validation
         # ═══════════════════════════════════════════════════════════════
         if not quiet:
             console.print("[cyan]Running preflight validation...[/cyan]")
@@ -413,7 +336,7 @@ def run_command(
             console.print("[green]✓[/green] Validation passed")
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 7a: Status Report (if requested)
+        # Stage 5a: Status Report (if requested)
         # ═══════════════════════════════════════════════════════════════
         if status_flag:
             status = analysis.get_workflow_status()
@@ -421,15 +344,15 @@ def run_command(
             raise typer.Exit(0)
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 7b: Dry-Run Output (if requested)
+        # Stage 5b: Dry-Run Output (if requested)
         # ═══════════════════════════════════════════════════════════════
         if dry_run:
             _print_dry_run_summary(locals())
             console.print("\n[yellow]Dry-run mode: Snakemake DAG will be validated but not executed[/yellow]")
-            # Continue to Stage 8 with dry_run=True
+            # Continue to Stage 6 with dry_run=True
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 8: Workflow Orchestration
+        # Stage 6: Workflow Orchestration
         # ═══════════════════════════════════════════════════════════════
 
         # Determine execution mode from CLI flags
@@ -1917,54 +1840,6 @@ def cleanup_settled_markers_command(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _handle_list_testcases(catalog_path: Path | None) -> None:
-    """Print available testcases and exit."""
-    try:
-        catalog = load_profile_catalog(catalog_path)
-        testcases = list_testcases(catalog)
-
-        if not testcases:
-            console.print("[yellow]No testcases defined in catalog.[/yellow]")
-            return
-
-        table = Table(title="Available Testcases", show_header=True, header_style="bold cyan")
-        table.add_column("Name", style="green")
-        table.add_column("Description")
-
-        for name, description in testcases:
-            table.add_row(name, description)
-
-        console.print(table)
-
-    except ConfigurationError as e:
-        console_err.print(f"[bold red]Error loading catalog:[/bold red] {e}")
-        raise typer.Exit(2) from e
-
-
-def _handle_list_case_studies(catalog_path: Path | None) -> None:
-    """Print available case studies and exit."""
-    try:
-        catalog = load_profile_catalog(catalog_path)
-        case_studies = list_case_studies(catalog)
-
-        if not case_studies:
-            console.print("[yellow]No case studies defined in catalog.[/yellow]")
-            return
-
-        table = Table(title="Available Case Studies", show_header=True, header_style="bold cyan")
-        table.add_column("Name", style="green")
-        table.add_column("Description")
-
-        for name, description in case_studies:
-            table.add_row(name, description)
-
-        console.print(table)
-
-    except ConfigurationError as e:
-        console_err.print(f"[bold red]Error loading catalog:[/bold red] {e}")
-        raise typer.Exit(2) from e
-
-
 def _validate_cli_arguments(**kwargs) -> None:
     """Validate business logic constraints on CLI arguments.
 
@@ -1992,31 +1867,6 @@ def _validate_cli_arguments(**kwargs) -> None:
             argument="--verbose/--quiet",
             message="Cannot use both --verbose and --quiet",
             fix_hint="Choose one output mode",
-        )
-
-    # Profile validation
-    valid_profiles = ["production", "testcase", "case-study"]
-    if kwargs["profile"] not in valid_profiles:
-        raise CLIValidationError(
-            argument="--profile",
-            message=f"Invalid profile: {kwargs['profile']}",
-            fix_hint=f"Must be one of: {', '.join(valid_profiles)}",
-        )
-
-    # Conditional requirement: testcase profile requires --testcase
-    if kwargs["profile"] == "testcase" and not kwargs["testcase"]:
-        raise CLIValidationError(
-            argument="--testcase",
-            message="--testcase NAME required when --profile testcase",
-            fix_hint="Specify testcase name or use --list-testcases to see available options",
-        )
-
-    # Conditional requirement: case-study profile requires --case-study
-    if kwargs["profile"] == "case-study" and not kwargs["case_study"]:
-        raise CLIValidationError(
-            argument="--case-study",
-            message="--case-study NAME required when --profile case-study",
-            fix_hint="Specify case study name or use --list-case-studies to see available options",
         )
 
     # Model validation
@@ -2071,13 +1921,6 @@ def _print_dry_run_summary(args: dict) -> None:
     """Print dry-run summary showing resolved configuration without execution."""
     console.print("\n[bold cyan]═══ Dry-Run Summary ═══[/bold cyan]\n")
 
-    # Profile information
-    console.print(f"[bold]Profile:[/bold] {args['profile']}")
-    if args["profile"] == "testcase":
-        console.print(f"[bold]Testcase:[/bold] {args['testcase']}")
-    elif args["profile"] == "case-study":
-        console.print(f"[bold]Case Study:[/bold] {args['case_study']}")
-
     # Configuration files
     console.print("\n[bold]Configuration Files:[/bold]")
     console.print(f"  System:   {args['system_config']}")
@@ -2110,6 +1953,49 @@ def _print_dry_run_summary(args: dict) -> None:
             console.print(f"  {key}: {value}")
 
     console.print("\n[yellow]Note: Dry-run mode - no execution performed.[/yellow]\n")
+
+
+def _list_excludable_callback(value: bool) -> bool:
+    """Print the ADR-20 excludable-input catalog and EXIT — before option validation.
+
+    ``is_eager=True`` + ``typer.Exit`` is load-bearing, not stylistic. The ``bundle``
+    command's ``--system-config`` and ``--analysis-config`` are REQUIRED options, so a
+    non-eager flag would demand two configs from an operator whose entire purpose in
+    running this is to DISCOVER the field names before authoring anything. That is
+    structurally the same defect as the retired ``--profile`` option, which was required
+    and therefore reached every invocation. An eager callback is processed before required
+    options are enforced (the same mechanism ``--help`` uses).
+    """
+    if not value:
+        return value
+
+    from hhemt.bundle._path_policy import _EXCLUDABLE_CATALOG
+
+    console.print(
+        "\n[bold]Inputs that MAY be excluded from a reprex bundle[/bold] (ADR-20 opt-out).\n"
+        "A bundle with no exclude-config is SELF-CONTAINED: every input below is carried.\n"
+        "Excluding an input carries it BY REFERENCE instead — supply a [cyan]citation[/cyan] "
+        "(required) and, if a consumer can download it directly, a [cyan]contentUrl[/cyan].\n"
+        "Omit [cyan]contentUrl[/cyan] for licensed/restricted data: ingest then fails closed "
+        "with your citation, which is the correct outcome — not a degraded one.\n"
+    )
+    for name, entry in sorted(_EXCLUDABLE_CATALOG.items()):
+        if entry.excludable:
+            console.print(
+                f"  [green]{name}[/green]\n      {entry.description}\n"
+                f"      cost: {entry.reproducibility_cost}"
+            )
+        else:
+            console.print(
+                f"  [red]{name}[/red] (NOT excludable)\n      {entry.description}\n"
+                f"      {entry.reproducibility_cost}"
+            )
+    console.print(
+        "\nOrdering: the excluded input must ALREADY have a durable record — the toolkit has "
+        "no per-file deposit helper. Deposit it (or locate the third-party source) FIRST, "
+        "then author the exclude-config.\n"
+    )
+    raise typer.Exit(0)
 
 
 @app.command(name="bundle")
@@ -2162,6 +2048,40 @@ def bundle_command(
             "{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip."
         ),
     ),
+    exclude_config: Path = typer.Option(
+        None,
+        "--exclude-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "ADR-20 governed opt-out: an operator-authored YAML naming inputs to carry BY "
+            "REFERENCE instead of in-bundle. Omit for a SELF-CONTAINED bundle (the default). "
+            "Run --list-excludable to see what may be opted out."
+        ),
+    ),
+    container_defs: list[Path] = typer.Option(
+        None,
+        "--container-defs",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "ADR-19 (multi-SIF): one Apptainer .def per distinct arch in the matrix so "
+            "`hhemt ingest` builds one SIF per arch (e.g. --container-defs "
+            "containers/uva-cuda-a100.def --container-defs containers/uva-cuda-a6000.def). "
+            "REQUIRED for a container-mode analysis; repeatable; ignored for a native one."
+        ),
+    ),
+    list_excludable: bool = typer.Option(
+        False,
+        "--list-excludable",
+        callback=_list_excludable_callback,
+        is_eager=True,
+        help="Print the excludable-input catalog and exit (no configs required).",
+    ),
 ) -> None:
     """Emit a portable render bundle for local renderer iteration.
 
@@ -2184,11 +2104,212 @@ def bundle_command(
         hpc_system_config_yaml=hpc_system_config,
         case_manifest_yaml=case_manifest,
     )
+    from hhemt.bundle import emit_bundle
+
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        bundle_path = analysis.sensitivity.bundle_report_data(output)
+        target = analysis.sensitivity.master_analysis
     else:
-        bundle_path = analysis.bundle_report_data(output)
-    console.print(f"[green]Bundle emitted:[/green] {bundle_path}")
+        target = analysis
+    bundle_path = emit_bundle(
+        target, output, exclude_config=exclude_config, container_defs=container_defs
+    )
+    if exclude_config is None:
+        console.print(f"[green]Bundle emitted (self-contained):[/green] {bundle_path}")
+    else:
+        console.print(f"[green]Bundle emitted (with by-reference inputs):[/green] {bundle_path}")
+
+
+@app.command(name="build-sif")
+def build_sif_command(
+    def_path: Path = typer.Option(
+        ...,
+        "--def",
+        help="Path to the Apptainer definition file (.def) to build.",
+    ),
+    sif_out: Path = typer.Option(
+        None,
+        "--sif-out",
+        help=(
+            "Output SIF path. Default: the content-addressed cache "
+            "($HHEMT_SIF_CACHE_DIR, else <user_cache_dir>/hhemt/sif_cache/). The default "
+            "is deliberately OUTSIDE any bundle: `from_doi` rmtree's bundle_root on every "
+            "ingest, so an under-bundle SIF could never be reused."
+        ),
+    ),
+    sif_build_mode: str = typer.Option(
+        "auto",
+        "--sif-build-mode",
+        help=(
+            "auto: submit an sbatch build when SLURM is present, else refuse a compiling "
+            ".def; batch: force sbatch; local: force an in-process build (for a pull-only, "
+            "non-compiling .def). A compiling .def is refused on a login node — `make "
+            "-j$(nproc)` sees no cgroup cap there and forks 40-way on a shared frontend."
+        ),
+    ),
+    account: str = typer.Option(
+        None,
+        "--account",
+        help=(
+            "SLURM account for the build job. Required in batch mode; normally read from "
+            "your hpc_system_config's `default_account`. Never defaulted — a default would "
+            "submit against someone else's allocation."
+        ),
+    ),
+    force_rebuild: bool = typer.Option(
+        False,
+        "--force-rebuild",
+        help="Rebuild even when a cached SIF for this recipe already exists.",
+    ),
+    apptainer_module: str = typer.Option(
+        None,
+        "--apptainer-module",
+        help=(
+            "Lmod module to load for apptainer (e.g. 'apptainer/1.5.0'). Default: "
+            "$HHEMT_APPTAINER_MODULE, else none (apptainer assumed on PATH). The build "
+            "script exports APPTAINER_IGNORE_PROOT=1 regardless (version-agnostic build)."
+        ),
+    ),
+) -> None:
+    """Build an Apptainer SIF from a definition file (ADR-19).
+
+    A standalone step, NOT a Snakemake rule: `apptainer build` is not byte-reproducible, so
+    a SIF wired into the DAG as a rule output would acquire mtime rerun-triggers and cascade
+    a full-ensemble re-run on any rebuild.
+
+    The build runs as a GPU-free CPU-batch job (`standard`, -c 16, --mem=64G, -t 04:00:00,
+    no --tmp) — a trim of the estate's own known-good build. `--wait` blocks until it
+    finishes, so the SIF path is available on return.
+    """
+    from hhemt.cli_utils import map_exception_to_exit_code
+    from hhemt.container_build import SifBuildUnavailable, build_sif, sif_cache_root
+
+    try:
+        out = Path(sif_out) if sif_out else sif_cache_root() / f"{Path(def_path).stem}.sif"
+        built = build_sif(
+            def_path=Path(def_path),
+            sif_out=out,
+            account=account,
+            apptainer_module=apptainer_module,
+            mode=sif_build_mode,
+            force_rebuild=force_rebuild,
+        )
+    except SifBuildUnavailable as exc:
+        # Preflight FAIL is a structured, actionable outcome — not a crash. Surface the
+        # remediation verbatim rather than a traceback.
+        console.print(f"[yellow]SIF build unavailable on this host:[/yellow] {exc.reason}")
+        console.print(f"[cyan]Remediation:[/cyan] {exc.remediation}")
+        raise typer.Exit(map_exception_to_exit_code(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
+        code = map_exception_to_exit_code(exc)
+        console.print(f"[red]build-sif failed:[/red] {exc}")
+        raise typer.Exit(code) from exc
+
+    console.print(f"[green]SIF ready:[/green] {built}")
+    console.print(
+        "Point your hpc_system_config's `container.sif_path` at it, or let "
+        "`hhemt ingest` repoint a derived copy for you."
+    )
+
+
+@app.command(name="ingest")
+def ingest_command(
+    doi: str = typer.Option(
+        None,
+        "--doi",
+        help="DOI of the published reprex bundle (e.g. 10.5281/zenodo.123456).",
+    ),
+    pid: str = typer.Option(
+        None,
+        "--pid",
+        help="Host-native id (Zenodo record id / HydroShare resource id).",
+    ),
+    host: str = typer.Option(
+        "zenodo",
+        "--host",
+        help="Deposit host: 'zenodo' or 'hydroshare'.",
+    ),
+    sha256: str = typer.Option(
+        None,
+        "--sha256",
+        help="Optional sha256 pin on the fetched bundle zip (integrity check).",
+    ),
+    target_dir: Path = typer.Option(
+        None,
+        "--target-dir",
+        help="Directory to fetch + reconstitute into (default: a fresh temp dir).",
+    ),
+    software_dir: Path = typer.Option(
+        None,
+        "--software-dir",
+        help=(
+            "Target-side directory for the toolkit's SWMM/TRITON build dirs "
+            "(default: {bundle_root}/software). These are toolkit-owned build outputs, "
+            "not bundled inputs."
+        ),
+    ),
+    hpc_system_config: Path = typer.Option(
+        None,
+        "--hpc-system-config",
+        help=(
+            "Path to YOUR cluster's hpc_system_config.yaml (ADR-6). Falls back to "
+            "$HHEMT_HPC_SYSTEM_CONFIG. The bundle never carries one (ADR-9), and it is "
+            "REQUIRED for a container-mode bundle: the ContainerSpec that renders "
+            "`apptainer exec {sif}` lives on it. Start from a worked example at "
+            "test_data/norfolk_coastal_flooding/hpc_system_config_{uva,frontier}.yaml, "
+            "or from the shape sketched in the bundle's hpc_system_config.template.yaml."
+        ),
+    ),
+    allow_cross_family_sif: bool = typer.Option(
+        False,
+        "--allow-cross-family-sif",
+        help=(
+            "Override the cross-family SIF guard (default: fail closed). When the "
+            "bundle's baked GPU arch does not match your target partition's hardware, "
+            "build + run anyway with only a warning. Use ONLY when you have confirmed "
+            "the baked arch is run-compatible with your GPU."
+        ),
+    ),
+) -> None:
+    """Fetch a published reprex bundle by DOI/PID, reconstitute it, and print the
+    runnable configs (ADR-13 C9).
+
+    A self-contained bundle (the default emit) carries every declared input, so the
+    reconstituted experiment runs from scratch. Ingesting a DOI and running it executes
+    shell derived from the fetched config — ingest only deposits you trust. Use
+    ``--sha256`` to pin the fetched bundle-zip integrity.
+    """
+    from hhemt.cli_utils import map_exception_to_exit_code
+    from hhemt.experiments import TRITON_SWMM_experiment
+
+    try:
+        if not (doi or pid):
+            raise CLIValidationError(
+                "doi", "Provide at least one of --doi or --pid."
+            )
+        exp = TRITON_SWMM_experiment.from_doi(
+            doi=doi,
+            pid=pid,
+            host=host,
+            expected_sha256=sha256,
+            target_dir=target_dir,
+            software_dir=software_dir,
+            hpc_system_config_yaml=hpc_system_config,
+            allow_cross_family_sif=allow_cross_family_sif,
+        )
+    except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
+        code = map_exception_to_exit_code(exc)
+        console.print(f"[red]ingest failed:[/red] {exc}")
+        raise typer.Exit(code) from exc
+
+    bundle_root = exp.bundle_root
+    analysis_dir = exp.analysis.analysis_paths.analysis_dir
+    console.print(f"[green]Ingested bundle:[/green] {bundle_root}")
+    console.print(f"[green]Reconstituted analysis_dir:[/green] {analysis_dir}")
+    console.print(
+        "Run it with:\n"
+        f"  hhemt run --system-config {bundle_root}/system_config.yaml "
+        f"--analysis-config {bundle_root}/analysis_config.yaml"
+    )
 
 
 @app.command(name="combine")

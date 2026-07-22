@@ -17,3 +17,9 @@ Task-oriented recipes for getting specific jobs done with the toolkit.
   render bundles into one cross-experiment report.
 - [Publishing and fetching](publishing.md) — deposit a dataset to
   Zenodo/HydroShare and fetch case-study inputs by DOI/PID.
+- [Reprex round-trip](reprex-roundtrip.md) — emit a reproducible-example
+  bundle and run it back.
+- [DOI round-trip (operator)](doi-roundtrip-e2e.md) — mint a DOI for a reprex
+  bundle, then fetch and run it on another machine.
+- [Running a synthetic compute-sensitivity experiment](synthetic-compute-sensitivity-experiment.md)
+  — sweep a fully-generated synthetic experiment to measure compute sensitivity.

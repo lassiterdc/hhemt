@@ -291,6 +291,7 @@ def test_reprex_bundle_carries_runnable_set(
     import zipfile
 
     from hhemt.bundle._emit import HPC_TEMPLATE_FILENAME, REPREX_CONFIG_FILENAME
+    from hhemt.config.loaders import load_hpc_system_config
     from hhemt.metadata import _SNAKEMAKE_LANG_ID, _WFRUN_ROOT_PROFILES
 
     zip_out = tmp_path / "reprex_bundle.zip"
@@ -303,6 +304,24 @@ def test_reprex_bundle_carries_runnable_set(
     assert (bundle_dir / HPC_TEMPLATE_FILENAME).exists()
     assert (bundle_dir / "Snakefile.source").exists()
     assert (bundle_dir / "ro-crate-metadata.json").exists()
+
+    # The carried HPC template must be LOADABLE as an hpc_system_config, not merely
+    # present. ADR-10 requires bundled HPC-specific info to be "bundled+flagged+revisable",
+    # and a file that cannot load is not revisable into a valid config. An existence-only
+    # assertion is exactly how the prior flat {default_account, login_node, sif_path} form
+    # survived: it raised a 3-error ValidationError (system_name missing, partitions
+    # missing, sif_path extra_forbidden at top level) and nothing ever loaded it.
+    cfg_hpc = load_hpc_system_config(bundle_dir / HPC_TEMPLATE_FILENAME)
+    assert cfg_hpc.system_name, "template must carry the REQUIRED system_name"
+    assert cfg_hpc.partitions, "template must carry the REQUIRED partitions map"
+    # sif_path nests under container: (ContainerSpec) — a top-level sif_path is
+    # extra-forbidden and is what made the old template unloadable.
+    assert cfg_hpc.container is not None
+    assert cfg_hpc.container.sif_path
+    # Zero-user-info (ADR-13/14): placeholders only, never the producer's real values.
+    tpl_text = (bundle_dir / HPC_TEMPLATE_FILENAME).read_text()
+    for producer_token in ("quinnlab", "atm112", "cli190", "dcl3nd"):
+        assert producer_token not in tpl_text
 
     doc = json.loads((bundle_dir / "ro-crate-metadata.json").read_text())
     root = next(e for e in doc["@graph"] if e.get("@id") == "./")
@@ -781,3 +800,49 @@ def test_copy_supporting_files_no_rocrate_sidecar_is_noop(tmp_path: Path) -> Non
     )
     _copy_supporting_files(analysis, staging)  # must not raise
     assert not (staging / "ro-crate-metadata.json").exists()
+
+
+def test_copy_reference_outputs_carries_test_summaries(tmp_path: Path) -> None:
+    """[Q8] REQ-1 (R9b): _copy_reference_outputs carries the producer's test()-shaped
+    per-scenario physics summaries into reference_outputs/, group-indexed, physics
+    *_summary.* only (never *_tseries.*)."""
+    import types
+
+    from hhemt.bundle._emit import _copy_reference_outputs
+
+    analysis_dir = tmp_path / "analysis"
+    processed = analysis_dir / "_test" / "group_0" / "sims" / "evt1" / "processed"
+    processed.mkdir(parents=True)
+    (processed / "TRITONSWMM_TRITON_summary.nc").write_text("ref")
+    (processed / "TRITONSWMM_SWMM_link_summary.nc").write_text("ref")
+    (processed / "TRITONSWMM_TRITON_tseries.nc").write_text("ts")  # NOT *_summary -> excluded
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    analysis = types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
+        cfg_analysis=types.SimpleNamespace(target_processed_output_type="nc"),
+    )
+    _copy_reference_outputs(analysis, staging)
+    ref = staging / "reference_outputs" / "group_0" / "sims" / "evt1" / "processed"
+    assert (ref / "TRITONSWMM_TRITON_summary.nc").exists()
+    assert (ref / "TRITONSWMM_SWMM_link_summary.nc").exists()
+    assert not (ref / "TRITONSWMM_TRITON_tseries.nc").exists()  # timeseries not carried
+
+
+def test_copy_reference_outputs_no_test_dir_is_noop(tmp_path: Path) -> None:
+    """[Q8] REQ-1 / ADR-19 (R9b): with no {analysis_dir}/_test/, _copy_reference_outputs is
+    a no-op and no reference_outputs/ is created (non-[Q8] bundles stay byte-identical)."""
+    import types
+
+    from hhemt.bundle._emit import _copy_reference_outputs
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    analysis = types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
+        cfg_analysis=types.SimpleNamespace(target_processed_output_type="nc"),
+    )
+    _copy_reference_outputs(analysis, staging)  # must not raise
+    assert not (staging / "reference_outputs").exists()

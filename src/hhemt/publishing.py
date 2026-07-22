@@ -20,7 +20,9 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import warnings
 import zipfile
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -36,6 +38,21 @@ _DATA_TO_SOFTWARE_RELATION = "IsCompiledBy"
 # The reciprocal edge written back onto the software record in the Phase-2 backfill.
 _SOFTWARE_TO_DATA_RELATION = "IsSourceOf"
 
+# Default dataset creator when the operator supplies none. An organizational creator is a
+# valid DataCite/InvenioRDM creator and unblocks publish; the operator SHOULD pass real
+# personal creators via publish_analysis(creators=...) for proper authorship credit. The
+# crate sidecar carries no author/creator entity, so this is the only creators source
+# unless the operator overrides it.
+_DEFAULT_CREATORS: list[dict] = [
+    {"person_or_org": {"type": "organizational", "name": "H&H Ensemble Modeling Toolkit"}}
+]
+
+# DataCite-mandatory publisher (the entity issuing the resource). Required for DOI
+# registration; Zenodo's own deposit UI defaults it to "Zenodo" for records it issues.
+# This is the 6th and last DataCite-mandatory field (Identifier/Creators/Title/Publisher/
+# PublicationYear/ResourceType) — the others land via the minted DOI + the metadata below.
+_PUBLISHER = "Zenodo"
+
 # InvenioRDM REST endpoint templates (A4/X4: named so a substrate correction is one line).
 _ZENODO_DEFAULT_BASE = "https://zenodo.org"
 _ZENODO_CREATE = "{base}/api/records"
@@ -45,6 +62,7 @@ _ZENODO_FILES_INIT = "{base}/api/records/{recid}/draft/files"
 _ZENODO_FILE_CONTENT = "{base}/api/records/{recid}/draft/files/{key}/content"
 _ZENODO_FILE_COMMIT = "{base}/api/records/{recid}/draft/files/{key}/commit"
 _ZENODO_PUBLISH = "{base}/api/records/{recid}/draft/actions/publish"
+_ZENODO_RECORD = "{base}/api/records/{recid}"
 
 _HTTP_TIMEOUT = 60
 
@@ -60,6 +78,25 @@ def _read_license_from_sidecar(analysis_dir: Path) -> str:
                 if meta["uri"] == uri:
                     return spdx
     raise PublishError(target="?", doi=None, status="no recognizable dataset license in ro-crate sidecar")
+
+
+def _read_title_from_sidecar(analysis_dir: Path) -> str:
+    """Return the root Dataset ``name`` from the emitted sidecar (generic fallback).
+
+    ``name`` is in the emitted crate's embedded core, so it survives partitioning. A
+    missing/empty/unreadable sidecar falls back to a generic title rather than raising —
+    a missing title must never block an otherwise-valid deposit.
+    """
+    try:
+        doc = json.loads((Path(analysis_dir) / "ro-crate-metadata.json").read_text())
+    except (OSError, ValueError):
+        return "HHEMT analysis dataset"
+    for e in doc.get("@graph", []):
+        if e.get("@id") in ("./", ""):
+            name = e.get("name")
+            if name:
+                return name
+    return "HHEMT analysis dataset"
 
 
 def build_datacite_rightslist(dataset_license_spdx: str) -> list[dict]:
@@ -98,6 +135,49 @@ def build_datacite_related(*, software_doi: str | None, paper_doi: str | None = 
     return edges
 
 
+def build_inveniordm_rights(dataset_license_spdx: str) -> list[dict]:
+    """InvenioRDM-native ``rights`` (license) entry — NOT the DataCite rightsList.
+
+    InvenioRDM keys its license vocabulary on the LOWERCASED SPDX id; the DataCite
+    rightsList names (rights/rightsUri/rightsIdentifier/rightsIdentifierScheme/schemeUri)
+    are unknown to the InvenioRDM metadata loader and are silently dropped, so the license
+    never lands unless mapped to this shape. Both frozen-vocab licenses (cc0-1.0,
+    cc-by-nc-4.0) are in Zenodo's SPDX-derived rights vocabulary. If a future SPDX id is
+    ever NOT in the vocabulary, the custom form ``{"title": {"en": name}, "link": uri}``
+    validates without a vocabulary lookup (InvenioRDM accepts either ``id`` OR ``title``,
+    never both).
+    """
+    return [{"id": dataset_license_spdx.lower()}]
+
+
+def build_inveniordm_related(*, software_doi: str | None, paper_doi: str | None = None) -> list[dict]:
+    """InvenioRDM-native ``related_identifiers`` — NOT the DataCite relatedIdentifiers.
+
+    ``scheme`` is ``"doi"``, ``identifier`` is the bare DOI, and ``relation_type`` is the
+    LOWERCASED controlled-vocabulary id (``{"id": "iscompiledby"}``). The DataCite
+    relatedIdentifiers names (relatedIdentifier/relatedIdentifierType/relationType) are
+    silently dropped by InvenioRDM. Reuses the existing single-tunable relation constants.
+    """
+    edges: list[dict] = []
+    if software_doi:
+        edges.append(
+            {
+                "identifier": software_doi,
+                "scheme": "doi",
+                "relation_type": {"id": _DATA_TO_SOFTWARE_RELATION.lower()},
+            }
+        )
+    if paper_doi:
+        edges.append(
+            {
+                "identifier": paper_doi,
+                "scheme": "doi",
+                "relation_type": {"id": "issupplementto"},
+            }
+        )
+    return edges
+
+
 def _deposit_set(analysis, consolidated_zarr_relpath: str) -> list[Path]:
     """The v1 analysis_dir deposit set: consolidated zarr + sidecar + configs.
 
@@ -128,7 +208,7 @@ def _require_env(name: str, target: str) -> str:
 def _check(resp, *, target: str, doi: str | None, step: str):
     """Raise PublishError on a non-2xx response; otherwise return the parsed JSON (or {})."""
     if resp.status_code >= 400:
-        raise PublishError(target=target, doi=doi, status=f"{step} failed: HTTP {resp.status_code} {resp.text[:300]}")
+        raise PublishError(target=target, doi=doi, status=f"{step} failed: HTTP {resp.status_code} {resp.text[:1000]}")
     try:
         return resp.json()
     except ValueError:
@@ -141,7 +221,15 @@ def _extract_reserved_doi(payload: dict) -> str | None:
     doi = (pids.get("doi") or {}).get("identifier")
     if doi:
         return doi
-    prereserve = (payload.get("metadata") or {}).get("prereserve_doi") or {}
+    # Verified live (sandbox record 565599, 2026-07-15): the minted DOI lands at
+    # top-level ``doi`` / ``metadata.doi`` while ``pids`` was null. Newer InvenioRDM
+    # exposes pids.doi.identifier; try both so the extractor is version-robust.
+    if payload.get("doi"):
+        return payload["doi"]
+    md = payload.get("metadata") or {}
+    if md.get("doi"):
+        return md["doi"]
+    prereserve = md.get("prereserve_doi") or {}
     return prereserve.get("doi")
 
 
@@ -162,13 +250,155 @@ def _resolve_upload(path: Path, staging: Path) -> tuple[Path, str]:
     return path, path.name
 
 
+# ---------------------------------------------------------------------------
+# ADR-20 — the Option-B pre-upload size validator.
+#
+# There is NO queryable quota on either platform through hhemt's dependency surface
+# (Zenodo's InvenioRDM records/drafts API exposes no quota field; hsclient v1.1.6 wraps no
+# quota endpoint — verified 2026-07-13). So the limits are DOCUMENTED constants carrying an
+# as_of date, and the live server rejection is caught and reframed as a backstop
+# (_classify_storage_error). Report-and-warn, not a hard block: the operator decides.
+# ---------------------------------------------------------------------------
+
+#: Documented per-target deposit limits. Refresh the `as_of` date when re-verifying.
+_TARGET_LIMITS: dict[str, dict] = {
+    "zenodo": {
+        "max_total_bytes": 50 * 1000**3,  # 50 GB per record
+        "max_files": 100,
+        "max_file_bytes": 50 * 1000**3,  # 50 GB per file
+        "as_of": "2026-07-13",
+        "doc_url": "https://help.zenodo.org/docs/deposit/manage-files/",
+        "note": "50 GB/record, 100 files/record, 50 GB/file.",
+    },
+    "hydroshare": {
+        "max_total_bytes": 20 * 1000**3,  # 20 GB DEFAULT account quota
+        "max_files": None,
+        "max_file_bytes": None,
+        "as_of": "2026-07-13",
+        "doc_url": "https://help.hydroshare.org/about-hydroshare/policies/quota/",
+        "note": "20 GB DEFAULT account quota (per-user, not per-resource); may be raised on request.",
+    },
+}
+
+
+def _path_size_bytes(path: Path) -> int:
+    """Total size of a file, or the SUM of a directory tree.
+
+    ``Path.stat().st_size`` on a DIRECTORY returns the inode size (~4 KB), so stat-ing the
+    consolidated zarr store would report a 20 GB deposit as fitting comfortably inside a
+    20 GB quota — a green check that certifies nothing. The tree sum is a conservative
+    upper bound on the resulting ZIP_DEFLATED archive, which errs in the safe direction.
+    """
+    if path.is_dir():
+        return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
+    return path.stat().st_size
+
+
+def validate_deposit_size(deposit: list[Path], target: str) -> dict:
+    """Measure the deposit against ``target``'s DOCUMENTED limits (ADR-20, Option B).
+
+    Always runs before a deposit. Returns a report; never raises and never blocks — the
+    operator chose self-contained-by-default knowing the HydroShare tension, so this
+    surfaces the tension and lets them decide.
+
+    Returns:
+        ``{fits, total_bytes, limit_bytes, overflow_bytes, n_files, as_of, doc_url,
+        remediation}`` — ``remediation`` is the menu the operator acts on when it overflows.
+    """
+    limits = _TARGET_LIMITS[target]
+    sizes = [_path_size_bytes(p) for p in deposit]
+    total = sum(sizes)
+    limit = limits["max_total_bytes"]
+    overflow = max(0, total - limit)
+
+    reasons: list[str] = []
+    if overflow:
+        reasons.append(
+            f"total {total / 1000**3:.2f} GB exceeds the documented {limit / 1000**3:.0f} GB "
+            f"limit by {overflow / 1000**3:.2f} GB"
+        )
+    if limits["max_files"] is not None and len(deposit) > limits["max_files"]:
+        reasons.append(f"{len(deposit)} files exceeds the {limits['max_files']}-file limit")
+    if limits["max_file_bytes"] is not None:
+        for p, size in zip(deposit, sizes, strict=True):
+            if size > limits["max_file_bytes"]:
+                reasons.append(
+                    f"'{p.name}' ({size / 1000**3:.2f} GB) exceeds the per-file "
+                    f"{limits['max_file_bytes'] / 1000**3:.0f} GB limit"
+                )
+
+    remediation = (
+        [
+            f"exclude ~{overflow / 1000**3:.2f} GB of inputs via an exclude-config "
+            f"(`hhemt bundle --list-excludable` shows what may be opted out)",
+            f"request a quota increase from {target}",
+            "switch to a target with more headroom",
+        ]
+        if reasons
+        else []
+    )
+
+    return {
+        "target": target,
+        "fits": not reasons,
+        "reasons": reasons,
+        "total_bytes": total,
+        "limit_bytes": limit,
+        "overflow_bytes": overflow,
+        "n_files": len(deposit),
+        "as_of": limits["as_of"],
+        "doc_url": limits["doc_url"],
+        "remediation": remediation,
+    }
+
+
+def _classify_storage_error(body: str, size_bytes: int, limit_bytes: int) -> str | None:
+    """Reframe a server rejection as a storage/quota failure when the body says so (G2).
+
+    The documented-limit validator above is only as good as its constants. This is the
+    attempt-and-surface backstop: if a constant is stale, or the account carries a
+    non-default quota, the LIVE rejection is caught here and reframed with the emit-side
+    size delta + the same remediation menu — instead of surfacing as an opaque HTTP error.
+
+    Returns the reframed message, or None when the body carries no storage signal (in which
+    case the caller re-raises verbatim — a non-storage failure must NOT be mislabelled).
+    """
+    signals = (
+        "quota",
+        "storage",
+        "exceeds",
+        "exceeded",
+        "too large",
+        "file size",
+        "size limit",
+        "insufficient space",
+        "no space",
+        "payload too large",
+        "request entity too large",
+    )
+    low = (body or "").lower()
+    if not any(s in low for s in signals):
+        return None
+    over = max(0, size_bytes - limit_bytes)
+    return (
+        f"deposit rejected for STORAGE/QUOTA reasons. The deposit measures "
+        f"{size_bytes / 1000**3:.2f} GB against a documented limit of "
+        f"{limit_bytes / 1000**3:.0f} GB"
+        + (f" (over by {over / 1000**3:.2f} GB)" if over else "")
+        + ". Remediation: exclude inputs via an exclude-config "
+        "(`hhemt bundle --list-excludable`), request a quota increase, or switch target. "
+        f"Server said: {body[:500]}"
+    )
+
+
 class _ZenodoTarget:
     """Programmatic reserve-DOI two-phase flow against the Zenodo/InvenioRDM REST API."""
 
-    def publish(self, *, deposit, license_spdx, software_doi, analysis_dir) -> dict:
-        # create draft -> POST reserve-DOI -> embed {reserved data-DOI, software-DOI,
-        #   IsCompiledBy relatedIdentifier, rightsList} -> upload files -> publish
-        #   -> Phase-2 backfill reciprocal edge on the software record.
+    def publish(self, *, deposit, license_spdx, software_doi, analysis_dir, creators=None) -> dict:
+        # create draft -> embed {InvenioRDM-native mandatory metadata + rights +
+        #   related_identifiers} -> upload files -> publish (Zenodo MINTS the DataCite DOI
+        #   here; NO reserve, NO self-supplied pids) -> read minted DOI from the publish
+        #   response -> Phase-2 backfill reciprocal edge on the software record.
         base = os.environ.get("HHEMT_ZENODO_BASE_URL", _ZENODO_DEFAULT_BASE).rstrip("/")
         token = _require_env("HHEMT_ZENODO_TOKEN", "zenodo")
         session = requests.Session()
@@ -188,33 +418,41 @@ class _ZenodoTarget:
         )
         recid = created.get("id")
 
-        # Phase 1b — reserve the DOI (distinct InvenioRDM action).
-        reserved = _check(
-            session.post(_ZENODO_RESERVE_DOI.format(base=base, recid=recid), timeout=_HTTP_TIMEOUT),
+        # Phase 1b — embed the InvenioRDM-NATIVE record metadata. The four InvenioRDM-
+        #   mandatory fields (title, creators, publication_date, resource_type) MUST all be
+        #   present or publish 400s. rights + related_identifiers use InvenioRDM-native
+        #   names (the DataCite rightsList/relatedIdentifiers names are silently dropped by
+        #   the loader). NO pids block: Zenodo mints + registers the DataCite DOI on publish
+        #   (self-supplying pids.doi.identifier=None is exactly what produced the 400).
+        embed_metadata = {
+            "title": _read_title_from_sidecar(analysis_dir),
+            "creators": creators or _DEFAULT_CREATORS,
+            "publication_date": date.today().isoformat(),
+            "resource_type": {"id": "dataset"},
+            "publisher": _PUBLISHER,
+            "rights": build_inveniordm_rights(license_spdx),
+            "related_identifiers": build_inveniordm_related(software_doi=software_doi),
+        }
+        _check(
+            session.put(
+                _ZENODO_DRAFT.format(base=base, recid=recid),
+                json={"metadata": embed_metadata},
+                timeout=_HTTP_TIMEOUT,
+            ),
             target="zenodo",
             doi=None,
-            step="reserve DOI",
-        )
-        data_doi = _extract_reserved_doi(reserved) or _extract_reserved_doi(created)
-
-        # Phase 1c — embed the reserved data-DOI + DataCite rightsList + IsCompiledBy edge.
-        embed_metadata = {
-            "resource_type": {"id": "dataset"},
-            "rightsList": build_datacite_rightslist(license_spdx),
-            "relatedIdentifiers": build_datacite_related(software_doi=software_doi),
-        }
-        embed_body = {"metadata": embed_metadata, "pids": {"doi": {"identifier": data_doi, "provider": "datacite"}}}
-        _check(
-            session.put(_ZENODO_DRAFT.format(base=base, recid=recid), json=embed_body, timeout=_HTTP_TIMEOUT),
-            target="zenodo",
-            doi=data_doi,
             step="embed metadata",
         )
 
-        # Phase 1d — upload the deposit files (init -> PUT content -> commit, per file).
+        # Phase 1c — upload the deposit files (init -> PUT content -> commit, per file).
         # Zarr stores are directories; deposit each as a single .zip (Zenodo stores loose
         # files, not directory trees). Temp archives are removed after upload.
-        with tempfile.TemporaryDirectory() as staging:
+        # OE-1: NOT the default /tmp. _resolve_upload zips a multi-GB zarr store into
+        # this staging dir; on an HPC login node /tmp is typically a small tmpfs, and a
+        # 'No space left on device' here strands an in-flight draft.
+        data_doi = None
+        staging_parent = os.environ.get("TMPDIR") or str(analysis_dir)
+        with tempfile.TemporaryDirectory(dir=staging_parent) as staging:
             for path in deposit:
                 upload_path, key = _resolve_upload(Path(path), Path(staging))
                 _check(
@@ -246,13 +484,25 @@ class _ZenodoTarget:
                     step=f"commit file {key}",
                 )
 
-        # Phase 1e — publish.
+        # Phase 1d — publish. Zenodo mints + registers the DataCite DOI here.
         published = _check(
             session.post(_ZENODO_PUBLISH.format(base=base, recid=recid), timeout=_HTTP_TIMEOUT),
             target="zenodo",
-            doi=data_doi,
+            doi=None,
             step="publish",
         )
+        data_doi = _extract_reserved_doi(published)
+        if not data_doi:
+            # DataCite registration can lag the publish action; the minted DOI is
+            # authoritative on the published record. Re-read it (verified shape:
+            # top-level ``doi`` / ``metadata.doi`` on the record GET).
+            record = _check(
+                session.get(_ZENODO_RECORD.format(base=base, recid=recid), timeout=_HTTP_TIMEOUT),
+                target="zenodo",
+                doi=None,
+                step="read minted DOI",
+            )
+            data_doi = _extract_reserved_doi(record)
 
         # Phase 2 — backfill the reciprocal IsSourceOf edge onto the software record.
         if software_doi:
@@ -276,14 +526,14 @@ class _ZenodoTarget:
             return
         soft_recid = software_doi.rsplit("zenodo.", 1)[-1]
         edge = {
-            "relatedIdentifier": data_doi,
-            "relatedIdentifierType": "DOI",
-            "relationType": _SOFTWARE_TO_DATA_RELATION,
+            "identifier": data_doi,
+            "scheme": "doi",
+            "relation_type": {"id": _SOFTWARE_TO_DATA_RELATION.lower()},
         }
         try:
             session.put(
                 _ZENODO_DRAFT.format(base=base, recid=soft_recid),
-                json={"metadata": {"relatedIdentifiers": [edge]}},
+                json={"metadata": {"related_identifiers": [edge]}},
                 timeout=_HTTP_TIMEOUT,
             )
         except requests.RequestException:
@@ -294,7 +544,9 @@ class _ZenodoTarget:
 class _HydroShareTarget:
     """Two-invocation flow: hsclient publish-to-public -> manual web-UI DOI -> backfill."""
 
-    def publish(self, *, deposit, license_spdx, software_doi, analysis_dir) -> dict:
+    def publish(self, *, deposit, license_spdx, software_doi, analysis_dir, creators=None) -> dict:
+        # creators: accepted for call-site parity; an hsclient creator-metadata mapping is a
+        # future enhancement (the HydroShare leg does not require it). Intentionally unused.
         # Invocation 1: hs.create -> upload -> set metadata -> set_sharing_status(public=True),
         #   then STOP and surface the manual web-UI DOI-mint instruction (hsclient v1.1.6 has
         #   no programmatic .publish()/DOI mint).
@@ -351,13 +603,37 @@ def publish_analysis(
     target: Literal["zenodo", "hydroshare"],
     override_dataset_license: str | None = None,
     software_doi: str | None = None,
+    creators: list[dict] | None = None,
     consolidated_zarr_relpath: str = "analysis_datatree.zarr",
+    deposit_source: Literal["analysis_dir", "reprex_bundle"] | Path = "analysis_dir",
+    container_defs: list[Path] | None = None,
 ) -> dict:
     """Deposit an analysis to a DOI-minting repository (C6, ADR-11).
 
     Reads the license baked into the emitted ro-crate sidecar; override_dataset_license
     ASSERTS the caller's expected value against the sidecar (raising PublishError on
     mismatch) rather than re-stamping the archived crate.
+
+    Args:
+        deposit_source: WHICH artifact to deposit (D6/R5 — the seam anticipated by the
+            2026-07-08 decision `publish deposits the analysis_dir set not the render
+            bundle`). This is the ONLY new parameter that decision permits, and it is
+            default-preserving:
+
+            - ``"analysis_dir"`` (DEFAULT) — the ADR-11 data-DOI deposit set (consolidated
+              zarr + crate sidecar + configs). Byte-identical to the pre-seam behavior (R9).
+            - ``"reprex_bundle"`` — the runnable reprex-bundle ZIP, emitted fresh and
+              self-contained (no exclusions).
+            - a ``Path`` — deposit exactly this artifact. This is how the
+              ``publish_reprex_bundle`` facade passes a bundle it emitted with an
+              exclude-config, without needing a second parameter here.
+
+            NOTE the bundle is deposited as the ZIP that ``emit_bundle`` wrote, NOT via
+            ``analysis.reprex_bundle()`` — that facade returns the EXTRACTED DIRECTORY, and
+            ``_resolve_upload`` would re-zip a directory with ZIP_DEFLATED and
+            ``relative_to(path.parent)`` arcnames, producing a non-deterministic archive
+            that extracts to a nested root, so the ingest side's ``Bundle.from_directory``
+            would raise ``FileNotFoundError`` and the round-trip (R8) could not pass.
     """
     analysis_dir = analysis.analysis_paths.analysis_dir
     license_spdx = _read_license_from_sidecar(analysis_dir)
@@ -371,10 +647,50 @@ def publish_analysis(
                 f"reprocess(start_with='consolidate') first — publish does not re-stamp the archived zarr."
             ),
         )
-    deposit = _deposit_set(analysis, consolidated_zarr_relpath)
-    return _TARGETS[target]().publish(
-        deposit=deposit,
-        license_spdx=license_spdx,
-        software_doi=software_doi,
-        analysis_dir=analysis_dir,
-    )
+
+    if isinstance(deposit_source, Path):
+        deposit = [deposit_source]
+    elif deposit_source == "reprex_bundle":
+        from hhemt.bundle import emit_bundle
+
+        deposit = [emit_bundle(analysis, container_defs=container_defs)]
+    else:
+        deposit = _deposit_set(analysis, consolidated_zarr_relpath)
+
+    # ADR-20: the size validator ALWAYS runs before an irrevocable deposit. It reports and
+    # warns; it never blocks (the operator elected self-contained-by-default knowing the
+    # HydroShare tension). The measured total is threaded to _classify_storage_error so a
+    # live rejection can be reframed with the real delta.
+    size_report = validate_deposit_size(deposit, target)
+    if not size_report["fits"]:
+        warnings.warn(
+            f"[{target}] deposit may exceed documented limits (as_of {size_report['as_of']}, "
+            f"{size_report['doc_url']}): "
+            + "; ".join(size_report["reasons"])
+            + ". Remediation: "
+            + " | ".join(size_report["remediation"])
+            + ". Attempting the deposit anyway — a live rejection will be surfaced verbatim.",
+            stacklevel=2,
+        )
+
+    try:
+        return _TARGETS[target]().publish(
+            deposit=deposit,
+            license_spdx=license_spdx,
+            software_doi=software_doi,
+            analysis_dir=analysis_dir,
+            creators=creators,
+        )
+    except PublishError as exc:
+        # G2 attempt-and-surface backstop: if the documented constant was stale or the
+        # account carries a non-default quota, the LIVE rejection lands here. Reframe it
+        # with the emit-side delta; otherwise re-raise verbatim (a non-storage failure must
+        # never be mislabelled as a quota problem).
+        reframed = _classify_storage_error(
+            str(exc.status if hasattr(exc, "status") else exc),
+            size_report["total_bytes"],
+            size_report["limit_bytes"],
+        )
+        if reframed is None:
+            raise
+        raise PublishError(target=target, doi=None, status=reframed) from exc

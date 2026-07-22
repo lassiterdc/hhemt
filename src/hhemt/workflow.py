@@ -822,6 +822,19 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         self._override_hpc_restart_times_simulate: int | None = None
         self._override_hpc_restart_times_other: int | None = None
 
+        # [Q8] Defect 2: the resolved execution LOCUS (local vs slurm) of the
+        # emitted Snakefile. Set by submit_workflow's standard branch (and the
+        # sensitivity submit_workflow, on this base builder) AFTER mode
+        # resolution and BEFORE generate_snakefile_content /
+        # generate_master_snakefile_content runs. None => not resolved (a direct
+        # generate_* call, e.g. the byte-identity tests) — the report-tail
+        # partition predicate then keys on the multi_sim_run_method label alone,
+        # keeping direct-generate output byte-identical. Mirrors the
+        # _override_hpc_restart_times_* pattern above: a submit-time-resolved
+        # value stored on the builder instead of threaded through the ~10
+        # _make_rule_emission_context callers.
+        self._resolved_execution_locus: Literal["local", "slurm"] | None = None
+
         # ADR-1: the container prefix for the PROCESS rungs only (sim rungs wrap
         # inside run_simulation.py; plot/consolidate/render stay native). Empty in
         # native mode (keeps generated Snakefiles byte-identical, R2/TO-1).
@@ -1869,9 +1882,25 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # `--executor slurm` (matching render_report/setup/process/consolidate).
         # Empty in `local` mode so the emitted Snakefile is byte-identical there
         # and no literal "None" partition leaks.
+        # [Q8] Defect 2: emit the CPU processing partition when the report-tail
+        # plot rules will run under `--executor slurm`. That is true for the
+        # NATIVE dispatch families (multi_sim_run_method != "local", e.g.
+        # 1_job_many_srun_tasks / batch_job — the pre-fix clause, unchanged) AND
+        # for a `local` dispatch-family run whose RESOLVED execution locus is
+        # slurm (the doi_emitter emit path: multi_sim_run_method="local" +
+        # execution_mode="slurm"). Without the partition, the CPU plot rungs
+        # inherit default-resources' GPU ensemble partition and are QOS-rejected
+        # (QOSMinGRES, master-log-confirmed). A genuine local `--cores` run
+        # (locus None/"local") still emits "" — byte-identical to the pre-fix
+        # form (this is why the committed byte-identity goldens, captured from a
+        # DIRECT generate_* call where the field stays None, need no regen).
+        _runs_under_slurm = (
+            self.cfg_analysis.multi_sim_run_method != "local"
+            or self._resolved_execution_locus == "slurm"
+        )
         _report_tail_partition = (
             str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "")
-            if self.cfg_analysis.multi_sim_run_method != "local"
+            if _runs_under_slurm
             else ""
         )
         return RuleEmissionContext(
@@ -5573,6 +5602,15 @@ exit $snakemake_status
         if mode == "auto":
             mode = "slurm" if self.analysis.in_slurm else "local"
 
+        # [Q8] Defect 2: publish the resolved execution LOCUS to the report-tail
+        # partition predicate in _make_rule_emission_context, which runs inside
+        # the generate_snakefile_content call below. Set here (post-resolution,
+        # pre-generate) so a `local` dispatch-family run under `--executor slurm`
+        # gives its CPU plot rungs the CPU processing partition. The 1_job /
+        # batch_job branches above do not set it — they are `!= "local"`, so the
+        # predicate's first clause already emits the partition (byte-identical).
+        self._resolved_execution_locus = mode
+
         if verbose:
             print(f"[Snakemake] Submitting workflow in {mode} mode", flush=True)
 
@@ -9147,6 +9185,16 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # Detect execution mode
         if mode == "auto":
             mode = "slurm" if self.master_analysis.in_slurm else "local"
+
+        # [Q8] Defect 2: the sensitivity plot-rule builders call
+        # self._base_builder._make_rule_emission_context, so the resolved locus
+        # must land on the BASE builder (not on this
+        # SensitivityAnalysisWorkflowBuilder). Set post-resolution /
+        # pre-generate_master so a `local` dispatch-family sensitivity run under
+        # `--executor slurm` gives its CPU report-tail plot rungs the CPU
+        # partition. The 1_job / batch_job branches above are `!= "local"` and
+        # already emit the partition (byte-identical).
+        self._base_builder._resolved_execution_locus = mode
 
         if verbose:
             print(

@@ -93,6 +93,137 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
 }
 
 
+#: Path policies whose fields name a bundle-carried input file (self-contained emit).
+#: FORCED_DOT (analysis_dir / system_directory) are directory markers, IS_NONE_ACCEPTABLE
+#: (software dirs) are nulled and never bundled, HELPER_RESOLVED is runtime-derived — none
+#: names a file to carry. Lives HERE rather than in ``_emit.py`` so
+#: ``config/bundle_exclude.py`` can import it without importing ``hhemt.bundle._emit``:
+#: ``config/reprex_taxonomy.py`` documents the invariant that no module reachable from
+#: ``hhemt.bundle.__init__`` may import ``hhemt.config.*``, and this module is the leaf.
+_SELF_CONTAINED_POLICIES = frozenset(
+    {
+        PathPolicy.BUNDLE_RELATIVE,
+        PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+        PathPolicy.BUNDLE_RELATIVE_LIST,
+    }
+)
+
+
+@dataclass(frozen=True)
+class ExcludableInput:
+    """One row of the ADR-20 excludable-input catalog.
+
+    ``excludable=False`` means the field is carried self-contained and MAY NOT be opted
+    out — it is still catalogued (the bidirectional guard test demands total coverage of
+    ``_SELF_CONTAINED_POLICIES``) but ``BundleExcludeConfig`` rejects it.
+    """
+
+    description: str
+    reproducibility_cost: str
+    excludable: bool = True
+
+
+#: ADR-20 (as amended 2026-07-14): the documented menu an operator authors an exclude-config
+#: against (``hhemt bundle --list-excludable``). TOTAL over every cfg field whose
+#: ``_PATH_FIELD_POLICY`` is in ``_SELF_CONTAINED_POLICIES`` — enforced bidirectionally by
+#: ``test_all_self_contained_fields_have_catalog_entry``, mirroring
+#: ``test_all_path_fields_have_policy``. A new self-contained Path field therefore CANNOT be
+#: added without a catalog entry.
+_EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
+    # ---- system_config ----
+    "DEM_fullres": ExcludableInput(
+        description="Full-resolution DEM raster the TRITON grid is derived from.",
+        reproducibility_cost=(
+            "Usually the single largest input. Excluding it makes the bundle unrunnable "
+            "without a successful input_deposit fetch — the terrain IS the experiment."
+        ),
+    ),
+    "watershed_gis_polygon": ExcludableInput(
+        description="Watershed boundary polygon used to clip the DEM/landuse rasters.",
+        reproducibility_cost="Small; excluding it buys almost no space and adds a fetch dependency.",
+    ),
+    "landuse_raster": ExcludableInput(
+        description="Landuse raster the spatially-varying Manning's n grid is built from.",
+        reproducibility_cost=(
+            "Large. Excluding it blocks Manning's preprocessing when "
+            "toggle_use_constant_mannings=False."
+        ),
+    ),
+    "landuse_lookup_file": ExcludableInput(
+        description="Landuse-code -> Manning's n lookup table.",
+        reproducibility_cost="Tiny; excluding it buys no space. Almost never worth a fetch dependency.",
+    ),
+    "SWMM_hydraulics": ExcludableInput(
+        description="SWMM hydraulics .inp model (the drainage network).",
+        reproducibility_cost=(
+            "Modest in size but load-bearing: the coupled run cannot execute without it. "
+            "This is the field to exclude for a LICENSED or proprietary municipal network — "
+            "omit contentUrl and supply a citation naming how to obtain it."
+        ),
+    ),
+    "SWMM_hydrology": ExcludableInput(
+        description="SWMM hydrology .inp model (subcatchment runoff).",
+        reproducibility_cost="Modest; excluding it blocks the hydrology leg of the coupling.",
+    ),
+    "SWMM_full": ExcludableInput(
+        description="Combined SWMM .inp model (hydrology + hydraulics in one file).",
+        reproducibility_cost="Modest; excluding it blocks the coupled run.",
+    ),
+    "subcatchment_raingage_mapping": ExcludableInput(
+        description="Subcatchment -> raingage mapping table.",
+        reproducibility_cost="Tiny; excluding it buys no space.",
+    ),
+    "triton_swmm_configuration_template": ExcludableInput(
+        description="TRITON-SWMM run-configuration template the per-sim configs are filled from.",
+        reproducibility_cost=(
+            "Tiny, and it is the reprex template the reconstituted run fills. Excluding it is "
+            "almost always wrong — the bundle carries it as part of the runnable template set."
+        ),
+    ),
+    # ---- analysis_config ----
+    "weather_timeseries": ExcludableInput(
+        description="Gridded precipitation / weather forcing the simulations are driven by.",
+        reproducibility_cost=(
+            "Typically the second-largest input after the DEM, and often the best exclusion "
+            "candidate for an oversized bundle. The run cannot start without it."
+        ),
+    ),
+    "weather_events_to_simulate": ExcludableInput(
+        description="The event list (which storms/windows to simulate).",
+        reproducibility_cost="Tiny, and it defines the ensemble. Excluding it buys no space.",
+    ),
+    "weather_event_summary_csv": ExcludableInput(
+        description="Per-event summary table used by reporting.",
+        reproducibility_cost="Small; excluding it degrades reporting rather than the run.",
+    ),
+    "storm_tide_boundary_line_gis": ExcludableInput(
+        description="Coastal boundary line the storm-tide forcing is applied along.",
+        reproducibility_cost="Small; excluding it blocks the coastal boundary condition.",
+    ),
+    "sensitivity_analysis": ExcludableInput(
+        description="Sensitivity-analysis specification (the SA design).",
+        reproducibility_cost="Small; excluding it blocks a sensitivity re-run.",
+    ),
+    "master_analysis_cfg_yaml": ExcludableInput(
+        description="Master analysis config the per-analysis configs derive from.",
+        reproducibility_cost="Tiny; excluding it buys no space.",
+    ),
+    "static_plot_configs": ExcludableInput(
+        description="Static-plot configuration files (a LIST — one input_deposit block per element).",
+        reproducibility_cost="Tiny; excluding them degrades reporting only.",
+    ),
+    "brand_theme": ExcludableInput(
+        description="Brand/theme YAML for report styling.",
+        reproducibility_cost=(
+            "NOT EXCLUDABLE. _emit_resolved_brand_theme rewrites the bundled cfg to point at "
+            "the emitted brand_theme.resolved.yaml sidecar, so an exclusion here would emit an "
+            "input_deposit block that no consumer ever fetches — a dangling by-reference record."
+        ),
+        excludable=False,
+    ),
+}
+
+
 @dataclass
 class RewriteResult:
     """Outcome of ``_rewrite_paths_to_relative``.

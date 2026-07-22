@@ -54,6 +54,7 @@ _VOLATILE_EXCLUDED_KEYS: frozenset[str] = frozenset({"startTime", "endTime", "ag
 _SIDECAR_FILENAME = "ro-crate-metadata.json"
 _SLURM_EFF_RELDIR = ("logs", "slurm_efficiency_report")
 _SLURM_EFF_GLOB = "slurm_efficiency_report_*.csv"
+_SLURM_EFF_INNER_GLOB = "efficiency_report_*.csv"  # plugin nests the real CSV inside the .csv-named dir
 
 _ROOT_ID = "./"
 _APP_ID = "#hhemt-app"
@@ -624,6 +625,39 @@ def _build_slurm_efficiency_html(csv_text: str) -> str:
     return _heading("SLURM Efficiency") + "\n" + _grid_table(header, grid)
 
 
+def _resolve_latest_efficiency_csv(eff_dir: Path) -> Path | None:
+    """Resolve the most-recent SLURM efficiency-report CSV FILE under ``eff_dir``.
+
+    The snakemake-executor-plugin-slurm treats ``--slurm-efficiency-report-path``
+    as a DIRECTORY and writes ``efficiency_report_{run_uuid}.csv`` inside it
+    (efficiency_report.py::create_efficiency_report). The toolkit driver passes a
+    ``.csv``-suffixed path, so on disk the glob match
+    ``slurm_efficiency_report_{ts}.csv`` is itself a DIRECTORY that CONTAINS the
+    real CSV -- a bare ``read_text()`` on it raises ``IsADirectoryError``. Return
+    the newest actual FILE, descending into any directory-shaped match; return
+    ``None`` when no CSV file is present (absent-banner fallback).
+
+    Glob / is_file / is_dir / stat only (os.scandir + os.stat) -- no file is
+    opened, so this adds no file-open audit surface (Gotcha 53).
+    """
+    if not eff_dir.is_dir():
+        return None
+    candidates: list[Path] = []
+    for match in sorted(eff_dir.glob(_SLURM_EFF_GLOB)):
+        if match.is_file():
+            # Hypothetical future flat-file layout (driver cleanup / other plugin).
+            candidates.append(match)
+        elif match.is_dir():
+            # Current plugin layout: descend to the inner efficiency_report_*.csv.
+            candidates.extend(p for p in sorted(match.glob(_SLURM_EFF_INNER_GLOB)) if p.is_file())
+    # Defensive: a plugin that wrote the inner file directly under eff_dir.
+    candidates.extend(p for p in sorted(eff_dir.glob(_SLURM_EFF_INNER_GLOB)) if p.is_file())
+    if not candidates:
+        return None
+    # Inner run-uuid filenames do not sort chronologically; use mtime for recency.
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 # --- page shell --------------------------------------------------------------
 
 
@@ -708,25 +742,15 @@ def render(
     # (2) Reproduction guide -- pure config-schema introspection, no file read.
     reprex_html = _build_reprex_guide_html()
 
-    # (3) SLURM efficiency -- glob (os.scandir; audit-invisible) then declare the
-    # specific FILE. Declaring the directory would raise in _validate_source_path
-    # once the dir exists (directory-as-source is rejected unless zarr).
+    # (3) SLURM efficiency -- glob + descend (os.scandir/os.stat; audit-invisible)
+    # to the inner efficiency_report_*.csv FILE, then declare it. The plugin writes
+    # the real CSV INSIDE a `.csv`-NAMED DIRECTORY (see _resolve_latest_efficiency_csv),
+    # so read_text() on the glob match itself raises IsADirectoryError, and declaring
+    # the directory would raise in _validate_source_path (directory-as-source rejected
+    # unless zarr).
     eff_dir = analysis_dir.joinpath(*_SLURM_EFF_RELDIR)
-    # snakemake-executor-plugin-slurm treats --slurm-efficiency-report-path as a
-    # DIRECTORY and writes `efficiency_report_{run_uuid}.csv` INSIDE it
-    # (efficiency_report.py::create_efficiency_report). The toolkit passes a
-    # file-shaped `slurm_efficiency_report_{ts}.csv` path, so on every SLURM run the
-    # plugin mkdir's a DIRECTORY with that .csv name and the real report lands one
-    # level deeper. A flat, non-recursive, unfiltered glob therefore matched the
-    # DIRECTORY and `read_text()` raised IsADirectoryError (2026-07-20), and on the
-    # non-crashing paths it never matched a real report at all. Glob recursively,
-    # keep files only, and order by mtime rather than by a filename convention
-    # (the plugin's run_uuid filename is not chronological). `stat()` is not `open`,
-    # so this stays invisible to the renderer-IO provenance audit (Gotcha 53).
-    _eff_candidates = [p for p in eff_dir.rglob("*.csv") if p.is_file()] if eff_dir.is_dir() else []
-    csvs = sorted(_eff_candidates, key=lambda p: (p.stat().st_mtime, p.name))
-    if csvs:
-        latest = csvs[-1]  # most recently written efficiency report
+    latest = _resolve_latest_efficiency_csv(eff_dir)
+    if latest is not None:
         source_paths.append(latest)
         with prov.artist(
             axes_id="html_section",
@@ -764,7 +788,7 @@ def render(
         manifest_data={
             "renderer": "metadata",
             "sidecar_present": sidecar_path.exists(),
-            "slurm_csv_present": bool(csvs),
+            "slurm_csv_present": latest is not None,
         },
         provenance=prov,
     )
