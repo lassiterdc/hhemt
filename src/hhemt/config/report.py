@@ -976,6 +976,57 @@ def validate_sensitivity_independent_vars(
         )
 
 
+def resolve_reporting_set_name(
+    reporting_set: str | None,
+    *,
+    is_sensitivity: bool,
+) -> str:
+    """Resolve a raw reporting-set NAME through the sentinel + registry rule.
+
+    This is the single implementation of the resolution rule, taking the raw
+    name rather than a report_config so that BOTH config-object callers and
+    raw-dict callers share it. Two properties, and callers depend on both:
+
+    1. SENTINEL — "default" (and an absent/empty value) resolves to
+       "benchmarking" when is_sensitivity else "default" (the standard set).
+       A non-"default" value is taken verbatim.
+    2. VALIDATION — the resolved name is checked against the ReportingSet
+       registry and an unknown name raises a named ConfigurationError listing
+       the registered sets.
+
+    Property 2 is not optional decoration. `get_reporting_set` is a bare
+    `REPORTING_SETS[name]` accessor whose docstring states it is for callers
+    "which receive an already-validated name" — so a caller that performs the
+    sentinel resolution WITHOUT this membership check turns a typo'd
+    reporting_set into a bare `KeyError` at the lookup instead of a field-named
+    ConfigurationError. That is exactly the divergence this helper exists to
+    prevent: the bundle-side harvest previously reimplemented property 1 inline
+    and silently dropped property 2.
+
+    REPORTING_SETS is imported LAZILY so this module never imports
+    report_renderers at module load — that would create the cycle
+    config.report -> report_renderers._reporting_sets -> config.report.
+    """
+    from hhemt.report_renderers._reporting_sets import (  # lazy: cycle-break
+        REPORTING_SETS,
+    )
+
+    requested = reporting_set or "default"
+    name = requested
+    if name == "default":
+        name = "benchmarking" if is_sensitivity else "default"
+    if name not in REPORTING_SETS:
+        raise ConfigurationError(
+            field="reporting_set",
+            message=(
+                f"report_config.reporting_set='{requested}' resolves to "
+                f"unknown set '{name}'. Registered sets: {sorted(REPORTING_SETS)}."
+            ),
+            config_path=None,
+        )
+    return name
+
+
 def resolve_active_reporting_set_name(
     cfg: report_config,
     *,
@@ -983,13 +1034,9 @@ def resolve_active_reporting_set_name(
 ) -> str:
     """Resolve the active reporting-set NAME, CSV-free (F-B-1).
 
-    `cfg.reporting_set == "default"` resolves to "benchmarking" when
-    is_sensitivity else "default" (the standard set). A non-"default" value is
-    taken verbatim. The resolved name is validated against the ReportingSet
-    registry (imported LAZILY here so this module never imports report_renderers
-    at module load — that would create the cycle config.report ->
-    report_renderers._reporting_sets -> config.report). Returns the resolved set
-    name.
+    Thin config-object wrapper over resolve_reporting_set_name, which carries
+    the sentinel resolution and the registry validation. See that helper for
+    the rule itself.
 
     This is the CSV-free resolver: it performs no sensitivity-CSV
     cross-validation, so it is safe to call from the render-without-run() path
@@ -997,23 +1044,10 @@ def resolve_active_reporting_set_name(
     available. validate_active_reporting_set delegates name resolution here and
     layers the run-entry CSV cross-validation on top.
     """
-    from hhemt.report_renderers._reporting_sets import (  # lazy: cycle-break
-        REPORTING_SETS,
+    return resolve_reporting_set_name(
+        cfg.reporting_set,
+        is_sensitivity=is_sensitivity,
     )
-
-    name = cfg.reporting_set
-    if name == "default":
-        name = "benchmarking" if is_sensitivity else "default"
-    if name not in REPORTING_SETS:
-        raise ConfigurationError(
-            field="reporting_set",
-            message=(
-                f"report_config.reporting_set='{cfg.reporting_set}' resolves to "
-                f"unknown set '{name}'. Registered sets: {sorted(REPORTING_SETS)}."
-            ),
-            config_path=None,
-        )
-    return name
 
 
 def validate_active_reporting_set(

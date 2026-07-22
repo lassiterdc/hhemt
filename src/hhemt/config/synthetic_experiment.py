@@ -57,6 +57,15 @@ class synthetic_experiment_config(cfgBaseModel):
             "The default (2,4,8) reproduces the fixed baseline mpi rows byte-for-byte."
         ),
     )
+    dem_resolution_ladder: tuple[float, ...] = Field(
+        default=(),
+        description=(
+            "Cell sizes (m) for the DEM-resolution sweep, FINEST FIRST. Empty (the "
+            "default) means this config drives a compute-config experiment, not a "
+            "resolution sweep -- the two are mutually exclusive axes. Validated "
+            "divisor-only AND constant-ratio by _validate_dem_ladder."
+        ),
+    )
     include_resume: bool = Field(
         default=True, description="Emit the clean+resume (kill-and-hotstart) combined experiment."
     )
@@ -212,6 +221,47 @@ class synthetic_experiment_config(cfgBaseModel):
             runtime = row.get("hpc_time_min_per_sim")
             if runtime is not None:
                 hpc.check_runtime_within_cap(part_name, int(runtime))
+        return self
+
+    @model_validator(mode="after")
+    def _validate_dem_ladder(self):
+        """Divisor-only + constant-ratio. Both are correctness constraints, not style.
+
+        Divisor-only: `.rio.reproject(resolution=R)` rounds the grid UP to cover the
+        source, so a non-divisor R yields partial-coverage edge cells that average
+        only their covered fraction while carrying FULL coarse-cell area weight.
+        gis-specialist measured the consequence: volume error +7.276% at 2.5 m and
+        5 m, +30.222% at 7 m, vs +0.000% at every divisor. Silent -- every run
+        completes.
+
+        Constant-ratio: keeps the rungs exactly nested, so grids are co-registered
+        for free (coarsen_georaster's resolution-only branch preserves the top-left
+        origin) and no alignment machinery is needed.
+        """
+        if not self.dem_resolution_ladder:
+            return self
+        ladder = self.dem_resolution_ladder
+        if list(ladder) != sorted(ladder):
+            raise ValueError(f"dem_resolution_ladder must be FINEST FIRST (ascending); got {ladder}")
+        extent_x = self.n_cols * self.cell_size_m
+        extent_y = self.n_rows * self.cell_size_m
+        for res in ladder:
+            for name, extent in (("x", extent_x), ("y", extent_y)):
+                n = extent / res
+                if abs(n - round(n)) > 1e-9:
+                    raise ValueError(
+                        f"dem_resolution_ladder rung {res} m is not an integer divisor of the "
+                        f"{name}-extent ({extent} m). Non-divisor rungs inflate area-integrated "
+                        f"metrics by +7% to +30% (measured) via partial-coverage edge cells, and "
+                        f"every run completes successfully, so the error is silent."
+                    )
+        ratios = [round(b / a, 9) for a, b in zip(ladder, ladder[1:], strict=False)]
+        if len(set(ratios)) > 1:
+            raise ValueError(
+                f"dem_resolution_ladder must use a CONSTANT refinement ratio; got ratios {ratios} "
+                f"from {ladder}. A constant ratio keeps the rungs exactly nested (co-registered "
+                f"grids, no alignment machinery)."
+            )
         return self
 
 

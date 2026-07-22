@@ -71,6 +71,42 @@ rendered report then carries the compute-config EDA figures (config-diff maps,
 and — as the EDA family grows — rank / resume / magnitude panels) under **Key
 Results**, alongside the benchmarking figures.
 
+## Running a DEM-resolution sweep instead
+
+The same synthetic machinery produces a **DEM-resolution sweep** — the same model
+run across DEM cell sizes instead of across compute configs — whose figures
+compare peak flood depth from a finer versus a coarser grid.
+
+Set it up through the **sensitivity-CSV overlay**, not through
+`hhemt synth-experiment`: that CLI always builds the compute-config matrix and
+does **not** dispatch on a resolution axis. A DEM-resolution sweep is instead
+expressed by giving the sensitivity CSV a `system.target_dem_resolution` overlay
+column — one row per resolution rung:
+
+| `sa_id` | ... | `system.target_dem_resolution` |
+|---------|-----|--------------------------------|
+| `res_3p5` | ... | 3.5 |
+| `res_7p0` | ... | 7.0 |
+| `res_14p0` | ... | 14.0 |
+
+Each row overlays `target_dem_resolution` onto the master system config
+(`system_config.model_validate({**master, **overlay})`), so the sub-analyses share
+everything but the DEM cell size. Choose a **constant-ratio** ladder — each coarser
+rung an integer multiple of the finest (e.g. 3.5 / 7.0 / 14.0 m, successive
+doubling) — so each coarse grid is a clean aggregation of the finest, which is the
+**reference** (never "truth": its own error is unquantified). Then select the
+DEM-resolution reporting set:
+
+- `report.reporting_set: dem-resolution` in the report config, and
+- `eda_config.enabled_plots: [dem_resolution_cost_error, dem_resolution_diff_maps, dem_resolution_error_ecdf, dem_resolution_coupling_table]`.
+
+!!! warning "The two EDA families are mutually exclusive per experiment"
+    The `compute-sensitivity` family's `config_diff_maps` requires a **uniform**
+    grid across sub-analyses and raises a named `ProcessingError` on a
+    mixed-resolution master; the `dem-resolution` family requires the varying grid.
+    Pick one reporting set per experiment — do not mix `config_diff_maps` with the
+    `dem_resolution_*` renderers.
+
 To compare two experiments (e.g. clean vs resume, or two clusters) in one
 report, emit a bundle from each and combine them — see
 [Combining experiments](combining-experiments.md); `combine` accepts

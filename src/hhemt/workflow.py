@@ -7372,12 +7372,14 @@ onerror:
         # Inert for the benchmarking/default sets (no eda renderer in the selection),
         # so byte-identity for those sets is preserved.
         _has_eda_artifact = bool(self.master_analysis.cfg_analysis.eda.enabled_plots)
-        _eda_in_set = any(
-            sel.builder_key == "eda_compute_sensitivity"
-            for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection
-        )
-        if _eda_in_set and _has_eda_artifact and renderer_active("eda_compute_sensitivity", _disabled):
-            rule_all_inputs.append(f'"plots/eda/config_diff_maps{_ext["eda_compute_sensitivity"]}"')
+        # D13 (registry-read): enumerate one entry PER registry template, from the same
+        # single source the emission site reads, so a four-figure family lists all four
+        # here. () for default/benchmarking keeps those sets byte-identical.
+        _eda_templates = self._eda_rule_spec_templates()
+        if _eda_templates and _has_eda_artifact and renderer_active("eda_compute_sensitivity", _disabled):
+            _e_eda = _ext["eda_compute_sensitivity"]
+            for _eda_tmpl in _eda_templates:
+                rule_all_inputs.append(f'"{_eda_tmpl.output_path_template.replace("__OUTPUT_EXT__", _e_eda)}"')
         # Snapshot the plot-input list before appending the report targets — the
         # render rule uses this same set as its `input:` so Snakemake's DAG
         # planner re-fires the render whenever any plot output is newer than
@@ -8104,12 +8106,14 @@ onerror:
         # Inert for the benchmarking/default sets (no eda renderer in the selection),
         # so byte-identity for those sets is preserved.
         _has_eda_artifact = bool(self.master_analysis.cfg_analysis.eda.enabled_plots)
-        _eda_in_set = any(
-            sel.builder_key == "eda_compute_sensitivity"
-            for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection
-        )
-        if _eda_in_set and _has_eda_artifact and renderer_active("eda_compute_sensitivity", _disabled):
-            rule_all_inputs.append(f'"plots/eda/config_diff_maps{_ext["eda_compute_sensitivity"]}"')
+        # D13 (registry-read): enumerate one entry PER registry template, from the same
+        # single source the emission site reads, so a four-figure family lists all four
+        # here. () for default/benchmarking keeps those sets byte-identical.
+        _eda_templates = self._eda_rule_spec_templates()
+        if _eda_templates and _has_eda_artifact and renderer_active("eda_compute_sensitivity", _disabled):
+            _e_eda = _ext["eda_compute_sensitivity"]
+            for _eda_tmpl in _eda_templates:
+                rule_all_inputs.append(f'"{_eda_tmpl.output_path_template.replace("__OUTPUT_EXT__", _e_eda)}"')
         render_rule_input_items = [item for item in rule_all_inputs if not item.startswith('"_status/')]
         for _fmt in _formats:
             rule_all_inputs.append(f'"analysis_report.{_fmt}"')
@@ -8414,46 +8418,65 @@ rule render_report:
 
         return snakefile_content
 
-    def _build_plot_rule_block_eda_compute_sensitivity(self, *, ctx: RuleEmissionContext | None = None) -> str:
-        """Generate the compute-sensitivity EDA adapter plot rule (R11).
+    def _eda_rule_spec_templates(self) -> tuple:
+        """The active set's ``eda_compute_sensitivity`` rule_spec_templates, or ().
 
-        Emits ONE report()-annotated rule for the config_diff_maps EDA figure under
-        master-rooted ``plots/eda/``. The rule shells out to
-        ``_cli eda_compute_sensitivity``, whose ``render()`` delegates to
-        ``eda/_plotting.render_eda_plots`` — the renderer self-declares its data
-        sources via ``emit_plot_with_sources`` (the consolidated tree + one
-        hydraulics.inp), so the rule's ``source_paths`` here feeds only the caption
-        Sources block. Lands under "Key Results" (Decision 1). Gated on the
-        has_eda_artifact predicate at the dispatcher, so it fires only when the
-        master carries an EDA artifact.
+        SINGLE SOURCE for both the rule emission
+        (``_build_plot_rule_block_eda_compute_sensitivity``) and the two rule all /
+        render_report enumeration sites, so an N-figure EDA family cannot desync its
+        emitted rules from its ``rule all`` entries (D13). Returns () for a set whose
+        selection carries no EDA renderer (default / benchmarking), which is what keeps
+        those sets byte-identical.
+        """
+        for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection:
+            if sel.builder_key == "eda_compute_sensitivity":
+                return sel.rule_spec_template
+        return ()
+
+    def _build_plot_rule_block_eda_compute_sensitivity(self, *, ctx: RuleEmissionContext | None = None) -> str:
+        """Generate the EDA adapter plot rules for the active reporting set (R11, D13).
+
+        Emits ONE report()-annotated rule PER ``RuleSpecTemplate`` carried by the active
+        set's ``eda_compute_sensitivity`` selection — one figure for
+        ``compute-sensitivity``, four for ``dem-resolution``. Each rule shells out to
+        ``_cli eda_compute_sensitivity``, whose ``render()`` scopes itself to the single
+        figure whose canonical plot ID equals the rule's output stem and delegates to
+        ``eda/_plotting.render_eda_plots`` — the renderer self-declares its data sources
+        via ``emit_plot_with_sources``, so the rule's ``source_paths`` here feeds only the
+        caption Sources block. Gated on the has_eda_artifact predicate at the dispatcher,
+        so it fires only when the master carries an EDA artifact.
+
+        D13 (registry-read): rule name, output path, caption/category/labels, wildcards,
+        resources and log path all come from the registry template rather than being
+        hardcoded here — the ReportingSet registry is the single source of renderer
+        selection per the single-source stipulation. For ``compute-sensitivity`` the
+        registry values reproduce the previously-hardcoded literals byte-for-byte EXCEPT
+        the log path, which is deliberately reconciled ``logs/`` -> ``_logs/`` (this
+        builder was the lone outlier; the registry template and every other rule already
+        used ``_logs/``).
         """
         if ctx is None:
             ctx = self._base_builder._make_rule_emission_context(
                 static_backend=self._base_builder._get_report_cfg_static_backend()
             )
-        spec = RuleSpec(
-            rule_name="plot_eda_compute_sensitivity",
-            renderer_module="eda_compute_sensitivity",
-            input_flags=("_status/f_consolidate_master_complete.flag",),
-            output_path_template=_plot_output_template(
-                renderer_kind="config_diff_maps",
-                subdir="plots/eda",
-            ),
-            source_paths=("sensitivity_datatree.zarr",),
-            wildcards=(),
-            extra_cli_flags=(),
-            extra_params=(),
-            report_kwargs={
-                "caption": "report/captions/eda_compute_sensitivity.rst",
-                "category": "Key Results",
-                "subcategory": "Compute-config EDA",
-                "labels": '{"figure": "Config-diff maps"}',
-            },
-            resources_yaml="mem_mb=4000, time_min=10",
-            log_path_template="logs/plots/eda_compute_sensitivity.log",
-            input_label="master",
-        )
-        return _emit_plot_rule(spec, ctx)
+        out = ""
+        for tmpl in self._eda_rule_spec_templates():
+            spec = RuleSpec(
+                rule_name=tmpl.rule_name,
+                renderer_module=tmpl.renderer_module,
+                input_flags=("_status/f_consolidate_master_complete.flag",),
+                output_path_template=tmpl.output_path_template,
+                source_paths=("sensitivity_datatree.zarr",),
+                wildcards=tmpl.wildcards,
+                extra_cli_flags=(),
+                extra_params=(),
+                report_kwargs=dict(tmpl.report_kwargs),
+                resources_yaml=tmpl.resources_yaml,
+                log_path_template=tmpl.log_path_template,
+                input_label="master",
+            )
+            out += _emit_plot_rule(spec, ctx)
+        return out
 
     def _build_plot_rule_block_sensitivity_benchmarking(
         self, independent_vars: list[str], *, ctx: RuleEmissionContext | None = None

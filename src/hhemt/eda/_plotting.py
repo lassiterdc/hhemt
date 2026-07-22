@@ -18,6 +18,12 @@ from typing import TYPE_CHECKING
 
 import plotly.graph_objects as go
 
+from hhemt.eda._dem_resolution_plots import (
+    _render_dem_resolution_cost_error,
+    _render_dem_resolution_coupling_table,
+    _render_dem_resolution_diff_maps,
+    _render_dem_resolution_error_ecdf,
+)
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 
@@ -104,4 +110,8 @@ def _fig_to_html(fig: go.Figure, *, plotly_js_mode: str) -> str:
 #: renderer-kind -> renderer function. Extend here when EDA families are added.
 _EDA_RENDERERS = {
     "config_diff_maps": _render_config_diff_maps,
+    "dem_resolution_cost_error": _render_dem_resolution_cost_error,
+    "dem_resolution_diff_maps": _render_dem_resolution_diff_maps,
+    "dem_resolution_error_ecdf": _render_dem_resolution_error_ecdf,
+    "dem_resolution_coupling_table": _render_dem_resolution_coupling_table,
 }

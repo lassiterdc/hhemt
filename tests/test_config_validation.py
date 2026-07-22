@@ -16,7 +16,9 @@ def _touch(path: Path) -> Path:
 
 def _minimal_system_config_dict(tmp_path: Path) -> dict:
     system_dir = tmp_path / "system"
-    system_dir.mkdir(parents=True, exist_ok=True)  # output root must exist for model_dump()->model_validate() round-trips
+    system_dir.mkdir(
+        parents=True, exist_ok=True
+    )  # output root must exist for model_dump()->model_validate() round-trips
     return {
         "system_directory": str(system_dir),
         "watershed_gis_polygon": str(_touch(tmp_path / "inputs" / "watershed.shp")),
@@ -224,14 +226,16 @@ def test_reporting_sets_registry_imports_cleanly():
     )
 
     # Exact-set equality (NOT a subset check) so an accidental registry member
-    # still fails. `combined` (PIP-1 cross-experiment) and `compute-sensitivity`
-    # (PIP-2 / R11 in-report EDA) are shipped, exercised sets; the assertion
+    # still fails. `combined` (PIP-1 cross-experiment), `compute-sensitivity`
+    # (PIP-2 / R11 in-report EDA) and `dem-resolution` (D13, the four-figure
+    # DEM-resolution EDA family) are shipped, exercised sets; the assertion
     # simply trailed their landing.
     assert set(REPORTING_SETS) == {
         "default",
         "benchmarking",
         "combined",
         "compute-sensitivity",
+        "dem-resolution",
     }
     assert get_reporting_set("benchmarking").validator_key == "benchmarking"
     assert get_reporting_set("default").validator_key == "none"
@@ -296,6 +300,69 @@ def test_resolve_active_reporting_set_name_unknown_raises():
     msg = str(exc.value)
     assert "does_not_exist" in msg
     assert "benchmarking" in msg and "default" in msg  # registered sets named
+
+
+# --- resolve_reporting_set_name: the shared name-taking helper (Plan Phase 5 / D14) ---
+#
+# resolve_active_reporting_set_name above is now a thin config-object wrapper over
+# this helper. The helper exists so raw-dict callers -- specifically the bundle
+# Snakefile harvest, which holds a yaml.safe_load'd cfg_analysis and no
+# report_config -- share ONE implementation of the sentinel-plus-validation rule
+# instead of reimplementing the sentinel half and silently dropping validation.
+
+
+def test_resolve_reporting_set_name_sentinel_matches_config_object_path():
+    """The helper and its config-object wrapper agree on the sentinel."""
+    from hhemt.config.report import (
+        report_config,
+        resolve_active_reporting_set_name,
+        resolve_reporting_set_name,
+    )
+
+    cfg = report_config()  # reporting_set == "default"
+    for is_sensitivity in (False, True):
+        assert resolve_reporting_set_name("default", is_sensitivity=is_sensitivity) == (
+            resolve_active_reporting_set_name(cfg, is_sensitivity=is_sensitivity)
+        )
+
+
+def test_resolve_reporting_set_name_treats_none_and_empty_as_the_sentinel():
+    """An absent report.reporting_set key resolves like the explicit sentinel.
+
+    The bundle harvest passes `_report.get("reporting_set")`, which is None when
+    the key is absent -- the common case for a bundle whose source run took the
+    default set.
+    """
+    from hhemt.config.report import resolve_reporting_set_name
+
+    for absent in (None, ""):
+        assert resolve_reporting_set_name(absent, is_sensitivity=True) == "benchmarking"
+        assert resolve_reporting_set_name(absent, is_sensitivity=False) == "default"
+
+
+def test_resolve_reporting_set_name_takes_non_default_verbatim():
+    """A non-sentinel name is honored regardless of is_sensitivity."""
+    from hhemt.config.report import resolve_reporting_set_name
+
+    for is_sensitivity in (False, True):
+        assert resolve_reporting_set_name("dem-resolution", is_sensitivity=is_sensitivity) == "dem-resolution"
+
+
+def test_resolve_reporting_set_name_unknown_raises_naming_the_requested_value():
+    """The VALIDATION half -- the property the bundle path had lost.
+
+    The message must name the value the CALLER supplied, not just the resolved
+    one, so a typo is greppable in the error.
+    """
+    from hhemt.config.report import resolve_reporting_set_name
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as exc:
+        resolve_reporting_set_name("dem-resolutoin", is_sensitivity=True)
+    msg = str(exc.value)
+    assert "reporting_set" in msg
+    assert "dem-resolutoin" in msg
+    assert "dem-resolution" in msg  # registered sets named
 
 
 def test_validate_active_reporting_set_unknown_raises():
@@ -652,10 +719,14 @@ def test_toolkit_owned_output_dirs_exempt_from_existence_check(tmp_path: Path):
     # isinstance(v, Path) branch is exercised. Pre-fix this raised; post-fix the
     # toolkit_owned_output sentinel exempts it.
     cfg["TRITONSWMM_software_directory"] = tmp_path / "_software" / "triton"  # absent
-    cfg["SWMM_software_directory"] = tmp_path / "_software" / "swmm"  # absent, Optional field SET to a non-existent Path
+    cfg["SWMM_software_directory"] = (
+        tmp_path / "_software" / "swmm"
+    )  # absent, Optional field SET to a non-existent Path
     validated = system_config.model_validate(cfg)
     assert not validated.TRITONSWMM_software_directory.exists()
-    assert not validated.SWMM_software_directory.exists()  # R2: Optional sentinel field is exempted when SET to an absent Path (not merely when None)
+    assert (
+        not validated.SWMM_software_directory.exists()
+    )  # R2: Optional sentinel field is exempted when SET to an absent Path (not merely when None)
 
     # R2: a genuine INPUT Path field pointing at an absent file still raises.
     bad = _minimal_system_config_dict(tmp_path)

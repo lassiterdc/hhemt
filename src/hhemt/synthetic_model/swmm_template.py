@@ -119,12 +119,28 @@ Units      None
 # cols right of J3, producing diagonal C1/C2 covering 4 cols × 9 rows each.
 # J3, J4, sewer_outflow share col 7 (centered), so C3+C4 form the vertical
 # stem of the Y. dummy_outfall stays disconnected at col 7.
-# Number of in-line coupling junctions. MUST be >= the largest MPI rank count
-# the experiment matrix exercises (8, from hhemt.synthetic_experiment's rank_sweep
-# default (2,4,8) max = 8 / hybrid rows) so that under a row-strip static
-# decomposition EVERY rank owns >= 1 coupling node and participates in the
-# TRITON-SWMM ENSIFY_COMM_WORLD collective. Fewer nodes than ranks => a
-# node-free top rank => coupling-collective deadlock (triton.h:2363-2404).
+# _N_COUPLING_NODES is THE MAXIMUM MPI RANK COUNT this synthetic model supports.
+# It is the number of in-line coupling junctions placed on the conduit centerline
+# ({J1..J(n-1), collector}, one per even band by _node_matrix_rows). WHY the node
+# count == the rank cap: TRITON statically decomposes the domain into top-to-bottom
+# row-strips, one strip per MPI rank (mpi_utils.h create_local_dims). Every rank
+# MUST own >= 1 coupling node or it never enters the TRITON-SWMM ENSIFY_COMM_WORLD
+# coupling collective, so ALL ranks block forever — a HANG, the worst HPC failure
+# shape (triton.h:2363-2404). Therefore rank_count can never exceed node_count.
+#
+# 8 supports runs up to 8 ranks (the rank_sweep default (2,4,8) tops out at 8).
+# TO SUPPORT AN N-RANK RUN: raise this to N *and* pick an n_rows divisible by N
+# whose interior conveyance span (_node_matrix_rows) is >= N. You do NOT get more
+# ranks by editing rank_sweep alone — this cap is enforced at config-load by
+# config.synthetic_experiment._validate_coupling_invariant (guard 1:
+# max(rank_sweep) <= _N_COUPLING_NODES), which FAILS FAST. The companion R14
+# geometric precheck synthetic_experiment.assert_coupling_nodes_distinct (no two
+# in-line nodes share a coarsened DEM cell) is NOT wired into any runtime path —
+# it is exercised only by tests/test_synth_dem_resolution_matrix.py. It is
+# unreachable-by-construction today (the dem_resolution_ladder has no runtime
+# consumer, and dem_resolution_matrix_rows pins a 1-rank _DEM_FIXED_CONFIG so no
+# rank can be stranded); wire it at the call site that first makes a ladder
+# runnable. See the knowledge doc "synth coupling-node count taxonomy".
 # (2026-06-14: replaced the hardcoded-for-16x30 _NODES list with this
 # n_rows-driven generator — the old list clustered all nodes in the bottom
 # ~22% of the 64x120 experiment grid, deadlocking every multi-rank run.)
@@ -236,8 +252,10 @@ def _nodes(params):
     col = _centerline_col(params)
     mrs = _node_matrix_rows(params)
     rfb = [params.n_rows - 1 - mr for mr in mrs]  # matrix-row -> row_from_bottom
-    # 8 upstream coupling junctions spread one-per-band (MPI rank coverage):
-    # J1..J7 + `collector` (southernmost, just upstream of the full-width sea wall).
+    # The _N_COUPLING_NODES upstream coupling junctions, spread one-per-band for
+    # MPI rank coverage (see the _N_COUPLING_NODES def): J1..J(n-1) then `collector`
+    # (southernmost, just upstream of the full-width sea wall). Count is n-driven —
+    # do NOT hardcode it here; it tracks _N_COUPLING_NODES.
     names = [f"J{i + 1}" for i in range(len(mrs) - 1)] + ["collector"]
     nodes = [(names[i], col, rfb[i]) for i in range(len(mrs))]
     # Interaction junction: in the BC shelf, just DOWNSTREAM of the sea wall. The

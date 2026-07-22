@@ -160,7 +160,7 @@ def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(
             builder.submit_reprocess_workflow(
                 start_with="consolidate", execution_mode="local", dry_run=False, verbose=False
             )
-        assert "live orchestration driver" in excinfo.value.stderr
+        assert "live-or-indeterminate orchestration driver" in excinfo.value.stderr
     finally:
         osent.remove_orchestrator_sentinel(master_dir, "live-driver")
 

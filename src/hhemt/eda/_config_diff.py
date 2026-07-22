@@ -31,6 +31,8 @@ import xarray as xr
 from plotly.colors import sample_colorscale
 from plotly.subplots import make_subplots
 
+from hhemt.exceptions import ProcessingError
+
 #: Diverging colorscale for signed diffs (iter-2 user feedback): RED = NEGATIVE
 #: (lower than serial), white = 0, BLUE = POSITIVE. Plotly "RdBu" maps low->red,
 #: high->blue, so with zmid=0 negative reads red and positive reads blue.
@@ -120,6 +122,21 @@ def _load_subs(root: Path) -> dict[str, dict]:
 def _group_by_identity(subs: dict[str, dict]) -> list[dict]:
     """Cluster subs whose (max_wlevel_m, max_flow_cms) arrays are byte-identical."""
     groups: list[dict] = []
+    shapes = {sa_id: np.asarray(s["wlevel"].values).shape for sa_id, s in subs.items()}
+    if len(set(shapes.values())) > 1:
+        raise ProcessingError(
+            operation="config_diff_group_by_identity",
+            filepath=None,
+            reason=(
+                f"config_diff_maps requires a UNIFORM grid across sub-analyses; got "
+                f"max_wlevel_m shapes {shapes}. This figure subtracts sub-analyses "
+                f"cell-wise and clusters them by byte-identity, both of which assume "
+                f"one grid. A mixed-resolution master needs the dem-resolution "
+                f"reporting set (which regrids), not config_diff_maps -- set "
+                f"report_config.reporting_set='dem-resolution' and "
+                f"eda.enabled_plots accordingly."
+            ),
+        )
     for sa_id, s in subs.items():
         w = np.asarray(s["wlevel"].values)
         f = np.asarray(s["flow"].values)

@@ -112,6 +112,141 @@ def _rows(configs: list[tuple], *, walltime_min: int | None, replicates: int = 2
     return rows
 
 
+#: The fixed compute config every DEM-resolution row runs at. The sweep varies
+#: ONE thing (cell size); holding the compute config fixed is the experimental
+#: control. Shape matches _SERIAL_CONFIGS' tuple:
+#: (run_mode, n_nodes, n_mpi, n_omp, n_gpus, partition, mem_gb_per_cpu).
+_DEM_FIXED_CONFIG = ("serial", 1, 1, 1, 0, "standard", 2)
+
+
+def dem_resolution_matrix_rows(
+    cfg: synthetic_experiment_config,
+    *,
+    walltime_min: int | None = None,
+    replicates: int = 2,
+) -> list[dict]:
+    """Expand the DEM-resolution ladder x replicates into CSV row dicts.
+
+    The DEM-resolution experiment is the compute-config experiment's transpose:
+    ONE fixed compute config (_DEM_FIXED_CONFIG) swept across N cell sizes, where
+    the compute-config experiment is one fixed cell size swept across N configs.
+
+    ``sa_id = f"dem_{res_token}_r{rep}"`` where ``res_token`` is the cell size with
+    '.' -> 'p' (charset-safe per ``^[A-Za-z0-9_.]+$``; '.' is legal but 'p' keeps the
+    sa_id readable as one token). The ladder comes from ``cfg.dem_resolution_ladder``,
+    which the config validates as divisor-only + constant-ratio.
+
+    The FINEST rung is the reference (D3: each coarser rung is compared vs finest).
+    It is emitted like any other row -- its reference status is a figure-time fact,
+    not a matrix-time one.
+    """
+    run_mode, n_nodes, n_mpi, n_omp, n_gpus, part, mem = _DEM_FIXED_CONFIG
+    rows: list[dict] = []
+    for res in cfg.dem_resolution_ladder:
+        res_token = str(res).replace(".", "p")
+        for rep in range(1, replicates + 1):
+            rows.append(
+                {
+                    "sa_id": f"dem_{res_token}_r{rep}",
+                    "run_mode": run_mode,
+                    "n_nodes": n_nodes,
+                    "n_mpi_procs": n_mpi,
+                    "n_omp_threads": n_omp,
+                    "n_gpus": n_gpus,
+                    "hpc.partition": part,
+                    "mem_gb_per_cpu": mem,
+                    "hpc_time_min_per_sim": walltime_min,
+                    "system.target_dem_resolution": res,
+                }
+            )
+    return rows
+
+
+def assert_coupling_nodes_distinct(
+    cfg: synthetic_experiment_config,
+) -> dict[float, int]:
+    """R14 geometric pre-check: no two IN-LINE coupling nodes share a DEM cell.
+
+    The retained in-line count MUST stay >= the largest MPI rank in the experiment:
+    a rung that drops it below the rank count is R14-unrunnable (see the
+    _N_COUPLING_NODES def in swmm_template.py, which explains WHY node_count caps
+    rank_count). This precheck is the ladder-time enforcement of that cap.
+
+    Returns ``{cell_size_m -> retained_coupling_node_count}`` for every rung in
+    ``cfg.dem_resolution_ladder`` -- the same quantity the resolution x coupling-node
+    table renders, so the safety check and the disclosure artifact are one
+    computation (D11). Monotone non-increasing as the rung coarsens.
+
+    Node set: EXACTLY the ``_N_COUPLING_NODES`` in-line rank-coverage junctions --
+    ``swmm_template._node_matrix_rows`` placed on the conduit centerline column
+    ``_centerline_col`` -- the same set ``config.synthetic_experiment.
+    _validate_coupling_invariant`` guarantees covers every TRITON row-strip rank at
+    native resolution. The OTHER SWMM nodes ``_nodes`` returns are DELIBERATELY
+    excluded because none of them can drop an in-line node's coupling inflow:
+      * ``dummy_outfall`` is a DISCONNECTED outfall (no downstream conduit), so the
+        most-downstream-per-cell reduction (scenario_inputs.py:157-205) never selects
+        it over a connected junction. Iterating it would false-positively reject the
+        canonical ladder -- it bins into ``J1``'s cell at the DoD-valid 14 m rung on
+        the default 64x120 grid.
+      * each ``_branches`` junction is an UPSTREAM tributary feeding a stem attach, so
+        if it ever shared a coarse cell with a stem node the stem node (more
+        downstream) is the one KEPT -- in-line coverage is preserved either way.
+      * ``sewer_outflow`` shares the centerline but sits below the sea wall, always
+        co-resident in the bottom rank-strip with ``collector``, so its winning
+        ``collector``'s cell can never empty a strip.
+
+    Coarsening the DEM SHRINKS the coupling network:
+    ``scenario_inputs.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell``
+    groups SWMM nodes by their containing cell in the PROCESSED (coarsened) DEM and
+    retains the inflow assignment of only the most downstream node per cell. Fewer
+    retained in-line nodes than MPI ranks => a node-free top rank => coupling-collective
+    deadlock (swmm_template.py:122-131, triton.h:2363-2404). A deadlock is a HANG, not
+    an error -- the worst failure shape on HPC -- so this converts it into a plan-time
+    constraint on the coarsest rung.
+
+    Raises ProcessingError naming the offending rung and the colliding node pair.
+    """
+    from hhemt.exceptions import ProcessingError
+    from hhemt.synthetic_model import SyntheticModelParams
+    from hhemt.synthetic_model.swmm_template import (
+        _N_COUPLING_NODES,
+        _centerline_col,
+        _node_matrix_rows,
+    )
+
+    params = SyntheticModelParams(n_cols=cfg.n_cols, n_rows=cfg.n_rows, cell_size_m=cfg.cell_size_m)
+    col = _centerline_col(params)
+    mrs = _node_matrix_rows(params)
+    # Reconstruct the in-line chain names + row_from_bottom exactly as ``_nodes`` does
+    # (swmm_template.py:241-242): J1..J(n-1) then ``collector`` (southernmost).
+    names = [f"J{i + 1}" for i in range(len(mrs) - 1)] + ["collector"]
+    inline_nodes = [(names[i], col, params.n_rows - 1 - mrs[i]) for i in range(len(mrs))]
+
+    retained: dict[float, int] = {}
+    for res in cfg.dem_resolution_ladder:
+        seen: dict[tuple[int, int], str] = {}
+        for name, node_col, row_from_bottom in inline_nodes:
+            x = cfg.cell_size_m * (node_col + 0.5)
+            y = cfg.cell_size_m * (row_from_bottom + 0.5)
+            cell = (int(x // res), int(y // res))
+            if cell in seen:
+                raise ProcessingError(
+                    operation="dem_resolution_ladder_precheck",
+                    filepath=None,
+                    reason=(
+                        f"in-line coupling nodes {seen[cell]!r} and {name!r} share DEM cell "
+                        f"{cell} at cell_size_m={res}. Coarsening would drop one node's inflow "
+                        f"assignment, shrinking the in-line coupling network below "
+                        f"_N_COUPLING_NODES={_N_COUPLING_NODES} and risking a coupling-collective "
+                        f"deadlock (a rank owning zero coupling nodes -- a HANG). Remove this rung "
+                        f"from dem_resolution_ladder or coarsen no further."
+                    ),
+                )
+            seen[cell] = name
+        retained[res] = len(seen)
+    return retained
+
+
 def experiment_matrix_rows(cfg: synthetic_experiment_config) -> list[dict]:
     """The shared experiment-matrix row enumeration for ``cfg`` (clean walltime).
 
