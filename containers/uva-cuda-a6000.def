@@ -176,6 +176,28 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     make -j8
     test -x /opt/triton/build/triton.exe   # fail the build if the coupled exe is absent
 
+    # --- (3b) SECOND build: TRITON-ONLY (SWMM coupling COMPILED OUT).
+    # The `triton` model type is a DISTINCT BINARY: the SWMM init sits behind a
+    # compile-time `#ifdef TRITON_SWMM` and reads inp_filename unconditionally, so
+    # the coupled exe dies for model_type=triton with `[ERROR] Error reading file: `.
+    # Natively this is ALREADY a separate build (build_triton_cpu/, no swmm5 target);
+    # the image must mirror that. Flags identical to (3) except the SWMM pair and dir.
+    mkdir -p /opt/triton/build_triton_only && cd /opt/triton/build_triton_only
+    cmake -DTRITON_ENABLE_SWMM=OFF \
+          -DTRITON_IGNORE_MACHINE_FILES=ON \
+          -DTRITON_BACKEND=CUDA -DTRITON_ARCH=AMPERE80 \
+          -DKokkos_ENABLE_CUDA=ON -DKokkos_ARCH_AMPERE86=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DCMAKE_CUDA_ARCHITECTURES=86 \
+          -DCMAKE_CUDA_COMPILER="$(command -v nvcc)" \
+          -DCMAKE_CXX_COMPILER=/opt/openmpi/bin/mpic++ \
+          -DCMAKE_C_COMPILER=/opt/openmpi/bin/mpicc \
+          -DCMAKE_CXX_FLAGS='-O3' \
+          -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
+          /opt/triton
+    # -j8 for the same cgroup reason as (3) -- this build is the SAME CUDA TU set.
+    make -j8
+    test -x /opt/triton/build_triton_only/triton.exe   # fail if the TRITON-only exe is absent
+
     # --- (4) Standalone SWMM v5.2.4 (runswmm) for the `swmm` model type.
     git clone --branch v5.2.4 --depth 1 \
         https://github.com/USEPA/Stormwater-Management-Model.git /opt/swmm-src
@@ -187,6 +209,8 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     #     /opt/hhemt-src/.venv by `uv sync` in (2).
     mkdir -p /opt/hhemt/bin
     cp /opt/triton/build/triton.exe /opt/hhemt/bin/triton.exe
+    # The `triton` (TRITON-only) model type needs the SWMM-DISABLED build — see (3b).
+    cp /opt/triton/build_triton_only/triton.exe /opt/hhemt/bin/triton_only.exe
     cp "$(find /opt/swmm-src/build -maxdepth 3 -type f -name runswmm -o -name swmm5 | head -1)" \
         /opt/hhemt/bin/runswmm
     chmod +x /opt/hhemt/bin/triton.exe /opt/hhemt/bin/runswmm

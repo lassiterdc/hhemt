@@ -309,7 +309,6 @@ rule consolidate_scenario:
         flag="_status/f_consolidate_scenario_evt-{event_id}_complete.flag",
         du_sentinel="sims/{event_id}/_status/_du.json",
     log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
-    group: "process_evt_{event_id}"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",

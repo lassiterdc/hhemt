@@ -49,7 +49,9 @@ _PYTEST_TMP_RE = re.compile(re.escape(tempfile.gettempdir()) + r"/pytest-of-[^/]
 # (``os.path.relpath`` from the deep analysis dir climbs to ``/`` then descends through
 # the absolute home dir into the out-of-repo model cache). The ``../`` depth varies with
 # tree nesting and the descended segment bakes the machine home — mask both, mirroring
-# suite-1's ``{HOME_REL}`` pattern, while preserving the content-hash dir + filename.
+# suite-1's ``{HOME_REL}`` pattern, while preserving the FILENAME. The content-hash dir
+# is masked separately below (it is a fixture-generator content-address, not dispatch
+# signal — see the ``{HASH}`` mask in ``_normalize_volatile``).
 _SYNTH_MODELS_REL_RE = re.compile(r"(?:\.\./)+" + re.escape(str(_SYNTH_MODELS_ROOT).lstrip("/")))
 
 
@@ -60,7 +62,8 @@ def _normalize_volatile(text: str) -> str:
     were captured against. The synth caches live under ``platformdirs`` user-cache
     (outside ``_REPO_ROOT``), so each needs its own mask beyond suite-1's ``{REPO_ROOT}``.
     Genuine generation-logic tokens (rule names, resources, command shape, source-path
-    attributions) are left intact so real drift still fails the assertion.
+    FILE IDENTITY and path STRUCTURE) are left intact so real drift still fails the
+    assertion; only the environment-derived cache-key hash WITHIN a source path is masked.
     """
     text = text.replace(sys.executable, "{PYTHON}")
     text = text.replace(str(_REPO_ROOT), "{REPO_ROOT}")
@@ -69,6 +72,13 @@ def _normalize_volatile(text: str) -> str:
     text = re.sub(r"\{SYNTH_RUNS\}/[^/\"' ]+", "{SYNTH_RUNS}/{WT}", text)  # mask worktree slug
     text = text.replace(str(_SYNTH_MODELS_ROOT), "{SYNTH_MODELS}")  # absolute form (if any)
     text = _SYNTH_MODELS_REL_RE.sub("{SYNTH_MODELS}", text)  # variable-depth ../-relative form
+    # The synth-model cache-dir NAME is a 16-hex `_cache_key` over
+    # SyntheticModelParams + toolkit version + SHA-1 of every
+    # src/hhemt/synthetic_model/*.py (cache.py). Any generator-source edit or
+    # version bump rotates it, so it is volatile w.r.t. this suite (which pins
+    # generation logic, not the synth-model identity). Mask it exactly like the
+    # {SYNTH_MODELS} root so a cache-key rotation cannot stale the goldens.
+    text = re.sub(r"(\{SYNTH_MODELS\})/[0-9a-f]{16}/", r"\1/{MODEL_KEY}/", text)
     return text
 
 

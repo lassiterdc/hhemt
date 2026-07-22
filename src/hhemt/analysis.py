@@ -789,7 +789,7 @@ class TRITONSWMM_analysis:
         """Emit a portable render bundle for local renderer iteration.
 
         Opt-in only — NEVER invoked from analysis.run() or
-        submit_workflow(). The bundle is a self-contained tar including
+        submit_workflow(). The bundle is a self-contained zip including
         every source path declared via prov.artist().add_channel(...)
         during the most recent render_report() execution, plus configs
         with relative paths, the Snakefile, and the HPC-baseline
@@ -798,10 +798,10 @@ class TRITONSWMM_analysis:
         Args:
             output_path: Optional target path for the bundle tar.
                 Defaults to
-                {analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.tar.
+                {analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip.
 
         Returns:
-            Path to the emitted bundle tar.
+            Path to the emitted bundle zip.
 
         Args:
             container_defs: ADR-19 (multi-SIF) — one Apptainer .def per distinct arch to
@@ -1734,29 +1734,7 @@ class TRITONSWMM_analysis:
         if model_type not in valid_types:
             raise ValueError(f"model_type must be one of {valid_types}, got {model_type}")
 
-        # ADR-1/M-7 (defect-11): same host-build gate as run_simulation_runner.py and
-        # scenario.py. This method is the DIRECT in-process API path
-        # (_run_sim <- run_sims_in_sequence <- sensitivity.run_all_sims / tests) -- it is
-        # NOT on the Snakemake/[Q8] path, which routes through run_simulation_runner.
-        # Gated anyway so a container-mode user calling analysis.run_sims_in_sequence()
-        # is not blocked by a host build that the SIF makes unnecessary.
-        _native_build = self.cfg_analysis.execution_environment != "container"
-
-        if _native_build and model_type == "triton":
-            if not self._system.compilation_triton_only_successful:
-                print("Log file:", flush=True)
-                print(scen.log.print())
-                raise ValueError("TRITON-only has not been compiled")
-        elif _native_build and model_type == "tritonswmm":
-            if not self._system.compilation_successful:
-                print("Log file:", flush=True)
-                print(scen.log.print())
-                raise ValueError("TRITONSWMM has not been compiled")
-        elif _native_build and model_type == "swmm":
-            if not self._system.compilation_swmm_successful:
-                print("Log file:", flush=True)
-                print(scen.log.print())
-                raise ValueError("SWMM has not been compiled")
+        self._verify_model_compiled_or_skip_in_container(model_type, scen)
         run = self._retrieve_sim_runs(event_iloc)
         if verbose:
             print("run instance instantiated", flush=True)
@@ -1789,6 +1767,38 @@ class TRITONSWMM_analysis:
                 compression_level=compression_level,
             )
         return
+
+    def _verify_model_compiled_or_skip_in_container(self, model_type, scen) -> None:
+        """Native mode: raise ValueError if `model_type`'s backend is not compiled.
+        Container mode: no-op.
+
+        Mirrors setup_workflow.py's container compile-skip and scenario.py's
+        `_verify_native_build_or_skip_in_container`. In container mode the sim runs
+        `apptainer exec {sif} {exe_in_sif}` (run_simulation.py), so no native build
+        is required and demanding one here would wrongly fail a valid container run.
+
+        Note: `_run_sim` is the LOCAL in-process launcher (run_sims_in_sequence /
+        run_all_sims), NOT the `batch_job` Snakefile path — that path dispatches
+        run_simulation_runner.py. This gate is a correctness gate for container-mode
+        `multi_sim_run_method="local"` / `.test()`, not the design-storm blocker.
+        """
+        if self.cfg_analysis.execution_environment == "container":
+            return
+        if model_type == "triton":
+            if not self._system.compilation_triton_only_successful:
+                print("Log file:", flush=True)
+                print(scen.log.print())
+                raise ValueError("TRITON-only has not been compiled")
+        elif model_type == "tritonswmm":
+            if not self._system.compilation_successful:
+                print("Log file:", flush=True)
+                print(scen.log.print())
+                raise ValueError("TRITONSWMM has not been compiled")
+        elif model_type == "swmm":
+            if not self._system.compilation_swmm_successful:
+                print("Log file:", flush=True)
+                print(scen.log.print())
+                raise ValueError("SWMM has not been compiled")
 
     def process_sim_timeseries(
         self,
@@ -3311,6 +3321,18 @@ class TRITONSWMM_analysis:
             # so MTIME-input triggers cascade re-fire automatically.
             self._apply_force_rerun(override_force_rerun)
 
+            # Fold the five kept override_* kwargs into one carrier at this facade
+            # boundary; the builder and sensitivity layers are overrides-only (D4).
+            from .orchestration import RunOverrides
+
+            overrides = RunOverrides(
+                clear_raw=override_clear_raw,
+                force_rerun=override_force_rerun,
+                hpc_total_nodes=override_hpc_total_nodes,
+                hpc_restart_times_simulate=override_hpc_restart_times_simulate,
+                hpc_restart_times_other=override_hpc_restart_times_other,
+            )
+
             if self.cfg_analysis.toggle_sensitivity_analysis:
                 result = self.sensitivity.submit_workflow(
                     mode=mode,
@@ -3323,16 +3345,12 @@ class TRITONSWMM_analysis:
                     rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                     process_timeseries=process_timeseries,
                     which=which,
-                    override_clear_raw=override_clear_raw,
-                    override_force_rerun=override_force_rerun,
                     compression_level=compression_level,
                     pickup_where_leftoff=pickup_where_leftoff,
                     wait_for_completion=wait_for_completion,
                     dry_run=dry_run,
                     verbose=verbose,
-                    override_hpc_total_nodes=override_hpc_total_nodes,
-                    override_hpc_restart_times_simulate=override_hpc_restart_times_simulate,
-                    override_hpc_restart_times_other=override_hpc_restart_times_other,
+                    overrides=overrides,
                     report_formats=report_formats,
                     extra_sbatch_args=extra_sbatch_args,
                     snakemake_diagnostics=snakemake_diagnostics,
@@ -3366,15 +3384,12 @@ class TRITONSWMM_analysis:
                     rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                     process_timeseries=process_timeseries,
                     which=which,
-                    override_clear_raw=override_clear_raw,
                     compression_level=compression_level,
                     pickup_where_leftoff=pickup_where_leftoff,
                     wait_for_completion=wait_for_completion,
                     dry_run=dry_run,
                     verbose=verbose,
-                    override_hpc_total_nodes=override_hpc_total_nodes,
-                    override_hpc_restart_times_simulate=override_hpc_restart_times_simulate,
-                    override_hpc_restart_times_other=override_hpc_restart_times_other,
+                    overrides=overrides,
                     report_formats=report_formats,
                     extra_sbatch_args=extra_sbatch_args,
                     snakemake_diagnostics=snakemake_diagnostics,

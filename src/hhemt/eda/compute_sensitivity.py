@@ -75,7 +75,7 @@ def compute_magnitude(
     dry_threshold_m: float = _DRY_THRESHOLD_M,
     domain_mask: np.ndarray | None = None,
     tau_m: float = _TAU_M,
-) -> dict[str, float | int | str]:
+) -> dict[str, float | int | str | None]:
     """Pure D-MAG magnitude-divergence metrics between two peak-DEPTH grids (m).
 
     ``depth_base`` is the reference run; both are 2-D ``(ny, nx)``, NaN at nodata,
@@ -131,12 +131,27 @@ def compute_magnitude(
     if pct.size:
         pct_diff_p95 = float(np.nanpercentile(np.abs(pct), 95, method=_PCT_METHOD))
         pct_diff_median_signed = float(np.nanmedian(pct))
+        pct_diff_p05_signed = float(np.nanpercentile(pct, 5, method=_PCT_METHOD))
+        pct_diff_p95_signed = float(np.nanpercentile(pct, 95, method=_PCT_METHOD))
     else:
         pct_diff_p95 = 0.0
         pct_diff_median_signed = 0.0
+        pct_diff_p05_signed = 0.0
+        pct_diff_p95_signed = 0.0
 
     # dry->wet newly-flooded-area complement (base dry below τ, test wet at/above τ).
     n_newly_wet = int(np.count_nonzero(domain & (base < tau_m) & (test >= tau_m)))
+
+    # CSI (critical success index) over the wet/dry footprint. EXACTLY recoverable from
+    # fields already computed -- no new reduction pass, no new array, no new I/O:
+    # n_extent_disagree = FP+FN and n_wet_union = TP+FP+FN, so
+    # 1 - frac_extent_disagree = TP/(TP+FP+FN) = CSI identically.
+    # EDGE CASE (must not be simplified away): when n_union == 0 the branch above sets
+    # frac_extent = 0.0, which would render CSI = 1.0 -- a FALSE "perfect agreement" for
+    # a domain where BOTH runs are entirely dry. A resolution whose run failed to flood
+    # anything would then plot at perfect agreement and appear to be the BEST choice.
+    # CSI is UNDEFINED with no wet cells; report None, never 1.0.
+    csi = None if n_union == 0 else 1.0 - frac_extent
 
     return {
         "max_abs_diff_m": max_abs_diff_m,
@@ -147,6 +162,9 @@ def compute_magnitude(
         "frac_extent_disagree": frac_extent,
         "pct_diff_p95": pct_diff_p95,
         "pct_diff_median_signed": pct_diff_median_signed,
+        "pct_diff_p05_signed": pct_diff_p05_signed,
+        "pct_diff_p95_signed": pct_diff_p95_signed,
+        "csi": csi,
         "n_newly_wet": n_newly_wet,
         "n_baseline_wet": n_baseline_wet,
         "tau_m": float(tau_m),

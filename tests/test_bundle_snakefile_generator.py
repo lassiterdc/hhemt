@@ -38,6 +38,16 @@ REGEN_RULE_SET = {
     "plot_sensitivity_benchmarking",
     "plot_per_sim_per_sa_peak_flood_depth",
     "plot_per_sim_per_sa_conduit_flow",
+    # EDA rules: emitted only for a bundle whose cfg_analysis selects a
+    # reporting set carrying the eda_compute_sensitivity renderer. Absent from
+    # the default/benchmarking fixtures, so the subset assertion above is
+    # unaffected; present here so a dem-resolution or compute-sensitivity
+    # bundle does not trip it.
+    "plot_eda_compute_sensitivity",
+    "plot_eda_dem_resolution_cost_error",
+    "plot_eda_dem_resolution_error_ecdf",
+    "plot_eda_dem_resolution_diff_maps",
+    "plot_eda_dem_resolution_coupling_table",
 }
 
 NON_REGEN_RULES = {
@@ -67,8 +77,7 @@ def sensitivity_bundle(tmp_path: Path) -> Path:
         msg = f"sensitivity_master bundle fixture missing at {SENSITIVITY_FIXTURE}"
         if os.environ.get("TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE") == "1":
             raise AssertionError(
-                f"{msg} (TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE=1) — the checked-in "
-                "bundle fixture must be present in CI."
+                f"{msg} (TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE=1) — the checked-in bundle fixture must be present in CI."
             )
         pytest.skip(msg)
     dest = tmp_path / "sensitivity_master"
@@ -91,7 +100,7 @@ def test_regeneration_scoped_rule_set(bundle_fixture: str, request: pytest.Fixtu
     rule_names = _extract_rule_names(text)
     assert rule_names.issubset(REGEN_RULE_SET), f"Unexpected rules emitted: {rule_names - REGEN_RULE_SET}"
     assert not (rule_names & NON_REGEN_RULES), (
-        f"Forbidden simulation/processing rules emitted: " f"{rule_names & NON_REGEN_RULES}"
+        f"Forbidden simulation/processing rules emitted: {rule_names & NON_REGEN_RULES}"
     )
 
 
@@ -142,8 +151,7 @@ def test_static_backend_controls_output_ext(
         r"rule\s+plot_system_overview:.*?output:.*?" rf"\"plots/system_overview\{expected_ext_for_system_overview}\""
     )
     assert re.search(pattern, text, re.DOTALL), (
-        f"Expected system_overview output {expected_ext_for_system_overview!r} "
-        f"for static_backend={static_backend!r}"
+        f"Expected system_overview output {expected_ext_for_system_overview!r} for static_backend={static_backend!r}"
     )
 
 
@@ -186,18 +194,18 @@ def test_output_ext_propagates_to_all_three_sites(
         text,
         re.DOTALL,
     )
-    assert rule_all_match and (
-        f"plots/system_overview{ext}" in rule_all_match.group(1)
-    ), f"rule all does not reference {ext} system_overview"
+    assert rule_all_match and (f"plots/system_overview{ext}" in rule_all_match.group(1)), (
+        f"rule all does not reference {ext} system_overview"
+    )
     # Site 3b: render_report input list
     render_match = re.search(
         r"rule\s+render_report:\s*\n\s*input:(.*?)(?=\n\s*output:)",
         text,
         re.DOTALL,
     )
-    assert render_match and (
-        f"plots/system_overview{ext}" in render_match.group(1)
-    ), f"render_report does not reference {ext} system_overview"
+    assert render_match and (f"plots/system_overview{ext}" in render_match.group(1)), (
+        f"render_report does not reference {ext} system_overview"
+    )
 
 
 def test_preamble_preserved_for_jinja2_conditionals(multi_sim_bundle: Path) -> None:
@@ -287,3 +295,94 @@ def _extract_input_block(text: str, rule_name: str) -> str:
     if not match:
         raise AssertionError(f"Rule {rule_name!r} not found in emitted text")
     return match.group(1)
+
+
+# ---------------------------------------------------------------------------
+# Reporting-set routing (Plan Phase 5 / D14)
+#
+# These lock behavior that ALREADY SHIPPED upstream (commit 9face09) with no
+# bundle-side coverage: the harvest resolves the active reporting set from
+# cfg_analysis rather than hardcoding benchmarking-or-default, so a bundle whose
+# source run selected a non-default set regenerates the SAME renderer set the
+# source side emitted. They are a regression lock, not a proof of new behavior --
+# their teeth come from the phase's verify-by-deletion step (revert the harvest's
+# config-read to the hardcode and these must fail).
+# ---------------------------------------------------------------------------
+
+
+def _set_reporting_set(bundle_root: Path, name: str) -> None:
+    """Point a copied bundle fixture's cfg_analysis at reporting set `name`."""
+    import yaml
+
+    cfg_path = bundle_root / "cfg_analysis.yaml"
+    cfg = yaml.safe_load(cfg_path.read_text()) or {}
+    cfg.setdefault("report", {})
+    cfg["report"]["reporting_set"] = name
+    cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+def _eda_rule_names(text: str) -> set[str]:
+    return {r for r in _extract_rule_names(text) if r.startswith("plot_eda_")}
+
+
+def test_dem_resolution_bundle_emits_all_four_eda_rules(sensitivity_bundle: Path) -> None:
+    """A dem-resolution bundle regenerates all four DEM EDA rules.
+
+    Membership PARITY against the registry, not a bare count: a count would pass
+    if the harvest emitted four rules with the wrong names.
+    """
+    from hhemt.report_renderers._reporting_sets import get_reporting_set
+
+    _set_reporting_set(sensitivity_bundle, "dem-resolution")
+    text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="matplotlib")
+
+    expected = {
+        f"plot_{tmpl.rule_name}" if not tmpl.rule_name.startswith("plot_") else tmpl.rule_name
+        for sel in get_reporting_set("dem-resolution").renderer_selection
+        if sel.builder_key == "eda_compute_sensitivity"
+        for tmpl in sel.rule_spec_template
+    }
+    assert _eda_rule_names(text) == expected, (
+        f"Emitted EDA rules {_eda_rule_names(text)} != registry templates {expected}"
+    )
+    assert len(expected) == 4, f"dem-resolution should carry four EDA templates, got {len(expected)}"
+
+
+def test_compute_sensitivity_bundle_emits_its_eda_rule(sensitivity_bundle: Path) -> None:
+    """The SHIPPED compute-sensitivity set regenerates its one EDA rule.
+
+    This is the set whose EDA figure was silently omitted from every regenerated
+    bundle before the harvest read the reporting set from config.
+    """
+    _set_reporting_set(sensitivity_bundle, "compute-sensitivity")
+    text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="matplotlib")
+    assert _eda_rule_names(text) == {"plot_eda_compute_sensitivity"}
+
+
+def test_benchmarking_bundle_emits_no_eda_rules(sensitivity_bundle: Path) -> None:
+    """The default (sentinel) sensitivity bundle carries no EDA rule.
+
+    The negative control: without it, a harvest that emitted EDA rules
+    unconditionally would satisfy both positive tests above.
+    """
+    text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="matplotlib")
+    assert _eda_rule_names(text) == set()
+
+
+def test_unknown_reporting_set_raises_named_configuration_error(sensitivity_bundle: Path) -> None:
+    """A typo'd reporting_set names the field, not a bare KeyError.
+
+    Regression lock on the validation half of the resolution rule: the harvest
+    delegates to config.report.resolve_reporting_set_name, so an unknown set is
+    rejected with a ConfigurationError listing the registered sets instead of
+    reaching the bare get_reporting_set accessor and raising KeyError.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    _set_reporting_set(sensitivity_bundle, "dem-resolutoin")  # deliberate typo
+    with pytest.raises(ConfigurationError) as excinfo:
+        generate_regeneration_snakefile(sensitivity_bundle, static_backend="matplotlib")
+    message = str(excinfo.value)
+    assert "reporting_set" in message
+    assert "dem-resolutoin" in message
+    assert "dem-resolution" in message, "the error should list the registered sets"

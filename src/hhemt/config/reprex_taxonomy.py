@@ -84,6 +84,7 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "hpc_restart_times_other": "hpc",
     "hpc_ensemble_partition": "hpc",
     "hpc_setup_and_analysis_processing_partition": "hpc",
+    "hpc_cpu_sim_partition": "hpc",  # CPU-only sim partition selector (QOSMinGRES fix, 9db7343); sibling of the two above
     "execution_environment": "hpc",  # native<->container is HPC-revisable (UVA->Frontier, FQ3/FQ4)
     "local_cpu_cores_for_workflow": "hpc",  # machine-local exec resource (sibling of local_gpus_for_workflow)
     # ---- every remaining non-Path field of system_config + analysis_config -> "experiment" ----

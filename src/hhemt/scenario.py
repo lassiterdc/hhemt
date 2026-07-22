@@ -794,72 +794,12 @@ class TRITONSWMM_scenario:
             )
             return
 
-        # ADR-1/M-7 (defect-10): in container mode the SIF carries the pre-compiled
-        # binary, so there is no host build to validate — exactly as
-        # setup_workflow.py skips the on-cluster compile AND its enabled-but-not-
-        # compiled verification guard. Gating with `_native_build` collapses to the
-        # original unconditional form in native mode (byte-identical) and to a
-        # no-op in container mode. One local serves BOTH gate sites in this method
-        # (this block and the build-copy block below) — they are the same rung.
-        _native_build = (
-            self._analysis.cfg_analysis.execution_environment != "container"
-        )
-
-        # Validate backend is available. The compilation marker depends on
-        # whether the coupled TRITONSWMM model is enabled — TRITON-only mode
-        # compiles into build_triton_cpu/ (no swmm5 target) and must not be
-        # gated on the TRITONSWMM-coupled markers.
-        is_tritonswmm = self._system.cfg_system.toggle_tritonswmm_model
-        model_label = "tritonswmm" if is_tritonswmm else "triton_only"
-        if _native_build and self.backend == "gpu":
-            gpu_ok = (
-                self._system.compilation_gpu_successful
-                if is_tritonswmm
-                else self._system.compilation_triton_only_gpu_successful
-            )
-            if not gpu_ok:
-                logfile = self._system.sys_paths.compilation_logfile_gpu
-                raise CompilationError(
-                    model_type=model_label,
-                    backend="gpu",
-                    logfile=logfile if logfile else Path("missing"),
-                    return_code=1,
-                )
-
-        if _native_build and self.backend == "cpu":
-            cpu_ok = (
-                self._system.compilation_cpu_successful
-                if is_tritonswmm
-                else self._system.compilation_triton_only_cpu_successful
-            )
-            if not cpu_ok:
-                # Distinguish "never built" from "built and failed". Every prep-rung
-                # call site passes the hardcoded literal return_code=1 even though no
-                # process ran, and compilation_logfile_cpu is a DERIVED path, so the
-                # CompilationError message instructs `cat` on a file that may never
-                # have existed -- a real diagnostic cost. An absent log means the
-                # build was never performed, which is a configuration problem (CLI
-                # exit 2), not a compile failure (exit 3).
-                _log = self._system.sys_paths.compilation_logfile_cpu
-                if _log is None or not _log.exists():
-                    raise ConfigurationError(
-                        field="TRITONSWMM_software_directory",
-                        message=(
-                            f"No {model_label} CPU build is present: expected a "
-                            f"compilation log at {_log}, which does not exist. No "
-                            "build was attempted here (this is not a compile "
-                            "failure). Run the setup phase to compile, or set "
-                            "execution_environment='container' if the binary is "
-                            "supplied by a SIF."
-                        ),
-                        config_path=self._system.system_config_yaml,
-                    )
-                raise CompilationError(
-                    model_type=model_label,
-                    backend="cpu",
-                    logfile=_log,
-                    return_code=1,
-                )
+        # Validate the native backend build is available (native mode only). In
+        # container mode this is a no-op — the SIF carries the pre-built binary and
+        # setup skipped the on-cluster compile (setup_workflow.py _native_compile),
+        # so compilation_*_successful is legitimately False and the sim runs
+        # `apptainer exec {sif} {exe_in_sif}` (run_simulation.py), never a native build.
+        self._verify_native_build_or_skip_in_container()
 
         print(
             f"[Scenario {self.event_iloc}] Using {self.backend.upper()} backend",
@@ -919,26 +859,96 @@ class TRITONSWMM_scenario:
         self._generate_TRITON_SWMM_cfg()  # Coupled model CFG
         self._generate_TRITON_cfg()  # TRITON-only CFG (if enabled)
 
-        # ADR-1/M-7 (defect-10, second gate site): the three "enabled but not
-        # successfully compiled" RuntimeErrors below and the two build-folder
-        # symlinks they guard all assert the presence of a HOST build tree. In
-        # container mode that tree does not and should not exist — the SIF carries
-        # the binary. The symlink is provably unused in container mode:
-        # run_simulation.py assigns `exe` from scen_paths.sim_*_executable, then
-        # OVERWRITES it wholesale with `apptainer exec … {exe_in_sif}` before use,
-        # and those scen_paths entries have no other consumer. `triton_backend_used`
-        # is still recorded here because analysis.py reads it for the df_status
-        # `backend_used` column -> scenario_status.csv; skipping it would ship a
-        # container-mode status CSV with a null column.
-        if not _native_build:
-            self.log.triton_backend_used.set(self.backend)
-            self.log.scenario_creation_complete.set(True)
-            print(
-                "Scenario preparation complete (container mode — host build "
-                "validation and build-folder symlink skipped; the SIF carries "
-                "the binary)",
-                flush=True,
+        # Link native build folders into the sim (native mode only) and fail fast
+        # if a toggled model was not compiled. No-op in container mode where the sim
+        # runs `apptainer exec {sif} {exe_in_sif}` (run_simulation.py:404-422), so the
+        # per-sim native build symlink is never consumed.
+        self._link_native_builds_into_sim()
+
+        self.log.scenario_creation_complete.set(True)
+        print("Scenario preparation complete", flush=True)
+
+        return
+
+    def _verify_native_build_or_skip_in_container(self) -> None:
+        """Native mode: raise CompilationError if the backend build required by
+        self.backend is not compiled. Container mode: no-op.
+
+        Mirrors setup_workflow.py's container compile-skip (_native_compile). In
+        container mode setup skips the on-cluster compile (the SIF carries the
+        binary), so compilation_*_successful is legitimately False and the sim runs
+        `apptainer exec {sif} {exe_in_sif}` (run_simulation.py) — no native build is
+        needed, so demanding one here would be wrong.
+        """
+        if self._analysis.cfg_analysis.execution_environment == "container":
+            return
+
+        # Validate backend is available. The compilation marker depends on
+        # whether the coupled TRITONSWMM model is enabled — TRITON-only mode
+        # compiles into build_triton_cpu/ (no swmm5 target) and must not be
+        # gated on the TRITONSWMM-coupled markers.
+        is_tritonswmm = self._system.cfg_system.toggle_tritonswmm_model
+        model_label = "tritonswmm" if is_tritonswmm else "triton_only"
+        if self.backend == "gpu":
+            gpu_ok = (
+                self._system.compilation_gpu_successful
+                if is_tritonswmm
+                else self._system.compilation_triton_only_gpu_successful
             )
+            if not gpu_ok:
+                logfile = self._system.sys_paths.compilation_logfile_gpu
+                raise CompilationError(
+                    model_type=model_label,
+                    backend="gpu",
+                    logfile=logfile if logfile else Path("missing"),
+                    return_code=1,
+                )
+
+        if self.backend == "cpu":
+            cpu_ok = (
+                self._system.compilation_cpu_successful
+                if is_tritonswmm
+                else self._system.compilation_triton_only_cpu_successful
+            )
+            if not cpu_ok:
+                # defect-10: distinguish "never built" from "built and failed".
+                # Every prep-rung call site passes the hardcoded literal
+                # return_code=1 even though no process ran, and
+                # compilation_logfile_cpu is a DERIVED path, so the plain
+                # CompilationError message instructs `cat` on a file that may never
+                # have existed. An absent log means the build was never performed,
+                # which is a configuration problem (CLI exit 2), not a compile
+                # failure (exit 3).
+                _log = self._system.sys_paths.compilation_logfile_cpu
+                if _log is None or not _log.exists():
+                    raise ConfigurationError(
+                        field="TRITONSWMM_software_directory",
+                        message=(
+                            f"No {model_label} CPU build is present: expected a "
+                            f"compilation log at {_log}, which does not exist. No "
+                            "build was attempted here (this is not a compile "
+                            "failure). Run the setup phase to compile, or set "
+                            "execution_environment='container' if the binary is "
+                            "supplied by a SIF."
+                        ),
+                        config_path=self._system.system_config_yaml,
+                    )
+                raise CompilationError(
+                    model_type=model_label,
+                    backend="cpu",
+                    logfile=_log,
+                    return_code=1,
+                )
+
+    def _link_native_builds_into_sim(self) -> None:
+        """Native mode: copy the compiled build folders into the sim dir,
+        failing fast if a toggled model was not compiled. Container mode: no-op.
+
+        Mirrors setup_workflow.py's container compile-skip. In container mode the
+        sim runs `apptainer exec {sif} {exe_in_sif}` (run_simulation.py:404-422), so
+        the per-sim native build symlink is never consumed.
+        """
+        if self._analysis.cfg_analysis.execution_environment == "container":
             return
 
         # Copy build folders - FAIL FAST if toggle ON but not compiled
@@ -977,11 +987,6 @@ class TRITONSWMM_scenario:
                     "Either compile SWMM (system.compile_SWMM()) or disable the toggle "
                     "(set toggle_swmm_model=False in system config)."
                 )
-
-        self.log.scenario_creation_complete.set(True)
-        print("Scenario preparation complete", flush=True)
-
-        return
 
     def _create_subprocess_prepare_scenario_launcher(
         self,

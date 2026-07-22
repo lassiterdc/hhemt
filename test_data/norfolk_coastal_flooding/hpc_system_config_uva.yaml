@@ -36,5 +36,5 @@ container:                                    # ADR-1/2/3: per-cluster Apptainer
   gpu_flag: "--nv"                            # NVIDIA GPU passthrough (binds host driver only; container CUDA toolkit executes -- NVIDIA-contractual)
   srun_mpi: "pmix"                            # seam emits `srun --mpi=pmix` for the container-own OpenMPI (UVA-only; mutually exclusive with cray_mpich_abi_module)
   binds: ["/scratch", "/sfs"]                 # APPTAINER_BIND: Rivanna scratch + SFS storage trees
-  exe_in_sif: {triton: "/opt/hhemt/bin/triton.exe", tritonswmm: "/opt/hhemt/bin/triton.exe", swmm: "/opt/hhemt/bin/runswmm"}   # in-SIF exe per model type
+  exe_in_sif: {triton: "/opt/hhemt/bin/triton_only.exe", tritonswmm: "/opt/hhemt/bin/triton.exe", swmm: "/opt/hhemt/bin/runswmm"}   # in-SIF exe per model type; `triton` MUST be the SWMM-DISABLED build (compile-time #ifdef TRITON_SWMM — not a runtime mode), else it dies on an empty inp_filename
 executor_profile_extras: {}                   # EXTENSION (advanced escape hatch; empty by default)

@@ -956,20 +956,16 @@ def test_df_setup_with_system_overlays_carries_prefixed_system_columns(
 # ============================================================================
 
 
-def test_bare_name_analysis_config_column_emits_deprecation_warning(tmp_path, monkeypatch):
+def test_bare_name_analysis_config_column_emits_deprecation_warning(monkeypatch, tmp_path):
     """Phase 2 R2 — bare-name analysis-config columns emit DeprecationWarning at construction."""
     # The default synth sensitivity CSV uses bare names (run_mode, n_mpi_procs, etc.),
     # so a fresh load must surface a DeprecationWarning naming a bare analysis-config column.
-    #
-    # census-green-up Phase 1 isolation (mirrors tests/conftest.py::synth_sensitivity_analysis):
-    # this is a DIRECT start_from_scratch=True call, so it escapes the runs-root override that
-    # every equivalent conftest fixture applies. Without the override it fast_rmtree's the SHARED
-    # `synth_sensitivity` slug cache (test_case_builder.py:361-362) and rebuilds only the
-    # config/preprocess tier, leaving subanalyses/sa_*/sims/ EMPTY — after which
-    # test_synth_07_validation_report.py::failing_synth_sensitivity_analysis clones the gutted
-    # tree and dies with StopIteration in _failing_fixture_helpers._first_scenario_in_sa.
-    # Nesting runs_root under tmp_path confines the wipe; _software_root stays pinned to the slug
-    # runs_root (test_case_builder.py:360), so the compile cache is still shared (Gotcha 52).
+    # census-green-up isolation: this is a start_from_scratch=True retrieve on the SHARED
+    # synth_sensitivity slug cache. Without the runs_root override it fast_rmtree-wipes the
+    # shared cache to a configured-only (empty sims/) state (no run) — which then breaks the
+    # downstream *_cached consumers (e.g. test_synth_07's failing_synth_sensitivity_analysis
+    # -> _first_scenario_in_sa StopIteration). Redirect the analysis tree to tmp_path so the
+    # construction (which is all this test exercises) cannot touch the shared cache.
     monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
     with pytest.warns(DeprecationWarning, match=r"Bare-name analysis-config column"):
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
@@ -1171,3 +1167,107 @@ def test_renderer_provenance_audit_passes_for_all_sensitivity_renderers(synth_se
     )
     manifests = list(plots_dir.rglob("*.manifest.json"))
     assert manifests, "no manifest sidecars (sensitivity renderers did not re-run)"
+
+
+def _eda_templates_for(set_name):
+    """The `eda_compute_sensitivity` selection's rule_spec_template tuple for a set."""
+    from hhemt.report_renderers._reporting_sets import get_reporting_set
+
+    for sel in get_reporting_set(set_name).renderer_selection:
+        if sel.builder_key == "eda_compute_sensitivity":
+            return sel.rule_spec_template
+    raise AssertionError(f"set {set_name!r} carries no eda_compute_sensitivity selection")
+
+
+def _rule_block(content: str, rule_name: str) -> str:
+    """The text of `rule {rule_name}:` up to the next column-0 `rule ` (or EOF)."""
+    start = content.index(f"rule {rule_name}:")
+    nxt = content.find("\nrule ", start + 1)
+    return content[start:] if nxt == -1 else content[start:nxt]
+
+
+def test_dem_resolution_set_emits_one_eda_rule_per_registry_template(
+    synth_sensitivity_analysis,
+):
+    """Phase 4 / D13 — the dem-resolution set emits ONE EDA rule per registry template.
+
+    Guards the registry-read generalization end to end: the builder iterates
+    ``sel.rule_spec_template`` instead of hardcoding one figure, and BOTH the ``rule
+    all`` enumeration and ``render_report``'s DERIVED input follow from the same
+    single source. Assertions are membership PARITY against the registry rather than a
+    bare count of four, so adding, removing or renaming a template without updating the
+    emission path fails here.
+    """
+    from hhemt.report_renderers._reporting_sets import get_reporting_set
+
+    analysis = synth_sensitivity_analysis
+    # The run-entry attr is the documented selection surface (_resolve_active_reporting_set
+    # prefers it over the cfg fallback), so this selects the set without mutating a
+    # frozen config model.
+    analysis._active_reporting_set = get_reporting_set("dem-resolution")
+    assert analysis.cfg_analysis.eda.enabled_plots, "the has_eda_artifact gate requires a non-empty eda.enabled_plots"
+
+    content = analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
+        which="both", compression_level=5
+    )
+
+    templates = _eda_templates_for("dem-resolution")
+    assert len(templates) == 4, "the dem-resolution set must carry four EDA templates"
+
+    # (a) one emitted rule per registry template — membership parity, not a count.
+    emitted = {t.rule_name for t in templates if f"rule {t.rule_name}:" in content}
+    assert emitted == {t.rule_name for t in templates}, (
+        "EDA rule emission is not one-per-registry-template.\n  missing from Snakefile: "
+        f"{sorted({t.rule_name for t in templates} - emitted)}"
+    )
+    # The shipped compute-sensitivity rule must NOT appear — it belongs to another set.
+    assert "rule plot_eda_compute_sensitivity:" not in content
+
+    # (b) rule all lists every template's output path.
+    expected_paths = [t.output_path_template.replace("__OUTPUT_EXT__", ".html") for t in templates]
+    rule_all = _rule_block(content, "all")
+    for path in expected_paths:
+        assert f'"{path}"' in rule_all, f"rule all is missing the EDA output {path!r}"
+
+    # (c) render_report's input is DERIVED from rule_all_inputs, not hand-edited:
+    # every EDA path appears EXACTLY ONCE (a hand-edit duplicates it), and the
+    # `_status/` flags that rule all carries are filtered out of it.
+    render_block = _rule_block(content, "render_report")
+    for path in expected_paths:
+        assert render_block.count(f'"{path}"') == 1, (
+            f"render_report input must contain {path!r} exactly once (a hand-edit "
+            f"duplicates the derived input); found {render_block.count(chr(34) + path + chr(34))}"
+        )
+    render_input_block = render_block.split("output:")[0]
+    assert '"_status/' not in render_input_block, (
+        "render_report input must be the rule_all_inputs subset filtered of _status/ "
+        "flags — an unfiltered copy means the derivation at workflow.py was bypassed"
+    )
+
+
+def test_compute_sensitivity_set_still_emits_its_single_eda_rule(
+    synth_sensitivity_analysis,
+):
+    """Phase 4 / Risk X2 — the SHIPPED compute-sensitivity set is output-preserving.
+
+    The D13 generalization changed a code path this set runs. Its single EDA rule must
+    still be emitted under its registry rule_name and output path, and its log path must
+    now read `_logs/` (the deliberate Risk-X2 reconciliation: the builder was the lone
+    `logs/` outlier versus the registry template).
+    """
+    from hhemt.report_renderers._reporting_sets import get_reporting_set
+
+    analysis = synth_sensitivity_analysis
+    analysis._active_reporting_set = get_reporting_set("compute-sensitivity")
+
+    content = analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
+        which="both", compression_level=5
+    )
+
+    (tmpl,) = _eda_templates_for("compute-sensitivity")
+    assert f"rule {tmpl.rule_name}:" in content
+    assert f'"{tmpl.output_path_template.replace("__OUTPUT_EXT__", ".html")}"' in content
+    assert "_logs/plots/eda_compute_sensitivity.log" in content
+    assert "logs/plots/eda_compute_sensitivity.log" not in content.replace(
+        "_logs/plots/eda_compute_sensitivity.log", ""
+    ), "the builder's `logs/` log path was not reconciled to `_logs/`"

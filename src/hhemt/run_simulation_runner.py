@@ -78,6 +78,33 @@ def _write_failed_marker(ctx: _MarkerCtx | None) -> None:
     os.replace(failed_tmp, failed_marker)
 
 
+def _native_compile_error_or_skip_in_container(analysis, system, model_type: str) -> str | None:
+    """Native mode: return an error message if the model's backend is not compiled,
+    else None. Container mode: always None (no-op).
+
+    Mirrors setup_workflow.py's container compile-skip (_native_compile). In container
+    mode the on-cluster compile is skipped (compilation_*_successful is legitimately
+    False) and the sim runs `apptainer exec {sif} {exe_in_sif}` (run_simulation.py),
+    so demanding a native build here would wrongly fail a valid container run.
+    """
+    if analysis.cfg_analysis.execution_environment == "container":
+        return None
+    if model_type == "triton":
+        if not hasattr(system, "compilation_triton_only_successful"):
+            return "TRITON-only compilation check not implemented"
+        if not system.compilation_triton_only_successful:
+            return "TRITON-only has not been compiled"
+    elif model_type == "tritonswmm":
+        if not system.compilation_successful:
+            return "TRITON-SWMM has not been compiled"
+    elif model_type == "swmm":
+        if not hasattr(system, "compilation_swmm_successful"):
+            return "SWMM compilation check not implemented"
+        if not system.compilation_swmm_successful:
+            return "SWMM has not been compiled"
+    return None
+
+
 def main():
     """Main entry point for simulation execution subprocess."""
     parser = argparse.ArgumentParser(description="Run a single simulation in a subprocess")
@@ -296,48 +323,16 @@ def main():
         # Get model-specific log for this simulation
         model_log = scenario.get_log(model_type)
 
-        # ADR-1/M-7 (defect-11): in container mode the SIF carries the pre-compiled
-        # binary, so there is no HOST build to verify -- exactly as setup_workflow.py
-        # skips the on-cluster compile AND its enabled-but-not-compiled verification
-        # guard, and as scenario.py skips the prep-rung build validation (defect-10).
-        # `analysis` is the full TRITONSWMM_analysis constructed above (line ~214);
-        # `system.analysis` is NOT usable here -- system._analysis is never assigned in
-        # this runner, so the property raises RuntimeError. Same local name as the
-        # scenario.py / setup_workflow.py gates so `grep -rn '_native_build\|_native_compile'
-        # src/hhemt/` enumerates the whole class. Collapses to the original
-        # unconditional form in native mode (byte-identical) and to a no-op in
-        # container mode.
-        _native_build = analysis.cfg_analysis.execution_environment != "container"
-        if not _native_build:
-            logger.info(
-                f"[{event_iloc}] Container mode — skipping host-compilation check "
-                "(the SIF carries the binary)"
-            )
-
-        # Verify model-specific compilation
-        if _native_build and model_type == "triton":
-            if not hasattr(system, "compilation_triton_only_successful"):
-                logger.error(f"[{event_iloc}] TRITON-only compilation check not implemented")
-                _write_failed_marker(_marker_ctx)
-                return 1
-            if not system.compilation_triton_only_successful:
-                logger.error(f"[{event_iloc}] TRITON-only has not been compiled")
-                _write_failed_marker(_marker_ctx)
-                return 1
-        elif _native_build and model_type == "tritonswmm":
-            if not system.compilation_successful:
-                logger.error(f"[{event_iloc}] TRITON-SWMM has not been compiled")
-                _write_failed_marker(_marker_ctx)
-                return 1
-        elif _native_build and model_type == "swmm":
-            if not hasattr(system, "compilation_swmm_successful"):
-                logger.error(f"[{event_iloc}] SWMM compilation check not implemented")
-                _write_failed_marker(_marker_ctx)
-                return 1
-            if not system.compilation_swmm_successful:
-                logger.error(f"[{event_iloc}] SWMM has not been compiled")
-                _write_failed_marker(_marker_ctx)
-                return 1
+        # Verify model-specific compilation (native mode only). In container mode
+        # the SIF carries the pre-built binary, setup skipped the on-cluster compile
+        # (setup_workflow.py _native_compile), so compilation_*_successful is
+        # legitimately False and the sim runs `apptainer exec {sif} {exe_in_sif}`
+        # (run_simulation.py) — no native build is needed.
+        _compile_error = _native_compile_error_or_skip_in_container(analysis, system, model_type)
+        if _compile_error is not None:
+            logger.error(f"[{event_iloc}] {_compile_error}")
+            _write_failed_marker(_marker_ctx)
+            return 1
 
         # Get the run object and prepare the simulation command
         run = scenario.run

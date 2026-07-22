@@ -119,12 +119,28 @@ Units      None
 # cols right of J3, producing diagonal C1/C2 covering 4 cols × 9 rows each.
 # J3, J4, sewer_outflow share col 7 (centered), so C3+C4 form the vertical
 # stem of the Y. dummy_outfall stays disconnected at col 7.
-# Number of in-line coupling junctions. MUST be >= the largest MPI rank count
-# the experiment matrix exercises (8, from hhemt.synthetic_experiment's rank_sweep
-# default (2,4,8) max = 8 / hybrid rows) so that under a row-strip static
-# decomposition EVERY rank owns >= 1 coupling node and participates in the
-# TRITON-SWMM ENSIFY_COMM_WORLD collective. Fewer nodes than ranks => a
-# node-free top rank => coupling-collective deadlock (triton.h:2363-2404).
+# _N_COUPLING_NODES is THE MAXIMUM MPI RANK COUNT this synthetic model supports.
+# It is the number of in-line coupling junctions placed on the conduit centerline
+# ({J1..J(n-1), collector}, one per even band by _node_matrix_rows). WHY the node
+# count == the rank cap: TRITON statically decomposes the domain into top-to-bottom
+# row-strips, one strip per MPI rank (mpi_utils.h create_local_dims). Every rank
+# MUST own >= 1 coupling node or it never enters the TRITON-SWMM ENSIFY_COMM_WORLD
+# coupling collective, so ALL ranks block forever — a HANG, the worst HPC failure
+# shape (triton.h:2363-2404). Therefore rank_count can never exceed node_count.
+#
+# 8 supports runs up to 8 ranks (the rank_sweep default (2,4,8) tops out at 8).
+# TO SUPPORT AN N-RANK RUN: raise this to N *and* pick an n_rows divisible by N
+# whose interior conveyance span (_node_matrix_rows) is >= N. You do NOT get more
+# ranks by editing rank_sweep alone — this cap is enforced at config-load by
+# config.synthetic_experiment._validate_coupling_invariant (guard 1:
+# max(rank_sweep) <= _N_COUPLING_NODES), which FAILS FAST. The companion R14
+# geometric precheck synthetic_experiment.assert_coupling_nodes_distinct (no two
+# in-line nodes share a coarsened DEM cell) is NOT wired into any runtime path —
+# it is exercised only by tests/test_synth_dem_resolution_matrix.py. It is
+# unreachable-by-construction today (the dem_resolution_ladder has no runtime
+# consumer, and dem_resolution_matrix_rows pins a 1-rank _DEM_FIXED_CONFIG so no
+# rank can be stranded); wire it at the call site that first makes a ladder
+# runnable. See the knowledge doc "synth coupling-node count taxonomy".
 # (2026-06-14: replaced the hardcoded-for-16x30 _NODES list with this
 # n_rows-driven generator — the old list clustered all nodes in the bottom
 # ~22% of the 64x120 experiment grid, deadlocking every multi-rank run.)
@@ -236,8 +252,10 @@ def _nodes(params):
     col = _centerline_col(params)
     mrs = _node_matrix_rows(params)
     rfb = [params.n_rows - 1 - mr for mr in mrs]  # matrix-row -> row_from_bottom
-    # 8 upstream coupling junctions spread one-per-band (MPI rank coverage):
-    # J1..J7 + `collector` (southernmost, just upstream of the full-width sea wall).
+    # The _N_COUPLING_NODES upstream coupling junctions, spread one-per-band for
+    # MPI rank coverage (see the _N_COUPLING_NODES def): J1..J(n-1) then `collector`
+    # (southernmost, just upstream of the full-width sea wall). Count is n-driven —
+    # do NOT hardcode it here; it tracks _N_COUPLING_NODES.
     names = [f"J{i + 1}" for i in range(len(mrs) - 1)] + ["collector"]
     nodes = [(names[i], col, rfb[i]) for i in range(len(mrs))]
     # Interaction junction: in the BC shelf, just DOWNSTREAM of the sea wall. The
@@ -406,17 +424,28 @@ def _subcatchment_polygon_cell_bounds(params) -> dict[str, tuple[int, int, int, 
 # ---------------------------------------------------------------------------
 # DataFrame builders
 # ---------------------------------------------------------------------------
-def _options_df() -> pd.DataFrame:
+def _options_df(flow_routing: str = "DYNWAVE") -> pd.DataFrame:
     """OPTIONS DataFrame. Timing keys use ``${NAME}`` placeholders that the
     toolkit's ``swmm_utils.create_swmm_inp_from_template`` fills at scenario
     prep via ``string.Template.safe_substitute``. Non-timing keys are literal.
+
+    ``flow_routing`` is variant-scoped. The conduit-free hydrology variant uses
+    KINWAVE, not DYNWAVE: with zero links every runoff node has ``degree == 0``,
+    and SWMM's ``node_getSystemOutflow`` (node.c) passes a terminal node's inflow
+    out as tracked External Outflow ONLY under ``RouteModel != DW``. Under DYNWAVE
+    that branch is skipped and 100% of wet-weather inflow strands on the routing
+    ledger (Flow Routing Continuity Error = 100.000%). KINWAVE closes it to 0.000%
+    with per-node TOTAL_INFLOW byte-identical to DYNWAVE (measured: max per-step
+    diff 0.0, mass ratio 1.000000000), so the coupling handoff is unchanged and
+    External Outflow then equals exactly the mass delivered to TRITON. The
+    hydraulics/full variants keep DYNWAVE — they have conduits and need backwater.
     """
     return pd.DataFrame(
         {
             "Value": [
                 "CMS",
                 "HORTON",
-                "DYNWAVE",
+                flow_routing,
                 "DEPTH",
                 "0",
                 "NO",
@@ -779,9 +808,36 @@ def _write_variant(
     dest.write_text(_STARTER_INP, encoding="utf-8")
     m = swmmio.Model(str(dest))
     # OPTIONS / REPORT — always written so synthesised run params take effect.
-    m.inp.options = _options_df()
-    # JUNCTIONS / OUTFALLS / COORDINATES — always present. Even hydrology-only
-    # .inp needs junctions so SUBCATCHMENTS can reference outlet nodes.
+    # Hydrology-only (conduit-free) variant routes with KINWAVE so its terminal
+    # nodes book External Outflow instead of stranding 100% on the routing
+    # ledger; see _options_df. Coupling output (TOTAL_INFLOW) is unaffected.
+    m.inp.options = _options_df(
+        flow_routing="KINWAVE" if (include_hydrology and not include_hydraulics) else "DYNWAVE"
+    )
+    # JUNCTIONS / OUTFALLS / COORDINATES — always present.
+    #
+    # The runoff nodes MUST stay JUNCTIONS and MUST NOT be promoted to
+    # [OUTFALLS]. This is a COUPLING constraint, not a SWMM one: a
+    # [SUBCATCHMENTS] Outlet may legally reference an outfall and SWMM runs
+    # fine. The binding reason is downstream —
+    # scenario.py::return_df_of_nodes_grouped_by_DEM_gridcell derives
+    # lst_outfalls as EVERY node in [OUTFALLS], and
+    # swmm_runoff_modeling.py::write_hydrograph_files skips exactly those
+    # (`if key not in lst_outfalls`). Promoting the runoff nodes to outfalls
+    # therefore yields ZERO TRITON inflow hydrographs (measured 2026-07-15:
+    # 0/11, for both a JB-only and an all-nodes promotion).
+    #
+    # The conduit-free topology is load-bearing for the same reason: it is what
+    # makes each node's TOTAL_INFLOW equal its OWN subcatchment's local runoff,
+    # which write_hydrograph_files injects at that node's own DEM cell. Adding
+    # conduits folds upstream runoff into downstream nodes and double-counts
+    # (measured 2026-07-15: 8.85x total mass inflation, 1.00x-10.73x per-node).
+    #
+    # Do NOT "fix" the hydrology variant's Flow Routing Continuity Error by
+    # changing node types or adding conduits — both are refuted above. It is a
+    # DYNWAVE artifact on a link-free network and is addressed via FLOW_ROUTING
+    # in _options_df. See the stipulation:
+    # `library/docs/stipulations/hhemt/synthetic hydrology variant is conduit-free with junction runoff nodes and kinwave routing.md`
     m.inp.junctions = _junctions_df(params)
     m.inp.outfalls = _outfalls_df(params)
     m.inp.coordinates = _coordinates_df(params)

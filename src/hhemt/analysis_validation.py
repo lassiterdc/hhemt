@@ -96,9 +96,13 @@ def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
     issues: list[dict] = []
     sys = analysis._system
 
-    _native_build = getattr(analysis.cfg_analysis, "execution_environment", "native") != "container"
-
-    if _native_build:
+    # Compilation checks apply to NATIVE mode only. In container mode setup skips
+    # the on-cluster compile (setup_workflow.py _native_compile) — the SIF carries
+    # the binary — so compilation_*_successful is legitimately False and the sim runs
+    # `apptainer exec {sif} {exe_in_sif}` (run_simulation.py). Appending a compilation
+    # issue here would force validation_report.json overall_passed:false on a valid
+    # container run. The DEM/Mannings checks below still run in both modes.
+    if analysis.cfg_analysis.execution_environment != "container":
         if cfg_sys.toggle_tritonswmm_model and not sys.compilation_successful:
             issues.append({"detail": "TRITON-SWMM compilation failed"})
         if cfg_sys.toggle_triton_model and not sys.compilation_triton_only_successful:

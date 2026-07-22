@@ -178,3 +178,116 @@ def test_swmm_cross_model_consistency(synth_all_models_analysis_cached):
 
         if swmm_link_vars != tritonswmm_link_vars:
             pytest.fail("Link time series data variables do not match")
+
+
+def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cached):
+    """Local-runoff-invariant guard — synth-swmm-hydrology-continuity Phase 1 (R7/R8).
+
+    Pins the three interlocking clauses of the stipulation ``synthetic hydrology
+    variant is conduit-free with junction runoff nodes and kinwave routing``
+    against the hydrology variant's real ``.out``/``.rpt``. VALUE-FREE by
+    construction (no hardcoded discharge magnitude), so it survives a fixture
+    retune, and it FAILS under each of the three refuted regressions the plan
+    exists to prevent (V4 negative controls in the master Validation Plan):
+
+    * outfall promotion -> the runoff nodes get skipped by
+      ``write_hydrograph_files`` (``if key not in lst_outfalls``), so the
+      hydrograph count drops below 11 (measured 0/11);
+    * added conduits -> downstream nodes fold in upstream runoff and
+      double-count, breaking per-node uniformity (measured 1.00x-10.73x);
+    * KINWAVE->DYNWAVE reversion -> per-node ``TOTAL_INFLOW`` is byte-identical
+      across DW/KW (master R4/A1), so assertions (1)-(3) are structurally BLIND;
+      the secondary continuity assertion (4) is that regression's ONLY coverage.
+
+    Mirrors ``swmm_runoff_modeling.write_hydrograph_files``'s two filters: the
+    outfall-skip and the ``d_inflow.sum() > 0`` positive-inflow filter that
+    selects the nodes actually delivering a hydrograph to TRITON.
+    """
+    import pandas as pd
+    from pyswmm import Output
+    from swmm.toolkit.shared_enum import NodeAttribute
+
+    from hhemt.scenario import return_df_of_nodes_grouped_by_DEM_gridcell
+    from hhemt.swmm_output_parser import return_swmm_system_outputs
+
+    analysis = synth_all_models_analysis_cached
+    # System-level preprocessing produces the processed DEM
+    # (`elevation_<res>m.dem`) that write_hydrograph_files and
+    # return_df_of_nodes_grouped_by_DEM_gridcell read. run_prepare_scenarios_serially
+    # is scenario-level and does NOT produce it, so this call makes the guard
+    # self-sufficient when run in isolation (in-module, an earlier
+    # start_from_scratch=True test already built it). Idempotent: skips when the
+    # DEM exists and passes integrity (system.py::create_dem_for_TRITON).
+    analysis._system.process_system_level_inputs()
+    analysis.run_prepare_scenarios_serially(
+        overwrite_scenario_if_already_set_up=True,
+        rerun_swmm_hydro_if_outputs_exist=True,
+    )
+
+    scen = analysis._retrieve_sim_runs(0)._scenario
+    hydro_inp = scen.scen_paths.swmm_hydro_inp
+    dem_processed = scen._system.sys_paths.dem_processed
+    hydro_out = str(hydro_inp).replace(".inp", ".out")
+    hydro_rpt = str(hydro_inp).replace(".inp", ".rpt")
+
+    # Reproduce write_hydrograph_files' outfall-skip partition via the SAME
+    # function it calls: every node NOT in [OUTFALLS] is a hydrograph candidate.
+    df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
+        hydro_inp, dem_processed
+    )
+    non_outfall = [k for k in df_node_locs["node_key"] if k not in lst_outfalls]
+
+    # Summed TOTAL_INFLOW per non-outfall node, from the same .out
+    # write_hydrograph_files consumes.
+    with Output(hydro_out) as out:
+        inflow_sum = {
+            key: float(pd.Series(out.node_series(key, NodeAttribute.TOTAL_INFLOW)).sum())
+            for key in non_outfall
+        }
+
+    # write_hydrograph_files' second filter (`if d_inflow.sum() > 0`): only
+    # positive-inflow nodes produce a TRITON hydrograph. That is the
+    # coupling-meaningful count.
+    runoff_nodes = {k: v for k, v in inflow_sum.items() if v > 0.0}
+    zero_nodes = {k: v for k, v in inflow_sum.items() if v == 0.0}
+
+    # (1) exactly 11 runoff nodes deliver a hydrograph to TRITON. Outfall
+    #     promotion drops this below 11; a spurious inflow at a BC node raises it.
+    assert len(runoff_nodes) == 11, (
+        f"expected 11 hydrograph-producing runoff nodes, got {len(runoff_nodes)}: "
+        f"{sorted(runoff_nodes)} (non-outfall nodes: {sorted(non_outfall)}; "
+        f"outfalls skipped: {sorted(lst_outfalls)})"
+    )
+
+    # (2) the two BC-side interaction junctions carry no local runoff -> exactly
+    #     0.0. A conduit would fold upstream runoff into them (non-zero).
+    assert set(zero_nodes) == {"collector", "sewer_outflow"}, (
+        f"expected exactly {{collector, sewer_outflow}} to book zero TOTAL_INFLOW, "
+        f"got {sorted(zero_nodes)}"
+    )
+
+    # (3) every runoff node books IDENTICAL local runoff (uniform subcatchments +
+    #     conduit-free -> each node sees only its own DEM cell). VALUE-FREE:
+    #     compares nodes to one another, never to a magnitude. Added conduits
+    #     double-count downstream and break this.
+    reference = next(iter(runoff_nodes.values()))
+    for name, val in runoff_nodes.items():
+        assert val == reference, (
+            f"runoff node {name} TOTAL_INFLOW sum {val} != reference {reference}; "
+            f"local-runoff uniformity broken (a conduit folds upstream runoff "
+            f"into downstream nodes)"
+        )
+
+    # (4) SECONDARY — pins the routing choice against a silent KINWAVE->DYNWAVE
+    #     reversion. NOT primary: per master R4/A1 the per-node TOTAL_INFLOW above
+    #     is byte-identical across DW/KW, so (1)-(3) cannot see a reversion; this
+    #     is its only coverage. Continuity is NOT in the .out binary -> read .rpt.
+    with open(hydro_rpt) as f:
+        rpt_lines = f.readlines()
+    sys_out = return_swmm_system_outputs(rpt_lines)
+    assert abs(sys_out["flow_continuity_error_perc"]) < 5.0, (
+        f"hydrology-variant flow-routing continuity error "
+        f"{sys_out['flow_continuity_error_perc']}% >= 5.0% -- routing likely "
+        f"reverted to DYNWAVE on a conduit-free network (see "
+        f"swmm_template._options_df)"
+    )

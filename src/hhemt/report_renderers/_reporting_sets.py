@@ -28,9 +28,11 @@ class RuleSpecTemplate:
     literal list. Each conditional/unconditional figure renderer that the bundle
     emits carries the per-renderer facts here so BOTH the source-side builders and
     the bundle generator read category/caption/wildcards/output-path from one
-    place (closing the source-vs-bundle drift). This field is consumed ONLY by the
-    bundle generator; the source-side workflow.py dispatcher ignores it, so it is
-    a backward-compatible add (P1a entries omit it).
+    place (closing the source-vs-bundle drift). Consumed by the bundle generator
+    AND -- since the dem-resolution phase's D13 registry-read generalization -- by
+    the source-side `_build_plot_rule_block_eda_compute_sensitivity`, which iterates
+    this tuple instead of hardcoding one figure. Selections that predate that change
+    omit it, so it remains a backward-compatible add (P1a entries omit it).
 
     renderer_module      : the renderer module the bundle rule shells out to.
     output_path_template : the rule's output path (may contain `{wildcard}`s).
@@ -219,10 +221,12 @@ _TMPL_CROSS_EXPERIMENT_COMPATIBILITY = RuleSpecTemplate(
 # compute-sensitivity family. Conditional (predicate has_eda_artifact — gated on
 # the master carrying an EDA artifact). Emits the config_diff_maps figure under
 # master-rooted plots/eda/; lands under "Key Results" (Decision 1, no new sidebar
-# category). Facts mirror the source-side builder
-# (workflow.py _build_plot_rule_block_eda_compute_sensitivity); the `category`
-# here is cross-checked against that builder's report(category=) by
-# tests/test_reporting_set_cosourcing.py.
+# category). The source-side builder
+# (workflow.py _build_plot_rule_block_eda_compute_sensitivity) DERIVES its
+# report_kwargs from this template, so category parity is structural rather than
+# test-enforced. Note tests/test_reporting_set_cosourcing.py does NOT cover this
+# template: its two tests exercise the `default` and `benchmarking` sets, neither
+# of which carries the eda_compute_sensitivity selection.
 _TMPL_EDA_COMPUTE_SENSITIVITY = RuleSpecTemplate(
     rule_name="plot_eda_compute_sensitivity",
     renderer_module="eda_compute_sensitivity",
@@ -236,6 +240,76 @@ _TMPL_EDA_COMPUTE_SENSITIVITY = RuleSpecTemplate(
     wildcards=(),
     resources_yaml="mem_mb=4000, time_min=10",
     log_path_template="_logs/plots/eda_compute_sensitivity.log",
+)
+
+# dem-resolution (D13): the in-report EDA adapter for the DEM-resolution family.
+# FOUR figures under ONE RendererSelection reusing builder key
+# eda_compute_sensitivity -- the same one-selection-N-templates shape per_sim and
+# per_sim_per_sa already use. All four share renderer_module
+# "eda_compute_sensitivity" (the _cli entrypoint and the _OUTPUT_EXT_BY_RENDERER
+# key are per-MODULE, not per-figure), and differ only in plot ID, caption, label
+# and log path. Tuple order is the figures' authored reading order (cost/error
+# headline -> error distribution -> spatial diff -> coupling table); the report's
+# within-category ordering is by output basename, so this order is the EMISSION
+# order, not the display order.
+_TMPL_DEM_RESOLUTION_COST_ERROR = RuleSpecTemplate(
+    rule_name="plot_eda_dem_resolution_cost_error",
+    renderer_module="eda_compute_sensitivity",
+    output_path_template="plots/eda/dem_resolution_cost_error__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/eda_dem_resolution_cost_error.rst",
+        "category": "Key Results",
+        "subcategory": "DEM-resolution EDA",
+        "labels": '{"figure": "Cost vs error"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=4000, time_min=10",
+    log_path_template="_logs/plots/dem_resolution_cost_error.log",
+)
+
+_TMPL_DEM_RESOLUTION_ERROR_ECDF = RuleSpecTemplate(
+    rule_name="plot_eda_dem_resolution_error_ecdf",
+    renderer_module="eda_compute_sensitivity",
+    output_path_template="plots/eda/dem_resolution_error_ecdf__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/eda_dem_resolution_error_ecdf.rst",
+        "category": "Key Results",
+        "subcategory": "DEM-resolution EDA",
+        "labels": '{"figure": "Depth-error ECDF"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=4000, time_min=10",
+    log_path_template="_logs/plots/dem_resolution_error_ecdf.log",
+)
+
+_TMPL_DEM_RESOLUTION_DIFF_MAPS = RuleSpecTemplate(
+    rule_name="plot_eda_dem_resolution_diff_maps",
+    renderer_module="eda_compute_sensitivity",
+    output_path_template="plots/eda/dem_resolution_diff_maps__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/eda_dem_resolution_diff_maps.rst",
+        "category": "Key Results",
+        "subcategory": "DEM-resolution EDA",
+        "labels": '{"figure": "Depth-difference maps"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=4000, time_min=10",
+    log_path_template="_logs/plots/dem_resolution_diff_maps.log",
+)
+
+_TMPL_DEM_RESOLUTION_COUPLING_TABLE = RuleSpecTemplate(
+    rule_name="plot_eda_dem_resolution_coupling_table",
+    renderer_module="eda_compute_sensitivity",
+    output_path_template="plots/eda/dem_resolution_coupling_table__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/eda_dem_resolution_coupling_table.rst",
+        "category": "Key Results",
+        "subcategory": "DEM-resolution EDA",
+        "labels": '{"figure": "Resolution x coupling junctions"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=4000, time_min=10",
+    log_path_template="_logs/plots/dem_resolution_coupling_table.log",
 )
 
 # The standard multisim set: the six common renderers, in emission order
@@ -358,6 +432,26 @@ _COMPUTE_SENSITIVITY_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SE
     ),
 )
 
+# The dem-resolution set (D13): the benchmarking (sensitivity-master) selection
+# plus the DEM-resolution EDA family, gated on has_eda_artifact. Structurally
+# identical to _COMPUTE_SENSITIVITY_SELECTION -- same builder key, same predicate,
+# same category_order -- differing only in carrying FOUR rule_spec_templates where
+# compute-sensitivity carries one. Selected via
+# report_config.reporting_set="dem-resolution", paired with a
+# system.target_dem_resolution sweep.
+_DEM_RESOLUTION_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
+    RendererSelection(
+        "eda_compute_sensitivity",
+        predicate_key="has_eda_artifact",
+        rule_spec_template=(
+            _TMPL_DEM_RESOLUTION_COST_ERROR,
+            _TMPL_DEM_RESOLUTION_ERROR_ECDF,
+            _TMPL_DEM_RESOLUTION_DIFF_MAPS,
+            _TMPL_DEM_RESOLUTION_COUPLING_TABLE,
+        ),
+    ),
+)
+
 REPORTING_SETS: dict[str, ReportingSet] = {
     "default": ReportingSet(
         name="default",
@@ -393,6 +487,12 @@ REPORTING_SETS: dict[str, ReportingSet] = {
         renderer_selection=_COMPUTE_SENSITIVITY_SELECTION,
         validator_key="benchmarking",
     ),
+    "dem-resolution": ReportingSet(
+        name="dem-resolution",
+        category_order=_STANDARD_CATEGORY_ORDER,
+        renderer_selection=_DEM_RESOLUTION_SELECTION,
+        validator_key="benchmarking",
+    ),
 }
 
 
@@ -405,3 +505,17 @@ def get_reporting_set(name: str) -> ReportingSet:
     which receive an already-validated name.
     """
     return REPORTING_SETS[name]
+
+
+def renderer_active(builder_key: str, disabled: list[str] | None) -> bool:
+    """Return False when ``builder_key`` is disabled for this invocation.
+
+    The single source of truth for per-plot disable (report_config.disabled_renderers,
+    Phase 3). Every emission site (the workflow.py dispatcher, the bundle harvest)
+    AND every rule all / render_report input-list site calls this — a site that
+    filters emission without filtering enumeration yields MissingInputException;
+    the inverse yields an orphan rule. An unknown ``builder_key`` (a typo) never
+    matches a selection entry, so it silently drops nothing here; the run-entry
+    ``validate_active_reporting_set`` is where such a key raises ConfigurationError.
+    """
+    return builder_key not in (disabled or ())

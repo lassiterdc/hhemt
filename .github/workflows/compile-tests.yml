@@ -1,8 +1,25 @@
 # Toolchain-bearing tier: provisions the hhemt conda env (cmake + mpic++ +
-# swmm-toolkit conda-forge pin) so the compile-bearing synth render tests
-# (test_synth_04 / test_synth_05 / test_synth_eda_facade) actually RUN instead
-# of skipping. Wireable as a required main status check by the release-gate PIP
-# (ADR-7); no continue-on-error.
+# swmm-toolkit conda-forge pin) so the compile-bearing synth tests
+# (test_synth_00 compile / test_synth_01::test_hydrology_variant_local_runoff_invariant /
+# test_synth_04 / test_synth_05 / test_synth_07_reprocess /
+# test_synth_08_sensitivity_reprocess / test_synth_eda_facade) actually RUN instead
+# of skipping. The run: block below is an explicit allowlist — not a marker or glob.
+#
+# COVERAGE DEBT (measured 2026-07-21): the compile-tier fixture
+# `tritonswmm_cpu_compiled` gates 94 test functions across ~20 modules; this
+# allowlist covers 59 of them after the 07/08 addition. The remaining ~35 run in
+# NO CI job — they skip in test.yml (pip runner, no cmake/mpic++) and are not named
+# here. That is why commit fd3c7c1 landed on develop with two stale assertions and
+# all five workflows green. Widen this list in LOCALLY-VERIFIED batches: a module
+# added blind can red-line `compile-synth-render-gate`, which is a REQUIRED status
+# check on main, and block a release. Do NOT convert this to a glob — the
+# test_synth_01 node-scoping below is load-bearing (see the next paragraph).
+# test_synth_01 is node-scoped to the hydrology-continuity guard on purpose: the
+# module's full single-sim pipeline (test_run_sim/test_process_sim/...) needs
+# TRITON-only, which the tritonswmm_cpu_compiled fixture does not build (it builds
+# only TRITON-SWMM + SWMM), so running the whole module here would fail.
+# Wireable as a required main status check by the release-gate PIP (ADR-7); no
+# continue-on-error.
 name: Compile-bearing synth render-gate tier
 
 on:
@@ -109,7 +126,10 @@ jobs:
         run: |
           pytest -p no:xdist -v \
             tests/test_synth_00_compile_models.py \
+            tests/test_synth_01_singlesim.py::test_hydrology_variant_local_runoff_invariant \
             tests/test_synth_04_multisim_with_snakemake.py \
             tests/test_synth_05_sensitivity_analysis_with_snakemake.py \
+            tests/test_synth_07_reprocess.py \
+            tests/test_synth_08_sensitivity_reprocess.py \
             tests/test_synth_eda_facade.py \
             --deselect tests/test_synth_04_multisim_with_snakemake.py::test_snakemake_workflow_end_to_end
