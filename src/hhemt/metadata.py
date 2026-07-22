@@ -125,6 +125,7 @@ def build_analysis_crate(
     sif_spec,  # {@id, softwareVersion, sha256, downloadUrl} | None (native run)
     consolidated_zarr_relpath: str,  # e.g. "analysis_datatree.zarr"
     input_parts: list[dict],  # [{"@id", "sha256", "contentSize", "encodingFormat"}]
+    emitted_vars: set[str] | None = None,  # actual data_vars of the deposited store
     sub_dataset_relpaths: list[str] | None = None,  # D5: master hasPart-refs each sub Dataset (FLAT)
 ) -> ROCrate:
     crate = ROCrate()  # seeds Root Dataset (./) + Metadata descriptor
@@ -200,8 +201,18 @@ def build_analysis_crate(
             },
         )
 
+    # variableMeasured is a claim about the DEPOSITED store, so advertise only what the
+    # store contains. Iterating _CF_VARIABLE_MAP alone published every map key as a claim:
+    # measured 2026-07-21 on a real sensitivity crate, 18 advertised / 11 absent from the
+    # zarr. Passing emitted_vars=None preserves the legacy whole-map behavior for callers
+    # that cannot see the dataset; every in-tree caller passes the real set.
+    _advertised = (
+        _CF_VARIABLE_MAP.items()
+        if emitted_vars is None
+        else [(v, a) for v, a in _CF_VARIABLE_MAP.items() if v in emitted_vars]
+    )
     var_refs = []  # CF crosswalk -> variableMeasured PropertyValues
-    for var, attrs in _CF_VARIABLE_MAP.items():
+    for var, attrs in _advertised:
         pv = crate.add(
             ContextEntity(
                 crate,

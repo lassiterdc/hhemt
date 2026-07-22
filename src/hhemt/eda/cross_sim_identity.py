@@ -2,7 +2,7 @@
 
 Verifies that key results — peak flood depth (``max_wlevel_m``) and conduit
 flow / full-flow ratio / full-depth ratio (``max_flow_cms`` /
-``max_full_flow_ratio`` / ``max_full_depth_ratio``) — are bit-identical across all
+``max_over_full_flow`` / ``max_over_full_depth``) — are bit-identical across all
 sims sharing an event iloc on a SENSITIVITY MASTER (sub-analyses that vary only
 compute config must produce identical physics). Reference-anchored to the
 lexicographically-first present ``sa_id``; verdict passes iff every non-reference
@@ -32,14 +32,17 @@ from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sour
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
 
-#: The summary variables whose cross-sim identity is verified. Names are the
-#: codebase-actual cf_conventions keys (NOT ``max_over_full_flow``). The check
-#: compares whichever of these exist as data_vars in each present mode's Dataset.
+#: The summary variables whose cross-sim identity is verified. Names are the EMITTED
+#: data_var names (LST_COL_HEADERS_LINK_FLOW_SUMMARY), NOT the retired phantom
+#: cf_conventions keys max_full_flow_ratio/max_full_depth_ratio -- which were never
+#: data_vars, so the check "compares whichever exist as data_vars" silently SKIPPED
+#: the two conduit-ratio variables this check claims to verify (fixed 2026-07-21
+#: alongside the cf_conventions phantom removal).
 TRACKED_VARS: tuple[str, ...] = (
     "max_wlevel_m",
     "max_flow_cms",
-    "max_full_flow_ratio",
-    "max_full_depth_ratio",
+    "max_over_full_flow",
+    "max_over_full_depth",
 )
 
 

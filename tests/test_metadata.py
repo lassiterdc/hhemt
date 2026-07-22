@@ -119,3 +119,36 @@ def test_sidecar_compare_and_write_idempotent(tmp_path):
     mtime1 = (tmp_path / "ro-crate-metadata.json").stat().st_mtime_ns
     assert metadata.write_rocrate_sidecar(tmp_path, graph_json=g) is False
     assert (tmp_path / "ro-crate-metadata.json").stat().st_mtime_ns == mtime1
+
+
+def _advertised_var_names(crate) -> set[str]:
+    """The variable names the deposited-store Dataset advertises via variableMeasured."""
+    doc = json.loads(metadata.canonical_jsonld(crate))
+    by_id = {e["@id"]: e for e in doc["@graph"]}
+    ds = next(e for e in doc["@graph"] if e.get("encodingFormat") == "application/x-zarr")
+    return {by_id[ref["@id"]]["name"] for ref in ds.get("variableMeasured", [])}
+
+
+def test_variable_measured_advertises_only_emitted_vars():
+    # RELEASE-BLOCKING (VMS-2, 2026-07-21): variableMeasured is a claim about the
+    # DEPOSITED store, so build_analysis_crate must advertise only the variables the
+    # store actually contains. A prior whole-map iteration published every _CF_VARIABLE_MAP
+    # key as a claim (measured: 18 advertised / 11 absent on a real sensitivity crate).
+    # This guards the emitter fix directly; test_no_phantom_swmm_keys_in_cf_variable_map
+    # guards the MAP, not the emitter's filtering — the two are distinct regressions.
+    from hhemt.cf_conventions import _CF_VARIABLE_MAP
+
+    # emitted_vars=None -> legacy whole-map behavior preserved (callers that cannot see
+    # the dataset, e.g. a doc-level upgrade path, still advertise the full crosswalk).
+    whole = _advertised_var_names(_build())
+    assert whole == set(_CF_VARIABLE_MAP)
+
+    # A real emitted set advertises exactly those variables — nothing the store lacks.
+    subset = {"max_wlevel_m", "max_flow_cms"}
+    filtered = _advertised_var_names(_build(emitted_vars=subset))
+    assert filtered == subset
+    assert filtered < whole  # strictly fewer than the whole map: the over-claim is gone
+
+    # A name not present in the crosswalk is silently dropped (advertise ⊆ crosswalk ∩ emitted).
+    over = _advertised_var_names(_build(emitted_vars={"max_wlevel_m", "not_a_real_var"}))
+    assert over == {"max_wlevel_m"}

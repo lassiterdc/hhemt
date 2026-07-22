@@ -1484,11 +1484,13 @@ class TRITONSWMM_sensitivity_analysis:
         from hhemt.provenance import emit_provenance
 
         _sub_relpaths = [f"subanalyses/sa_{sa_id}/analysis_datatree.zarr" for sa_id in self.sub_analyses]
+        _emitted_vars = {str(v) for _n in tree.subtree for v in _n.dataset.data_vars}
         _core_json, _graph_json = emit_provenance(
             self.master_analysis,
             consolidated_zarr_relpath="sensitivity_datatree.zarr",
             sub_dataset_relpaths=_sub_relpaths,
             with_run_units=False,
+            emitted_vars=_emitted_vars,
         )
         apply_provenance_core(tree, core_json_str=_core_json)
 

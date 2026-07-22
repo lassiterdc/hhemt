@@ -164,3 +164,12 @@ non_breaking_allowlist:
       any future grammar/stem edit yields a different hash and re-fires Check B (preserving
       layout-relevance per _load_allowlist).
     layout_signature: "9f141e0b9fb1a5cdb255bdffba70e9803a97b33633766d04d33da24d952613ef"
+  - path: src/hhemt/cf_conventions.py
+    justification: >-
+      q8-tracked-vars-naming-divergence — _CF_VARIABLE_MAP metadata-only edit: add the
+      two EMITTED conduit-capacity names (max_over_full_flow / max_over_full_depth) and
+      delete 8 phantom keys that were emitted nowhere. Changes only per-variable .zattrs
+      values (units/long_name/cell_methods) and the crate's variableMeasured block; no
+      variable is renamed, added, or removed from any dataset, and no path, group,
+      _version.json, or datatree structure changes. Existing on-disk analyses open and
+      re-consolidate unchanged.
