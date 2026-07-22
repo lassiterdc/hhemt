@@ -785,40 +785,12 @@ class TRITONSWMM_scenario:
             )
             return
 
-        # Validate backend is available. The compilation marker depends on
-        # whether the coupled TRITONSWMM model is enabled — TRITON-only mode
-        # compiles into build_triton_cpu/ (no swmm5 target) and must not be
-        # gated on the TRITONSWMM-coupled markers.
-        is_tritonswmm = self._system.cfg_system.toggle_tritonswmm_model
-        model_label = "tritonswmm" if is_tritonswmm else "triton_only"
-        if self.backend == "gpu":
-            gpu_ok = (
-                self._system.compilation_gpu_successful
-                if is_tritonswmm
-                else self._system.compilation_triton_only_gpu_successful
-            )
-            if not gpu_ok:
-                logfile = self._system.sys_paths.compilation_logfile_gpu
-                raise CompilationError(
-                    model_type=model_label,
-                    backend="gpu",
-                    logfile=logfile if logfile else Path("missing"),
-                    return_code=1,
-                )
-
-        if self.backend == "cpu":
-            cpu_ok = (
-                self._system.compilation_cpu_successful
-                if is_tritonswmm
-                else self._system.compilation_triton_only_cpu_successful
-            )
-            if not cpu_ok:
-                raise CompilationError(
-                    model_type=model_label,
-                    backend="cpu",
-                    logfile=self._system.sys_paths.compilation_logfile_cpu,
-                    return_code=1,
-                )
+        # Validate the native backend build is available (native mode only). In
+        # container mode this is a no-op — the SIF carries the pre-built binary and
+        # setup skipped the on-cluster compile (setup_workflow.py _native_compile),
+        # so compilation_*_successful is legitimately False and the sim runs
+        # `apptainer exec {sif} {exe_in_sif}` (run_simulation.py), never a native build.
+        self._verify_native_build_or_skip_in_container()
 
         print(
             f"[Scenario {self.event_iloc}] Using {self.backend.upper()} backend",
@@ -878,6 +850,76 @@ class TRITONSWMM_scenario:
         self._generate_TRITON_SWMM_cfg()  # Coupled model CFG
         self._generate_TRITON_cfg()  # TRITON-only CFG (if enabled)
 
+        # Link native build folders into the sim (native mode only) and fail fast
+        # if a toggled model was not compiled. No-op in container mode where the sim
+        # runs `apptainer exec {sif} {exe_in_sif}` (run_simulation.py:404-422), so the
+        # per-sim native build symlink is never consumed.
+        self._link_native_builds_into_sim()
+
+        self.log.scenario_creation_complete.set(True)
+        print("Scenario preparation complete", flush=True)
+
+        return
+
+    def _verify_native_build_or_skip_in_container(self) -> None:
+        """Native mode: raise CompilationError if the backend build required by
+        self.backend is not compiled. Container mode: no-op.
+
+        Mirrors setup_workflow.py's container compile-skip (_native_compile). In
+        container mode setup skips the on-cluster compile (the SIF carries the
+        binary), so compilation_*_successful is legitimately False and the sim runs
+        `apptainer exec {sif} {exe_in_sif}` (run_simulation.py) — no native build is
+        needed, so demanding one here would be wrong.
+        """
+        if self._analysis.cfg_analysis.execution_environment == "container":
+            return
+
+        # Validate backend is available. The compilation marker depends on
+        # whether the coupled TRITONSWMM model is enabled — TRITON-only mode
+        # compiles into build_triton_cpu/ (no swmm5 target) and must not be
+        # gated on the TRITONSWMM-coupled markers.
+        is_tritonswmm = self._system.cfg_system.toggle_tritonswmm_model
+        model_label = "tritonswmm" if is_tritonswmm else "triton_only"
+        if self.backend == "gpu":
+            gpu_ok = (
+                self._system.compilation_gpu_successful
+                if is_tritonswmm
+                else self._system.compilation_triton_only_gpu_successful
+            )
+            if not gpu_ok:
+                logfile = self._system.sys_paths.compilation_logfile_gpu
+                raise CompilationError(
+                    model_type=model_label,
+                    backend="gpu",
+                    logfile=logfile if logfile else Path("missing"),
+                    return_code=1,
+                )
+
+        if self.backend == "cpu":
+            cpu_ok = (
+                self._system.compilation_cpu_successful
+                if is_tritonswmm
+                else self._system.compilation_triton_only_cpu_successful
+            )
+            if not cpu_ok:
+                raise CompilationError(
+                    model_type=model_label,
+                    backend="cpu",
+                    logfile=self._system.sys_paths.compilation_logfile_cpu,
+                    return_code=1,
+                )
+
+    def _link_native_builds_into_sim(self) -> None:
+        """Native mode: copy the compiled build folders into the sim dir,
+        failing fast if a toggled model was not compiled. Container mode: no-op.
+
+        Mirrors setup_workflow.py's container compile-skip. In container mode the
+        sim runs `apptainer exec {sif} {exe_in_sif}` (run_simulation.py:404-422), so
+        the per-sim native build symlink is never consumed.
+        """
+        if self._analysis.cfg_analysis.execution_environment == "container":
+            return
+
         # Copy build folders - FAIL FAST if toggle ON but not compiled
         # TRITON-SWMM: Check toggle and compilation status
         if self._system.cfg_system.toggle_tritonswmm_model:
@@ -914,11 +956,6 @@ class TRITONSWMM_scenario:
                     "Either compile SWMM (system.compile_SWMM()) or disable the toggle "
                     "(set toggle_swmm_model=False in system config)."
                 )
-
-        self.log.scenario_creation_complete.set(True)
-        print("Scenario preparation complete", flush=True)
-
-        return
 
     def _create_subprocess_prepare_scenario_launcher(
         self,

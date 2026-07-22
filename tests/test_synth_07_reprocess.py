@@ -189,8 +189,8 @@ def test_reprocess_proceeds_with_submitted_workers_no_orchestrator(synthetic_mul
     present but no live ``_orchestrator/`` DRIVER sentinel exists.
 
     The liveness gate must distinguish queued/running sim workers (which a
-    reprocess legitimately coexists with) from a live orchestration driver
-    (which it must refuse). A ``_submitted/`` sentinel alone must not gate.
+    reprocess legitimately coexists with) from a live-or-indeterminate orchestration
+    driver (which it must refuse). A ``_submitted/`` sentinel alone must not gate.
     """
     a = synthetic_multisim_completed_isolated
     analysis_dir = a.analysis_paths.analysis_dir

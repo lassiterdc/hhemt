@@ -231,6 +231,17 @@ class analysis_config(cfgBaseModel):
         None,
         description="SLURM partition name for simulation setup and analysis output consolidation (single node, single core processing). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
+    hpc_cpu_sim_partition: str | None = Field(
+        None,
+        description=(
+            "SLURM partition for CPU-ONLY simulation rules (currently run_swmm). When None "
+            "this resolves to hpc_setup_and_analysis_processing_partition, then to "
+            "hpc_ensemble_partition. Exists because a CPU-only sim carries no --gres, so a "
+            "GPU partition whose QOS enforces a GRES minimum rejects it at submit "
+            "(UVA Rivanna -p gpu -> `sbatch: error: QOSMinGRES`). Set this only when the "
+            "CPU sim rung needs a different partition from the setup/processing rungs."
+        ),
+    )
     # Phase-4 (4d): hpc_account, hpc_login_node, python_path RETIRED off analysis_config.
     # account -> hpc_system_config.default_account (via _resolve_account); login_node ->
     # hpc_system_config.login_node; python_path -> sys.executable fallback (no

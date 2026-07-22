@@ -22,7 +22,13 @@ from hhemt.eda._promote import (
     promote_eda_plot_to_static_config,
     register_eda_plot_in_reporting_set,
 )
-from hhemt.eda._report import config_diff_maps_figure_from_root
+from hhemt.eda._report import (
+    config_diff_maps_figure_from_root,
+    dem_resolution_cost_error_figure_from_root,
+    dem_resolution_coupling_table_figure_from_root,
+    dem_resolution_diff_maps_figure_from_root,
+    dem_resolution_error_ecdf_figure_from_root,
+)
 from hhemt.eda._result import EdaReportResult, EdaResult
 from hhemt.eda.compute_sensitivity import (
     check_cross_hardware_magnitude,
@@ -40,6 +46,10 @@ __all__ = [
     "check_rank_sensitivity",
     "check_resume_sensitivity",
     "config_diff_maps_figure_from_root",
+    "dem_resolution_coupling_table_figure_from_root",
+    "dem_resolution_cost_error_figure_from_root",
+    "dem_resolution_diff_maps_figure_from_root",
+    "dem_resolution_error_ecdf_figure_from_root",
     "load_eda_context",
     "promote_eda_plot_to_static_config",
     "register_eda_plot_in_reporting_set",

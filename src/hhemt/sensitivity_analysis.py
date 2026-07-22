@@ -28,6 +28,7 @@ from hhemt.workflow import (
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
+    from .orchestration import RunOverrides
     from .system import TRITONSWMM_system
 
 
@@ -355,16 +356,12 @@ class TRITONSWMM_sensitivity_analysis:
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        override_clear_raw: ClearRawValue | None = None,
-        override_force_rerun: ForceRerunValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
-        override_hpc_total_nodes: int | None = None,
-        override_hpc_restart_times_simulate: int | None = None,
-        override_hpc_restart_times_other: int | None = None,
+        overrides: "RunOverrides | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
@@ -397,8 +394,10 @@ class TRITONSWMM_sensitivity_analysis:
             If True, process timeseries outputs after simulations
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process
-        override_clear_raw : ClearRawValue | None
-            Runtime override for ``cfg_analysis.clear_raw`` (None reads YAML).
+        overrides : RunOverrides | None
+            Runtime override carrier (``clear_raw``, ``force_rerun``,
+            ``hpc_total_nodes``, ``hpc_restart_times_simulate/other``); ``None``
+            reads every value from the config.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -407,9 +406,6 @@ class TRITONSWMM_sensitivity_analysis:
             If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
-        override_hpc_total_nodes : int | None
-            If set, overrides `hpc_total_nodes` in the generated SBATCH script without
-            mutating the config. Only valid for `multi_sim_run_method="1_job_many_srun_tasks"`.
 
         Returns
         -------
@@ -420,10 +416,14 @@ class TRITONSWMM_sensitivity_analysis:
             - snakefile_path: Path
             - message: str
         """
+        if overrides is None:
+            from .orchestration import RunOverrides
+
+            overrides = RunOverrides()
         # Force-rerun pre-delete for direct sensitivity.submit_workflow callers.
         # Idempotent when Analysis.submit_workflow already applied it on the
         # dispatch path (matched flags would be absent by now).
-        self.master_analysis._apply_force_rerun(override_force_rerun)
+        self.master_analysis._apply_force_rerun(overrides.force_rerun)
 
         # Driver-start orchestrator-liveness sentinel (Phase 2), keyed on the
         # MASTER analysis_dir. This is the sensitivity-master submit path and
@@ -451,15 +451,12 @@ class TRITONSWMM_sensitivity_analysis:
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
-                override_clear_raw=override_clear_raw,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 wait_for_completion=wait_for_completion,
                 dry_run=dry_run,
                 verbose=verbose,
-                override_hpc_total_nodes=override_hpc_total_nodes,
-                override_hpc_restart_times_simulate=override_hpc_restart_times_simulate,
-                override_hpc_restart_times_other=override_hpc_restart_times_other,
+                overrides=overrides,
                 report_formats=report_formats,
                 extra_sbatch_args=extra_sbatch_args,
                 snakemake_diagnostics=snakemake_diagnostics,

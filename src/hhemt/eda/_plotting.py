@@ -19,6 +19,12 @@ from typing import TYPE_CHECKING
 
 import plotly.graph_objects as go
 
+from hhemt.eda._dem_resolution_plots import (
+    _render_dem_resolution_cost_error,
+    _render_dem_resolution_coupling_table,
+    _render_dem_resolution_diff_maps,
+    _render_dem_resolution_error_ecdf,
+)
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 
@@ -217,6 +223,10 @@ _EDA_RENDERERS = {
     "eda_rank_sensitivity": _render_rank_sensitivity,
     "eda_resume_sensitivity": _render_resume_sensitivity,
     "eda_cross_hardware_magnitude": _render_cross_hardware_magnitude,
+    "dem_resolution_cost_error": _render_dem_resolution_cost_error,
+    "dem_resolution_diff_maps": _render_dem_resolution_diff_maps,
+    "dem_resolution_error_ecdf": _render_dem_resolution_error_ecdf,
+    "dem_resolution_coupling_table": _render_dem_resolution_coupling_table,
 }
 
 #: renderer-kind -> the on-disk eda/{stem}.zarr the kind's CALC member actually writes.

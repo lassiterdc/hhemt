@@ -7,6 +7,8 @@ Task-oriented recipes for getting specific jobs done with the toolkit.
   for your cluster.
 - [Config filling](config-filling.md) — fill the system and analysis config
   YAMLs.
+- [Running an experiment bundle](running-an-experiment-bundle.md) — run a
+  self-describing `experiment.yaml` bundle with `hhemt run-experiment`.
 - [In-flight operations](in-flight-operations.md) — monitor, resume, and
   manage a running analysis.
 - [Forcing and suppressing re-runs](forcing-reruns.md) — take control of what

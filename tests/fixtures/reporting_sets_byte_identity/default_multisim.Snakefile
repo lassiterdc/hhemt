@@ -300,7 +300,6 @@ rule consolidate_scenario:
         flag="_status/f_consolidate_scenario_evt-{event_id}_complete.flag",
         du_sentinel="sims/{event_id}/_status/_du.json",
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
-    group: "process_evt_{event_id}"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -357,8 +356,8 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/cba1103fcbb013fa/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/cba1103fcbb013fa/boundary.geojson``\n',
+        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson', 'variables': []}],
+        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson``\n',
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
@@ -381,7 +380,7 @@ def _per_sim_flood_depth_sources(wildcards):
         rainfall_datavar='RG_synth',
         storm_tide_datavar='water_level',
         dem_rel_path='../elevation_10.00m.dem',
-        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/cba1103fcbb013fa/watershed.geojson',
+        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson',
     )
 
 def _per_sim_conduit_flow_sources(wildcards):
@@ -394,7 +393,7 @@ def _per_sim_conduit_flow_sources(wildcards):
         rainfall_datavar='RG_synth',
         storm_tide_datavar='water_level',
         dem_rel_path='../elevation_10.00m.dem',
-        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/cba1103fcbb013fa/watershed.geojson',
+        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson',
     )
 
 rule plot_per_sim_peak_flood_depth:

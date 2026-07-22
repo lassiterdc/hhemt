@@ -110,11 +110,14 @@ non_breaking_allowlist:
       allowlist row the fnmatch glob bug had hidden.
   - path: src/hhemt/config/analysis.py
     justification: >-
-      Two collapsed non-breaking changes (former duplicate entries). containerization
+      Three collapsed non-breaking changes (former duplicate entries). containerization
       ADR-1 — additive execution_environment selector. AND resume-retry-resilience P1 —
-      retire hpc_restart_times for hpc_restart_times_simulate/_other. Both config-schema
-      only; not sensitivity-overlay columns; do not reach the per-sa input fingerprint;
-      no on-disk layout change.
+      retire hpc_restart_times for hpc_restart_times_simulate/_other. AND the additive
+      optional hpc_cpu_sim_partition selector (CPU-only sim rules; resolves to
+      hpc_setup_and_analysis_processing_partition then hpc_ensemble_partition when
+      unset, so it is a no-op for every existing config). All config-schema only; not
+      sensitivity-overlay columns; do not reach the per-sa input fingerprint; no
+      on-disk layout change.
   - path: src/hhemt/config/invalidating_fixes.py
     justification: >-
       reproducibility-system_version-provenance-and-recompute Phase 3 (ADR-17) — new
@@ -173,3 +176,9 @@ non_breaking_allowlist:
       variable is renamed, added, or removed from any dataset, and no path, group,
       _version.json, or datatree structure changes. Existing on-disk analyses open and
       re-consolidate unchanged.
+  - path: src/hhemt/config/experiment_bundle.py
+    justification: >
+      Input-schema module only (the estate's experiment.yaml descriptor). Adds no
+      on-disk analysis-tree layout and no consolidated-output field; nothing under
+      analysis_dir/ changes shape. Same class as case_manifest.py / reprex_config.py /
+      reprex_taxonomy.py.

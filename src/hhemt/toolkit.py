@@ -73,14 +73,6 @@ class Toolkit:
 
         >>> # Process events 0-4 only
         >>> result = tk.run(mode="resume", events=list(range(5)))
-
-        Run specific workflow phases:
-
-        >>> # Only run simulation phase (skip setup/preparation)
-        >>> result = tk.run(
-        ...     mode="resume",
-        ...     phases=["simulation"]
-        ... )
     """
 
     def __init__(self, system: "TRITONSWMM_system"):
@@ -234,12 +226,12 @@ class Toolkit:
     def run(
         self,
         mode: Literal["fresh", "resume", "overwrite"] = "resume",
-        phases: list[str] | None = None,
         events: list[int] | None = None,
         dry_run: bool = False,
         verbose: bool = True,
         report_config: Path | None = None,
         override_force_rerun=None,
+        wait_for_completion: bool | None = None,
     ) -> WorkflowResult:
         """Run TRITON-SWMM workflow.
 
@@ -256,9 +248,6 @@ class Toolkit:
                 - "fresh": Start from scratch, overwrite all outputs
                 - "resume": Resume from last checkpoint (default)
                 - "overwrite": Rerun existing scenarios without full reset
-            phases: Optional list of phases to run. If None, runs all phases.
-                Valid phases: ["setup", "preparation", "simulation",
-                              "processing", "consolidation"]
             events: Optional list of event indices to process. If None,
                 processes all events in the analysis.
             dry_run: If True, print workflow plan without executing
@@ -301,14 +290,6 @@ class Toolkit:
             >>> # Process only hurricane Irene and Sandy
             >>> result = tk.run(mode="resume", events=[5, 12])
 
-            Run only simulation phase:
-
-            >>> # Skip setup/preparation, just run simulations
-            >>> result = tk.run(
-            ...     mode="resume",
-            ...     phases=["simulation"]
-            ... )
-
             Dry run (preview without executing):
 
             >>> result = tk.run(mode="fresh", dry_run=True)
@@ -322,16 +303,24 @@ class Toolkit:
         # Auto-detect execution mode
         execution_mode = self._detect_execution_mode()
 
+        # Map the public ``mode`` knob to ``analysis.run()``'s ``from_scratch`` flag.
+        # ``analysis.run()`` accepts neither ``mode`` nor ``phases`` (Gotcha 8):
+        # "fresh" starts from scratch; "resume"/"overwrite" resume from checkpoint.
+        from_scratch = mode == "fresh"
+
         # Delegate to analysis.run()
+        # wait_for_completion=None preserves analysis.run()'s own default
+        # (wait = exec_mode != "slurm"); an explicit bool overrides it. run_experiment()
+        # passes an explicit value so a batch_job hosted inside an sbatch blocks.
         return self.analysis.run(
-            mode=mode,
-            phases=phases,
+            from_scratch=from_scratch,
             events=events,
             execution_mode=execution_mode,
             dry_run=dry_run,
             verbose=verbose,
             report_config=report_config,
             override_force_rerun=override_force_rerun,
+            wait_for_job_completion=wait_for_completion,
         )
 
     def get_status(self) -> WorkflowStatus:
