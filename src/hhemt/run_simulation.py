@@ -404,6 +404,19 @@ class TRITONSWMM_run:
         cspec = resolve_container_spec(self._analysis.cfg_hpc_system)
         if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
             exe_in_sif = cspec.exe_in_sif.get(model_type) or f"/opt/hhemt/bin/{_DEFAULT_EXE_NAME[model_type]}"
+            # Per-arch SIF resolution (multi-SIF cross-hardware, Option A): resolve THIS
+            # row's arch (gpu_hardware) from its (sub-analysis) partition and pick the
+            # matching SIF; fall back to sif_path when no map entry (single-SIF/CPU,
+            # byte-identical to before). Key is gpu_hardware ("a100"/"a6000") — the same
+            # namespace resolve_gpu_target[0] returns and sif_paths_by_arch is keyed on.
+            from hhemt.config.hpc_system import resolve_gpu_target
+
+            _row_hw, _ = resolve_gpu_target(
+                self._analysis.cfg_hpc_system,
+                self._analysis.cfg_analysis.hpc_ensemble_partition,
+            )
+            _sim_sif = cspec.sif_paths_by_arch.get(_row_hw) if _row_hw else None
+            _sif = _sim_sif or cspec.sif_path
             _gpu = f"{cspec.gpu_flag} " if (run_mode == "gpu" and cspec.gpu_flag) else ""
             _extra = (" ".join(cspec.extra_exec_args) + " ") if cspec.extra_exec_args else ""
             # Container Change 2 (ROOT CAUSE of zero-output): TRITON derives its output
@@ -434,7 +447,7 @@ class TRITONSWMM_run:
                 )
                 _proj_dir = "/".join(exe_in_sif.split("/")[:-2])  # two-up from in-SIF exe = TRITON project_dir
                 _out_bind = f"-B {_host_out}:{_proj_dir}/{_host_out.name} "
-            exe = f"apptainer exec {_gpu}{_extra}{_out_bind}{cspec.sif_path} {exe_in_sif}"
+            exe = f"apptainer exec {_gpu}{_extra}{_out_bind}{_sif} {exe_in_sif}"
             # `exe` now expands inside launch_cmd_str's `{exe} {cfg}` as
             #   srun … apptainer exec --rocm -B {host_out}:/opt/hhemt/out_tritonswmm {sif} {exe} {cfg}
 
@@ -848,24 +861,25 @@ class TRITONSWMM_run:
                     # whole-node parent would otherwise over-expand --ntasks-per-gpu
                     # to the full node GPU count, so clamp with explicit --ntasks.
                     ntasks_flag = f"--ntasks={n_gpus} "
-                elif n_nodes_per_sim >= 2 and multi_sim_run_method != "1_job_many_srun_tasks":
-                    # UVA gres mode, MULTI-NODE under the Snakemake slurm executor
-                    # (per-rule jobstep). Here the per-rule sbatch is generated via the
-                    # executor's mpi+tasks path (mpi=True, tasks=N, tasks_per_gpu=0), so
-                    # it carries an explicit --ntasks=N and SUPPRESSES --ntasks-per-gpu.
-                    # In the jobstep the step GPU tres is non-authoritative
-                    # (SLURM_GPUS/ON_NODE/JOB_GPUS unset) and the per-node sbatch --gres
-                    # does NOT flow into a multi-node srun step, so an inner
-                    # --ntasks-per-gpu=1 fails: "_handle_ntasks_per_tres_step:
-                    # ntasks_per_tres was specified, but there was ... no GPU
-                    # specification". Because the parent carries NO --ntasks-per-gpu here,
-                    # SLURM_NTASKS_PER_GPU is NOT inherited, so --gpus-per-task=1 does NOT
+                elif n_gpus >= 2 and multi_sim_run_method != "1_job_many_srun_tasks":
+                    # UVA gres mode, MULTI-GPU (n_gpus>=2, single- OR multi-node) under
+                    # the Snakemake slurm executor (per-rule jobstep). The per-rule sbatch
+                    # is Gotcha-32-routed (gres_multi_gpu = gpus_total>=2 -> mpi=True,
+                    # tasks=N, tasks_per_gpu=0), so it carries an explicit --ntasks=N and
+                    # SUPPRESSES --ntasks-per-gpu. Keyed on n_gpus (NOT node count) because
+                    # that routing is node-count-agnostic: a single-node strict-subset
+                    # multi-GPU sim (g2: n_gpus=2, n_nodes=1) hits the identical
+                    # unset-SLURM_GPUS* + no-inherited-ntasks-per-gpu state, so an inner
+                    # --ntasks-per-gpu=1 fails "_handle_ntasks_per_tres_step: ntasks_per_tres
+                    # was specified, but there was ... no GPU specification". Because the
+                    # parent carries NO --ntasks-per-gpu here, --gpus-per-task=1 does NOT
                     # conflict (unlike the single-node else below) — mirror the Frontier
                     # gpus form: explicit --ntasks + explicit per-rank GPU binding.
-                    # Empirically surfaced on UVA gpu-a100 2-node (2026-07-01, job
-                    # 16708076). Single-node gres, 1_job_many_srun_tasks, and the local
-                    # in-allocation path keep the --ntasks-per-gpu=1 form below (the
-                    # 2026-05-23 collision constraint is still binding there — their
+                    # Surfaced on UVA gpu-a100/a6000 g2 by the [Q8] cross-hardware run
+                    # (2026-07-18); the multi-node case (2026-07-01, job 16708076) is the
+                    # same root cause. Single-node 1-GPU gres, 1_job_many_srun_tasks, and
+                    # the local in-allocation path keep the --ntasks-per-gpu=1 form below
+                    # (the 2026-05-23 collision constraint is still binding there — their
                     # parent carries --ntasks-per-gpu).
                     gpu_bind_flag = "--gpus-per-task=1 "
                     ntasks_flag = f"--ntasks={n_gpus} "

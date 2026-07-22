@@ -316,3 +316,45 @@ def test_gpu_preflight_skips_when_no_gpu_vars(capsys):
                 result = run.prepare_simulation_command(pickup_where_leftoff=False, verbose=False)
     assert result is not None
     assert "[GPU-PREFLIGHT]" in capsys.readouterr().out
+
+
+def test_gres_mode_multi_gpu_local_uses_gpus_per_task(monkeypatch):
+    """[Q8] Mode A (g2): gres-mode single-node MULTI-GPU (n_gpus>=2) under the
+    per-rule Snakemake slurm executor (multi_sim_run_method='local') must emit
+    --gpus-per-task=1 + explicit --ntasks=N, NOT --ntasks-per-gpu=1. The outer
+    per-rule sbatch is Gotcha-32-routed (mpi+tasks, tasks_per_gpu=0) -> SUPPRESSES
+    --ntasks-per-gpu; an inner --ntasks-per-gpu=1 then fails
+    _handle_ntasks_per_tres_step ('no GPU specification')."""
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)  # skip the GPU/CPU preflight
+    run = _make_run(
+        "gpu",
+        n_gpus=2,
+        n_omp_threads=1,
+        in_slurm=True,
+        multi_sim_run_method="local",
+        gpu_alloc_mode="gres",
+    )
+    full_cmd = _get_launch_cmd(run)
+    assert "--gpus-per-task=1" in full_cmd
+    assert "--ntasks=2" in full_cmd
+    assert "--ntasks-per-gpu" not in full_cmd
+
+
+def test_gres_mode_single_gpu_local_keeps_ntasks_per_gpu(monkeypatch):
+    """[Q8] Mode A regression guard (FQ4): the 1-GPU (g1) gres case -- which
+    SUCCEEDS on the live run -- must stay on --ntasks-per-gpu=1 with NO explicit
+    --ntasks (its outer sbatch is single-GPU, NOT gres_multi_gpu, and carries
+    --ntasks-per-gpu=1). n_gpus<2 keeps it in the else branch."""
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+    run = _make_run(
+        "gpu",
+        n_gpus=1,
+        n_omp_threads=1,
+        in_slurm=True,
+        multi_sim_run_method="local",
+        gpu_alloc_mode="gres",
+    )
+    full_cmd = _get_launch_cmd(run)
+    assert "--ntasks-per-gpu=1" in full_cmd
+    assert "--gpus-per-task" not in full_cmd
+    assert "--ntasks=" not in full_cmd  # '--ntasks-per-gpu=1' is not a '--ntasks=' match

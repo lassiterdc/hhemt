@@ -21,17 +21,17 @@ pip install -e .
 
 ## 2. Get the Norfolk example data
 
-The example uses the Norfolk, VA coastal-flooding case study. You do not download it by hand — the data is fetched automatically the first time you call `NorfolkIreneExample.load()` in the next step. The public Norfolk case study downloads anonymously — **no HydroShare account is needed** (the download tries anonymous retrieval first).
+The example uses the Norfolk, VA coastal-flooding case study. You do not download it by hand — the data is fetched automatically the first time you call `NorfolkIreneExperiment.load()` in the next step. The public Norfolk case study downloads anonymously — **no HydroShare account is needed** (the download tries anonymous retrieval first).
 
 ## 3. Run from an interactive Python session
 
 ```python
-from hhemt.examples import NorfolkIreneExample
-norfolk = NorfolkIreneExample.load()          # anonymous Hydroshare download; builds system + analysis
+from hhemt.experiments import NorfolkIreneExperiment
+norfolk = NorfolkIreneExperiment.load()       # anonymous Hydroshare download; builds system + analysis
 result = norfolk.analysis.run(from_scratch=False, execution_mode="auto")
 ```
 
-`NorfolkIreneExample.load()` downloads the case data (once), builds the system and analysis objects, and hands you back an example whose `.analysis` is the orchestrator. `run(from_scratch=False)` resumes any completed work rather than rebuilding from scratch, and `execution_mode="auto"` detects whether you are in a SLURM allocation or on a local machine.
+`NorfolkIreneExperiment.load()` downloads the case data (once), builds the system and analysis objects, and hands you back an experiment whose `.analysis` is the orchestrator. `run(from_scratch=False)` resumes any completed work rather than rebuilding from scratch, and `execution_mode="auto"` detects whether you are in a SLURM allocation or on a local machine.
 
 !!! warning "Use `analysis.run()` directly"
     Call `norfolk.analysis.run(...)` — NOT `norfolk.run(...)`/`Toolkit.run(mode=...)`. The `Toolkit.run()` facade is not wired for the first release; `analysis.run()` is the working interactive entry point.

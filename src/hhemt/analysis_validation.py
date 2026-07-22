@@ -78,7 +78,20 @@ class ValidationReport:
 
 
 def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
-    """System-level: compilation success for enabled models + DEM/Mannings present."""
+    """System-level: compilation success for enabled models + DEM/Mannings present.
+
+    ADR-1/M-7 (defect-11): the three HOST-compilation assertions are gated on
+    ``_native_build``. In container mode no on-cluster compile occurs by design
+    (``setup_workflow.py`` skips it -- the SIF carries the binary), so asserting host
+    compilation would be asserting a property that is definitionally false. What the
+    triad certified in native mode ("a runnable binary exists") is certified MORE
+    strongly downstream in container mode: the sim rung actually executes the binary
+    out of the SIF, and ``check_scenarios_run`` / ``check_timeseries_processed`` /
+    ``check_analysis_summaries_created`` all fail if it did not. The DEM/Mannings half
+    below stays UNCONDITIONAL -- those artifacts are produced on the host in BOTH modes
+    (``process_system_level_inputs`` runs in container mode too) and nothing downstream
+    re-certifies them, so gating them would genuinely weaken this check.
+    """
     cfg_sys = analysis._system.cfg_system
     issues: list[dict] = []
     sys = analysis._system

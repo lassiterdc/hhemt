@@ -140,6 +140,19 @@ non_breaking_allowlist:
       ONLY the current file content; any future grammar/stem edit yields a different
       hash and re-fires Check B (preserving layout-relevance per _load_allowlist).
     layout_signature: "849fd071bb7f9fb70cd935a3920c189cc42e5c5991463c8b7883865f49b0688c"
+  - path: src/hhemt/cf_conventions.py
+    justification: >-
+      q8-tracked-vars-naming-divergence — _CF_VARIABLE_MAP metadata-only edit: add the
+      two EMITTED conduit-capacity names (max_over_full_flow / max_over_full_depth) and
+      delete 8 phantom keys that were emitted nowhere. Changes only per-variable .zattrs
+      values (units/long_name/cell_methods) and the crate's variableMeasured block; no
+      variable is renamed, added, or removed from any dataset, and no path, group,
+      _version.json, or datatree structure changes. Existing on-disk analyses open and
+      re-consolidate unchanged. CHANGE-SCOPED via layout_signature: this exemption covers
+      ONLY the current file content; cf_conventions.py also carries apply_grid_mapping /
+      apply_provenance_core, whose future edits could be layout-bearing, so any content
+      drift re-fires Check B rather than inheriting a path-permanent pass.
+    layout_signature: "5d987e2a3b81db9a27ba577199504add7e810fdb807fb7239df74fef65bf5662"
   - path: src/hhemt/config/experiment_bundle.py
     justification: >
       Input-schema module only (the estate's experiment.yaml descriptor). Adds no

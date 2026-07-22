@@ -34,10 +34,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import pytest  # noqa: E402
 from fixtures.test_case_catalog import Local_TestCases  # noqa: E402
 from test_srun_command_construction import _get_launch_cmd, _make_run  # noqa: E402
 
 from hhemt.config.hpc_system import ContainerSpec, system_directory_bind  # noqa: E402
+from hhemt.exceptions import ConfigurationError  # noqa: E402
+from hhemt.scenario import TRITONSWMM_scenario  # noqa: E402
 from hhemt.workflow import SnakemakeWorkflowBuilder  # noqa: E402
 
 # The Norfolk LOCAL test cases are byte-identity-neutral with this config (all
@@ -646,3 +649,55 @@ def test_only_allowlisted_rules_declare_a_snakemake_group() -> None:
         "dispatched on a real cluster (see the allowlist docstring). If this is "
         "intentional, add it to the allowlist AND re-validate on a real cluster."
     )
+
+
+def test_native_absent_cpu_build_log_raises_configuration_not_compilation(
+    monkeypatch,
+):
+    """Anchor F: an ABSENT CPU compilation log is a CONFIGURATION problem, not a
+    compile failure.
+
+    Coverage rationale (main-agent apply-time addition, not in the VMS). Anchor F
+    branches the native CPU raise on log existence, but the shared Norfolk fixture
+    carries a real ``compilation.log``, so the sibling test above provably takes the
+    CompilationError arm -- measured, not assumed. Without this test Anchor F's new
+    ConfigurationError branch would ship with zero coverage.
+
+    Why the distinction is load-bearing rather than cosmetic: every prep-rung raise
+    site passes the hardcoded literal ``return_code=1`` even though no process ran,
+    and ``compilation_logfile_cpu`` is a DERIVED path -- so the old message told the
+    operator to ``cat`` a file that never existed. That cost real diagnostic time
+    when defect-10 first surfaced. The two arms also carry different CLI exit codes
+    (config 2 vs compile 3), so this is an exit-contract assertion, not a wording one.
+    """
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    scen = TRITONSWMM_scenario(event_iloc=0, analysis=tc.analysis)
+
+    monkeypatch.setattr(
+        type(scen._system),
+        "compilation_cpu_successful",
+        property(lambda self: False),
+        raising=True,
+    )
+    # sys_paths is a plain @dataclass (paths.py:22-40), so the instance attribute is
+    # settable; point it at a path that provably does not exist.
+    monkeypatch.setattr(
+        scen._system.sys_paths,
+        "compilation_logfile_cpu",
+        Path("/nonexistent/hhemt-anchor-f/compilation.log"),
+        raising=True,
+    )
+
+    scen.log.scenario_creation_complete.set(False)
+    tc.analysis.cfg_analysis.execution_environment = "native"
+    with pytest.raises(ConfigurationError) as excinfo:
+        scen.prepare_scenario(overwrite_scenario_if_already_set_up=True)
+
+    msg = str(excinfo.value)
+    assert "does not exist" in msg, msg
+    assert "not a compile" in msg, msg
+

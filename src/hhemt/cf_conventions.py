@@ -75,42 +75,6 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
         "units": "10^6 L",
         "cell_methods": "time: sum",
     },
-    "max_depth_m": {
-        "standard_name": None,
-        "long_name": "Maximum node depth",
-        "units": "m",
-        "cell_methods": "time: maximum",
-    },
-    "max_hgl_m": {
-        "standard_name": None,
-        "long_name": "Maximum hydraulic grade line elevation",
-        "units": "m",
-        "cell_methods": "time: maximum",
-    },
-    "max_lat_inflow_cms": {
-        "standard_name": None,
-        "long_name": "Maximum lateral inflow",
-        "units": "m3 s-1",
-        "cell_methods": "time: maximum",
-    },
-    "max_tot_inflow_cms": {
-        "standard_name": None,
-        "long_name": "Maximum total inflow",
-        "units": "m3 s-1",
-        "cell_methods": "time: maximum",
-    },
-    "flood_vol_10e6_ltr": {
-        "standard_name": None,
-        "long_name": "Flood volume",
-        "units": "10^6 L",
-        "cell_methods": "time: sum",
-    },
-    "max_flood_cms": {
-        "standard_name": None,
-        "long_name": "Maximum flooding rate",
-        "units": "m3 s-1",
-        "cell_methods": "time: maximum",
-    },
     # SWMM link summary variables
     "max_flow_cms": {
         "standard_name": None,
@@ -118,13 +82,27 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
         "units": "m3 s-1",
         "cell_methods": "time: maximum",
     },
-    "max_full_flow_ratio": {
+    # EMITTED names -- constants.LST_COL_HEADERS_LINK_FLOW_SUMMARY, consumed live by
+    # per_sim_conduit_flow.py:120,555. A key here is NOT inert: metadata.py:204 iterates
+    # this whole map to emit `variableMeasured` PropertyValues on the DEPOSITED zarr's
+    # Dataset node, so an entry naming a variable the pipeline does not emit is published
+    # as a false claim about the data. Ground every new key against `list(ds.data_vars)`
+    # of a real summary zarr -- never against a plausible-looking name.
+    #
+    # Removed 2026-07-21: `max_full_flow_ratio` / `max_full_depth_ratio`, plus the SWMM
+    # node-tier `max_lat_inflow_cms` / `max_tot_inflow_cms` / `flood_vol_10e6_ltr` /
+    # `max_flood_cms` / `max_depth_m` / `max_hgl_m`. All 8 were introduced by b5e56c9 (the
+    # CF-conventions commit) into this file ONLY and were emitted NOWHERE -- guessed names,
+    # not an unfinished rename (`git log -S` shows no producer for any of them at any
+    # commit). A real crate measured before removal advertised 18 variables of which 11
+    # were absent from the deposited zarr.
+    "max_over_full_flow": {
         "standard_name": None,
         "long_name": "Maximum flow-to-full-flow ratio",
         "units": "1",
         "cell_methods": "time: maximum",
     },
-    "max_full_depth_ratio": {
+    "max_over_full_depth": {
         "standard_name": None,
         "long_name": "Maximum depth-to-full-depth ratio",
         "units": "1",

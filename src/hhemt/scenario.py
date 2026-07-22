@@ -911,10 +911,32 @@ class TRITONSWMM_scenario:
                 else self._system.compilation_triton_only_cpu_successful
             )
             if not cpu_ok:
+                # defect-10: distinguish "never built" from "built and failed".
+                # Every prep-rung call site passes the hardcoded literal
+                # return_code=1 even though no process ran, and
+                # compilation_logfile_cpu is a DERIVED path, so the plain
+                # CompilationError message instructs `cat` on a file that may never
+                # have existed. An absent log means the build was never performed,
+                # which is a configuration problem (CLI exit 2), not a compile
+                # failure (exit 3).
+                _log = self._system.sys_paths.compilation_logfile_cpu
+                if _log is None or not _log.exists():
+                    raise ConfigurationError(
+                        field="TRITONSWMM_software_directory",
+                        message=(
+                            f"No {model_label} CPU build is present: expected a "
+                            f"compilation log at {_log}, which does not exist. No "
+                            "build was attempted here (this is not a compile "
+                            "failure). Run the setup phase to compile, or set "
+                            "execution_environment='container' if the binary is "
+                            "supplied by a SIF."
+                        ),
+                        config_path=self._system.system_config_yaml,
+                    )
                 raise CompilationError(
                     model_type=model_label,
                     backend="cpu",
-                    logfile=self._system.sys_paths.compilation_logfile_cpu,
+                    logfile=_log,
                     return_code=1,
                 )
 

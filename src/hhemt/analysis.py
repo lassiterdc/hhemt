@@ -231,7 +231,7 @@ class TRITONSWMM_analysis:
         self.cfg_analysis = cfg_analysis
         # Settable CaseManifest accessor (C6/ADR-11). Default None keeps the
         # provenance.py graceful-absent stand-in (_resolve_case_manifest); a pure
-        # no-op today. Populate wiring (examples.py::from_case_study) is deferred to
+        # no-op today. Populate wiring (experiments.py::from_case_study) is deferred to
         # a follow-up — it flips the embedded core and needs a golden regen.
         # Quotes are required (no `from __future__ import annotations` in this module —
         # the instance-attr annotation is runtime-evaluated; CaseManifest is TYPE_CHECKING-only).
@@ -784,6 +784,7 @@ class TRITONSWMM_analysis:
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,
+        container_defs: "list[Path] | None" = None,
     ) -> "Path":
         """Emit a portable render bundle for local renderer iteration.
 
@@ -802,15 +803,24 @@ class TRITONSWMM_analysis:
         Returns:
             Path to the emitted bundle zip.
 
+        Args:
+            container_defs: ADR-19 (multi-SIF) — one Apptainer .def per distinct arch to
+                carry. Required (repeatable) for a container-mode analysis (nothing in the
+                config names one); ignored for native.
+
         Raises:
             FileNotFoundError: If render_report() has not been invoked
                 on this analysis (no *.manifest.json sidecars exist).
         """
         from hhemt.bundle import emit_bundle
 
-        return emit_bundle(self, output_path)
+        return emit_bundle(self, output_path, container_defs=container_defs)
 
-    def reprex_bundle(self, output_path: "Path | None" = None) -> "Path":
+    def reprex_bundle(
+        self,
+        output_path: "Path | None" = None,
+        container_defs: "list[Path] | None" = None,
+    ) -> "Path":
         """Emit a reprex-ready Workflow-Run-Crate bundle and return its extracted
         directory root (ADR-10, D3).
 
@@ -822,13 +832,20 @@ class TRITONSWMM_analysis:
         zero-user-info gate is deferred to the emit-hardening follow-up (its
         prerequisite); ``Bundle.reprex()`` runs a consume-side informational scan.
 
+        Args:
+            container_defs: ADR-19 (multi-SIF) — one Apptainer .def per distinct arch to
+                carry. Required (repeatable) for a container-mode analysis (nothing in the
+                config names one); ignored for native.
+
         Returns:
             Path to the extracted reprex-bundle directory.
         """
         from hhemt.bundle import emit_bundle
         from hhemt.bundle._reprex import extract_reprex_bundle
 
-        return extract_reprex_bundle(emit_bundle(self, output_path))
+        return extract_reprex_bundle(
+            emit_bundle(self, output_path, container_defs=container_defs)
+        )
 
     def publish(
         self,
@@ -853,6 +870,55 @@ class TRITONSWMM_analysis:
         return publish_analysis(
             self,
             target=target,
+            override_dataset_license=override_dataset_license,
+            software_doi=software_doi,
+        )
+
+    def publish_reprex_bundle(
+        self,
+        target: "Literal['hydroshare', 'zenodo']",
+        *,
+        exclude_config: "Path | None" = None,
+        override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
+        software_doi: "str | None" = None,
+        container_defs: "list[Path] | None" = None,
+    ) -> dict:
+        """Deposit the RUNNABLE reprex bundle to a DOI-minting repository (D6, R5).
+
+        The publish<->ingest symmetry: this is the emit half of the DOI round-trip whose
+        consume half is ``TRITON_SWMM_experiment.from_doi``. Where ``publish()`` deposits the
+        ADR-11 analysis_dir DATA set (a citation/reuse DOI with no reconstitution path), this
+        deposits the reprex bundle — the only artifact whose crate carries a ``mainEntity``
+        ComputationalWorkflow and for which ``reconstitute_runnable_config`` exists.
+
+        Opt-in only — NEVER invoked from ``run()``/``submit_workflow()`` (per the
+        ``publish is a standalone opt-in facade`` stipulation).
+
+        The bundle is deposited as the ZIP ``emit_bundle`` wrote — NOT via
+        ``reprex_bundle()``, which returns the EXTRACTED DIRECTORY (a re-zip would produce a
+        nested root that the ingest side's ``Bundle.from_directory`` rejects).
+
+        Args:
+            exclude_config: The ADR-20 governed opt-out — a path to an operator-authored
+                exclude-config YAML. Omit it and the deposited bundle is SELF-CONTAINED:
+                every cfg-declared input is carried, so a consumer can run it from scratch.
+                Supply it and the named inputs are carried BY REFERENCE instead (an
+                ``input_deposit`` block + a URL-bearing crate ``File`` part). See
+                ``hhemt bundle --list-excludable`` for the menu, and note the ordering
+                constraint: the excluded input must ALREADY have a durable record.
+            container_defs: ADR-19 (multi-SIF) — one Apptainer ``.def`` per distinct arch
+                in the experiment matrix; threaded to ``emit_bundle`` so a CONTAINER-mode
+                analysis can be deposited (its container branch fail-closes without them).
+                Omit for a native-mode bundle.
+        """
+        from hhemt.bundle import emit_bundle
+        from hhemt.publishing import publish_analysis
+
+        bundle_zip = emit_bundle(self, exclude_config=exclude_config, container_defs=container_defs)
+        return publish_analysis(
+            self,
+            target=target,
+            deposit_source=bundle_zip,
             override_dataset_license=override_dataset_license,
             software_doi=software_doi,
         )
@@ -2674,6 +2740,31 @@ class TRITONSWMM_analysis:
             # the {group_id}-suffixed name keeps multiple groups from colliding.
             short_weather = test_root / f"_test_weather_{group_id}.nc"
             wx_short.to_netcdf(short_weather, engine="h5netcdf")
+            # The reference sub is toggle_sensitivity_analysis=False (line below),
+            # so it is definitionally NOT a sensitivity analysis. base_cfg is a
+            # sub-analysis cfg that inherited the master's report block wholesale
+            # (report.reporting_set + report.sensitivity benchmarking block). Left
+            # un-scoped, at the reference sub's run() entry validate_active_reporting_set
+            # -> validate_sensitivity_independent_vars (config/report.py:924-932) raises
+            # ConfigurationError ("report_config.sensitivity is set but the analysis is
+            # not a sensitivity analysis") whenever the master's reporting_set names a
+            # benchmarking-validator set ("benchmarking" / "compute-sensitivity"),
+            # because the reference's sa_csv resolves to None (analysis.py:2231). Scope
+            # the report block to the non-sensitivity default: null the benchmarking
+            # sensitivity: sub-block (report_config.sensitivity is Optional and is
+            # "ignored for main analyses" per its field doc, config/report.py:872-874)
+            # and reset reporting_set to the "default" sentinel, which resolves to the
+            # standard non-sensitivity set at the sub's run()-entry so the reference
+            # renders the standard report instead of selecting benchmarking renderers
+            # with no sub-analyses. Every other report field (interactive / per_sim /
+            # brand_theme / ...) is inherited unchanged. This is a config fix at the
+            # SOURCE, not a validator carve-out: the sensitivity-config<->sensitivity-
+            # analysis guard stays fully intact for genuine (mis)configured analyses.
+            scoped_report = {
+                **base_cfg.report.model_dump(),
+                "sensitivity": None,
+                "reporting_set": "default",
+            }
             overlay = {
                 "analysis_id": f"{self.cfg_analysis.analysis_id}_test_{group_id}",
                 "toggle_sensitivity_analysis": False,
@@ -2682,6 +2773,7 @@ class TRITONSWMM_analysis:
                 "master_analysis_cfg_yaml": str(self.analysis_config_yaml),
                 "weather_timeseries": str(short_weather),  # short weather survives the YAML reload
                 "TRITON_reporting_timestep_s": reporting_timestep_s,
+                "report": scoped_report,
             }
             cfg_a = analysis_config.model_validate({**base_cfg.model_dump(), **overlay})
             # The sub runs with from_scratch=True (test(), below), which fast_rmtree's

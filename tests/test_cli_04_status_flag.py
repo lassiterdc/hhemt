@@ -29,7 +29,6 @@ def test_status_flag_shows_report(test_config_pair):
 
     # Run with --status flag
     result = runner.invoke(app, [
-        "--profile", "production",
         "--system-config", system_cfg,
         "--analysis-config", analysis_cfg,
         "--status",
@@ -65,7 +64,6 @@ def test_status_flag_with_quiet(test_config_pair):
 
     # Run with both --status and --quiet
     result = runner.invoke(app, [
-        "--profile", "production",
         "--system-config", system_cfg,
         "--analysis-config", analysis_cfg,
         "--status",
@@ -87,7 +85,6 @@ def test_status_flag_requires_configs():
     """Test that --status requires config files like normal execution."""
     # Missing --system-config
     result = runner.invoke(app, [
-        "--profile", "production",
         "--analysis-config", "test_data/norfolk_coastal_flooding/template_analysis_config.yaml",
         "--status",
     ])
@@ -110,7 +107,6 @@ def test_status_flag_exits_before_execution(test_config_pair):
 
     # Run with --status and --from-scratch (should not execute)
     result = runner.invoke(app, [
-        "--profile", "production",
         "--system-config", system_cfg,
         "--analysis-config", analysis_cfg,
         "--status",

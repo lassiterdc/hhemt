@@ -164,7 +164,10 @@ def extract_reprex_bundle(zip_path: Path) -> Path:
 
 def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
     """Verify + validate runnability + emit amendments for a reprex bundle."""
-    from hhemt.bundle._emit import reconstitute_runnable_config
+    from hhemt.bundle._emit import (
+        reconstitute_runnable_analysis_config,
+        reconstitute_runnable_config,
+    )
     from hhemt.config.analysis import analysis_config
     from hhemt.config.loaders import yaml_to_model
     from hhemt.config.system import system_config
@@ -184,12 +187,19 @@ def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
         sif_verified = True  # native bundle: nothing to verify (vacuous pass)
         sif_signature_ok = None
 
-    # 2. Load the bundle's configs and re-aim them at the target HPC profile.
+    # 2. Load the bundle's configs and re-aim them at the target HPC profile. Both
+    # sides use the SINGLE reconstitution helpers (reconstitute_runnable_config /
+    # reconstitute_runnable_analysis_config), which rebase EVERY bundle-relative Path
+    # — including sensitivity_analysis — onto the carried, self-contained bundle. The
+    # former inline sensitivity_analysis rebase is folded into the analysis helper so
+    # there is one rebase implementation.
     cfg_system = yaml_to_model(reconstitute_runnable_config(bundle_root), system_config)
-    cfg_analysis = yaml_to_model(bundle_root / "cfg_analysis.yaml", analysis_config)
+    cfg_analysis = yaml_to_model(
+        reconstitute_runnable_analysis_config(bundle_root), analysis_config
+    )
 
-    # Overlay the target partition selectors (the HPC-revisable axis) + rebase the
-    # sensitivity CSV onto the bundle so the per-row cap scan can read it.
+    # Overlay only the target partition selectors (the HPC-revisable axis); the input
+    # paths are already rebased by the reconstitution helper above.
     overlay: dict[str, Any] = {
         "hpc_ensemble_partition": reprex_cfg.target_ensemble_partition,
         "hpc_setup_and_analysis_processing_partition": (
@@ -197,10 +207,6 @@ def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
             or reprex_cfg.target_ensemble_partition
         ),
     }
-    if cfg_analysis.sensitivity_analysis is not None:
-        sens = Path(cfg_analysis.sensitivity_analysis)
-        if not sens.is_absolute():
-            overlay["sensitivity_analysis"] = (bundle_root / sens).resolve()
     cfg_analysis_target = cfg_analysis.model_copy(update=overlay)
 
     # 3. Re-aim preflight at the target profile; extract the per-(sa_id, column) pairs.

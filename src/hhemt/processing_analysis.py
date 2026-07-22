@@ -158,7 +158,8 @@ class TRITONSWMM_analysis_post_processing:
         from hhemt.cf_conventions import apply_producing_stamp, apply_provenance_core
         from hhemt.provenance import emit_provenance
 
-        _core_json, _graph_json = emit_provenance(self._analysis)
+        _emitted_vars = {str(v) for _p, _ds in tree_dict.items() if _p != "/" for v in _ds.data_vars}
+        _core_json, _graph_json = emit_provenance(self._analysis, emitted_vars=_emitted_vars)
         apply_provenance_core(tree, core_json_str=_core_json)
 
         # ADR-15 Phase 1: re-derive the scalar producing-stamp fast-path on the

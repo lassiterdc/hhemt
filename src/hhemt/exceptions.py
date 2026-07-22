@@ -276,3 +276,15 @@ class PublishError(TRITONSWMMError):
         self.doi = doi
         self.status = status
         super().__init__(f"publish to {target} failed (doi={doi}): {status}")
+
+
+# Standalone errors that do NOT extend TRITONSWMMError (they predate / stand apart from
+# the toolkit hierarchy). BundleSchemaError lives HERE (not in bundle/__init__) so that
+# cli_utils.py can import it for exit-code mapping without dragging the eager
+# bundle -> _emit/_combine -> xarray/zarr import graph into `hhemt --help`. It is
+# re-exported from hhemt.bundle for the existing `from hhemt.bundle import
+# BundleSchemaError` call sites.
+class BundleSchemaError(ValueError):
+    """A bundle's bundle_schema_version does not match the locally-installed
+    toolkit's BUNDLE_SCHEMA_VERSION. Distinct from generic malformed-manifest
+    errors so callers can branch on schema-version mismatch specifically."""
