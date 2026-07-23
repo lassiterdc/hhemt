@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import xarray as xr
+
 from hhemt.config.eda import eda_config
 from hhemt.eda._plotting import _EDA_RENDERERS, _RENDERER_BACKING_ARTIFACT, render_eda_plots
 
@@ -18,7 +19,11 @@ def test_three_sensitivity_renderers_registered():
     for kind in _SENS_KINDS:
         assert kind in _EDA_RENDERERS
         assert callable(_EDA_RENDERERS[kind])
-    assert set(_EDA_RENDERERS) == {"config_diff_maps", *_SENS_KINDS}
+    # Superset, not equality. This module is scoped to the three compute-sensitivity
+    # renderers (see module docstring); asserting the GLOBAL registry contains nothing
+    # else makes every renderer registered by any other feature a failure of this test,
+    # which is a cross-cutting break no per-branch test run can anticipate.
+    assert {"config_diff_maps", *_SENS_KINDS} <= set(_EDA_RENDERERS)
 
 
 def test_three_members_reexported_from_eda():
