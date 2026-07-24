@@ -440,7 +440,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
                 self._software_root / "triton"
             ),
             "TRITONSWMM_git_URL": "https://code.ornl.gov/hydro/triton.git",
-            "TRITONSWMM_branch_key": "15eb18a5d25afe5da295cb4b559a62669dbe5bc3",
+            "TRITONSWMM_branch_key": TRITON_PIN,
             "SWMM_software_directory": str(self._software_root / "swmm"),
             "triton_swmm_configuration_template": str(
                 self.artifacts.tritonswmm_cfg

@@ -57,7 +57,7 @@ TRITON_GIT_URL = "https://code.ornl.gov/hydro/triton.git"
 #: construction, destroying the ancestry-not-equality property Gotcha 69 chose
 #: deliberately. The two values coinciding after the Phase-2 bump is exactly what
 #: makes the reuse look attractive and is why it must be refused.
-TRITON_PIN = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"
+TRITON_PIN = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
 
 _PROVISION_LOCK_TIMEOUT_SECONDS = 1800
 
