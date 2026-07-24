@@ -26,7 +26,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import platformdirs
 import yaml
 
 import hhemt.utils as ut
@@ -37,6 +36,11 @@ from hhemt.config.analysis import analysis_config
 from hhemt.experiments import TRITON_SWMM_experiment
 from hhemt.system import TRITONSWMM_system
 from tests.fixtures import worktree_slug
+from tests.fixtures._triton_source_cache import (
+    TRITON_PIN,
+    provision_borrower,
+    slug_runs_root,
+)
 
 # NOTE: the former _SHARED_ARTIFACT_CACHE cross-worktree _software symlink was
 # removed because CMake build dirs are non-relocatable — sharing the build tier
@@ -44,8 +48,8 @@ from tests.fixtures import worktree_slug
 # RPATH with whichever worktree configured last, and concurrent cross-worktree
 # compiles corrupted each other's build + shared compilation.log (CompilationError
 # rc=1 on fresh fixture rebuilds). Each worktree now owns a per-worktree real
-# _software dir (see TestCaseBuilder.__init__). platformdirs is still imported —
-# it is used to root the per-worktree runs_root below.
+# _software dir (see TestCaseBuilder.__init__). The runs_root derivation moved to
+# tests/fixtures/_triton_source_cache.py, so platformdirs is no longer imported here.
 
 # census-green-up Phase 1: env-var override for the runs_root of start_from_scratch=True
 # BUILDER fixtures. When set (by a conftest builder fixture via monkeypatch.setenv to a
@@ -324,11 +328,11 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # not-exists() clone gate re-clone it PER TEST, which fills the disk
         # (35GB+ across a suite). The slug _software already exists (compiled once
         # by tritonswmm_cpu_compiled), so the gate skips it and the builders reuse it.
-        _slug_runs_root = (
-            Path(platformdirs.user_cache_dir("hhemt"))
-            / "synthetic_test_runs"
-            / worktree_slug()
-        )
+        # Single-sourced (R12): the reaper and both catalog sites consume the
+        # SAME derivation. A second copy here would let the builder's root drift
+        # out from under the reaper's, which is a delete-the-wrong-tree bug, not
+        # a style problem.
+        _slug_runs_root = slug_runs_root(worktree_slug())
         _runs_root_override = runs_root_override or os.environ.get(
             _TEST_RUNS_ROOT_OVERRIDE_ENV
         )
@@ -368,6 +372,30 @@ class retrieve_synth_TRITON_SWMM_test_case:
         if self._software_root.is_symlink():
             self._software_root.unlink()
         self._software_root.mkdir(parents=True, exist_ok=True)
+        # Provision triton's working tree from the SHARED canonical object store.
+        # Runs BEFORE system.py's not-exists() clone gate, which then finds the
+        # tree present + carrying CMakeLists.txt and skips its own full clone —
+        # which is why this change touches no production code. Only the git
+        # OBJECT STORE is shared (namespace-invariant, content-addressed); the
+        # working tree and every nested CMake build dir stay per-worktree REAL
+        # dirs, so the non-relocatable-build-tier invariant (Gotcha 52) is
+        # untouched. provision_borrower() is a no-op on a healthy existing tree.
+        #
+        # EFFECTIVE PIN, not the module default. `_write_configs` applies
+        # `additional_system_configs` LAST (test_case_builder.py:450), so a caller
+        # that overrides TRITONSWMM_branch_key — scripts/experiments/
+        # container_validation.py pins its native arm to the SIF's sha — gets that
+        # value in the system cfg, and system.py::_verify_tritonswmm_pin compares
+        # the CHECKOUT against it. Provisioning at the module default would check
+        # out a different commit than the config pins and raise ConfigurationError.
+        # One working tree per slug is shared across cases, so a case whose pin
+        # differs from the previous case's re-provisions (borrower_is_healthy is
+        # False against the other sha); post-canonical that costs ~61 MB, not a
+        # full clone, which is the same argument master Risk X3 makes.
+        _effective_pin = (additional_system_configs or {}).get(
+            "TRITONSWMM_branch_key", TRITON_PIN
+        )
+        provision_borrower(self._software_root / "triton", pin=_effective_pin)
 
         self._write_configs(
             n_events=n_events,

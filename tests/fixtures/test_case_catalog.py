@@ -19,12 +19,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-import platformdirs
 import pytest
 
 import hhemt.constants as cnst
 from hhemt.experiments import NorfolkIreneExperiment
 from tests.fixtures import worktree_slug
+from tests.fixtures._triton_source_cache import slug_runs_root
 
 # Import from test fixtures
 from tests.fixtures.test_case_builder import (
@@ -536,9 +536,7 @@ class Local_TestCases:
         """Phase 1 R3 — row with both system_config_yaml AND system.* → ConfigurationError."""
         _require_cpu_cores_for_sensitivity()
         dest_dir = (
-            Path(platformdirs.user_cache_dir("hhemt"))
-            / "synthetic_test_runs"
-            / worktree_slug()
+            slug_runs_root(worktree_slug())
             / "_sensitivity_configs"
         )
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -841,7 +839,7 @@ class Local_TestCases:
         # start_from_scratch wipe of the analysis dir does not delete the CSV.
         # Per-worktree rooting matches test_case_builder so concurrent runs in
         # sibling worktrees do not race on the sensitivity CSV.
-        runs_root = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_runs" / worktree_slug()
+        runs_root = slug_runs_root(worktree_slug())
         dest_dir = runs_root / "_sensitivity_configs"
         dest_dir.mkdir(parents=True, exist_ok=True)
         csv_path = dest_dir / f"{analysis_name}.csv"

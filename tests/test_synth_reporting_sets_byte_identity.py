@@ -33,10 +33,12 @@ from pathlib import Path
 import platformdirs
 import pytest
 
+from tests.fixtures._triton_source_cache import synthetic_runs_root
+
 _GOLDEN_DIR = Path(__file__).parent / "fixtures" / "reporting_sets_byte_identity"
 _CAPTURE = os.environ.get("CAPTURE_REPORTING_SET_GOLDENS") == "1"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_SYNTH_RUNS_ROOT = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_runs"
+_SYNTH_RUNS_ROOT = synthetic_runs_root()
 _SYNTH_MODELS_ROOT = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_models"
 # The synth fixtures' runs_root is nested under pytest's tmp base (Phase 1's
 # `runs_root_override` isolation), so the goldens bake `{tmpdir}/pytest-of-{user}/
