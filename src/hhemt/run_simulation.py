@@ -395,8 +395,21 @@ class TRITONSWMM_run:
         n_checkpoints: int,
         poll_interval_s: float = 2.0,
     ) -> int:
-        """Wait for the sim subprocess, forcing exactly ONE mid-sim hard-kill for
-        the Option-D deterministic resume test.
+        """Wait for the sim subprocess, forcing AT MOST ONE mid-sim hard-kill per
+        ATTEMPT of the multi-resume interruption schedule.
+
+        ``n_checkpoints`` is the ABSOLUTE schedule entry for THIS attempt —
+        ``resume_interruption_schedule[k]`` where ``k`` is the persisted
+        ``n_resumes`` count read by the caller. It is NOT a per-attempt delta and
+        MUST NOT be offset by a baseline: the hotstart cfg dir accumulates
+        monotonically across attempts (the resume picker globs all cfgs and prunes
+        nothing), so at the start of the attempt following ``k`` resumes the dir
+        holds about ``schedule[k-1] + 1`` files, and because the schedule is
+        STRICTLY INCREASING (enforced by the field validator) the predicate
+        ``len(cfgs) >= schedule[k] + 1`` is by construction not yet satisfied.
+        Subtracting a baseline while passing an absolute entry would push kill ``k``
+        to ``baseline + schedule[k] + 1``: with ``schedule = (25, 50, 75)`` the
+        second kill lands near index 76 and the third never fires at all.
 
         Polls the hotstart cfg dir; once ``>= n_checkpoints + 1`` ``config_NNNN.cfg``
         files exist (the newest may be mid-write, so N+1 present guarantees N are

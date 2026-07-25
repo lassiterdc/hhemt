@@ -1620,6 +1620,42 @@ def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "Validation
 # ============================================================================
 
 
+def _validate_resume_interruption_schedule(cfg: analysis_config, result: ValidationResult) -> None:
+    """R6: reject a multi-resume interruption schedule under
+    ``multi_sim_run_method='1_job_many_srun_tasks'``.
+
+    That mode does not get the job-end cgroup reap that makes repeated
+    per-attempt SIGKILL step teardown structurally safe; only ``batch_job``
+    (a separate sbatch job per retry, brought up and reaped fresh) provides it.
+    Field-local rejections (empty/duplicate/non-positive/non-increasing) are
+    enforced by the ``resume_interruption_schedule`` field validator; this is the
+    ONLY cross-field preflight check the schedule carries.
+    """
+    # getattr, not direct access: a real analysis_config always carries the field
+    # (default None), but preflight_validate is also called with partial/stub configs
+    # (e.g. the Phase-4 per-sa-validator test's SimpleNamespace). Absent field == None
+    # == harness disabled, so the R6 check is correctly skipped. Mirrors the runner's
+    # arming gate, which reads the same field via getattr.
+    schedule = getattr(cfg, "resume_interruption_schedule", None)
+    if schedule is None:
+        return
+    if getattr(cfg, "multi_sim_run_method", None) == "1_job_many_srun_tasks":
+        result.add_error(
+            field="analysis.resume_interruption_schedule",
+            message=(
+                "resume_interruption_schedule is incompatible with "
+                "multi_sim_run_method='1_job_many_srun_tasks': that mode does not get "
+                "the job-end cgroup reap that makes repeated per-attempt step teardown "
+                "structurally safe under batch_job."
+            ),
+            current_value=schedule,
+            fix_hint=(
+                "Use multi_sim_run_method='batch_job' (each retry is a separate sbatch "
+                "job) or unset resume_interruption_schedule."
+            ),
+        )
+
+
 def preflight_validate(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
@@ -1699,5 +1735,9 @@ def preflight_validate(
     # ADR-1 (R10): container-mode requires a resolvable ContainerSpec/sif_path.
     # No-op in native mode (byte-identical to today's preflight).
     _validate_container_config(cfg_analysis, cfg_hpc_system, result)
+
+    # R6: a multi-resume interruption schedule is unsafe under
+    # multi_sim_run_method='1_job_many_srun_tasks' (no job-end cgroup reap).
+    _validate_resume_interruption_schedule(cfg_analysis, result)
 
     return result

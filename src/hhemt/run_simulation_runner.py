@@ -312,6 +312,15 @@ def main():
                 failed_dir=_failed_dir,
                 completed_dir=_completed_dir,
             )
+            # A killed attempt writes _failed/{rule_token}.json and nothing ever
+            # unlinks it, so the NEXT attempt's finally-guard
+            # (`not _completed.exists() and not _failed.exists()`) short-circuits
+            # False and a SUCCESSFUL attempt can never write _completed/ — the token
+            # stays latched failed. Clear the PRIOR attempt's marker here, at runner
+            # start, where the only marker that can exist is a stale one. Doing this
+            # in the finally instead would delete the marker THIS attempt's own
+            # failure paths just wrote and stamp a failed sim completed.
+            (_failed_dir / f"{_marker_ctx.rule_token}.json").unlink(missing_ok=True)
 
         # Verify scenario is prepared (check scenario prep log)
         scenario.log.refresh()
@@ -368,17 +377,24 @@ def main():
         import subprocess
         import time
 
-        # Option-D deterministic single-kill resume-test harness (synthetic resume
-        # arm ONLY). Armed iff the analysis config opts in via
-        # deterministic_kill_after_n_checkpoints AND this is a FRESH first attempt
-        # (sim_start_reporting_tstep == 0). A resume attempt (tstep > 0 -> a
-        # checkpoint already exists) runs to completion untouched, so exactly ONE
-        # mid-sim kill fires per sim. Production / clean-arm / non-synthetic configs
-        # never set the field (default None), so this path is byte-identical to a
-        # plain proc.wait() there (no Snakemake-emitter or CLI-flag change).
-        _kill_after_n = getattr(analysis.cfg_analysis, "deterministic_kill_after_n_checkpoints", None)
+        # Multi-resume deterministic interruption harness (synthetic resume arm
+        # ONLY). Armed iff the analysis config opts in via
+        # resume_interruption_schedule (a non-empty tuple of absolute cumulative
+        # checkpoint indices) AND this attempt's persisted n_resumes count is still
+        # < len(schedule), so K entries yield exactly K resumes across K+1 attempts
+        # and the final attempt runs to completion. Production / clean-arm /
+        # non-synthetic configs never set the field (default None), so this path is
+        # byte-identical to a plain proc.wait() there (no Snakemake-emitter or
+        # CLI-flag change). NOTE: the retries: cap (hpc_restart_times_simulate) MUST
+        # be >= len(schedule) + 1.
+        _schedule = getattr(analysis.cfg_analysis, "resume_interruption_schedule", None)
+        # n_resumes is CUMULATIVE and never reset (run_simulation.py's increment is its
+        # only writer), so it indexes the schedule directly: after k resumes the next
+        # interruption is schedule[k]. Re-read the model log AFTER
+        # prepare_simulation_command so the count reflects this attempt's baseline.
+        _n_done = scenario.get_log(model_type).n_resumes.get() or 0
         _arm_deterministic_kill = (
-            _kill_after_n is not None and _kill_after_n >= 1 and model_type != "swmm" and sim_start_reporting_tstep == 0
+            _schedule is not None and model_type != "swmm" and _n_done < len(_schedule)
         )
 
         start_time = time.time()
@@ -407,11 +423,12 @@ def main():
             )
             if _arm_deterministic_kill:
                 logger.info(
-                    f"[{event_iloc}] Deterministic resume-test kill ARMED: "
-                    f"SIGKILL after {_kill_after_n} hotstart checkpoint(s)."
+                    f"[{event_iloc}] Multi-resume interruption kill ARMED: "
+                    f"SIGKILL at checkpoint index {_schedule[_n_done]} "
+                    f"(resume {_n_done + 1} of {len(_schedule)})."
                 )
                 _rc = run.wait_with_deterministic_checkpoint_kill(
-                    proc, model_type=model_type, n_checkpoints=_kill_after_n
+                    proc, model_type=model_type, n_checkpoints=_schedule[_n_done]
                 )
             else:
                 _rc = proc.wait()  # Return code checked via status below

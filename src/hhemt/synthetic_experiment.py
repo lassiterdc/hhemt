@@ -305,11 +305,11 @@ def write_resume_matrix_csv(
     *,
     rank_sweep: tuple[int, ...] = _DEFAULT_RANK_SWEEP,
 ) -> None:
-    """Resume sweep CSV for the Option-D deterministic single-kill harness.
+    """Resume sweep CSV for the multi-resume deterministic interruption harness.
 
-    Under Option D the mid-sim kill is DETERMINISTIC (a SIGKILL after N hotstart
-    checkpoints, wired in ``run_simulation_runner`` and armed via the analysis
-    config field ``deterministic_kill_after_n_checkpoints``), NOT a walltime
+    The mid-sim kills are DETERMINISTIC (a SIGKILL at each cumulative hotstart
+    checkpoint index in the schedule, wired in ``run_simulation_runner`` and armed
+    via the analysis config field ``resume_interruption_schedule``), NOT a walltime
     expiry. So every row gets the SAME generous ``_CLEAN_WALLTIME_MIN`` walltime
     as the clean sweep — the resume attempt always has budget to finish. The
     resume arm is distinguished from the clean arm ONLY by the analysis-config

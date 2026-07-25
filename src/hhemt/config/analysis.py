@@ -163,19 +163,27 @@ class analysis_config(cfgBaseModel):
             "(1h) to 10080 (1 week). Lower it only to force an earlier give-up."
         ),
     )
-    deterministic_kill_after_n_checkpoints: int | None = Field(
+    resume_interruption_schedule: tuple[int, ...] | None = Field(
         default=None,
-        ge=1,
         description=(
-            "Synthetic resume-test harness ONLY (Option-D deterministic single "
-            "kill). When set to N >= 1, the run-simulation runner hard-kills "
-            "(SIGKILL) a FRESH first-attempt TRITON/TRITON-SWMM sim once N "
-            "complete config_NNNN.cfg hotstart checkpoints exist, forcing exactly "
-            "one mid-sim kill so the Snakemake retry resumes-to-completion under a "
-            "generous walltime. Gated on sim_start_reporting_tstep == 0, so a "
-            "resume attempt is never killed. Default None DISABLES the harness — "
-            "production and clean-arm runs MUST leave it unset (the runner path is "
-            "byte-identical to a plain proc.wait() when None)."
+            "Resume-test harness ONLY. A STRICTLY INCREASING tuple of ABSOLUTE "
+            "hotstart-checkpoint indices at which a fresh TRITON/TRITON-SWMM sim is "
+            "interrupted, producing len(schedule) hotstart resumes. The unit is the "
+            "one the watcher already counts (config_NNNN.cfg files) and the one "
+            "return_the_reporting_step_from_a_cfg returns, so no conversion exists "
+            "anywhere in the mechanism and interval alignment is vacuous. An entry "
+            "beyond the sim's checkpoint count degrades gracefully (no kill fires). "
+            "Empty tuples, duplicates, non-positive entries and non-increasing "
+            "sequences are rejected. The runner arms each kill "
+            "from the PERSISTED n_resumes counter relative to the attempt's own "
+            "baseline, never from an absolute count over the cfg directory (that "
+            "directory accumulates across attempts, so an absolute predicate is "
+            "already true on attempt 2 before any forward progress). Default None "
+            "DISABLES the harness — production and clean-arm runs leave it unset and "
+            "the runner path is byte-identical to a plain proc.wait(). Incompatible "
+            "with multi_sim_run_method='1_job_many_srun_tasks' (rejected at "
+            "preflight): that mode does not get the job-end cgroup reap that makes "
+            "repeated per-attempt step teardown structurally safe under batch_job."
         ),
     )
     # local run constraints
@@ -546,6 +554,27 @@ class analysis_config(cfgBaseModel):
                         f"clear_raw list cannot contain sentinel value {item!r}; "
                         f"use the sentinel as a bare string (clear_raw: {item})"
                     )
+        return v
+
+    @field_validator("resume_interruption_schedule", mode="after")
+    @classmethod
+    def _validate_resume_interruption_schedule(cls, v):
+        if v is None:
+            return v
+        if not v:
+            raise ValueError(
+                "resume_interruption_schedule cannot be an empty tuple; use None to disable the harness"
+            )
+        if len(v) != len(set(v)):
+            raise ValueError(f"resume_interruption_schedule contains duplicates: {v}")
+        if any(entry < 1 for entry in v):
+            raise ValueError(
+                f"resume_interruption_schedule entries must be >= 1 (absolute checkpoint indices): {v}"
+            )
+        if any(b <= a for a, b in zip(v, v[1:], strict=False)):
+            raise ValueError(
+                f"resume_interruption_schedule must be strictly increasing with no duplicates: {v}"
+            )
         return v
 
     @field_validator("force_rerun", mode="after")

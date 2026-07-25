@@ -54,6 +54,13 @@ _EXPERIMENT_PARAMS = dataclasses.replace(
 _DOMAIN_WIDTH_M = _EXPERIMENT_PARAMS.n_cols * _EXPERIMENT_PARAMS.cell_size_m  # 224.0
 _DOMAIN_HEIGHT_M = _EXPERIMENT_PARAMS.n_rows * _EXPERIMENT_PARAMS.cell_size_m  # 420.0
 
+# Multi-resume interruption schedule: 25/50/75% of the synth grid's reporting-timestep
+# checkpoint count. sim_duration_min=1440 (24 h) / reporting_timestep_s=600 (10 min) = 144
+# config_NNNN.cfg checkpoints; each entry is an ABSOLUTE checkpoint index (1:1 with the
+# reporting-step index the watcher counts). Strictly increasing; all < 144 so all three
+# kills fire and attempt 4 resumes from ~108 to completion -> n_resumes == 3.
+_RESUME_INTERRUPTION_SCHEDULE: tuple[int, ...] = (36, 72, 108)
+
 
 def _params_for_resolution(cell_size_m: float) -> SyntheticModelParams:
     """Return `_EXPERIMENT_PARAMS` re-gridded to `cell_size_m`, preserving the
@@ -154,18 +161,15 @@ def _build_case(
             # base-level per-sim walltime (the sensitivity CSV overrides it per sub-analysis;
             # 30 matches the clean-experiment walltime in write_clean_matrix_csv):
             "hpc_time_min_per_sim": 30,
-            # Snakemake retries: under the Option-D deterministic single kill the
-            # resume arm's attempt-1 is SIGKILLed after N checkpoints and attempt-2
-            # resumes-to-completion under the generous walltime, so a LOW cap (3)
-            # both completes the sweep and fails a genuinely non-converging config
-            # FAST. 2 for clean (never killed).
-            "hpc_restart_times_simulate": 3 if resume else 2,
-            "hpc_restart_times_other": 3 if resume else 2,
-            # Option-D deterministic single-kill resume-test harness: on the RESUME
-            # arm the runner SIGKILLs a fresh first-attempt sim after 3 hotstart
-            # checkpoints (forcing exactly one mid-sim kill); the retry resumes and
-            # completes under the generous walltime. None (clean arm) disables it.
-            "deterministic_kill_after_n_checkpoints": 3 if resume else None,
+            # Snakemake retries: a K-entry resume_interruption_schedule needs K+1
+            # attempts, so the cap is len(schedule) + 2 (one spare for a genuine
+            # transient). 2 for clean (never interrupted).
+            "hpc_restart_times_simulate": (len(_RESUME_INTERRUPTION_SCHEDULE) + 2) if resume else 2,
+            "hpc_restart_times_other": (len(_RESUME_INTERRUPTION_SCHEDULE) + 2) if resume else 2,
+            # Multi-resume interruption schedule: absolute hotstart-checkpoint indices
+            # at which the runner SIGKILLs the sim (one kill per attempt); each retry
+            # hotstart-resumes from the latest checkpoint. None (clean arm) disables it.
+            "resume_interruption_schedule": _RESUME_INTERRUPTION_SCHEDULE if resume else None,
             # base partition selectors (the CSV overrides ensemble per-row). The master ensemble
             # is a GPU partition so the master participates in the GPU-target dedup (Gotcha 54);
             # setup/prepare/process/consolidate run on standard.
@@ -271,12 +275,13 @@ def resume_case(
     _GENERATED.mkdir(parents=True, exist_ok=True)
     csv = _GENERATED / "resume_matrix.csv"
     write_resume_matrix_csv(csv)
-    # Option-D mechanism: resume completion lands within ONE analysis.run() via
-    # Snakemake retries — attempt-1 is deterministically SIGKILLed after N
-    # checkpoints (deterministic_kill_after_n_checkpoints on the resume analysis
-    # config), and attempt-2 resumes from the latest config_NNNN.cfg checkpoint and
-    # completes under the generous per-sim walltime. This supersedes the prior
-    # short-walltime + repeated-driver-re-invocation scheme (both retired).
+    # Multi-resume mechanism: resume completion lands within ONE analysis.run() via
+    # Snakemake retries — each attempt is deterministically SIGKILLed at the next
+    # resume_interruption_schedule checkpoint index (on the resume analysis config),
+    # and the following attempt hotstart-resumes from the latest config_NNNN.cfg
+    # checkpoint; the final attempt completes under the generous per-sim walltime.
+    # This supersedes the prior short-walltime + repeated-driver-re-invocation
+    # scheme (both retired).
     return _build_case(
         analysis_name=f"synth_cc_resume_{model_arm}",
         sensitivity_csv=csv,
