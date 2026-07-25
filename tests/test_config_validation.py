@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from hhemt.config.analysis import analysis_config
 from hhemt.config.loaders import load_system_config_from_dict
+from hhemt.config.synthetic_experiment import synthetic_experiment_config
 from hhemt.config.system import system_config
 
 
@@ -239,19 +240,13 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
         sensitivity=SensitivityReportConfig(independent_vars=["n_devices"]),
     )
     with pytest.raises(ConfigurationError, match="not a sensitivity analysis"):
-        validate_active_reporting_set(
-            unscoped, is_sensitivity=False, sensitivity_csv_path=None
-        )
+        validate_active_reporting_set(unscoped, is_sensitivity=False, sensitivity_csv_path=None)
 
     # Post-fix state: the overlay-scoping recipe nulls sensitivity and resets
     # reporting_set to the 'default' sentinel. A non-sensitivity reference now
     # resolves to the standard set and passes validation.
-    scoped = report_config.model_validate(
-        {**unscoped.model_dump(), "sensitivity": None, "reporting_set": "default"}
-    )
-    resolved = validate_active_reporting_set(
-        scoped, is_sensitivity=False, sensitivity_csv_path=None
-    )
+    scoped = report_config.model_validate({**unscoped.model_dump(), "sensitivity": None, "reporting_set": "default"})
+    resolved = validate_active_reporting_set(scoped, is_sensitivity=False, sensitivity_csv_path=None)
     assert resolved == "default"
 
 
@@ -795,3 +790,53 @@ def test_toolkit_owned_output_exempt_under_overlay_revalidation(tmp_path: Path):
     assert revalidated.target_dem_resolution == 10.0
     assert not revalidated.TRITONSWMM_software_directory.exists()
     assert not revalidated.SWMM_software_directory.exists()
+
+
+# VALIDATION - SYNTHETIC EXPERIMENT MODEL ARMS
+def _synth_cfg(tmp_path: Path, **overrides) -> synthetic_experiment_config:
+    """Build a synthetic_experiment_config for model_arms rejection tests.
+
+    ``hpc_system_config_yaml`` only has to EXIST here: ``_validate_model_arms`` is a
+    field validator, and pydantic runs every field validator before any
+    ``mode="after"`` model validator — so a model_arms rejection short-circuits
+    ``_validate_caps``, which is the only thing that would parse the YAML body.
+    """
+    return synthetic_experiment_config(
+        hpc_system_config_yaml=_touch(tmp_path / "hpc.yaml"),
+        ensemble_partition="gpu-a6000",
+        setup_partition="standard",
+        **overrides,
+    )
+
+
+def test_model_arms_rejects_empty(tmp_path: Path):
+    """An empty arm set would produce zero sibling masters — no experiment at all."""
+    with pytest.raises(ValidationError, match="model_arms cannot be empty"):
+        _synth_cfg(tmp_path, model_arms=())
+
+
+def test_model_arms_rejects_duplicates(tmp_path: Path):
+    """A duplicated arm would generate two identical masters racing one output tree."""
+    with pytest.raises(ValidationError, match="duplicates"):
+        _synth_cfg(tmp_path, model_arms=("tritonswmm", "tritonswmm"))
+
+
+def test_model_arms_rejects_unknown_arm(tmp_path: Path):
+    """A typo must fail at config-load naming the field, not as a bare KeyError
+    from inside _build_case (which gives the operator no field name)."""
+    with pytest.raises(ValidationError, match="unknown arm"):
+        _synth_cfg(tmp_path, model_arms=("tritonswmm", "tritn"))
+
+
+def test_model_arms_exempt_from_pydantic_protected_namespace():
+    """`model_arms` collides with pydantic's default `model_` protected namespace.
+
+    The model relaxes the namespace for itself; dropping that relaxation
+    reintroduces a UserWarning on every import of this config module. Asserted on
+    the resolved config rather than by capturing a warning, because re-emitting it
+    would require reloading the module and swapping the class object other tests
+    already hold a reference to.
+    """
+    assert synthetic_experiment_config.model_config.get("protected_namespaces") == ()
+    # The relaxation must not clobber the strictness guard inherited from cfgBaseModel.
+    assert synthetic_experiment_config.model_config.get("extra") == "forbid"

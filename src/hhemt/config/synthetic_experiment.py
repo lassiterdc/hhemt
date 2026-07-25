@@ -25,13 +25,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from hhemt.config.base import cfgBaseModel
 from hhemt.exceptions import ConfigurationError
 
 
 class synthetic_experiment_config(cfgBaseModel):
+    # `model_arms` collides with pydantic's default `model_` protected namespace
+    # (the pinned pydantic 2.7 still protects the whole `model_` prefix). The field
+    # shadows no pydantic API, and the token is fixed by the estate experiment YAML,
+    # so relax the namespace for THIS model only rather than repo-wide. Merges with
+    # cfgBaseModel's ConfigDict(extra="forbid"), which is preserved.
+    model_config = ConfigDict(protected_namespaces=())
+
     # --- synthetic model knobs (grid + forcing) ---
     cell_size_m: float = Field(
         default=3.5, description="Synthetic DEM cell size (m). Finer -> more cells -> longer per-sim wallclock."
@@ -50,6 +57,39 @@ class synthetic_experiment_config(cfgBaseModel):
     )
 
     # --- experiment matrix ---
+    model_arms: tuple[str, ...] = Field(
+        default=("tritonswmm",),
+        description=(
+            "Model arms to run as SIBLING sensitivity masters. Each arm is a separate "
+            "master with an identical matrix, differing only in system model toggles "
+            "(workflow.py's sensitivity generator raises on >1 enabled model). The "
+            "default ('tritonswmm',) reproduces the historical single-arm experiment "
+            "byte-for-byte. Set ('tritonswmm', 'triton') for the coupled + uncoupled pair."
+        ),
+    )
+
+    @field_validator("model_arms", mode="after")
+    @classmethod
+    def _validate_model_arms(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        """Reject an empty, duplicated, or unknown arm set at config-load.
+
+        ``model_arm_toggles``'s KeyError remains the last-resort guard, but a bare
+        KeyError surfacing from inside ``_build_case`` gives the operator no field
+        name — this rejection names both the field and the offending value.
+        """
+        # Function-local: a module-top import would create a
+        # config.synthetic_experiment -> synthetic_experiment -> config.synthetic_experiment cycle.
+        from hhemt.synthetic_experiment import _MODEL_ARMS
+
+        if not v:
+            raise ValueError("model_arms cannot be empty; supply at least one arm, e.g. ('tritonswmm',)")
+        if len(v) != len(set(v)):
+            raise ValueError(f"model_arms contains duplicates: {list(v)}")
+        unknown = [arm for arm in v if arm not in _MODEL_ARMS]
+        if unknown:
+            raise ValueError(f"model_arms contains unknown arm(s) {unknown}; known arms are {sorted(_MODEL_ARMS)}")
+        return v
+
     rank_sweep: tuple[int, ...] = Field(
         default=(2, 4, 8),
         description=(

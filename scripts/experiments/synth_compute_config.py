@@ -20,7 +20,7 @@ from pathlib import Path
 import rioxarray  # noqa: F401  (import-order workaround — see comment above)
 
 from hhemt.bundle._dependency import ExperimentDependency, ExperimentIdentity
-from hhemt.synthetic_experiment import write_clean_matrix_csv, write_resume_matrix_csv
+from hhemt.synthetic_experiment import model_arm_toggles, write_clean_matrix_csv, write_resume_matrix_csv
 from tests.fixtures.synthetic_model.cache import SyntheticModelParams
 from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case  # delegate target
 
@@ -89,6 +89,7 @@ def _build_case(
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
+    model_arm: str = "tritonswmm",
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -129,9 +130,7 @@ def _build_case(
         analysis_name=analysis_name,
         params=_params_for_resolution(cell_size_m),
         sensitivity_csv=sensitivity_csv,
-        toggle_tritonswmm_model=True,
-        toggle_triton_model=False,
-        toggle_swmm_model=False,
+        **model_arm_toggles(model_arm),
         start_from_scratch=start_from_scratch,
         additional_system_configs=system_cfg,
         hpc_system_config_yaml=hpc_cfg,
@@ -214,6 +213,7 @@ def clean_case(
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
+    model_arm: str = "tritonswmm",
 ) -> _Case:
     """Clean determinism experiment: 28-config sweep, single-allocation walltime.
 
@@ -229,7 +229,7 @@ def clean_case(
     csv = _GENERATED / "clean_matrix.csv"
     write_clean_matrix_csv(csv)
     return _build_case(
-        analysis_name="synth_cc_clean",
+        analysis_name=f"synth_cc_clean_{model_arm}",
         sensitivity_csv=csv,
         start_from_scratch=start_from_scratch,
         resume=False,
@@ -237,6 +237,7 @@ def clean_case(
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
+        model_arm=model_arm,
     )
 
 
@@ -247,6 +248,7 @@ def resume_case(
     runtime_min_by_sa: dict[str, float] | None = None,
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
+    model_arm: str = "tritonswmm",
 ) -> _Case:
     """Resume demo (Option-D deterministic single kill): the runner SIGKILLs the
     fresh first attempt mid-sim after N hotstart checkpoints; the Snakemake retry
@@ -276,7 +278,7 @@ def resume_case(
     # completes under the generous per-sim walltime. This supersedes the prior
     # short-walltime + repeated-driver-re-invocation scheme (both retired).
     return _build_case(
-        analysis_name="synth_cc_resume",
+        analysis_name=f"synth_cc_resume_{model_arm}",
         sensitivity_csv=csv,
         start_from_scratch=start_from_scratch,
         resume=True,
@@ -284,6 +286,7 @@ def resume_case(
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
+        model_arm=model_arm,
     )
 
 

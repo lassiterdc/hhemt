@@ -32,6 +32,37 @@ if TYPE_CHECKING:  # avoid a runtime config <-> framework import cycle
 _DEFAULT_RANK_SWEEP: tuple[int, ...] = (2, 4, 8)
 _CLEAN_WALLTIME_MIN: int = 30  # generous single-allocation walltime for the clean sweep
 
+#: The two model arms of the compute-config experiment, as (arm_token, system-toggle overlay).
+#: The arms run as SIBLING sensitivity masters, never as one multi-model master:
+#: workflow.py::generate_master_snakefile_content raises
+#: ValueError("Sensitivity analysis does not support multi-model execution") on >1
+#: enabled model and threads a scalar model_type into every per-sa_id flag name.
+#: Each arm's matrix is byte-identical; only the system toggles differ, so no matrix
+#: column is added and no per-sa_id input fingerprint is rewritten.
+_MODEL_ARMS: dict[str, dict[str, bool]] = {
+    "tritonswmm": {
+        "toggle_tritonswmm_model": True,
+        "toggle_triton_model": False,
+        "toggle_swmm_model": False,
+    },
+    "triton": {
+        "toggle_tritonswmm_model": False,
+        "toggle_triton_model": True,
+        "toggle_swmm_model": False,
+    },
+}
+
+
+def model_arm_toggles(arm: str) -> dict[str, bool]:
+    """The system-config toggle overlay for one model arm.
+
+    Raises KeyError on an unknown arm rather than defaulting, so a typo in the
+    estate config fails at case construction rather than producing a silently
+    coupled run mislabelled as uncoupled.
+    """
+    return dict(_MODEL_ARMS[arm])
+
+
 # Canonical partition-as-axis column schema (VMS-1a): the retired
 # system.gpu_hardware / system.gpu_compilation_backend overlay columns are dropped
 # (GPU hardware DERIVES from the partition's PartitionSpec, Gotcha 54); the
