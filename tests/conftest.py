@@ -573,8 +573,10 @@ def tritonswmm_cpu_compiled():
     data is absent.
 
     Process-safety note: this fixture writes to ~/.cache/.../_software/
-    or test_data/.../triton/ and assumes no concurrent test sessions are
-    running an actual compile against the same cache dir.
+    or test_data/.../triton/. Concurrent test sessions compiling against
+    the same cache dir are serialized by the per-build-dir lock in
+    system.py::_compile_backend; a second entrant re-reads the success
+    marker inside the lock and skips rather than racing the first.
     """
     from tests.utils_for_testing import (
         compile_toolchain_unavailable,

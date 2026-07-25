@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import rioxarray as rxr
 import xarray as xr
+from filelock import Timeout
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 
@@ -20,6 +21,7 @@ from hhemt.exceptions import CompilationError, ConfigurationError, ProcessingErr
 from hhemt.log import TRITONSWMM_system_log
 from hhemt.paths import SysPaths
 from hhemt.plot_system import TRITONSWMM_system_plotting
+from hhemt._filelock_compat import resolve_filelock
 
 
 _ROW_BLOCK_SIZE = 1024  # row-streaming block size for _write_raster (D-PR-5 B)
@@ -30,6 +32,16 @@ _ROW_BLOCK_SIZE = 1024  # row-streaming block size for _write_raster (D-PR-5 B)
 #: stamp `triton_has_coupled_resume_fix` via `git merge-base --is-ancestor` at compile
 #: time — ancestry, NOT sha-equality, so a descendant of the fix is still post-fix.
 _PINNED_TRITON_COUPLED_RESUME_FIX_SHA = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
+
+#: Wall-clock cap on waiting for a sibling process's compile of the SAME build dir.
+#: Keyed on the BUILD DIR (not the software dir) so a CPU and a GPU compile of one
+#: tree still proceed in parallel. Sized for a cold TRITON+Kokkos build plus queue
+#: slack. On expiry we FAIL LOUD rather than proceed: proceeding would reintroduce
+#: the concurrent-write corruption the lock exists to prevent (Gotcha 52), and on a
+#: flock-less filesystem `resolve_filelock` returns a SoftFileLock, which has no
+#: crash-release — so a stale lock from a SLURM-killed compile must surface as an
+#: actionable error naming the lock file, never as an indefinite hang.
+_COMPILE_LOCK_TIMEOUT_SECONDS = 3600
 
 
 def _assert_dem_integrity(fpath_raster):
@@ -694,7 +706,15 @@ class TRITONSWMM_system:
                 field="TRITONSWMM_branch_key",
                 message=(
                     f"TRITONSWMM_branch_key {branch_key!r} does not resolve to a commit in the "
-                    f"TRITON clone at {d}. Fetch the pinned commit or correct the pin, then re-run."
+                    f"TRITON clone at {d}. Either the pin is wrong, or the clone's object store "
+                    f"cannot serve it (a clone predating the pinned commit, a pruned/partial "
+                    f"object store, or a borrowed store whose source is gone). Fix: correct the "
+                    f"pin, OR `git -C {d} fetch --all` if the clone merely predates it, OR remove "
+                    f"the clone (rm -rf {d}) and re-run — the clone gate re-clones at the pinned "
+                    "commit AND runs `git submodule update --init --recursive`. If you remove the "
+                    "clone by hand you MUST also delete the build directory: hhemt's compile gate "
+                    "is log-marker-based, so a cached build with a passing compilation log is "
+                    "skipped and your re-clone is silently defeated."
                 ),
                 config_path=self.system_config_yaml,
             )
@@ -938,7 +958,74 @@ class TRITONSWMM_system:
         recompile: bool,
         verbose: bool,
     ):
-        """Internal method to compile a single backend."""
+        """Internal method to compile a single backend.
+
+        Serialized on a per-BUILD-DIR lock. `TRITONSWMM_build_dir_cpu` carries no
+        per-target component, so two `UniqueSystemTarget`s that differ only in
+        `target_dem_resolution` (or in partition, at equal `gpu_hardware`) resolve to
+        the SAME cpu build dir — and `workflow.py` emits one INDEPENDENT
+        `rule setup_target_{N}` per target with no Snakemake `group:`, so those rules
+        run concurrently in EVERY execution mode: under `batch_job` as independently
+        dispatched SLURM jobs, under `1_job_many_srun_tasks` as concurrent srun tasks
+        inside one allocation, and under `local` as parallel Snakemake jobs at
+        `--cores N`. All three compile into one directory and write one
+        `compilation.log`. Without this lock the loser's
+        objects are interleaved with the winner's and the log can still read
+        "Build finished" (Gotcha 52's corruption class, on production HPC). The lock
+        wraps the already-compiled gate too, so a waiter re-reads the log marker AFTER
+        the holder finishes and correctly skips instead of rebuilding.
+        """
+        build_dir.parent.mkdir(parents=True, exist_ok=True)
+        lock = resolve_filelock(
+            str(build_dir.parent / f".{build_dir.name}.compile.lock"),
+            timeout=_COMPILE_LOCK_TIMEOUT_SECONDS,
+        )
+        try:
+            with lock:
+                self._compile_backend_locked(
+                    backend=backend,
+                    build_dir=build_dir,
+                    compilation_script=compilation_script,
+                    compilation_logfile=compilation_logfile,
+                    cmake_backend_flag=cmake_backend_flag,
+                    recompile=recompile,
+                    verbose=verbose,
+                )
+        except Timeout as exc:
+            # CompilationError takes no free-text message (exceptions.py) and renders
+            # only "Return code / Log / Run: cat {log}" — but on a lock timeout NO
+            # compile ran, so that log is empty or stale and the lock path, the only
+            # actionable datum, would never reach the operator. On Lustre
+            # resolve_filelock returns a crash-release-less SoftFileLock, so a
+            # SLURM-killed setup_target job leaves exactly this state. Emit the
+            # diagnostic first (same stderr idiom as _assert_dem_integrity), then
+            # raise so the exit-code-3 mapping is preserved.
+            print(
+                f"[{backend.upper()}] Timed out after {_COMPILE_LOCK_TIMEOUT_SECONDS}s "
+                f"waiting for the compile lock at {lock.lock_file}. Another process is "
+                f"compiling {build_dir}, or a killed holder left a stale lock. If no "
+                f"compile is running, remove the lock file and re-run.",
+                flush=True,
+                file=sys.stderr,
+            )
+            raise CompilationError(
+                model_type="tritonswmm",
+                backend=backend,
+                logfile=compilation_logfile,
+                return_code=1,
+            ) from exc
+
+    def _compile_backend_locked(
+        self,
+        backend: str,
+        build_dir: Path,
+        compilation_script: Path,
+        compilation_logfile: Path,
+        cmake_backend_flag: str,
+        recompile: bool,
+        verbose: bool,
+    ):
+        """Compile one backend. Caller MUST hold the per-build-dir compile lock."""
 
         # Check if already compiled
         if backend == "cpu":
@@ -1036,7 +1123,15 @@ class TRITONSWMM_system:
             [
                 'cd "${TRITON_DIR}"',
                 'mkdir -p "${BUILD_DIR}"',
-                'rm -rf "${BUILD_DIR}/CMakeFiles" "${BUILD_DIR}/CMakeCache.txt" "${BUILD_DIR}/Makefile" "${BUILD_DIR}/cmake_install.cmake"',
+                # Reconfigure from clean: remove ALL prior build state (stale objects and
+                # the external/{kokkos,swmm} trees included, which the old four-path rm
+                # left behind, so a cache-variable change could produce a mismatched
+                # binary with no error). MUST spare compilation.log: it lives INSIDE
+                # BUILD_DIR and _compile_backend already holds it open as this script's
+                # stdout, so a bare `rm -rf "${BUILD_DIR}"` unlinks it and the post-run
+                # read_text_file_as_string raises an UNCAUGHT FileNotFoundError on every
+                # compile (verified). Do not "simplify" this back to rm -rf.
+                'find "${BUILD_DIR}" -mindepth 1 -maxdepth 1 ! -name compilation.log -exec rm -rf {} +',
                 'cd "${BUILD_DIR}"',
                 "",
                 f'cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
@@ -1287,7 +1382,52 @@ class TRITONSWMM_system:
         recompile: bool,
         verbose: bool,
     ):
-        """Internal method to compile TRITON-only for a single backend."""
+        """Internal method to compile TRITON-only for a single backend.
+
+        Serialized on the per-BUILD-DIR compile lock — see _compile_backend for the
+        full rationale (N independent `setup_target_{N}` jobs compile into one build
+        dir with no per-target component). The lock wraps the already-compiled gate
+        too, so a waiter re-reads the log marker after the holder finishes and skips
+        instead of rebuilding.
+        """
+        build_dir.parent.mkdir(parents=True, exist_ok=True)
+        lock = resolve_filelock(
+            str(build_dir.parent / f".{build_dir.name}.compile.lock"),
+            timeout=_COMPILE_LOCK_TIMEOUT_SECONDS,
+        )
+        try:
+            with lock:
+                self._compile_triton_only_backend_locked(
+                    backend=backend,
+                    build_dir=build_dir,
+                    recompile=recompile,
+                    verbose=verbose,
+                )
+        except Timeout as exc:
+            print(
+                f"[TRITON-only {backend.upper()}] Timed out after "
+                f"{_COMPILE_LOCK_TIMEOUT_SECONDS}s waiting for the compile lock at "
+                f"{lock.lock_file}. Another process is compiling {build_dir}, or a "
+                f"killed holder left a stale lock. If no compile is running, remove "
+                f"the lock file and re-run.",
+                flush=True,
+                file=sys.stderr,
+            )
+            raise CompilationError(
+                model_type="triton",
+                backend=backend,
+                logfile=build_dir / "compilation.log",
+                return_code=1,
+            ) from exc
+
+    def _compile_triton_only_backend_locked(
+        self,
+        backend: str,
+        build_dir: Path,
+        recompile: bool,
+        verbose: bool,
+    ):
+        """Compile TRITON-only for one backend. Caller MUST hold the per-build-dir compile lock."""
         # Check if already compiled
         if backend == "cpu":
             already_compiled = self.compilation_triton_only_cpu_successful
@@ -1382,7 +1522,10 @@ class TRITONSWMM_system:
             [
                 'cd "${TRITON_DIR}"',
                 'mkdir -p "${BUILD_DIR}"',
-                'rm -rf "${BUILD_DIR}/CMakeFiles" "${BUILD_DIR}/CMakeCache.txt" "${BUILD_DIR}/Makefile" "${BUILD_DIR}/cmake_install.cmake"',
+                # Reconfigure from clean, sparing compilation.log (it is inside BUILD_DIR
+                # and is already this script's open stdout) — see the identical site in
+                # _compile_backend for the full rationale.
+                'find "${BUILD_DIR}" -mindepth 1 -maxdepth 1 ! -name compilation.log -exec rm -rf {} +',
                 'cd "${BUILD_DIR}"',
                 "",
                 f'cmake -DTRITON_ENABLE_SWMM=OFF {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
@@ -1523,6 +1666,55 @@ class TRITONSWMM_system:
                 print("[SWMM] Skipped (toggle_swmm_model=False)", flush=True)
             return
 
+        build_dir = self.sys_paths.SWMM_build_dir
+        if build_dir is None:
+            raise ValueError("SWMM build dir not configured (toggle_swmm_model may be False)")
+
+        # Serialize on the per-build-dir compile lock (see _compile_backend). SWMM's
+        # build dir carries no per-target component either, so concurrent setup_target
+        # jobs would otherwise race one swmm_build. The already-compiled gate is re-read
+        # INSIDE the lock so a waiter skips instead of rebuilding.
+        build_dir.mkdir(parents=True, exist_ok=True)
+        lock = resolve_filelock(
+            str(build_dir / ".swmm.compile.lock"),
+            timeout=_COMPILE_LOCK_TIMEOUT_SECONDS,
+        )
+        try:
+            with lock:
+                self._compile_SWMM_locked(
+                    recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                    redownload_swmm_if_exists=redownload_swmm_if_exists,
+                    verbose=verbose,
+                    build_dir=build_dir,
+                )
+        except Timeout as exc:
+            # Same diagnostic + exit-3 contract as _compile_backend: cli.py maps
+            # CompilationError -> exit 3 and does NOT catch filelock.Timeout, so a
+            # stale-lock timeout must surface as CompilationError to keep the setup
+            # workflow's clean exit-3 path rather than an uncaught traceback.
+            print(
+                f"[SWMM] Timed out after {_COMPILE_LOCK_TIMEOUT_SECONDS}s waiting for "
+                f"the compile lock at {lock.lock_file}. Another process is compiling "
+                f"{build_dir}, or a killed holder left a stale lock. If no compile is "
+                f"running, remove the lock file and re-run.",
+                flush=True,
+                file=sys.stderr,
+            )
+            raise CompilationError(
+                model_type="swmm",
+                backend="cpu",
+                logfile=build_dir / "compilation.log",
+                return_code=1,
+            ) from exc
+
+    def _compile_SWMM_locked(
+        self,
+        recompile_if_already_done_successfully: bool,
+        redownload_swmm_if_exists: bool,
+        verbose: bool,
+        build_dir: Path,
+    ):
+        """Compile standalone SWMM. Caller MUST hold the per-build-dir compile lock."""
         if self.compilation_swmm_successful and not recompile_if_already_done_successfully:
             if verbose:
                 print("[SWMM] Already compiled successfully (skipping)", flush=True)
@@ -1532,10 +1724,6 @@ class TRITONSWMM_system:
             print(f"\n{'=' * 60}", flush=True)
             print("Compiling Standalone EPA SWMM", flush=True)
             print("=" * 60, flush=True)
-
-        build_dir = self.sys_paths.SWMM_build_dir
-        if build_dir is None:
-            raise ValueError("SWMM build dir not configured (toggle_swmm_model may be False)")
 
         swmm_source_dir = build_dir / "swmm_source"
         logfile = build_dir / "compilation.log"
