@@ -122,7 +122,21 @@ def build_case(
         start_from_scratch=start_from_scratch,
         hpc_system_config_yaml=cfg_path,
         additional_system_configs=(
-            {"system_directory": system_directory} if system_directory else {}
+            # PIN THE NATIVE ARM TO THE SIF'S SHA, not to the fixture default.
+            # The invariant this experiment rests on is: the native arm's TRITON
+            # commit == the container's `org.hhemt.triton_sha` label. That held
+            # only by coincidence while the fixture default happened to equal the
+            # SIF sha. Once the fixture pin moved forward, inheriting it would
+            # make the two arms DIFFERENT SOLVERS, and check_cross_sim_identity
+            # would report DIVERGED with nothing in the output naming the cause —
+            # the divergence would read as a containerization defect.
+            # Bump this only together with a SIF rebuild at the new sha.
+            # The pin is on BOTH branches: the conditional governs only whether a
+            # system_directory override is supplied, never whether the arm is pinned.
+            {
+                "TRITONSWMM_branch_key": "15eb18a5d25afe5da295cb4b559a62669dbe5bc3",
+                **({"system_directory": system_directory} if system_directory else {}),
+            }
         ),
         additional_analysis_configs={
             # batch_job/1_job_many_srun_tasks = login-node operator submission (default per
