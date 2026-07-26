@@ -300,6 +300,16 @@ def write_clean_matrix_csv(path: Path, *, rank_sweep: tuple[int, ...] = _DEFAULT
     df.to_csv(path, index=False)
 
 
+def write_smoke_matrix_csv(path: Path) -> None:
+    """ONE-row cheap-confirmation CSV: a SINGLE serial-CPU row on ``standard``
+    (the cheapest compute config), 1 replicate, for the Phase-2 multi-resume
+    Empirical-Testing DoD. NOT a matrix sweep — the resume harness is confirmed
+    per-sim, so one row suffices. Consumed by ``synth_compute_config.smoke_case``.
+    """
+    rows = _rows(_SERIAL_CONFIGS, walltime_min=_CLEAN_WALLTIME_MIN, replicates=1)
+    pd.DataFrame(rows, columns=_COLS).to_csv(path, index=False)
+
+
 def write_resume_matrix_csv(
     path: Path,
     *,

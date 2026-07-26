@@ -20,7 +20,12 @@ from pathlib import Path
 import rioxarray  # noqa: F401  (import-order workaround — see comment above)
 
 from hhemt.bundle._dependency import ExperimentDependency, ExperimentIdentity
-from hhemt.synthetic_experiment import model_arm_toggles, write_clean_matrix_csv, write_resume_matrix_csv
+from hhemt.synthetic_experiment import (
+    model_arm_toggles,
+    write_clean_matrix_csv,
+    write_resume_matrix_csv,
+    write_smoke_matrix_csv,
+)
 from tests.fixtures.synthetic_model.cache import SyntheticModelParams
 from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case  # delegate target
 
@@ -61,6 +66,18 @@ _DOMAIN_HEIGHT_M = _EXPERIMENT_PARAMS.n_rows * _EXPERIMENT_PARAMS.cell_size_m  #
 # kills fire and attempt 4 resumes from ~108 to completion -> n_resumes == 3.
 _RESUME_INTERRUPTION_SCHEDULE: tuple[int, ...] = (36, 72, 108)
 
+# Phase-2 Empirical-Testing cheap confirmation (one-config, no clean prereq). A
+# 2-entry schedule that REUSES two production checkpoint indices, so the kill
+# windows stay production-scale (>=36 reporting-step checkpoints between events) and
+# the 2 s deterministic-kill watcher (run_simulation.py:390, poll_interval_s=2.0)
+# reliably catches both kills regardless of the actual serial wallclock. 144
+# checkpoints already exist (sim_duration_min=1440 / reporting_timestep_s=600), so
+# both entries < 144: both kills fire -> n_resumes == 2 and attempt 3 completes.
+# Do NOT shrink sim_duration for the smoke: on the 64x120 synth grid a short sim
+# blows through checkpoints faster than the watcher polls, risking a missed kill
+# (a false negative). Cheapness comes from serial + one config + no fan-out.
+_SMOKE_SCHEDULE: tuple[int, ...] = (36, 72)
+
 
 def _params_for_resolution(cell_size_m: float) -> SyntheticModelParams:
     """Return `_EXPERIMENT_PARAMS` re-gridded to `cell_size_m`, preserving the
@@ -97,6 +114,8 @@ def _build_case(
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
     model_arm: str = "tritonswmm",
+    resume_interruption_schedule: tuple[int, ...] = _RESUME_INTERRUPTION_SCHEDULE,
+    ensemble_partition: str = "gpu-a6000",
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -164,16 +183,16 @@ def _build_case(
             # Snakemake retries: a K-entry resume_interruption_schedule needs K+1
             # attempts, so the cap is len(schedule) + 2 (one spare for a genuine
             # transient). 2 for clean (never interrupted).
-            "hpc_restart_times_simulate": (len(_RESUME_INTERRUPTION_SCHEDULE) + 2) if resume else 2,
-            "hpc_restart_times_other": (len(_RESUME_INTERRUPTION_SCHEDULE) + 2) if resume else 2,
+            "hpc_restart_times_simulate": (len(resume_interruption_schedule) + 2) if resume else 2,
+            "hpc_restart_times_other": (len(resume_interruption_schedule) + 2) if resume else 2,
             # Multi-resume interruption schedule: absolute hotstart-checkpoint indices
             # at which the runner SIGKILLs the sim (one kill per attempt); each retry
             # hotstart-resumes from the latest checkpoint. None (clean arm) disables it.
-            "resume_interruption_schedule": _RESUME_INTERRUPTION_SCHEDULE if resume else None,
+            "resume_interruption_schedule": resume_interruption_schedule if resume else None,
             # base partition selectors (the CSV overrides ensemble per-row). The master ensemble
             # is a GPU partition so the master participates in the GPU-target dedup (Gotcha 54);
             # setup/prepare/process/consolidate run on standard.
-            "hpc_ensemble_partition": "gpu-a6000",
+            "hpc_ensemble_partition": ensemble_partition,
             "hpc_setup_and_analysis_processing_partition": "standard",
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": str(sensitivity_csv),
@@ -292,6 +311,40 @@ def resume_case(
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
         model_arm=model_arm,
+    )
+
+
+def smoke_case(
+    start_from_scratch: bool = True,
+    system_directory: str | None = None,
+    hpc_system_config_yaml: Path | None = None,
+    tritonswmm_branch_key: str | None = None,
+) -> _Case:
+    """Phase-2 Empirical-Testing cheap confirmation of the multi-resume interruption
+    harness. ONE serial-CPU sub-analysis on ``standard`` (pure-TRITON / uncoupled
+    arm), PRODUCTION sim sizing (1440 min / 600 s -> 144 checkpoints), a 2-entry
+    ``_SMOKE_SCHEDULE``. Runs STANDALONE (no clean-sweep prerequisite — Option D
+    ignores the clean-derived walltime). ``ensemble_partition="standard"`` keeps the
+    master off the GPU-target fast path (sensitivity_analysis.py:268-303), so the
+    compile is CPU-only and the serial sim runs a CPU binary. The caller MUST pass
+    ``override_pickup_where_leftoff=True`` to ``analysis.run()`` or every retry
+    restarts from t=0 and the sim never completes (run_simulation.py:618).
+    """
+    _GENERATED.mkdir(parents=True, exist_ok=True)
+    csv = _GENERATED / "smoke_matrix.csv"
+    write_smoke_matrix_csv(csv)
+    return _build_case(
+        analysis_name="synth_cc_smoke_triton",
+        sensitivity_csv=csv,
+        start_from_scratch=start_from_scratch,
+        resume=True,
+        system_directory=system_directory,
+        cell_size_m=3.5,
+        hpc_system_config_yaml=hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
+        model_arm="triton",
+        resume_interruption_schedule=_SMOKE_SCHEDULE,
+        ensemble_partition="standard",
     )
 
 
