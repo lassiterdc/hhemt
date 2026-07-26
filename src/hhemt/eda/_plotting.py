@@ -197,6 +197,104 @@ def _render_cross_hardware_magnitude(
     )
 
 
+def _render_b4b(
+    root: Path,
+    *,
+    stem: str,
+    title: str,
+    eda_cfg: eda_config,
+    show_boundaries: bool,
+) -> Path:
+    """Shared b4b render: reads eda/{stem}.zarr (written by
+    raw_resume_identity.check_raw_b4b) and emits a heatmap y=compute_config, x=timestep_min,
+    z=all-raw-types-identical (AND-reduced over raw_output_type), or an explicit R10
+    honest-degradation panel when the artifact's `degraded` attr is set. Declares its own
+    eda/{stem}.zarr as the source (raw dirs fail _validate_source_path; the producer owns
+    raw-presence detection via the `degraded` attr, so this render reads only its own zarr
+    and passes the Gotcha-53 renderer-IO audit)."""
+    import xarray as xr
+
+    plot_id = canonical_plot_id(stem)  # pass-through == stem
+    artifact = root / "eda" / f"{plot_id}.zarr"
+    output_path = root / "plots" / "eda" / f"{plot_id}.html"
+    ds = xr.open_zarr(artifact, consolidated=False)
+    degraded = bool(int(ds.attrs.get("degraded", 0)))
+    reason = str(ds.attrs.get("degraded_reason", ""))
+    da = ds["identical"] if "identical" in ds else None
+    if degraded or da is None or "compute_config" not in getattr(da, "dims", ()):
+        fig = go.Figure()
+        fig.add_annotation(
+            text="Raw byte-for-byte comparison unavailable<br>" + (reason or "raw outputs were cleared"),
+            showarrow=False,
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            font=dict(size=14),
+        )
+        fig.update_layout(title=title, height=260, xaxis=dict(visible=False), yaxis=dict(visible=False))
+    else:
+        z_all = da.min(dim="raw_output_type", skipna=True)  # 1 iff ALL raw types identical
+        x = [float(t) for t in z_all["timestep_min"].values]
+        y = [str(c) for c in z_all["compute_config"].values]
+        z = [[None if v != v else int(v) for v in row] for row in z_all.values]  # NaN -> None
+        fig = go.Figure(
+            go.Heatmap(
+                z=z,
+                x=x,
+                y=y,
+                colorscale=[[0.0, "crimson"], [1.0, "seagreen"]],
+                zmin=0,
+                zmax=1,
+                colorbar=dict(title="b4b (1=identical)"),
+            )
+        )
+        if show_boundaries:
+            for k, t in enumerate(ds.attrs.get("resume_boundaries_min", []) or [], start=1):
+                fig.add_vline(
+                    x=float(t),
+                    line_dash="dash",
+                    line_color="black",
+                    annotation_text=f"r{k}",
+                    annotation_position="top",
+                )
+        fig.update_layout(
+            title=title,
+            xaxis_title="reporting timestep (min)",
+            yaxis_title="compute config",
+            height=max(220, 60 + 26 * len(y)),
+            margin=dict(l=140, r=90, t=50, b=40),
+        )
+    html_text = _fig_to_html(fig, plotly_js_mode=eda_cfg.plotly_js_mode)
+    return emit_plot_with_sources(
+        html_text,
+        output_path,
+        source_paths=[artifact],
+        analysis_dir=root,
+        output_format="html",
+    )
+
+
+def _render_b4b_clean_identity(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+    """Clean-run raw byte-identity heatmap (b4b). Reads eda/b4b_clean_identity.zarr; R10
+    honest-degradation panel when raw outputs were cleared."""
+    return _render_b4b(
+        root, stem="b4b_clean_identity", title="Clean-run raw byte identity", eda_cfg=eda_cfg, show_boundaries=False
+    )
+
+
+def _render_b4b_clean_vs_resume(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+    """Clean-vs-resume raw byte-identity heatmap (b4b) with requested resume-boundary vlines.
+    Reads eda/b4b_clean_vs_resume.zarr; R10 honest-degradation panel on `degraded`."""
+    return _render_b4b(
+        root,
+        stem="b4b_clean_vs_resume",
+        title="Clean vs resume raw byte identity",
+        eda_cfg=eda_cfg,
+        show_boundaries=True,
+    )
+
+
 def _fig_to_html(fig: go.Figure, *, plotly_js_mode: str) -> str:
     """Serialize one figure to an HTML fragment via the FQ1 single-bundle path.
 
@@ -227,6 +325,8 @@ _EDA_RENDERERS = {
     "dem_resolution_diff_maps": _render_dem_resolution_diff_maps,
     "dem_resolution_error_ecdf": _render_dem_resolution_error_ecdf,
     "dem_resolution_coupling_table": _render_dem_resolution_coupling_table,
+    "b4b_clean_identity": _render_b4b_clean_identity,
+    "b4b_clean_vs_resume": _render_b4b_clean_vs_resume,
 }
 
 #: renderer-kind -> the on-disk eda/{stem}.zarr the kind's CALC member actually writes.

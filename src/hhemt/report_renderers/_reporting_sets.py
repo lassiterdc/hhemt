@@ -507,6 +507,49 @@ _DEM_RESOLUTION_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTI
     ),
 )
 
+# b4b (raw-output byte-for-byte comparison) -- Phase 4. Two figures under ONE
+# RendererSelection reusing builder key eda_compute_sensitivity (the _cli entrypoint
+# and _OUTPUT_EXT_BY_RENDERER key are per-MODULE, not per-figure), so these templates
+# require ZERO generator edits. predicate_key is has_preserved_raw_outputs (NOT
+# has_eda_artifact): b4b requires raw outputs to have survived; gating on
+# has_eda_artifact would drop every b4b figure from rule all AND emission silently.
+_TMPL_B4B_CLEAN_IDENTITY = RuleSpecTemplate(
+    rule_name="plot_b4b_clean_identity",
+    renderer_module="eda_compute_sensitivity",
+    output_path_template="plots/eda/b4b_clean_identity__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/b4b_clean_identity.rst",
+        "category": "Key Results",
+        "subcategory": "Byte-for-byte comparison",
+        "labels": '{"figure": "Clean-run byte identity"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=4000, time_min=10",
+    log_path_template="_logs/plots/b4b_clean_identity.log",
+)
+_TMPL_B4B_CLEAN_VS_RESUME = RuleSpecTemplate(
+    rule_name="plot_b4b_clean_vs_resume",
+    renderer_module="eda_compute_sensitivity",
+    output_path_template="plots/eda/b4b_clean_vs_resume__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/b4b_clean_vs_resume.rst",
+        "category": "Key Results",
+        "subcategory": "Byte-for-byte comparison",
+        "labels": '{"figure": "Clean vs resume byte identity"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=4000, time_min=10",
+    log_path_template="_logs/plots/b4b_clean_vs_resume.log",
+)
+
+_B4B_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
+    RendererSelection(
+        "eda_compute_sensitivity",
+        predicate_key="has_preserved_raw_outputs",
+        rule_spec_template=(_TMPL_B4B_CLEAN_IDENTITY, _TMPL_B4B_CLEAN_VS_RESUME),
+    ),
+)
+
 REPORTING_SETS: dict[str, ReportingSet] = {
     "default": ReportingSet(
         name="default",
@@ -564,6 +607,12 @@ REPORTING_SETS: dict[str, ReportingSet] = {
         name="dem-resolution",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_DEM_RESOLUTION_SELECTION,
+        validator_key="benchmarking",
+    ),
+    "b4b": ReportingSet(
+        name="b4b",
+        category_order=_STANDARD_CATEGORY_ORDER,
+        renderer_selection=_B4B_SELECTION,
         validator_key="benchmarking",
     ),
 }

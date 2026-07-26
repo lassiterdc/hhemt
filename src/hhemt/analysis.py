@@ -966,6 +966,7 @@ class TRITONSWMM_analysis:
             check_cross_hardware_magnitude,
             check_cross_sim_identity,
             check_rank_sensitivity,
+            check_raw_b4b,
             check_resume_sensitivity,
             render_eda_plots,
         )
@@ -992,6 +993,17 @@ class TRITONSWMM_analysis:
                 "eda_cross_hardware_magnitude",
                 check_cross_hardware_magnitude(self, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg),
             ),
+        ]
+        # b4b producer (Phase 4): ONE calc, TWO backing zarrs (b4b_clean_identity /
+        # b4b_clean_vs_resume). Register BOTH renderer kinds so BOTH figures pass the
+        # facade's only_kinds filter AND the report-path enabled_plots scoping; the second
+        # entry's verdict is nulled so validate_analysis surfaces the combined verdict once.
+        import dataclasses as _dataclasses
+
+        _raw_b4b = check_raw_b4b(self, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        _eda_results += [
+            ("b4b_clean_identity", _raw_b4b),
+            ("b4b_clean_vs_resume", _dataclasses.replace(_raw_b4b, verdict=None)),
         ]
         verdicts = [r.verdict for _kind, r in _eda_results if r.verdict is not None]
         _produced_kinds = {kind for kind, r in _eda_results if (not r.skipped and r.artifact_path is not None)}

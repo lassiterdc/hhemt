@@ -313,3 +313,281 @@ def build_binary_timestep_figure(
         margin=dict(l=90, r=90, t=50, b=40),
     )
     return fig
+
+
+# --- Promotable calc member (ADR-9): the b4b figures' WITHIN-MASTER producer -----------
+#
+# check_raw_b4b is single-arm by construction (master R12(b)): it reads ONLY the passed
+# master's own sub-analyses' raw per-timestep rasters and NEVER reaches a sibling master.
+# It writes TWO backing artifacts (one per registered b4b figure) ALWAYS -- real grids or
+# an honest-degradation marker -- so neither report() target raises WorkflowError:
+#   * eda/b4b_clean_identity.zarr   config-vs-config raw identity over the master's CLEAN
+#                                   subs (the raw-per-timestep analog of check_cross_sim_identity)
+#   * eda/b4b_clean_vs_resume.zarr  clean-vs-resume raw identity, pairing each resume sub with
+#                                   its clean config-counterpart WITHIN the master. Real only
+#                                   when the master carries both arms; degrades otherwise (the
+#                                   synth experiment runs clean/resume as SEPARATE masters --
+#                                   config/eda.py -- so the FULL cross-MASTER heatmap is the
+#                                   R13-deferred combine artifact, not this).
+
+
+def _b4b_enabled_model(sub) -> str:
+    """The raw-raster-bearing model arm for a sub: 'tritonswmm' (coupled) or 'triton'.
+
+    swmm-only subs have no TRITON raster tier and are skipped by the caller (returns '').
+    """
+    cfg_sys = getattr(getattr(sub, "_system", None), "cfg_system", None)
+    if bool(getattr(cfg_sys, "toggle_tritonswmm_model", False)):
+        return "tritonswmm"
+    if bool(getattr(cfg_sys, "toggle_triton_model", False)):
+        return "triton"
+    return ""
+
+
+def _b4b_sub_raw_bin_dir(sub, model: str, raw_out_type: str) -> Path | None:
+    """First present ``{sim}/out_{model}/{raw_out_type}`` raw dir under a sub, else None.
+
+    Read-only glob over the sub's ``simulation_directory`` (plain dirs; no scenario
+    construction, so no mkdir side effect). None == raw outputs absent (cleared or never
+    written) -> the raw-cleared degradation signal.
+    """
+    try:
+        sim_root = Path(sub.analysis_paths.simulation_directory)
+    except AttributeError:
+        return None
+    for out_dir in sorted(sim_root.glob(f"*/out_{model}")):
+        cand = out_dir / raw_out_type
+        if cand.is_dir() and any(cand.iterdir()):
+            return cand
+    return None
+
+
+def _b4b_n_resumes(master, sa_id) -> int:
+    """Max ``n_resumes`` for one sa_id from ``master.df_status`` (R9); 0 on any absence.
+
+    ``df_status``'s sa_id may carry the ``sa_`` prefix while sub keys are bare -- normalize.
+    """
+    try:
+        df = master.df_status
+    except Exception:  # noqa: BLE001 -- df_status is best-effort; absence -> clean
+        return 0
+    cols = getattr(df, "columns", [])
+    if df is None or "n_resumes" not in cols or "sa_id" not in cols:
+        return 0
+
+    def _norm(v: object) -> str:
+        s = str(v)
+        return s[3:] if s.startswith("sa_") else s
+
+    want = _norm(sa_id)
+    vals: list[int] = []
+    for raw_id, n in zip(df["sa_id"], df["n_resumes"], strict=False):
+        if _norm(raw_id) != want:
+            continue
+        if n is None or (isinstance(n, float) and np.isnan(n)):
+            continue
+        vals.append(int(n))
+    return max(vals) if vals else 0
+
+
+def _b4b_config_identity(sub) -> tuple:
+    """Compute-config identity for clean/resume pairing (excludes the resume knob)."""
+    c = getattr(sub, "cfg_analysis", None)
+    return (
+        str(getattr(c, "run_mode", "")),
+        int(getattr(c, "n_mpi_procs", 0) or 0),
+        int(getattr(c, "n_omp_threads", 0) or 0),
+        int(getattr(c, "n_gpus", 0) or 0),
+        int(getattr(c, "n_nodes", 0) or 0),
+        str(getattr(c, "hpc_ensemble_partition", "") or ""),
+    )
+
+
+def _b4b_grid(per_config: dict[str, dict[str, xr.DataArray]]) -> xr.DataArray | None:
+    """Stack ``{config: {var: (timestep_min,) bool}}`` into a
+    ``(compute_config, raw_output_type, timestep_min)`` float64 grid (1.0=identical,
+    0.0=differ, NaN=not compared). Returns None when nothing was compared."""
+    cfg_das: list[xr.DataArray] = []
+    cfg_labels: list[str] = []
+    for cfg, var_map in sorted(per_config.items()):
+        rows = [v for v in TRITON_VARS if v in var_map and var_map[v].size]
+        if not rows:
+            continue
+        stacked = xr.concat(
+            [var_map[v].astype("float64").rename(None) for v in rows],
+            dim=xr.DataArray(list(rows), dims="raw_output_type", name="raw_output_type"),
+        )
+        cfg_das.append(stacked)
+        cfg_labels.append(cfg)
+    if not cfg_das:
+        return None
+    grid = xr.concat(
+        cfg_das,
+        dim=xr.DataArray(cfg_labels, dims="compute_config", name="compute_config"),
+        join="outer",
+    )
+    return grid.transpose("compute_config", "raw_output_type", "timestep_min")
+
+
+def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
+    """WITHIN-MASTER raw per-timestep byte-for-byte producer for the b4b ReportingSet.
+
+    Reads ONLY the passed master's own subs' raw outputs (single-arm; master R12(b)).
+    Writes eda/b4b_clean_identity.zarr and eda/b4b_clean_vs_resume.zarr ALWAYS (real grids
+    or a degraded marker) so both report() targets render. Returns one EdaResult whose
+    verdict is a combined CheckResult (persisted under the identity stem); the analysis.eda()
+    facade registers BOTH figure kinds against this result.
+    """
+    import dataclasses as _dc
+    import json as _json
+
+    from hhemt.analysis_validation import CheckResult, _iter_subanalyses_or_self
+    from hhemt.eda._result import EdaResult
+    from hhemt.report_plot_ids import canonical_plot_id
+    from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
+
+    name = "Raw byte-for-byte identity"
+    raw_out_type = str(getattr(cfg_analysis, "TRITON_raw_output_type", "bin") or "bin")
+    interval = float(getattr(cfg_analysis, "TRITON_reporting_timestep_s", 60.0) or 60.0)
+    schedule = getattr(cfg_analysis, "resume_interruption_schedule", None)
+    boundaries = resume_boundaries_from_schedule(schedule, interval)
+
+    analysis_dir = Path(master.analysis_paths.analysis_dir)
+    eda_dir = analysis_dir / "eda"
+
+    # gather: (sa_id, sub, model, raw_bin_dir, n_resumes, config_identity)
+    subs: list[tuple] = []
+    for sa_id, sub in _iter_subanalyses_or_self(master):
+        model = _b4b_enabled_model(sub)
+        if model not in ("tritonswmm", "triton"):
+            continue
+        raw_bin = _b4b_sub_raw_bin_dir(sub, model, raw_out_type)
+        n_res = _b4b_n_resumes(master, sa_id) if sa_id is not None else 0
+        label = str(sa_id) if sa_id is not None else "self"
+        subs.append((label, sub, model, raw_bin, n_res, _b4b_config_identity(sub)))
+
+    def _write(stem: str, grid, *, degraded: bool, reason: str, ref: str, contributing: list) -> Path:
+        eda_dir.mkdir(parents=True, exist_ok=True)
+        plot_id = canonical_plot_id(stem)  # pass-through == stem
+        artifact = eda_dir / f"{plot_id}.zarr"
+        ds = (
+            xr.Dataset({"identical": grid})
+            if grid is not None
+            else xr.Dataset({"identical": xr.DataArray(np.array(np.nan, dtype="float64"))})
+        )
+        ds.attrs.update(
+            {
+                "degraded": int(bool(degraded)),
+                "degraded_reason": str(reason or ""),
+                "reference_config": str(ref or ""),
+                "raw_output_type": raw_out_type,
+                "reporting_interval_s": interval,
+                "resume_boundaries_min": [float(b) for b in boundaries],
+            }
+        )
+        ds.to_zarr(artifact, mode="w", consolidated=False, encoding={"identical": {"dtype": "float64"}})
+        # Provenance: raw dirs are bare non-zarr dirs the emit gate rejects, so declare each
+        # contributing sub's consolidated store (the compute_sensitivity._emit precedent). The
+        # raw-cleared signal is the `degraded` attr, not source absence.
+        srcs = [Path(s.analysis_paths.analysis_dir) / "analysis_datatree.zarr" for s in contributing] or [
+            analysis_dir / "analysis_datatree.zarr"
+        ]
+        emit_data_artifact_with_sources(
+            artifact_path=artifact, source_paths=srcs, analysis_dir=analysis_dir, plot_id=plot_id
+        )
+        return artifact
+
+    # --- b4b_clean_identity: config-vs-config over the CLEAN subs ---
+    clean = [s for s in subs if s[4] == 0]
+    id_ref = next((s for s in clean if s[3] is not None), None)
+    id_per_config: dict[str, dict] = {}
+    id_contrib: list = []
+    id_degraded = False
+    id_reason = ""
+    id_ref_label = ""
+    if id_ref is None:
+        id_degraded = True
+        id_reason = "raw outputs cleared or absent for every clean sub"
+    else:
+        id_ref_label = id_ref[0]
+        id_contrib.append(id_ref[1])
+        for s in clean:
+            if s is id_ref or s[3] is None:
+                continue
+            tri = compare_triton_raw_timeseries(
+                id_ref[3], s[3], reporting_interval_s=interval, raw_out_type=raw_out_type
+            )
+            if tri:
+                id_per_config[s[0]] = tri
+                id_contrib.append(s[1])
+    id_grid = _b4b_grid(id_per_config)
+    if id_ref is not None and id_grid is None:
+        id_degraded = True
+        id_reason = "only one clean config with raw outputs in this master -- no config-vs-config pair"
+    id_artifact = _write(
+        "b4b_clean_identity", id_grid, degraded=id_degraded, reason=id_reason, ref=id_ref_label, contributing=id_contrib
+    )
+
+    # --- b4b_clean_vs_resume: pair each resume sub with its clean config-counterpart ---
+    resume = [s for s in subs if s[4] > 0]
+    clean_by_cfg = {s[5]: s for s in clean if s[3] is not None}
+    cvr_per_config: dict[str, dict] = {}
+    cvr_contrib: list = []
+    cvr_degraded = False
+    cvr_reason = ""
+    if not resume or not clean_by_cfg:
+        cvr_degraded = True
+        cvr_reason = (
+            "clean-vs-resume raw comparison requires a single master carrying both clean and "
+            "resume subs; this master carries one arm. The cross-master heatmap is a combine-layer "
+            "artifact (master R13), out of this phase's scope."
+        )
+    else:
+        for s in resume:
+            if s[3] is None:
+                continue
+            cref = clean_by_cfg.get(s[5])
+            if cref is None:
+                continue
+            tri = compare_triton_raw_timeseries(cref[3], s[3], reporting_interval_s=interval, raw_out_type=raw_out_type)
+            if tri:
+                cvr_per_config[s[0]] = tri
+                cvr_contrib.extend([cref[1], s[1]])
+        if not cvr_per_config:
+            cvr_degraded = True
+            cvr_reason = "no within-master clean/resume config pair with present raw outputs"
+    cvr_grid = _b4b_grid(cvr_per_config)
+    _write(
+        "b4b_clean_vs_resume",
+        cvr_grid,
+        degraded=cvr_degraded,
+        reason=cvr_reason,
+        ref=id_ref_label,
+        contributing=cvr_contrib,
+    )
+
+    # --- combined verdict (persisted under the identity stem) ---
+    n_id = 0 if id_grid is None else int((id_grid == 0.0).sum())
+    n_cvr = 0 if cvr_grid is None else int((cvr_grid == 0.0).sum())
+    passed = (n_id == 0) and (n_cvr == 0)
+    parts: list[str] = []
+    if id_degraded:
+        parts.append(f"clean-identity: degraded ({id_reason})")
+    else:
+        parts.append(
+            "clean-identity: all raw rasters byte-identical across clean configs"
+            if n_id == 0
+            else f"clean-identity: {n_id} differing (config, raw-type, timestep) cell(s)"
+        )
+    if cvr_degraded:
+        parts.append(f"clean-vs-resume: degraded ({cvr_reason})")
+    else:
+        parts.append(
+            "clean-vs-resume: all resume rasters reproduce their clean counterpart byte-for-byte"
+            if n_cvr == 0
+            else f"clean-vs-resume: {n_cvr} differing cell(s)"
+        )
+    verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=" | ".join(parts))
+    eda_dir.mkdir(parents=True, exist_ok=True)
+    (eda_dir / "b4b_clean_identity.verdict.json").write_text(_json.dumps(_dc.asdict(verdict), indent=2, default=str))
+    return EdaResult(verdict=verdict, artifact_path=id_artifact, plot_id="b4b_clean_identity", skipped=False)

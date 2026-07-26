@@ -36,6 +36,7 @@ from hhemt.eda.compute_sensitivity import (
     check_resume_sensitivity,
 )
 from hhemt.eda.cross_sim_identity import check_cross_sim_identity
+from hhemt.eda.raw_resume_identity import check_raw_b4b
 
 __all__ = [
     "EdaContext",
@@ -44,6 +45,7 @@ __all__ = [
     "check_cross_hardware_magnitude",
     "check_cross_sim_identity",
     "check_rank_sensitivity",
+    "check_raw_b4b",
     "check_resume_sensitivity",
     "config_diff_maps_figure_from_root",
     "dem_resolution_coupling_table_figure_from_root",

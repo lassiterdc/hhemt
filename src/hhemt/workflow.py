@@ -633,6 +633,11 @@ class _ReportingSetDispatchMixin:
         # carries an EDA artifact (the eda calc ran, producing plots/eda/*.zarr).
         # Threaded via predicate_inputs["has_eda_artifact"] at the generator sites.
         "has_eda_artifact": lambda inp: bool(inp.get("has_eda_artifact")),
+        # b4b requires raw outputs to have survived. Config-read (not an on-disk
+        # stat) because the predicate must answer at Snakefile-GENERATION time, and
+        # an on-disk sweep here is O(configs x events) login-node work. The
+        # renderer carries the on-disk check and degrades honestly.
+        "has_preserved_raw_outputs": lambda inp: bool(inp.get("has_preserved_raw_outputs")),
     }
 
     def _resolve_active_reporting_set(self, analysis):
@@ -7558,6 +7563,17 @@ onerror:
         # Inert for the benchmarking/default sets (no eda renderer in the selection),
         # so byte-identity for those sets is preserved.
         _has_eda_artifact = bool(self.master_analysis.cfg_analysis.eda.enabled_plots)
+        # b4b (Phase 4): the resolved clear-raw policy (runtime override wins, else the
+        # config value). ClearRawValue = Literal["all","none"] | list[...] (config/analysis.py):
+        # None is NOT a member, and a LIST form that does not name THIS master's model leaves
+        # the raw TRITON binaries the b4b comparison reads intact, so a bare `in ("none",)`
+        # test would gate the set off on a legitimate `clear_raw: ["swmm"]` run.
+        _resolved_clear_raw = (
+            override_clear_raw if override_clear_raw is not None else self.master_analysis.cfg_analysis.clear_raw
+        )
+        _has_preserved_raw_outputs = _resolved_clear_raw == "none" or (
+            isinstance(_resolved_clear_raw, list) and model_type not in _resolved_clear_raw
+        )
         # D13 (registry-read): enumerate one entry PER registry template, from the same
         # single source the emission site reads, so a four-figure family lists all four
         # here. () for default/benchmarking keeps those sets byte-identical.
@@ -7948,6 +7964,7 @@ onerror:
                 "independent_vars": _independent_vars,
                 "sa_event_pairs_sa": sa_event_pairs_sa,
                 "has_eda_artifact": _has_eda_artifact,
+                "has_preserved_raw_outputs": _has_preserved_raw_outputs,
             },
             disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
@@ -8292,6 +8309,13 @@ onerror:
         # Inert for the benchmarking/default sets (no eda renderer in the selection),
         # so byte-identity for those sets is preserved.
         _has_eda_artifact = bool(self.master_analysis.cfg_analysis.eda.enabled_plots)
+        # b4b (Phase 4): the reprocess generator runs no sims and takes no clear-raw runtime
+        # override (override_clear_raw is NOT in this method's scope), so the resolved policy
+        # is the config value alone. Same list-aware test as the master generator.
+        _resolved_clear_raw = self.master_analysis.cfg_analysis.clear_raw
+        _has_preserved_raw_outputs = _resolved_clear_raw == "none" or (
+            isinstance(_resolved_clear_raw, list) and model_type not in _resolved_clear_raw
+        )
         # D13 (registry-read): enumerate one entry PER registry template, from the same
         # single source the emission site reads, so a four-figure family lists all four
         # here. () for default/benchmarking keeps those sets byte-identical.
@@ -8562,6 +8586,7 @@ onerror:
                 "independent_vars": _independent_vars,
                 "sa_event_pairs_sa": sa_event_pairs_sa,
                 "has_eda_artifact": _has_eda_artifact,
+                "has_preserved_raw_outputs": _has_preserved_raw_outputs,
             },
             disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(

@@ -265,15 +265,17 @@ def test_reporting_sets_registry_imports_cleanly():
 
     # Exact-set equality (NOT a subset check) so an accidental registry member
     # still fails. `combined` (PIP-1 cross-experiment), `compute-sensitivity`
-    # (PIP-2 / R11 in-report EDA) and `dem-resolution` (D13, the four-figure
-    # DEM-resolution EDA family) are shipped, exercised sets; the assertion
-    # simply trailed their landing.
+    # (PIP-2 / R11 in-report EDA), `dem-resolution` (D13, the four-figure
+    # DEM-resolution EDA family) and `b4b` (Phase 4, the raw-output byte-for-byte
+    # comparison family) are shipped, exercised sets; the assertion simply trailed
+    # their landing.
     assert set(REPORTING_SETS) == {
         "default",
         "benchmarking",
         "combined",
         "compute-sensitivity",
         "dem-resolution",
+        "b4b",
     }
     assert get_reporting_set("benchmarking").validator_key == "benchmarking"
     assert get_reporting_set("default").validator_key == "none"
