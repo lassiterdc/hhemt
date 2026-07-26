@@ -320,7 +320,9 @@ def test_reprex_bundle_carries_runnable_set(
     assert cfg_hpc.container.sif_path
     # Zero-user-info (ADR-13/14): placeholders only, never the producer's real values.
     tpl_text = (bundle_dir / HPC_TEMPLATE_FILENAME).read_text()
-    for producer_token in ("quinnlab", "atm112", "cli190", "dcl3nd"):
+    _reprex_bl = Path(__file__).resolve().parents[1] / "scripts" / "reprex_blocklist.txt"
+    _producer_tokens = [t.strip() for t in _reprex_bl.read_text().splitlines() if t.strip() and not t.strip().startswith("#")]
+    for producer_token in _producer_tokens:
         assert producer_token not in tpl_text
 
     doc = json.loads((bundle_dir / "ro-crate-metadata.json").read_text())

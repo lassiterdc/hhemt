@@ -47,6 +47,65 @@ def pytest_configure(config):
     )
 
 
+# Phase 4 — periodic TTL+liveness backstop for the synthetic_test_runs cache.
+# WHY THIS HOOK, AND WHY THESE GUARDS (all four are load-bearing):
+#   * pytest_sessionfinish fires ONCE per xdist worker PLUS ONCE in the
+#     controller (probed: 3 firings at -n 2). Without the `workerinput` guard,
+#     N workers race the same rmtree walk and one gets FileNotFoundError
+#     mid-delete. `workerinput` is set by xdist on the worker's Config and is
+#     absent in the controller and in a serial run.
+#   * An unhandled exception in this hook is reported as INTERNALERROR and
+#     makes an ALL-GREEN run exit non-zero (probed: 2 passed, exit != 0).
+#     A best-effort cache sweep must never decide the suite's verdict.
+#   * exitstatus 2/3/4 = INTERRUPTED / INTERNAL_ERROR / USAGE_ERROR. A Ctrl-C'd
+#     or misinvoked run should not then spend wall time deleting.
+#   * The report is part of the feature: the cache reached 5.0 GB unnoticed
+#     because nothing ever said what it held. A silent reaper preserves that.
+#   * First-run-gated apply (friction reaper-backstop-auto-apply-safety): the
+#     wrapper deletes ONLY after a per-machine acknowledgment sentinel exists
+#     (see _run_dir_reaper._reaper_ack_path). Until then it runs DRY and prints
+#     the review-then-`touch` prompt, so "reviewed before any --apply" (phase-4
+#     DoD) holds on the automated path while "self-clean" holds once acked.
+def pytest_sessionfinish(session, exitstatus):
+    import os
+    import warnings
+
+    if hasattr(session.config, "workerinput"):
+        return  # xdist worker; the controller performs the single sweep
+    if int(exitstatus) in {2, 3, 4}:
+        return
+    if os.environ.get("HHEMT_DISABLE_RUN_DIR_REAPER") == "1" or os.environ.get("CI"):
+        return
+    try:
+        from tests.fixtures._run_dir_reaper import (
+            _reaper_ack_path,
+            default_runs_root,
+            sweep_with_live_signals,
+        )
+
+        report = sweep_with_live_signals(default_runs_root())
+    except Exception as exc:  # noqa: BLE001 - best-effort maintenance, never fails the suite
+        warnings.warn(f"run-dir reaper skipped: {type(exc).__name__}: {exc}", stacklevel=1)
+        return
+    tr = session.config.pluginmanager.get_plugin("terminalreporter")
+    if tr is not None and (report.reaped or report.kept):
+        if report.reaped:
+            verb = "reclaimed" if report.applied else "would reclaim"
+            tr.write_line(
+                f"[run-dir reaper] {verb} {len(report.reaped)} stale run dir(s), "
+                f"{report.bytes_reclaimed / 1e9:.2f} GB: {', '.join(sorted(report.reaped))}"
+            )
+            if not report.applied:
+                ack = _reaper_ack_path(default_runs_root())
+                tr.write_line(
+                    "[run-dir reaper] DRY RUN — nothing deleted. Review the line "
+                    f"above, then `touch {ack}` to enable automatic reclamation "
+                    "on this machine."
+                )
+        for slug, arm in sorted(report.kept.items()):
+            tr.write_line(f"[run-dir reaper] kept {slug} ({arm})")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _pytest_uses_non_interactive_snakemake_lock_clear():
     """Route this pytest session through the non-interactive branch of
@@ -573,8 +632,10 @@ def tritonswmm_cpu_compiled():
     data is absent.
 
     Process-safety note: this fixture writes to ~/.cache/.../_software/
-    or test_data/.../triton/ and assumes no concurrent test sessions are
-    running an actual compile against the same cache dir.
+    or test_data/.../triton/. Concurrent test sessions compiling against
+    the same cache dir are serialized by the per-build-dir lock in
+    system.py::_compile_backend; a second entrant re-reads the success
+    marker inside the lock and skips rather than racing the first.
     """
     from tests.utils_for_testing import (
         compile_toolchain_unavailable,

@@ -1233,7 +1233,7 @@ def _toolkit_source_dir() -> Path:
     """The directory of the INSTALLED toolkit source. The anchor for every git query.
 
     Anchoring on __file__ (not the process CWD) is load-bearing: real runs are driven
-    from the private estate `hhemt_projects`, and an unanchored `git` resolves THAT repo
+    from a private estate repo, and an unanchored `git` resolves THAT repo
     — measured 2026-07-15, `_get_toolkit_git_sha()` from a foreign repo's CWD returned
     the foreign SHA while hhemt was imported from a different checkout.
     """

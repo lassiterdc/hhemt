@@ -642,7 +642,7 @@ if __name__ == "__main__":
     # Secure cross-machine [Q8] flow (token stays LOCAL; Rivanna computes token-free):
     #   RIVANNA (producer, token-free) — emit provisions 3 fresh per-arch SIFs, runs the full
     #     matrix + a producer test() (the truncated REQ-1 reference), then bundles:
-    #       export HHEMT_DEPLOYMENT_CONFIG=/scratch/$USER/hhemt_experiments/hhemt_projects
+    #       export HHEMT_DEPLOYMENT_CONFIG=/scratch/$USER/hhemt_experiments/<your_estate>
     #       export OPENBLAS_NUM_THREADS=1            # login-node thread-alloc guard
     #       # (optional) export HHEMT_Q8_PRODUCER_SIF_DIR=/scratch/$USER/q8_producer_sifs
     #       python -m scripts.experiments.doi_emitter_and_ingestion_verification emit-bundle
@@ -655,7 +655,7 @@ if __name__ == "__main__":
     #             -> prints data_doi=<doi>
     #   RIVANNA (reproducer, token-free) — from_doi GENUINELY builds 3 SIFs on ingest; a FRESH,
     #     EMPTY reproducer cache (distinct from the producer SIF dir) forecloses a cache-hit:
-    #       export HHEMT_DEPLOYMENT_CONFIG=/scratch/$USER/hhemt_experiments/hhemt_projects
+    #       export HHEMT_DEPLOYMENT_CONFIG=/scratch/$USER/hhemt_experiments/<your_estate>
     #       export OPENBLAS_NUM_THREADS=1
     #       export HHEMT_SIF_CACHE_DIR=/scratch/$USER/q8_reproducer_sif_cache; rm -rf "$HHEMT_SIF_CACHE_DIR"
     #       export HHEMT_ZENODO_BASE_URL=<same host the deposit published to>   # non-secret

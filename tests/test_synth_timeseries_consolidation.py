@@ -99,7 +99,7 @@ def test_toggle_on_consolidates_node_and_link_timeseries(tmp_path, monkeypatch):
     # so it reads the PERSISTED config; an in-memory attribute set on the parent's
     # analysis object never reaches it and the timeseries loop silently no-ops.
     # `retrieve_synth_TRITON_SWMM_test_case` composes analysis_config.yaml from
-    # `additional_analysis_configs`, which is the same seam the hhemt_projects estate
+    # `additional_analysis_configs`, which is the same seam the private-estate
     # runner uses -- so this exercises the real operator path.
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
 
