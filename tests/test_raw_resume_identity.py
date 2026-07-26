@@ -11,9 +11,11 @@ from __future__ import annotations
 import numpy as np
 
 from hhemt.eda.raw_resume_identity import (
+    build_binary_timestep_figure,
     compare_triton_raw_timeseries,
     first_divergent_timestep,
     parse_resume_timestep,
+    resume_boundaries_from_schedule,
 )
 
 
@@ -113,9 +115,62 @@ def test_read_sub_resume_context_cache_split(tmp_path):
         "master_analysis_cfg_yaml": str(master_root / "analysis_config.yaml"),
     }))
 
-    log, interval = read_sub_resume_context(sub_dir, sa_id, iloc)
+    log, interval, schedule = read_sub_resume_context(sub_dir, sa_id, iloc)
     assert interval == 600.0
     assert log is not None and log.exists()
     assert parse_resume_timestep(log) == 3000.0
-    # missing yaml -> (None, None), never raises
-    assert read_sub_resume_context(tmp_path / "nope", sa_id, iloc) == (None, None)
+    assert schedule is None  # no resume_interruption_schedule key in this fixture
+    # missing yaml -> (None, None, None), never raises
+    assert read_sub_resume_context(tmp_path / "nope", sa_id, iloc) == (None, None, None)
+
+
+def test_resume_boundaries_from_schedule_unit_conversion():
+    # index -> minutes: timestep_min = index * reporting_interval_s / 60
+    assert resume_boundaries_from_schedule((25, 50, 75), 60.0) == [25.0, 50.0, 75.0]
+    assert resume_boundaries_from_schedule((25, 50, 75), 600.0) == [250.0, 500.0, 750.0]
+    # clean-vs-clean / missing context -> no boundary, never raises
+    assert resume_boundaries_from_schedule(None, 60.0) == []
+    assert resume_boundaries_from_schedule((25,), None) == []
+    assert resume_boundaries_from_schedule((), 60.0) == []
+
+
+def test_read_sub_resume_context_returns_schedule(tmp_path):
+    import yaml
+
+    from hhemt.eda.raw_resume_identity import read_sub_resume_context
+
+    sa_id, iloc = "sa_gpu_0_r1", 0
+    sub_dir = tmp_path / "subanalyses" / sa_id
+    sub_dir.mkdir(parents=True)
+    (sub_dir / f"{sa_id}.yaml").write_text(yaml.safe_dump({
+        "analysis_id": sa_id,
+        "TRITON_reporting_timestep_s": 600.0,
+        "resume_interruption_schedule": [25, 50, 75],
+    }))
+    log, interval, schedule = read_sub_resume_context(sub_dir, sa_id, iloc)
+    assert interval == 600.0
+    assert schedule == (25, 50, 75)
+    # index 25 at interval 600 s -> 250.0 min (pure-TRITON path needs no marker)
+    assert resume_boundaries_from_schedule(schedule, interval) == [250.0, 500.0, 750.0]
+
+
+def test_build_binary_timestep_figure_k_vlines_and_clean_vs_clean():
+    import numpy as np
+    import xarray as xr
+
+    b4b = {
+        "wlevel_m": xr.DataArray(
+            np.array([True, True, True], dtype=bool),
+            dims=("timestep_min",),
+            coords={"timestep_min": np.array([0.0, 10.0, 20.0])},
+            name="wlevel_m",
+        )
+    }
+    # K=3 requested boundaries -> exactly 3 vline shapes (pure-TRITON arm: no marker needed)
+    fig = build_binary_timestep_figure(
+        b4b, config_label="gpu_1", resume_timesteps_min=[250.0, 500.0, 750.0]
+    )
+    assert len([s for s in fig.layout.shapes if s.type == "line"]) == 3
+    # clean-vs-clean pair -> default () -> zero vlines
+    fig0 = build_binary_timestep_figure(b4b, config_label="cpu_vs_cpu")
+    assert len([s for s in fig0.layout.shapes if s.type == "line"]) == 0
