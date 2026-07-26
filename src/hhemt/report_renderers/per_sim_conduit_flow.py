@@ -7,6 +7,7 @@ placeholder figure (R6 / Phase 3).
 
 from __future__ import annotations
 
+import html
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -470,15 +471,37 @@ def _emit_model_type_skip_placeholder(
     message: str,
     dpi: int,
 ) -> Path:
-    """Centered-text figure explaining a model-type skip (Gotcha 5).
+    """Centered-text placeholder explaining a model-type skip (Gotcha 5).
 
     Keeps the Snakemake rule output present so the DAG does not fail, while
-    making the inapplicability visible in the report.
+    making the inapplicability visible in the report. Format-aware: the plotly
+    report branch owns an ``.html`` ``output_path`` (matplotlib cannot save
+    ``.html``), so an ``.html`` target emits a self-contained HTML document and
+    every other suffix (``.png``/``.svg``/... — the matplotlib/publication path)
+    keeps the matplotlib centered-text figure. This is a module-private
+    degenerate-case emitter, so it persists via ``Path.write_text`` /
+    ``Figure.savefig`` directly (trusted by test_figure_save_discipline.py) and
+    declares no data source (a skip figure has none).
     """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.suffix.lower() == ".html":
+        safe = html.escape(message)
+        output_path.write_text(
+            "<!DOCTYPE html>\n"
+            '<html lang="en"><head><meta charset="utf-8">'
+            f"<title>{safe}</title></head>"
+            '<body style="margin:0;height:100vh;display:flex;'
+            'align-items:center;justify-content:center;'
+            'font-family:system-ui,-apple-system,sans-serif;">'
+            f'<div style="max-width:80%;text-align:center;color:#555;'
+            f'font-size:1rem;line-height:1.4;">{safe}</div>'
+            "</body></html>\n",
+            encoding="utf-8",
+        )
+        return output_path
     fig, ax = plt.subplots(figsize=(8, 3), layout="constrained")
     ax.text(0.5, 0.5, message, ha="center", va="center", fontsize=12, wrap=True)
     ax.axis("off")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     return output_path
