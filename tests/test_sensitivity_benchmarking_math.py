@@ -31,6 +31,7 @@ import pytest
 from hhemt.report_renderers.sensitivity_benchmarking import (
     _compute_efficiency_per_group,
     _compute_speedup_per_group,
+    _find_perf_node,
 )
 
 
@@ -309,3 +310,41 @@ class TestGlobalBaselineSpeedup:
                 df, t_col="wallclock_s", indep_col="n_devices", group_col="group",
                 baseline_mode="invalid",
             )
+
+
+# ── _find_perf_node datatree-group resolution ──────────────────────────────
+
+
+class TestFindPerfNode:
+    """A pure-TRITON sub-analysis consolidates under ``triton_only/performance``;
+    the pre-fix reader only tried ``triton/performance`` (a spelling nothing
+    writes), so it returned None and the sub contributed zero rows -> the
+    ``RuntimeError('No data for benchmarking ...')`` smoke crash (2026-07-26).
+    """
+
+    def _tree(self, group: str):
+        import xarray as xr
+
+        perf = xr.Dataset(
+            {"Total": ("event_iloc", [12.5])}, coords={"event_iloc": [0]}
+        )
+        return xr.DataTree.from_dict({f"/sa_serial_0_r1/{group}": perf})
+
+    def test_triton_only_performance_node_is_found(self):
+        """Pre-fix: returns None (looked in triton/performance)."""
+        tree = self._tree("triton_only/performance")
+        node = _find_perf_node(tree, "serial_0_r1")
+        assert node is not None
+        assert "Total" in node.data_vars
+
+    def test_coupled_tritonswmm_performance_still_found(self):
+        """Regression: the coupled path is unchanged."""
+        tree = self._tree("tritonswmm/performance")
+        node = _find_perf_node(tree, "serial_0_r1")
+        assert node is not None
+        assert "Total" in node.data_vars
+
+    def test_absent_node_returns_none(self):
+        """A sub with no performance node still returns None (no raise)."""
+        tree = self._tree("swmm_only/swmm_link")
+        assert _find_perf_node(tree, "serial_0_r1") is None

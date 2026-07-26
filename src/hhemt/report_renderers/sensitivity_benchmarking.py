@@ -853,7 +853,7 @@ def _collect_rows(
 
 def _find_perf_node(tree: xr.DataTree, sa_id: str) -> xr.Dataset | None:
     """Locate the per-sa_id performance node, preferring tritonswmm over triton-only."""
-    for model_subpath in ("tritonswmm/performance", "triton/performance"):
+    for model_subpath in ("tritonswmm/performance", "triton_only/performance", "triton/performance"):
         path = f"/sa_{sa_id}/{model_subpath}"
         try:
             return tree[path].ds
