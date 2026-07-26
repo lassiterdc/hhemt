@@ -117,9 +117,9 @@ class TestSbatchForm:
         assert "--gres" not in j
 
     def test_never_defaults_to_the_producers_allocation(self, tmp_path):
-        """The ratified spec wrote `-A "${HHEMT_SLURM_ACCOUNT:-quinnlab}"`.
+        """The ratified spec wrote a literal default of the producer's UVA allocation.
 
-        `quinnlab` is the producer's UVA allocation and is on the zero-user-info blocklist;
+        That account literal is the producer's UVA allocation and is on the zero-user-info blocklist;
         defaulting public library code to it would make a third-party reproducer submit
         against an account they do not belong to. The account comes from the reproducer's own
         hpc_system_config instead.
@@ -127,7 +127,9 @@ class TestSbatchForm:
         argv = build_sbatch_argv(
             account="theirs", sif_out=tmp_path / "o.sif", build_script=tmp_path / "b.sh", log_dir=tmp_path
         )
-        assert "quinnlab" not in " ".join(argv)
+        # the reproducer's own account flows through verbatim; no producer-allocation
+        # default is substituted (replaces the original single-token absence check).
+        assert argv[argv.index("-A") + 1] == "theirs"
 
     def test_batch_mode_requires_an_account(self, tmp_path, monkeypatch):
         d = _write_def(tmp_path)

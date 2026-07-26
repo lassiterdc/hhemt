@@ -31,7 +31,7 @@ itself is recoverable; one that does not is the silent-incompleteness failure mo
 The durable fix is consolidating the per-timestep DOMAIN REDUCTION (``max`` over ``(y, x)``
 per timestep — 144 float32 = 576 bytes/scenario, ~16 KB/arm, FLAT in grid size) into a
 ``tritonswmm/triton_domain_reduction`` node. Until that lands, ``fetch_triton_tseries.py``
-in the experiment's ``hhemt_projects`` subdirectory is the Q27-conformant source.
+in the experiment's private-estate subdirectory is the Q27-conformant source.
 
 Note the consolidated ``tritonswmm/triton`` summary node is the ORTHOGONAL reduction
 (CF ``cell_methods: "timestep_min: maximum"`` — max over TIME per cell, dims ``(y, x)``).
@@ -121,7 +121,7 @@ _WLEVEL_ABSENT_NOTE = (
     "wlevel panel NOT RENDERED — the per-scenario TRITON timeseries stores "
     "(TRITONSWMM_TRITON_tseries.zarr) were not supplied. They are deliberately not "
     "consolidated into the bundle (~83x the SWMM series by payload). Fetch them with "
-    "hhemt_projects/synthetic_compute_sensitivity/fetch_triton_tseries.py and re-render."
+    "<estate>/synthetic_compute_sensitivity/fetch_triton_tseries.py and re-render."
 )
 
 _REPLAY_ATTR = "coupled_resume_replay_evidence"

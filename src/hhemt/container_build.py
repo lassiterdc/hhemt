@@ -175,9 +175,9 @@ def build_sbatch_argv(
     synchronous with ``from_doi`` (the caller needs the SIF path before constructing the
     analysis).
 
-    ``account`` is REQUIRED and has no default. The ratified Build-Step Specification wrote
-    ``-A "${HHEMT_SLURM_ACCOUNT:-quinnlab}"``, but ``quinnlab`` is the PRODUCER's UVA
-    allocation and appears in ``scripts/reprex_blocklist.txt``; defaulting public library
+    ``account`` is REQUIRED and has no default. The ratified Build-Step Specification wrote a
+    literal default of the PRODUCER's UVA allocation (on ``scripts/reprex_blocklist.txt``);
+    defaulting public library
     code to it would make a third-party reproducer submit against an account they do not
     belong to. The account is sourced from the reproducer's own
     ``hpc_system_config.default_account`` instead -- the same source the proven-green
