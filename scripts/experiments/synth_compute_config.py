@@ -355,6 +355,7 @@ def build_resume_from_clean_runtimes(
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
+    model_arm: str = "tritonswmm",
 ) -> _Case:
     """Two-pass (FQ3): read each completed clean-sweep sa_id's full-completion
     wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
@@ -372,6 +373,7 @@ def build_resume_from_clean_runtimes(
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
+        model_arm=model_arm,
     )
     runtime_min_by_sa = size_resume_walltimes(clean.analysis)
     return resume_case(
@@ -380,6 +382,7 @@ def build_resume_from_clean_runtimes(
         runtime_min_by_sa=runtime_min_by_sa,
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
+        model_arm=model_arm,
     )
 
 
