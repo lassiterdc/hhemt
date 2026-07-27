@@ -156,20 +156,24 @@ class _FakeProcess:
         self._grid = grid
         self._MODE_CONFIG = {"max_depth": object()}
         self._calls = calls
+        self._mode = "max_depth"
 
     def _retrieve_combined_output(self, mode: str) -> xr.Dataset:
         self._calls.append(mode)
-        if mode == "max_depth":
+        if mode == self._mode:
             return _depth_ds(self._grid)
         raise FileNotFoundError(mode)
 
 
-def _fake_sub(analysis_dir, grid, *, run_mode, n_mpi, partition, n_gpus=0, calls=None):
+def _fake_sub(analysis_dir, grid, *, run_mode, n_mpi, partition, n_gpus=0, calls=None, model=None, mode="max_depth"):
     analysis_dir.mkdir(parents=True, exist_ok=True)
     # Real .zarr store so the emit provenance gate (_validate_source_path) passes.
     xr.Dataset({"placeholder": (("a",), [1])}).to_zarr(analysis_dir / "analysis_datatree.zarr", mode="w")
-    return SimpleNamespace(
-        process=_FakeProcess(grid, calls if calls is not None else []),
+    proc = _FakeProcess(grid, calls if calls is not None else [])
+    proc._MODE_CONFIG = {mode: object()}
+    proc._mode = mode
+    ns = SimpleNamespace(
+        process=proc,
         cfg_analysis=SimpleNamespace(
             run_mode=run_mode,
             n_mpi_procs=n_mpi,
@@ -180,6 +184,15 @@ def _fake_sub(analysis_dir, grid, *, run_mode, n_mpi, partition, n_gpus=0, calls
         ),
         analysis_paths=SimpleNamespace(analysis_dir=str(analysis_dir)),
     )
+    if model is not None:
+        ns._system = SimpleNamespace(
+            cfg_system=SimpleNamespace(
+                toggle_tritonswmm_model=(model == "tritonswmm"),
+                toggle_triton_model=(model == "triton"),
+                toggle_swmm_model=(model == "swmm"),
+            )
+        )
+    return ns
 
 
 def _fake_master(tmp_path, subs: dict):
@@ -295,3 +308,112 @@ def test_resume_sensitivity_pairs_clean_and_resume_by_config(tmp_path, monkeypat
     assert res.skipped is False
     assert res.verdict.passed is True
     assert res.plot_id == "eda_resume_sensitivity"
+
+
+# --------------------------------------------------------------------------- #
+# Cross-arm collision guard (Validation-Plan item 2 / DoD item 1)             #
+# --------------------------------------------------------------------------- #
+
+
+def test_config_identity_separates_arms_at_same_compute_config(tmp_path):
+    """HAND-CONSTRUCTED two-arm bucket (master R12): `_config_identity` is called ONLY
+    over one master's `sub_analyses` (compute_sensitivity.py:519), and under the
+    sibling-master architecture each master carries exactly ONE arm, so NO run of this
+    system produces a two-arm bucket. This fabricates one to prove the model-arm identity
+    component prevents the pre-fix collapse. Pre-fix `_config_identity` (no model) returns
+    EQUAL tuples for a coupled and a pure-TRITON sub at the same compute config, so this
+    `!=` assertion FAILS against the pre-fix code.
+    """
+    from hhemt.eda.compute_sensitivity import _config_identity
+
+    grid = np.array([[0.0, 0.5], [1.0, 0.04]], dtype="float64")
+    coupled = _fake_sub(tmp_path / "c", grid, run_mode="serial", n_mpi=1, partition="standard", model="tritonswmm")
+    triton = _fake_sub(tmp_path / "t", grid.copy(), run_mode="serial", n_mpi=1, partition="standard", model="triton")
+    assert _config_identity(coupled) != _config_identity(triton)
+
+
+def test_resume_sensitivity_two_arm_bucket_pairs_both_arms(tmp_path):
+    """HAND-CONSTRUCTED two-arm bucket (master R12): four subs at one compute config,
+    two arms, each arm a clean+resume pair. Under the sibling-master architecture no run
+    produces this state; the fixture fabricates it to prove item (1)'s fix. Pre-fix the
+    four collapse into ONE bucket, the ref is the lexicographically-first clean, and the
+    cross-arm resume pair dies in `_compare_pair` (mode mismatch) → n_pairs=1 with a
+    silent drop. Post-fix the model-arm identity splits them into two buckets → n_pairs=2,
+    nothing dropped.
+    """
+    import pandas as pd
+
+    grid = np.array([[0.0, 0.5], [1.0, 0.04]], dtype="float64")
+    subs = {
+        # distinct mode keys per arm so a cross-arm compare would drop (pre-fix halving).
+        "c_clean": _fake_sub(
+            tmp_path / "cc",
+            grid,
+            run_mode="serial",
+            n_mpi=1,
+            partition="standard",
+            model="tritonswmm",
+            mode="tritonswmm_depth",
+        ),
+        "c_res": _fake_sub(
+            tmp_path / "cr",
+            grid.copy(),
+            run_mode="serial",
+            n_mpi=1,
+            partition="standard",
+            model="tritonswmm",
+            mode="tritonswmm_depth",
+        ),
+        "t_clean": _fake_sub(
+            tmp_path / "tc",
+            grid.copy(),
+            run_mode="serial",
+            n_mpi=1,
+            partition="standard",
+            model="triton",
+            mode="triton_depth",
+        ),
+        "t_res": _fake_sub(
+            tmp_path / "tr",
+            grid.copy(),
+            run_mode="serial",
+            n_mpi=1,
+            partition="standard",
+            model="triton",
+            mode="triton_depth",
+        ),
+    }
+    master = _fake_master(tmp_path, subs)
+    master.df_status = pd.DataFrame(
+        {"sa_id": ["c_clean", "c_res", "t_clean", "t_res"], "event_iloc": [0, 0, 0, 0], "n_resumes": [0, 1, 0, 1]}
+    )
+    res = check_resume_sensitivity(master, cfg_analysis=SimpleNamespace(), eda_cfg=SimpleNamespace())
+    assert res.skipped is False
+    assert res.verdict.passed is True
+    # TWO within-arm pairs (not one), and no pair silently dropped.
+    assert "All 2 resume-vs-clean pair(s) bit-identical" in res.verdict.summary
+    assert "dropped" not in res.verdict.summary
+
+
+def test_member_summary_names_examined_and_dropped_counts(tmp_path):
+    """Denominator disclosure (Validation-Plan item 3 / DoD item 2 / Gotcha-71(d)).
+
+    HAND-CONSTRUCTED: a rank family with a rank-1 reference (mode `max_depth`), a rank-2
+    sub sharing that mode (compares), and a rank-4 sub with a DISTINCT mode (`other`) so
+    its pair falls through `_compare_pair` and is dropped. The summary must name BOTH the
+    examined count (1 pair) AND the dropped count (1), so a vacuous pass cannot read as a
+    real one.
+    """
+    grid = np.array([[0.0, 0.5], [1.0, 0.04]], dtype="float64")
+    subs = {
+        "mpi_1": _fake_sub(tmp_path / "r1", grid, run_mode="mpi", n_mpi=1, partition="standard", mode="max_depth"),
+        "mpi_2": _fake_sub(
+            tmp_path / "r2", grid.copy(), run_mode="mpi", n_mpi=2, partition="standard", mode="max_depth"
+        ),
+        "mpi_4": _fake_sub(tmp_path / "r4", grid.copy(), run_mode="mpi", n_mpi=4, partition="standard", mode="other"),
+    }
+    master = _fake_master(tmp_path, subs)
+    res = check_rank_sensitivity(master, cfg_analysis=SimpleNamespace(), eda_cfg=SimpleNamespace())
+    assert res.skipped is False
+    assert "All 1 within-family rank-N vs rank-1 mpi pair(s) bit-identical" in res.verdict.summary  # examined named
+    assert "1 pair(s) dropped for absent/unreadable outputs" in res.verdict.summary  # denominator disclosed

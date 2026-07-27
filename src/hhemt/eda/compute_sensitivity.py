@@ -216,6 +216,25 @@ def _partition(sub) -> str:
     return str(getattr(_cfg(sub), "hpc_ensemble_partition", "") or "")
 
 
+def _model_arm(sub) -> str:
+    """The enabled model arm for one sub-analysis, as an identity component.
+
+    Mirrors `_run_mode` / `_partition`: a single string read off the sub's system
+    config. Falls back to the empty string so a sub with no resolvable toggle sorts
+    deterministically rather than raising inside a grouping loop.
+    """
+    _sys = getattr(sub, "_system", None)
+    _c = getattr(_sys, "cfg_system", None)
+    for _tok, _attr in (
+        ("tritonswmm", "toggle_tritonswmm_model"),
+        ("triton", "toggle_triton_model"),
+        ("swmm", "toggle_swmm_model"),
+    ):
+        if bool(getattr(_c, _attr, False)):
+            return _tok
+    return ""
+
+
 def _config_identity(sub) -> tuple:
     """Compute-config identity for clean/resume pairing (excludes the resume knob).
 
@@ -230,6 +249,12 @@ def _config_identity(sub) -> tuple:
         int(getattr(c, "n_gpus", 0) or 0),
         int(getattr(c, "n_nodes", 0) or 0),
         _partition(sub),
+        # DEFENCE-IN-DEPTH, not a live-bug fix (master R12). `_config_identity` is
+        # called only over ONE master's sub_analyses (`:519`), and under the sibling-
+        # master architecture each master carries exactly one arm, so two arms can
+        # never reach the same bucket today. The component makes the identity correct
+        # if the single-model restriction is ever lifted.
+        _model_arm(sub),
     )
 
 
@@ -438,6 +463,7 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
     contributing: dict[str, object] = {}
     all_identical = True
     any_compared = False
+    n_dropped = 0
 
     for partition, members in sorted(families.items()):
         ref_id = next((sa for sa, sub in sorted(members.items()) if _n_mpi(sub) == 1), None)
@@ -454,6 +480,7 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
                 continue
             recs = _compare_pair(ref_sub, sub, ref_modes, dry_threshold_m=dry, tau_m=tau)
             if not recs:
+                n_dropped += 1
                 continue
             any_compared = True
             contributing[sa] = sub
@@ -477,10 +504,11 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
     passed = all_identical
     n_pairs = len(labeled)
     n_div = len([d for d in details if "variable" in d])
+    dropped_note = f" ({n_dropped} pair(s) dropped for absent/unreadable outputs)" if n_dropped else ""
     summary = (
-        f"All {n_pairs} within-family rank-N vs rank-1 mpi pair(s) bit-identical."
+        f"All {n_pairs} within-family rank-N vs rank-1 mpi pair(s) bit-identical{dropped_note}."
         if all_identical
-        else f"{n_div} (sa, event, variable) tuple(s) diverged from the rank-1 reference."
+        else f"{n_div} (sa, event, variable) tuple(s) diverged from the rank-1 reference{dropped_note}."
     )
     verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=summary, details=details)
 
@@ -525,6 +553,7 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
     contributing: dict[str, object] = {}
     all_identical = True
     any_compared = False
+    n_dropped = 0
 
     for cid, bucket in sorted(groups.items(), key=lambda kv: str(kv[0])):
         clean_ids = sorted(bucket["clean"])
@@ -543,6 +572,7 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
             sub = subs[sa]
             recs = _compare_pair(ref_sub, sub, ref_modes, dry_threshold_m=dry, tau_m=tau)
             if not recs:
+                n_dropped += 1
                 continue
             any_compared = True
             contributing[sa] = sub
@@ -567,10 +597,11 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
     passed = all_identical
     n_pairs = len(labeled)
     n_div = len([d for d in details if "variable" in d])
+    dropped_note = f" ({n_dropped} pair(s) dropped for absent/unreadable outputs)" if n_dropped else ""
     summary = (
-        f"All {n_pairs} resume-vs-clean pair(s) bit-identical."
+        f"All {n_pairs} resume-vs-clean pair(s) bit-identical{dropped_note}."
         if all_identical
-        else f"{n_div} (sa, event, variable) tuple(s) diverged from the clean counterpart."
+        else f"{n_div} (sa, event, variable) tuple(s) diverged from the clean counterpart{dropped_note}."
     )
     verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=summary, details=details)
 
@@ -618,11 +649,13 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
     labeled: list[tuple[str, list[dict]]] = []
     contributing: dict[str, object] = {serial_id: ref_sub}
     any_compared = False
+    n_dropped = 0
 
     for sa in gpu_ids:
         sub = subs[sa]
         recs = _compare_pair(ref_sub, sub, ref_modes, dry_threshold_m=dry, tau_m=tau)
         if not recs:
+            n_dropped += 1
             continue
         any_compared = True
         contributing[sa] = sub
@@ -650,11 +683,14 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
         for d in details
         if d.get("max_abs_diff_m") is not None and d["variable"] == _DEPTH_VAR
     ]
+    n_gpu_compared = len(labeled)
+    dropped_note = f" ({n_dropped} GPU pair(s) dropped for absent/unreadable outputs)" if n_dropped else ""
     summary = (
         f"Characterized cross-hardware divergence (1-GPU vs 1-rank serial-CPU; disclosed, ref sa_id={serial_id}): "
-        f"max_abs_depth_diff_m {', '.join(bounds)}."
+        f"{n_gpu_compared} GPU pair(s) compared{dropped_note}; max_abs_depth_diff_m {', '.join(bounds)}."
         if bounds
-        else f"Characterized cross-hardware divergence: no comparable depth field (ref sa_id={serial_id})."
+        else f"Characterized cross-hardware divergence: no comparable depth field "
+        f"(ref sa_id={serial_id}; {n_gpu_compared} GPU pair(s) compared{dropped_note})."
     )
     verdict = CheckResult(name=name, level="aggregate", passed=True, summary=summary, details=details)
 

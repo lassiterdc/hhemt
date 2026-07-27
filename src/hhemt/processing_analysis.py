@@ -372,9 +372,7 @@ class TRITONSWMM_analysis_post_processing:
             scen = TRITONSWMM_scenario(event_iloc, self._analysis)
             ts_file = getattr(scen.scen_paths, scen_attr)
             if ts_file is None:
-                raise ValueError(
-                    f"Timeseries path is None for ts_mode '{ts_mode}' and event_iloc={event_iloc}."
-                )
+                raise ValueError(f"Timeseries path is None for ts_mode '{ts_mode}' and event_iloc={event_iloc}.")
             if not ts_file.exists():
                 raise FileNotFoundError(
                     f"Timeseries file not found: {ts_file}. Run timeseries processing before consolidating."
@@ -675,11 +673,28 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
             except Exception:  # noqa: BLE001 — log unreadable at consolidation: skip this sub, best-effort
                 continue
             key = str(_sa) if _sa is not None else str(row.get("scenario_directory", ""))
+            _replay_t = _parse_replay_t(text, _TRITON_REPLAY_MARKER)
+            # Schedule VERIFICATION (Phase 5). The resume schedule is now CONFIGURED, so the
+            # parsed replay_t is a check against it, not the sole source of truth. Units differ:
+            # replay_t is TRITON sim-time SECONDS while schedule entries are checkpoint INDICES,
+            # so the last requested boundary in seconds is schedule[-1] * TRITON_reporting_timestep_s.
+            # The realized kill is a lower-bounded lag of the request, so the honored predicate is
+            # replay_t >= that product. COUPLED-ONLY: a pure-TRITON arm emits no replay marker, so
+            # replay_t is None and the comparison is None here (its schedule verification rests on
+            # df_status n_resumes == len(schedule); see
+            # analysis_validation.check_resume_schedule_honored).
+            _c = getattr(sub, "cfg_analysis", None)
+            _sched = getattr(_c, "resume_interruption_schedule", None)
+            _interval = getattr(_c, "TRITON_reporting_timestep_s", None)
+            _expected_t = float(_sched[-1]) * float(_interval) if _sched and _interval is not None else None
+            _matches = (_replay_t >= _expected_t) if (_replay_t is not None and _expected_t is not None) else None
             evidence[key] = {
                 "resumed": _TRITON_CHECKPOINT_READ_MARKER in text,
                 "completed": _TRITON_COMPLETION_MARKER in text,
                 "replayed": _TRITON_REPLAY_MARKER in text,
-                "replay_t": _parse_replay_t(text, _TRITON_REPLAY_MARKER),
+                "replay_t": _replay_t,
+                "expected_replay_t": _expected_t,
+                "replay_matches_schedule": _matches,
             }
         if evidence:
             tree.attrs["coupled_resume_replay_evidence"] = json.dumps(evidence, sort_keys=True)

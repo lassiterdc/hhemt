@@ -188,9 +188,7 @@ def parse_resume_timestep(model_log: Path) -> float | None:
         return None
 
 
-def resume_boundaries_from_schedule(
-    schedule: Sequence[int] | None, reporting_interval_s: float | None
-) -> list[float]:
+def resume_boundaries_from_schedule(schedule: Sequence[int] | None, reporting_interval_s: float | None) -> list[float]:
     """The K REQUESTED resume boundaries, in reporting-timestep MINUTES.
 
     Model-agnostic and K-complete, unlike ``parse_resume_timestep`` (its coupled-only
@@ -248,12 +246,7 @@ def read_sub_resume_context(
     master = cfg.get("master_analysis_cfg_yaml")
     log_path: Path | None = None
     if master:
-        candidate = (
-            Path(master).parent
-            / "logs"
-            / "sims"
-            / f"model_tritonswmm_{sa_id}_evt{event_iloc}.log"
-        )
+        candidate = Path(master).parent / "logs" / "sims" / f"model_tritonswmm_{sa_id}_evt{event_iloc}.log"
         log_path = candidate if candidate.exists() else None
     return log_path, reporting_interval_s, schedule
 
@@ -400,6 +393,10 @@ def _b4b_config_identity(sub) -> tuple:
         int(getattr(c, "n_gpus", 0) or 0),
         int(getattr(c, "n_nodes", 0) or 0),
         str(getattr(c, "hpc_ensemble_partition", "") or ""),
+        # DEFENCE-IN-DEPTH parity with compute_sensitivity._config_identity (master R12):
+        # each master carries exactly one arm today, so two arms never share a bucket; the
+        # component makes clean/resume pairing correct if the single-model restriction lifts.
+        _b4b_enabled_model(sub),
     )
 
 

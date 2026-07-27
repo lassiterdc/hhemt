@@ -863,6 +863,143 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
+def check_resume_schedule_honored(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Warn when a resumed sim's REALIZED resume did not honor the CONFIGURED schedule.
+
+    DISJOINT from ``check_coupled_resume_validity`` (which tests whether the coupled
+    replay ENGAGED — the PRESENCE of the replay marker): this check tests whether the
+    realized resume reached the LAST CONFIGURED boundary. The two never count the same
+    row: Arm A here fires only when the marker is PRESENT (``replay_matches_schedule``
+    is a real bool) but mis-positioned, whereas ``check_coupled_resume_validity`` fires
+    only when the marker is ABSENT. Two arms, disclosed as an asymmetry:
+
+    (A) COUPLED (tritonswmm): reads the durable ``coupled_resume_replay_evidence`` stamp
+        (``processing_analysis._stamp_coupled_resume_evidence``), which now carries
+        ``replay_matches_schedule`` = ``replay_t >= schedule[-1] * reporting_interval_s``
+        (coupled-only, unit-matched). ``False`` -> the replay engaged but landed BEFORE
+        the last scheduled boundary (schedule truncated / not honored); ``None`` (no
+        replay_t or no configured schedule) -> INDETERMINATE, never a warn.
+    (B) PURE-TRITON (triton): emits NO replay marker, so ``replay_t`` is structurally
+        unavailable; its schedule is instead verified by ``n_resumes == len(schedule)``
+        from ``df_status``. A mismatch -> warn. This arm ASYMMETRY is disclosed in every
+        pure-TRITON detail row and in the summary.
+
+    ``level="aggregate"``. Non-blocking (``validate_analysis`` never raises). Graceful-
+    absent throughout: no stamp / no configured schedule -> INDETERMINATE INFO
+    (``passed=True``). Disclosed denominator (Gotcha-71(d)): examined + INDETERMINATE
+    counts are named in the summary.
+    """
+    import json
+
+    import pandas as pd
+
+    cfg_sys = analysis._system.cfg_system
+    coupled_on = bool(getattr(cfg_sys, "toggle_tritonswmm_model", False))
+    triton_on = bool(getattr(cfg_sys, "toggle_triton_model", False))
+    if not (coupled_on or triton_on):
+        return CheckResult(
+            name="Resume schedule honored",
+            level="aggregate",
+            passed=True,
+            summary="Neither coupled nor pure-TRITON model enabled — resume-schedule verification N/A.",
+            details=[],
+        )
+
+    details: list[dict] = []
+    examined = 0
+    indeterminate = 0
+
+    # --- Arm A: COUPLED — replay_t vs schedule[-1]*interval, from the durable stamp ---
+    if coupled_on:
+        _ev: dict = {}
+        try:
+            _p = (
+                analysis.analysis_paths.sensitivity_datatree_zarr
+                if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+                else analysis.analysis_paths.analysis_datatree_zarr
+            )
+            if _p is not None and _p.exists():
+                import xarray as xr
+
+                _ev = json.loads(
+                    xr.open_datatree(_p, engine="zarr", consolidated=False).attrs.get(
+                        "coupled_resume_replay_evidence", "{}"
+                    )
+                )
+        except Exception:  # noqa: BLE001 — durable-stamp read is best-effort; absence -> Arm A N/A
+            _ev = {}
+        for key, rec in sorted(_ev.items()):
+            matches = rec.get("replay_matches_schedule")
+            if matches is None:
+                indeterminate += 1
+                continue  # no replay_t or no configured schedule -> cannot verify position
+            examined += 1
+            if matches is False:
+                details.append(
+                    {
+                        "scenario": key,
+                        "detail": (
+                            f"coupled resume replayed to t={rec.get('replay_t')}s but the last "
+                            f"configured boundary is t={rec.get('expected_replay_t')}s "
+                            "(schedule[-1] * TRITON_reporting_timestep_s); the realized resume did "
+                            "not reach the last scheduled interruption, so the coupled state was "
+                            "replayed short and later summaries may be truncated."
+                        ),
+                    }
+                )
+
+    # --- Arm B: PURE-TRITON — n_resumes == len(schedule) (arm asymmetry: no replay_t) ---
+    if triton_on:
+        try:
+            df = analysis.df_status
+        except Exception:
+            df = None
+        if df is not None and {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
+            n_res = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
+            triton_resumed = df[(df["model_type"] == "triton") & (n_res >= 1)]
+            subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+            for _, row in triton_resumed.iterrows():
+                _sa = row.get("sa_id")
+                sub = subs.get(str(_sa) if _sa is not None else None)
+                sched = getattr(getattr(sub, "cfg_analysis", None), "resume_interruption_schedule", None)
+                if not sched:
+                    indeterminate += 1
+                    continue  # no configured schedule -> cannot verify the resume count
+                examined += 1
+                n_r = int(row.get("n_resumes") or 0)
+                if n_r != len(sched):
+                    details.append(
+                        {
+                            "scenario": str(row.get("scenario_directory", "")),
+                            "detail": (
+                                f"pure-TRITON resume count n_resumes={n_r} != {len(sched)} configured "
+                                "interruption(s) (resume_interruption_schedule). The pure-TRITON arm "
+                                "emits no replay marker, so its schedule is verified by the resume "
+                                "count (arm asymmetry) — a mismatch means the schedule was not honored."
+                            ),
+                        }
+                    )
+
+    n = len(details)
+    passed = n == 0
+    _parts = [f"{examined} resumed sim(s) schedule-verified"]
+    if indeterminate:
+        _parts.append(f"{indeterminate} INDETERMINATE (no replay_t / no configured schedule)")
+    _denom = "; ".join(_parts)
+    summary = (
+        f"All resumed sims honored their configured resume schedule ({_denom})."
+        if passed
+        else f"{n} resumed sim(s) did not honor the configured resume schedule ({_denom})."
+    )
+    return CheckResult(
+        name="Resume schedule honored",
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+    )
+
+
 def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
@@ -883,6 +1020,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_resource_usage(analysis),
             check_invalidating_fixes(analysis),  # ADR-17 registry surface
             check_coupled_resume_validity(analysis),  # post-fix retroactive coupled-resume invalidity warning
+            check_resume_schedule_honored(analysis),  # Phase 5: replay_t / n_resumes vs configured schedule
         ]
         + _read_persisted_eda_verdicts(analysis)
     )

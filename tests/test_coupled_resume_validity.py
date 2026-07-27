@@ -586,3 +586,42 @@ def test_postfix_unreadable_log_durable_stamp_not_replayed_warns(monkeypatch, tm
     assert len(res.details) == 1
     assert "durable replay-evidence stamp shows the replay did NOT engage" in res.details[0]["detail"]
     assert "1 resumed coupled sim(s) examined" in res.summary
+
+
+def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
+    """Arm A: a coupled resume whose replay_t landed BELOW schedule[-1]*interval
+    (replay_matches_schedule=False in the durable stamp) is a warn. Disjoint from
+    check_coupled_resume_validity (which fires on marker ABSENCE): here the marker is
+    present but mis-positioned.
+    """
+    import json
+
+    import xarray as xr
+
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    zpath = tmp_path / "analysis_datatree.zarr"
+    ev = {
+        "sa_0": {
+            "resumed": True,
+            "completed": True,
+            "replayed": True,
+            "replay_t": 300.0,
+            "expected_replay_t": 600.0,
+            "replay_matches_schedule": False,
+        }
+    }
+    ds = xr.Dataset({"placeholder": (("a",), [1])})
+    ds.attrs["coupled_resume_replay_evidence"] = json.dumps(ev, sort_keys=True)
+    ds.to_zarr(zpath, mode="w")
+
+    analysis = SimpleNamespace(
+        _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=True, toggle_triton_model=False)),
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zpath, sensitivity_datatree_zarr=None),
+    )
+    res = check_resume_schedule_honored(analysis)
+    assert res.passed is False
+    assert res.name == "Resume schedule honored"
+    assert any("did not reach the last scheduled interruption" in d["detail"] for d in res.details)
+    assert "1 resumed sim(s) schedule-verified" in res.summary  # disclosed denominator
