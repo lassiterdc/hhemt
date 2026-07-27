@@ -257,8 +257,10 @@ def render(
         speedup_range_mode = getattr(
             getattr(report_cfg, "sensitivity", None), "speedup_panel_range_mode", "full_ideal",
         )
+        _model_arm = _resolve_model_arm(analysis)
         return _render_plotly_branch(
             df, speedup_pg, strong_eff_pg,
+            model_arm=_model_arm,
             wall_unit=wall_unit, cost_unit=cost_unit,
             independent_var=independent_var, group_by_var=group_by_var,
             sens_cfg=sens_cfg,
@@ -853,12 +855,38 @@ def _collect_rows(
 
 def _find_perf_node(tree: xr.DataTree, sa_id: str) -> xr.Dataset | None:
     """Locate the per-sa_id performance node, preferring tritonswmm over triton-only."""
-    for model_subpath in ("tritonswmm/performance", "triton_only/performance", "triton/performance"):
+    for model_subpath in ("tritonswmm/performance", "triton_only/performance"):
         path = f"/sa_{sa_id}/{model_subpath}"
         try:
             return tree[path].ds
         except KeyError:
             continue
+    return None
+
+
+def _resolve_model_arm(analysis) -> str | None:
+    """Return the single TRITON model arm this benchmarking master carries.
+
+    Phase 6 change (2). Under the sibling-master architecture each sensitivity
+    master enables exactly one TRITON arm, so the figure is single-arm and the
+    encoding is constant per figure (self-labeling). ``"coupled"`` == the
+    TRITON-SWMM arm (``tritonswmm/performance``); ``"uncoupled"`` == the
+    pure-TRITON arm (``triton_only/performance``). Returns ``None`` for a
+    non-TRITON master (e.g. swmm-only) so the pre-change filled/dashed default is
+    preserved byte-identically. The tritonswmm-first precedence mirrors
+    ``_find_perf_node``'s probe order, so config-truth agrees with the plotted
+    node under the single-arm invariant.
+    """
+    sens = getattr(analysis, "sensitivity", None)
+    if sens is None:
+        return None
+    enabled: set[str] = set()
+    for sub in sens.sub_analyses.values():
+        enabled.update(sub._get_enabled_model_types())
+    if "tritonswmm" in enabled:
+        return "coupled"
+    if "triton" in enabled:
+        return "uncoupled"
     return None
 
 
@@ -895,6 +923,7 @@ def _build_sensitivity_benchmarking_figure(
     speedup_all_rows: dict | None = None,
     efficiency_all_rows: dict | None = None,
     speedup_range_mode: str = "full_ideal",
+    model_arm: str | None = None,
 ):
     """Plotly MV port (pre-/design-figure): static 4-panel benchmarking figure.
     Wall-clock | Compute-cost | Strong-scaling speedup | Parallel efficiency,
@@ -931,6 +960,7 @@ def _build_sensitivity_benchmarking_figure(
             group_by_var=group_by_var, sens_cfg=sens_cfg, prov=prov,
             show_in_legend=(row == 1),
             gpu_legend_suffix=gpu_legend_suffix,
+            model_arm=model_arm,
         )
 
     # ---- Panels 3 + 4: speedup + efficiency -----------------------------
@@ -947,6 +977,7 @@ def _build_sensitivity_benchmarking_figure(
         gpu_legend_suffix=gpu_legend_suffix,
         all_rows_per_group=speedup_all_rows,
         ideal_show_in_legend=True,
+        model_arm=model_arm,
     )
     _plotly_metric_panel_precomputed(
         fig, strong_eff_per_group, df_for_groups=df, row=4,
@@ -957,6 +988,7 @@ def _build_sensitivity_benchmarking_figure(
         gpu_legend_suffix=gpu_legend_suffix,
         all_rows_per_group=efficiency_all_rows,
         ideal_show_in_legend=False,
+        model_arm=model_arm,
     )
     # F-FU-6 / Q1: speedup panel range mode. Default `full_ideal` shows the full
     # ideal line; `empirical_clipped` clips y to the empirical max for better
@@ -1041,6 +1073,7 @@ def _render_plotly_branch(
     speedup_all_rows: dict | None = None,
     efficiency_all_rows: dict | None = None,
     speedup_range_mode: str = "full_ideal",
+    model_arm: str | None = None,
 ) -> Path:
     fig, plotly_config = _build_sensitivity_benchmarking_figure(
         df,
@@ -1061,6 +1094,7 @@ def _render_plotly_branch(
         speedup_all_rows=speedup_all_rows,
         efficiency_all_rows=efficiency_all_rows,
         speedup_range_mode=speedup_range_mode,
+        model_arm=model_arm,
     )
     html_text = pio.to_html(
         fig, include_plotlyjs=plotly_js_mode,
@@ -1107,6 +1141,7 @@ def _plotly_metric_panel(
     prov: ProvenanceLog,
     show_in_legend: bool,
     gpu_legend_suffix: str = "",
+    model_arm: str | None = None,
 ) -> None:
     """Plot one of the wallclock/compute-cost panels (raw data per group)."""
     groups = sorted(df["group_value"].dropna().unique(), key=str)
@@ -1125,6 +1160,13 @@ def _plotly_metric_panel(
             marker_symbol = "star"
         else:
             marker_symbol = "circle"
+        # Phase 6 change (2): model arm on marker FILL (open=uncoupled) layered on
+        # the group-type base symbol so the group encoding is preserved, plus a
+        # redundant connector dash (solid=coupled / dashed=uncoupled). model_arm
+        # None (e.g. swmm-only) keeps the pre-change filled/dashed default.
+        if model_arm == "uncoupled":
+            marker_symbol = f"{marker_symbol}-open"
+        arm_dash = "solid" if model_arm == "coupled" else "dash"
         if is_gpu_group:
             legend_name = f"{gv}{gpu_legend_suffix}"
         elif is_hybrid_group:
@@ -1142,7 +1184,7 @@ def _plotly_metric_panel(
                     go.Scatter(
                         x=per_x_min.index, y=per_x_min.values,
                         mode="lines",
-                        line=dict(color=color, dash="dash",
+                        line=dict(color=color, dash=arm_dash,
                                   width=sens_cfg.line_width),
                         legendgroup=str(gv), name=legend_name,
                         showlegend=False, hoverinfo="skip",
@@ -1215,6 +1257,7 @@ def _plotly_metric_panel_precomputed(
     gpu_legend_suffix: str = "",
     all_rows_per_group: dict | None = None,
     ideal_show_in_legend: bool = False,
+    model_arm: str | None = None,
 ) -> None:
     """Plot speedup / efficiency panel from precomputed per-group data.
 
@@ -1291,6 +1334,14 @@ def _plotly_metric_panel_precomputed(
             marker_symbol = "star"
         else:
             marker_symbol = "circle"
+        # Phase 6 change (2): model arm on marker FILL (open=uncoupled) layered on
+        # the group-type base symbol so the group encoding is preserved, plus a
+        # redundant connector dash (solid=coupled / dashed=uncoupled). model_arm
+        # None (e.g. swmm-only) keeps the pre-change filled/dashed default. The
+        # ideal-reference line below is NOT a data connector and is left unchanged.
+        if model_arm == "uncoupled":
+            marker_symbol = f"{marker_symbol}-open"
+        arm_dash = "solid" if model_arm == "coupled" else "dash"
         legend_name = f"{gv}{gpu_legend_suffix}" if is_gpu_group else (
             f"{gv}*" if is_hybrid_group else str(gv)
         )
@@ -1319,7 +1370,7 @@ def _plotly_metric_panel_precomputed(
         else:
             line_trace = dict(
                 x=line_xs, y=line_ys, mode="lines",
-                line=dict(color=color, dash="dash", width=sens_cfg.line_width),
+                line=dict(color=color, dash=arm_dash, width=sens_cfg.line_width),
                 legendgroup=str(gv), name=legend_name,
                 showlegend=False, hoverinfo="skip",
             )

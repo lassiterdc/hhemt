@@ -348,3 +348,133 @@ class TestFindPerfNode:
         """A sub with no performance node still returns None (no raise)."""
         tree = self._tree("swmm_only/swmm_link")
         assert _find_perf_node(tree, "serial_0_r1") is None
+
+
+# ── Phase 6 change (2): model-arm marker-fill / line-dash encoding ──────────
+
+
+class TestModelArmEncoding:
+    """Assert the single-arm model encoding is actually emitted onto the traces.
+
+    Phase 6 change (2): coupled (tritonswmm) => FILLED markers + SOLID connector;
+    uncoupled (triton_only) => OPEN markers (``-open`` symbol variant layered on
+    the group-type base symbol) + DASHED connector; model_arm=None => the
+    pre-change filled/dashed default (protects swmm-only masters). The math suite
+    above asserts numeric correctness; this class closes the silent-visual-defect
+    gap by inspecting the emitted ``go.Figure`` traces. Passing ``model_arm=`` is
+    itself the fail-against-pre-change reachability guard: the pre-change panel
+    builders take no ``model_arm`` kwarg, so these calls raise ``TypeError`` there.
+    """
+
+    @staticmethod
+    def _sens_cfg():
+        from hhemt.config.report import SensitivityReportConfig
+
+        return SensitivityReportConfig(independent_vars=["n_devices"])
+
+    @staticmethod
+    def _connector_lines(fig):
+        # Data-connector lines only; the ideal-reference line (legendgroup="ideal")
+        # is not an arm connector and is excluded.
+        return [
+            t for t in fig.data
+            if t.mode == "lines" and getattr(t, "legendgroup", None) != "ideal"
+        ]
+
+    @staticmethod
+    def _marker_traces(fig):
+        return [t for t in fig.data if t.mode and "markers" in t.mode]
+
+    def _panel12_fig(self, model_arm):
+        from plotly.subplots import make_subplots
+
+        from hhemt.report_renderers._provenance import ProvenanceLog
+        from hhemt.report_renderers.sensitivity_benchmarking import (
+            _plotly_metric_panel,
+        )
+
+        # gpu group, 2 points at distinct indep_value => multi-point, non-serial,
+        # so the connector LINE trace is emitted and the base symbol is triangle-up.
+        df = pd.DataFrame(
+            {
+                "group_value": ["gpu", "gpu"],
+                "indep_value": [1, 2],
+                "wallclock_disp": [10.0, 5.0],
+            }
+        )
+        fig = make_subplots(rows=1, cols=1)
+        _plotly_metric_panel(
+            fig, df, y_col="wallclock_disp", row=1, panel_id="p",
+            group_by_var="run_mode", sens_cfg=self._sens_cfg(),
+            prov=ProvenanceLog(), show_in_legend=True, model_arm=model_arm,
+        )
+        return fig
+
+    def _panel34_fig(self, model_arm):
+        from plotly.subplots import make_subplots
+
+        from hhemt.report_renderers._provenance import ProvenanceLog
+        from hhemt.report_renderers.sensitivity_benchmarking import (
+            _plotly_metric_panel_precomputed,
+        )
+
+        per_group = {"gpu": [(1.0, 1.0, "sa_gpu_0"), (2.0, 2.0, "sa_gpu_1")]}
+        df_for_groups = pd.DataFrame(
+            {"group_value": ["gpu", "gpu"], "sa_id": ["sa_gpu_0", "sa_gpu_1"]}
+        )
+        fig = make_subplots(rows=1, cols=1)
+        _plotly_metric_panel_precomputed(
+            fig, per_group, df_for_groups=df_for_groups, row=1, panel_id="p",
+            ideal_kind="linear", x_max=2.0, ideal_label="ideal",
+            sens_cfg=self._sens_cfg(), prov=ProvenanceLog(),
+            show_in_legend=True, model_arm=model_arm,
+        )
+        return fig
+
+    def test_uncoupled_panel12_open_markers_dashed_connector(self):
+        fig = self._panel12_fig("uncoupled")
+        markers = self._marker_traces(fig)
+        assert markers, "expected at least one marker trace"
+        assert all(str(t.marker.symbol).endswith("-open") for t in markers)
+        assert str(markers[0].marker.symbol) == "triangle-up-open"
+        lines = self._connector_lines(fig)
+        assert lines, "expected a connector line for the multi-point group"
+        assert all(t.line.dash == "dash" for t in lines)
+
+    def test_coupled_panel12_filled_markers_solid_connector(self):
+        fig = self._panel12_fig("coupled")
+        markers = self._marker_traces(fig)
+        assert markers
+        assert not any(str(t.marker.symbol).endswith("-open") for t in markers)
+        assert str(markers[0].marker.symbol) == "triangle-up"
+        lines = self._connector_lines(fig)
+        assert lines
+        assert all(t.line.dash == "solid" for t in lines)
+
+    def test_uncoupled_panel34_open_markers_dashed_connector(self):
+        fig = self._panel34_fig("uncoupled")
+        markers = self._marker_traces(fig)
+        assert markers
+        assert all(str(t.marker.symbol).endswith("-open") for t in markers)
+        lines = self._connector_lines(fig)
+        assert lines
+        assert all(t.line.dash == "dash" for t in lines)
+
+    def test_coupled_panel34_filled_markers_solid_connector(self):
+        fig = self._panel34_fig("coupled")
+        markers = self._marker_traces(fig)
+        assert markers
+        assert not any(str(t.marker.symbol).endswith("-open") for t in markers)
+        lines = self._connector_lines(fig)
+        assert lines
+        assert all(t.line.dash == "solid" for t in lines)
+
+    def test_none_arm_is_byte_identical_default(self):
+        # model_arm=None preserves the pre-change default (filled + dashed), so the
+        # encoding cannot leak into a swmm-only / non-TRITON master.
+        fig = self._panel12_fig(None)
+        markers = self._marker_traces(fig)
+        assert not any(str(t.marker.symbol).endswith("-open") for t in markers)
+        assert str(markers[0].marker.symbol) == "triangle-up"
+        lines = self._connector_lines(fig)
+        assert all(t.line.dash == "dash" for t in lines)

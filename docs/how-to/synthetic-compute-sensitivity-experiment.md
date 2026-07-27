@@ -24,6 +24,27 @@ outputs.
   `hpc_system_config` + partition selectors. The cross-hardware axis is expressed
   as the **partition** (an a6000 row + an a100 row), not a `gpu_hardware` column.
 
+## Declaring the model arms (and an optional resume schedule)
+
+A compute-sensitivity experiment runs as **one sensitivity master per model arm**.
+Declare the arms in the experiment config's matrix block:
+`model_arms: [tritonswmm, triton]`. Each arm runs the identical compute-config
+matrix and differs only in its system model toggles, because the sensitivity
+Snakefile generator accepts exactly one enabled model type per master. The two
+masters are joined for reporting by `hhemt combine`; the cross-arm figures live on
+the combined report, not on either master's own report.
+
+To interrupt the sims for a resume study, set `resume_interruption_schedule` on the
+analysis config to a strictly increasing tuple of hotstart-checkpoint INDICES — not
+percentages, not seconds. One checkpoint is written per reporting interval, so on
+the 3.5 m / 24 h synthetic grid (10-minute reporting = 144 checkpoints) the
+25% / 50% / 75% markers are `[36, 72, 108]`, which produces three resumes at the
+same three points in every compute config — that identity across configs is what
+makes cross-config resume comparisons meaningful. Convert the fractions to indices
+once, in the committed experiment config; the runner performs no conversion. Leave
+it unset for a clean sweep. The retired `deterministic_kill_after_n_checkpoints`
+field is no longer accepted.
+
 ## Scaffold the experiment
 
 Validate the config and build the partition-as-axis matrix (and, without
@@ -81,6 +102,33 @@ the clean-vs-resume comparison at COMBINE level via `hhemt combine` (the
 verdict is merged into the report's Errors-and-Warnings section. A member whose
 experiment shape does not supply the required pair (for example, a matrix with no
 resume arm) skips silently and emits no figure.
+
+### Reading the b4b resume-validity verdict
+
+When the experiment carries a resume arm, the raw-resume-identity check writes
+`eda/b4b_clean_identity.verdict.json` — the pass/fail record of whether every
+resumed sim reproduces its clean-run raw rasters byte-for-byte. It is a
+`CheckResult` (`name`, `level`, `passed`, `summary`, `details`), so reading it is a
+plain JSON load:
+
+```python
+import json
+from pathlib import Path
+
+verdict = json.loads(
+    Path("<analysis_dir>/eda/b4b_clean_identity.verdict.json").read_text()
+)
+verdict["passed"]    # True iff BOTH sub-checks hold
+verdict["summary"]   # e.g. "clean-identity: all raw rasters byte-identical across clean
+                     #       configs | clean-vs-resume: all resume rasters reproduce their
+                     #       clean counterpart byte-for-byte"
+```
+
+`passed` is `True` only when the clean configs are byte-identical to each other AND
+every resume raster matches its clean counterpart; when it is `False`,
+`verdict["details"]` carries the per-`(config, raw-type, timestep)` differing-cell
+rows. The same verdict is folded into the report's Errors-and-Warnings section
+automatically, so this direct read is for scripting a gate on resume validity.
 
 Select the `compute-sensitivity` reporting set via
 `report_config.reporting_set: compute-sensitivity` in your report config. The
