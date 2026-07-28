@@ -4210,8 +4210,26 @@ class TRITONSWMM_analysis:
         restart_ids = [str(v) for v in sa_ids]
         for sa in restart_ids:
             sub_dir = self.analysis_paths.analysis_dir / "subanalyses" / f"sa_{sa}"
-            if sub_dir.exists():
-                fast_rmtree(sub_dir, analysis_dir=self.analysis_paths.analysis_dir)
+            if not sub_dir.exists():
+                continue
+            # PRESERVE the setup-generated per-sub config `sa_{sa}.yaml` — it is written
+            # by sensitivity_analysis._create_sub_analyses at MASTER __init__ (before this
+            # wipe fires) and read by the prepare runner via --analysis-config. Remove ONLY
+            # the RUNTIME children: sims/ (per-scenario inputs, the coupled exchange-replay
+            # side-file, the config_NNNN.cfg checkpoints, and the per-model logs carrying
+            # n_resumes), log.json, and any analysis_datatree.zarr/plots/_status/_du.json a
+            # completed sub carries — so the DAG re-fires this sub fresh from checkpoint_id=0
+            # (n_resumes reset) WITHOUT re-firing the shared per-target setup rule. A whole-
+            # dir fast_rmtree(sub_dir) would delete sa_{sa}.yaml, and because the surviving
+            # a_setup_target_N_complete.flag makes snakemake skip setup, nothing regenerates
+            # it -> prepare aborts "[ERROR] Analysis config not found". Mirrors the .test()
+            # config-outside-wipe precedent (analysis.py:2835-2841). fast_rmtree handles both
+            # files and dirs and re-stamps parent DU sentinels per child.
+            config_name = f"sa_{sa}.yaml"
+            for child in sorted(sub_dir.iterdir()):
+                if child.name == config_name:
+                    continue
+                fast_rmtree(child, analysis_dir=self.analysis_paths.analysis_dir)
         self._workflow_builder._delete_flags_for_force_rerun(
             ResolvedForceRerunSpec(scope="sa", tokens=tuple(restart_ids))
         )
