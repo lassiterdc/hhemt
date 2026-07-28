@@ -546,7 +546,17 @@ _B4B_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
     RendererSelection(
         "eda_compute_sensitivity",
         predicate_key="has_preserved_raw_outputs",
-        rule_spec_template=(_TMPL_B4B_CLEAN_IDENTITY, _TMPL_B4B_CLEAN_VS_RESUME),
+        # config_diff_maps (the cross-sim byte-identity grouping vs the serial-CPU
+        # baseline) joins the b4b set's single eda_compute_sensitivity selection so it
+        # renders into analysis_report.html for the b4b masters. It MUST share this ONE
+        # selection: _eda_rule_spec_templates() (workflow.py) returns only the FIRST
+        # eda_compute_sensitivity selection's templates, so a second same-key selection
+        # would be silently dropped from both emission and the rule-all enumeration. It
+        # therefore inherits the has_preserved_raw_outputs predicate; that is inert here
+        # because the b4b masters preserve raw outputs by contract (the b4b figures
+        # require it), and the rule-all enumeration gate is has_eda_artifact, so both
+        # gates hold together on a b4b run.
+        rule_spec_template=(_TMPL_EDA_COMPUTE_SENSITIVITY, _TMPL_B4B_CLEAN_IDENTITY, _TMPL_B4B_CLEAN_VS_RESUME),
     ),
 )
 

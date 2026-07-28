@@ -362,6 +362,23 @@ def test_compute_sensitivity_bundle_emits_its_eda_rule(sensitivity_bundle: Path)
     assert _eda_rule_names(text) == {"plot_eda_compute_sensitivity"}
 
 
+def test_b4b_bundle_emits_config_diff_maps_eda_rule(sensitivity_bundle: Path) -> None:
+    """A b4b bundle regenerates the config_diff_maps EDA rule (Thread-C wiring).
+
+    Enumeration/emission parity guard for the report-wiring edit: switching a
+    bundle to the b4b set must emit ``plot_eda_compute_sensitivity`` in the
+    regeneration Snakefile (it was absent under the ``benchmarking`` set the driver
+    used before). This exercises the emission path so a listed-but-unemitted output
+    would surface here rather than as a ``MissingInputException`` at snakemake parse.
+    """
+    _set_reporting_set(sensitivity_bundle, "b4b")
+    text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="matplotlib")
+    assert "plot_eda_compute_sensitivity" in _eda_rule_names(text), (
+        f"b4b bundle did not emit the config_diff_maps EDA rule; emitted: "
+        f"{_eda_rule_names(text)}"
+    )
+
+
 def test_benchmarking_bundle_emits_no_eda_rules(sensitivity_bundle: Path) -> None:
     """The default (sentinel) sensitivity bundle carries no EDA rule.
 

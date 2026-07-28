@@ -124,3 +124,42 @@ def test_benchmarking_set_category_co_sourced(synth_sensitivity_analysis):
             f"source builder={source[rule_name]!r}. Update the rule_spec_template to "
             f"match the source-side report(category=)."
         )
+
+
+def test_b4b_set_config_diff_maps_wired_and_ordered():
+    """The report-wiring edit adds ``config_diff_maps`` (rule
+    ``plot_eda_compute_sensitivity``) to the b4b set, declaring an ORDERED category.
+
+    Two invariants, scoped to the template this wiring introduces:
+
+    1. Presence — the ``eda_compute_sensitivity`` template is in the b4b set (guards
+       against the edit being dropped/reverted, or the second-same-key-selection
+       trap where ``_eda_rule_spec_templates()`` would silently ignore it).
+    2. Ordered category — its ``report(category=)`` is a member of the set's
+       ``category_order`` (so the figure lands in a positioned section rather than
+       the implicit "everything else last" tail).
+
+    Scope note: ``category_order`` is deliberately NON-exhaustive — the b4b set
+    already inherits pre-existing templates (e.g. ``plot_scenario_status_appendix``
+    → ``"Appendix"``) whose category is outside it and sorts at the tail, so a
+    universal "every template category in category_order" assertion would (wrongly)
+    fail on that inherited template. The full source-co-sourcing guard the
+    default/benchmarking sets use is not mirrored here because the b4b set's
+    ``eda_compute_sensitivity`` selection emits only when
+    ``has_preserved_raw_outputs`` fires — a runtime gate covered by the
+    ``reporting_set="b4b"`` dry-run parity check, not a construction-only unit test.
+    """
+    rset = get_reporting_set("b4b")
+    templates = _template_categories("b4b")
+    assert templates, "b4b set has no rule_spec_template figures"
+    assert "plot_eda_compute_sensitivity" in templates, (
+        "b4b set is missing the eda_compute_sensitivity (config_diff_maps) template; "
+        "the report-wiring edit did not land (or was dropped as a second same-key "
+        "eda_compute_sensitivity selection)."
+    )
+    category = templates["plot_eda_compute_sensitivity"]
+    assert category in set(rset.category_order), (
+        f"config_diff_maps template declares category {category!r} not in the b4b "
+        f"set's category_order {sorted(rset.category_order)}; it would render in the "
+        f"untracked tail instead of a positioned section."
+    )

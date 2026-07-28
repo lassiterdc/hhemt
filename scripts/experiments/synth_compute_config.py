@@ -201,7 +201,7 @@ def _build_case(
             # (ADR-5 ReportingSet: config/report.py::report_config.reporting_set; the
             # sensitivity submodel forbids it as extra and strips a legacy `mode` key).
             "report": {
-                "reporting_set": "benchmarking",
+                "reporting_set": "b4b",
                 "sensitivity": {
                     "independent_vars": ["n_devices"],
                     "dependent_var": "performance.Total",
