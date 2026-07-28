@@ -2095,6 +2095,7 @@ class TRITONSWMM_analysis:
         override_hpc_restart_times_simulate: int | None = None,
         override_hpc_restart_times_other: int | None = None,
         override_pickup_where_leftoff: bool | None = None,
+        override_clean_restart_sa_ids: list[str] | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
         override_brand_theme: "Path | None" = None,
@@ -2408,6 +2409,9 @@ class TRITONSWMM_analysis:
             # path; this site was the lone holdout.
             # EXEMPT-DU: full-analysis-root-wipe
             fast_rmtree(self.analysis_paths.analysis_dir)
+
+        if override_clean_restart_sa_ids and not dry_run:
+            self._clean_restart_wipe([str(v) for v in override_clean_restart_sa_ids])
 
         # Orphan detection gate (sensitivity-only; non-sensitivity covered by
         # follow-up plan per D-EVENT-PARITY).
@@ -4183,6 +4187,34 @@ class TRITONSWMM_analysis:
             compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(int(iloc))) for iloc in values
         )
         return ResolvedForceRerunSpec(scope="event", tokens=slugs)
+
+    def _clean_restart_wipe(self, sa_ids: list[str]) -> None:
+        """Targeted clean-restart wipe for a resume-sweep recovery: remove ONLY the
+        named sub-analysis dirs (sim outputs incl. the coupled exchange-replay
+        side-file, per-model logs incl. ``n_resumes``, and per-sub status) and
+        delete their master per-sa completion flags, so a subsequent
+        ``run(from_scratch=False)`` re-fires ONLY those subs fresh from
+        ``checkpoint_id=0`` (``n_resumes`` reset -> the deterministic-kill schedule
+        re-arms) while every other sub's flags survive and skip.
+
+        "Scoped from_scratch" for a resumable multi-allocation sweep where a hard
+        kill truncated a sub's coupled exchange-replay side-file — TRITON detects
+        the side-file/checkpoint mismatch and directs a clean restart (see the
+        ``clear raw triton outputs deferred until last allocation`` stipulation).
+        ``fast_rmtree(analysis_dir=...)`` re-stamps parent DU sentinels (DU-correct
+        restamp path, no ``# EXEMPT-DU`` needed). Invoked from ``run()`` under the
+        ``override_clean_restart_sa_ids`` gate.
+        """
+        from hhemt.workflow import ResolvedForceRerunSpec
+
+        restart_ids = [str(v) for v in sa_ids]
+        for sa in restart_ids:
+            sub_dir = self.analysis_paths.analysis_dir / "subanalyses" / f"sa_{sa}"
+            if sub_dir.exists():
+                fast_rmtree(sub_dir, analysis_dir=self.analysis_paths.analysis_dir)
+        self._workflow_builder._delete_flags_for_force_rerun(
+            ResolvedForceRerunSpec(scope="sa", tokens=tuple(restart_ids))
+        )
 
     def _apply_force_rerun(self, override_force_rerun) -> None:
         """Resolve, validate, and pre-delete flags + per-scenario log records

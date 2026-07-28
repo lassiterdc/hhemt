@@ -44,6 +44,41 @@ def synthetic_perf_dir(tmp_path):
     return perf_dir
 
 
+def test_zero_byte_perf_file_is_skipped(synthetic_perf_dir):
+    """A 0-byte ``performance{N}.txt`` (left by a hard kill / SIGKILL / the
+    deterministic resume harness — the perf dump for a checkpoint created but killed
+    before any row was written) must be SKIPPED with a ``UserWarning``, not crash the
+    aggregator.
+
+    Pre-fix behavior (the failure this guards): ``parse_performance_file`` ->
+    ``pandas.read_csv`` raises ``EmptyDataError`` on the empty file and the whole
+    process rule fails (observed 2026-07-28: ``synth_cc_resume_triton`` ``sa_gpu_1_r1``
+    left ``performance110.txt`` at 0 bytes of 144). The FIRST
+    ``_aggregate_perf_tseries`` call below therefore RAISES against pre-fix code — the
+    assertion anchors on the raise/return behavior (true in both pre- and post-fix
+    worlds), so it discriminates on behavior, not on the warning wording.
+    """
+    import warnings
+
+    from hhemt.process_simulation import _aggregate_perf_tseries
+
+    # A hard kill leaves a 0-byte perf dump alongside the 10 valid checkpoints.
+    (synthetic_perf_dir / "performance11.txt").write_text("")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ds = _aggregate_perf_tseries(synthetic_perf_dir)  # raises EmptyDataError pre-fix
+
+    # The empty file is skipped: the series covers exactly the 10 valid checkpoints.
+    assert ds.sizes["timestep_min"] == 10
+    # A UserWarning naming the skipped empty file(s) was emitted (mirrors the
+    # existing perfs-with-negatives warning pattern).
+    assert any(
+        issubclass(w.category, UserWarning) and "empty" in str(w.message).lower()
+        for w in caught
+    )
+
+
 def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
     """Verify ``max(Rank)`` of summed-deltas equals the slowest-rank final cumulative.
 

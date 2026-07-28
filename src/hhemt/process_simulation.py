@@ -1679,10 +1679,22 @@ def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> x
 
     dfs = []
     perfs_with_negatives: list[str] = []
+    empty_perfs: list[str] = []
     dfs_with_negatives: list[pd.DataFrame] = []
     for f in files:
         m = re.search(r"performance(\d+)", f.name)
         if m is None:
+            continue
+        if f.stat().st_size == 0:
+            # A hard kill (walltime, SIGKILL, or the deterministic multi-resume
+            # harness) can leave a 0-byte performance{N}.txt — the perf dump for a
+            # checkpoint created but killed before any row was written. It carries
+            # no timing data; skip it (the wallclock series simply omits that
+            # reporting step, which the per-rank diff/reset logic below already
+            # tolerates) rather than let pandas.read_csv raise EmptyDataError and
+            # fail the whole process rule. Empirically: synth_cc_resume_triton
+            # sa_gpu_1_r1 left performance110.txt at 0 bytes of 144 perf files.
+            empty_perfs.append(str(f))
             continue
         tstep_iloc = int(m.group(1))
         df_ranks, _ = parse_performance_file(f)
@@ -1703,6 +1715,18 @@ def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> x
                 "This is a known issue in some versions of TRITON-SWMM that should\n"
                 " not cause significant bias in performance measurement.\n"
                 f" Files with negative time values: {all_files}"
+            ),
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if empty_perfs:
+        warnings.warn(
+            (
+                f"Skipped {len(empty_perfs)} empty (0-byte) performance.txt file(s) "
+                "left by a hard kill (walltime / SIGKILL / deterministic-resume harness); "
+                "the wallclock series omits those reporting steps.\n"
+                f" Skipped files: {chr(10).join('    - ' + p for p in empty_perfs)}"
             ),
             UserWarning,
             stacklevel=2,
