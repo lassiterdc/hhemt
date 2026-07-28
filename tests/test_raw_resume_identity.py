@@ -26,6 +26,55 @@ def _write_bin_raster(path, arr: np.ndarray) -> None:
     np.concatenate([[float(y), float(x)], arr.ravel()]).astype(np.float64).tofile(path)
 
 
+def test_b4b_clean_identity_reason_distinguishes_no_clean_subs_from_raw_cleared(tmp_path, monkeypatch):
+    """A RESUME master (no n_resumes==0 subs) must NOT report 'raw cleared or absent'.
+
+    check_raw_b4b computes b4b_clean_identity over clean (n_resumes==0) subs; a resume
+    master has none, so `clean` is empty and id_ref is None. The degraded_reason for that
+    case must name the real cause (no clean subs in this master), NOT falsely claim the raw
+    was cleared — the raw is present (a real raw-bin dir), the master simply carries only
+    resume subs. Pre-fix this branch emitted 'raw outputs cleared or absent for every clean
+    sub' unconditionally (false raw-loss alarm on every resume master).
+    """
+    import types
+
+    import xarray as xr
+
+    import hhemt.analysis_validation as av
+    import hhemt.eda.raw_resume_identity as rri
+    import hhemt.report_renderers._figure_emission as fe
+
+    # A real, NON-empty raw bin dir — raw is genuinely PRESENT.
+    raw_bin = tmp_path / "sims" / "event_index.0" / "out_triton" / "bin"
+    _write_bin_raster(raw_bin / "H0", np.zeros((2, 2)))
+
+    sub = types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(
+            analysis_dir=tmp_path, simulation_directory=tmp_path / "sims"
+        )
+    )
+    master = types.SimpleNamespace(analysis_paths=types.SimpleNamespace(analysis_dir=tmp_path))
+
+    # One RESUME sub (n_resumes==3) whose raw IS present -> clean set empty, raw not cleared.
+    monkeypatch.setattr(av, "_iter_subanalyses_or_self", lambda m: [("gpu_0", sub)])
+    monkeypatch.setattr(rri, "_b4b_enabled_model", lambda s: "triton")
+    monkeypatch.setattr(rri, "_b4b_n_resumes", lambda m, sa_id: 3)
+    monkeypatch.setattr(rri, "_b4b_config_identity", lambda s: "cfgA")
+    monkeypatch.setattr(rri, "_b4b_sub_raw_bin_dir", lambda s, model, rot: raw_bin)
+    monkeypatch.setattr(fe, "emit_data_artifact_with_sources", lambda **kw: kw["artifact_path"])
+
+    cfg = types.SimpleNamespace(
+        TRITON_raw_output_type="bin",
+        TRITON_reporting_timestep_s=60.0,
+        resume_interruption_schedule=None,
+    )
+    rri.check_raw_b4b(master, cfg_analysis=cfg, eda_cfg=cfg)
+
+    reason = xr.open_zarr(tmp_path / "eda" / "b4b_clean_identity.zarr").attrs["degraded_reason"]
+    assert "no clean" in reason and "n_resumes==0" in reason, reason
+    assert "cleared or absent" not in reason, reason
+
+
 def test_triton_raw_b4b_identical_and_divergent_at_boundary(tmp_path):
     clean = tmp_path / "clean" / "bin"
     resume = tmp_path / "resume" / "bin"

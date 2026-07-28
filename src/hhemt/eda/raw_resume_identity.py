@@ -504,7 +504,17 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     id_ref_label = ""
     if id_ref is None:
         id_degraded = True
-        id_reason = "raw outputs cleared or absent for every clean sub"
+        # Distinguish the two causes the id_ref==None branch conflates: a master with
+        # NO clean (n_resumes==0) subs (the normal resume-master case — clean-identity is
+        # computed on the clean master / combined report, NOT here) vs clean subs present
+        # but their raw genuinely cleared/absent. Reporting "raw cleared or absent" on a
+        # resume master (which legitimately has no clean subs) is a false raw-loss alarm.
+        id_reason = (
+            "no clean (n_resumes==0) subs in this master — clean-identity is computed "
+            "on the clean master / combined report"
+            if not clean
+            else "raw outputs cleared or absent for every clean sub"
+        )
     else:
         id_ref_label = id_ref[0]
         id_contrib.append(id_ref[1])
