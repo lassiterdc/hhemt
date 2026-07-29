@@ -584,7 +584,14 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         parts.append(
             "clean-identity: all raw rasters byte-identical across clean configs"
             if n_id == 0
-            else f"clean-identity: {n_id} differing (config, raw-type, timestep) cell(s)"
+            else (
+                f"clean-identity: {n_id} of {int(id_grid.size)} (config, raw-type, timestep) "
+                f"cell(s) differ across clean configs -- EXPECTED where the clean configs span "
+                f"backends (GPU vs CPU raw rasters are not bit-identical; BIT4BIT is a "
+                f"double-precision serial-oracle property) or rank counts. This is cross-config "
+                f"divergence, NOT resume-induced; the resume-validity claim is b4b_clean_vs_resume "
+                f"(a within-config comparison)."
+            )
         )
     if cvr_degraded:
         parts.append(f"clean-vs-resume: degraded ({cvr_reason})")

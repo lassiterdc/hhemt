@@ -68,7 +68,12 @@ def render_eda_plots(
         # _harvest_and_copy_sources skip-with-warning precedent, Gotcha 50).
         backing_stem = _RENDERER_BACKING_ARTIFACT.get(kind, kind)
         artifact = root / "eda" / f"{backing_stem}.zarr"
-        if not artifact.exists():
+        # The b4b kinds are ALWAYS enumerated by the b4b ReportingSet (workflow.py /
+        # bundle snakefile_generator emit one report() target per template), and their
+        # renderer emits an honest-degradation panel on absent/degraded data, so they must
+        # NOT be absence-skipped here — a skip yields "marked for report but does not exist".
+        # Non-b4b conditional members keep the skip (a skipped calc member wrote no zarr).
+        if not artifact.exists() and kind not in _ALWAYS_EMIT_KINDS:
             warnings.warn(
                 f"EDA plot kind {kind!r} is enabled but its backing artifact "
                 f"{artifact} is absent -- skipping. If the calc member did NOT "
@@ -217,10 +222,22 @@ def _render_b4b(
     plot_id = canonical_plot_id(stem)  # pass-through == stem
     artifact = root / "eda" / f"{plot_id}.zarr"
     output_path = root / "plots" / "eda" / f"{plot_id}.html"
-    ds = xr.open_zarr(artifact, consolidated=False)
-    degraded = bool(int(ds.attrs.get("degraded", 0)))
-    reason = str(ds.attrs.get("degraded_reason", ""))
-    da = ds["identical"] if "identical" in ds else None
+    # Absent-artifact guard (Gate-6 honest-degradation). check_raw_b4b writes this zarr on
+    # every analysis.eda() run, so an absent artifact means the b4b calc member did not run
+    # before this render (a bundle emitted before eda(), or a bundle-carriage gap where the
+    # figure was not harvested). Emit the honest-degradation placeholder rather than letting
+    # xr.open_zarr raise / render_eda_plots skip, so an ENUMERATED b4b report target is never
+    # "marked for report but does not exist".
+    if not artifact.exists():
+        ds = None
+        degraded = True
+        reason = "raw byte-for-byte backing artifact absent (the b4b calc member did not run before this render)"
+        da = None
+    else:
+        ds = xr.open_zarr(artifact, consolidated=False)
+        degraded = bool(int(ds.attrs.get("degraded", 0)))
+        reason = str(ds.attrs.get("degraded_reason", ""))
+        da = ds["identical"] if "identical" in ds else None
     if degraded or da is None or "compute_config" not in getattr(da, "dims", ()):
         fig = go.Figure()
         fig.add_annotation(
@@ -316,6 +333,11 @@ def _fig_to_html(fig: go.Figure, *, plotly_js_mode: str) -> str:
 #: renderer-kind -> renderer function. Keys are the eda_-PREFIXED plot-IDs the calc
 #: members mint (compute_sensitivity.py:463,553,637); canonical_plot_id is a
 #: pass-through, so those keys ARE the on-disk eda/{key}.zarr stems. Do not unprefix.
+#: EDA kinds that are ALWAYS enumerated by their ReportingSet (the b4b family) and whose
+#: renderer emits an honest-degradation panel on absent/degraded backing data. render_eda_plots
+#: MUST NOT absence-skip these, or an enumerated report() target goes unproduced (WorkflowError).
+_ALWAYS_EMIT_KINDS = frozenset({"b4b_clean_identity", "b4b_clean_vs_resume"})
+
 _EDA_RENDERERS = {
     "config_diff_maps": _render_config_diff_maps,
     "eda_rank_sensitivity": _render_rank_sensitivity,

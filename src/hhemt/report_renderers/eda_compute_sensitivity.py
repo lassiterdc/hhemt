@@ -32,8 +32,16 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     root = Path(analysis.analysis_paths.analysis_dir)
     eda_cfg = analysis.cfg_analysis.eda
 
+    from hhemt.eda._plotting import _ALWAYS_EMIT_KINDS
+
     target_stem = Path(output_path).stem
     wanted = [kind for kind in eda_cfg.enabled_plots if canonical_plot_id(kind) == target_stem]
+    # The b4b ReportingSet enumerates its figures unconditionally (not gated on enabled_plots
+    # membership at the rule-all site), and their renderer degrades honestly. Render an
+    # enumerated b4b target even when enabled_plots omits it, so the enumeration/emission
+    # contract holds structurally rather than depending on a config invariant (Gate-6).
+    if not wanted and target_stem in _ALWAYS_EMIT_KINDS:
+        wanted = [target_stem]
     if not wanted:
         raise ValueError(
             f"eda_compute_sensitivity: no enabled EDA plot maps to output stem "

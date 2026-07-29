@@ -50,3 +50,22 @@ def test_unknown_eda_plot_kind_raises(synthetic_sensitivity_completed):
     root = Path(analysis.analysis_paths.analysis_dir)
     with pytest.raises(ValueError, match="unknown EDA plot kind"):
         render_eda_plots(root, cfg_analysis=analysis.cfg_analysis, eda_cfg=eda_config(enabled_plots=["nope"]))
+
+
+def test_b4b_absent_backing_zarr_emits_degradation_panel_not_skip(tmp_path):
+    """A b4b figure whose backing eda/<stem>.zarr is absent MUST still emit an honest-
+    degradation html (Gate-6), so an ENUMERATED b4b report target is never 'marked for report
+    but does not exist'. Pre-fix, render_eda_plots' absence gate skipped it (returned []), which
+    at report-assembly time raised WorkflowError. b4b renderers ignore cfg_analysis, so a bare
+    tmp_path + a b4b enabled_plots entry exercises the path with no completed-run fixture."""
+    (tmp_path / "eda").mkdir()  # exists but carries NO b4b_clean_identity.zarr
+    paths = render_eda_plots(
+        tmp_path,
+        cfg_analysis=None,
+        eda_cfg=eda_config(enabled_plots=["b4b_clean_identity"]),
+    )
+    assert len(paths) == 1, "the b4b figure must be emitted (degradation panel), not absence-skipped"
+    out = paths[0]
+    assert out == tmp_path / "plots" / "eda" / "b4b_clean_identity.html"
+    assert out.exists()
+    assert "unavailable" in out.read_text().lower()  # the honest-degradation annotation text
