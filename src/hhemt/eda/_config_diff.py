@@ -651,6 +651,45 @@ def _panel_order_key(g: dict) -> tuple:
     return (is_gpu, -n_configs, device_count, run_mode)
 
 
+def _config_diff_absent_panel(*, headline: str, observed: str, remedy: str) -> go.Figure:
+    """Gate-6 honest-absence panel for config_diff_maps.
+
+    The b4b/compute-sensitivity ReportingSets enumerate this figure UNCONDITIONALLY as a
+    report() target, so it must produce a file on every run of those sets -- including runs
+    where the cross-config comparison it draws is undefined. A bare empty figure fails Gate 6
+    ("degraded panels read as intentional"): the reader cannot tell a not-applicable state
+    from a broken renderer. Every panel therefore states WHAT the figure compares, the MEASURED
+    fact that makes it undefined, that this is expected rather than a failure, and the
+    condition under which it populates.
+    """
+    fig = go.Figure()
+    fig.add_annotation(
+        text=(
+            f"<b>{headline}</b><br><br>"
+            "This figure compares every compute-configuration group against the serial-CPU "
+            "baseline (signed difference and percent-difference maps over DEM cells and SWMM "
+            "conduits).<br><br>"
+            f"{observed}<br><br>"
+            "<b>This is the expected result for this analysis, not a rendering failure.</b><br>"
+            f"{remedy}"
+        ),
+        showarrow=False,
+        x=0.5,
+        y=0.5,
+        xref="paper",
+        yref="paper",
+        align="left",
+        font=dict(size=13),
+    )
+    fig.update_layout(
+        title="Config diff maps -- not applicable",
+        height=320,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+    )
+    return fig
+
+
 def build_config_diff_figure(root: Path) -> go.Figure:
     """Assemble the config-diff-maps figure from the bundle/analysis root.
 
@@ -662,11 +701,56 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     (cross-arm fungibility, iter-2 report QA), identical in both model arms by construction,
     so micrometer-scale diffs read as uniform "no meaningful difference" rather than saturating.
     """
+    # Consolidated-tree guard. _load_subs opens root/sensitivity_datatree.zarr unconditionally,
+    # so an absent tree raises rather than degrading. On the rule path the tree is present by
+    # the rule's consolidate-complete input flag; this guard covers the bundle-carriage gap and
+    # is what lets the enumerate-implies-emit contract be tested from a bare tmp_path.
+    if not (root / "sensitivity_datatree.zarr").exists():
+        return _config_diff_absent_panel(
+            headline="Config-diff maps unavailable (consolidated outputs absent)",
+            observed=(
+                "The consolidated <code>sensitivity_datatree.zarr</code> this figure reads is "
+                "not present under the analysis root, so no compute configuration could be "
+                "loaded."
+            ),
+            remedy=(
+                "The figure populates once master consolidation has completed (or, for a "
+                "render bundle, once the consolidated tree is carried into the bundle)."
+            ),
+        )
     subs = _load_subs(root)
     if not subs:
-        fig = go.Figure()
-        fig.update_layout(height=_PANEL_H_PX, title="Config diff maps (no coupled sub-analyses found)")
-        return fig
+        return _config_diff_absent_panel(
+            headline="Config-diff maps unavailable (no comparable sub-analyses)",
+            observed=(
+                "The consolidated tree carries no sub-analysis with a TRITON node, so there is "
+                "nothing to compare."
+            ),
+            remedy=(
+                "The figure populates once the master carries sub-analyses whose processed "
+                "outputs include the TRITON depth tier."
+            ),
+        )
+    if len(subs) < 2:
+        # N=1 is the one-simulation SMOKE GATE, a legitimate configuration -- not an error.
+        # Without this guard the figure would still render (a serial-reference panel plus a
+        # one-row table whose identity cell reads "unknown (identity artifact absent)"), which
+        # a reader cannot distinguish from a silently broken identity check. Fail the Gate-6
+        # test honestly instead.
+        _only = next(iter(subs))
+        return _config_diff_absent_panel(
+            headline="Config-diff maps not applicable (single compute configuration)",
+            observed=(
+                f"This master carries exactly one sub-analysis (<code>{_only}</code>), so no "
+                "second compute configuration exists to difference against a baseline and the "
+                "comparison is mathematically undefined."
+            ),
+            remedy=(
+                "This is what a one-simulation smoke run looks like. The figure populates "
+                "automatically once the master carries two or more sub-analyses spanning "
+                "distinct compute configurations."
+            ),
+        )
 
     # F10: a pure-TRITON master carries no SWMM link tier, so every sub's "flow" is None.
     # Retain the 2-column layout but skip the col-2 conduit half (traces + table column +

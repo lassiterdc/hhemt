@@ -39,6 +39,7 @@ def render_eda_plots(
     cfg_analysis: analysis_config,
     eda_cfg: eda_config,
     only_kinds: set[str] | None = None,
+    must_emit: set[str] | None = None,
 ) -> list[Path]:
     """Render the plots in ``eda_cfg.enabled_plots`` to ``{root}/plots/eda/``.
 
@@ -73,7 +74,25 @@ def render_eda_plots(
         # renderer emits an honest-degradation panel on absent/degraded data, so they must
         # NOT be absence-skipped here — a skip yields "marked for report but does not exist".
         # Non-b4b conditional members keep the skip (a skipped calc member wrote no zarr).
-        if not artifact.exists() and kind not in _ALWAYS_EMIT_KINDS:
+        # ENUMERATE-IMPLIES-EMIT (the general rule; _ALWAYS_EMIT_KINDS is the b4b-specific
+        # special case that predates it). `must_emit` carries the ENUMERATED report() targets
+        # for THIS invocation -- the adapter passes the single rule's own output stem, which is
+        # exactly what the ReportingSet enumerated. A kind the active set enumerated MUST be
+        # emitted even with its backing artifact absent, or Snakemake raises
+        # MissingOutputException ("marked for report but does not exist") and the whole workflow
+        # dies. The renderer is then contractually responsible for an honest-degradation panel.
+        # Render-all callers that carry no enumeration (Bundle.eda(plots_only=True),
+        # eda/_notebook.py) pass must_emit=None and KEEP the skip-with-warning, so the warning
+        # that surfaces genuine kind/stem drift is preserved exactly where it is still meaningful.
+        if not artifact.exists() and kind in (must_emit or ()) and kind not in _ALWAYS_EMIT_KINDS:
+            warnings.warn(
+                f"EDA plot kind {kind!r} is an ENUMERATED report target but its backing "
+                f"artifact {artifact} is absent -- rendering the degradation panel rather "
+                f"than skipping (a skip would fail the workflow). If the calc member did "
+                f"NOT legitimately skip, this is a kind/stem mismatch.",
+                stacklevel=2,
+            )
+        elif not artifact.exists() and kind not in _ALWAYS_EMIT_KINDS:
             warnings.warn(
                 f"EDA plot kind {kind!r} is enabled but its backing artifact "
                 f"{artifact} is absent -- skipping. If the calc member did NOT "

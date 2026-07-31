@@ -52,4 +52,15 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     # eda_config validators per the per-row-overlay stipulation; model_copy is
     # forbidden for config models).
     scoped_cfg = eda_config.model_validate({**eda_cfg.model_dump(), "enabled_plots": wanted})
-    render_eda_plots(root, cfg_analysis=analysis.cfg_analysis, eda_cfg=scoped_cfg)
+    # `target_stem` IS the enumerated report() target: the Snakemake rule is emitted one-per-
+    # RuleSpecTemplate (workflow.py::_build_plot_rule_block_eda_compute_sensitivity on the
+    # source side, bundle/snakefile_generator.py on the bundle side), and this rule's declared
+    # output is what Snakemake will demand. Handing it to render_eda_plots as `must_emit` is
+    # what makes "a ReportingSet enumerated this figure" imply "this figure's file is produced",
+    # for every current and future enumerating set, with no per-kind list to maintain.
+    render_eda_plots(
+        root,
+        cfg_analysis=analysis.cfg_analysis,
+        eda_cfg=scoped_cfg,
+        must_emit={target_stem},
+    )

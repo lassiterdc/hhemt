@@ -107,3 +107,36 @@ def test_eda_config_renames_legacy_eda_cross_sim_identity_kind():
     with pytest.warns(DeprecationWarning):
         cfg = eda_config(enabled_plots=["eda_cross_sim_identity"])
     assert cfg.enabled_plots == ["config_diff_maps"]
+
+
+def test_enumerated_config_diff_maps_emits_when_backing_artifact_absent(tmp_path):
+    """An ENUMERATED report() target must produce its file even when the backing calc member
+    legitimately skipped -- the enumerate-implies-emit invariant.
+
+    Measured pre-fix failure (Rivanna smoke job 17609295): the b4b ReportingSet enumerates
+    plots/eda/config_diff_maps.html unconditionally, check_cross_sim_identity skips at one
+    sub-analysis, render_eda_plots' absence gate skipped the kind, nothing was written, and
+    Snakemake raised MissingOutputException -> workflow FAILED.
+
+    Entry is the ADAPTER (not render_eda_plots directly), because the adapter's `output_path`
+    IS the enumerated target -- so this asserts the real seam and fails PRE-FIX on BEHAVIOUR
+    (no file written) rather than on a parameter name.
+    """
+    from types import SimpleNamespace
+
+    from hhemt.report_renderers import eda_compute_sensitivity
+
+    (tmp_path / "eda").mkdir()  # exists but carries NO eda_cross_sim_identity.zarr
+    analysis = SimpleNamespace(
+        analysis_paths=SimpleNamespace(analysis_dir=tmp_path),
+        cfg_analysis=SimpleNamespace(eda=eda_config(enabled_plots=["config_diff_maps"])),
+    )
+    output_path = tmp_path / "plots" / "eda" / "config_diff_maps.html"
+
+    eda_compute_sensitivity.render(analysis, None, output_path)
+
+    assert output_path.exists(), (
+        "an enumerated report() target must be produced; a skip yields Snakemake's "
+        "MissingOutputException ('marked for report but does not exist')"
+    )
+    assert "not applicable" in output_path.read_text().lower()
