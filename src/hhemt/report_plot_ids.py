@@ -69,6 +69,10 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     # same as the cross_experiment renderers above — a key here lets the combined
     # generator's _emit_plot_rule reuse resolve an ext instead of raising KeyError.
     "cross_experiment_errors_and_warnings": {"matplotlib": ".html", "plotly": ".html"},
+    # Cross-experiment disk-utilization roll-up: emits HTML unconditionally, same as the
+    # cross_experiment renderers above — a key here lets the combined generator's
+    # _emit_plot_rule reuse resolve an ext instead of raising KeyError.
+    "cross_experiment_disk_utilization": {"matplotlib": ".html", "plotly": ".html"},
 }
 
 
@@ -107,6 +111,72 @@ def canonical_plot_id(
     if event_id is not None:
         segments.append(f"evt.{event_id}")
     return "__".join(segments)
+
+
+#: Human display labels per renderer_kind, for humanize_plot_id (K1). Deterministic,
+#: single-source, model-agnostic: a pure-TRITON and a coupled figure share the stem
+#: grammar, so they resolve to identical labels (G3 fungibility).
+_RENDERER_KIND_LABELS: dict[str, str] = {
+    # Keys MUST be the renderer_kind literal passed to canonical_plot_id /
+    # plot_output_template, NOT the renderer MODULE name — the two differ for the per-sim
+    # figures (module per_sim_peak_flood_depth, kind peak_flood_depth). Two dead entries
+    # keyed on the module name were retired here; they never matched a minted stem and were
+    # invisible only because the generic fallback happened to produce the same words.
+    "benchmarking": "Benchmarking",
+    "system_overview": "System overview",
+    "peak_flood_depth": "Peak flood depth",
+    "conduit_flow": "Conduit flow",
+    "config_diff_maps": "Config-diff maps",
+    "b4b_clean_identity": "Cross-hardware raw byte identity",
+    "eda_cross_sim_identity": "Cross-simulation byte identity",
+    "eda_rank_sensitivity": "MPI-rank sensitivity",
+    "eda_resume_sensitivity": "Resume sensitivity",
+    "eda_cross_hardware_magnitude": "Cross-hardware difference magnitude",
+    "eda_compute_sensitivity": "Compute sensitivity",
+    "per_analysis_summary": "Analysis summary",
+    "scenario_status_appendix": "Scenario status appendix",
+    "errors_and_warnings": "Errors and warnings",
+    "disk_utilization": "Disk utilization",
+    "metadata": "Run metadata",
+    "cross_experiment_compatibility": "Cross-experiment compatibility",
+    "cross_experiment_intercomparison": "Clean vs resume intercomparison",
+    "cross_experiment_intercomparison_maps": "Clean vs resume spatial difference maps",
+    "cross_experiment_errors_and_warnings": "Cross-experiment errors and warnings",
+    "cross_experiment_disk_utilization": "Cross-experiment disk utilization",
+}
+
+
+def humanize_plot_id(plot_id: str) -> str:
+    """Deterministic plot-id -> human display label (K1).
+
+    Parses the ADR-2 grammar (segments joined by "__"; "." within a segment) and
+    produces a reader-facing label. NEVER a per-figure hardcoded string: a new
+    renderer/descriptor humanizes via the same rule with no code edit. Strips a
+    trailing output extension if present (e.g. "...total.html").
+    """
+    stem = plot_id
+    for _ext in (".html", ".png", ".svg"):
+        if stem.endswith(_ext):
+            stem = stem[: -len(_ext)]
+            break
+    segments = stem.split("__")
+    kind = segments[0]
+    # Fallback sentence-cases the FIRST character only. str.capitalize() lower-cases the
+    # remainder, which destroys any correct casing an unlisted kind carries (it is what
+    # rendered "eda_cross_sim_identity" as "Eda cross sim identity").
+    _generic = kind.replace("_", " ")
+    label = _RENDERER_KIND_LABELS.get(kind, _generic[:1].upper() + _generic[1:])
+    extras: list[str] = []
+    for seg in segments[1:]:
+        if seg.startswith("sa."):
+            extras.append(f"sub-analysis {seg[3:]}")
+        elif seg.startswith("evt."):
+            extras.append(f"event {seg[4:]}")
+        else:
+            # descriptor: "{independent_var}.vs.total" -> "independent var vs total runtime"
+            desc = seg.replace(".vs.total", " vs total runtime").replace(".", " ").replace("_", " ")
+            extras.append(desc.strip())
+    return f"{label}: {', '.join(extras)}" if extras else label
 
 
 def plot_output_template(

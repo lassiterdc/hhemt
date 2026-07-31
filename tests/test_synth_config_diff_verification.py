@@ -167,23 +167,25 @@ def test_identity_cell_identical():
 def test_identity_cell_within_family_expected():
     from hhemt.eda._config_diff import _identity_cell
 
-    # A differing CPU-family group (MPI decomposition vs serial) reads "within-family expected"
-    # -- floating-point non-associativity within the CPU family, not a defect.
+    # Q1 (iter-2): `identical` is now computed against each group's OWN hardware-family
+    # minimum-device reference, so a False verdict is ALWAYS a within-family difference
+    # (decomposition / rank FP non-associativity) -- never a cross-hardware claim.
     g = _grp(["mpi"], "sa_mpi_11_r1")
     serial = _grp(["serial"], "sa_serial_6_r1")
-    assert _identity_cell(False, g, serial, 1.19e-07, 0.0) == "differs (within-family expected)"
+    assert _identity_cell(False, g, serial, 1.19e-07, 0.0) == "differs (within-family; FP non-associativity)"
 
 
-def test_identity_cell_cross_family_discloses_bound():
+def test_identity_cell_gpu_differs_reads_within_family_not_cross_family_bound():
     from hhemt.eda._config_diff import _identity_cell
 
-    # A differing GPU-family group vs a CPU serial baseline discloses its bound (never a bare
-    # "no"): cross-hardware-family divergence is ADR-4-conceded and must be surfaced with max_abs.
+    # Q1 (iter-2): a differing GPU group is measured against its OWN 1-GPU family reference, so
+    # _identity_cell reads it as a within-family difference and NO LONGER emits a cross-family
+    # "bounded, disclosed" bound (the vs-serial magnitude lives in the max_wlevel_m abs-diff column).
     g = _grp(["gpu"], "sa_gpu_0_r1")
     serial = _grp(["serial"], "sa_serial_6_r1")
     cell = _identity_cell(False, g, serial, 1.19e-07, 0.0)
-    assert cell.startswith("differs (bounded, disclosed: max_abs=")
-    assert "1.190e-07" in cell
+    assert cell == "differs (within-family; FP non-associativity)"
+    assert "bounded, disclosed" not in cell
 
 
 def test_within_family_cpu_vs_cpu_true_gpu_vs_cpu_false():
@@ -193,6 +195,38 @@ def test_within_family_cpu_vs_cpu_true_gpu_vs_cpu_false():
     assert _within_family(_grp(["mpi"], "m"), serial) is True
     assert _within_family(_grp(["openmp"], "o"), serial) is True
     assert _within_family(_grp(["gpu"], "g"), serial) is False
+
+
+def _grp_attrs(run_modes, member, attrs) -> dict:
+    return {"run_modes": list(run_modes), "members": [member], "attrs": dict(attrs)}
+
+
+def test_family_reference_group_within_family_min_device():
+    # Q1 (iter-2): each group's within-family reference is its OWN hardware family's minimum-device
+    # group (CPU -> serial-CPU; each GPU hardware -> its 1-GPU) -- matching b4b_clean_identity, so
+    # a GPU config is NEVER referenced against serial-CPU or against a DIFFERENT GPU hardware.
+    from hhemt.eda._config_diff import _family_reference_group, _hw_family_key
+
+    serial = _grp_attrs(["serial"], "sa_serial", {"n_nodes": 1, "n_gpus": 0, "n_mpi_procs": 1, "n_omp_threads": 1})
+    mpi8 = _grp_attrs(["mpi"], "sa_mpi8", {"n_nodes": 1, "n_gpus": 0, "n_mpi_procs": 8, "n_omp_threads": 1})
+    a6000_1 = _grp_attrs(["gpu"], "sa_a6000_1", {"n_nodes": 1, "n_gpus": 1, "hpc.partition": "gpu-a6000"})
+    a6000_4 = _grp_attrs(["gpu"], "sa_a6000_4", {"n_nodes": 1, "n_gpus": 4, "hpc.partition": "gpu-a6000"})
+    a100_1 = _grp_attrs(["gpu"], "sa_a100_1", {"n_nodes": 1, "n_gpus": 1, "hpc.partition": "gpu-a100-80"})
+    groups = [serial, mpi8, a6000_1, a6000_4, a100_1]
+
+    # hardware-family keys are FINER than CPU/GPU: a6000 != a100.
+    assert _hw_family_key(serial) == "cpu"
+    assert _hw_family_key(mpi8) == "cpu"
+    assert _hw_family_key(a6000_4) == "a6000"
+    assert _hw_family_key(a100_1) == "a100-80"
+
+    # references: CPU -> serial-CPU; each GPU hardware -> its OWN 1-GPU (never serial, never a different GPU).
+    assert _family_reference_group(mpi8, groups) is serial
+    assert _family_reference_group(a6000_4, groups) is a6000_1
+    assert _family_reference_group(a100_1, groups) is a100_1  # its own family's min-device (itself)
+    # a lone-family member falls back to itself.
+    lone = _grp_attrs(["gpu"], "sa_a40", {"n_gpus": 2, "hpc.partition": "gpu-a40"})
+    assert _family_reference_group(lone, [lone]) is lone
 
 
 def test_identity_labels_none_when_store_absent(tmp_path):
@@ -226,3 +260,31 @@ def test_identity_labels_reads_partition_and_folds_reference(tmp_path):
         "sa_gpu_0_r2": 1,
         "sa_gpu_0_r1": 1,  # reference folded in from reference_group -> groups with sa_gpu_0_r2
     }
+
+
+# ---------------------------------------------------------------------------
+# iter-2 report QA: cross-arm fungibility bands for the config_diff diff maps.
+# The co-located TRITON / TRITON-SWMM config_diff diff maps must share ONE fixed
+# hue->magnitude band so a same-hue cell means the same magnitude in both arms.
+# The band IS the b4b meaningful-difference threshold vocabulary (fungible with the
+# b4b figure too), NOT per-arm auto-scale.
+# ---------------------------------------------------------------------------
+
+
+def test_config_diff_bands_are_fixed_b4b_vocabulary():
+    """The diff-map bands are the fixed b4b-threshold vocabulary (3 cm / 0.01 cms / 0.1 %)."""
+    import hhemt.eda._config_diff as cd
+
+    assert cd._CONFIG_DIFF_DEPTH_BAND_M == 0.03
+    assert cd._CONFIG_DIFF_FLOW_BAND_CMS == 0.01
+    assert cd._CONFIG_DIFF_PCT_BAND == 0.1
+
+
+def test_config_diff_depth_band_matches_b4b_tau():
+    """Cross-figure fungibility invariant: the config_diff depth band equals the b4b figure's
+    tau, so a <3 cm water-level difference reads 'not meaningful' identically in both figures.
+    If the b4b tau is retuned, this test flags that the config_diff band must move with it."""
+    import hhemt.eda._config_diff as cd
+    from hhemt.eda._plotting import _B4B_TAU_M
+
+    assert cd._CONFIG_DIFF_DEPTH_BAND_M == _B4B_TAU_M

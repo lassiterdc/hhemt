@@ -23,6 +23,7 @@ group; each group's panels carry a caption naming every member config.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +33,7 @@ from plotly.colors import sample_colorscale
 from plotly.subplots import make_subplots
 
 from hhemt.exceptions import ProcessingError
+from hhemt.figure_caption import add_figure_caption
 
 #: Diverging colorscale for signed diffs (iter-2 user feedback): RED = NEGATIVE
 #: (lower than serial), white = 0, BLUE = POSITIVE. Plotly "RdBu" maps low->red,
@@ -47,6 +49,32 @@ _REF_FLOW = "Reds"
 #: spatial-pattern difference). Symmetric about 0 (zmid=0); this epsilon only guards a
 #: degenerate all-zero range from collapsing the diverging colorscale.
 _RANGE_EPS = 1e-12
+
+#: Cross-ARM fungibility bands (iter-2 report QA). When a config_diff figure is co-located
+#: with the OTHER model arm's config_diff in the combined report, a same-hue cell must mean
+#: the same magnitude in BOTH arms. Auto-scaling each arm to its own max-abs-diff breaks that
+#: (pure-TRITON collapses to ~0; coupled has real cross-config variation), so BOTH arms render
+#: the diverging diff maps against ONE fixed physically-anchored band and are fungible by
+#: construction — the same strategy the b4b figure uses (_plotting.py `_B4B_TAU_M = 0.03`). The
+#: values ARE the b4b meaningful-difference threshold vocabulary: a diff below the band reads
+#: ~white ("no meaningful difference"), above it saturates honestly (a real >3 cm divergence
+#: worth flagging). This re-instates a fixed band OVER the iter-3 exploratory auto-scale FOR the
+#: fungibility constraint (a named EXPLORATORY->DISCLOSURE regime change per the data-viz
+#: `diff map colorscale honesty` knowledge doc). The Panel-A serial-reference ABSOLUTE-depth cap
+#: is intentionally left auto-scaled (per-arm) — it is a sequential reference, not the diff-map
+#: comparison the fungibility mandate targets, and a fixed cap risks flattening it; its cross-arm
+#: harmonization is deferred to the shared-max follow-up plan.
+_CONFIG_DIFF_DEPTH_BAND_M = 0.03
+_CONFIG_DIFF_FLOW_BAND_CMS = 0.01
+_CONFIG_DIFF_PCT_BAND = 0.1
+
+#: Quantization step (m) for the Panel-A serial-reference depth cap. The cap is the
+#: watershed-masked maximum ROUNDED UP to this step, so two model arms whose masked peaks
+#: differ by millimetres-to-centimetres land on the SAME cap and their sequential colorbars
+#: are identical — G3 fungibility for the reference panel, which the fixed diverging bands
+#: above already give the diff panels. Rounding up never clips, so no out-of-range
+#: disclosure is owed (plotly Heatmap has no set_over triangle to carry one).
+_DEPTH_CAP_STEP_M = 0.25
 
 _PANEL_H_PX = 350
 _TABLE_H_PX = 40
@@ -66,6 +94,16 @@ def _identity_labels(root: Path) -> dict[str, int] | None:
         return None
     ds = xr.open_zarr(store, consolidated=False)
     if "identity_group" not in ds:
+        # PRESENT but pre-`identity_group` schema. Distinct from absent, and the two demand
+        # different operator actions: absent -> the EDA member never ran; legacy -> it ran
+        # under an older producer and re-running EDA restores the identity column. Reporting
+        # both as "artifact absent" sends a reader looking for a file that is right there.
+        warnings.warn(
+            f"eda_cross_sim_identity.zarr at {store} carries no 'identity_group' variable "
+            "(pre-identity_group schema). The byte-identity column renders 'unknown'; "
+            "re-run EDA to repopulate it.",
+            stacklevel=2,
+        )
         return None
     labels = {str(sa): int(v) for sa, v in zip(ds["sa_id"].values, ds["identity_group"].values, strict=False)}
     # The partition is persisted over the NON-reference sa_ids (matching the artifact's
@@ -115,16 +153,16 @@ def _within_family(g: dict, serial_grp: dict) -> bool:
 
 
 def _identity_cell(identical, g: dict, serial_grp: dict, wad: float, fad: float) -> str:
-    """R2's three-state 'identical to serial?' value. A bare 'no' reads as a defect;
-    a real cross-decomposition divergence must be DISCLOSED with its bound, and an
-    absent identity artifact must read 'unknown', never 'no'."""
+    """Q1 (iter-2) within-family verdict. `identical` is now computed against g's OWN
+    hardware-family minimum-device reference (CPU -> serial-CPU, GPU -> 1-GPU), matching
+    b4b_clean_identity — so a False verdict is ALWAYS a within-family difference (decomposition
+    / rank FP non-associativity), never a cross-hardware claim. The vs-serial magnitude still
+    appears in the 'max_wlevel_m abs diff' column (a distinct quantity)."""
     if identical is None:
         return "unknown (identity artifact absent)"
     if identical:
         return "identical"
-    if _within_family(g, serial_grp):
-        return "differs (within-family expected)"
-    return f"differs (bounded, disclosed: max_abs={max(wad, fad):.3e})"
+    return "differs (within-family; FP non-associativity)"
 
 
 def _to_int(attrs: dict, key: str) -> int:
@@ -132,6 +170,32 @@ def _to_int(attrs: dict, key: str) -> int:
         return int(float(attrs.get(key, 0)))
     except (TypeError, ValueError):
         return 0
+
+
+def _hw_family_key(g: dict) -> str:
+    """Per-HARDWARE family key matching raw_resume_identity._b4b_family_key: 'cpu' for any
+    non-GPU group, else the GPU hardware token (a6000 / a100-80) from the representative
+    config's partition (Gotcha 54). Finer than _within_family (a6000 != a100), so a GPU
+    config is classified against its OWN 1-GPU hardware, never a different GPU."""
+    if not any(str(rm) == "gpu" for rm in g.get("run_modes", [])):
+        return "cpu"
+    return _gpu_hardware(g.get("attrs", {})) or "gpu"
+
+
+def _device_count_key(g: dict) -> tuple:
+    """Ascending device-count key mirroring raw_resume_identity._b4b_device_key, so a family's
+    MINIMUM-device group (serial-CPU / 1-GPU) is its within-family byte-identity reference."""
+    a = g.get("attrs", {})
+    return (_to_int(a, "n_nodes"), _to_int(a, "n_gpus"), _to_int(a, "n_mpi_procs"), _to_int(a, "n_omp_threads"))
+
+
+def _family_reference_group(g: dict, groups: list[dict]) -> dict:
+    """The within-hardware-family minimum-device reference group for g (matches
+    b4b_clean_identity: cpu -> serial-CPU, each GPU-hardware -> its 1-GPU). Falls back to g
+    when no family peer exists (g is its family's only member)."""
+    fam = _hw_family_key(g)
+    peers = [x for x in groups if _hw_family_key(x) == fam]
+    return min(peers, key=_device_count_key) if peers else g
 
 
 def _gpu_hardware(attrs: dict) -> str:
@@ -206,11 +270,24 @@ def _load_subs(root: Path) -> dict[str, dict]:
         if g.count("/") != 1 or not g.startswith("/sa_"):
             continue
         node = dt[g]
+        # Model-aware node resolution: coupled masters store max_wlevel_m under
+        # tritonswmm/triton; a pure-TRITON master stores it under triton_only/triton
+        # (processing_analysis.py NODE_PATHS). The SWMM link (flow) tier is coupled-only —
+        # absent for pure-TRITON, so it loads as None and the flow panel/columns are dropped
+        # downstream (F10: rest of the figure + tables still render).
+        tri = None
+        for _tri_path in (g + "/tritonswmm/triton", g + "/triton_only/triton"):
+            try:
+                tri = dt[_tri_path]
+                break
+            except KeyError:
+                continue
+        if tri is None:
+            continue  # sub carries no TRITON node at all — nothing to compare
         try:
-            tri = dt[g + "/tritonswmm/triton"]
             lnk = dt[g + "/tritonswmm/swmm_link"]
         except KeyError:
-            continue  # sub missing coupled outputs (e.g. triton-only) — skip
+            lnk = None  # pure-TRITON: no coupled SWMM link tier
         sa_id = str(node.attrs.get("sa_id", g[len("/sa_") :]))
         subs[sa_id] = {
             "attrs": dict(node.attrs),
@@ -218,7 +295,7 @@ def _load_subs(root: Path) -> dict[str, dict]:
             "run_mode": str(node.attrs.get("run_mode", "")),
             "n_resumes": int(n_res.get(sa_id, 0)),  # b5
             "wlevel": tri["max_wlevel_m"].isel(event_iloc=0),  # (y, x) with x/y coords
-            "flow": lnk["max_flow_cms"].isel(event_iloc=0),  # (link_id,)
+            "flow": (lnk["max_flow_cms"].isel(event_iloc=0) if lnk is not None else None),  # coupled-only
         }
     return subs
 
@@ -249,7 +326,7 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
         )
     for sa_id, s in subs.items():
         w = np.asarray(s["wlevel"].values)
-        f = np.asarray(s["flow"].values)
+        f = np.asarray(s["flow"].values) if s["flow"] is not None else None
         for grp in groups:
             # Identity comes ONLY from the flat-summary-derived partition (Gotcha 44).
             # labels is None -> the artifact is absent (legacy bundle): every sub becomes
@@ -268,6 +345,7 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
             groups.append(
                 {
                     "members": [sa_id],
+                    "attrs": dict(s["attrs"]),  # Q5: representative config attrs for deterministic panel ordering
                     "labels": [s["label"]],
                     "run_modes": [s["run_mode"]],
                     "n_resumes": [s["n_resumes"]],  # b5
@@ -277,6 +355,74 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
                     "flow_da": s["flow"],
                 }
             )
+    return groups
+
+
+def _config_class_key(attrs: dict) -> tuple:
+    """Panel identity: the run-mode class, with GPU split by HARDWARE family.
+
+    This is the G3-fungible grouping axis. It is a pure function of the COMPUTE attrs —
+    ``run_mode`` plus, for GPU, the partition-derived hardware token — with no coupling to
+    SWMM, to the model arm, or to any byte-identity artifact, so the panel SET is identical
+    in both model arms by construction.
+
+    GPU splits by hardware rather than collapsing to one panel because an a6000 job and an
+    a100 job are DISTINCT configs (``_derive_config_label`` already encodes that), and
+    because the ordering rule this figure implements speaks of GPU groupingS in the plural.
+    It does NOT split by device count: that is what keeps group membership varied, so
+    "larger groups toward the top" orders something real rather than a row of singletons."""
+    rm = str(attrs.get("run_mode", "?"))
+    return (rm, _gpu_hardware(attrs)) if rm == "gpu" else (rm, "")
+
+
+def _group_by_config_class(subs: dict[str, dict], root: Path | None) -> list[dict]:
+    """Cluster subs by COMPUTE-CONFIG CLASS -- run mode, with GPU split by hardware family.
+
+    Replaces byte-identity as the grouping AXIS. Byte-identity clusters are model-DEPENDENT
+    (measured: the coupled arm splits along CPU-vs-GPU while the pure-TRITON arm holds one
+    cluster straddling every run mode), which gives the two arms of this same-named figure
+    structurally different panels. Byte-identity is not lost -- it is reported per group in
+    the "byte-identical to family ref" column, which is where a VERDICT belongs.
+
+    Retains ``_group_by_identity``'s uniform-grid fail-fast: this figure subtracts
+    sub-analyses cell-wise, which assumes one grid regardless of the grouping axis."""
+    groups: list[dict] = []
+    shapes = {sa_id: np.asarray(s["wlevel"].values).shape for sa_id, s in subs.items()}
+    if len(set(shapes.values())) > 1:
+        raise ProcessingError(
+            operation="config_diff_group_by_config_class",
+            filepath=None,
+            reason=(
+                f"config_diff_maps requires a UNIFORM grid across sub-analyses; got "
+                f"max_wlevel_m shapes {shapes}. This figure subtracts sub-analyses "
+                f"cell-wise, which assumes one grid. A mixed-resolution master needs the "
+                f"dem-resolution reporting set (which regrids), not config_diff_maps -- set "
+                f"report_config.reporting_set='dem-resolution' and "
+                f"eda.enabled_plots accordingly."
+            ),
+        )
+    by_key: dict[tuple, dict] = {}
+    for sa_id, s in subs.items():
+        key = _config_class_key(s["attrs"])
+        grp = by_key.get(key)
+        if grp is None:
+            grp = {
+                "members": [],
+                "attrs": dict(s["attrs"]),
+                "labels": [],
+                "run_modes": [],
+                "n_resumes": [],
+                "wlevel": np.asarray(s["wlevel"].values),
+                "flow": (np.asarray(s["flow"].values) if s["flow"] is not None else None),
+                "wlevel_da": s["wlevel"],
+                "flow_da": s["flow"],
+            }
+            by_key[key] = grp
+            groups.append(grp)
+        grp["members"].append(sa_id)
+        grp["labels"].append(s["label"])
+        grp["run_modes"].append(s["run_mode"])
+        grp["n_resumes"].append(s["n_resumes"])
     return groups
 
 
@@ -308,15 +454,49 @@ def _load_conduit_geometry(root: Path) -> dict[str, tuple[tuple[float, float], t
 
 
 def _watershed_polygon(root: Path):
-    """The bundled watershed polygon (``external/watershed.geojson``), or None. It is the
-    drainage area north of the sea wall — used both as the display/colorbar mask and as a
-    boundary overlay labeled 'watershed'."""
+    """The watershed polygon, or None. It is the drainage area north of the sea wall — used
+    both as the display/colorbar mask and as a boundary overlay labeled 'watershed'.
+
+    Resolves in BOTH render roots. ``external/watershed.geojson`` is a bundle-EMIT artifact:
+    ``bundle/_path_policy`` rewrites ``cfg_system.watershed_gis_polygon`` to
+    ``external/{filename}`` at emit time. A LIVE analysis dir has no ``external/`` at all and
+    holds the absolute path in ``cfg_system.yaml``."""
     wpath = root / "external" / "watershed.geojson"
     if not wpath.exists():
+        # LIVE-ANALYSIS root. Without this fallback the mask silently degrades to None in
+        # every analysis.eda() render: depth_vmax reverts to the unmasked coastal storm-tide
+        # maximum and no boundary ring is drawn, while the 'watershed' swatch still claims
+        # one. Bundle roots hit the branch above first, so bundle renders are unchanged.
+        wpath = _cfg_system_watershed_path(root)
+    if wpath is None or not wpath.exists():
         return None
     import geopandas as gpd
 
     return gpd.read_file(wpath).geometry.union_all()
+
+
+def _cfg_system_watershed_path(root: Path) -> Path | None:
+    """``watershed_gis_polygon`` from ``root/cfg_system.yaml``, resolved against ``root``.
+
+    Present in BOTH render contexts: ``analysis.eda()`` writes cfg_system.yaml to the live
+    root before ``render_eda_plots(root, ...)``, and the bundle staging dir carries it via
+    ``_copy_configs_with_relative_paths``. Returns None (never raises) when the file, the
+    key, or the YAML parse is unavailable — an absent polygon is a legitimate excludable-input
+    state that the caller renders as "no watershed"."""
+    cfg = root / "cfg_system.yaml"
+    if not cfg.exists():
+        return None
+    import yaml
+
+    try:
+        raw = yaml.safe_load(cfg.read_text()) or {}
+    except yaml.YAMLError:
+        return None
+    val = raw.get("watershed_gis_polygon")
+    if not val:
+        return None
+    p = Path(str(val))
+    return p if p.is_absolute() else (root / p)
 
 
 def _watershed_mask(poly, xd, yd) -> np.ndarray | None:
@@ -343,6 +523,28 @@ def _polygon_boundary_rings(poly) -> list[tuple[list[float], list[float]]]:
             xs, ys = gpoly.exterior.xy
             rings.append((list(xs), list(ys)))
     return rings
+
+
+def _watershed_boundary_traces(poly) -> list:
+    """The watershed boundary as ready-to-add line traces (empty when no polygon).
+
+    Mirrors ``_conduit_traces``: the trace objects are CONSTRUCTED HERE so every consumer
+    inherits one boundary encoding instead of re-declaring colour and width at each call
+    site. Renderer modules must not build these themselves -- artist construction inside
+    ``report_renderers/`` has to be lexically enclosed in a ``with prov.artist(...)``
+    block, which a figure-builder helper called from one cannot satisfy.
+    """
+    return [
+        go.Scatter(
+            x=xs,
+            y=ys,
+            mode="lines",
+            line=dict(color="#111", width=1.3),
+            showlegend=False,
+            hoverinfo="skip",
+        )
+        for xs, ys in _polygon_boundary_rings(poly)
+    ]
 
 
 def _apply_mask(z, mask):
@@ -428,6 +630,27 @@ def _conduit_traces(geom, values_by_link, *, colorscale, vmin, vmax, cbar_title,
     return traces
 
 
+def _device_count(attrs: dict) -> int:
+    """Compute-config size: GPUs for a GPU config, ranks x threads for a CPU config.
+
+    ONE definition, shared by the panel ordering and the within-panel config list, so the
+    user's "smaller to larger compute configs" rule means the same thing at both levels."""
+    ng, nm, no = (_to_int(attrs, k) for k in ("n_gpus", "n_mpi_procs", "n_omp_threads"))
+    return ng if str(attrs.get("run_mode", "")) == "gpu" else max(nm, 1) * max(no, 1)
+
+
+def _panel_order_key(g: dict) -> tuple:
+    """Deterministic non-serial group order (Q5, iter-2): CPU groupings before GPU groupings;
+    within a category, larger groups (more distinct configs) toward the top; ties broken
+    smaller->larger compute-config (total device count); final tie alphabetical run-mode."""
+    attrs = g.get("attrs", {})
+    is_gpu = 1 if any(str(rm) == "gpu" for rm in g.get("run_modes", [])) else 0
+    n_configs = len(set(g.get("labels", [])))
+    device_count = _device_count(attrs)
+    run_mode = min(sorted({str(rm) for rm in g.get("run_modes", [])}), default="")
+    return (is_gpu, -n_configs, device_count, run_mode)
+
+
 def build_config_diff_figure(root: Path) -> go.Figure:
     """Assemble the config-diff-maps figure from the bundle/analysis root.
 
@@ -435,8 +658,9 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     Panel A (row 2) = serial-CPU reference (absolute depth + flow, report palettes).
     Panels B, C ... = each byte-identical config group that differs from serial, as
     a diff row + a percent-diff row. Diverging maps (RdBu: red = below serial, blue =
-    above) use a symmetric range floored at 3 cm / 0.01 cms / 0.1 %, so micrometer-
-    scale diffs read as uniform "no meaningful difference" rather than saturating.
+    above) use a FIXED physically-anchored symmetric band of 3 cm / 0.01 cms / 0.1 %
+    (cross-arm fungibility, iter-2 report QA), identical in both model arms by construction,
+    so micrometer-scale diffs read as uniform "no meaningful difference" rather than saturating.
     """
     subs = _load_subs(root)
     if not subs:
@@ -444,10 +668,21 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         fig.update_layout(height=_PANEL_H_PX, title="Config diff maps (no coupled sub-analyses found)")
         return fig
 
+    # F10: a pure-TRITON master carries no SWMM link tier, so every sub's "flow" is None.
+    # Retain the 2-column layout but skip the col-2 conduit half (traces + table column +
+    # ranges + _links) and annotate it "N/A (no coupled SWMM)". Depth (col-1) renders fully.
+    has_flow = any(s["flow"] is not None for s in subs.values())
+
     # Identity labels (flat-summary partition) — shared by the grouping and the summary
     # column's three-state verdict; None on a legacy bundle with no identity artifact.
     labels = _identity_labels(root)
-    groups = _group_by_identity(subs, root)
+    # G3 (model fungibility, the #1 rule): the GROUPING AXIS is the compute-config class, NOT
+    # byte-identity. Byte-identity clusters are model-DEPENDENT -- measured, the coupled arm
+    # splits along CPU-vs-GPU while the pure-TRITON arm holds one cluster straddling every run
+    # mode -- so using them as the axis gives the two arms of this same-named figure
+    # structurally different panels. The byte-identity VERDICT is still reported per group in
+    # the summary table's identity column.
+    groups = _group_by_config_class(subs, root)
     serial_grp = next((g for g in groups if "serial" in g["run_modes"]), None)
     if serial_grp is None:
         fig = go.Figure()
@@ -461,22 +696,29 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # cross_sim_identity comparison.
     for _g in groups:
         _g["wlevel"] = _align_to(serial_grp["wlevel_da"], _g["wlevel_da"])
-        _g["flow"] = _align_to(serial_grp["flow_da"], _g["flow_da"])
+        if has_flow:
+            _g["flow"] = _align_to(serial_grp["flow_da"], _g["flow_da"])
     base_w = serial_grp["wlevel"]
-    base_f = serial_grp["flow"]
+    base_f = serial_grp["flow"] if has_flow else None
     # Deterministic panel order (B, C, …): sort the differing groups by their sorted config
     # labels so Panel-letter assignment is stable across renders (not dict-discovery order).
-    diff_groups = sorted(
-        (g for g in groups if g is not serial_grp),
-        key=lambda g: sorted(set(g["labels"])),
-    )
+    # Q5 (iter-2): ONE deterministic order for BOTH the panels (below) and the summary table
+    # (ordered_groups). Serial always first; the rest by _panel_order_key (CPU before GPU;
+    # larger groups top; ties smaller->larger device count; then alphabetical run-mode).
+    _non_serial_ordered = sorted((g for g in groups if g is not serial_grp), key=_panel_order_key)
+    diff_groups = _non_serial_ordered
     geom = _load_conduit_geometry(root)
 
     def _configs(g):
-        # The single source of a group's config identity: sorted DISTINCT labels. The top
-        # table (# configs), the per-panel side table, and the panel letters ALL derive
-        # from this, so they are deterministically in alignment.
-        return sorted(set(g["labels"]))
+        # The single source of a group's config identity: DISTINCT labels, ordered by the
+        # SAME rule that orders the panels -- smaller to larger device count, then the label
+        # itself. The top table (# configs), the per-panel side table, and the panel letters
+        # ALL derive from this, so they are deterministically in alignment. Alphabetical
+        # ordering was the prior behaviour and put "OpenMP 1r×8t" above "OpenMP 1r×2t".
+        by_label: dict[str, dict] = {}
+        for sa_id, lbl in zip(g["members"], g["labels"], strict=False):
+            by_label.setdefault(lbl, subs[sa_id]["attrs"])
+        return sorted(by_label, key=lambda lbl: (_device_count(by_label[lbl]), lbl))
 
     def _rng(actual):
         # Data-driven symmetric half-range (iter-3, no floor): the actual magnitude,
@@ -489,32 +731,36 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # `# configs` counts DISTINCT compute configs (len of the deduped label set) so it
     # equals the hand-countable comma-separated list in the "Compute-config group" cell —
     # NOT len(members), which counts sa_ids incl. r1/r2 replicates.
-    ordered_groups = [serial_grp] + [g for g in groups if g is not serial_grp]
+    ordered_groups = [serial_grp] + _non_serial_ordered  # Q5: table order == panel order
     table_rows = []
     for i, g in enumerate(ordered_groups):
         wad = float(np.nanmax(np.abs(g["wlevel"] - base_w)))
-        fad = float(np.nanmax(np.abs(g["flow"] - base_f)))
+        fad = float(np.nanmax(np.abs(g["flow"] - base_f))) if has_flow else float("nan")
         # Three-state, per R2. `identical` is None when the identity artifact is absent
         # (legacy bundle) -- rendered "unknown", NEVER silently "no". Sourced ONLY from the
         # flat-summary partition label (Gotcha 44), never a positional consolidated compare.
         if labels is None:
             identical = None
         else:
-            identical = bool(
-                labels.get(g["members"][0]) is not None
-                and labels.get(g["members"][0]) == labels.get(serial_grp["members"][0])
-            )
+            # Q1 (iter-2): within-family classification (matches b4b_clean_identity). Compare
+            # each group's byte-identity label to its HARDWARE-FAMILY minimum-device reference
+            # group (CPU -> serial-CPU, GPU -> 1-GPU), NOT the global serial group, so a GPU
+            # config is never claimed identical-to-serial-CPU. The diff MAPS below stay vs serial.
+            _fam_ref = _family_reference_group(g, groups)
+            _g_lbl = labels.get(g["members"][0])
+            _ref_lbl = labels.get(_fam_ref["members"][0])
+            identical = bool(_g_lbl is not None and _ref_lbl is not None and _g_lbl == _ref_lbl)
         # Top table keyed by Panel letter (A/B/C); the full config list now lives in the
         # per-panel table beside each panel's maps, not in this summary row.
-        table_rows.append(
-            [
-                f"Panel {chr(ord('A') + i)}",
-                len(_configs(g)),
-                _identity_cell(identical, g, serial_grp, wad, fad),
-                f"{fad:.4g}",
-                f"{wad:.4g}",
-            ]
-        )
+        _row = [
+            f"Panel {chr(ord('A') + i)}",
+            len(_configs(g)),
+            _identity_cell(identical, g, serial_grp, wad, fad),
+        ]
+        if has_flow:
+            _row.append(f"{fad:.4g}")
+        _row.append(f"{wad:.4g}")
+        table_rows.append(_row)
 
     # ---- grid: 2 cols (rasters | conduits); row1 table; row2 serial ref;
     #      then per differing group a diff row + a percent-diff row. ----
@@ -545,15 +791,24 @@ def build_config_diff_figure(root: Path) -> go.Figure:
 
     fig.add_trace(
         go.Table(
-            columnwidth=[1.0, 1.2, 1.2, 1.4, 1.4],
+            columnwidth=([1.0, 1.2, 1.2, 1.4, 1.4] if has_flow else [1.0, 1.2, 1.2, 1.4]),
             header=dict(
-                values=[
-                    "Panel",
-                    "# configs in group",
-                    "identical to serial?",
-                    "max_flow_cms abs diff",
-                    "max_wlevel_m abs diff",
-                ],
+                values=(
+                    [
+                        "Panel",
+                        "# configs in group",
+                        "byte-identical to family ref (peak summary)?",
+                        "max_flow_cms abs diff (vs serial)",
+                        "max_wlevel_m abs diff (vs serial)",
+                    ]
+                    if has_flow
+                    else [
+                        "Panel",
+                        "# configs in group",
+                        "byte-identical to family ref (peak summary)?",
+                        "max_wlevel_m abs diff (vs serial)",
+                    ]
+                ),
                 align="left",
                 fill_color="#eef2f7",
                 font=dict(size=11),
@@ -605,12 +860,13 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     G_FOOTER = 62  # below a panel's last map (x-ticks + x-title + swatch + gap + outline)
     G_INTER = 30  # between-panel extra gap ≈ watershed-box width (item: more space)
     G_TABLE = 16
-    T_MARGIN, B_MARGIN = 80, 45
+    T_MARGIN = 80  # bottom margin is DERIVED from the caption (hhemt.figure_caption), never a constant
 
     plot_h = table_px + G_TABLE + G_INTER * (len(panel_rows) - 1)
     for prows in panel_rows:
         plot_h += G_TOP + len(prows) * H_MAP + (len(prows) - 1) * G_WITHIN + G_FOOTER
-    fig_height = plot_h + T_MARGIN + B_MARGIN
+    # No fig_height constant: the figure height is computed at layout time from plot_h plus
+    # the bottom margin the caption module returns.
 
     def _f(px):  # px -> paper-height fraction
         return px / plot_h
@@ -662,30 +918,19 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     wpoly = _watershed_polygon(root)
     wmask = _watershed_mask(wpoly, xd, yd)
 
-    # ---- Global (across-panel) diff ranges, keyed by UNIT — like colorbars share one
-    #      vmin/vmax. Depth-diff ("m") and flow-diff ("cms") each share ONE symmetric range
-    #      across ALL panels; depth-% and flow-% are BOTH "%", so they share ONE unified range
-    #      spanning every panel's depth-% AND flow-%. (Flow diffs are exactly 0.0 in coupled
-    #      byte-identical groups, so unifying % is lossless — flow-% renders flat because it
-    #      IS flat.) Colorbars with DIFFERENT colorscales (the sequential serial references)
-    #      are exempt: a shared unit with a different color signals a different scale.
-    def _maxabs(a):
-        a = np.asarray(a)
-        a = a[np.isfinite(a)]
-        return float(np.nanmax(np.abs(a))) if a.size else 0.0
-
-    _g_depth = _g_flow = _g_pct = 0.0
-    for g in diff_groups:
-        _dw = _apply_mask(g["wlevel"] - base_w, wmask)
-        _pw = _apply_mask(_signed_pct(g["wlevel"] - base_w, base_w), wmask)
-        _df = g["flow"] - base_f
-        _pf = _signed_pct(_df, base_f)
-        _g_depth = max(_g_depth, _maxabs(_dw))
-        _g_flow = max(_g_flow, _maxabs(_df))
-        _g_pct = max(_g_pct, _maxabs(_pw), _maxabs(_pf))
-    wsym = _rng(_g_depth)  # depth diff (m) — shared across every panel
-    fsym = _rng(_g_flow)  # flow diff (cms) — shared across every panel
-    pct_sym = _rng(_g_pct)  # percent difference (%) — depth% ∪ flow%, shared across every panel
+    # ---- Cross-ARM fungibility (iter-2 report QA): FIXED shared bands for the diverging DIFF
+    #      maps, NOT per-arm auto-scale. The co-located TRITON / TRITON-SWMM config_diff maps
+    #      must share one hue->magnitude mapping, so the like-unit diff colorbars (depth "m",
+    #      flow "cms", and the unified "%") each bind to a FIXED physically-anchored band that is
+    #      identical in both arms by construction (= the b4b meaningful-difference threshold
+    #      vocabulary). This re-instates a fixed band over the iter-3 exploratory auto-scale
+    #      (EXPLORATORY -> DISCLOSURE regime change per the `diff map colorscale honesty`
+    #      knowledge doc), because the co-located comparison is a cross-arm small-multiple where a
+    #      shared scale is the correct proportional-ink reading. The sequential serial-reference
+    #      maps (DIFFERENT colorscales) are exempt and keep their own per-arm auto-scale.
+    wsym = _CONFIG_DIFF_DEPTH_BAND_M
+    fsym = _CONFIG_DIFF_FLOW_BAND_CMS
+    pct_sym = _CONFIG_DIFF_PCT_BAND
 
     def _links(g):
         return [str(x) for x in g["flow_da"]["link_id"].values]
@@ -710,6 +955,24 @@ def build_config_diff_figure(root: Path) -> go.Figure:
                 showarrow=False,
                 font=dict(size=13, color="#111"),
                 text=text,
+            )
+        )
+
+    def _col2_na(row):
+        # Deterministic col-2 placeholder for a pure-TRITON master (F9: clear backend
+        # commentary, not a silent blank). Centered over the col-2 map domain.
+        d0, d1 = row_ydom[row]
+        annotations.append(
+            dict(
+                x=(dom2[0] + dom2[1]) / 2.0,
+                y=(d0 + d1) / 2.0,
+                xref="paper",
+                yref="paper",
+                xanchor="center",
+                yanchor="middle",
+                showarrow=False,
+                font=dict(size=11, color="#666"),
+                text="N/A — pure-TRITON<br>(no coupled SWMM conduits)",
             )
         )
 
@@ -741,13 +1004,26 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         )
 
     # ---- Panel A: serial-CPU reference (absolute magnitudes, report palettes) ----
-    fmax = _rng(np.nanmax(np.abs(base_f)))
+    fmax = _rng(np.nanmax(np.abs(base_f))) if has_flow else None
     # Serial depth reference: displayed water level AND the colorbar vmax are restricted to
     # the watershed mask (north of the sea wall) — the coastal storm-tide extreme south of
     # the wall is excluded, so the inland floodplain signal is visible (item: vmax based on
     # the region NORTH of the sea wall, via the geodataframe polygon mask).
     base_w_disp = _apply_mask(base_w, wmask)
-    depth_vmax = float(np.nanmax(base_w_disp)) if np.isfinite(base_w_disp).any() else None
+    # G3 fungibility: the Panel-A cap is QUANTIZED UP to a shared ladder rather than set to
+    # the raw masked maximum. max_wlevel_m is the same TRITON quantity in both model arms, so
+    # a per-arm cap makes one YlGnBu hue mean two different water levels in the two same-named
+    # figures. A FIXED constant is the wrong instrument here (no physical anchor exists for an
+    # ABSOLUTE level the way 3 cm anchors a DIFFERENCE, and plotly's Heatmap has no set_over
+    # triangle, so a clipped cap saturates silently). Rounding up to _DEPTH_CAP_STEP_M is
+    # deterministic, never clips, and makes the two arms coincide whenever their masked peaks
+    # share a bin.
+    _raw_vmax = float(np.nanmax(base_w_disp)) if np.isfinite(base_w_disp).any() else None
+    depth_vmax = (
+        float(np.ceil(_raw_vmax / _DEPTH_CAP_STEP_M) * _DEPTH_CAP_STEP_M)
+        if _raw_vmax is not None and _raw_vmax > 0
+        else _raw_vmax
+    )
     fig.add_trace(
         _heatmap(
             base_w_disp,
@@ -765,20 +1041,23 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         row=serial_row,
         col=1,
     )
-    serial_links = _links(serial_grp)
-    for tr in _conduit_traces(
-        geom,
-        dict(zip(serial_links, np.asarray(base_f), strict=False)),
-        colorscale=_REF_FLOW,
-        vmin=0,
-        vmax=fmax,
-        cbar_title="cms",
-        cbar_x=cb_x[2],
-        cbar_y=_cb_y(serial_row),
-        cbar_len=cb_len,
-        diverging=False,
-    ):
-        fig.add_trace(tr, row=serial_row, col=2)
+    if has_flow:
+        serial_links = _links(serial_grp)
+        for tr in _conduit_traces(
+            geom,
+            dict(zip(serial_links, np.asarray(base_f), strict=False)),
+            colorscale=_REF_FLOW,
+            vmin=0,
+            vmax=fmax,
+            cbar_title="cms",
+            cbar_x=cb_x[2],
+            cbar_y=_cb_y(serial_row),
+            cbar_len=cb_len,
+            diverging=False,
+        ):
+            fig.add_trace(tr, row=serial_row, col=2)
+    else:
+        _col2_na(serial_row)
     _panel_label("<b>Panel A</b> — Serial CPU reference", serial_row, serial_row)
     _panel_config_table(serial_grp, serial_row, serial_row)
 
@@ -790,10 +1069,11 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         # reference); flow (conduits) are already all upstream, so not masked.
         dw = _apply_mask(g["wlevel"] - base_w, wmask)
         pw = _apply_mask(_signed_pct(g["wlevel"] - base_w, base_w), wmask)
-        df = g["flow"] - base_f
-        pf = _signed_pct(df, base_f)
+        if has_flow:
+            df = g["flow"] - base_f
+            pf = _signed_pct(df, base_f)
+            links = _links(g)
         # wsym / fsym / pct_sym are GLOBAL (computed above): like-unit colorbars share one range.
-        links = _links(g)
 
         # diff row: depth diff (raster) | flow diff (conduits)
         fig.add_trace(
@@ -814,19 +1094,22 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             row=diff_row,
             col=1,
         )
-        for tr in _conduit_traces(
-            geom,
-            dict(zip(links, np.asarray(df), strict=False)),
-            colorscale=_DIVERGING,
-            vmin=-fsym,
-            vmax=fsym,
-            cbar_title="cms",
-            cbar_x=cb_x[2],
-            cbar_y=_cb_y(diff_row),
-            cbar_len=cb_len,
-            diverging=True,
-        ):
-            fig.add_trace(tr, row=diff_row, col=2)
+        if has_flow:
+            for tr in _conduit_traces(
+                geom,
+                dict(zip(links, np.asarray(df), strict=False)),
+                colorscale=_DIVERGING,
+                vmin=-fsym,
+                vmax=fsym,
+                cbar_title="cms",
+                cbar_x=cb_x[2],
+                cbar_y=_cb_y(diff_row),
+                cbar_len=cb_len,
+                diverging=True,
+            ):
+                fig.add_trace(tr, row=diff_row, col=2)
+        else:
+            _col2_na(diff_row)
 
         # percent-diff row: depth % (raster) | flow % (conduits)
         fig.add_trace(
@@ -847,19 +1130,22 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             row=pct_row,
             col=1,
         )
-        for tr in _conduit_traces(
-            geom,
-            dict(zip(links, np.asarray(pf), strict=False)),
-            colorscale=_DIVERGING,
-            vmin=-pct_sym,
-            vmax=pct_sym,
-            cbar_title="percent difference (%)",
-            cbar_x=cb_x[2],
-            cbar_y=_cb_y(pct_row),
-            cbar_len=cb_len,
-            diverging=True,
-        ):
-            fig.add_trace(tr, row=pct_row, col=2)
+        if has_flow:
+            for tr in _conduit_traces(
+                geom,
+                dict(zip(links, np.asarray(pf), strict=False)),
+                colorscale=_DIVERGING,
+                vmin=-pct_sym,
+                vmax=pct_sym,
+                cbar_title="percent difference (%)",
+                cbar_x=cb_x[2],
+                cbar_y=_cb_y(pct_row),
+                cbar_len=cb_len,
+                diverging=True,
+            ):
+                fig.add_trace(tr, row=pct_row, col=2)
+        else:
+            _col2_na(pct_row)
 
         panel = chr(ord("B") + gi)
         # Left-margin rotated label; group title from the SAME _configs(g) as the table
@@ -939,15 +1225,17 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # ---- my own subplot titles: centered over each map's tight x-domain, small font ----
     _titles = {
         (serial_row, 1): "Serial depth (m)",
-        (serial_row, 2): "Serial flow (cms)",
     }
+    if has_flow:
+        _titles[(serial_row, 2)] = "Serial flow (cms)"
     for gi in range(len(diff_groups)):
         dr = serial_row + 1 + 2 * gi
         pr = dr + 1
         _titles[(dr, 1)] = "Depth diff (m)"
-        _titles[(dr, 2)] = "Flow diff (cms)"
         _titles[(pr, 1)] = "Depth % diff"
-        _titles[(pr, 2)] = "Flow % diff"
+        if has_flow:
+            _titles[(dr, 2)] = "Flow diff (cms)"
+            _titles[(pr, 2)] = "Flow % diff"
     for (r, c), t in _titles.items():
         xa0, xa1 = _xdom(r, c)
         ya0, ya1 = _ydom(r, c)
@@ -980,7 +1268,15 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # the G_FOOTER budget: 28 px wide × 16 px tall (WIDER than tall; ~1.3× the 10-pt text).
     _SW_HALF_W = 14 / fig_width  # paper-x
     _SW_HALF_H = _f(8)  # paper-y
+    # The "watershed" swatch is drawn ONLY when a watershed boundary is actually drawn.
+    # watershed_gis_polygon is an EXCLUDABLE bundle input, so a bundle legitimately ships
+    # without it; when it does, `rings` is empty, `_apply_mask` is the identity, and the depth
+    # cap reverts to the coastal boundary maximum. An unconditional swatch labels a boundary
+    # that is not there and hides that reversion.
+    _has_watershed = bool(rings)
     for first_row, last_row in panel_spans:
+        if not _has_watershed:
+            continue
         y_top = _ydom(first_row, 1)[1]
         y_bot = _ydom(last_row, 1)[0]
         sw_y = y_bot - _f(34)  # below the x-axis "x (m)" title
@@ -1029,10 +1325,38 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             )
         )
 
+    # Q1 (iter-2): disclose that the identity column is a PEAK-water-level max-over-time SUMMARY
+    # (which washes out the per-timestep divergence the b4b figure catches) and cross-ref the b4b
+    # figure. Data-viz Round-2 tunes the exact y/px placement.
+    # Caption layout is owned by hhemt.figure_caption (ONE deterministic module for every
+    # figure). It wraps to the PANEL-OUTLINE width -- not the figure width, which ran this
+    # caption ~25% past the drawn content -- and RETURNS the bottom margin it needs, which
+    # replaces the hardcoded B_MARGIN. The old `y=-0.02` was a fraction of plot_h, so the
+    # caption sank further below the axes as config groups were added while b=140 stayed
+    # fixed: it fit on small masters and clipped on large ones.
+    _caption_w_px = (cb_x[2] + 0.12 - 0.006) * fig_width  # dashed panel-outline extent
+    _caption_b_px = add_figure_caption(
+        fig,
+        (
+            "Identity column = byte-identity of the <b>max_wlevel_m PEAK water-level summary</b> "
+            "(max over time) vs each config's hardware-family minimum-device reference "
+            "(CPU → serial-CPU, GPU → 1-GPU). A max summary can read byte-identical even where "
+            "individual timesteps differ — per-timestep byte-for-byte agreement is in the "
+            "“Per-timestep water-level” (b4b) figure. Diff/percent maps below are vs the serial-CPU baseline."
+            + (
+                " Serial-reference depth is scaled over the watershed north of the sea wall, "
+                f"capped at {depth_vmax:.2f} m."
+                if _has_watershed and depth_vmax
+                else " Serial-reference depth is scaled over the full DEM extent, including the seaward boundary."
+            )
+        ),
+        content_w_px=_caption_w_px,
+        plot_h_px=plot_h,
+    )
     fig.update_layout(
-        height=fig_height,
+        height=plot_h + T_MARGIN + _caption_b_px,
         width=fig_width,
-        margin=dict(t=T_MARGIN, l=30, r=30, b=B_MARGIN),
+        margin=dict(t=T_MARGIN, l=30, r=30, b=_caption_b_px),
         title="Config diff maps: spatial difference vs serial-CPU baseline, per byte-identical config group",
         annotations=list(fig.layout.annotations) + annotations,
         shapes=shapes,
@@ -1056,6 +1380,11 @@ def config_diff_source_paths(root: Path) -> list[Path]:
         root / "sensitivity_datatree.zarr",
         root / "eda" / "eda_cross_sim_identity.zarr",
         root / "scenario_status.csv",  # b5: n_resumes column in the per-panel config table
+        # The watershed polygon: this figure otherwise free-rides on ANOTHER renderer's
+        # declaration to get it into the bundle. Declaring it here makes the harvest file set
+        # self-sufficient. Harvest skips-with-warning on a declared-but-absent source, so an
+        # excluded polygon stays safe.
+        *([_wp] if (_wp := _cfg_system_watershed_path(root)) is not None and _wp.exists() else []),
     ]
     inps = sorted(root.glob("subanalyses/*/sims/*/swmm/hydraulics.inp"))
     if inps:

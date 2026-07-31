@@ -316,11 +316,16 @@ def _write_combined_compatibility(output_path: Path, report: CompatibilityReport
 _COMBINED_INTERCOMPARISON_FILENAME = "combined_intercomparison.json"
 
 #: Key-result variables compared clean-vs-resume cross-bundle (mirrors
-#: eda.cross_sim_identity.TRACKED_VARS): peak flood depth + peak conduit flow, read from
-#: the consolidated-tree child node under each /sa_{id} group.
-_INTERCOMPARISON_VARS: tuple[tuple[str, str], ...] = (
-    ("tritonswmm/triton", "max_wlevel_m"),
-    ("tritonswmm/swmm_link", "max_flow_cms"),
+#: eda.cross_sim_identity.TRACKED_VARS): peak flood depth + peak conduit flow. Each var
+#: maps to a TUPLE of candidate child node-paths tried in order — the coupled tier
+#: (tritonswmm/*) first, the pure-TRITON tier (triton_only/triton) as fallback — because a
+#: pure-TRITON master stores max_wlevel_m under triton_only/triton, NOT tritonswmm/triton
+#: (processing_analysis.py NODE_PATHS). max_flow_cms is coupled-only (no SWMM link tier on a
+#: pure-TRITON master), so its candidate tuple has the single coupled path and is simply
+#: absent — and correctly skipped — for a pure-TRITON master.
+_INTERCOMPARISON_VARS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("tritonswmm/triton", "triton_only/triton"), "max_wlevel_m"),
+    (("tritonswmm/swmm_link",), "max_flow_cms"),
 )
 
 
@@ -418,13 +423,15 @@ def _load_intercomparison_subs(root: Path) -> dict:
             collapsed.setdefault(cfg_key, []).append(g.lstrip("/"))
             continue
         vars_by_name: dict = {}
-        for child, var in _INTERCOMPARISON_VARS:
-            try:
-                child_node = dt[f"{g}/{child}"]
-            except KeyError:
-                continue
-            if var in child_node.data_vars:
-                vars_by_name[var] = child_node[var]
+        for candidate_children, var in _INTERCOMPARISON_VARS:
+            for child in candidate_children:
+                try:
+                    child_node = dt[f"{g}/{child}"]
+                except KeyError:
+                    continue
+                if var in child_node.data_vars:
+                    vars_by_name[var] = child_node[var]
+                    break  # first present candidate wins (coupled tier before pure-TRITON)
         if vars_by_name:
             out[cfg_key] = vars_by_name
     return out, collapsed
@@ -453,13 +460,35 @@ def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> Non
     experiment_ids = _combined_experiment_ids(roots)
     roles = [_bundle_role_from_status(root) for root in roots]
     experiments = [{"experiment": eid, "role": role} for eid, role in zip(experiment_ids, roles, strict=True)]
-    clean = [root for root, role in zip(roots, roles, strict=True) if role == "clean"]
-    resume = [root for root, role in zip(roots, roles, strict=True) if role == "resume"]
+
+    # X2 (iter-3): pair WITHIN each model so combined_intercomparison.json carries BOTH
+    # TRITON-SWMM and TRITON pairs; the cross_experiment_intercomparison renderer already
+    # groupBy: "model" (Q6b), so this yields a per-model section pair with NO renderer change.
+    # Supersedes the clean[0]/resume[0] single-model pairing (the "multi-model pairing" the
+    # retired comment named). Fungible: identical compare_variable_exact kernel per model.
+    _MODEL_BY_TOKEN = (("_tritonswmm", "TRITON-SWMM"), ("_triton", "TRITON"))
+
+    def _model_of_root(root: Path) -> str:
+        eid = _combined_experiment_ids([root])[0]
+        for _tok, _label in _MODEL_BY_TOKEN:
+            if eid.endswith(_tok):
+                return _label
+        return ""
 
     pairs: list[dict] = []
-    if clean and resume:
-        clean_subs, clean_collapsed = _load_intercomparison_subs(clean[0])
-        resume_subs, resume_collapsed = _load_intercomparison_subs(resume[0])
+    _clean_collapsed_all: dict = {}
+    _resume_collapsed_all: dict = {}
+    _by_model_role: dict[str, dict[str, list[Path]]] = {}
+    for _root, _role in zip(roots, roles, strict=True):
+        _by_model_role.setdefault(_model_of_root(_root), {}).setdefault(_role, []).append(_root)
+    for _model, _rr in sorted(_by_model_role.items()):
+        _cl, _rs = _rr.get("clean", []), _rr.get("resume", [])
+        if not (_cl and _rs):
+            continue
+        clean_subs, clean_collapsed = _load_intercomparison_subs(_cl[0])
+        resume_subs, resume_collapsed = _load_intercomparison_subs(_rs[0])
+        _clean_collapsed_all.update(clean_collapsed)
+        _resume_collapsed_all.update(resume_collapsed)
         for cfg_key in sorted(set(clean_subs) & set(resume_subs)):
             c_vars, r_vars = clean_subs[cfg_key], resume_subs[cfg_key]
             for _child, var in _INTERCOMPARISON_VARS:
@@ -478,14 +507,14 @@ def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> Non
                             "variable": var,
                             "event_iloc": int(e),
                             "identical": bool(cmp["identical"]),
+                            "model": _model,
                             # NaN (incomparable coords) -> None so the JSON is valid + honest.
                             "max_abs_diff": (None if mad != mad else float(mad)),
                         }
                     )
-
     payload = {
         "experiments": sorted(experiments, key=lambda x: x["experiment"]),
-        "pairs": sorted(pairs, key=lambda p: (p["config"], p["variable"], p["event_iloc"])),
+        "pairs": sorted(pairs, key=lambda p: (p.get("model", ""), p["config"], p["variable"], p["event_iloc"])),
         # Replicate collapse is DISCLOSED, not silent. `pairs` above carries one
         # representative sub per compute-config; any replicate dropped to get there is
         # listed here so a renderer can state the collapse. The premise that replicates
@@ -493,10 +522,10 @@ def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> Non
         # so an undisclosed collapse under-reports the very spread a resume-validity
         # experiment exists to measure. See _load_intercomparison_subs.
         "replicates_collapsed": {
-            "clean": {k: sorted(v) for k, v in sorted(clean_collapsed.items())},
-            "resume": {k: sorted(v) for k, v in sorted(resume_collapsed.items())},
+            "clean": {k: sorted(v) for k, v in sorted(_clean_collapsed_all.items())},
+            "resume": {k: sorted(v) for k, v in sorted(_resume_collapsed_all.items())},
         }
-        if (clean and resume)
+        if (_clean_collapsed_all or _resume_collapsed_all)
         else {},
     }
     (output_path / _COMBINED_INTERCOMPARISON_FILENAME).write_text(

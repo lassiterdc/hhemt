@@ -347,6 +347,63 @@ def main():
         run = scenario.run
         logger.info(f"[{event_iloc}] Preparing {model_type} simulation...")
 
+        # KR-a: deterministic same-timestep interruption. The kill watcher fires on a 2 s
+        # POLL, so a fast config overshoots the scheduled checkpoint by however many
+        # reporting steps it wrote between the threshold being met and the SIGTERM landing;
+        # the picker then resumes from that overshoot and the realized resume boundary
+        # VARIES PER CONFIG. Prune the overshoot HERE, before prepare_simulation_command —
+        # the picker runs INSIDE it (run_simulation.py's hotstart branch), so a prune sited
+        # after this call is a silent no-fix: the cfg is already chosen and the command
+        # already built.
+        #
+        # Index: n_resumes is read PRE-prepare, so it is the count of resumes ALREADY done
+        # (prepare's own increment has not fired). After k resumes, the interruption that
+        # produced the cfgs on disk was armed at schedule[k], so the resume must come from
+        # schedule[k] — no offset. Attempt 0 and attempt 1 both read k == 0; the EMPTY cfg
+        # dir on attempt 0 is what disambiguates them, which is why the helper's
+        # empty-dir no-op is load-bearing rather than defensive.
+        _sched_pre = getattr(analysis.cfg_analysis, "resume_interruption_schedule", None)
+        if _sched_pre and model_type != "swmm":
+            _k_pre = scenario.get_log(model_type).n_resumes.get() or 0
+            if _k_pre >= len(_sched_pre):
+                # Schedule spent: this is a genuine transient retry of the final attempt,
+                # not a harness-ordered resume. Resume from wherever the sim actually got
+                # to; pruning here would rewind real progress.
+                logger.info(
+                    f"[{event_iloc}] Resume schedule spent (n_resumes={_k_pre} >= "
+                    f"{len(_sched_pre)}); no interruption prune applied."
+                )
+            else:
+                _target_step = _sched_pre[_k_pre]
+                _n_pruned = run.prune_hotstart_cfgs_above_step(model_type, target_step=_target_step)
+                if _n_pruned:
+                    logger.info(
+                        f"[{event_iloc}] Deterministic-resume prune: removed {_n_pruned} "
+                        f"hotstart cfg(s) above reporting step {_target_step}; this attempt "
+                        f"will resume from exactly step {_target_step}."
+                    )
+                elif _k_pre > 0:
+                    # k > 0 means a resume DID happen, so cfgs must exist; zero removed means
+                    # the sim stopped exactly on the boundary (fine) — logged for the record.
+                    logger.info(
+                        f"[{event_iloc}] Deterministic-resume prune: no overshoot above "
+                        f"reporting step {_target_step} (already exact)."
+                    )
+                else:
+                    # k == 0 with cfgs present is ambiguous: attempt 1 (correct, handled
+                    # above by a non-zero prune) OR a re-dispatched attempt 0 after a
+                    # non-harness failure, whose resume will consume a schedule slot the
+                    # harness never ordered. WARN rather than raise: a raise would break
+                    # legitimate transient retries, and the mis-indexing predates KR-a.
+                    _cfg_dir_pre = run._hotstart_cfg_dir(model_type)
+                    if _cfg_dir_pre is not None and _cfg_dir_pre.exists() and any(_cfg_dir_pre.glob("*.cfg")):
+                        logger.warning(
+                            f"[{event_iloc}] Hotstart cfgs present with n_resumes=0 — this attempt "
+                            "may be a transient retry of the FRESH attempt, in which case the resume "
+                            "it is about to perform will consume a schedule slot the harness did not "
+                            "order and every later boundary shifts by one entry. Inspect the sim log."
+                        )
+
         # Use prepare_simulation_command to get the actual executable command
         # (NOT the recursive runner command)
         simprep_result = run.prepare_simulation_command(
@@ -436,6 +493,36 @@ def main():
         # Update simulation log with results
         end_time = time.time()
         elapsed = end_time - start_time
+
+        # F11: durable per-attempt wall-time ledger. The perf files (out_*/performance/
+        # performanceN.txt) and the model log's sim_run_time_minutes are OVERWRITE-PRONE — a
+        # resume re-runs from the checkpoint and overwrites the perf files for the re-run
+        # steps, and sim_run_time_minutes is last-exec-only — so a resumed sim's total
+        # UNDER-counts (empirically 372.3 s reported vs 489 s actual on sa_serial_6_r1, 3
+        # resumes). This ledger appends THIS attempt's wall (completed OR harness-killed) BEFORE
+        # the next resume can overwrite anything; df_status sums it (fallback to the perf path
+        # when absent, so non-resumed + legacy trees are byte-unchanged). Best-effort / non-fatal.
+        try:
+            import json as _json_wl
+
+            _wl_dir = model_logfile.parent / "_walltime"
+            _wl_dir.mkdir(parents=True, exist_ok=True)
+            _wl_path = _wl_dir / f"{model_logfile.stem}.jsonl"
+            with open(_wl_path, "a") as _wl:
+                _wl.write(
+                    _json_wl.dumps(
+                        {
+                            "attempt": int(_n_done),
+                            "wall_s": float(elapsed),
+                            "completed": bool(run.model_run_completed(model_type)),
+                            "slurm_jobid": os.environ.get("SLURM_JOB_ID"),
+                            "slurm_step_id": os.environ.get("SLURM_STEP_ID"),
+                        }
+                    )
+                    + "\n"
+                )
+        except OSError as _wl_err:
+            logger.warning(f"[{event_iloc}] wall-time ledger append failed (non-fatal): {_wl_err}")
 
         # Check simulation status via log file
         status = (

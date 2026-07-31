@@ -260,6 +260,51 @@ def _read_jsonld_core(bundle_root: Path) -> dict:
     return core
 
 
+#: Paired model-arm toggles (F1). tritonswmm FIRST (longer token) — mirrors
+#: combined_snakefile_generator._MODEL_TOKENS. Kept local (leaf-safe); a future refactor may
+#: lift _base_experiment / _MODEL_TOKENS to a shared bundle leaf consumed by both modules.
+_MODEL_TOKENS: tuple[str, ...] = ("_tritonswmm", "_triton")
+_PAIRED_MODEL_TOGGLES: frozenset[str] = frozenset({"toggle_triton_model", "toggle_tritonswmm_model"})
+
+
+def _base_experiment(eid: str) -> str:
+    """The analysis-id with its trailing model token stripped (synth_cc_clean_triton and
+    synth_cc_clean_tritonswmm both collapse to synth_cc_clean). Mirrors
+    combined_snakefile_generator._base_experiment (kept local to keep this module leaf-safe)."""
+    for _tok in _MODEL_TOKENS:
+        if eid.endswith(_tok):
+            return eid[: -len(_tok)]
+    return eid
+
+
+def _downgrade_paired_model_arms(report: CompatibilityReport, eids: list[str]) -> None:
+    """Auto-detect (F1): downgrade the paired model-toggle divergence from BLOCKING to WARNING
+    for the WHOLE combine set — and ONLY when — (a) the ONLY blocking-classified divergence
+    anywhere is toggle_triton_model / toggle_tritonswmm_model (no other experiment-identity
+    field blocks) AND (b) the eids genuinely collapse to fewer base experiments than eids (some
+    base carries >=2 model arms). This admits a both-models combine (one experiment's two arms,
+    or the 4-way clean/resume x triton/tritonswmm) while two unrelated single-arm experiments
+    (expA_triton + expB_tritonswmm: 2 bases == 2 eids, no collapse) STILL block."""
+    all_blocking = {d.field_name for d in report.divergences if d.severity is CompatibilitySeverity.BLOCKING}
+    real_collapse = len({_base_experiment(e) for e in eids}) < len(eids)
+    if not (all_blocking and all_blocking <= _PAIRED_MODEL_TOGGLES and real_collapse):
+        return
+    report.divergences = [
+        CompatibilityDivergence(
+            field_name=d.field_name,
+            bucket=d.bucket,
+            severity=CompatibilitySeverity.WARNING,  # both-arms-of-one-experiment: admissible (F1)
+            bundle_a=d.bundle_a,
+            bundle_b=d.bundle_b,
+            value_a=d.value_a,
+            value_b=d.value_b,
+        )
+        if (d.field_name in _PAIRED_MODEL_TOGGLES and d.severity is CompatibilitySeverity.BLOCKING)
+        else d
+        for d in report.divergences
+    ]
+
+
 def check_bundle_compatibility(bundle_roots: list[Path]) -> CompatibilityReport:
     """Compare N bundles' metadata pairwise; return a CompatibilityReport.
 
@@ -289,4 +334,5 @@ def check_bundle_compatibility(bundle_roots: list[Path]) -> CompatibilityReport:
                             value_b=vb,
                         )
                     )
+    _downgrade_paired_model_arms(report, [cores[r].get("analysis_id", str(r)) for r in roots])
     return report

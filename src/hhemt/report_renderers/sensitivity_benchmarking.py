@@ -40,6 +40,24 @@ import plotly.io as pio
 import xarray as xr
 from plotly.subplots import make_subplots
 
+
+# Q1 fungibility (iter-2): color must be STABLE per group_value across arms. A
+# pure-TRITON arm and a TRITON-SWMM arm that differ in which groups are present
+# would otherwise get shifted palette indices (color = palette[i % len]) and the
+# same hardware family would read as two colors across the co-located figures.
+# Canonical order pins the known families to fixed slots; unknowns append
+# deterministically (sorted) after the known block.
+_CANONICAL_GROUP_ORDER = ("serial", "single_cpu", "single-cpu", "cpu", "gpu", "hybrid")
+
+
+def _stable_group_color(group_value, palette, all_groups):
+    gv = str(group_value)
+    known = [g for g in _CANONICAL_GROUP_ORDER if g in {str(x) for x in all_groups}]
+    unknown = sorted({str(x) for x in all_groups} - set(_CANONICAL_GROUP_ORDER))
+    order = known + unknown
+    idx = order.index(gv) if gv in order else 0
+    return palette[idx % len(palette)]
+
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 from hhemt.swmm_output_parser import parse_total_elapsed
@@ -680,7 +698,7 @@ def _draw_metric_panel(
             continue
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
-        color = palette[i % len(palette)]
+        color = _stable_group_color(gv, palette, groups)
         with prov.artist(
             axes_id="ax_metric", kind="line",
             note=f"metric group {gv}",
@@ -751,7 +769,7 @@ def _draw_panel(
     gpu_marker = static_cfg.gpu_marker if static_cfg is not None else sens_cfg.gpu_marker
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = palette[i % len(palette)]
+        color = _stable_group_color(gv, palette, groups)
         is_gpu_group = str(gv).lower() == "gpu"
         is_hybrid_group = str(gv).lower() == "hybrid"
         marker = gpu_marker if is_gpu_group else cpu_marker
@@ -937,7 +955,7 @@ def _build_sensitivity_benchmarking_figure(
 
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True,
-        vertical_spacing=0.045,
+        vertical_spacing=0.06,
     )
     fig.update_layout(
         template="plotly_white",
@@ -947,7 +965,8 @@ def _build_sensitivity_benchmarking_figure(
             title=group_by_var if group_by_var is not None else "",
             orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.02,
         ),
-        margin=dict(l=10, r=120, t=30, b=80),
+        margin=dict(l=90, r=120, t=30, b=80),
+        height=1000,
     )
 
     # ---- Panels 1 + 2: wallclock + compute-cost -------------------------
@@ -1020,7 +1039,7 @@ def _build_sensitivity_benchmarking_figure(
     # Footnote (matches matplotlib reference): explain the n_mpi_procs annotations on hybrid markers.
     # v5 tuning — middle ground between v3 (y=-0.14, b=110, too far) and v4
     # (y=-0.07, b=85, too close).
-    fig.update_layout(margin=dict(l=10, r=120, t=30, b=95))
+    fig.update_layout(margin=dict(l=90, r=120, t=30, b=95))
     fig.add_annotation(
         text="* number next to hybrid scenarios indicates number of MPI processes",
         xref="paper", yref="paper", x=0.5, y=-0.10,
@@ -1149,7 +1168,7 @@ def _plotly_metric_panel(
     available_cfg_cols = [c for c in cfg_cols if c in df.columns]
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = sens_cfg.palette[i % len(sens_cfg.palette)]
+        color = _stable_group_color(gv, sens_cfg.palette, groups)
         is_gpu_group = str(gv).lower() == "gpu"
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
@@ -1324,7 +1343,7 @@ def _plotly_metric_panel_precomputed(
             if not marker_xs:
                 # Empty all-rows fall back to line data for markers.
                 marker_xs, marker_ys, marker_sa = line_xs, line_ys, line_sa
-        color = sens_cfg.palette[i % len(sens_cfg.palette)]
+        color = _stable_group_color(gv, sens_cfg.palette, groups)
         is_gpu_group = str(gv).lower() == "gpu"
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}

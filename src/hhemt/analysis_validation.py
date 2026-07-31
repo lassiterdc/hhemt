@@ -979,6 +979,54 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis) -> CheckResult:
                             ),
                         }
                     )
+                else:
+                    # KR-a/KR-b: the COUNT alone cannot distinguish "resumed 3 times at
+                    # 36/72/108" from "resumed 3 times at 41/79/113" — the per-config
+                    # boundary variance the deterministic prune exists to eliminate. KR-b
+                    # persists the REALIZED boundary per resume, so compare it directly.
+                    _realized = row.get("resume_reporting_tsteps") or []
+                    if not _realized:
+                        # ABSENCE OF EVIDENCE IS NOT EVIDENCE OF CORRECTNESS. A resumed sub
+                        # with a configured schedule but no realized-boundary list cannot be
+                        # verified, and silently passing here is the exact shape of a re-sim
+                        # that never re-simulated: re-running the resume arm WITHOUT
+                        # start_from_scratch leaves the prior campaign's n_resumes in place,
+                        # so no kill arms (the gate is _n_done < len(schedule)), the count
+                        # check above passes, and a pre-KR-b tree carries no list to compare
+                        # — every detector green over data the deterministic prune never
+                        # touched. Surface it as INDETERMINATE (cannot verify) rather than
+                        # as a failure: a genuinely legacy pre-KR-b tree is unverifiable-but-
+                        # fine, and the honest report of that is "unverifiable", not "ok".
+                        indeterminate += 1
+                        details.append(
+                            {
+                                "scenario": str(row.get("scenario_directory", "")),
+                                "detail": (
+                                    f"pure-TRITON resume count n_resumes={n_r} matches the {len(sched)} "
+                                    "configured interruption(s), but NO realized resume boundaries were "
+                                    "recorded (resume_reporting_tsteps absent/empty), so the "
+                                    "same-timestep claim CANNOT BE VERIFIED. Either this tree predates "
+                                    "realized-boundary persistence, or the resume arm was re-run over an "
+                                    "existing analysis dir without start_from_scratch — in which case no "
+                                    "interruption fired and the data is clean-arm data carrying the "
+                                    "resume arm's label."
+                                ),
+                            }
+                        )
+                    elif [int(t) for t in _realized] != [int(s) for s in sched]:
+                        details.append(
+                            {
+                                "scenario": str(row.get("scenario_directory", "")),
+                                "detail": (
+                                    f"pure-TRITON realized resume boundaries {list(_realized)} != "
+                                    f"configured schedule {list(sched)}. The resume COUNT is correct, "
+                                    "so the harness fired the right number of interruptions, but at "
+                                    "least one config resumed from a different reporting step than "
+                                    "requested — the b4b same-timestep comparison across configs is "
+                                    "NOT valid for this sim."
+                                ),
+                            }
+                        )
 
     n = len(details)
     passed = n == 0

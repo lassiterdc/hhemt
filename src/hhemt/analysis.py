@@ -994,16 +994,15 @@ class TRITONSWMM_analysis:
                 check_cross_hardware_magnitude(self, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg),
             ),
         ]
-        # b4b producer (Phase 4): ONE calc, TWO backing zarrs (b4b_clean_identity /
-        # b4b_clean_vs_resume). Register BOTH renderer kinds so BOTH figures pass the
-        # facade's only_kinds filter AND the report-path enabled_plots scoping; the second
-        # entry's verdict is nulled so validate_analysis surfaces the combined verdict once.
-        import dataclasses as _dataclasses
-
+        # b4b producer (Phase 4): ONE calc, ONE backing zarr (b4b_clean_identity — the
+        # per-hardware-family cross-config raw byte-identity figure over the master's OWN subs,
+        # applicable on both the clean and resume masters). The former within-master
+        # b4b_clean_vs_resume figure is removed (F8: always degraded on a single-arm master);
+        # the clean-vs-resume comparison lives on the combine surface
+        # (cross_experiment_intercomparison).
         _raw_b4b = check_raw_b4b(self, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
         _eda_results += [
             ("b4b_clean_identity", _raw_b4b),
-            ("b4b_clean_vs_resume", _dataclasses.replace(_raw_b4b, verdict=None)),
         ]
         verdicts = [r.verdict for _kind, r in _eda_results if r.verdict is not None]
         _produced_kinds = {kind for kind, r in _eda_results if (not r.skipped and r.artifact_path is not None)}
@@ -4774,6 +4773,7 @@ class TRITONSWMM_analysis:
             "scenario_setup",
             "run_completed",
             "n_resumes",
+            "resume_reporting_tsteps",
             "scenario_directory",
         ]
         fixed_perf = [f"perf_{v}" for v in PERF_VARS_ORDERED]
@@ -4886,6 +4886,17 @@ class TRITONSWMM_analysis:
                 row["scenario_setup"] = scenario_setup
                 row["run_completed"] = scen.model_run_completed(model_type)
                 row["n_resumes"] = scen.get_log(model_type).n_resumes.get() or 0
+                # KR-b: surface the realized per-attempt resume reporting-steps as a first-class
+                # df_status column → scenario_status.csv → data-tree, so the b4b same-timestep
+                # experiment is answerable from the data. Legacy logs -> [] (coalesced).
+                row["resume_reporting_tsteps"] = scen.get_log(model_type).resume_reporting_tsteps.get() or []
+                # F11: durable per-attempt wall total (None -> fall back to the perf-summary
+                # total; a resumed sim's perf total under-counts, see run_simulation_runner ledger).
+                from hhemt.run_simulation import model_logfile_for, read_walltime_ledger_total_s
+
+                row["wall_clock_ledger_s"] = read_walltime_ledger_total_s(
+                    model_logfile_for(self, event_iloc, model_type)
+                )
                 row["scenario_directory"] = scenario_dir
                 row["disk_utilization_bytes"] = scenario_du
 

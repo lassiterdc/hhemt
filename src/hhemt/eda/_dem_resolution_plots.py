@@ -34,7 +34,6 @@ inapplicable and are DROPPED. This figure is SIMPLER than its precedent.
 
 from __future__ import annotations
 
-import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -42,6 +41,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
 
+from hhemt.figure_caption import add_figure_caption
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import (
     emit_plot_with_sources,  # noqa: F401  # reserved for the /design-figure-authored bodies
@@ -153,39 +153,19 @@ def _dem_diff_heatmap_trace(
 
 
 def _add_caption(fig, text: str, *, content_w_px: float, font_px: int = 10, y: float = -0.05) -> None:
-    """Bottom-left caption wrapped to a CALLER-MEASURED content width (family-wide invariant).
+    """Backward-compatible shim over ``hhemt.figure_caption.add_figure_caption``.
 
-    plotly annotations do not auto-wrap, so an unwrapped caption runs off the right edge. The width
-    passed in is the figure's own drawn extent in px, measured from whatever feature actually bounds
-    the content -- the plot area for a single-panel figure, the panel outline for a multi-panel one.
-    Deriving it from the figure width alone is WRONG for any figure whose content stops short of the
-    margins, which is how figure 3's caption ended up running well past its panel boundary.
+    Caption geometry now lives in ONE module. This wrapper survives only so the three
+    existing call sites keep their signature; ``y`` is accepted and ignored -- the
+    module derives the offset in pixels, which is the whole point (a paper-fraction
+    ``y`` is a fraction of the plot area and therefore drifts with figure height).
 
-    CAPTION CONTENT RULES (user, iterates 2-3, generalised to all four figures):
-      - carry nothing already legible from an axis label, a legend entry, or a column header
-      - "meters", never "metres"
-      - never reference another figure by number (each figure stands alone)
-      - no experiment-specific commentary (fixture scale, toy-domain caveats)
-      - state what IS. Never state what a thing is not, and never describe something absent -- both
-        are `ai cruft phrases.md` Tier-1 "redundant negative reinforcement". A caption that says
-        "a manually set constant, not a percentile" or "this run carries no watershed polygon"
-        spends the reader's attention on a non-fact.
+    Callers that can take the return value should call ``add_figure_caption``
+    directly and feed it into ``margin=dict(b=...)`` instead of hand-tuning a
+    bottom-margin constant.
     """
-    # ~0.58 x font-size is a slightly conservative average glyph advance for plotly's default sans
-    # stack. Erring high costs one early wrap; erring low overflows the figure.
-    chars = max(40, int(content_w_px / (font_px * 0.58)))
-    fig.add_annotation(
-        xref="paper",
-        yref="paper",
-        x=0,
-        y=y,
-        showarrow=False,
-        align="left",
-        xanchor="left",
-        yanchor="top",
-        font=dict(size=font_px),
-        text="<br>".join(textwrap.wrap(text, width=chars)),
-    )
+    _plot_h = float(fig.layout.height or 800) - float((fig.layout.margin.t or 0) + (fig.layout.margin.b or 0))
+    add_figure_caption(fig, text, content_w_px=content_w_px, plot_h_px=max(_plot_h, 1.0), font_px=font_px)
 
 
 def _maxabs(a: np.ndarray) -> float:

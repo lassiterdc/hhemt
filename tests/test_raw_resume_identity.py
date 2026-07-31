@@ -70,8 +70,13 @@ def test_b4b_clean_identity_reason_distinguishes_no_clean_subs_from_raw_cleared(
     )
     rri.check_raw_b4b(master, cfg_analysis=cfg, eda_cfg=cfg)
 
-    reason = xr.open_zarr(tmp_path / "eda" / "b4b_clean_identity.zarr").attrs["degraded_reason"]
-    assert "no clean" in reason and "n_resumes==0" in reason, reason
+    z = xr.open_zarr(tmp_path / "eda" / "b4b_clean_identity.zarr")
+    reason = z.attrs.get("degraded_reason", "")
+    # Post-F4 redesign: b4b is computed per-hardware-family for BOTH clean (n_resumes==0) and
+    # resume (n_resumes>0) masters. A resume master with PRESENT raw therefore computes b4b over
+    # its resume subs -> NOT degraded, and must NOT false-alarm 'raw cleared or absent'. (Only a
+    # master where NO sub produced raw b4b data degrades, with that explicit reason.)
+    assert int(z.attrs["degraded"]) == 0, reason
     assert "cleared or absent" not in reason, reason
 
 
@@ -90,11 +95,11 @@ def test_triton_raw_b4b_identical_and_divergent_at_boundary(tmp_path):
     _write_bin_raster(resume / "MH1", base + 1)
 
     res = compare_triton_raw_timeseries(clean, resume, reporting_interval_s=60.0)
-    wl = res["wlevel_m"]  # H
+    wl = res["wlevel_m"][0]  # identical da (return is {var: (identical, max_abs_diff)})
     assert bool(wl.sel(timestep_min=0.0)) is True
     assert bool(wl.sel(timestep_min=1.0)) is False
     assert first_divergent_timestep(wl) == 1.0
-    mh = res["max_wlevel_m"]  # MH identical throughout
+    mh = res["max_wlevel_m"][0]  # MH identical throughout
     assert all(bool(b) for b in mh.values)
     assert first_divergent_timestep(mh) is None
 

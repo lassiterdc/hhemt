@@ -76,6 +76,29 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
     return log_dir / f"model_{model_type}_{subanalysis_id}evt{event_iloc}.log"
 
 
+def read_walltime_ledger_total_s(model_logfile: Path) -> float | None:
+    """Sum the append-only per-attempt wall-time ledger written by run_simulation_runner at
+    each sim-finalize (F11). Returns the total wall seconds across ALL attempts of a (possibly
+    resumed) sim, or None when the ledger is absent (caller falls back to the perf-summary
+    total). The ledger is the ONLY kill-survivable per-attempt wall source — the perf files
+    and sim_run_time_minutes are overwrite-prone (see the runner's ledger comment)."""
+    import json as _json
+
+    p = model_logfile.parent / "_walltime" / f"{model_logfile.stem}.jsonl"
+    if not p.exists():
+        return None
+    total = 0.0
+    try:
+        for line in p.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            total += float(_json.loads(line).get("wall_s", 0.0) or 0.0)
+    except (OSError, ValueError):
+        return None
+    return total
+
+
 class TRITONSWMM_run:
     def __init__(self, scenario: "TRITONSWMM_scenario") -> None:
         self._scenario = scenario
@@ -387,6 +410,74 @@ class TRITONSWMM_run:
             return None
         return output_dir / "cfg"
 
+    def prune_hotstart_cfgs_above_step(
+        self,
+        model_type: Literal["triton", "tritonswmm"],
+        *,
+        target_step: int,
+    ) -> int:
+        """Delete every ``config_NNNN.cfg`` whose reporting step EXCEEDS ``target_step``,
+        so the resume picker is FORCED to select exactly ``target_step``.
+
+        KR-a (deterministic same-timestep interruption). The multi-resume harness kills
+        on a POLL (``wait_with_deterministic_checkpoint_kill``, 2 s), so a fast config
+        (rank-8 OpenMP/Hybrid, GPU: sub-2 s reporting periods) writes several more
+        checkpoints between the threshold being met and the SIGTERM landing. The picker
+        (``_retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation``)
+        returns ``latest_complete.iloc[-1]`` — the HIGHEST complete step — so that
+        overshoot became the realized resume boundary and it VARIED PER CONFIG. The b4b
+        hotstart-resume experiment is only valid if every config resumes at the SAME
+        reporting step, so this prune runs BEFORE the picker and removes the overshoot.
+
+        MUST be called before ``prepare_simulation_command`` (which invokes the picker
+        internally). Calling it after is a silent no-fix: the cfg is already chosen and
+        the launch command already built, so the sim still resumes from the overshoot
+        while the log reads correct.
+
+        Numbering contract (measured, not assumed): TRITON writes ``config_N.cfg``
+        1-based, contiguous, unpadded (``config_9.cfg`` / ``config_99.cfg`` /
+        ``config_1000.cfg``; a real 1080-step dir holds steps 1..1080 with zero gaps).
+        Because numbering is contiguous from 1, ``len(cfgs) == max(step)`` identically —
+        which is why deleting only the TOP preserves the count-based arming predicate in
+        ``wait_with_deterministic_checkpoint_kill`` EXACTLY. Do NOT extend this to delete
+        interior files: that would break the count/step identity the watcher relies on and
+        the kill would then fire one reporting step late per missing file.
+
+        Size-mutating, so it re-stamps the DU sentinels per the ``du sentinels written at
+        every mutation site`` stipulation (PATTERN B: unlink + ``restamp_parent_sentinels``)
+        — NOT ``# EXEMPT-DU``: these cfgs live inside the scenario scope and ARE DU-counted.
+
+        Returns the number of cfg files removed (0 when nothing was above ``target_step``).
+        """
+        from hhemt.du_sentinels import restamp_parent_sentinels
+
+        cfg_dir = self._hotstart_cfg_dir(model_type)
+        if cfg_dir is None or not cfg_dir.exists():
+            return 0
+        analysis_dir = self._analysis.analysis_paths.analysis_dir
+        n_removed = 0
+        for f_cfg in sorted(cfg_dir.glob("*.cfg")):
+            try:
+                step = return_the_reporting_step_from_a_cfg(f_cfg)
+            except (ValueError, IndexError):
+                continue  # unparseable name: leave it alone rather than guess
+            if step <= target_step:
+                continue
+            try:
+                f_cfg.unlink()
+                # PATTERN B — must be the IMMEDIATELY-following sibling of the unlink, in
+                # the same block: check_du_sentinel_sites only accepts the next statement
+                # in the same statement list, or the trailing statement of a `finally`. A
+                # `finally` is wrong here because it would restamp on the failure path too.
+                # Consequence of living inside the try: an OSError from the restamp is
+                # caught by the same handler, so such a file is deleted but not counted —
+                # an under-report that correctly signals its DU obligation did not complete.
+                restamp_parent_sentinels(f_cfg, analysis_dir=analysis_dir)
+            except OSError:
+                continue
+            n_removed += 1
+        return n_removed
+
     def wait_with_deterministic_checkpoint_kill(
         self,
         proc,
@@ -625,6 +716,11 @@ class TRITONSWMM_run:
                 # Track hotstart resumes as a first-class log field (P2).
                 _ml = self._scenario.get_log(model_type)
                 _ml.n_resumes.set((_ml.n_resumes.get() or 0) + 1)
+                # KR-b: persist the REALIZED resume reporting-step (the cfg the picker chose)
+                # on the SAME _ml object, so the b4b same-timestep-interruption experiment is
+                # answerable from the data forever. Mirrors n_resumes' write path exactly.
+                _prior_tsteps = list(_ml.resume_reporting_tsteps.get() or [])
+                _ml.resume_reporting_tsteps.set(_prior_tsteps + [int(sim_start_reporting_tstep)])
                 if verbose:
                     print(
                         f"Resuming {model_type} from hotstart: {hotstart_cfg}",

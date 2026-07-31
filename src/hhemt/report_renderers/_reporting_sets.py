@@ -209,7 +209,7 @@ _TMPL_CROSS_EXPERIMENT_COMPATIBILITY = RuleSpecTemplate(
     output_path_template="plots/cross_experiment/compatibility__OUTPUT_EXT__",
     report_kwargs={
         "caption": "report/captions/cross_experiment_compatibility.rst",
-        "category": "Cross-Experiment Compatibility",
+        "category": "Combine Provenance & Compatibility",
         "labels": '{"figure": "Compatibility report"}',
     },
     wildcards=(),
@@ -270,6 +270,20 @@ _TMPL_CROSS_EXPERIMENT_ERRORS_AND_WARNINGS = RuleSpecTemplate(
     wildcards=(),
     resources_yaml="mem_mb=1000, time_min=5",
     log_path_template="_logs/plots/cross_experiment_errors_and_warnings.log",
+)
+
+_TMPL_CROSS_EXPERIMENT_DISK_UTILIZATION = RuleSpecTemplate(
+    rule_name="plot_cross_experiment_disk_utilization",
+    renderer_module="cross_experiment_disk_utilization",
+    output_path_template="plots/cross_experiment/disk_utilization__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/cross_experiment_disk_utilization.rst",
+        "category": "Cross-Experiment Disk Utilization",
+        "labels": '{"figure": "Per-experiment disk utilization"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=1000, time_min=5",
+    log_path_template="_logs/plots/cross_experiment_disk_utilization.log",
 )
 
 # eda_compute_sensitivity (R11): the in-report EDA adapter for the
@@ -521,25 +535,11 @@ _TMPL_B4B_CLEAN_IDENTITY = RuleSpecTemplate(
         "caption": "report/captions/b4b_clean_identity.rst",
         "category": "Key Results",
         "subcategory": "Byte-for-byte comparison",
-        "labels": '{"figure": "Clean-run byte identity"}',
+        "labels": '{"figure": "Cross-hardware raw byte identity"}',
     },
     wildcards=(),
     resources_yaml="mem_mb=4000, time_min=10",
     log_path_template="_logs/plots/b4b_clean_identity.log",
-)
-_TMPL_B4B_CLEAN_VS_RESUME = RuleSpecTemplate(
-    rule_name="plot_b4b_clean_vs_resume",
-    renderer_module="eda_compute_sensitivity",
-    output_path_template="plots/eda/b4b_clean_vs_resume__OUTPUT_EXT__",
-    report_kwargs={
-        "caption": "report/captions/b4b_clean_vs_resume.rst",
-        "category": "Key Results",
-        "subcategory": "Byte-for-byte comparison",
-        "labels": '{"figure": "Clean vs resume byte identity"}',
-    },
-    wildcards=(),
-    resources_yaml="mem_mb=4000, time_min=10",
-    log_path_template="_logs/plots/b4b_clean_vs_resume.log",
 )
 
 _B4B_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
@@ -556,7 +556,7 @@ _B4B_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
         # because the b4b masters preserve raw outputs by contract (the b4b figures
         # require it), and the rule-all enumeration gate is has_eda_artifact, so both
         # gates hold together on a b4b run.
-        rule_spec_template=(_TMPL_EDA_COMPUTE_SENSITIVITY, _TMPL_B4B_CLEAN_IDENTITY, _TMPL_B4B_CLEAN_VS_RESUME),
+        rule_spec_template=(_TMPL_EDA_COMPUTE_SENSITIVITY, _TMPL_B4B_CLEAN_IDENTITY),
     ),
 )
 
@@ -583,9 +583,10 @@ REPORTING_SETS: dict[str, ReportingSet] = {
         # RETIRED — each experiment carries its OWN errors_and_warnings figure natively
         # under its {eid} section via the per-experiment harvest.)
         category_order=(
-            "Cross-Experiment Compatibility",
+            "Combine Provenance & Compatibility",
             "Cross-Experiment Results",
             "Cross-Experiment Errors and Warnings",
+            "Cross-Experiment Disk Utilization",
         ),
         renderer_selection=(
             RendererSelection(
@@ -603,6 +604,10 @@ REPORTING_SETS: dict[str, ReportingSet] = {
             RendererSelection(
                 "cross_experiment_errors_and_warnings",
                 rule_spec_template=(_TMPL_CROSS_EXPERIMENT_ERRORS_AND_WARNINGS,),
+            ),
+            RendererSelection(
+                "cross_experiment_disk_utilization",
+                rule_spec_template=(_TMPL_CROSS_EXPERIMENT_DISK_UTILIZATION,),
             ),
         ),
         validator_key="none",

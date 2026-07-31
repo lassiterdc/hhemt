@@ -44,10 +44,28 @@ def test_combine_pip2_roundtrip(synthetic_two_bundle_fixture):
     for child in child_dirs:
         # each experiment id appears as a native sidebar category
         assert child.name in report_html, f"combined report missing per-experiment section {child.name!r}"
-        # and at least one harvested child figure is referenced in place
-        assert f"child_crates/{child.name}/plots/" in report_html, (
-            f"combined report did not harvest {child.name}'s plots"
-        )
+
+    # Harvested per-experiment figures are COMPOSED PAGES under paired_figures/ (F1 Option C,
+    # round-6), not in-place under child_crates/{eid}/plots/ as the pre-round-6 layout emitted.
+    # Companion contract: tests/test_combine_colocation.py ("output under paired_figures/, NOT
+    # child_crates/"). The invariant asserted here is that EVERY base experiment contributes at
+    # least one harvested figure — a base silently contributing none is the regression this
+    # replaced assertion accidentally caught.
+    from hhemt.bundle.combined_snakefile_generator import _base_experiment
+
+    paired_root = cb.root / "paired_figures"
+    paired = sorted(p.relative_to(paired_root).as_posix() for p in paired_root.glob("**/*.html"))
+    assert paired, "combine harvested no per-experiment figures at all (paired_figures/ absent or empty)"
+
+    # Each composed page lives in a per-base DIRECTORY, so crediting a page to its base is
+    # unambiguous. (The earlier flat "{base}__{plot_id}" layout needed longest-prefix matching
+    # because "synth_multi_sim__" is a strict prefix of "synth_multi_sim__1__..."; the
+    # subdirectory layout removes that hazard, and the page stem is now the bare plot id so the
+    # ADR-2 humanizer's curated renderer-kind label survives.)
+    bases = {_base_experiment(c.name) for c in child_dirs}
+    for b in bases:
+        pages = sorted(p.name for p in (paired_root / b).glob("*.html")) if (paired_root / b).is_dir() else []
+        assert pages, f"combine harvested no figures for base experiment {b!r} (pages present: {paired})"
 
     # F1 (v9): the combine-time system-free re-render (_rerender_child_report_figures) refreshes
     # each child's pure-data report figures with the CURRENT renderer BEFORE the harvest --touch,

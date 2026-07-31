@@ -84,6 +84,31 @@ nav h1 span { font-weight: bold; }
     color: white;
 }
 
+/* Cross-experiment compatibility table (F7): the renderer emits
+ * <table class='compat'> but no selector styled it, so cells collapsed with no
+ * boundaries (text mashed together). Give it collapsed borders, padded cells,
+ * a branded header, and left alignment for readability.
+ */
+table.compat {
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 0.95rem;
+}
+table.compat th,
+table.compat td {
+    border: 1px solid var(--uva-medium-gray);
+    padding: 6px 12px;
+    text-align: left;
+    vertical-align: top;
+}
+table.compat th {
+    background-color: var(--uva-blue);
+    color: white;
+}
+table.compat tbody tr:nth-child(even) {
+    background-color: var(--uva-light-gray);
+}
+
 /* Allow multi-panel SVGs / images to render at native height with vertical
  * scroll inside their result panel. The Snakemake report's `ContentDisplay`
  * wraps results in `<div class="grow flex items-center justify-center

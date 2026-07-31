@@ -202,11 +202,219 @@ def _render_cross_hardware_magnitude(
     )
 
 
+#: Disclosure-regime physical band for the b4b max-abs-difference colorbar (data-viz round-3).
+#: Ties to the disclosed dry-cell/nuisance floor τ (a-priori physical quantity, NEVER tuned to
+#: the result); keep equal to compute_sensitivity._TAU_M. |Δ| below this reads ~white (honest
+#: "no meaningful difference"); above it saturates honestly (proportional ink).
+_B4B_TAU_M = 0.03
+#: Okabe-Ito colorblind-safe pair (Moreland 2016): bluish-green = byte-identical (null state),
+#: vermillion = magnitude ramp for differing cells. Redundant text/legend accompanies color.
+_B4B_IDENTICAL_COLOR = "#009E73"
+_B4B_DIFF_RAMP = [[0.0, "#FFFFFF"], [1.0, "#D55E00"]]
+
+
+def _b4b_str_map(ds, name: str) -> dict:
+    """compute_config (str) -> str value from a (compute_config,) DataArray; {} if absent."""
+    if ds is None or name not in ds:
+        return {}
+    da = ds[name]
+    return {str(c): str(v) for c, v in zip(da["compute_config"].values, da.values)}
+
+
+def _b4b_bool_map(ds, name: str) -> dict:
+    """compute_config (str) -> bool value from a (compute_config,) DataArray; {} if absent."""
+    if ds is None or name not in ds:
+        return {}
+    da = ds[name]
+    return {str(c): bool(v) for c, v in zip(da["compute_config"].values, da.values)}
+
+
+def _b4b_category(fam: str) -> str:
+    """Q4a (iter-2): collapse the per-hardware family token to a display CATEGORY — 'cpu' stays
+    'cpu'; any GPU hardware token -> 'gpu'; the degraded single-panel sentinel 'all' -> 'all'.
+    Panels group by this (one CPU panel, one GPU panel); each row keeps its OWN family's
+    within-family reference math (max_abs_diff is precomputed per config in the zarr)."""
+    if fam in ("cpu", "all"):
+        return fam
+    return "gpu"
+
+
+def _b4b_category_title(cat: str) -> str:
+    """Human panel title for a display CATEGORY: 'cpu' -> 'CPU'; 'gpu' -> 'GPU'; 'all' -> 'All configs'."""
+    if cat == "cpu":
+        return "CPU"
+    if cat == "all":
+        return "All configs"
+    return "GPU"
+
+
+def _b4b_family_title(fam: str) -> str:
+    """Human panel title from the settled `family` token: 'cpu' -> 'CPU'; a GPU hardware token
+    -> 'GPU {token}'; the degraded single-panel sentinel -> 'All configs'."""
+    if fam == "cpu":
+        return "CPU"
+    if fam == "all":
+        return "All configs"
+    return f"GPU {fam}"
+
+
+def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_boundaries: bool) -> "go.Figure":
+    """Disclosure-regime b4b figure: ONE subplot per hardware family (CPU + one per GPU
+    hardware). Identical cells render solid Okabe-Ito bluish-green; differing cells are colored
+    by max |Δ| vs the per-family baseline on a white->vermillion colorbar anchored to [0, τ].
+    Reads the SETTLED per-compute_config DataArray contract directly: `config_label` (already
+    _derive_config_label'd) as the y-label, `family` for panel grouping, `is_reference` to mark
+    the baseline row, `max_abs_diff` (metres) for magnitude. Caption is built from the dataset
+    attr `reference_config_by_family`. Degrades to a binary identical/differs encoding + raw
+    labels + a single panel when max_abs_diff / config_label / family are absent. Positions and
+    margins are nominal — smoke-render and nudge if needed."""
+    import json
+
+    import numpy as np
+    from plotly.subplots import make_subplots
+
+    # Q4b (iter-2): compare WATER LEVEL (wlevel_m = instantaneous H), NOT the AND of all four
+    # raw types (which includes max_wlevel_m + velocities). Select the wlevel_m raw type when
+    # present; fall back to the all-types AND only when wlevel_m is absent (older/partial data).
+    _RAW_WLEVEL = "wlevel_m"
+    if "raw_output_type" in getattr(da, "dims", ()) and _RAW_WLEVEL in [str(v) for v in da["raw_output_type"].values]:
+        z_all = da.sel(raw_output_type=_RAW_WLEVEL)
+    else:
+        z_all = da.min(dim="raw_output_type", skipna=True)  # fallback: 1 iff ALL raw types identical
+    x = [float(t) for t in z_all["timestep_min"].values]
+    configs = [str(c) for c in z_all["compute_config"].values]
+    identical = np.asarray(z_all.transpose("compute_config", "timestep_min").values, dtype=float)
+
+    mad = ds["max_abs_diff"] if (ds is not None and "max_abs_diff" in ds) else None
+    if mad is not None and "raw_output_type" in getattr(mad, "dims", ()):
+        # Q4b: magnitude for the SAME variable the identity uses (wlevel_m), not the max over
+        # all raw types. Fall back to the all-types max only when wlevel_m is absent.
+        if _RAW_WLEVEL in [str(v) for v in mad["raw_output_type"].values]:
+            mad = mad.sel(raw_output_type=_RAW_WLEVEL)
+        else:
+            mad = mad.max(dim="raw_output_type", skipna=True)
+    mad_vals = np.asarray(mad.transpose("compute_config", "timestep_min").values, dtype=float) if mad is not None else None
+
+    label_by_cfg = _b4b_str_map(ds, "config_label")   # already deterministic (F2)
+    family_by_cfg = _b4b_str_map(ds, "family")        # "cpu" / "a6000" / "a100-80"
+    is_ref_by_cfg = _b4b_bool_map(ds, "is_reference")
+
+    def _label(cfg: str) -> str:
+        base = label_by_cfg.get(cfg, cfg)
+        return f"{base}  ★ ref" if is_ref_by_cfg.get(cfg) else base
+
+    def _family(cfg: str) -> str:
+        return family_by_cfg.get(cfg, "all")
+
+    fam_to_rows: dict[str, list[int]] = {}
+    for i, cfg in enumerate(configs):
+        fam_to_rows.setdefault(_b4b_category(_family(cfg)), []).append(i)  # Q4a: one CPU + one GPU panel
+    families = sorted(fam_to_rows, key=lambda f: (f != "cpu", f))  # CPU panel first
+    n_panels = len(families)
+    row_heights = [max(2, len(fam_to_rows[f]) ) for f in families]  # Q2: floor a 1-config panel
+
+    fig = make_subplots(
+        rows=n_panels, cols=1, shared_xaxes=True, row_heights=row_heights,
+        subplot_titles=[_b4b_category_title(f) for f in families],
+        vertical_spacing=min(0.08, 0.3 / max(n_panels, 1)),
+    )
+    shown_colorbar = False
+    for r, fam in enumerate(families, start=1):
+        rows = fam_to_rows[fam]
+        y = [_label(configs[i]) for i in rows]
+        ident = identical[rows, :]  # (n_rows, n_t)
+        z_ident = [[1 if v == 1 else None for v in ident[a]] for a in range(len(rows))]
+        fig.add_trace(
+            go.Heatmap(
+                z=z_ident, x=x, y=y,
+                colorscale=[[0.0, _B4B_IDENTICAL_COLOR], [1.0, _B4B_IDENTICAL_COLOR]],
+                showscale=False, xgap=1, ygap=1,
+                hovertemplate="%{y}<br>t=%{x} min<br>byte-identical<extra></extra>",
+            ),
+            row=r, col=1,
+        )
+        if mad_vals is not None:
+            mrows = mad_vals[rows, :]
+            z_diff = [
+                [None if (ident[a, b] == 1 or mrows[a, b] != mrows[a, b]) else float(mrows[a, b]) for b in range(len(x))]
+                for a in range(len(rows))
+            ]
+            fig.add_trace(
+                go.Heatmap(
+                    z=z_diff, x=x, y=y, colorscale=_B4B_DIFF_RAMP, zmin=0.0, zmax=_B4B_TAU_M,
+                    showscale=not shown_colorbar,
+                    colorbar=dict(
+                        title=f"max |Δ| vs baseline (m)<br>scale 0–τ ({_B4B_TAU_M} m)",
+                        len=0.5, thickness=14, x=1.02, xanchor="left",
+                        y=0.85, yanchor="top",
+                    ),
+                    xgap=1, ygap=1,
+                    hovertemplate="%{y}<br>t=%{x} min<br>max |Δ|=%{z:.3g} m<extra></extra>",
+                ),
+                row=r, col=1,
+            )
+            shown_colorbar = True
+        else:
+            z_diff = [[1 if ident[a, b] == 0 else None for b in range(len(x))] for a in range(len(rows))]
+            fig.add_trace(
+                go.Heatmap(
+                    z=z_diff, x=x, y=y, colorscale=[[0.0, "#D55E00"], [1.0, "#D55E00"]],
+                    showscale=False, xgap=1, ygap=1,
+                    hovertemplate="%{y}<br>t=%{x} min<br>differs<extra></extra>",
+                ),
+                row=r, col=1,
+            )
+        if show_boundaries and ds is not None:
+            for k, t in enumerate(ds.attrs.get("resume_boundaries_min", []) or [], start=1):
+                fig.add_vline(
+                    x=float(t), line_dash="dash", line_color="black",
+                    annotation_text=f"r{k}", annotation_position="top", row=r, col=1,
+                )
+
+    # Legend proxy for the identical color (Heatmap emits no legend entry) — redundant channel.
+    fig.add_trace(
+        go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=12, color=_B4B_IDENTICAL_COLOR, symbol="square"),
+            name="byte-identical (Δ = 0)", showlegend=True,
+        ),
+        row=1, col=1,
+    )
+
+    # Caption: generic prefix + the deterministic per-family reference list (Δ = 0 by definition).
+    ref_map = ds.attrs.get("reference_config_by_family", "{}") if ds is not None else "{}"
+    if isinstance(ref_map, str):
+        try:
+            ref_map = json.loads(ref_map)
+        except Exception:
+            ref_map = {}
+    ref_bits = "; ".join(f"{_b4b_family_title(k)} → {v}" for k, v in sorted((ref_map or {}).items()))
+    caption = baseline_caption
+    if ref_bits:
+        caption = f"{baseline_caption} Reference (Δ = 0 by definition) per family: {ref_bits}."
+
+    total_rows = sum(row_heights)
+    fig.update_layout(
+        title=title,
+        height=max(340, 90 + 26 * total_rows + 46 * n_panels),
+        margin=dict(l=180, r=140, t=64, b=150),
+        legend=dict(orientation="v", yanchor="top", y=1.0, x=1.02, xanchor="left"),
+    )
+    fig.update_xaxes(title_text="reporting timestep (min)", row=n_panels, col=1)
+    fig.add_annotation(
+        text=caption, showarrow=False, xref="paper", yref="paper",
+        x=0.0, y=-0.14, yanchor="top", align="left", font=dict(size=11),
+        width=400,
+    )
+    return fig
+
+
 def _render_b4b(
     root: Path,
     *,
     stem: str,
     title: str,
+    baseline_caption: str,
     eda_cfg: eda_config,
     show_boundaries: bool,
 ) -> Path:
@@ -239,9 +447,12 @@ def _render_b4b(
         reason = str(ds.attrs.get("degraded_reason", ""))
         da = ds["identical"] if "identical" in ds else None
     if degraded or da is None or "compute_config" not in getattr(da, "dims", ()):
+        import textwrap
+
         fig = go.Figure()
         fig.add_annotation(
-            text="Raw byte-for-byte comparison unavailable<br>" + (reason or "raw outputs were cleared"),
+            text="Raw byte-for-byte comparison unavailable<br>"
+            + "<br>".join(textwrap.wrap(reason or "raw outputs were cleared", width=90)),
             showarrow=False,
             x=0.5,
             y=0.5,
@@ -251,36 +462,8 @@ def _render_b4b(
         )
         fig.update_layout(title=title, height=260, xaxis=dict(visible=False), yaxis=dict(visible=False))
     else:
-        z_all = da.min(dim="raw_output_type", skipna=True)  # 1 iff ALL raw types identical
-        x = [float(t) for t in z_all["timestep_min"].values]
-        y = [str(c) for c in z_all["compute_config"].values]
-        z = [[None if v != v else int(v) for v in row] for row in z_all.values]  # NaN -> None
-        fig = go.Figure(
-            go.Heatmap(
-                z=z,
-                x=x,
-                y=y,
-                colorscale=[[0.0, "crimson"], [1.0, "seagreen"]],
-                zmin=0,
-                zmax=1,
-                colorbar=dict(title="b4b (1=identical)"),
-            )
-        )
-        if show_boundaries:
-            for k, t in enumerate(ds.attrs.get("resume_boundaries_min", []) or [], start=1):
-                fig.add_vline(
-                    x=float(t),
-                    line_dash="dash",
-                    line_color="black",
-                    annotation_text=f"r{k}",
-                    annotation_position="top",
-                )
-        fig.update_layout(
-            title=title,
-            xaxis_title="reporting timestep (min)",
-            yaxis_title="compute config",
-            height=max(220, 60 + 26 * len(y)),
-            margin=dict(l=140, r=90, t=50, b=40),
+        fig = _b4b_faceted_figure(
+            ds, da, title=title, baseline_caption=baseline_caption, show_boundaries=show_boundaries
         )
     html_text = _fig_to_html(fig, plotly_js_mode=eda_cfg.plotly_js_mode)
     return emit_plot_with_sources(
@@ -293,22 +476,23 @@ def _render_b4b(
 
 
 def _render_b4b_clean_identity(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
-    """Clean-run raw byte-identity heatmap (b4b). Reads eda/b4b_clean_identity.zarr; R10
-    honest-degradation panel when raw outputs were cleared."""
-    return _render_b4b(
-        root, stem="b4b_clean_identity", title="Clean-run raw byte identity", eda_cfg=eda_cfg, show_boundaries=False
-    )
-
-
-def _render_b4b_clean_vs_resume(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
-    """Clean-vs-resume raw byte-identity heatmap (b4b) with requested resume-boundary vlines.
-    Reads eda/b4b_clean_vs_resume.zarr; R10 honest-degradation panel on `degraded`."""
+    """Cross-hardware results comparison (b4b), reused per-hardware-family over each master's
+    own subs (serves both the clean and resume masters). Reads eda/b4b_clean_identity.zarr;
+    R10 honest-degradation panel when raw outputs were cleared."""
     return _render_b4b(
         root,
-        stem="b4b_clean_vs_resume",
-        title="Clean vs resume raw byte identity",
+        stem="b4b_clean_identity",
+        title=(
+            "Per-timestep water-level byte-for-byte comparison vs the hardware-category reference"
+            "<br><sub>non-serial configs vs the category minimum-device baseline "
+            "(CPU → serial-CPU, GPU → 1-GPU)</sub>"
+        ),
+        baseline_caption=(
+            "Identical cells (Δ = 0) are green; differing cells show max |Δ| vs the per-hardware "
+            "reference, colorbar band 0–τ (τ = 0.03 m)."
+        ),
         eda_cfg=eda_cfg,
-        show_boundaries=True,
+        show_boundaries=False,
     )
 
 
@@ -336,7 +520,7 @@ def _fig_to_html(fig: go.Figure, *, plotly_js_mode: str) -> str:
 #: EDA kinds that are ALWAYS enumerated by their ReportingSet (the b4b family) and whose
 #: renderer emits an honest-degradation panel on absent/degraded backing data. render_eda_plots
 #: MUST NOT absence-skip these, or an enumerated report() target goes unproduced (WorkflowError).
-_ALWAYS_EMIT_KINDS = frozenset({"b4b_clean_identity", "b4b_clean_vs_resume"})
+_ALWAYS_EMIT_KINDS = frozenset({"b4b_clean_identity"})
 
 _EDA_RENDERERS = {
     "config_diff_maps": _render_config_diff_maps,
@@ -348,7 +532,6 @@ _EDA_RENDERERS = {
     "dem_resolution_error_ecdf": _render_dem_resolution_error_ecdf,
     "dem_resolution_coupling_table": _render_dem_resolution_coupling_table,
     "b4b_clean_identity": _render_b4b_clean_identity,
-    "b4b_clean_vs_resume": _render_b4b_clean_vs_resume,
 }
 
 #: renderer-kind -> the on-disk eda/{stem}.zarr the kind's CALC member actually writes.

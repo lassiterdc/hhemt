@@ -125,9 +125,10 @@ def _build_intercomparison_html(source: Path, report_cfg) -> str:
         row["event"] = p.get("event_iloc")
         row["clean_vs_resume"] = "identical" if p.get("identical") else "differs"
         row["max_abs_diff"] = p.get("max_abs_diff")
+        row["model"] = str(p.get("model", ""))  # Q6b: split TRITON-SWMM vs TRITON
         records.append(row)
     result_fields = ["variable", "event", "clean_vs_resume", "max_abs_diff"]
-    df = pd.DataFrame(records, columns=[*_CONFIG_FIELDS, *result_fields])
+    df = pd.DataFrame(records, columns=["model", *_CONFIG_FIELDS, *result_fields])
 
     columns_spec = build_columns_spec(df, visible_columns_default=None, header_filter=True)
     # NaN -> None so records serialize as JSON null (Tabulator-safe), like scenario_status_appendix.
@@ -138,7 +139,7 @@ def _build_intercomparison_html(source: Path, report_cfg) -> str:
         table_height="540px",
         pagination_size=0,
         persistence_id="cross_experiment_intercomparison",
-        extra_options={},
+        extra_options={"groupBy": "model"},  # Q6b: per-model (TRITON-SWMM / TRITON) group sections
     )
     js_mode = getattr(getattr(report_cfg, "interactive", None), "tabulator_js_mode", "cdn")
     column_groups = [

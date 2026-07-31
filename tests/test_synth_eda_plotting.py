@@ -69,3 +69,41 @@ def test_b4b_absent_backing_zarr_emits_degradation_panel_not_skip(tmp_path):
     assert out == tmp_path / "plots" / "eda" / "b4b_clean_identity.html"
     assert out.exists()
     assert "unavailable" in out.read_text().lower()  # the honest-degradation annotation text
+
+
+def test_eda_config_drops_retired_b4b_clean_vs_resume_kind():
+    """A frozen pre-F8 cfg_analysis.yaml carrying enabled_plots: [..., b4b_clean_vs_resume, ...]
+    must DROP the retired kind at config-load (mode='before') with a DeprecationWarning, so the
+    no-wipe report re-render's render_eda_plots no longer raises 'unknown EDA plot kind' at that
+    position (F8: the within-master figure was removed; the result lives on hhemt combine)."""
+    import pytest
+
+    from hhemt.config.eda import eda_config
+
+    with pytest.warns(DeprecationWarning, match="retired EDA figure kind"):
+        cfg = eda_config(
+            enabled_plots=[
+                "config_diff_maps",
+                "b4b_clean_identity",
+                "b4b_clean_vs_resume",
+                "eda_rank_sensitivity",
+            ]
+        )
+    assert "b4b_clean_vs_resume" not in cfg.enabled_plots
+    assert cfg.enabled_plots == [
+        "config_diff_maps",
+        "b4b_clean_identity",
+        "eda_rank_sensitivity",
+    ]
+
+
+def test_eda_config_renames_legacy_eda_cross_sim_identity_kind():
+    """Precedent coverage (previously untested): the eda_cross_sim_identity -> config_diff_maps
+    rename still fires at config-load with a DeprecationWarning."""
+    import pytest
+
+    from hhemt.config.eda import eda_config
+
+    with pytest.warns(DeprecationWarning):
+        cfg = eda_config(enabled_plots=["eda_cross_sim_identity"])
+    assert cfg.enabled_plots == ["config_diff_maps"]

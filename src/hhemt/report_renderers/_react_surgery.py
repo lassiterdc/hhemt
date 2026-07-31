@@ -20,6 +20,10 @@ The replacements are idempotent: reapplying does not double-inject
 
 from __future__ import annotations
 
+import re
+
+from hhemt.report_plot_ids import humanize_plot_id
+
 # Historical default category order (used when no category_order is passed —
 # byte-identical for non-passing callers, mirroring navbar_text's None default).
 _DEFAULT_CATEGORY_ORDER = (
@@ -191,6 +195,20 @@ def apply_post_process_surgery(
         'this.content = "rulegraph";',
         'this.content = "metadata";',
     )
+
+    # 8b (iter-3): deterministic grammar-driven card-name humanization. Snakemake derives
+    # the figure-card display name from the OUTPUT-FILENAME stem (= the canonical plot-id,
+    # layout-relevant / un-renameable), and there is no report() kwarg for the card name,
+    # so a post-render pass is the only lever. This replaces the hardcoded n_devices band-aid
+    # with ONE deterministic transform over EVERY card name via the ADR-2 grammar humanizer
+    # (report_plot_ids.humanize_plot_id) — model-fungible, never another per-figure hardcode.
+    # The record KEY, "filename", data_uri filename, and category path-references are left
+    # intact so links/downloads keep working; the charset excludes "/" and ":" so paths/URLs
+    # never match, and the base64 figure blob carries no plain `"name": "<stem>.ext"` fragment.
+    def _humanize_card_name(m):
+        return '"name": "' + humanize_plot_id(m.group(1)) + '"'
+
+    html_text = re.sub(r'"name": "([A-Za-z0-9_.]+\.(?:html|png|svg))"', _humanize_card_name, html_text)
 
     # 9. Bundle-mode: drop Workflow + Statistics menu items, drop "General"
     # ListHeading (which would otherwise be an empty heading after the

@@ -835,6 +835,31 @@ def rendered_synth_sensitivity(tritonswmm_cpu_compiled, tmp_path_factory):
     _assert_no_sha_drift("rendered_synth_sensitivity", snapshot, final)
 
 
+@pytest.fixture(scope="session")
+def rendered_synth_sensitivity_triton_only(tritonswmm_cpu_compiled, tmp_path_factory):
+    """Session-scope: build, run, and render the PURE-TRITON synth sensitivity master
+    once -- the pure-TRITON arm of the same-named-figure fungibility test
+    (``test_synth_fungibility_same_named_figures``). Byte-mirror of
+    ``rendered_synth_sensitivity`` (the coupled arm) but retrieves the ``_triton_only``
+    master (``toggle_tritonswmm_model=False``), so ``system_overview`` renders DEM-only
+    and DROPS the SWMM ``.inp`` sources -- making the two arms' same-named figures differ
+    ONLY by SWMM-specific sources. Same ``tritonswmm_cpu_compiled`` compile-tier gate and
+    private-``runs_root`` contract; the TRITON-SWMM CPU binary is compiled on demand by
+    ``.run()`` (pure-TRITON needs no separate toolchain). Uses the same
+    ``_SYNTH_SENSITIVITY_REPORT_CONFIG`` report shape (model-agnostic)."""
+    with _runs_root_override_env(tmp_path_factory.mktemp("rendered_synth_sensitivity_triton_only")):
+        case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_triton_only(
+            start_from_scratch=True,
+        )
+        case.analysis.run(report_config=_SYNTH_SENSITIVITY_REPORT_CONFIG)
+        case.analysis.render_report(format="html")
+        case.analysis.render_report(format="zip")
+    snapshot = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
+    yield case.analysis
+    final = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
+    _assert_no_sha_drift("rendered_synth_sensitivity_triton_only", snapshot, final)
+
+
 @pytest.fixture
 def synthetic_two_bundle_fixture(rendered_synth_multi_sim, tmp_path):
     """Two hermetic synthetic bundles for the PIP-2 combine proof (R10).

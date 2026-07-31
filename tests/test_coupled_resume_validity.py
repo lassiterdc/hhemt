@@ -625,3 +625,65 @@ def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
     assert res.name == "Resume schedule honored"
     assert any("did not reach the last scheduled interruption" in d["detail"] for d in res.details)
     assert "1 resumed sim(s) schedule-verified" in res.summary  # disclosed denominator
+
+
+def _triton_arm_b_stub(df):
+    """Pure-TRITON (Arm B) analysis stub: no sensitivity, so _iter_subanalyses_or_self
+    yields (None, analysis) and the schedule is read off analysis.cfg_analysis."""
+    return SimpleNamespace(
+        _system=SimpleNamespace(
+            cfg_system=SimpleNamespace(toggle_tritonswmm_model=False, toggle_triton_model=True)
+        ),
+        cfg_analysis=SimpleNamespace(
+            toggle_sensitivity_analysis=False,
+            resume_interruption_schedule=(36, 72, 108),
+        ),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=None, sensitivity_datatree_zarr=None),
+        df_status=df,
+    )
+
+
+def test_resume_schedule_honored_surfaces_unverifiable_when_no_realized_boundaries():
+    """Arm B: a resumed pure-TRITON sim whose COUNT matches the schedule but which
+    recorded NO realized boundaries must be surfaced as UNVERIFIABLE, not passed.
+
+    This is the re-sim silent-invalidation shape: re-running the resume arm over an
+    existing analysis dir without start_from_scratch leaves the prior campaign's
+    n_resumes in place, so no interruption arms (the gate is _n_done < len(schedule)),
+    the count check passes, and a tree with no realized-boundary list has nothing to
+    compare — every detector green over data the deterministic prune never touched.
+    Absence of evidence must not read as evidence of correctness.
+    """
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    # n_resumes == len(schedule) (count check passes) and NO resume_reporting_tsteps.
+    df = pd.DataFrame(
+        [{"model_type": "triton", "n_resumes": 3, "scenario_directory": "sim_0"}]
+    )
+    res = check_resume_schedule_honored(_triton_arm_b_stub(df))
+
+    assert any("CANNOT BE VERIFIED" in d["detail"] for d in res.details), (
+        "a resumed sim with no realized boundaries must be surfaced, not silently passed"
+    )
+    assert any("start_from_scratch" in d["detail"] for d in res.details), (
+        "the detail must name the operational cause a reader can act on"
+    )
+
+
+def test_resume_schedule_honored_is_quiet_when_realized_boundaries_match():
+    """Regression guard for the fix above: a sim that DID record realized boundaries
+    matching the configured schedule is the verified-good case and must emit no detail."""
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    df = pd.DataFrame(
+        [
+            {
+                "model_type": "triton",
+                "n_resumes": 3,
+                "scenario_directory": "sim_0",
+                "resume_reporting_tsteps": [36, 72, 108],
+            }
+        ]
+    )
+    res = check_resume_schedule_honored(_triton_arm_b_stub(df))
+    assert res.details == [], f"verified-good sim should emit no detail, got {res.details}"

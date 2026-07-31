@@ -263,3 +263,118 @@ def test_preflight_accepts_schedule_with_batch_job(synth_multi_sim_analysis):
 
     result = preflight_validate(cfg_sys, cfg_analysis)
     assert not [e for e in result.errors if "resume_interruption_schedule" in e.field]
+
+
+# --- KR-a: deterministic same-timestep interruption prune ----------------------
+#
+# These drive the REAL picker and the REAL prune helper against a synthesized cfg
+# dir carrying an OVERSHOOT (the poll-granularity artifact that made the realized
+# resume boundary vary per config). The first test FAILS against pre-KR-a code:
+# without the prune the picker returns the highest complete cfg, which is
+# schedule[k] + M, not schedule[k].
+#
+# Naming note: these fixtures use the REAL on-disk format — 1-based and UNPADDED
+# (config_1.cfg ... config_1080.cfg, measured on a live synth run). The older
+# _cfg_dir_with above writes 0-based zero-padded names; both parse, but only this
+# one describes what TRITON actually writes.
+
+
+def _real_cfg_dir(tmp_path, max_step):
+    """config_1.cfg .. config_{max_step}.cfg — 1-based, contiguous, unpadded."""
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir()
+    for i in range(1, max_step + 1):
+        (cfg_dir / f"config_{i}.cfg").write_text("line1\nline2\nline3\n")
+    return cfg_dir
+
+
+def _steps_on_disk(cfg_dir):
+    return sorted(int(p.name.split("_")[-1].split(".")[0]) for p in cfg_dir.glob("*.cfg"))
+
+
+def test_prune_forces_picker_to_scheduled_step_despite_overshoot(tmp_path):
+    """The kill lands late (poll granularity), so the dir holds schedule[k] + M cfgs.
+    Pre-KR-a the picker returns schedule[k] + M; after the prune it returns exactly
+    schedule[k]. This is the whole hard requirement in one assertion."""
+    from hhemt.run_simulation import (
+        TRITONSWMM_run,
+        return_the_reporting_step_from_a_cfg,
+    )
+
+    target_step = _SCHEDULE[0]  # 2
+    overshoot = 3
+    cfg_dir = _real_cfg_dir(tmp_path, target_step + overshoot)  # steps 1..5
+
+    out_dir = cfg_dir.parent
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    fake_self = types.SimpleNamespace(
+        _hotstart_cfg_dir=lambda mt: cfg_dir,
+        _scenario=types.SimpleNamespace(
+            scen_paths=types.SimpleNamespace(
+                out_triton=out_dir,
+                out_tritonswmm=out_dir,
+                triton_cfg=out_dir / "base.cfg",
+                triton_swmm_cfg=out_dir / "base.cfg",
+            )
+        ),
+        _analysis=types.SimpleNamespace(
+            analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir)
+        ),
+    )
+
+    # Pre-fix behaviour: the picker takes the HIGHEST complete cfg -> the overshoot.
+    picked_before = TRITONSWMM_run._retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation(
+        fake_self, model_type="triton"
+    )
+    assert return_the_reporting_step_from_a_cfg(picked_before) == target_step + overshoot
+
+    n_removed = TRITONSWMM_run.prune_hotstart_cfgs_above_step(
+        fake_self, "triton", target_step=target_step
+    )
+    assert n_removed == overshoot
+
+    picked_after = TRITONSWMM_run._retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation(
+        fake_self, model_type="triton"
+    )
+    assert return_the_reporting_step_from_a_cfg(picked_after) == target_step
+
+
+def test_prune_deletes_only_the_top_preserving_contiguity_from_one(tmp_path):
+    """The count-based kill arming (wait_with_deterministic_checkpoint_kill) relies on
+    len(cfgs) == max(step), which holds only while numbering stays contiguous from 1.
+    A prune that removed interior files would silently push every later kill late, so
+    pin that the prune removes a strict SUFFIX."""
+    from hhemt.run_simulation import TRITONSWMM_run
+
+    cfg_dir = _real_cfg_dir(tmp_path, 9)
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    fake_self = types.SimpleNamespace(
+        _hotstart_cfg_dir=lambda mt: cfg_dir,
+        _analysis=types.SimpleNamespace(
+            analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir)
+        ),
+    )
+
+    TRITONSWMM_run.prune_hotstart_cfgs_above_step(fake_self, "triton", target_step=4)
+
+    steps = _steps_on_disk(cfg_dir)
+    assert steps == [1, 2, 3, 4]
+    assert len(steps) == max(steps)  # the identity the watcher's count predicate needs
+
+
+def test_prune_is_a_noop_on_a_fresh_attempt_with_no_cfg_dir(tmp_path):
+    """Attempt 0 has no cfg dir. The helper must return 0 rather than raise — this
+    no-op is what disambiguates attempt 0 from attempt 1 (both read n_resumes == 0)."""
+    from hhemt.run_simulation import TRITONSWMM_run
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    fake_self = types.SimpleNamespace(
+        _hotstart_cfg_dir=lambda mt: tmp_path / "does_not_exist",
+        _analysis=types.SimpleNamespace(
+            analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir)
+        ),
+    )
+    assert TRITONSWMM_run.prune_hotstart_cfgs_above_step(fake_self, "triton", target_step=2) == 0

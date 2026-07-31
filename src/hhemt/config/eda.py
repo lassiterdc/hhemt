@@ -17,6 +17,19 @@ from pydantic import Field, model_validator
 
 from hhemt.config.base import cfgBaseModel
 
+#: Retired EDA figure kinds, shared source of truth for (a) the config-load self-heal
+#: below and (b) the combine catch-all guard (bundle/combined_snakefile_generator.py::
+#: _figures_of). A RENAMED kind keeps rendering under its new stem; a DROPPED kind has no
+#: within-master replacement (F8: the clean-vs-resume result lives on the hhemt-combine
+#: cross_experiment_intercomparison surface). Add an entry when an EDA figure is retired.
+_EDA_RENAMES: dict[str, str] = {"eda_cross_sim_identity": "config_diff_maps"}
+_EDA_DROPS: frozenset[str] = frozenset({"b4b_clean_vs_resume"})
+#: Every retired FIGURE stem (rename originals + drops). The combine catch-all guard skips
+#: any plots/eda/{stem}.html whose stem is in this set so a no-wipe re-render never surfaces
+#: a retired figure. NEVER key an eda/*.zarr prune on this set: eda_cross_sim_identity.zarr
+#: is the LIVE backing artifact for config_diff_maps (_plotting._RENDERER_BACKING_ARTIFACT).
+_RETIRED_EDA_FIGURE_STEMS: frozenset[str] = frozenset(_EDA_RENAMES) | _EDA_DROPS
+
 
 class eda_config(cfgBaseModel):
     """EDA-loop config: selected plots + the eda_report.html JS-bundling mode."""
@@ -36,17 +49,21 @@ class eda_config(cfgBaseModel):
         Remove next cycle."""
         if isinstance(data, dict) and isinstance(data.get("enabled_plots"), list):
             plots = data["enabled_plots"]
-            if "eda_cross_sim_identity" in plots:
+            present_retired = [p for p in plots if p in _RETIRED_EDA_FIGURE_STEMS]
+            if present_retired:
                 import warnings
 
-                data = {
-                    **data,
-                    "enabled_plots": ["config_diff_maps" if p == "eda_cross_sim_identity" else p for p in plots],
-                }
+                rewritten = [_EDA_RENAMES.get(p, p) for p in plots if p not in _EDA_DROPS]
+                data = {**data, "enabled_plots": rewritten}
+                renamed = sorted({p for p in present_retired if p in _EDA_RENAMES})
+                dropped = sorted({p for p in present_retired if p in _EDA_DROPS})
                 warnings.warn(
-                    "eda.enabled_plots entry 'eda_cross_sim_identity' is retired; "
-                    "the config-diff EDA plot is now 'config_diff_maps'. The legacy "
-                    "key is rewritten this cycle and will be rejected in a future release.",
+                    "eda.enabled_plots carried retired EDA figure kind(s): "
+                    f"renamed {renamed} (eda_cross_sim_identity -> config_diff_maps); "
+                    f"dropped {dropped} (F8: no within-master replacement — the clean-vs-"
+                    "resume result lives on the hhemt-combine cross_experiment_intercomparison "
+                    "surface). The legacy keys are rewritten this cycle and will be rejected "
+                    "in a future release.",
                     DeprecationWarning,
                     stacklevel=2,
                 )

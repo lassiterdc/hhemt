@@ -76,7 +76,7 @@ def compare_triton_raw_timeseries(
     *,
     reporting_interval_s: float = 60.0,
     raw_out_type: str = "bin",
-) -> dict[str, xr.DataArray]:
+) -> dict[str, tuple[xr.DataArray, xr.DataArray]]:
     """Per-timestep b4b for one base/test ``out_tritonswmm/<raw_out_type>`` pair.
 
     The pairing is base-vs-test, NOT clean-vs-resume: the same kernel serves the clean run's
@@ -93,11 +93,12 @@ def compare_triton_raw_timeseries(
         return {}
     dem = _stub_index_dem(base_bin, raw_out_type)
     shared = sorted(set(df_base.index) & set(df_test.index))
-    out: dict[str, xr.DataArray] = {}
+    out: dict[str, tuple[xr.DataArray, xr.DataArray]] = {}
     for var in df_base.columns:
         if var not in df_test.columns:
             continue
         flags: list[bool] = []
+        mads: list[float] = []
         ts: list[float] = []
         for t in shared:
             f_base = df_base.loc[t, var]
@@ -106,13 +107,15 @@ def compare_triton_raw_timeseries(
                 continue
             da_base = load_triton_output_w_xarray(dem, f_base, var, raw_out_type)[var]
             da_test = load_triton_output_w_xarray(dem, f_test, var, raw_out_type)[var]
-            flags.append(bool(compare_variable_exact(da_base, da_test)["identical"]))
+            cmp = compare_variable_exact(da_base, da_test)
+            flags.append(bool(cmp["identical"]))
+            _mad = cmp["max_abs_diff"]
+            mads.append(float("nan") if _mad != _mad else float(_mad))
             ts.append(float(t))
-        out[var] = xr.DataArray(
-            np.asarray(flags, dtype=bool),
-            dims=("timestep_min",),
-            coords={"timestep_min": np.asarray(ts, dtype=float)},
-            name=var,
+        _coords = {"timestep_min": np.asarray(ts, dtype=float)}
+        out[var] = (
+            xr.DataArray(np.asarray(flags, dtype=bool), dims=("timestep_min",), coords=_coords, name=var),
+            xr.DataArray(np.asarray(mads, dtype="float64"), dims=("timestep_min",), coords=_coords, name=var),
         )
     return out
 
@@ -400,40 +403,122 @@ def _b4b_config_identity(sub) -> tuple:
     )
 
 
-def _b4b_grid(per_config: dict[str, dict[str, xr.DataArray]]) -> xr.DataArray | None:
-    """Stack ``{config: {var: (timestep_min,) bool}}`` into a
-    ``(compute_config, raw_output_type, timestep_min)`` float64 grid (1.0=identical,
-    0.0=differ, NaN=not compared). Returns None when nothing was compared."""
-    cfg_das: list[xr.DataArray] = []
-    cfg_labels: list[str] = []
-    for cfg, var_map in sorted(per_config.items()):
-        rows = [v for v in TRITON_VARS if v in var_map and var_map[v].size]
+def _b4b_config_attrs(sub) -> dict:
+    """Attrs dict in the shape _config_diff._derive_config_label / _gpu_hardware consume
+    (they key on 'hpc.partition'), sourced from the sub's cfg_analysis (NOT the sa_id)."""
+    c = getattr(sub, "cfg_analysis", None)
+    return {
+        "run_mode": str(getattr(c, "run_mode", "") or ""),
+        "n_gpus": int(getattr(c, "n_gpus", 0) or 0),
+        "n_mpi_procs": int(getattr(c, "n_mpi_procs", 0) or 0),
+        "n_omp_threads": int(getattr(c, "n_omp_threads", 0) or 0),
+        "n_nodes": int(getattr(c, "n_nodes", 0) or 0),
+        "hpc.partition": str(getattr(c, "hpc_ensemble_partition", "") or ""),
+    }
+
+
+def _b4b_family_key(sub) -> str:
+    """Hardware-family bucket key: 'cpu' for every non-GPU config, else the GPU hardware
+    token (a6000 / a100-80 / …) from the ensemble partition (Gotcha 54: partition IS the
+    hardware axis). Comparisons are WITHIN a family only (BIT4BIT is within-backend)."""
+    from hhemt.eda._config_diff import _gpu_hardware
+
+    c = getattr(sub, "cfg_analysis", None)
+    if str(getattr(c, "run_mode", "") or "") != "gpu":
+        return "cpu"
+    return _gpu_hardware(_b4b_config_attrs(sub)) or "gpu"
+
+
+def _b4b_device_key(sub) -> tuple:
+    """Ascending device-count sort key so a family's MINIMUM-device config (serial-CPU /
+    1-GPU) is picked as its within-family byte-identity reference (F3c)."""
+    c = getattr(sub, "cfg_analysis", None)
+    return (
+        int(getattr(c, "n_nodes", 0) or 0),
+        int(getattr(c, "n_gpus", 0) or 0),
+        int(getattr(c, "n_mpi_procs", 0) or 0),
+        int(getattr(c, "n_omp_threads", 0) or 0),
+    )
+
+
+def _b4b_dataset(
+    per_config: dict[str, dict[str, tuple[xr.DataArray, xr.DataArray]]],
+    meta: dict[str, dict],
+    *,
+    boundaries,
+    raw_out_type: str,
+    interval: float,
+    degraded: bool,
+    degraded_reason: str,
+    reference_config_by_family: dict[str, str],
+) -> xr.Dataset:
+    """Stack {config: {var: (identical_da, mad_da)}} into the b4b DATA CONTRACT Dataset:
+    `identical` + `max_abs_diff` on (compute_config, raw_output_type, timestep_min), plus
+    per-compute_config 1-D vars (config_label / family / is_reference / run_mode /
+    hpc_partition / n_gpus / n_mpi / n_omp / n_nodes) and the dataset attrs data-viz reads."""
+    import json as _json
+
+    id_das: list[xr.DataArray] = []
+    mad_das: list[xr.DataArray] = []
+    labels: list[str] = []
+    for cfg in sorted(per_config):
+        var_map = per_config[cfg]
+        rows = [v for v in TRITON_VARS if v in var_map and var_map[v][0].size]
         if not rows:
             continue
-        stacked = xr.concat(
-            [var_map[v].astype("float64").rename(None) for v in rows],
-            dim=xr.DataArray(list(rows), dims="raw_output_type", name="raw_output_type"),
+        rot = xr.DataArray(list(rows), dims="raw_output_type", name="raw_output_type")
+        id_das.append(xr.concat([var_map[v][0].astype("float64").rename(None) for v in rows], dim=rot))
+        mad_das.append(xr.concat([var_map[v][1].astype("float64").rename(None) for v in rows], dim=rot))
+        labels.append(cfg)
+    if not id_das:
+        ds = xr.Dataset({"identical": xr.DataArray(np.array(np.nan, dtype="float64"))})
+    else:
+        cc = xr.DataArray(labels, dims="compute_config", name="compute_config")
+        identical = xr.concat(id_das, dim=cc, join="outer").transpose("compute_config", "raw_output_type", "timestep_min")
+        max_abs_diff = xr.concat(mad_das, dim=cc, join="outer").transpose("compute_config", "raw_output_type", "timestep_min")
+        ds = xr.Dataset({"identical": identical, "max_abs_diff": max_abs_diff})
+
+        def _sa(key):
+            return xr.DataArray([meta[c][key] for c in labels], dims="compute_config", coords={"compute_config": labels})
+
+        ds["config_label"] = _sa("config_label")
+        ds["family"] = _sa("family")
+        ds["is_reference"] = xr.DataArray(
+            [bool(meta[c]["is_reference"]) for c in labels], dims="compute_config", coords={"compute_config": labels}
         )
-        cfg_das.append(stacked)
-        cfg_labels.append(cfg)
-    if not cfg_das:
-        return None
-    grid = xr.concat(
-        cfg_das,
-        dim=xr.DataArray(cfg_labels, dims="compute_config", name="compute_config"),
-        join="outer",
+        ds["run_mode"] = _sa("run_mode")
+        ds["hpc_partition"] = _sa("hpc_partition")
+        for _k in ("n_gpus", "n_mpi", "n_omp", "n_nodes"):
+            ds[_k] = xr.DataArray(
+                [int(meta[c][_k]) for c in labels], dims="compute_config", coords={"compute_config": labels}
+            )
+    ds.attrs.update(
+        {
+            "degraded": int(bool(degraded)),
+            "degraded_reason": str(degraded_reason or ""),
+            "raw_output_type": raw_out_type,
+            "reporting_interval_s": interval,
+            "resume_boundaries_min": [float(b) for b in boundaries],
+            "units_by_raw_output_type": _json.dumps(
+                {"max_wlevel_m": "m", "wlevel_m": "m", "velocity_x_mps": "m/s", "velocity_y_mps": "m/s"}
+            ),
+            "reference_config_by_family": _json.dumps(reference_config_by_family),
+        }
     )
-    return grid.transpose("compute_config", "raw_output_type", "timestep_min")
+    return ds
 
 
 def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     """WITHIN-MASTER raw per-timestep byte-for-byte producer for the b4b ReportingSet.
 
     Reads ONLY the passed master's own subs' raw outputs (single-arm; master R12(b)).
-    Writes eda/b4b_clean_identity.zarr and eda/b4b_clean_vs_resume.zarr ALWAYS (real grids
-    or a degraded marker) so both report() targets render. Returns one EdaResult whose
-    verdict is a combined CheckResult (persisted under the identity stem); the analysis.eda()
-    facade registers BOTH figure kinds against this result.
+    Writes eda/b4b_clean_identity.zarr ALWAYS (a real per-hardware-family cross-config grid
+    or a degraded marker) so the single report() target renders. The comparison is
+    PER-HARDWARE-FAMILY over the master's OWN subs (each config vs its within-family
+    minimum-device reference), so the ONE figure is applicable + non-degraded on BOTH the
+    clean and the resume master. The former within-master b4b_clean_vs_resume figure is
+    removed (F8); the clean-vs-resume comparison lives on the combine surface
+    (cross_experiment_intercomparison). Returns one EdaResult carrying the per-family verdict.
     """
     import dataclasses as _dc
     import json as _json
@@ -452,7 +537,9 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     analysis_dir = Path(master.analysis_paths.analysis_dir)
     eda_dir = analysis_dir / "eda"
 
-    # gather: (sa_id, sub, model, raw_bin_dir, n_resumes, config_identity)
+    from hhemt.eda._config_diff import _derive_config_label
+
+    # gather: (sa_id, sub, model, raw_bin_dir, n_resumes)
     subs: list[tuple] = []
     for sa_id, sub in _iter_subanalyses_or_self(master):
         model = _b4b_enabled_model(sub)
@@ -461,147 +548,110 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         raw_bin = _b4b_sub_raw_bin_dir(sub, model, raw_out_type)
         n_res = _b4b_n_resumes(master, sa_id) if sa_id is not None else 0
         label = str(sa_id) if sa_id is not None else "self"
-        subs.append((label, sub, model, raw_bin, n_res, _b4b_config_identity(sub)))
+        subs.append((label, sub, model, raw_bin, n_res))
 
-    def _write(stem: str, grid, *, degraded: bool, reason: str, ref: str, contributing: list) -> Path:
-        eda_dir.mkdir(parents=True, exist_ok=True)
-        plot_id = canonical_plot_id(stem)  # pass-through == stem
-        artifact = eda_dir / f"{plot_id}.zarr"
-        ds = (
-            xr.Dataset({"identical": grid})
-            if grid is not None
-            else xr.Dataset({"identical": xr.DataArray(np.array(np.nan, dtype="float64"))})
-        )
-        ds.attrs.update(
-            {
-                "degraded": int(bool(degraded)),
-                "degraded_reason": str(reason or ""),
-                "reference_config": str(ref or ""),
-                "raw_output_type": raw_out_type,
-                "reporting_interval_s": interval,
-                "resume_boundaries_min": [float(b) for b in boundaries],
-            }
-        )
-        ds.to_zarr(artifact, mode="w", consolidated=False, encoding={"identical": {"dtype": "float64"}})
-        # Provenance: raw dirs are bare non-zarr dirs the emit gate rejects, so declare each
-        # contributing sub's consolidated store (the compute_sensitivity._emit precedent). The
-        # raw-cleared signal is the `degraded` attr, not source absence.
-        srcs = [Path(s.analysis_paths.analysis_dir) / "analysis_datatree.zarr" for s in contributing] or [
-            analysis_dir / "analysis_datatree.zarr"
-        ]
-        emit_data_artifact_with_sources(
-            artifact_path=artifact, source_paths=srcs, analysis_dir=analysis_dir, plot_id=plot_id
-        )
-        return artifact
+    # PER-HARDWARE-FAMILY cross-config raw byte-identity over the master's OWN subs. Applicable
+    # on BOTH the clean master (n_resumes==0) and the resume master (n_resumes>0): each family
+    # is compared within itself against its minimum-device reference (serial-CPU for the cpu
+    # family; 1-GPU for each GPU-hardware family), so a GPU config is NEVER compared to a CPU
+    # config. The clean-vs-resume comparison lives on the combine surface
+    # (cross_experiment_intercomparison), NOT here (F8: the old within-master b4b_clean_vs_resume
+    # figure is removed).
+    with_raw = [s for s in subs if s[3] is not None]
+    families: dict[str, list[tuple]] = {}
+    for s in with_raw:
+        families.setdefault(_b4b_family_key(s[1]), []).append(s)
 
-    # --- b4b_clean_identity: config-vs-config over the CLEAN subs ---
-    clean = [s for s in subs if s[4] == 0]
-    id_ref = next((s for s in clean if s[3] is not None), None)
-    id_per_config: dict[str, dict] = {}
-    id_contrib: list = []
-    id_degraded = False
-    id_reason = ""
-    id_ref_label = ""
-    if id_ref is None:
-        id_degraded = True
-        # Distinguish the two causes the id_ref==None branch conflates: a master with
-        # NO clean (n_resumes==0) subs (the normal resume-master case — clean-identity is
-        # computed on the clean master / combined report, NOT here) vs clean subs present
-        # but their raw genuinely cleared/absent. Reporting "raw cleared or absent" on a
-        # resume master (which legitimately has no clean subs) is a false raw-loss alarm.
-        id_reason = (
-            "no clean (n_resumes==0) subs in this master — clean-identity is computed "
-            "on the clean master / combined report"
-            if not clean
-            else "raw outputs cleared or absent for every clean sub"
+    per_config: dict[str, dict] = {}
+    meta: dict[str, dict] = {}
+    contrib: list = []
+    reference_config_by_family: dict[str, str] = {}
+
+    def _meta_for(s, family: str, is_ref: bool) -> dict:
+        a = _b4b_config_attrs(s[1])
+        return {
+            "config_label": _derive_config_label(a),
+            "family": family,
+            "is_reference": is_ref,
+            "run_mode": a["run_mode"],
+            "hpc_partition": a["hpc.partition"],
+            "n_gpus": a["n_gpus"],
+            "n_mpi": a["n_mpi_procs"],
+            "n_omp": a["n_omp_threads"],
+            "n_nodes": a["n_nodes"],
+        }
+
+    for family, members in sorted(families.items()):
+        ref = min(members, key=lambda s: _b4b_device_key(s[1]))
+        ref_meta = _meta_for(ref, family, True)
+        reference_config_by_family[family] = ref_meta["config_label"]
+        # the reference row itself (self-compare -> all-identical baseline marker, F3c)
+        ref_self = compare_triton_raw_timeseries(
+            ref[3], ref[3], reporting_interval_s=interval, raw_out_type=raw_out_type
         )
-    else:
-        id_ref_label = id_ref[0]
-        id_contrib.append(id_ref[1])
-        for s in clean:
-            if s is id_ref or s[3] is None:
+        if ref_self:
+            per_config[ref[0]] = ref_self
+            meta[ref[0]] = ref_meta
+            contrib.append(ref[1])
+        for s in members:
+            if s is ref:
                 continue
             tri = compare_triton_raw_timeseries(
-                id_ref[3], s[3], reporting_interval_s=interval, raw_out_type=raw_out_type
+                ref[3], s[3], reporting_interval_s=interval, raw_out_type=raw_out_type
             )
             if tri:
-                id_per_config[s[0]] = tri
-                id_contrib.append(s[1])
-    id_grid = _b4b_grid(id_per_config)
-    if id_ref is not None and id_grid is None:
-        id_degraded = True
-        id_reason = "only one clean config with raw outputs in this master -- no config-vs-config pair"
-    id_artifact = _write(
-        "b4b_clean_identity", id_grid, degraded=id_degraded, reason=id_reason, ref=id_ref_label, contributing=id_contrib
-    )
+                per_config[s[0]] = tri
+                meta[s[0]] = _meta_for(s, family, False)
+                contrib.append(s[1])
 
-    # --- b4b_clean_vs_resume: pair each resume sub with its clean config-counterpart ---
-    resume = [s for s in subs if s[4] > 0]
-    clean_by_cfg = {s[5]: s for s in clean if s[3] is not None}
-    cvr_per_config: dict[str, dict] = {}
-    cvr_contrib: list = []
-    cvr_degraded = False
-    cvr_reason = ""
-    if not resume or not clean_by_cfg:
-        cvr_degraded = True
-        cvr_reason = (
-            "clean-vs-resume raw comparison requires a single master carrying both clean and "
-            "resume subs; this master carries one arm. The cross-master heatmap is a combine-layer "
-            "artifact (master R13), out of this phase's scope."
+    degraded = not per_config
+    degraded_reason = ""
+    if degraded:
+        degraded_reason = (
+            "no sub-analysis with present raw outputs in this master (raw cleared or absent); "
+            "the b4b masters must preserve raw outputs (clear_raw disabled)"
+            if not with_raw
+            else "no within-family config pair with present raw outputs"
         )
-    else:
-        for s in resume:
-            if s[3] is None:
-                continue
-            cref = clean_by_cfg.get(s[5])
-            if cref is None:
-                continue
-            tri = compare_triton_raw_timeseries(cref[3], s[3], reporting_interval_s=interval, raw_out_type=raw_out_type)
-            if tri:
-                cvr_per_config[s[0]] = tri
-                cvr_contrib.extend([cref[1], s[1]])
-        if not cvr_per_config:
-            cvr_degraded = True
-            cvr_reason = "no within-master clean/resume config pair with present raw outputs"
-    cvr_grid = _b4b_grid(cvr_per_config)
-    _write(
-        "b4b_clean_vs_resume",
-        cvr_grid,
-        degraded=cvr_degraded,
-        reason=cvr_reason,
-        ref=id_ref_label,
-        contributing=cvr_contrib,
-    )
 
-    # --- combined verdict (persisted under the identity stem) ---
-    n_id = 0 if id_grid is None else int((id_grid == 0.0).sum())
-    n_cvr = 0 if cvr_grid is None else int((cvr_grid == 0.0).sum())
-    passed = (n_id == 0) and (n_cvr == 0)
-    parts: list[str] = []
-    if id_degraded:
-        parts.append(f"clean-identity: degraded ({id_reason})")
-    else:
-        parts.append(
-            "clean-identity: all raw rasters byte-identical across clean configs"
-            if n_id == 0
-            else (
-                f"clean-identity: {n_id} of {int(id_grid.size)} (config, raw-type, timestep) "
-                f"cell(s) differ across clean configs -- EXPECTED where the clean configs span "
-                f"backends (GPU vs CPU raw rasters are not bit-identical; BIT4BIT is a "
-                f"double-precision serial-oracle property) or rank counts. This is cross-config "
-                f"divergence, NOT resume-induced; the resume-validity claim is b4b_clean_vs_resume "
-                f"(a within-config comparison)."
-            )
-        )
-    if cvr_degraded:
-        parts.append(f"clean-vs-resume: degraded ({cvr_reason})")
-    else:
-        parts.append(
-            "clean-vs-resume: all resume rasters reproduce their clean counterpart byte-for-byte"
-            if n_cvr == 0
-            else f"clean-vs-resume: {n_cvr} differing cell(s)"
-        )
-    verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=" | ".join(parts))
     eda_dir.mkdir(parents=True, exist_ok=True)
+    plot_id = canonical_plot_id("b4b_clean_identity")
+    artifact = eda_dir / f"{plot_id}.zarr"
+    ds = _b4b_dataset(
+        per_config,
+        meta,
+        boundaries=boundaries,
+        raw_out_type=raw_out_type,
+        interval=interval,
+        degraded=degraded,
+        degraded_reason=degraded_reason,
+        reference_config_by_family=reference_config_by_family,
+    )
+    _encoding = {"identical": {"dtype": "float64"}}
+    if "max_abs_diff" in ds:
+        _encoding["max_abs_diff"] = {"dtype": "float64"}
+    ds.to_zarr(artifact, mode="w", consolidated=False, encoding=_encoding)
+    srcs = [Path(s.analysis_paths.analysis_dir) / "analysis_datatree.zarr" for s in contrib] or [
+        analysis_dir / "analysis_datatree.zarr"
+    ]
+    emit_data_artifact_with_sources(
+        artifact_path=artifact, source_paths=srcs, analysis_dir=analysis_dir, plot_id=plot_id
+    )
+
+    # --- verdict (per-family framing; deterministic — within-family identity IS expected) ---
+    has_grid = "compute_config" in getattr(ds["identical"], "dims", ())
+    n_diff = int((ds["identical"] == 0.0).sum()) if has_grid else 0
+    passed = (not degraded) and (n_diff == 0)
+    if degraded:
+        summary = f"per-hardware raw byte-identity: degraded ({degraded_reason})"
+    elif n_diff == 0:
+        fams = ", ".join(f"{k} (ref {v})" for k, v in sorted(reference_config_by_family.items()))
+        summary = f"per-hardware raw byte-identity: every config is byte-identical to its within-family reference [{fams}]"
+    else:
+        summary = (
+            f"per-hardware raw byte-identity: {n_diff} (config, raw-type, timestep) cell(s) differ "
+            f"from their within-family reference"
+        )
+    verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=summary)
     (eda_dir / "b4b_clean_identity.verdict.json").write_text(_json.dumps(_dc.asdict(verdict), indent=2, default=str))
-    return EdaResult(verdict=verdict, artifact_path=id_artifact, plot_id="b4b_clean_identity", skipped=False)
+    return EdaResult(verdict=verdict, artifact_path=artifact, plot_id="b4b_clean_identity", skipped=False)

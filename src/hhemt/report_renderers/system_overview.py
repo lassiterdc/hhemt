@@ -98,6 +98,18 @@ def render(
         dem = dem.rio.reproject(target_crs)
     dem_bounds = dem.rio.bounds()
 
+    # ---- Load the Manning's-n raster (Q4 Phase-2): the DEM's companion system
+    # input, present for BOTH model arms (TRITON and TRITON-SWMM), drawn as the top
+    # row of the system-overview grid. Use the `mannings_rds` accessor (NOT a plain
+    # open_rasterio): the processed Manning's `.dem` ships without a spatial header, so
+    # `open_processed_mannings_as_rds` splices the DEM's header onto it (same system
+    # grid) before opening — a plain open raises "Couldn't determine X spacing". The
+    # spliced raster shares the DEM's grid/extent, so it reprojects identically.
+    mannings = analysis._system.mannings_rds
+    if mannings.rio.crs is not None and mannings.rio.crs != target_crs:
+        mannings = mannings.rio.reproject(target_crs)
+    mannings_res = analysis._system.cfg_system.target_dem_resolution
+
     bc_path: Path | None = None
     if cfg_ana.toggle_storm_tide_boundary and cfg_ana.storm_tide_boundary_line_gis:
         bc_path = Path(cfg_ana.storm_tide_boundary_line_gis)
@@ -105,16 +117,26 @@ def render(
             bc_path = None
 
     # ---- Resolve hydro + hydraulics .inp paths (both required, with full.inp
-    # fallback for either when only the combined .inp exists).
-    hydro_inp, hydraulics_inp = _resolve_inp_sources(analysis)
+    # fallback for either when only the combined .inp exists). Q4 (iter-2): a pure-TRITON
+    # master enables no SWMM model, so the SWMM .inp / swmmio loads / hydrology+hydraulics
+    # panels are skipped and system_overview renders the DEM (+Mannings) only.
+    _renders_swmm = _master_renders_swmm(analysis)
+    hydro_inp = hydraulics_inp = None
+    if _renders_swmm:
+        hydro_inp, hydraulics_inp = _resolve_inp_sources(analysis)
 
     # Relpaths against analysis_dir for provenance-record portability.
     analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
-    hydro_rel = os.path.relpath(str(Path(hydro_inp).resolve()), analysis_root)
-    hydraulics_rel = os.path.relpath(
-        str(Path(hydraulics_inp).resolve()), analysis_root,
-    )
+    hydro_rel = hydraulics_rel = None
+    if _renders_swmm:
+        hydro_rel = os.path.relpath(str(Path(hydro_inp).resolve()), analysis_root)
+        hydraulics_rel = os.path.relpath(
+            str(Path(hydraulics_inp).resolve()), analysis_root,
+        )
     dem_rel = os.path.relpath(str(Path(sys_paths.dem_processed).resolve()), analysis_root)
+    mannings_rel = os.path.relpath(
+        str(Path(sys_paths.mannings_processed).resolve()), analysis_root,
+    )
     bc_rel = (
         os.path.relpath(str(Path(bc_path).resolve()), analysis_root)
         if bc_path is not None else None
@@ -123,29 +145,34 @@ def render(
     # ---- Load each model independently so swmmio's empty-section warnings
     # are scoped (hydraulics has no [POLYGONS]; hydro has no populated
     # [CONDUITS]) and panel artists trace cleanly to the right file.
-    hydro_model = swmmio.Model(str(hydro_inp))
-    hydraulics_model = swmmio.Model(str(hydraulics_inp))
+    hydro_model = hydraulics_model = None
+    if _renders_swmm:
+        hydro_model = swmmio.Model(str(hydro_inp))
+        hydraulics_model = swmmio.Model(str(hydraulics_inp))
 
-    # ---- Persistent GeoJSON exports for downstream GIS workflows --------
-    # Written under <system_dir>/gis/ so the layers are durable outputs of
-    # the system inputs (not analysis-run outputs). Idempotent — same .inp
-    # data produces the same files. See _swmm_gis_layers.export_swmm_gis_layers.
-    from hhemt.report_renderers._swmm_gis_layers import (
-        export_swmm_gis_layers,
-    )
+        # ---- Persistent GeoJSON exports for downstream GIS workflows ----
+        # Written under <system_dir>/gis/ so the layers are durable outputs of
+        # the system inputs (not analysis-run outputs). Idempotent — same .inp
+        # data produces the same files. See _swmm_gis_layers.export_swmm_gis_layers.
+        from hhemt.report_renderers._swmm_gis_layers import (
+            export_swmm_gis_layers,
+        )
 
-    system_dir = Path(sys_paths.dem_processed).parent
-    gis_dir = system_dir / "gis"
-    export_swmm_gis_layers(
-        hydro_model, hydraulics_model, gis_dir, target_crs=target_crs,
-    )
+        system_dir = Path(sys_paths.dem_processed).parent
+        gis_dir = system_dir / "gis"
+        export_swmm_gis_layers(
+            hydro_model, hydraulics_model, gis_dir, target_crs=target_crs,
+        )
 
-    # Source-paths and manifest-data are shared across both branches.
-    source_paths: list[Path] = [
-        sys_paths.dem_processed,
-        Path(hydro_inp),
-        Path(hydraulics_inp),
-    ]
+    # Source-paths and manifest-data are shared across both branches. Q4: the SWMM .inp
+    # sources are declared only when SWMM is rendered (a pure-TRITON figure drops ONLY the
+    # SWMM inputs — the fungibility subset relation).
+    # Q4 Phase-2: the DEM and Mannings rasters are BOTH system inputs present for
+    # either arm, so both are declared unconditionally; only the SWMM .inp sources
+    # are conditional (the fungibility subset relation).
+    source_paths: list[Path] = [sys_paths.dem_processed, sys_paths.mannings_processed]
+    if _renders_swmm:
+        source_paths += [Path(hydro_inp), Path(hydraulics_inp)]
     if bc_path is not None:
         source_paths.append(bc_path)
 
@@ -155,6 +182,7 @@ def render(
         hydro_model=hydro_model,
         hydraulics_model=hydraulics_model,
         bc_present=bc_path is not None,
+        mannings_res=mannings_res,
     )
 
     if use_plotly:
@@ -174,6 +202,7 @@ def render(
             source_paths=source_paths,
             analysis_dir=analysis.analysis_paths.analysis_dir,
             dem=dem, dem_bounds=dem_bounds,
+            mannings=mannings, mannings_rel=mannings_rel, mannings_res=mannings_res,
             hydro_model=hydro_model, hydraulics_model=hydraulics_model,
             hydro_rel=hydro_rel, hydraulics_rel=hydraulics_rel, dem_rel=dem_rel,
             bc_path=bc_path, bc_rel=bc_rel, target_crs=target_crs,
@@ -184,16 +213,21 @@ def render(
             vertical_crs_epsg=analysis._system.cfg_system.crs.vertical_epsg,
         )
 
-    # Matplotlib branch (legacy / interactive.enabled=False default).
+    # Matplotlib branch (legacy / interactive.enabled=False default). Q4 Phase-2:
+    # model-parametric grid — top row is DEM + Mannings (BOTH arms); the coupled
+    # master adds a bottom row of Hydrology + Hydraulics (2×2). A pure-TRITON master
+    # is the top row alone (1×2). `squeeze=False` keeps `_axes` 2-D for both shapes.
+    _ncols_mpl = 2
+    _nrows_mpl = 2 if _renders_swmm else 1
     if static_cfg is not None:
         # Publication exact dimensions (data-viz OE-1): the user owns the figure
         # size via figure_width/height_inches; bypass the report aspect-math width
         # derivation. The publication emit uses bbox_inches=None so the saved
         # figure is exactly this size (subplots_adjust below is preserved).
-        fig, (ax_hydro, ax_hydraulics, ax_dem) = plt.subplots(
-            1, 3,
+        fig, _axes = plt.subplots(
+            _nrows_mpl, _ncols_mpl,
             figsize=(static_cfg.figure_width_inches, static_cfg.figure_height_inches),
-            sharex=True, sharey=True,
+            sharex=True, sharey=True, squeeze=False,
         )
     else:
         _, h = map_cfg.figsize_inches
@@ -201,22 +235,19 @@ def render(
         dem_y_extent = dem_bounds[3] - dem_bounds[1]
         panel_aspect = dem_x_extent / dem_y_extent if dem_y_extent else 1.0
         fig_width = max(
-            3 * h * panel_aspect * map_cfg.fig_width_panel_pad,
+            _ncols_mpl * h * panel_aspect * map_cfg.fig_width_panel_pad,
             h * map_cfg.fig_width_min_factor,
         )
-        fig, (ax_hydro, ax_hydraulics, ax_dem) = plt.subplots(
-            1, 3, figsize=(fig_width, h), sharex=True, sharey=True,
+        fig, _axes = plt.subplots(
+            _nrows_mpl, _ncols_mpl, figsize=(fig_width, h * _nrows_mpl),
+            sharex=True, sharey=True, squeeze=False,
         )
     fig.subplots_adjust(**map_cfg.subplots_adjust)
 
-    _draw_hydrology_panel(
-        ax_hydro, hydro_model, hydro_rel, dem_bounds, map_cfg, prov,
-    )
-    _draw_hydraulics_panel(
-        ax_hydraulics, hydraulics_model, hydraulics_rel, dem_bounds, map_cfg, prov,
-    )
-    # Dual-source DEM style: static_cfg overrides the elevation-panel cmap +
-    # over-color when in publication mode; None falls back to ep.cmap/ep.over_color.
+    # Top row: DEM (col 0) + Mannings (col 1). Dual-source DEM style: static_cfg
+    # overrides the elevation-panel cmap + over-color in publication mode.
+    ax_dem = _axes[0][0]
+    ax_mannings = _axes[0][1]
     _draw_elevation_panel(
         ax_dem, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
         prov, dem_source=dem_rel,
@@ -224,6 +255,19 @@ def render(
         dem_cmap_override=(static_cfg.dem_cmap if static_cfg is not None else None),
         dem_over_color_override=(static_cfg.dem_over_color if static_cfg is not None else None),
     )
+    # Mannings panel reuses the existing static plotter (viridis raster + watershed
+    # overlay + "Mannings ({res}m)" title) — the SAME artist the publication path uses.
+    from hhemt.plot_system import TRITONSWMM_system_plotting
+    TRITONSWMM_system_plotting(analysis._system).processed_mannings(ax=ax_mannings)
+    if _renders_swmm:
+        # Bottom row (coupled only): Hydrology (col 0) + Hydraulics (col 1).
+        ax_hydro, ax_hydraulics = _axes[1][0], _axes[1][1]
+        _draw_hydrology_panel(
+            ax_hydro, hydro_model, hydro_rel, dem_bounds, map_cfg, prov,
+        )
+        _draw_hydraulics_panel(
+            ax_hydraulics, hydraulics_model, hydraulics_rel, dem_bounds, map_cfg, prov,
+        )
 
     return emit_plot_with_sources(
         fig, output_path, source_paths,
@@ -240,51 +284,58 @@ def render(
 def _build_manifest_data(
     analysis_id, dem_bounds,
     hydro_model, hydraulics_model, bc_present: bool,
+    mannings_res=None,
 ) -> dict:
-    polygons_df = getattr(hydro_model.inp, "polygons", None)
-    n_subcatchments = (
-        int(len(polygons_df.index.unique()))
-        if polygons_df is not None and len(polygons_df) > 0 else 0
-    )
     panel_extents = {
         "xlim": [float(dem_bounds[0]), float(dem_bounds[2])],
         "ylim": [float(dem_bounds[1]), float(dem_bounds[3])],
     }
-    return {
-        "analysis_id": str(analysis_id),
-        "panels": [
-            {
-                "name": "hydrology",
-                "title": "Hydrology",
-                "axis_extents": panel_extents,
-                "element_counts": {
-                    "subcatchments_with_polygons": n_subcatchments,
-                    "subcatchment_rows": int(len(hydro_model.inp.subcatchments)),
-                },
-                "legend_labels": (
-                    ["Subcatchments", "Drains to"] if n_subcatchments else []
-                ),
+    panels: list[dict] = []
+    # Q4 (iter-2): the SWMM hydrology/hydraulics panels are present only when SWMM is rendered
+    # (models are None for a pure-TRITON master); the DEM panel is always present.
+    if hydro_model is not None and hydraulics_model is not None:
+        polygons_df = getattr(hydro_model.inp, "polygons", None)
+        n_subcatchments = (
+            int(len(polygons_df.index.unique()))
+            if polygons_df is not None and len(polygons_df) > 0 else 0
+        )
+        panels.append({
+            "name": "hydrology",
+            "title": "Hydrology",
+            "axis_extents": panel_extents,
+            "element_counts": {
+                "subcatchments_with_polygons": n_subcatchments,
+                "subcatchment_rows": int(len(hydro_model.inp.subcatchments)),
             },
-            {
-                "name": "hydraulics",
-                "title": "Hydraulics",
-                "axis_extents": panel_extents,
-                "element_counts": {
-                    "junctions": int(len(hydraulics_model.inp.junctions)),
-                    "outfalls": int(len(hydraulics_model.inp.outfalls)),
-                    "conduits": int(len(hydraulics_model.inp.conduits)),
-                },
-                "legend_labels": ["SWMM conduits", "SWMM junction"],
+            "legend_labels": (
+                ["Subcatchments", "Drains to"] if n_subcatchments else []
+            ),
+        })
+        panels.append({
+            "name": "hydraulics",
+            "title": "Hydraulics",
+            "axis_extents": panel_extents,
+            "element_counts": {
+                "junctions": int(len(hydraulics_model.inp.junctions)),
+                "outfalls": int(len(hydraulics_model.inp.outfalls)),
+                "conduits": int(len(hydraulics_model.inp.conduits)),
             },
-            {
-                "name": "triton_dem",
-                "title": "TRITON DEM",
-                "axis_extents": panel_extents,
-                "dem_bounds": [float(b) for b in dem_bounds],
-                "legend_labels": ["Storm tide BC"] if bc_present else [],
-            },
-        ],
-    }
+            "legend_labels": ["SWMM conduits", "SWMM junction"],
+        })
+    panels.append({
+        "name": "triton_dem",
+        "title": "TRITON DEM",
+        "axis_extents": panel_extents,
+        "dem_bounds": [float(b) for b in dem_bounds],
+        "legend_labels": ["Storm tide BC"] if bc_present else [],
+    })
+    # Q4 Phase-2: the Manning's-n panel is present for both arms (system input).
+    panels.append({
+        "name": "mannings",
+        "title": (f"Mannings ({mannings_res}m)" if mannings_res is not None else "Mannings"),
+        "axis_extents": panel_extents,
+    })
+    return {"analysis_id": str(analysis_id), "panels": panels}
 
 
 # ---------------------------------------------------------------------------
@@ -664,6 +715,28 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
 # ---------------------------------------------------------------------------
 
 
+def _master_renders_swmm(analysis: TRITONSWMM_analysis) -> bool:
+    """True iff any enabled model type needs a SWMM .inp (coupled tritonswmm or standalone
+    swmm). A pure-TRITON master has none, so the SWMM hydrology/hydraulics loads + panels are
+    skipped and system_overview renders the DEM (+Mannings) only. Q4 (iter-2). For a sensitivity
+    master, unions across subs (a mixed master with ANY SWMM-bearing sub still renders SWMM)."""
+
+    def _enabled(a) -> set:
+        try:
+            return set(a._get_enabled_model_types())
+        except Exception:
+            return set()
+
+    if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
+        types: set = set()
+        subs = getattr(getattr(analysis, "sensitivity", None), "sub_analyses", {}) or {}
+        for sub in subs.values():
+            types |= _enabled(sub)
+        types |= _enabled(analysis)
+        return bool(types & {"tritonswmm", "swmm"})
+    return bool(_enabled(analysis) & {"tritonswmm", "swmm"})
+
+
 def _resolve_inp_sources(analysis: TRITONSWMM_analysis) -> tuple[Path, Path]:
     """Return `(hydro_inp, hydraulics_inp)` — both required.
 
@@ -730,6 +803,9 @@ def _build_system_overview_figure(
     analysis_dir,
     dem,
     dem_bounds,
+    mannings,
+    mannings_rel: str,
+    mannings_res,
     hydro_model,
     hydraulics_model,
     hydro_rel: str,
@@ -752,77 +828,103 @@ def _build_system_overview_figure(
         emit_plot_with_sources,
     )
 
-    # Three subplots, equal aspect, shared spatial extent (DEM bounds).
+    # Q4 Phase-2: model-parametric GRID. Top row = TRITON DEM + Mannings, present for
+    # BOTH arms so the same-named DEM/Mannings panels occupy identical cells/aspect across
+    # models (fungibility-optimal). A coupled master adds a second row of Hydrology +
+    # Hydraulics → 2×2; a pure-TRITON master is the top row alone → 1×2. `_cells` is
+    # row-major so make_subplots' positional `subplot_titles` and the equal-aspect loop
+    # index each cell correctly.
+    _coupled = hydro_model is not None and hydraulics_model is not None
+    _cells: list[tuple[int, int, str]] = [(1, 1, "TRITON DEM"), (1, 2, "Mannings")]
+    if _coupled:
+        _cells += [(2, 1, "Hydrology"), (2, 2, "Hydraulics")]
+    _nrows = 2 if _coupled else 1
+    _ncols = 2
     fig = make_subplots(
-        rows=1, cols=3, shared_xaxes=True, shared_yaxes=True,
-        horizontal_spacing=0.04,
-        subplot_titles=("Hydrology", "Hydraulics", "TRITON DEM"),
+        rows=_nrows, cols=_ncols, shared_xaxes=True, shared_yaxes=True,
+        horizontal_spacing=0.13, vertical_spacing=0.12,
+        subplot_titles=tuple(name for _, _, name in _cells),
     )
     fig.update_layout(
         template="triton_journal",
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.30, xanchor="left", x=0),
-        margin=dict(l=10, r=10, t=40, b=100),
-        height=600,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="left", x=0),
+        margin=dict(l=10, r=10, t=40, b=90),
+        height=1040 if _coupled else 560,
         plot_bgcolor="white",
     )
     # Lock equal-aspect on all panels and pin to DEM bounds.
     # Axis titles label the projected CRS so readers can identify the
     # seven-digit easting/northing values; the CRS authority string is
-    # appended to the middle-panel x-title to show once across the figure.
+    # appended to the DEM cell's x-title to show once across the figure.
     crs_authority = (
         target_crs.to_string() if hasattr(target_crs, "to_string")
         else str(target_crs)
     )
     # Panel bounds: square + padded + encompass all SWMM nodes so left-edge
     # nodes (e.g., upstream-most subcatchment outfalls) are not clipped.
+    # compute_padded_square_bounds tolerates None models (pure-TRITON): it reduces to a
+    # padded square around the DEM extent alone.
     panel_bounds = compute_padded_square_bounds(
         dem_bounds, hydro_model, hydraulics_model, padding_frac=0.02,
     )
-    for col in (1, 2, 3):
-        x_title = "Easting (m)" if col != 2 else f"Easting (m) — {crs_authority}"
+    for (_pr, col, _name) in _cells:
+        # Plotly numbers subplot axes row-major: (1,1)->x1, (1,2)->x2, (2,1)->x3, (2,2)->x4.
+        _axis_idx = (_pr - 1) * _ncols + col
+        _is_dem = _pr == 1 and col == 1
+        x_title = f"Easting (m) — {crs_authority}" if _is_dem else "Easting (m)"
         x_kwargs = dict(
             range=[panel_bounds[0], panel_bounds[2]],
             title_text=x_title,
-            row=1, col=col,
+            row=_pr, col=col,
         )
         # Defensively link x-axes via `matches="x"` so pan/zoom on any panel
-        # synchronizes the other two (Plotly's `shared_xaxes=True` in
+        # synchronizes the others (Plotly's `shared_xaxes=True` in
         # `make_subplots` does NOT always emit the `matches` property — verified
-        # empirically against this fixture's rendered HTML). The y-axes are
-        # already linked via `make_subplots(shared_yaxes=True)`'s emitted
-        # `matches="y"`.
-        if col > 1:
+        # empirically against this fixture's rendered HTML).
+        if _axis_idx > 1:
             x_kwargs["matches"] = "x"
         # `constrain="domain"` on both axes: when `scaleanchor` enforces 1:1
         # data aspect, Plotly defaults to *expanding the range* to fill the
-        # subplot's plot area. With 3 narrow panels side-by-side that blows
-        # the x range out to ~6000 m on a ~1900-m-wide dataset (user Round 4
-        # "way too zoomed out"). `constrain="domain"` shrinks the rendered
+        # subplot's plot area. `constrain="domain"` shrinks the rendered
         # domain instead, keeping the data range exactly at panel_bounds.
         x_kwargs["constrain"] = "domain"
         fig.update_xaxes(**x_kwargs)
         fig.update_yaxes(
             range=[panel_bounds[1], panel_bounds[3]],
-            scaleanchor=f"x{col}", scaleratio=1.0,
+            scaleanchor=f"x{_axis_idx}", scaleratio=1.0,
             constrain="domain",
             title_text="Northing (m)" if col == 1 else None,
-            row=1, col=col,
+            row=_pr, col=col,
         )
 
-    _draw_hydrology_panel_plotly(
-        fig, hydro_model, hydro_rel, map_cfg, prov, col=1,
-    )
-    _draw_hydraulics_panel_plotly(
-        fig, hydraulics_model, hydraulics_rel, map_cfg, prov, col=2,
-    )
+    # Top row: DEM (1,1) + Mannings (1,2) — both arms. Bottom row (coupled only):
+    # Hydrology (2,1) + Hydraulics (2,2). Each top-row raster carries its OWN colorbar
+    # (elevation vs Manning's n are distinct quantities): DEM's docks in the mid-gutter
+    # right of col 1, Mannings' at the far right. In a 2×2 they are shortened and raised
+    # to the top-row band; in a 1×2 they span the full height. (Blind-pixel values —
+    # nudged at the final present, per the accepted blind-pixel residual pattern.)
+    _top_cbar_y = 0.79 if _coupled else None
+    _top_cbar_len = 0.42 if _coupled else 0.9
     _draw_elevation_panel_plotly(
         fig, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
-        prov, dem_source=dem_rel, col=3,
+        prov, dem_source=dem_rel, col=1, row=1,
+        cbar_x=0.44, cbar_y=_top_cbar_y, cbar_len=_top_cbar_len,
         dem_building_height=dem_building_height,
         dem_outside_watershed_height=dem_outside_watershed_height,
         vertical_crs_epsg=vertical_crs_epsg,
     )
+    _draw_mannings_panel_plotly(
+        fig, mannings, mannings_rel, mannings_res, prov, row=1, col=2,
+        cbar_x=1.01, cbar_y=_top_cbar_y, cbar_len=_top_cbar_len,
+    )
+    if _coupled:
+        _draw_hydrology_panel_plotly(
+            fig, hydro_model, hydro_rel, map_cfg, prov, col=1, row=2,
+        )
+        _draw_hydraulics_panel_plotly(
+            fig, hydraulics_model, hydraulics_rel, map_cfg, prov, col=2, row=2,
+        )
 
     # Filter the default Plotly modebar to the buttons that map onto the
     # message of a three-panel pinned-aspect spatial figure (zoom / pan /
@@ -855,6 +957,9 @@ def _render_plotly_branch(
     analysis_dir,
     dem,
     dem_bounds,
+    mannings,
+    mannings_rel: str,
+    mannings_res,
     hydro_model,
     hydraulics_model,
     hydro_rel: str,
@@ -880,6 +985,9 @@ def _render_plotly_branch(
         analysis_dir=analysis_dir,
         dem=dem,
         dem_bounds=dem_bounds,
+        mannings=mannings,
+        mannings_rel=mannings_rel,
+        mannings_res=mannings_res,
         hydro_model=hydro_model,
         hydraulics_model=hydraulics_model,
         hydro_rel=hydro_rel,
@@ -903,10 +1011,17 @@ def _render_plotly_branch(
     # Inject an accessible <title> tag so screen-readers narrating the
     # iframe-embedded figure announce the document name rather than the URL
     # (I3 accessibility floor).
+    # Q4 Phase-2: the doc title names the panels actually rendered — DEM + Mannings for
+    # a pure-TRITON master; DEM + Mannings + Hydrology + Hydraulics (2×2) when coupled.
+    _title_panels = (
+        "TRITON DEM, Mannings, Hydrology, Hydraulics"
+        if (hydro_model is not None and hydraulics_model is not None)
+        else "TRITON DEM, Mannings"
+    )
     html_text = html_text.replace(
         '<head><meta charset="utf-8" /></head>',
         '<head><meta charset="utf-8" />'
-        '<title>System overview — Hydrology, Hydraulics, TRITON DEM</title>'
+        f'<title>System overview — {_title_panels}</title>'
         '</head>',
         1,
     )
@@ -915,9 +1030,13 @@ def _render_plotly_branch(
     # Kaleido is the Plotly static-export engine and is an optional dep — if
     # missing, log and continue; the HTML deliverable remains valid.
     try:
+        # Q4 Phase-2: the coupled 2×2 grid is taller than the pure-TRITON 1×2 row.
+        _svg_height = (
+            1000 if (hydro_model is not None and hydraulics_model is not None) else 600
+        )
         fig.write_image(
             output_path.with_suffix(".svg"),
-            engine="kaleido", width=1500, height=600, scale=1,
+            engine="kaleido", width=1200, height=_svg_height, scale=1,
         )
     except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
         import logging
@@ -936,8 +1055,9 @@ def _render_plotly_branch(
 
 
 def _draw_hydrology_panel_plotly(
-    fig, hydro_model, hydro_rel: str, map_cfg, prov, *, col: int,
+    fig, hydro_model, hydro_rel: str, map_cfg, prov, *, col: int, row: int = 1,
 ) -> None:
+    _prow = row  # capture the panel row before any iterrows/itertuples loop shadows `row`
     hp = map_cfg.hydrology_panel
     coords_df = hydro_model.inp.coordinates
     subcatch_df = getattr(hydro_model.inp, "subcatchments", None)
@@ -1025,7 +1145,7 @@ def _draw_hydrology_panel_plotly(
                     legendgroup="hydrology",
                     hoverinfo="skip",
                 ),
-                row=1, col=col,
+                row=_prow, col=col,
             )
         with prov.artist(
             axes_id="ax_hydro_plotly", kind="scatter_path",
@@ -1043,7 +1163,7 @@ def _draw_hydrology_panel_plotly(
                     legendgroup="hydrology",
                     hoverinfo="skip",
                 ),
-                row=1, col=col,
+                row=_prow, col=col,
             )
     if outlet_xs:
         with prov.artist(
@@ -1071,7 +1191,7 @@ def _draw_hydrology_panel_plotly(
                     ),
                     showlegend=False,
                 ),
-                row=1, col=col,
+                row=_prow, col=col,
             )
 
 
@@ -1097,8 +1217,9 @@ def _plotly_junction_marker_size(map_cfg) -> int:
 
 
 def _draw_hydraulics_panel_plotly(
-    fig, hydraulics_model, hydraulics_rel: str, map_cfg, prov, *, col: int,
+    fig, hydraulics_model, hydraulics_rel: str, map_cfg, prov, *, col: int, row: int = 1,
 ) -> None:
+    _prow = row  # capture the panel row before any iterrows/itertuples loop shadows `row`
     hp = map_cfg.hydraulics_panel
     # Outfalls render at the full unified node-marker size.
     # Junctions render at 50% of that size; the same helper is used by
@@ -1192,7 +1313,7 @@ def _draw_hydraulics_panel_plotly(
                     legendgroup="hydraulics",
                     hoverinfo="skip",
                 ),
-                row=1, col=col,
+                row=_prow, col=col,
             )
     if midpoint_xs:
         with prov.artist(
@@ -1216,7 +1337,7 @@ def _draw_hydraulics_panel_plotly(
                     legendgroup="hydraulics",
                     showlegend=False,
                 ),
-                row=1, col=col,
+                row=_prow, col=col,
             )
     if slope_xs:
         # Hidden by default (legend-toggleable) — the 1000+ text labels overlap
@@ -1239,7 +1360,7 @@ def _draw_hydraulics_panel_plotly(
                     showlegend=True,
                     visible="legendonly",
                 ),
-                row=1, col=col,
+                row=_prow, col=col,
             )
 
     if len(junctions_df):
@@ -1278,7 +1399,7 @@ def _draw_hydraulics_panel_plotly(
                         "<extra></extra>"
                     ),
                 ),
-                row=1, col=col,
+                row=_prow, col=col,
             )
 
     if len(outfalls_df):
@@ -1318,7 +1439,7 @@ def _draw_hydraulics_panel_plotly(
                         "<extra></extra>"
                     ),
                 ),
-                row=1, col=col,
+                row=_prow, col=col,
             )
 
     # Per-node Rim/Inv labels (matplotlib branch annotates each node).
@@ -1359,19 +1480,80 @@ def _draw_hydraulics_panel_plotly(
                     showlegend=True,
                     visible="legendonly",
                 ),
-                row=1, col=col,
+                row=_prow, col=col,
             )
+
+
+def _draw_mannings_panel_plotly(
+    fig, mannings, mannings_rel: str, mannings_res, prov, *, row: int, col: int,
+    cbar_x: float = 1.005, cbar_y: float | None = None, cbar_len: float | None = None,
+) -> None:
+    """Manning's-n panel (Q4 Phase-2): a viridis ``go.Heatmap`` on the processed
+    Manning's raster, pinned to the same panel bounds + equal-aspect treatment as the
+    DEM panel (the caller sets the axis range/scaleanchor). Mirrors
+    ``_draw_elevation_panel_plotly``'s cell-center coordinate construction; no
+    building/wall masking (Manning's has no sentinel-fill cells)."""
+    _prow = row
+    m = mannings.squeeze()
+    arr = m.values
+    valid = arr[np.isfinite(arr)]
+    vmin = float(valid.min()) if valid.size else 0.0
+    vmax = float(valid.max()) if valid.size else 1.0
+    m_bounds = m.rio.bounds()
+    n_y, n_x = arr.shape
+    x0, y0, x1, y1 = m_bounds[0], m_bounds[1], m_bounds[2], m_bounds[3]
+    xs = np.linspace(x0, x1, n_x)
+    # origin="upper": y vector starts at y1 (top) and decreases, matching the DEM panel.
+    ys = np.linspace(y1, y0, n_y)
+
+    res_label = (
+        f"Manning's n<br>({mannings_res} m)" if mannings_res is not None
+        else "Manning's n"
+    )
+    _cbar = dict(title=res_label, x=cbar_x)
+    if cbar_len is not None:
+        _cbar["len"] = cbar_len
+    if cbar_y is not None:
+        _cbar["y"] = cbar_y
+        _cbar["yanchor"] = "middle"
+    with prov.artist(
+        axes_id="ax_mannings_plotly", kind="image", note="Manning's-n raster",
+    ) as a:
+        a.add_xarray_channel(
+            "z", m, source_path=mannings_rel,
+            transform="viridis; vmin/vmax over finite cells",
+        )
+        fig.add_trace(
+            go.Heatmap(
+                z=arr,
+                x0=float(xs[0]), dx=float(xs[1] - xs[0]),
+                y0=float(ys[0]), dy=float(ys[1] - ys[0]),
+                colorscale="Viridis",
+                zmin=vmin, zmax=vmax, zauto=False,
+                showscale=True,
+                colorbar=_cbar,
+                name="Manning's n",
+                hovertemplate=(
+                    "Manning's n: %{z:.3f}<br>"
+                    "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m"
+                    "<extra></extra>"
+                ),
+            ),
+            row=_prow, col=col,
+        )
 
 
 def _draw_elevation_panel_plotly(
     fig, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
-    prov, *, dem_source: str, col: int,
+    prov, *, dem_source: str, col: int, row: int = 1,
+    cbar_x: float = 1.005, cbar_y: float | None = None, cbar_len: float | None = None,
     dem_building_height: float | None = None,
     dem_outside_watershed_height: float | None = None,
     vertical_crs_epsg: int | None = None,
 ) -> None:
     from hhemt.report_renderers._provenance import ProvenanceRef
 
+    _prow = row
     ep = map_cfg.elevation_panel
     dem_squeezed = dem.squeeze()
     arr = dem_squeezed.values
@@ -1450,7 +1632,9 @@ def _draw_elevation_panel_plotly(
                 showscale=True,
                 colorbar=dict(
                     title=units.dem_elev_label(vertical_crs_epsg),
-                    len=ep.cbar_shrink, x=1.005,
+                    len=(cbar_len if cbar_len is not None else ep.cbar_shrink),
+                    x=cbar_x,
+                    **({"y": cbar_y, "yanchor": "middle"} if cbar_y is not None else {}),
                 ),
                 name="DEM elevation (modeled area)",
                 hovertemplate=(
@@ -1459,7 +1643,7 @@ def _draw_elevation_panel_plotly(
                     "<extra></extra>"
                 ),
             ),
-            row=1, col=col,
+            row=_prow, col=col,
         )
         fig.add_trace(
             go.Heatmap(
@@ -1477,7 +1661,7 @@ def _draw_elevation_panel_plotly(
                     "<extra></extra>"
                 ),
             ),
-            row=1, col=col,
+            row=_prow, col=col,
         )
 
     # Black bounding box around the TRITON DEM modeled-area extent (per Round 2
@@ -1504,7 +1688,7 @@ def _draw_elevation_panel_plotly(
                 showlegend=False,
                 hoverinfo="skip",
             ),
-            row=1, col=col,
+            row=_prow, col=col,
         )
 
     if bc_path is not None:
@@ -1564,7 +1748,7 @@ def _draw_elevation_panel_plotly(
                             "<extra></extra>"
                         ),
                     ),
-                    row=1, col=col,
+                    row=_prow, col=col,
                 )
 
 

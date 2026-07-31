@@ -438,6 +438,12 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # at the resume-decision site in run_simulation.py. Unset on legacy logs;
     # consumers MUST coalesce None -> 0 (LogField.get() returns None when unset).
     n_resumes: LogField[int] = Field(default_factory=LogField)
+    # resume_reporting_tsteps records the REALIZED resume reporting-step (config_NNNN.cfg
+    # NNNN = the reporting step, return_the_reporting_step_from_a_cfg) per resume attempt,
+    # appended in run_simulation.py's hotstart branch. First-class durable record of WHERE
+    # each config actually resumed, so the b4b same-timestep-interruption experiment is
+    # answerable from the data forever (KR-b). Legacy logs omit it; consumers coalesce None -> [].
+    resume_reporting_tsteps: LogField[list[int]] = Field(default_factory=LogField)
     processing_log: Processing = Field(default_factory=Processing)
 
     # Performance timeseries (triton and tritonswmm only)
@@ -486,6 +492,13 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         mode="before",
     )(_create_logfield_validator(int))
 
+    # resume_reporting_tsteps is LogField[list[int]] (KR-b) — a list-typed LogField, so it
+    # gets its own validator group rather than the scalar-int coercion above.
+    _validate_list_fields = field_validator(
+        "resume_reporting_tsteps",
+        mode="before",
+    )(_create_logfield_validator(list))
+
     # Serializers
     _serialize_bool_fields = field_serializer(
         "simulation_completed",
@@ -511,6 +524,11 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
 
     _serialize_int_fields = field_serializer(
         "n_resumes",
+        when_used="json",
+    )(lambda self, v: v.get() if v is not None else None)
+
+    _serialize_list_fields = field_serializer(
+        "resume_reporting_tsteps",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 
