@@ -4753,6 +4753,27 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
                 "message": error_msg,
             }
 
+    @staticmethod
+    def _resolve_reattach_node(
+        submission_node: str,
+        login_node: str | None,
+        in_slurm: bool,
+    ) -> str:
+        """Resolve the host to name in tmux reattach/kill commands.
+
+        The session is created by a LOCAL ``subprocess.run`` on the submitting host, so
+        ``submission_node`` is the only machine that can ever hold it. ``login_node`` is a
+        REACHABILITY hint for the case where the workflow is launched from a login node behind
+        a round-robin alias and the auto-detected name is not the one an operator should ssh to.
+
+        Inside a Slurm allocation that hint is always wrong: the session lives on the allocated
+        compute node, so the true host wins. Outside one, the configured hint is preferred as
+        before.
+        """
+        if in_slurm:
+            return submission_node
+        return login_node or submission_node
+
     def _submit_tmux_workflow(
         self,
         snakefile_path: Path,
@@ -5010,11 +5031,15 @@ exit $snakemake_status
             self.analysis.log.workflow_submission_mode.set("tmux")
             self.analysis.log.workflow_submission_node.set(submission_node)
 
-            # Determine the node to use in reattach commands:
-            # prefer explicit config value, fall back to auto-detected hostname
+            # Determine the node to use in reattach commands. See _resolve_reattach_node for the
+            # rule: the session can only live on submission_node, and the configured login_node is
+            # a reachability hint that must not win inside a Slurm allocation.
             # Phase-4 (4d): login_node moved to hpc_system_config.login_node.
+            import os
+
             _login_node = self.cfg_hpc_system.login_node if self.cfg_hpc_system else None
-            reattach_node = _login_node or submission_node
+            _in_slurm = "SLURM_JOB_ID" in os.environ
+            reattach_node = self._resolve_reattach_node(submission_node, _login_node, _in_slurm)
 
             # Build node-pinned reattach commands (required when cluster uses
             # round-robin login load balancers, e.g. login.hpc.virginia.edu)
@@ -5036,6 +5061,14 @@ exit $snakemake_status
                 )
                 print(f"[Snakemake] Session name: {session_name}", flush=True)
                 print(f"[Snakemake] Submission node: {submission_node}", flush=True)
+                if _in_slurm:
+                    print(
+                        "[Snakemake]   NOTE: this session runs INSIDE Slurm job "
+                        f"{os.environ.get('SLURM_JOB_ID')} on {submission_node}. It ENDS when that "
+                        "job ends, and a compute node is usually not reachable by ssh from a login "
+                        "node — follow the log file above rather than attaching.",
+                        flush=True,
+                    )
                 if snakemake_pid:
                     print(f"[Snakemake] Snakemake PID: {snakemake_pid}", flush=True)
                 print(f"[Snakemake] Log file: {tmux_log}", flush=True)
