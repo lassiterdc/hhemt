@@ -121,7 +121,8 @@ _WLEVEL_ABSENT_NOTE = (
     "wlevel panel NOT RENDERED — the per-scenario TRITON timeseries stores "
     "(TRITONSWMM_TRITON_tseries.zarr) were not supplied. They are deliberately not "
     "consolidated into the bundle (~83x the SWMM series by payload). Fetch them with "
-    "<estate>/synthetic_compute_sensitivity/fetch_triton_tseries.py and re-render."
+    "<estate>/experiments/synthetic/hydraulics_vs_compute_config_combined/"
+    "fetch_triton_tseries.py and re-render."
 )
 
 _REPLAY_ATTR = "coupled_resume_replay_evidence"
