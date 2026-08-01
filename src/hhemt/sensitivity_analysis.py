@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import uuid
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -172,6 +173,35 @@ def _unlink_dprocess_flags_for_regenerate(targets: list[str], status_dir: Path) 
             f.unlink(missing_ok=True)
 
 
+def _should_materialize_sub_analysis_yaml(cfg_yaml: Path, is_main_orchestrator: bool) -> bool:
+    """Decide whether this construction should (re)write a sub-analysis config YAML.
+
+    Sub-analysis YAML materialization is a DRIVER-only side effect. Every
+    `TRITONSWMM_analysis` construction with `toggle_sensitivity_analysis=True`
+    reaches `_create_sub_analyses`, including the ~63 per-figure renderer
+    subprocesses spawned by the report tail (`report_renderers/_cli.py`
+    constructs with `is_main_orchestrator=False`). Those renderers previously
+    rewrote all N sub-analysis YAMLs each, putting every destination name under
+    continuous concurrent-rename churn on the shared filesystem for the ~12 s a
+    full pass takes. Concurrent cross-client renames onto a shared destination
+    name were observed to expose a window in which a third client's `open()`
+    returns ENOENT -- a renderer failing to read the very file it had just
+    renamed into place, killing the workflow at the report tail.
+
+    The writes were redundant, not merely racy: each sub config is derived
+    deterministically from the same master `cfg_analysis.model_dump()` plus the
+    same sensitivity-CSV row, so all writers produce byte-identical content.
+    Gating on `is_main_orchestrator` therefore removes N-1 writers with no
+    content change -- the same convention `_build_unique_system_targets` already
+    applies to its `_generated/` purge.
+
+    The absent-target fallback keeps the change safe on any construction path
+    that is genuinely first-to-materialize: a missing YAML is always written,
+    whoever is constructing, so no consumer can encounter a missing file.
+    """
+    return bool(is_main_orchestrator) or not cfg_yaml.exists()
+
+
 class TRITONSWMM_sensitivity_analysis:
     """
     Manages sensitivity analysis by creating and orchestrating multiple sub-analyses.
@@ -229,6 +259,7 @@ class TRITONSWMM_sensitivity_analysis:
         self.master_analysis = analysis
         self._system = analysis._system
         self._skip_log_update = skip_log_update
+        self._is_main_orchestrator = is_main_orchestrator
         self.analysis_paths = analysis.analysis_paths
         self.cfg_analysis = analysis.cfg_analysis
         # BundleableAnalysis delegation (_protocol.py): emit_bundle reads these off its input, so a
@@ -2385,30 +2416,42 @@ class TRITONSWMM_sensitivity_analysis:
 
             cfg_snstvty_analysis.master_analysis_cfg_yaml = self.master_analysis.analysis_config_yaml
 
-            # Atomic write via temp-file + rename. `Path.write_text` truncates the
-            # target before writing; concurrent readers in other plot subprocesses
-            # would catch the truncated-empty state and fail with
-            # `model_validate(None)`. POSIX `rename(2)` (Path.replace) is atomic
-            # on the same filesystem, so readers always see a complete file.
+            # DRIVER-only write (see `_should_materialize_sub_analysis_yaml`). The
+            # renderer subprocesses that dominate the report tail construct with
+            # `is_main_orchestrator=False` and are pure readers here; only a
+            # genuinely-absent target is written on those paths.
             #
-            # Temp filename is keyed on PID so concurrent writers do not collide
-            # on the same `*.tmp` path (one writer's `replace()` would otherwise
-            # move the tmp out from under another, raising FileNotFoundError on
-            # the second writer's replace). PID is unique per OS process within
-            # a job's lifetime; subprocess A and subprocess B always write to
-            # distinct tmp files before swapping into the target.
+            # Atomic write via temp-file + rename is retained for the remaining
+            # writers. `Path.write_text` truncates the target before writing, so a
+            # concurrent reader would otherwise catch the truncated-empty state and
+            # fail with `model_validate(None)`; `rename(2)` (Path.replace) swaps a
+            # fully-written file into place instead.
             #
-            # Once the deeper fix lands (sub-analysis yaml materialization lifted
-            # out of `__init__` into the setup phase), this temp-file dance can
+            # Temp filename is keyed on a uuid4, NOT on `os.getpid()`. PID is unique
+            # only per NODE, and these subprocesses span multiple compute nodes
+            # writing to one shared filesystem, so a PID-keyed tmp path can collide
+            # across nodes -- one writer's `replace()` moves the tmp out from under
+            # another, raising FileNotFoundError on the second writer's replace.
+            # uuid4 subsumes both PID and hostname.
+            #
+            # Note that atomic rename is NOT sufficient on its own here: concurrent
+            # cross-client renames onto a SHARED destination name were observed to
+            # expose a window in which another client's `open()` on that name
+            # returns ENOENT. The gate above -- not the rename -- is what closes
+            # that exposure, by ensuring there is normally a single writer.
+            #
+            # The deeper fix remains lifting sub-analysis yaml materialization out
+            # of `__init__` into an explicit setup phase; that would let this
             # collapse back to a single `cfg_anlysys_yaml.write_text(...)`.
-            _tmp = cfg_anlysys_yaml.with_suffix(cfg_anlysys_yaml.suffix + f".{os.getpid()}.tmp")
-            _tmp.write_text(
-                yaml.safe_dump(
-                    cfg_snstvty_analysis.model_dump(mode="json"),
-                    sort_keys=False,
+            if _should_materialize_sub_analysis_yaml(cfg_anlysys_yaml, self._is_main_orchestrator):
+                _tmp = cfg_anlysys_yaml.with_suffix(cfg_anlysys_yaml.suffix + f".{uuid.uuid4().hex}.tmp")
+                _tmp.write_text(
+                    yaml.safe_dump(
+                        cfg_snstvty_analysis.model_dump(mode="json"),
+                        sort_keys=False,
+                    )
                 )
-            )
-            _tmp.replace(cfg_anlysys_yaml)
+                _tmp.replace(cfg_anlysys_yaml)
             anlsys = anlysis.TRITONSWMM_analysis(
                 analysis_config_yaml=cfg_anlysys_yaml,
                 system=sa_id_to_system[sa_id],
