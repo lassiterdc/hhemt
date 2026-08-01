@@ -118,6 +118,48 @@ def test_non_tty_with_locks_refuses_with_actionable_error(tmp_path, monkeypatch)
 
     assert not mock_input.called, "non-TTY must not reach input()"
     assert "--unlock" in str(excinfo.value), "error must carry the manual unlock command"
+    # The lock is keyed on the WORKING DIRECTORY, so the pasteable command must
+    # scope itself to wd — otherwise it is a no-op from the operator's cwd on the
+    # run path and unlocks the wrong namespace on the delete path.
+    assert f"cd {analysis_dir} &&" in str(excinfo.value), (
+        "manual unlock command must cd into the lock's working directory"
+    )
+
+
+def test_non_tty_delete_path_names_the_delete_namespace(tmp_path, monkeypatch):
+    """Delete path: wd != snakefile_path.parent, so the message must name wd.
+
+    ``_pre_delete_guards`` passes ``working_dir=analysis_dir/.snakemake_delete``
+    while ``snakefile_path`` is ``analysis_dir/Snakefile.delete``. A recovery
+    command scoped to ``analysis_dir`` would unlock the WRONG lock namespace and
+    exit 0 — the branch where the un-scoped message is actively wrong rather
+    than merely inconvenient.
+    """
+    from hhemt.exceptions import WorkflowError
+
+    analysis_dir = tmp_path / "an"
+    delete_wd = analysis_dir / ".snakemake_delete"
+    locks_dir = delete_wd / ".snakemake" / "locks"
+    locks_dir.mkdir(parents=True)
+    (locks_dir / "0.input.lock").write_text("lock\n")
+
+    monkeypatch.delenv(_NON_INTERACTIVE_LOCK_CLEAR_ENV, raising=False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+
+    builder = _make_builder(analysis_dir)
+
+    with mock.patch("builtins.input", side_effect=EOFError):
+        with pytest.raises(WorkflowError) as excinfo:
+            builder._check_and_clear_snakemake_lock(
+                analysis_dir / "Snakefile.delete",
+                dry_run=False,
+                verbose=False,
+                working_dir=delete_wd,
+            )
+
+    msg = str(excinfo.value)
+    assert f"cd {delete_wd} &&" in msg, "must cd into the DELETE working directory"
+    assert f"cd {analysis_dir} &&" not in msg, "must not name the run-path namespace"
 
 
 def test_non_tty_without_locks_returns_cleanly(tmp_path, monkeypatch):

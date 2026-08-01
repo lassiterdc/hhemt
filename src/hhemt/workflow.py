@@ -1088,7 +1088,14 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         )
 
         if not sys.stdin.isatty():
-            manual_cmd = f"{sys.executable} -m snakemake --unlock --snakefile {snakefile_path}"
+            # cd into wd: the Snakemake lock is keyed on the WORKING DIRECTORY,
+            # and this method's own unlock runs with cwd=wd below. Without the
+            # cd the printed command is un-pasteable on the run path (the
+            # operator is never in analysis_dir) and SILENTLY WRONG on the
+            # delete path, where wd is analysis_dir/.snakemake_delete/ but
+            # snakefile_path.parent is analysis_dir/ — it would unlock the
+            # wrong namespace and exit 0. snakefile_path is always absolute.
+            manual_cmd = f"cd {wd} && {sys.executable} -m snakemake --unlock --snakefile {snakefile_path}"
             raise WorkflowError(
                 phase="pre-submission lock check",
                 return_code=1,  # sentinel: non-interactive stdin (WorkflowError requires int)
@@ -1101,7 +1108,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
 
         response = input("[Snakemake] Run snakemake --unlock and proceed? [y/N]: ").strip()
         if response.lower() != "y":
-            manual_cmd = f"{sys.executable} -m snakemake --unlock --snakefile {snakefile_path}"
+            # Same wd-scoping rationale as the non-TTY branch above.
+            manual_cmd = f"cd {wd} && {sys.executable} -m snakemake --unlock --snakefile {snakefile_path}"
             raise WorkflowError(
                 phase="pre-submission lock check",
                 return_code=1,  # sentinel: user aborted (WorkflowError requires int)
