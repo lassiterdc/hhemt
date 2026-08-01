@@ -5244,6 +5244,69 @@ exit $snakemake_status
                 continue
         return (n_flags, max_mtime)
 
+    def _tmux_slurm_run_uuid(self) -> str | None:
+        """Newest ``SLURM run ID: {uuid}`` emitted by the SLURM executor, or None.
+
+        Same file and newest-by-mtime selection as ``_tmux_snakemake_exit_status``:
+        the generated ``run_workflow_tmux.sh`` redirects the whole Snakemake
+        invocation into ``tmux_session_{timestamp}.log``, so the executor's
+        ``logger.info(f"SLURM run ID: {self.run_uuid}")`` line lands there. The
+        executor uses that uuid as the sbatch ``--name`` precisely to enable
+        ``--name``-based status queries, which is how its OWN status loop tracks
+        jobs -- so it is a working job-set key at every site the executor works at.
+        """
+        log_dir = self.analysis_paths.analysis_log_directory
+        try:
+            candidates = sorted(log_dir.glob("tmux_session_*.log"), key=lambda p: p.stat().st_mtime)
+        except OSError:
+            return None
+        if not candidates:
+            return None
+        try:
+            text = candidates[-1].read_text(errors="replace")
+        except OSError:
+            return None
+        matches = re.findall(r"SLURM run ID:\s*([0-9a-fA-F-]{36})", text)
+        return matches[-1] if matches else None
+
+    def _workflow_has_live_slurm_jobs(self, *, timeout_s: float = 20.0) -> set[str]:
+        """The set of non-terminal SLURM states this workflow run still owns.
+
+        Liveness gate for the stall watchdog. On an executor-owns-sbatch site the
+        toolkit never sees the per-rule job ids (the ``_status/_queued/`` payload
+        jobid is null), so identity comes from the tmux log via
+        ``_tmux_slurm_run_uuid`` and the job set is queried by sbatch ``--name``.
+        Per-USER squeue is BLIND on this site's Hidden GPU partitions (see
+        ``slurm_liveness.py``) -- never substitute a per-user form here.
+
+        Fails OPEN: any inability to determine the job set returns {"PENDING"} -- a
+        non-empty, non-terminal set meaning "assume live" -- so an sacct outage can
+        only DELAY a stall kill, never cause one. Truthiness is preserved, so callers
+        that only test liveness are unaffected by the widening.
+        """
+        run_uuid = self._tmux_slurm_run_uuid()
+        if run_uuid is None:
+            return {"PENDING"}
+        starttime = (datetime.datetime.now() - datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:00")
+        try:
+            r = subprocess.run(
+                [
+                    "sacct", "-X", "--parsable2", "--noheader", "--clusters", "all",
+                    "--name", run_uuid, "--starttime", starttime, "-o", "State",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return {"PENDING"}
+        if r.returncode != 0:
+            return {"PENDING"}
+        states = {ln.split("|")[0].split()[0] for ln in r.stdout.splitlines() if ln.strip()}
+        if not states:
+            return {"PENDING"}
+        return states - _SACCT_DEAD_STATES
+
     def _tmux_snakemake_exit_status(self, session_name: str) -> int | None:
         """Best-effort read of the Snakemake exit code from the tmux workflow log.
 
@@ -5295,9 +5358,15 @@ exit $snakemake_status
         poll_interval_s : int
             Seconds between polls.
         no_progress_timeout_min : float | None
-            Stall threshold. When None, defaults to ``max(30, 6 * per_sim_walltime)``
-            minutes, where ``per_sim_walltime`` is ``hpc_time_min_per_sim`` — generous
-            enough that a healthy but queue-backed sweep never trips it.
+            SLURM-SILENT backstop, in minutes. When None, reads
+            ``hpc_no_progress_timeout_min`` from analysis config; absent that, falls back
+            to ``max(30, 6 * hpc_time_min_per_sim)``. That derivation scales with how long
+            a sim RUNS, which is unrelated to how long the workflow may legitimately be
+            SLURM-silent, and it is retained only so existing configs are unchanged. It is
+            NOT a queue-wait tolerance: a queue-backed sweep is handled by the liveness
+            gate (``_workflow_has_live_slurm_jobs``), which suspends this timer while SLURM
+            reports live work, and a permanently starved queue by the separate
+            ``hpc_max_queue_wait_min`` cap.
 
         Returns
         -------
@@ -5307,11 +5376,24 @@ exit $snakemake_status
         """
         module_load_prefix = self._get_module_load_prefix()
         if no_progress_timeout_min is None:
-            per_sim = getattr(self.cfg_analysis, "hpc_time_min_per_sim", None) or 5
-            no_progress_timeout_min = max(30.0, 6.0 * float(per_sim))
+            # Config-owned backstop wins when set. The walltime-derived fallback is
+            # retained ONLY for configs that do not set it: it scales with how long a
+            # sim RUNS, which is unrelated to how long the workflow may legitimately be
+            # SLURM-silent. The queue-wait dimension is handled by the liveness gate
+            # (_workflow_has_live_slurm_jobs), not by this number.
+            configured = getattr(self.cfg_analysis, "hpc_no_progress_timeout_min", None)
+            if configured is not None:
+                no_progress_timeout_min = float(configured)
+            else:
+                per_sim = getattr(self.cfg_analysis, "hpc_time_min_per_sim", None) or 5
+                no_progress_timeout_min = max(30.0, 6.0 * float(per_sim))
         stall_seconds = no_progress_timeout_min * 60.0
         last_fp = self._status_progress_fingerprint()
         last_progress_t = time.monotonic()
+        all_pending_since: float | None = None
+        queue_starved_seconds = (
+            float(getattr(self.cfg_analysis, "hpc_max_queue_wait_min", None) or 720.0) * 60.0
+        )
         try:
             while True:
                 has_session_cmd = f"{module_load_prefix}tmux has-session -t {session_name}"
@@ -5346,6 +5428,42 @@ exit $snakemake_status
                 if fp != last_fp:
                     last_fp = fp
                     last_progress_t = now
+                elif live_states := self._workflow_has_live_slurm_jobs():
+                    # A queue wait is fingerprint-silent: _status/ is written by
+                    # WORKERS at process start/finish, so a SLURM-accepted-but-
+                    # PENDING job contributes no evidence of progress. Live SLURM
+                    # work IS forward progress the fingerprint cannot see, so the
+                    # stall timer is SUSPENDED. Mirrors the wait-rule's in-loop-
+                    # liveness design (see hpc_max_wait_for_inflight_min): liveness,
+                    # not a walltime-derived timer, terminates the wait.
+                    last_progress_t = now
+                    # Queue-starvation bound: the liveness gate suspends the stall
+                    # timer indefinitely, so a partition that never schedules this
+                    # work would wait forever. Track how long the live set has been
+                    # continuously ALL-PENDING; any RUNNING observation resets it.
+                    if live_states == {"PENDING"}:
+                        if all_pending_since is None:
+                            all_pending_since = now
+                        elif now - all_pending_since > queue_starved_seconds:
+                            subprocess.run(
+                                ["bash", "-c", f"{module_load_prefix}tmux kill-session -t {session_name}"],
+                                capture_output=True,
+                            )
+                            return {
+                                "completed": False,
+                                "message": (
+                                    f"Workflow queue-starved: every SLURM job for this run has been "
+                                    f"PENDING (never RUNNING) for {(now - all_pending_since) / 60:.0f} min, "
+                                    f"exceeding the {queue_starved_seconds / 60:.0f} min queue-wait cap. "
+                                    f"This is partition contention, NOT a hung workflow — check partition "
+                                    f"load or re-target the partition. The session was killed, which "
+                                    f"cancels the queued jobs (the SLURM executor runs scancel on "
+                                    f"interrupt), so their queue positions are lost and the sweep must "
+                                    f"be RESUMED (from_scratch=False) rather than re-run from scratch."
+                                ),
+                            }
+                    else:
+                        all_pending_since = None
                 elif now - last_progress_t > stall_seconds:
                     if verbose:
                         print(

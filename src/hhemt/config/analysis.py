@@ -163,6 +163,40 @@ class analysis_config(cfgBaseModel):
             "(1h) to 10080 (1 week). Lower it only to force an earlier give-up."
         ),
     )
+    hpc_no_progress_timeout_min: int | None = Field(
+        None,
+        ge=10,
+        le=10080,
+        description=(
+            "Backstop cap (minutes) on the tmux orchestrator's no-progress stall "
+            "watchdog (_wait_for_tmux_session_completion). As of the watchdog "
+            "liveness-gate change, the stall timer is SUSPENDED while SLURM "
+            "reports at least one live job for the run, so this cap is a pure "
+            "safety backstop (NOT a queue-wait tolerance) - it fires only when "
+            "Snakemake is alive AND SLURM has no live work AND _status/ has not "
+            "advanced. None (default) keeps the legacy walltime-derived fallback "
+            "max(30, 6 * hpc_time_min_per_sim), which is NOT queue-aware on its "
+            "own and is retained only so existing configs are unchanged. Bounds: "
+            "10 (10 min) to 10080 (1 week). Mirrors hpc_max_wait_for_inflight_min."
+        ),
+    )
+    hpc_max_queue_wait_min: int | None = Field(
+        None,
+        ge=30,
+        le=10080,
+        description=(
+            "Cap (minutes) on how long the tmux orchestrator tolerates a live SLURM "
+            "job set that is continuously ALL-PENDING (never RUNNING). Distinct from "
+            "hpc_no_progress_timeout_min by construction: that one bounds the "
+            "SLURM-SILENT state (a hang), this one bounds the QUEUE-STARVED state "
+            "(partition contention). Reusing one number for both would recreate the "
+            "walltime-coupling defect the liveness gate exists to remove. Any RUNNING "
+            "observation resets the tracker. On expiry the session is killed - which "
+            "cancels the queued jobs, since the SLURM executor runs scancel on "
+            "interrupt - and a distinct queue-starved verdict is returned. None "
+            "(default) means 720 (12 h). Bounds: 30 (30 min) to 10080 (1 week)."
+        ),
+    )
     resume_interruption_schedule: tuple[int, ...] | None = Field(
         default=None,
         description=(

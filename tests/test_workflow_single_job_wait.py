@@ -454,6 +454,11 @@ def _builder_with_status_dir(mock_analysis, tmp_path, monkeypatch):
     (tmp_path / "_status").mkdir()
     mock_analysis.analysis_paths.analysis_dir = tmp_path
     mock_analysis.cfg_analysis.hpc_time_min_per_sim = 30
+    # The watchdog reads these two optional fields off cfg_analysis. A bare Mock
+    # auto-creates truthy attributes, so they must be pinned to None to model a real
+    # analysis_config (where both default to None and select the legacy fallbacks).
+    mock_analysis.cfg_analysis.hpc_no_progress_timeout_min = None
+    mock_analysis.cfg_analysis.hpc_max_queue_wait_min = None
     b = SnakemakeWorkflowBuilder(mock_analysis)
     monkeypatch.setattr(type(b), "_get_module_load_prefix", lambda self: "")
     return b
@@ -470,6 +475,10 @@ def test_wait_watchdog_fails_fast_on_stall(monkeypatch, _builder_with_status_dir
     )
     # frozen fingerprint -> no progress ever
     monkeypatch.setattr(type(b), "_status_progress_fingerprint", lambda self: (0, 0.0))
+    # SLURM reports NO live work -> the liveness gate does not suspend the timer.
+    # Without this the gate fails OPEN (assume live) and the stall branch is
+    # unreachable, so the test would hang rather than assert.
+    monkeypatch.setattr(type(b), "_workflow_has_live_slurm_jobs", lambda self, **kw: set())
     # collapse the stall window + poll so the test is instant
     res = b._wait_for_tmux_session_completion(
         "sess", verbose=False, poll_interval_s=0, no_progress_timeout_min=1e-6
@@ -503,3 +512,69 @@ def test_wait_reports_clean_exit_as_success(monkeypatch, _builder_with_status_di
     monkeypatch.setattr(type(b), "_tmux_snakemake_exit_status", lambda self, s: 0)
     res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0)
     assert res["completed"] is True
+
+
+def test_wait_watchdog_does_not_kill_while_slurm_jobs_are_live(monkeypatch, _builder_with_status_dir):
+    """Frozen _status/ fingerprint + a collapsed stall window, but SLURM still reports
+    live work -> the watchdog must NOT kill the session. Pre-fix this returns a stall
+    verdict (the queue-wait false kill of campaign 17639894)."""
+    b = _builder_with_status_dir
+    monkeypatch.setattr(type(b), "_status_progress_fingerprint", lambda self: (0, 0.0))
+    # A RUNNING job: live, and NOT all-pending, so the queue-starvation tracker resets.
+    monkeypatch.setattr(type(b), "_workflow_has_live_slurm_jobs", lambda self, **kw: {"RUNNING"})
+    calls = {"n": 0}
+
+    def _fake_run(*a, **k):
+        # tmux has-session alive for 3 polls, then the session exits cleanly.
+        calls["n"] += 1
+        return Mock(returncode=0 if calls["n"] <= 3 else 1, stdout="", stderr="")
+
+    monkeypatch.setattr("hhemt.workflow.subprocess.run", _fake_run)
+    monkeypatch.setattr(type(b), "_tmux_snakemake_exit_status", lambda self, s: 0)
+    res = b._wait_for_tmux_session_completion(
+        "sess", verbose=False, poll_interval_s=0, no_progress_timeout_min=1e-6
+    )
+    assert res["completed"] is True
+    assert "stall" not in res["message"].lower()
+
+
+def test_wait_watchdog_uses_configured_backstop_over_walltime_derivation(
+    monkeypatch, _builder_with_status_dir
+):
+    """cfg.hpc_no_progress_timeout_min overrides max(30, 6*hpc_time_min_per_sim).
+
+    The clock stub must ADVANCE: a constant monotonic makes now - last_progress_t
+    identically 0, the stall branch is never reached, and the test hangs instead of
+    asserting.
+    """
+    b = _builder_with_status_dir
+    b.cfg_analysis.hpc_no_progress_timeout_min = 45  # derivation would give 180
+    monkeypatch.setattr(type(b), "_status_progress_fingerprint", lambda self: (0, 0.0))
+    monkeypatch.setattr(type(b), "_workflow_has_live_slurm_jobs", lambda self, **kw: set())
+    monkeypatch.setattr(
+        "hhemt.workflow.subprocess.run",
+        lambda *a, **k: Mock(returncode=0, stdout="", stderr=""),
+    )
+    ticks = iter([0.0, 1e6])
+    monkeypatch.setattr("hhemt.workflow.time.monotonic", lambda: next(ticks, 1e6))
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0)
+    assert res["completed"] is False
+    assert "45 min" in res["message"]
+
+
+def test_wait_watchdog_reports_queue_starvation_distinctly(monkeypatch, _builder_with_status_dir):
+    """All jobs PENDING past the queue cap -> a queue-starved verdict, NOT a stall verdict."""
+    b = _builder_with_status_dir
+    b.cfg_analysis.hpc_max_queue_wait_min = 30
+    monkeypatch.setattr(type(b), "_status_progress_fingerprint", lambda self: (0, 0.0))
+    monkeypatch.setattr(type(b), "_workflow_has_live_slurm_jobs", lambda self, **kw: {"PENDING"})
+    monkeypatch.setattr(
+        "hhemt.workflow.subprocess.run",
+        lambda *a, **k: Mock(returncode=0, stdout="", stderr=""),
+    )
+    ticks = iter([0.0, 0.0, 1e6, 1e6, 1e6, 1e6])
+    monkeypatch.setattr("hhemt.workflow.time.monotonic", lambda: next(ticks, 1e6))
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0)
+    assert res["completed"] is False
+    assert "queue-starved" in res["message"]
+    assert "stalled" not in res["message"]
