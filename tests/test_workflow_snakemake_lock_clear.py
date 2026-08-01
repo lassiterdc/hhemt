@@ -10,6 +10,7 @@ DoD.
 from __future__ import annotations
 
 import os
+import sys
 from types import SimpleNamespace
 from unittest import mock
 
@@ -75,6 +76,10 @@ def test_interactive_branch_when_env_unset(tmp_path, monkeypatch):
 
     monkeypatch.delenv(_NON_INTERACTIVE_LOCK_CLEAR_ENV, raising=False)
 
+    # The interactive branch is reachable only with a TTY; stub one so this
+    # test asserts the prompt under the condition it has always meant.
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+
     builder = _make_builder(analysis_dir)
 
     with mock.patch("builtins.input", return_value="n") as mock_input:
@@ -84,3 +89,48 @@ def test_interactive_branch_when_env_unset(tmp_path, monkeypatch):
             )
 
     assert mock_input.called, "interactive branch must call input() when env unset"
+
+
+def test_non_tty_with_locks_refuses_with_actionable_error(tmp_path, monkeypatch):
+    """Non-TTY + stale locks → WorkflowError naming the unlock command, not EOFError.
+
+    This is the batch/sbatch submission path. It is unreachable from any
+    ``--dry-run`` (the helper returns early on ``dry_run``), so this unit is
+    the only coverage of it.
+    """
+    from hhemt.exceptions import WorkflowError
+
+    analysis_dir = tmp_path / "an"
+    locks_dir = analysis_dir / ".snakemake" / "locks"
+    locks_dir.mkdir(parents=True)
+    (locks_dir / "0.input.lock").write_text("lock\n")
+
+    monkeypatch.delenv(_NON_INTERACTIVE_LOCK_CLEAR_ENV, raising=False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+
+    builder = _make_builder(analysis_dir)
+
+    with mock.patch("builtins.input", side_effect=EOFError) as mock_input:
+        with pytest.raises(WorkflowError) as excinfo:
+            builder._check_and_clear_snakemake_lock(
+                analysis_dir / "Snakefile", dry_run=False, verbose=False
+            )
+
+    assert not mock_input.called, "non-TTY must not reach input()"
+    assert "--unlock" in str(excinfo.value), "error must carry the manual unlock command"
+
+
+def test_non_tty_without_locks_returns_cleanly(tmp_path, monkeypatch):
+    """Non-TTY + no locks → returns; the guard fires only when locks exist."""
+    analysis_dir = tmp_path / "an"
+    (analysis_dir / ".snakemake").mkdir(parents=True)
+
+    monkeypatch.delenv(_NON_INTERACTIVE_LOCK_CLEAR_ENV, raising=False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+
+    builder = _make_builder(analysis_dir)
+
+    with mock.patch("builtins.input", side_effect=EOFError):
+        builder._check_and_clear_snakemake_lock(
+            analysis_dir / "Snakefile", dry_run=False, verbose=False
+        )

@@ -1048,8 +1048,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         wd = working_dir if working_dir is not None else self.analysis_paths.analysis_dir
         snakemake_state = wd / ".snakemake"
         # Non-interactive test path: silently rmtree locks/ AND incomplete/ and
-        # re-create log/ for the tee target. Production / CLI invocations
-        # leave the env var unset and fall through to the interactive prompt.
+        # re-create log/ for the tee target. Interactive CLI invocations leave
+        # the env var unset and fall through to the prompt below; batch
+        # submissions have no TTY and are refused there with an actionable
+        # unlock command rather than prompting.
         # Phase 1 of synth-test-isolation-and-runtime — Decision D1-Option-D
         # routes the unconditional pre-snakemake clear through this site so
         # fixtures don't need to clear separately. metadata/ is deliberately
@@ -1084,6 +1086,18 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             "in this directory.",
             flush=True,
         )
+
+        if not sys.stdin.isatty():
+            manual_cmd = f"{sys.executable} -m snakemake --unlock --snakefile {snakefile_path}"
+            raise WorkflowError(
+                phase="pre-submission lock check",
+                return_code=1,  # sentinel: non-interactive stdin (WorkflowError requires int)
+                stderr=(
+                    "Stale Snakemake locks require confirmation, but stdin is not a "
+                    "TTY (batch submission). If no other Snakemake process is running "
+                    f"in this directory, unlock and resubmit:\n  {manual_cmd}"
+                ),
+            )
 
         response = input("[Snakemake] Run snakemake --unlock and proceed? [y/N]: ").strip()
         if response.lower() != "y":
