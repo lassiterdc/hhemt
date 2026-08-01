@@ -37,6 +37,15 @@ def test_clean_restart_wipe_removes_only_named_subs_and_delegates_flag_delete(tm
     (analysis_dir / "subanalyses" / "sa_1" / "sa_1.yaml").write_text("sa: 1\n", encoding="utf-8")
     (analysis_dir / "subanalyses" / "sa_2" / "sa_2.yaml").write_text("sa: 2\n", encoding="utf-8")
 
+    # The sub's ANALYSIS-LEVEL model runtime logs live under the MASTER's logs/sims/, not
+    # under the sub dir — model_logfile_for routes every sim of a sweep to one directory.
+    # Seed both subs so the wipe's scoping is observable: sa_1's log must go, sa_2's stays.
+    simlogs = analysis_dir / "logs" / "sims"
+    (simlogs / "_walltime").mkdir(parents=True)
+    for _sa in ("1", "2"):
+        (simlogs / f"model_tritonswmm_sa_{_sa}_evt0.log").write_text("Simulation ends\n", encoding="utf-8")
+        (simlogs / "_walltime" / f"model_tritonswmm_sa_{_sa}_evt0.jsonl").write_text("{}\n", encoding="utf-8")
+
     recorded: list = []
 
     class _RecordingBuilder:
@@ -44,7 +53,10 @@ def test_clean_restart_wipe_removes_only_named_subs_and_delegates_flag_delete(tm
             recorded.append(spec)
 
     stub = types.SimpleNamespace(
-        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
+        # simlog_directory is a REQUIRED (non-Optional) AnalysisPaths field (paths.py:57),
+        # always constructed as {analysis_log_directory}/sims (analysis.py:274). A stub
+        # omitting it is unrealistic, not a signal — the wipe legitimately reads it.
+        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir, simlog_directory=simlogs),
         _workflow_builder=_RecordingBuilder(),
     )
 
@@ -64,9 +76,25 @@ def test_clean_restart_wipe_removes_only_named_subs_and_delegates_flag_delete(tm
         "the setup-generated per-sub config must survive the wipe byte-intact"
     )
 
-    # The good sub (sa_2) is wholly untouched.
+    # The named sub's analysis-level model log and its _walltime ledger sibling are gone.
+    # Leaving the log behind would reproduce, at sa granularity, the stale-evidence skip that
+    # motivated the model_logfile_for relocation: model_run_completed's raw-marker fallback
+    # would find this "Simulation ends" and skip the sim whose outputs were just cleared.
+    # Leaving the ledger behind would double-count into wall_clock_ledger_s on the re-run.
+    assert not (simlogs / "model_tritonswmm_sa_1_evt0.log").exists(), (
+        "the named sub's model log must be removed, else the re-run skips on stale evidence"
+    )
+    assert not (simlogs / "_walltime" / "model_tritonswmm_sa_1_evt0.jsonl").exists(), (
+        "the walltime ledger must go with its log, else the re-run double-counts"
+    )
+
+    # The good sub (sa_2) is wholly untouched — including its log and ledger, which share
+    # the master's one logs/sims/ directory with sa_1's. This is what pins the SCOPING:
+    # a glob that dropped the sa token would take every sub's log in the sweep.
     assert (analysis_dir / "subanalyses" / "sa_2" / "out_tritonswmm" / "swmm_replay.bin").exists()
     assert (analysis_dir / "subanalyses" / "sa_2" / "sa_2.yaml").exists()
+    assert (simlogs / "model_tritonswmm_sa_2_evt0.log").exists(), "the good sub's log must survive"
+    assert (simlogs / "_walltime" / "model_tritonswmm_sa_2_evt0.jsonl").exists()
 
     # Per-sa flag deletion was delegated exactly once with a scope="sa" spec naming sa_1.
     assert len(recorded) == 1

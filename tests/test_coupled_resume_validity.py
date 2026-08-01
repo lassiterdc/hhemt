@@ -350,7 +350,12 @@ def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
             analysis_id="sa_0",
             master_analysis_cfg_yaml=master_dir / "cfg_analysis.yaml",
         ),
-        analysis_paths=SimpleNamespace(simlog_directory=tmp_path / "unused"),
+        # model_logfile_for now derives the master log dir from the sub's OWN analysis_dir
+        # (`.parent.parent`), so the stub must carry the real two-level layout.
+        analysis_paths=SimpleNamespace(
+            simlog_directory=tmp_path / "unused",
+            analysis_dir=master_dir / "subanalyses" / "sa_0",
+        ),
     )
     master = _analysis_stub(
         sensitivity=True,
@@ -385,6 +390,37 @@ def test_model_logfile_method_delegates_to_free_function():
     run = SimpleNamespace(_analysis=a, _scenario=SimpleNamespace(event_iloc=7))
     assert TRITONSWMM_run._analysis_level_model_logfile(run, "tritonswmm") == model_logfile_for(a, 7, "tritonswmm")
     assert model_logfile_for(a, 7, "tritonswmm").name == "model_tritonswmm_evt7.log"
+
+
+def test_sub_model_log_lives_under_master_analysis_dir_not_config_dir(tmp_path):
+    """THE WIPE-COVERAGE INVARIANT. A sub-analysis's model runtime log MUST land inside the
+    MASTER's analysis_dir, so `run(from_scratch=True)`'s fast_rmtree(analysis_dir) removes it
+    along with the outputs it describes.
+
+    FAILS PRE-FIX: the old form derived the dir from master_analysis_cfg_yaml.parent, so with
+    the config placed outside analysis_dir (the synth case-builder's platformdirs layout, and
+    the ordinary production layout where the user's config is not at the analysis root) the
+    log landed outside the wipe. Empirically, that stranded 28/28 week-stale "Simulation ends"
+    logs and made every sim of the pure-TRITON resume arm skip execution.
+    """
+    from hhemt.run_simulation import model_logfile_for
+
+    master_dir = tmp_path / "scratch" / "exp"
+    config_dir = tmp_path / "cache" / "exp"  # deliberately NOT under master_dir
+    sub = SimpleNamespace(
+        cfg_analysis=SimpleNamespace(
+            is_subanalysis=True,
+            analysis_id="sa_gpu_2_r1",
+            master_analysis_cfg_yaml=config_dir / "analysis_config.yaml",
+        ),
+        analysis_paths=SimpleNamespace(
+            simlog_directory=master_dir / "subanalyses" / "sa_gpu_2_r1" / "logs" / "sims",
+            analysis_dir=master_dir / "subanalyses" / "sa_gpu_2_r1",
+        ),
+    )
+    p = model_logfile_for(sub, 0, "triton")
+    assert p == master_dir / "logs" / "sims" / "model_triton_sa_gpu_2_r1_evt0.log"
+    assert config_dir not in p.parents, "model log must not be anchored to the config dir"
 
 
 # ---------------------------------------------------------------------------

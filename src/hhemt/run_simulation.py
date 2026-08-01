@@ -71,8 +71,30 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
     subanalysis_id = ""
     if getattr(analysis.cfg_analysis, "is_subanalysis", False):
         subanalysis_id = str(analysis.cfg_analysis.analysis_id) + "_"
-        master_analysis_yaml = analysis.cfg_analysis.master_analysis_cfg_yaml
-        log_dir = master_analysis_yaml.parent / "logs" / "sims"
+        # Derive the MASTER analysis dir STRUCTURALLY, from this sub's own analysis_dir.
+        # A sub's dir is always `{master_analysis_dir}/subanalyses/sa_{sa_id}` (single
+        # writer: sensitivity_analysis.py:273 + _create_sub_analyses; the same two-level
+        # convention du_sentinels.py:406 detects via parent.name == "subanalyses"), so
+        # `.parent.parent` IS the master analysis_dir and this expression equals the
+        # master's `analysis_paths.simlog_directory` (analysis.py:273-274) by construction.
+        #
+        # DO NOT restore the previous `master_analysis_cfg_yaml.parent / "logs" / "sims"`
+        # form. `master_analysis_cfg_yaml` is the USER'S config-file path
+        # (sensitivity_analysis.py:2417 assigns master_analysis.analysis_config_yaml), so
+        # that form anchored the model logs to an arbitrary directory that
+        # `run(from_scratch=True)`'s fast_rmtree(analysis_dir) does not cover. Empirically
+        # (Rivanna, 2026-08-01, synth_cc_resume_triton): the wipe ran, out_triton/ was
+        # emptied, and 28/28 week-stale `Simulation ends` logs survived in the platformdirs
+        # cache -- so model_run_completed's raw-marker fallback reported every sim complete,
+        # all 28 sims skipped execution, and 168 process_* rules died on a missing
+        # performance/ dir. The docstring above ALREADY specified {master_analysis_dir};
+        # this restores agreement between the spec and the code.
+        #
+        # Deliberately NO fallback to the old location here. A fallback would silently
+        # re-admit the stale-evidence skip this fixes. The one place a fallback IS correct
+        # is eda/raw_resume_identity.py, which reads historical completed arms and gates
+        # nothing.
+        log_dir = analysis.analysis_paths.analysis_dir.parent.parent / "logs" / "sims"
     return log_dir / f"model_{model_type}_{subanalysis_id}evt{event_iloc}.log"
 
 
@@ -244,16 +266,36 @@ class TRITONSWMM_run:
         else:  # swmm
             success = "EPA SWMM completed" in log_content
 
-        # Forensic-only divergence check — NOT a user-visible warning.
-        # Logs at DEBUG level so post-mortem investigation can find raw-output-
-        # clearing bugs without spamming the normal resume path.
+        # Divergence check — WARN, but deliberately NOT load-bearing.
+        #
+        # The prior comment hypothesized a "raw-output-clearing race". That hypothesis is
+        # FALSIFIED: _clear_raw_outputs deletes only children that are DIRECTORIES named in
+        # _CLEAR_RAW_DELETE_SUBDIRS (process_simulation.py:1215), and its docstring states
+        # top-level files such as performance.txt are preserved -- so the only mechanism the
+        # comment named cannot produce the condition it detects. Every observed instance of
+        # this condition has been a DURABLE state (a completion marker that outlived the
+        # artifacts it describes), never a transient one: the log is truncated by
+        # `open(model_logfile, "w")` BEFORE Popen (run_simulation_runner.py:459), so during a
+        # sim `success` is False and this branch is unreachable; and every in-runner call
+        # sits after proc.wait().
+        #
+        # Promoted DEBUG -> WARNING so the next instance is visible without a post-mortem.
+        # NOT promoted to actuation (i.e. not folded into the return value) for two reasons:
+        # (1) the check sits only in the raw-marker FALLBACK -- a positive
+        # `simulation_completed` returns at the `if completed:` branch above and never
+        # reaches here, so coverage would be partial by construction; and (2) gating
+        # completion on an output artifact's presence inverts the toolkit's log-based-truth
+        # principle. The durable fix is that model logs now live INSIDE analysis_dir
+        # (model_logfile_for), so the wipe that removes the outputs removes the marker too.
         if model_type in ("triton", "tritonswmm") and success:
             perf_file = self.performance_file(model_type=model_type)
             if not perf_file.exists():
-                logger.debug(
-                    "model_run_completed: %s log says completed but performance.txt "
-                    "is absent at %s — possible raw-output-clearing race; not a "
-                    "user-visible error.",
+                logger.warning(
+                    "model_run_completed: %s log reports completion but performance.txt "
+                    "is absent at %s. This usually means a completion marker outlived the "
+                    "outputs it describes (stale evidence from a prior campaign). "
+                    "Completion is being reported from the log marker anyway; downstream "
+                    "process_* rules will fail on the missing performance/ directory.",
                     model_type,
                     perf_file,
                 )

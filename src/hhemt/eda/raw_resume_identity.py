@@ -248,9 +248,34 @@ def read_sub_resume_context(
     schedule = tuple(int(n) for n in _sched) if _sched else None
     master = cfg.get("master_analysis_cfg_yaml")
     log_path: Path | None = None
+    # Resolve the model-log dir the way model_logfile_for now does: structurally, from the
+    # sub dir (`{master_analysis_dir}/subanalyses/sa_{sa_id}` -> .parent.parent). The
+    # `master_analysis_cfg_yaml` pointer is retained ONLY as a legacy fallback, because this
+    # function reads arms that COMPLETED before the relocation and whose logs are still at
+    # the config-adjacent path. New-location-first, legacy-second: on a post-fix arm the
+    # first candidate exists and the legacy path is never consulted.
+    #
+    # A fallback is correct HERE and wrong in model_logfile_for. This reader is tolerant by
+    # contract (missing log -> None -> the figure simply loses its resume vlines) and gates
+    # no execution; model_logfile_for gates whether a simulation runs, where a fallback would
+    # silently re-admit stale completion evidence.
+    #
+    # LEGACY-FALLBACK SCOPE -- experiment-bound, DELETE WHEN THE EXPERIMENT IS GONE.
+    # The second candidate serves ONE experiment: the pure-TRITON / TRITON-SWMM two-arm
+    # compute-config sweep whose logs were written by toolkit commit 513d5e1 or EARLIER --
+    # 513d5e1 being the last commit under which model_logfile_for anchored sub model logs to
+    # the config-adjacent path. The concrete analysis trees that need it are that
+    # experiment's four sensitivity masters:
+    #     synth_cc_clean_triton, synth_cc_clean_tritonswmm,
+    #     synth_cc_resume_tritonswmm, synth_cc_resume_triton
+    # DELETION CRITERION: once none of those four trees survives on disk, or every one has
+    # been re-run under a post-513d5e1 toolkit, the first candidate is total -- drop the
+    # `if master:` branch, this comment, and the now-unused `master` read above.
+    _filename = f"model_tritonswmm_{sa_id}_evt{event_iloc}.log"
+    _candidates = [Path(sub_analysis_dir).parent.parent / "logs" / "sims" / _filename]
     if master:
-        candidate = Path(master).parent / "logs" / "sims" / f"model_tritonswmm_{sa_id}_evt{event_iloc}.log"
-        log_path = candidate if candidate.exists() else None
+        _candidates.append(Path(master).parent / "logs" / "sims" / _filename)
+    log_path = next((c for c in _candidates if c.exists()), None)
     return log_path, reporting_interval_s, schedule
 
 

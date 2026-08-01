@@ -4229,6 +4229,20 @@ class TRITONSWMM_analysis:
                 if child.name == config_name:
                     continue
                 fast_rmtree(child, analysis_dir=self.analysis_paths.analysis_dir)
+            # The sub's analysis-level model runtime logs do NOT live under sub_dir --
+            # model_logfile_for routes them to the MASTER's logs/sims/ so all sims of a
+            # sensitivity sweep share one directory. Leaving them behind reproduces, at sa
+            # granularity, exactly the stale-evidence skip that motivated the
+            # model_logfile_for fix: model_run_completed's raw-marker fallback would find a
+            # prior campaign's "Simulation ends" and skip the sim this method just cleared
+            # the outputs for. Remove the log and its _walltime ledger sibling together --
+            # a ledger surviving its log would double-count into wall_clock_ledger_s on the
+            # re-run. Best-effort: a missing file is the normal case on a first restart.
+            _simlogs = self.analysis_paths.simlog_directory
+            for _log in _simlogs.glob(f"model_*_sa_{sa}_evt*.log"):
+                _log.unlink(missing_ok=True)  # EXEMPT-DU: runtime log
+                _ledger = _simlogs / "_walltime" / f"{_log.stem}.jsonl"
+                _ledger.unlink(missing_ok=True)  # EXEMPT-DU: runtime log
         self._workflow_builder._delete_flags_for_force_rerun(
             ResolvedForceRerunSpec(scope="sa", tokens=tuple(restart_ids))
         )
