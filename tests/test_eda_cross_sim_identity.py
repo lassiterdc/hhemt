@@ -9,7 +9,7 @@ import pytest
 import xarray as xr
 
 from hhemt.eda import EdaResult, check_cross_sim_identity
-from hhemt.eda.cross_sim_identity import compare_variable_exact
+from hhemt.eda.cross_sim_identity import _ref_rank, compare_variable_exact
 
 # ---- Fast tier (no build): non-sensitivity skip + graceful-absent + kernel ----
 
@@ -283,3 +283,66 @@ def test_every_tracked_var_has_cf_attributes() -> None:
         f"tracked but unlabelled in _CF_VARIABLE_MAP: {missing} — these publish with "
         f"an auto-generated long_name and no units"
     )
+
+
+class _StubCfg:
+    """Minimal stand-in for a sub's cfg_analysis — only the compute attrs _ref_rank reads."""
+
+    def __init__(self, run_mode, n_gpus=0, n_mpi_procs=0, n_omp_threads=0, n_nodes=0):
+        self.run_mode = run_mode
+        self.n_gpus = n_gpus
+        self.n_mpi_procs = n_mpi_procs
+        self.n_omp_threads = n_omp_threads
+        self.n_nodes = n_nodes
+
+
+class _StubSub:
+    def __init__(self, cfg):
+        self.cfg_analysis = cfg
+
+
+def test_reference_rank_selects_serial_over_lexicographically_earlier_gpu():
+    """N1: the reference is the SERIAL-CPU sub, not the lexicographically-first sa_id.
+
+    The retired rule sorted on sa_id alone, which on the real compute-config sweep selected
+    `gpu_0_r1` — making every reported difference a difference-from-a-GPU-run rather than
+    from the serial oracle. This fixture reproduces that adversarial shape deliberately:
+    the GPU sa_id sorts FIRST lexicographically and the serial sa_id sorts LAST, so the
+    assertion discriminates the new rule from the old one rather than passing under both.
+    """
+    items = [
+        ("a_gpu_0_r1", _StubSub(_StubCfg("gpu", n_gpus=1))),
+        ("m_mpi_8_r1", _StubSub(_StubCfg("mpi", n_mpi_procs=8, n_omp_threads=1))),
+        ("z_serial_0_r1", _StubSub(_StubCfg("serial", n_mpi_procs=1, n_omp_threads=1))),
+    ]
+    ordered = sorted(items, key=_ref_rank)
+    assert ordered[0][0] == "z_serial_0_r1", (
+        "reference must be the serial-CPU sub even when its sa_id sorts last; "
+        f"got {ordered[0][0]}"
+    )
+    # Pre-fix control: sa_id-only ordering picks the GPU sub, so the two rules disagree on
+    # this fixture. Without this the test could not distinguish "serial won" from "serial
+    # happened to sort first anyway".
+    assert sorted(items, key=lambda kv: kv[0])[0][0] == "a_gpu_0_r1"
+
+
+def test_reference_rank_tiebreaks_are_ordered_as_documented():
+    """Among non-serial subs: ascending nodes, then GPUs, then MPI x OMP, then sa_id.
+
+    Pins the rule's LATER terms. Without this only the leading serial term is covered, and
+    a regression in the tiebreak would move the starred reference between renders of the
+    same data while the serial assertion above still passed.
+    """
+    items = [
+        ("b_gpu_3", _StubSub(_StubCfg("gpu", n_gpus=3))),
+        ("a_gpu_1", _StubSub(_StubCfg("gpu", n_gpus=1))),
+        ("c_gpu_2", _StubSub(_StubCfg("gpu", n_gpus=2))),
+    ]
+    assert [sa for sa, _ in sorted(items, key=_ref_rank)] == ["a_gpu_1", "c_gpu_2", "b_gpu_3"]
+
+    # sa_id is the FINAL tiebreak, reached only when every compute term ties.
+    tied = [
+        ("z_gpu_1", _StubSub(_StubCfg("gpu", n_gpus=1))),
+        ("a_gpu_1", _StubSub(_StubCfg("gpu", n_gpus=1))),
+    ]
+    assert [sa for sa, _ in sorted(tied, key=_ref_rank)] == ["a_gpu_1", "z_gpu_1"]

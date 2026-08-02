@@ -271,3 +271,110 @@ def test_errors_and_warnings_renders_html_sensitivity_real(failing_synth_sensiti
     html = out_path.read_text()
     assert "Errors and Warnings" in html
     assert "Analysis summaries created" in html
+
+
+def _eda_stub(analysis_dir, enabled_plots, *, sensitivity=True, reporting_set="b4b"):
+    """Minimal analysis shape `check_eda_calc_ran` reads: all four ENUMERATION-GATE terms.
+
+    The check mirrors the Snakemake rule-all enumeration gate term for term, so a fixture
+    carrying fewer than four terms short-circuits at the first missing one and every
+    assertion below passes trivially. The terms: (1) toggle_sensitivity_analysis, because
+    only the sensitivity-master generators carry an EDA enumeration site; (2) the active
+    reporting set carrying an eda_compute_sensitivity selection; (3) a non-empty
+    eda.enabled_plots; (4) the builder key absent from report.disabled_renderers.
+    """
+    import types
+
+    from hhemt.report_renderers._reporting_sets import get_reporting_set
+
+    ns = types.SimpleNamespace(
+        cfg_analysis=types.SimpleNamespace(
+            eda=types.SimpleNamespace(enabled_plots=list(enabled_plots)),
+            toggle_sensitivity_analysis=sensitivity,
+            report=types.SimpleNamespace(disabled_renderers=[], reporting_set=reporting_set),
+        ),
+        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
+    )
+    ns._active_reporting_set = get_reporting_set(reporting_set)
+    return ns
+
+
+def test_eda_calc_ran_fails_when_targets_are_enumerated_but_no_verdicts_exist(tmp_path):
+    """K1/F4: an analysis that ENUMERATES EDA report targets owes verdicts.
+
+    The degradation panels that replaced the workflow-killing MissingOutputException are
+    correct, but they removed the LOUD failure without replacing the signal. This is the
+    positive signal. The antecedent is the enumeration gate, NOT enabled_plots: that field
+    carries a non-empty default_factory and is true on essentially every analysis, which is
+    why keying on it alone fired on every multisim.
+    """
+    from hhemt.analysis_validation import check_eda_calc_ran
+
+    result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], reporting_set="b4b"))
+
+    assert result.passed is False
+    assert "2 EDA plot(s)" in result.summary, "the summary must name the ENUMERATED-target count"
+    assert result.level == "aggregate"
+    assert result.details and "verdict_count=0" in result.details[0]["detail"]
+
+
+def test_eda_calc_ran_passes_once_a_verdict_artifact_is_present(tmp_path):
+    """Same enumeration, one verdict on disk -> the calc ran."""
+    from hhemt.analysis_validation import check_eda_calc_ran
+
+    eda_dir = tmp_path / "eda"
+    eda_dir.mkdir()
+    (eda_dir / "b4b_clean_identity.verdict.json").write_text("{}", encoding="utf-8")
+
+    result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], reporting_set="b4b"))
+
+    assert result.passed is True
+    assert "1 verdict artifact(s) present" in result.summary
+
+
+def test_eda_calc_ran_is_not_applicable_when_the_set_enumerates_no_targets(tmp_path):
+    """Differently-positioned satisfying input: a set enumerating nothing owes nothing.
+
+    `benchmarking` carries no eda_compute_sensitivity selection, so a sensitivity master on
+    it renders no degradation panels and has no silence to close — even though enabled_plots
+    is NON-empty here. A predicate keyed on enabled_plots alone FAILS this input, which is
+    what pins the check to the enumeration gate rather than to the config.
+    """
+    from hhemt.analysis_validation import check_eda_calc_ran
+
+    result = check_eda_calc_ran(
+        _eda_stub(tmp_path, ["config_diff_maps"], reporting_set="benchmarking")
+    )
+
+    assert result.passed is True
+    assert "N/A" in result.summary
+    assert not (tmp_path / "eda").exists(), "the fixture has no eda/ dir, and that is not a failure"
+
+
+def test_eda_calc_ran_is_not_applicable_to_a_multisim(tmp_path):
+    """The K1 false positive itself: a multisim enumerates no EDA rules whatever set it names.
+
+    generate_snakefile_content carries no EDA enumeration site and the multisim plot
+    dispatcher passes no predicate_inputs, so term 1 is what excludes this whole class.
+    """
+    from hhemt.analysis_validation import check_eda_calc_ran
+
+    result = check_eda_calc_ran(
+        _eda_stub(tmp_path, ["config_diff_maps"], sensitivity=False, reporting_set="b4b")
+    )
+
+    assert result.passed is True
+    assert "N/A" in result.summary
+
+
+def test_eda_rule_spec_templates_pins_the_sets_check_eda_calc_ran_depends_on():
+    """Drift guard: the check's blast radius is exactly the enumerating set membership.
+
+    A new reporting set that adds the eda_compute_sensitivity renderer silently widens what
+    check_eda_calc_ran demands verdicts for. This fails loudly instead.
+    """
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS, eda_rule_spec_templates
+
+    enumerating = {n for n, s in REPORTING_SETS.items() if eda_rule_spec_templates(s)}
+
+    assert enumerating == {"b4b", "compute-sensitivity", "dem-resolution"}

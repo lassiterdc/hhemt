@@ -71,6 +71,24 @@ app = typer.Typer(
     help="H&H Ensemble Modeling Toolkit: Coupled hydrodynamic-stormwater simulation orchestration",
     no_args_is_help=True,
 )
+@app.callback()
+def _root(ctx: typer.Context) -> None:
+    """Root callback: one worktree-resolution guard for every CLI invocation.
+
+    This is the single funnel for the console script, `python -m hhemt`, and
+    `python src/hhemt/cli.py`. Placing the guard here rather than in each command (or
+    in each of the 21 runner `__main__` blocks) is what keeps it out of the
+    copy-pasted-assert category the anti-bloat mandate forbids.
+
+    The 21 runner `__main__` blocks are deliberately NOT guarded: they are
+    subprocess-launched by Snakemake rules and inherit PYTHONPATH from the parent,
+    which this guard has already validated when the parent came through the CLI.
+    """
+    from hhemt._worktree_guard import assert_worktree_source
+
+    assert_worktree_source(strict=True)
+
+
 console = Console()
 console_err = Console(stderr=True)
 

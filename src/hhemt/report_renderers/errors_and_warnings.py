@@ -1,6 +1,7 @@
 """Errors and Warnings sidebar renderer.
 
-Calls `analysis_validation.validate_analysis()` and renders the resulting
+Reads the PERSISTED `validation_report.json` read-model via `load_validation_report`
+(never `validate_analysis()` at render time — Gotcha 53 Class-Y) and renders the resulting
 ValidationReport as an inline-styled HTML document organized into 4 sections
 per the user's requested grouping:
 

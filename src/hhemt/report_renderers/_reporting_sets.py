@@ -656,3 +656,22 @@ def renderer_active(builder_key: str, disabled: list[str] | None) -> bool:
     ``validate_active_reporting_set`` is where such a key raises ConfigurationError.
     """
     return builder_key not in (disabled or ())
+
+def eda_rule_spec_templates(reporting_set: ReportingSet) -> tuple[RuleSpecTemplate, ...]:
+    """Return ``reporting_set``'s ``eda_compute_sensitivity`` rule_spec_templates, or ().
+
+    SINGLE SOURCE for the question "does this set enumerate EDA figures as report
+    targets, and how many?" — shared by the workflow builder's
+    ``_eda_rule_spec_templates`` (which drives the rule emission and the two rule all /
+    render_report enumeration sites) and by
+    ``analysis_validation.check_eda_calc_ran``, which must answer the same question at
+    validate time with no workflow builder in hand. Lives here, on the registry, rather
+    than on the builder, because the answer is a property of the SET.
+
+    Returns the FIRST such selection's templates: a second same-key selection is
+    silently dropped by every consumer (see the _B4B_SELECTION comment).
+    """
+    for sel in reporting_set.renderer_selection:
+        if sel.builder_key == "eda_compute_sensitivity":
+            return sel.rule_spec_template
+    return ()

@@ -116,7 +116,7 @@ def emit_bundle(
         )
 
     with _staging_dir(output_path.parent) as staging:
-        _harvest_and_copy_sources(sources_by_renderer, analysis_dir, staging)
+        declared_sources_absent = _harvest_and_copy_sources(sources_by_renderer, analysis_dir, staging)
         _copy_bundle_baseline(analysis_dir, staging)
         _copy_reference_outputs(analysis, staging)
         aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
@@ -167,6 +167,7 @@ def emit_bundle(
             bundle_root_invariants=aggregated_invariants,
             input_deposits=input_deposits,
             container_build=container_build,
+            declared_sources_absent=declared_sources_absent,
         )
         _emit_bundle_zip(staging, output_path)
 
@@ -191,6 +192,12 @@ def _harvest_and_copy_sources(
     master. The skip keeps the emit side consistent with the declare side; the
     warning preserves auditability (a source that vanished after render shows up
     here rather than failing silently)."""
+    # F4: a declared source that is absent stays NON-FATAL (ADR-6 D3), but the evidence must
+    # survive the run. Accumulate the skipped relative paths and return them so the caller can
+    # record them in the bundle manifest — the manifest that made a false claim then also
+    # carries the record of it. Without this the only trace is a warnings.warn on stderr
+    # inside a Snakemake rule log, which is lost by the time anyone reads the bundle.
+    declared_absent: list[str] = []
     for paths in sources_by_renderer.values():
         for src in paths:
             try:
@@ -198,6 +205,7 @@ def _harvest_and_copy_sources(
             except ValueError:
                 rel = Path("external") / src.name
             if not src.exists():
+                declared_absent.append(str(rel))
                 warnings.warn(
                     f"Bundle harvest: declared source {rel} does not exist on disk; "
                     f"skipping it (ADR-6 D3 permits renderers to declare an expected "
@@ -213,6 +221,7 @@ def _harvest_and_copy_sources(
                 shutil.copytree(src, dest, dirs_exist_ok=True)
             else:
                 shutil.copy2(src, dest)
+    return sorted(set(declared_absent))
 
 
 def _copy_bundle_baseline(analysis_dir: Path, staging: Path) -> None:
@@ -1174,6 +1183,7 @@ def _write_bundle_manifest(
     bundle_root_invariants: dict | None = None,
     input_deposits: list[dict] | None = None,
     container_build: dict | None = None,
+    declared_sources_absent: list[str] | None = None,
 ) -> None:
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
@@ -1185,6 +1195,13 @@ def _write_bundle_manifest(
     }
     if bundle_root_invariants is not None:
         manifest["bundle_root_invariants"] = bundle_root_invariants
+    if declared_sources_absent:
+        # F4: renderers that DECLARED a source which was not on disk at harvest time.
+        # Non-fatal by ADR-6 D3, but recorded here so the state is auditable from the
+        # shipped artifact rather than only from a warning in a rule log. Absent (not
+        # empty) when every declared source resolved, so a clean bundle's manifest is
+        # byte-identical to what it was before this key existed.
+        manifest["declared_sources_absent"] = declared_sources_absent
     if input_deposits:
         # ADR-20: the by-reference record for each EXCLUDED input. Absent (not empty) when
         # the bundle is self-contained, so a self-contained manifest is byte-identical to

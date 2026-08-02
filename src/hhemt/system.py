@@ -33,6 +33,17 @@ _ROW_BLOCK_SIZE = 1024  # row-streaming block size for _write_raster (D-PR-5 B)
 #: time — ancestry, NOT sha-equality, so a descendant of the fix is still post-fix.
 _PINNED_TRITON_COUPLED_RESUME_FIX_SHA = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
 
+#: The upstream TRITON commit that distributes replayed SWMM node depths from rank 0's
+#: ``global_new_depth[]`` into the per-rank ``new_depth[]`` on the RESUME path
+#: (``global_to_local`` + ``MPI_Scatterv``). ``None`` means NO SUCH COMMIT EXISTS YET —
+#: the defect is present at ``3a832f7d`` and at every descendant, so a coupled resume at
+#: ANY currently-reachable pin produces a first-post-resume step that evaluates every
+#: manhole at ``new_depth = 0``, forces the Case-1 exchange branch, and writes a
+#: permanent perturbation into TRITON's depth field. Set this to the fix sha when it
+#: lands upstream; the ancestry capture below then starts stamping True and the
+#: validation arm keyed on it goes quiet with no other code change.
+_PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA: str | None = None
+
 #: Wall-clock cap on waiting for a sibling process's compile of the SAME build dir.
 #: Keyed on the BUILD DIR (not the software dir) so a CPU and a GPU compile of one
 #: tree still proceed in parallel. Sized for a cold TRITON+Kokkos build plus queue
@@ -781,6 +792,24 @@ class TRITONSWMM_system:
         # this clone -> leave has_fix None (INDETERMINATE), never a false pre-fix warn.
         if ancestor.returncode in (0, 1):
             self.log.triton_has_coupled_resume_fix.set(ancestor.returncode == 0)
+
+        # Sibling ancestry stamp for the SWMM node-depth scatter fix. When the constant is
+        # None no fix exists yet, so every clone is pre-fix -> stamp False (defect present).
+        # A None-constant must NOT stamp None: None means INDETERMINATE, which would make
+        # the validation arm silently skip on a defect we have MEASURED to be present.
+        if _PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA is None:
+            self.log.triton_has_swmm_depth_scatter_fix.set(False)
+        else:
+            _sc = subprocess.run(
+                [
+                    "git", "-C", str(d), "merge-base", "--is-ancestor",
+                    _PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA, "HEAD",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if _sc.returncode in (0, 1):
+                self.log.triton_has_swmm_depth_scatter_fix.set(_sc.returncode == 0)
         self.log.write()
         if verbose:
             print(

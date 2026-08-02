@@ -268,12 +268,16 @@ def _b4b_category_title(cat: str) -> str:
 
 
 def _b4b_family_title(fam: str) -> str:
-    """Human panel title from the settled `family` token: 'cpu' -> 'CPU'; a GPU hardware token
-    -> 'GPU {token}'; the degraded single-panel sentinel -> 'All configs'."""
+    """Human panel title from the settled `family` token: 'cpu' -> 'CPU'; 'gpu' -> 'GPU'
+    (N3: ONE GPU family); a legacy per-hardware token -> 'GPU {token}'; the degraded
+    single-panel sentinel -> 'All configs'. The per-hardware branch is retained so a
+    pre-N3 zarr still renders a sensible caption."""
     if fam == "cpu":
         return "CPU"
     if fam == "all":
         return "All configs"
+    if fam == "gpu":
+        return "GPU"
     return f"GPU {fam}"
 
 
@@ -412,6 +416,19 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
     if ref_bits:
         caption = f"{baseline_caption} Reference (Δ = 0 by definition) per family: {ref_bits}."
 
+    # N4 / Gate-0 count-don't-eyeball: the collapsed rows hide a denominator, so state it.
+    # Guarded on `in ds` because a legacy (pre-N4) zarr carries no n_replicates variable and
+    # must render its caption unchanged.
+    if ds is not None and "n_replicates" in ds:
+        _nr = sorted({int(v) for v in ds["n_replicates"].values})
+        if _nr and max(_nr) > 1:
+            _rng = str(_nr[0]) if len(_nr) == 1 else f"{min(_nr)}–{max(_nr)}"
+            caption += (
+                f" Each row aggregates {_rng} replicate run(s) of that compute config,"
+                " worst-case: a cell is green only if EVERY replicate was byte-identical,"
+                " and |Δ| is the maximum over replicates."
+            )
+
     total_rows = sum(row_heights)
     fig.update_layout(
         title=title,
@@ -495,7 +512,7 @@ def _render_b4b(
 
 
 def _render_b4b_clean_identity(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
-    """Cross-hardware results comparison (b4b), reused per-hardware-family over each master's
+    """Cross-hardware results comparison (b4b), reused per-family over each master's
     own subs (serves both the clean and resume masters). Reads eda/b4b_clean_identity.zarr;
     R10 honest-degradation panel when raw outputs were cleared."""
     return _render_b4b(
@@ -507,7 +524,7 @@ def _render_b4b_clean_identity(root: Path, *, cfg_analysis: analysis_config, eda
             "(CPU → serial-CPU, GPU → 1-GPU)</sub>"
         ),
         baseline_caption=(
-            "Identical cells (Δ = 0) are green; differing cells show max |Δ| vs the per-hardware "
+            "Identical cells (Δ = 0) are green; differing cells show max |Δ| vs the per-family "
             "reference, colorbar band 0–τ (τ = 0.03 m)."
         ),
         eda_cfg=eda_cfg,

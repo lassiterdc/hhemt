@@ -5,8 +5,11 @@ flow / over-full-flow / over-full-depth (``max_flow_cms`` /
 ``max_over_full_flow`` / ``max_over_full_depth``) — are bit-identical across all
 sims sharing an event iloc on a SENSITIVITY MASTER (sub-analyses that vary only
 compute config must produce identical physics). Reference-anchored to the
-lexicographically-first present ``sa_id``; verdict passes iff every non-reference
-sub is exactly equal to the reference for every tracked variable.
+SERIAL-CPU sub whose summaries are present (falling back to the smallest present
+compute config, then lexicographic ``sa_id``); verdict passes iff every non-reference
+sub is exactly equal to the reference for every tracked variable. Serial CPU is the
+reference because BIT4BIT is a double-precision serial-oracle property — anchoring
+on any other config reports differences from a run rather than from the oracle.
 
 Reads the per-sub FLAT summaries via ``sub.process._retrieve_combined_output(mode)``
 — NOT the consolidated ``analysis_datatree.zarr`` (consolidation CF-stamps,
@@ -167,12 +170,32 @@ def _combine_cells(arrs: list[xr.DataArray]) -> xr.DataArray:
     return out
 
 
+# Reference = the SERIAL-CPU sub whose summaries are present (N1). The former
+# lexicographically-first rule selected `gpu_0_r1` on the synth compute-config
+# sweep, which made every reported difference a difference-from-a-GPU-run rather
+# than a difference-from-the-serial-oracle. BIT4BIT is a double-precision SERIAL
+# oracle property, so serial CPU is the only reference against which "identical"
+# is a claim about correctness rather than about co-residency on one backend.
+# Ordering key: serial first, then ascending device count, then lexicographic
+# sa_id as the final deterministic tiebreak.
+def _ref_rank(item: tuple[str, object]) -> tuple:
+    sa, sub = item
+    c = getattr(sub, "cfg_analysis", None)
+    rm = str(getattr(c, "run_mode", "") or "")
+    ng = int(getattr(c, "n_gpus", 0) or 0)
+    nm = int(getattr(c, "n_mpi_procs", 0) or 0)
+    no = int(getattr(c, "n_omp_threads", 0) or 0)
+    nn = int(getattr(c, "n_nodes", 0) or 0)
+    return (0 if rm == "serial" else 1, nn, ng, nm * max(no, 1), sa)
+
+
 def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bool = True) -> EdaResult:
     """ADR-4: verify cross-sim reproducibility and EMIT a characterized-divergence verdict.
 
     Returns a skipped ``EdaResult`` on a non-sensitivity analysis. On a sensitivity
     master, compares each enabled ``(event_iloc, mode, variable)`` across
-    sub-analyses against the lexicographically-first present ``sa_id`` reference,
+    sub-analyses against the SERIAL-CPU reference (smallest present compute config,
+    then lexicographic ``sa_id``, as deterministic fallbacks),
     writes ``{analysis_dir}/eda/<plot_id>.zarr`` (max-abs-diff + identical maps) and
     ``<plot_id>.verdict.json``, and returns an ``EdaResult`` carrying the verdict +
     artifact path.
@@ -205,8 +228,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
             ),
         )
 
-    # Reference = lexicographically-first sa_id whose summaries are present.
-    subs = dict(sorted(((str(sa), sub) for sa, sub in sub_items), key=lambda kv: kv[0]))
+    subs = dict(sorted(((str(sa), sub) for sa, sub in sub_items), key=_ref_rank))
     ref_id = next((sa for sa, sub in subs.items() if _enabled_modes(sub)), None)
     if ref_id is None:
         return EdaResult(

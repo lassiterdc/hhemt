@@ -592,6 +592,12 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     # descendant of the fix commit is still post-fix).
     triton_head_sha: LogField[str] = Field(default_factory=LogField)
     triton_has_coupled_resume_fix: LogField[bool] = Field(default_factory=LogField)
+    # Sibling ancestry stamp for the SWMM node-depth SCATTER fix on the coupled resume
+    # path. Like triton_has_coupled_resume_fix this is a `git merge-base --is-ancestor`
+    # RESULT, not a sha — but its pinned sha is None today (no upstream fix exists), and
+    # system.py stamps False rather than None in that case, because the defect is MEASURED
+    # to be present rather than indeterminate.
+    triton_has_swmm_depth_scatter_fix: LogField[bool] = Field(default_factory=LogField)
 
     # System-level DataTree consolidation
     system_datatree_consolidation_complete: LogField[bool] = Field(
@@ -613,6 +619,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_swmm_successful",
         "system_datatree_consolidation_complete",
         "triton_has_coupled_resume_fix",
+        "triton_has_swmm_depth_scatter_fix",
         mode="before",
     )(_create_logfield_validator(bool))
 
@@ -649,6 +656,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "system_datatree_consolidation_complete",
         "triton_head_sha",
         "triton_has_coupled_resume_fix",
+        "triton_has_swmm_depth_scatter_fix",
         "dem_crs_epsg",
         "vertical_crs_epsg",
     )(_logfield_serializer)

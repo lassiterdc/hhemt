@@ -23,41 +23,27 @@ _ALLOW = os.environ.get("HHEMT_ALLOW_INSTALLED") == "1"
 _FORCE_WRONG_SRC = os.environ.get("HHEMT_FORCE_WRONG_SRC")
 
 if not _DISABLE:
-    try:
-        import hhemt  # noqa: E402
-        _resolved = Path(hhemt.__file__).resolve() if _FORCE_WRONG_SRC is None else Path(_FORCE_WRONG_SRC).resolve()
-    except ImportError as _exc:
-        # Shared conda env's editable install may point at a removed worktree — surface the friendly message instead of a raw ModuleNotFoundError.
-        msg = (
-            f"worktree-test-guard: import hhemt failed ({_exc}).\n"
-            f"  expected prefix: {_SRC}\n"
-            f"  shared conda env's editable install may point at a removed or stale path.\n"
-            f"  Set HHEMT_ALLOW_INSTALLED=1 to bypass for installed-package testing."
-        )
-        if _ALLOW:
-            sys.__stderr__.write(f"[worktree-test-guard] WARNING: {msg}\n")
-            sys.__stderr__.flush()
-        else:
-            sys.__stderr__.write(f"[worktree-test-guard] {msg}\n")
-            sys.__stderr__.flush()
-            sys.exit(99)
+    # Layer 3 is DELEGATED to hhemt._worktree_guard.worktree_mismatch_message so the
+    # assertion and its message body exist ONCE. What stays here is pytest-specific and
+    # the shared module must not own it: the HHEMT_FORCE_WRONG_SRC pytester seam, the
+    # sys.__stderr__/__stdout__ writes that bypass pytest's already-installed capture
+    # middleware, and the success-path marker the protocol's Smoke Validation
+    # Requirement greps for. The `label` argument pins this tier's wording, which
+    # tests/test_worktree_guard.py asserts verbatim.
+    from hhemt._worktree_guard import worktree_mismatch_message  # noqa: E402
+
+    msg = worktree_mismatch_message(
+        expected_src=_SRC,
+        force_wrong_src=_FORCE_WRONG_SRC,
+        label="worktree-test-guard",
+    )
+    if msg is None:
+        sys.__stdout__.write(f"[worktree-test-guard] sys.path prefix: {_SRC}\n")
+        sys.__stdout__.flush()
+    elif _ALLOW:
+        sys.__stderr__.write(f"[worktree-test-guard] WARNING: {msg}\n")
+        sys.__stderr__.flush()
     else:
-        try:
-            _resolved.relative_to(_SRC)
-        except ValueError:
-            msg = (
-                f"worktree-test-guard: hhemt.__file__ = {_resolved}\n"
-                f"  expected prefix: {_SRC}\n"
-                f"  shared conda env's editable install points elsewhere.\n"
-                f"  Set HHEMT_ALLOW_INSTALLED=1 to bypass for installed-package testing."
-            )
-            if _ALLOW:
-                sys.__stderr__.write(f"[worktree-test-guard] WARNING: {msg}\n")
-                sys.__stderr__.flush()
-            else:
-                sys.__stderr__.write(f"[worktree-test-guard] {msg}\n")
-                sys.__stderr__.flush()
-                sys.exit(99)
-        else:
-            sys.__stdout__.write(f"[worktree-test-guard] sys.path prefix: {_SRC}\n")
-            sys.__stdout__.flush()
+        sys.__stderr__.write(f"[worktree-test-guard] {msg}\n")
+        sys.__stderr__.flush()
+        sys.exit(99)

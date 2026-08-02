@@ -109,7 +109,46 @@ def _build_intercomparison_html(source: Path, report_cfg) -> str:
         ", ".join(f"{_html.escape(str(e.get('experiment')))} ({_html.escape(str(e.get('role')))})" for e in experiments)
         or "(no experiments recorded)"
     )
-    heading = f"<h2>Cross-Experiment Results: clean vs resume</h2>\n<p>Experiments: {exp_line}</p>\n"
+    # N5: the per-model row counts are ASYMMETRIC by construction and the asymmetry is
+    # correct, so it must READ as correct. It is DERIVED here (never hard-coded) from the
+    # payload's own (model -> distinct variable) map, so the sentence stays true if a
+    # third model arm or a third tracked variable is added.
+    #
+    # Guarded on `pairs` because `heading` is ALSO consumed by the empty-payload early
+    # return below: an unguarded note would render "Measured this render: ." on the
+    # honest-placeholder path, disclosing a denominator that was never measured.
+    _asymmetry_note = ""
+    if pairs:
+        _vars_by_model: dict[str, set[str]] = {}
+        for _p in pairs:
+            _vars_by_model.setdefault(str(_p.get("model", "") or "(unattributed)"), set()).add(
+                str(_p.get("variable", ""))
+            )
+        _rows_by_model = {
+            _m: sum(1 for _p in pairs if str(_p.get("model", "") or "(unattributed)") == _m)
+            for _m in _vars_by_model
+        }
+        _denominator = "; ".join(
+            f"{_m}: {_rows_by_model[_m]} rows = {len(_vars_by_model[_m])} variable(s) "
+            f"({', '.join(sorted(_vars_by_model[_m]))}) x "
+            f"{_rows_by_model[_m] // max(len(_vars_by_model[_m]), 1)} compute configs"
+            for _m in sorted(_vars_by_model)
+        )
+        _asymmetry_note = (
+            "<p class='note'><b>Why the row counts differ per model.</b> Each row is one "
+            "(compute config, key-result variable, event) triple, so a model's row count is "
+            "its compute-config count times its tracked-variable count — not a coverage gap. "
+            "The coupled TRITON-SWMM arm contributes TWO variables (<code>max_wlevel_m</code> "
+            "peak water level and <code>max_flow_cms</code> peak conduit flow); the uncoupled "
+            "pure-TRITON arm contributes ONE (<code>max_wlevel_m</code>), because a pure-TRITON "
+            "run has no SWMM conduits and therefore no flow variable to compare. Measured this "
+            f"render: {_denominator}. Both arms cover the same compute configs.</p>\n"
+        )
+    heading = (
+        f"<h2>Cross-Experiment Results: clean vs resume</h2>\n"
+        f"<p>Experiments: {exp_line}</p>\n"
+        f"{_asymmetry_note}"
+    )
 
     if not pairs:
         body = (

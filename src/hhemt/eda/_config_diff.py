@@ -358,73 +358,6 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
     return groups
 
 
-def _config_class_key(attrs: dict) -> tuple:
-    """Panel identity: the run-mode class, with GPU split by HARDWARE family.
-
-    This is the G3-fungible grouping axis. It is a pure function of the COMPUTE attrs —
-    ``run_mode`` plus, for GPU, the partition-derived hardware token — with no coupling to
-    SWMM, to the model arm, or to any byte-identity artifact, so the panel SET is identical
-    in both model arms by construction.
-
-    GPU splits by hardware rather than collapsing to one panel because an a6000 job and an
-    a100 job are DISTINCT configs (``_derive_config_label`` already encodes that), and
-    because the ordering rule this figure implements speaks of GPU groupingS in the plural.
-    It does NOT split by device count: that is what keeps group membership varied, so
-    "larger groups toward the top" orders something real rather than a row of singletons."""
-    rm = str(attrs.get("run_mode", "?"))
-    return (rm, _gpu_hardware(attrs)) if rm == "gpu" else (rm, "")
-
-
-def _group_by_config_class(subs: dict[str, dict], root: Path | None) -> list[dict]:
-    """Cluster subs by COMPUTE-CONFIG CLASS -- run mode, with GPU split by hardware family.
-
-    Replaces byte-identity as the grouping AXIS. Byte-identity clusters are model-DEPENDENT
-    (measured: the coupled arm splits along CPU-vs-GPU while the pure-TRITON arm holds one
-    cluster straddling every run mode), which gives the two arms of this same-named figure
-    structurally different panels. Byte-identity is not lost -- it is reported per group in
-    the "byte-identical to family ref" column, which is where a VERDICT belongs.
-
-    Retains ``_group_by_identity``'s uniform-grid fail-fast: this figure subtracts
-    sub-analyses cell-wise, which assumes one grid regardless of the grouping axis."""
-    groups: list[dict] = []
-    shapes = {sa_id: np.asarray(s["wlevel"].values).shape for sa_id, s in subs.items()}
-    if len(set(shapes.values())) > 1:
-        raise ProcessingError(
-            operation="config_diff_group_by_config_class",
-            filepath=None,
-            reason=(
-                f"config_diff_maps requires a UNIFORM grid across sub-analyses; got "
-                f"max_wlevel_m shapes {shapes}. This figure subtracts sub-analyses "
-                f"cell-wise, which assumes one grid. A mixed-resolution master needs the "
-                f"dem-resolution reporting set (which regrids), not config_diff_maps -- set "
-                f"report_config.reporting_set='dem-resolution' and "
-                f"eda.enabled_plots accordingly."
-            ),
-        )
-    by_key: dict[tuple, dict] = {}
-    for sa_id, s in subs.items():
-        key = _config_class_key(s["attrs"])
-        grp = by_key.get(key)
-        if grp is None:
-            grp = {
-                "members": [],
-                "attrs": dict(s["attrs"]),
-                "labels": [],
-                "run_modes": [],
-                "n_resumes": [],
-                "wlevel": np.asarray(s["wlevel"].values),
-                "flow": (np.asarray(s["flow"].values) if s["flow"] is not None else None),
-                "wlevel_da": s["wlevel"],
-                "flow_da": s["flow"],
-            }
-            by_key[key] = grp
-            groups.append(grp)
-        grp["members"].append(sa_id)
-        grp["labels"].append(s["label"])
-        grp["run_modes"].append(s["run_mode"])
-        grp["n_resumes"].append(s["n_resumes"])
-    return groups
-
 
 def _signed_pct(delta: np.ndarray, base: np.ndarray) -> np.ndarray:
     """100*(group-serial)/serial, NaN where the serial baseline is ~0 (undefined)."""
@@ -644,11 +577,18 @@ def _panel_order_key(g: dict) -> tuple:
     within a category, larger groups (more distinct configs) toward the top; ties broken
     smaller->larger compute-config (total device count); final tie alphabetical run-mode."""
     attrs = g.get("attrs", {})
+    # N1 level-2 ordering, applied WITHIN the identity partition produced by
+    # _group_by_identity. Terms in prescribed order: (1) the identity group that
+    # CONTAINS serial CPU sorts first — it is the oracle class and the diff maps are
+    # taken against it; (2) CPU groupings before GPU groupings; (3) larger groups
+    # toward the top; (4) ties broken smaller->larger compute config; (5) final tie
+    # alphabetical by run mode.
+    has_serial = 0 if any(str(rm) == "serial" for rm in g.get("run_modes", [])) else 1
     is_gpu = 1 if any(str(rm) == "gpu" for rm in g.get("run_modes", [])) else 0
     n_configs = len(set(g.get("labels", [])))
     device_count = _device_count(attrs)
     run_mode = min(sorted({str(rm) for rm in g.get("run_modes", [])}), default="")
-    return (is_gpu, -n_configs, device_count, run_mode)
+    return (has_serial, is_gpu, -n_configs, device_count, run_mode)
 
 
 def _config_diff_absent_panel(*, headline: str, observed: str, remedy: str) -> go.Figure:
@@ -760,13 +700,19 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # Identity labels (flat-summary partition) — shared by the grouping and the summary
     # column's three-state verdict; None on a legacy bundle with no identity artifact.
     labels = _identity_labels(root)
-    # G3 (model fungibility, the #1 rule): the GROUPING AXIS is the compute-config class, NOT
-    # byte-identity. Byte-identity clusters are model-DEPENDENT -- measured, the coupled arm
-    # splits along CPU-vs-GPU while the pure-TRITON arm holds one cluster straddling every run
-    # mode -- so using them as the axis gives the two arms of this same-named figure
-    # structurally different panels. The byte-identity VERDICT is still reported per group in
-    # the summary table's identity column.
-    groups = _group_by_config_class(subs, root)
+    # N1 (user ruling): the GROUPING AXIS is byte-identity. Configs that are b4b-identical
+    # to each other form a group; the prescribed serial -> CPU -> GPU ordering is applied
+    # WITHIN each identity group by _panel_order_key, not across the whole figure.
+    #
+    # G3 (model fungibility, the #1 rule) is preserved at the level where it belongs — the
+    # RULE, not the panel COUNT. Byte-identity clusters are model-DEPENDENT (measured: the
+    # coupled arm splits along CPU-vs-GPU while the pure-TRITON arm holds one cluster
+    # straddling every run mode), so the two arms may show different panel COUNTS. That is
+    # an honest measured property of each arm's data. What must be identical across arms is
+    # the grouping rule, the ordering, the columns, and the palettes — and the caption
+    # discloses the data-determined count so a reader cannot mistake it for a renderer
+    # divergence.
+    groups = _group_by_identity(subs, root)
     serial_grp = next((g for g in groups if "serial" in g["run_modes"]), None)
     if serial_grp is None:
         fig = go.Figure()

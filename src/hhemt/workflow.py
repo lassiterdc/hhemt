@@ -8805,6 +8805,9 @@ rule render_report:
     def _eda_rule_spec_templates(self) -> tuple:
         """The active set's ``eda_compute_sensitivity`` rule_spec_templates, or ().
 
+        Delegates to ``_reporting_sets.eda_rule_spec_templates`` — the registry-side
+        single source, shared with ``analysis_validation.check_eda_calc_ran``.
+
         SINGLE SOURCE for both the rule emission
         (``_build_plot_rule_block_eda_compute_sensitivity``) and the two rule all /
         render_report enumeration sites, so an N-figure EDA family cannot desync its
@@ -8812,10 +8815,9 @@ rule render_report:
         selection carries no EDA renderer (default / benchmarking), which is what keeps
         those sets byte-identical.
         """
-        for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection:
-            if sel.builder_key == "eda_compute_sensitivity":
-                return sel.rule_spec_template
-        return ()
+        from hhemt.report_renderers._reporting_sets import eda_rule_spec_templates
+
+        return eda_rule_spec_templates(self._resolve_active_reporting_set(self.master_analysis))
 
     def _build_plot_rule_block_eda_compute_sensitivity(self, *, ctx: RuleEmissionContext | None = None) -> str:
         """Generate the EDA adapter plot rules for the active reporting set (R11, D13).

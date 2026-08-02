@@ -995,7 +995,7 @@ class TRITONSWMM_analysis:
             ),
         ]
         # b4b producer (Phase 4): ONE calc, ONE backing zarr (b4b_clean_identity — the
-        # per-hardware-family cross-config raw byte-identity figure over the master's OWN subs,
+        # per-family cross-config raw byte-identity figure over the master's OWN subs,
         # applicable on both the clean and resume masters). The former within-master
         # b4b_clean_vs_resume figure is removed (F8: always degraded on a single-arm master);
         # the clean-vs-resume comparison lives on the combine surface
@@ -1036,6 +1036,23 @@ class TRITONSWMM_analysis:
         # ADR-14: HTML is a best-effort nbconvert export of the notebook (the source
         # of truth); a kernel/exec failure degrades to None, never fails the loop.
         report_path = export_eda_html(notebook_path, root=root)
+        # The persisted validation read-model (validation_report.json) is written at
+        # CONSOLIDATION and again by export_scenario_status — both strictly BEFORE any
+        # eda() invocation — so check_eda_calc_ran is baked as a FAILURE on every master
+        # whose reporting set enumerates EDA figures. Re-persist here, symmetric with the
+        # v9/F3 export_scenario_status re-persist that exists for the same reason
+        # (scenario_status.csv did not exist at consolidation time). Non-fatal: a persist
+        # failure must never fail the EDA loop.
+        # SCOPE: this re-runs validate_analysis WHOLE-TREE and re-stamps the parent DU
+        # sentinels, so every check's verdict — not only "EDA calc ran" — is recomputed at
+        # eda() time and the report's Errors-and-Warnings section is sourced from this
+        # moment rather than from consolidation.
+        try:
+            from hhemt.analysis_validation import persist_validation_report
+
+            persist_validation_report(self)
+        except Exception as _e:  # pragma: no cover - defensive, mirrors consolidate_workflow
+            print(f"[eda] validation_report.json re-persist failed (non-fatal): {_e}", flush=True)
         return EdaReportResult(
             report_path=report_path,
             notebook_path=notebook_path,

@@ -31,6 +31,69 @@ _INLINE_STYLE = (
 )
 
 
+def _derived_block_html(derived: dict) -> str:
+    """Standalone rendering of the derived cross-experiment finding.
+
+    Used on the no-child-reports path, where there is no matrix to carry a row but the
+    finding is still true and still worth surfacing.
+    """
+    return (
+        "<p class='note fail'><b>"
+        + _html.escape(str(derived.get("name", "")))
+        + "</b> (derived across experiments) &mdash; "
+        + _html.escape(str(derived.get("summary", "")))
+        + "</p>"
+    )
+
+
+def _swmm_invisible_divergence_finding(combined_root: Path) -> dict | None:
+    """The TRITON-visible / SWMM-invisible clean-vs-resume signature, as a warning row.
+
+    Measured on the pure-TRITON campaign: max_wlevel_m differs on 14/14 coupled configs
+    while max_flow_cms is identical on 14/14. That asymmetry is the FINGERPRINT of the
+    SWMM node-depth scatter defect — the interface error collapses from 1.45e+02 cfs to
+    2.1e-03 within ~1000 steps, so SWMM-side maxima are unchanged at reported precision
+    while TRITON's own depth field carries a permanent perturbation. A reader looking at
+    the intercomparison table sees a wall of near-zero max_abs_diff values and reads
+    "resume reproduces clean"; the asymmetry is what says otherwise, and nothing surfaced
+    it. Returns None when the signature is absent (either variable missing, or both
+    variables agree), so this fires on a PATTERN, never on a mere non-identity.
+    """
+    rm = combined_root / "combined_intercomparison.json"
+    if not rm.exists():
+        return None
+    try:
+        pairs = _json.loads(rm.read_text()).get("pairs", [])
+    except (OSError, ValueError):
+        return None
+    coupled = [p for p in pairs if str(p.get("model", "")) == "TRITON-SWMM"]
+    depth = [p for p in coupled if p.get("variable") == "max_wlevel_m"]
+    flow = [p for p in coupled if p.get("variable") == "max_flow_cms"]
+    if not depth or not flow:
+        return None
+    n_depth_diff = sum(1 for p in depth if not p.get("identical", True))
+    n_flow_diff = sum(1 for p in flow if not p.get("identical", True))
+    if not (n_depth_diff == len(depth) and n_flow_diff == 0):
+        return None
+    return {
+        "name": "Coupled clean-vs-resume divergence is TRITON-only",
+        "level": "aggregate",
+        "passed": False,
+        "summary": (
+            f"Every coupled config's max_wlevel_m differs clean-vs-resume "
+            f"({n_depth_diff}/{len(depth)}) while every config's max_flow_cms is identical "
+            f"(0/{len(flow)} differ). This asymmetry is the signature of the SWMM node-depth "
+            "SCATTER defect on the resume path: the replayed depths never reach the per-rank "
+            "new_depth[], the first post-resume step forces the Case-1 exchange branch at every "
+            "manhole, and the perturbation lands permanently in TRITON's depth field while the "
+            "interface error decays below SWMM's reported precision within ~1000 steps. "
+            "SWMM-side agreement is NOT evidence that the resume reproduced the clean run. "
+            "See the per-analysis 'Coupled resume validity' check."
+        ),
+        "details": [],
+    }
+
+
 def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     analysis_dir = Path(analysis.analysis_paths.analysis_dir)
     crates = analysis_dir / "child_crates"
@@ -48,6 +111,16 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
                     checks = []
             child_reports.append((child.name, checks))
 
+    # S4: a cross-arm derived finding, computed from the shipped combine read-model at
+    # render time. The read-model MUST be declared as a source: audit_renderer_io
+    # (Gotcha 53) raises ProcessingError on any render-time read outside the declared
+    # set, so an undeclared read here would be fatal under HHEMT_ENABLE_PROVENANCE_AUDIT.
+    # Declared unconditionally (declared-but-absent only warns; undeclared-but-read is
+    # fatal), matching the child_crates/*/validation_report.json treatment above.
+    _derived_rm = analysis_dir / "combined_intercomparison.json"
+    sources.append(_derived_rm)
+    derived = _swmm_invisible_divergence_finding(analysis_dir)
+
     prov = ProvenanceLog()
     with prov.artist(
         axes_id="html_section",
@@ -59,7 +132,7 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
                 "data",
                 ProvenanceRef(source_path=src.relative_to(analysis_dir).as_posix()),
             )
-        html = _render_rollup_html(child_reports)
+        html = _render_rollup_html(child_reports, derived=derived)
 
     emit_plot_with_sources(
         html,
@@ -72,7 +145,9 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     )
 
 
-def _render_rollup_html(child_reports: list[tuple[str, list[dict]]]) -> str:
+def _render_rollup_html(
+    child_reports: list[tuple[str, list[dict]]], *, derived: dict | None = None
+) -> str:
     # Union of check names across experiments, preserving first-seen order.
     check_names: list[str] = []
     seen: set[str] = set()
@@ -85,6 +160,8 @@ def _render_rollup_html(child_reports: list[tuple[str, list[dict]]]) -> str:
 
     if not child_reports or not check_names:
         body = "<p class='note'>No per-experiment validation reports were found in child_crates/.</p>"
+        if derived is not None:
+            body += _derived_block_html(derived)
         return (
             "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
             + _INLINE_STYLE
@@ -107,6 +184,18 @@ def _render_rollup_html(child_reports: list[tuple[str, list[dict]]]) -> str:
                 summ = _html.escape(str(match.get("summary", "")))
                 cells.append(f"<td class='fail' title='{summ}'>FAIL</td>")
         rows.append(f"<tr><td>{_html.escape(name)}</td>{''.join(cells)}</tr>")
+
+    if derived is not None:
+        # Spans every experiment column: this finding is DERIVED across the combine, so it
+        # belongs to no single child. A per-column cell would assert it about one
+        # experiment, which is not what was measured.
+        _n_cols = len(child_reports) + 1
+        _summ = _html.escape(str(derived.get("summary", "")))
+        _nm = _html.escape(str(derived.get("name", "")))
+        rows.append(
+            f"<tr><td colspan='{_n_cols}' class='fail'>"
+            f"<b>{_nm}</b> (derived across experiments) &mdash; {_summ}</td></tr>"
+        )
 
     table = "<table><thead><tr><th>Check</th>" + header + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
     return (

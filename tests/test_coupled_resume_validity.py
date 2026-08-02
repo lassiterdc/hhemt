@@ -180,14 +180,14 @@ def _write_dead_path_decoy(scen_dir, text):
 
 
 def test_coupled_off_is_na(monkeypatch):
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: (None, None))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: (None, None, None))
     res = check_coupled_resume_validity(_analysis_stub(coupled=False))
     assert res.passed is True
     assert "not enabled" in res.summary
 
 
 def test_unstamped_is_indeterminate(monkeypatch):
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: (None, None))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: (None, None, None))
     res = check_coupled_resume_validity(_analysis_stub(df=_resumed_df()))
     assert res.passed is True
     assert "unknown" in res.summary
@@ -195,7 +195,7 @@ def test_unstamped_is_indeterminate(monkeypatch):
 
 
 def test_prefix_with_resume_warns(monkeypatch):
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("deadbeef", False))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("deadbeef", False, True))
     res = check_coupled_resume_validity(_analysis_stub(df=_resumed_df()))
     assert res.passed is False
     assert len(res.details) == 1
@@ -203,7 +203,7 @@ def test_prefix_with_resume_warns(monkeypatch):
 
 
 def test_prefix_without_resume_passes(monkeypatch):
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("deadbeef", False))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("deadbeef", False, True))
     empty = pd.DataFrame([{"model_type": "tritonswmm", "n_resumes": 0, "scenario_directory": ""}])
     res = check_coupled_resume_validity(_analysis_stub(df=empty))
     assert res.passed is True
@@ -215,7 +215,7 @@ def test_postfix_missing_replay_marker_warns(monkeypatch, tmp_path):
     FAILS PRE-FIX: today the check reads the decoy (marker PRESENT) -> 0 details ->
     passed=True, so `assert res.passed is False` fails.
     """
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
     scen = tmp_path / "sim_0"
     a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
     _write_real_log(a, 0, _CKPT + _ENDS)
@@ -235,7 +235,7 @@ def test_postfix_with_replay_marker_passes(monkeypatch, tmp_path):
     passed=False, so `assert res.passed is True` fails. The denominator assertion is the
     second lock: a vacuous pass reports "0 ... examined".
     """
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
     scen = tmp_path / "sim_0"
     a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
     _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS)
@@ -252,7 +252,7 @@ def test_postfix_unreadable_log_is_indeterminate(monkeypatch, tmp_path):
     FAILS PRE-FIX: today the check reads the decoy (marker ABSENT) -> 1 detail ->
     passed=False, so `assert res.passed is True` fails.
     """
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
     scen = tmp_path / "sim_0"
     a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
     # No _write_real_log — the producer path is absent.
@@ -272,7 +272,7 @@ def test_postfix_incomplete_last_exec_is_indeterminate(monkeypatch, tmp_path):
     FAILS PRE-FIX: today the check reads the decoy (complete, no replay marker) -> 1 detail
     -> passed=False, so `assert res.passed is True` fails. Pre-fix there is no gate at all.
     """
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
     scen = tmp_path / "sim_0"
     a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
     _write_real_log(a, 0, _CKPT + "running\n")  # resumed, then killed: no replay, no ends
@@ -297,7 +297,7 @@ def test_postfix_fresh_last_exec_is_out_of_scope(monkeypatch, tmp_path):
     fails against the PRE-ADDENDUM spec too, which had no scope gate either — this test is
     what the live checkpoint-marker evidence bought.
     """
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
     scen = tmp_path / "sim_0"
     a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
     _write_real_log(a, 0, "start\n" + _ENDS)  # NO _CKPT: this exec ran fresh
@@ -322,7 +322,7 @@ def test_postfix_partial_checkpoint_read_is_indeterminate(monkeypatch, tmp_path)
 
     FAILS PRE-FIX: no scope gate -> complete + no replay marker -> 1 detail -> passed=False.
     """
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
     scen = tmp_path / "sim_0"
     a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
     _write_real_log(a, 0, _CKPT_ATTEMPT + _ENDS)  # attempt WITHOUT the [OK] completion
@@ -341,7 +341,7 @@ def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
     FAILS PRE-FIX: today the check reads the decoy (marker PRESENT) -> passed=True, so
     `assert res.passed is False` fails.
     """
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
     scen = tmp_path / "sim_0"
     master_dir = tmp_path / "master"
     sub = SimpleNamespace(
@@ -460,7 +460,7 @@ def test_provenance_stamp_read_roundtrip(tmp_path):
 
     write_datatree_zarr(tree, zarr_path)
 
-    sha, has_fix = av._read_triton_provenance(analysis)
+    sha, has_fix, scatter = av._read_triton_provenance(analysis)
     assert sha == "cafebabecafebabecafebabecafebabecafebabe"
     assert has_fix is True
 
@@ -520,7 +520,7 @@ def test_provenance_reader_does_not_use_auto_rechunking(tmp_path, monkeypatch):
 
     monkeypatch.setattr(xr, "open_datatree", _fake_open_datatree)
 
-    sha, has_fix = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
+    sha, has_fix, scatter = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
     assert sha == "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
     assert has_fix is True
 
@@ -540,9 +540,9 @@ def test_provenance_reader_warns_but_never_raises_on_unexpected_failure(tmp_path
     monkeypatch.setattr(xr, "open_datatree", _boom)
 
     with caplog.at_level(logging.WARNING, logger="hhemt.analysis_validation"):
-        sha, has_fix = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
+        sha, has_fix, scatter = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
 
-    assert (sha, has_fix) == (None, None)  # graceful-absent, never raises
+    assert (sha, has_fix, scatter) == (None, None, None)  # graceful-absent, never raises
     assert "INDETERMINATE" in caplog.text
     assert "RuntimeError" in caplog.text
 
@@ -561,9 +561,9 @@ def test_provenance_reader_is_quiet_on_genuinely_absent_tree(tmp_path, monkeypat
     monkeypatch.setattr(xr, "open_datatree", _absent)
 
     with caplog.at_level(logging.WARNING, logger="hhemt.analysis_validation"):
-        sha, has_fix = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
+        sha, has_fix, scatter = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
 
-    assert (sha, has_fix) == (None, None)
+    assert (sha, has_fix, scatter) == (None, None, None)
     assert caplog.text == ""
 
 
@@ -585,7 +585,7 @@ def test_postfix_unreadable_log_durable_stamp_replayed_passes(monkeypatch, tmp_p
 
     from hhemt.utils import write_datatree_zarr
 
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
     scen = tmp_path / "sim_0"
     a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
     # No _write_real_log — the producer log path is ABSENT (purged).
@@ -609,7 +609,7 @@ def test_postfix_unreadable_log_durable_stamp_not_replayed_warns(monkeypatch, tm
 
     from hhemt.utils import write_datatree_zarr
 
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
     scen = tmp_path / "sim_0"
     a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
     zarr_path = tmp_path / "analysis_datatree.zarr"
@@ -723,3 +723,62 @@ def test_resume_schedule_honored_is_quiet_when_realized_boundaries_match():
     )
     res = check_resume_schedule_honored(_triton_arm_b_stub(df))
     assert res.details == [], f"verified-good sim should emit no detail, got {res.details}"
+
+
+# --- Arm C (S8): replayed SWMM node depths are never scattered to the ranks. ----------
+# The three-way fixture below is the whole contract: Arm C must fire ONLY on the post-fix
+# branch, must be suppressed where Arm A already fires (so a doubly-affected sim receives
+# one remedy rather than two contradictory ones), and must go quiet once the upstream
+# scatter fix lands. All three share a replay-marker-PRESENT log, which is what isolates
+# Arm C from Arm B — the replay ran; its result was then discarded.
+
+
+def test_armc_suppressed_when_arm_a_fires(monkeypatch, tmp_path):
+    """has_fix=False -> Arm A fires and Arm C does NOT, so exactly one detail per scenario.
+
+    Anchored on the DETAIL COUNT rather than on message wording: a count of 1 is true in
+    both the pre-fix and post-fix worlds, whereas asserting on Arm A's wording alone would
+    pass even if Arm C also appended a second, contradictory row.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("deadbeef", False, False))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is False
+    assert len(res.details) == 1, "Arm C must not append a second detail on the pre-fix branch"
+    assert "PRE-FIX" in res.details[0]["detail"]
+
+
+def test_armc_fires_on_postfix_replayed_without_scatter(monkeypatch, tmp_path):
+    """has_fix=True, replay marker PRESENT, scatter absent -> Arm C fires.
+
+    This is the case Arms A and B are both silent on by construction, which is why the
+    fixture writes a complete, replayed log: Arm B passes on it, so a detail here can only
+    have come from Arm C.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, False))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is False
+    assert len(res.details) == 1
+    assert "lacks the SWMM node-depth SCATTER" in res.details[0]["detail"]
+    assert "max_wlevel_m / H / MH from this sim are INVALID" in res.details[0]["detail"]
+    assert "lacking the SWMM node-depth scatter" in res.summary
+
+
+def test_armc_quiet_when_scatter_fix_present(monkeypatch, tmp_path):
+    """has_fix=True, scatter=True -> the arm goes quiet with no other code change.
+
+    This is the forward-compatibility assertion: when the upstream fix lands and the pin
+    constant is set, the ancestry stamp starts reporting True and this arm stops firing.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []

@@ -509,7 +509,7 @@ _TRITON_CHECKPOINT_ATTEMPT_MARKER = "Reading checkpoint files"
 
 def _read_triton_provenance(
     analysis: TRITONSWMM_analysis,
-) -> tuple[str | None, bool | None]:
+) -> tuple[str | None, bool | None, bool | None]:
     """Graceful-absent read of the consolidated-tree TRITON provenance root attrs.
 
     Returns ``(triton_producing_sha, triton_has_coupled_resume_fix)``. Mirrors
@@ -527,7 +527,7 @@ def _read_triton_provenance(
     else:
         zarr_path = getattr(paths, "analysis_datatree_zarr", None)
     if zarr_path is None or not zarr_path.exists():
-        return None, None
+        return None, None, None
     # NO chunking: this reader consumes ONLY root attrs, and `chunks="auto"` raises
     # NotImplementedError ("Can not use auto rechunking with object dtype") on any
     # tree carrying an object-dtype variable — which the bare except below then
@@ -541,7 +541,7 @@ def _read_triton_provenance(
     except (FileNotFoundError, OSError, KeyError, ValueError):
         # Genuinely absent / unreadable tree (pre-provenance or off-checkout) —
         # the documented graceful-absent path. Quiet by design.
-        return None, None
+        return None, None, None
     except Exception as e:
         # NEVER raise (validation must not abort a run over a diagnostic), but do
         # NOT swallow silently: an unexpected exception here means this check is
@@ -550,13 +550,16 @@ def _read_triton_provenance(
             f"TRITON provenance read failed unexpectedly for {zarr_path} "
             f"({type(e).__name__}: {e}); coupled-resume validity is INDETERMINATE."
         )
-        return None, None
+        return None, None, None
     sha = tree.attrs.get("triton_producing_sha")
     has_fix = tree.attrs.get("triton_has_coupled_resume_fix")
     # zarr may round-trip the bool as numpy bool_/0-1; normalize to Python bool-or-None.
     if has_fix is not None:
         has_fix = bool(has_fix)
-    return (str(sha) if sha is not None else None), has_fix
+    scatter = tree.attrs.get("triton_has_swmm_depth_scatter_fix")
+    if scatter is not None:
+        scatter = bool(scatter)
+    return (str(sha) if sha is not None else None), has_fix, scatter
 
 
 def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
@@ -617,7 +620,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             summary="Coupled model not enabled — coupled-resume validity N/A.",
             details=[],
         )
-    triton_sha, has_fix = _read_triton_provenance(analysis)
+    triton_sha, has_fix, has_scatter_fix = _read_triton_provenance(analysis)
     if has_fix is None:
         return CheckResult(
             name="Coupled resume validity",
@@ -828,6 +831,51 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
                     }
                 )
 
+    # ---- ARM C (S8): SWMM node-depth scatter absent on the resume path. -------------
+    # The defect: replay_exchange_history rebuilds SWMM node depths into rank 0's
+    # global_new_depth[], but the global_to_local + MPI_Scatterv that distributes them
+    # into the per-rank new_depth[] is ABSENT on the resume path. The first post-resume
+    # step evaluates every manhole at new_depth = 0, forces the Case-1 exchange branch,
+    # flips the sign of the surface/sewer flux at every junction, and writes a permanent
+    # perturbation into TRITON's depth field.
+    #
+    # Why this arm cannot be folded into A or B: Arm A fires on PRE-3a832f7d code; Arm B
+    # fires when the replay marker is ABSENT. This defect occurs at a POST-fix pin WITH the
+    # replay marker present — the replay ran, and its result was then discarded by the
+    # missing scatter. Arms A and B are both silent on it by construction.
+    #
+    # Why it is INVISIBLE to the artifacts the existing arms read: measured on this
+    # campaign, max_flow_cms is identical on 14/14 coupled configs while max_wlevel_m
+    # differs on 14/14, and SWMM's own hydraulics.rpt link/node maxima are unchanged at
+    # reported precision because the interface error collapses from 1.45e+02 cfs to
+    # 2.1e-03 within ~1000 steps. Only TRITON's own H/MH rasters carry it. No amount of
+    # rpt/summary reading can detect it, which is why this arm is PIN-CONDITIONED rather
+    # than evidence-conditioned.
+    #
+    # SUPPRESSION (reconciliation with Arm A, required so a doubly-affected sim does not
+    # receive contradictory guidance): when has_fix is False, Arm A has already fired and
+    # its remedy — re-run at a pin carrying BOTH fixes — subsumes this one. Arm C is
+    # therefore evaluated only on the post-fix branch.
+    if has_fix and not has_scatter_fix:
+        for _, row in resume_candidates.iterrows():
+            details.append(
+                {
+                    "scenario": str(row.get("scenario_directory", "")),
+                    "detail": (
+                        f"coupled hotstart resume (n_resumes={int(row.get('n_resumes') or 0)}) at a "
+                        f"TRITON pin ({triton_sha}) that lacks the SWMM node-depth SCATTER on the "
+                        "resume path: replay_exchange_history rebuilds node depths into rank 0's "
+                        "global_new_depth[] but never scatters them into the per-rank new_depth[], "
+                        "so the first post-resume step evaluates every manhole at new_depth=0 and "
+                        "writes a permanent perturbation into TRITON's depth field. TRITON-side "
+                        "max_wlevel_m / H / MH from this sim are INVALID; SWMM-side max_flow_cms "
+                        "and hydraulics.rpt maxima are unaffected at reported precision and are "
+                        "NOT evidence of validity. Re-run once the upstream scatter fix lands "
+                        "(_PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA)."
+                    ),
+                }
+            )
+
     n = len(details)
     passed = n == 0
     _parts = [f"{examined} resumed coupled sim(s) examined"]
@@ -848,6 +896,14 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
         summary = (
             f"{n} coupled sim(s) produced by PRE-FIX TRITON WITH a hotstart resume — "
             f"summaries likely invalid ({_denom})."
+        )
+    elif not has_scatter_fix:
+        # Arm C: post-fix pin, replay marker PRESENT, but the replayed depths never reach
+        # the per-rank new_depth[]. Distinguished from Arm B because the remedy differs —
+        # Arm B is re-runnable now, Arm C waits on an upstream TRITON fix.
+        summary = (
+            f"{n} resumed coupled sim(s) ran at a pin lacking the SWMM node-depth scatter "
+            f"— TRITON depth fields are invalid ({_denom})."
         )
     else:
         summary = (
@@ -1048,6 +1104,125 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
+def _enumerated_eda_templates(analysis: TRITONSWMM_analysis) -> tuple:
+    """The EDA rule_spec_templates this analysis ENUMERATES as report targets, or ().
+
+    Mirrors the Snakemake rule-all enumeration gate (workflow.py:7753-7757 and its
+    reprocess-master twin at :8495-8499) TERM FOR TERM. All four terms matter:
+
+    1. Only the sensitivity-master generators carry an EDA enumeration site at all.
+       ``generate_snakefile_content`` (multisim) and ``reprocess_snakefile_generator``
+       contain none, and the multisim plot dispatcher passes no ``predicate_inputs``,
+       so a multisim neither emits nor enumerates EDA rules whatever set it names.
+    2. The active set must carry an ``eda_compute_sensitivity`` selection. ``default``
+       and ``benchmarking`` do not; ``compute-sensitivity``/``dem-resolution``/``b4b``
+       do. This is the discriminating term.
+    3. ``eda.enabled_plots`` must be non-empty — TRUE by default (non-empty
+       default_factory), which is why it cannot carry the predicate alone.
+    4. The builder key must not be in ``report_config.disabled_renderers``.
+
+    Set resolution goes through ``resolve_active_reporting_set_name``, the helper that
+    carries BOTH the sentinel rule and the registry membership check — never an inline
+    re-derivation of the sentinel branch, which is the exact shortcut
+    ``resolve_reporting_set_name``'s docstring records the bundle-side harvest taking.
+    The ``_active_reporting_set`` / ``_cfg_report`` fallback chain mirrors
+    ``workflow.py::_resolve_active_reporting_set`` so validate-time and generate-time
+    resolve the same set on a generate-without-run() tree.
+    """
+    from hhemt.config.report import resolve_active_reporting_set_name
+    from hhemt.report_renderers._reporting_sets import (
+        eda_rule_spec_templates,
+        get_reporting_set,
+        renderer_active,
+    )
+
+    if not getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
+        return ()
+    if not list(getattr(getattr(analysis.cfg_analysis, "eda", None), "enabled_plots", []) or []):
+        return ()
+    cfg_report = getattr(analysis, "_cfg_report", None) or analysis.cfg_analysis.report
+    if not renderer_active("eda_compute_sensitivity", list(cfg_report.disabled_renderers)):
+        return ()
+    active = getattr(analysis, "_active_reporting_set", None)
+    if active is None:
+        try:
+            active = get_reporting_set(
+                resolve_active_reporting_set_name(cfg_report, is_sensitivity=True)
+            )
+        except Exception:  # unresolvable/typo'd set -> run-entry validation owns the error
+            return ()
+    return tuple(eda_rule_spec_templates(active))
+
+
+def check_eda_calc_ran(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Fail when EDA figures are ENUMERATED as report targets but the EDA calc never ran.
+
+    The gap this closes: a master can complete, render a report that post-dates its own
+    scenario_status.csv, and pass every currency check while ``{master}/eda/`` does not
+    exist — because ``analysis.eda()`` was never invoked. Every DoD line naming
+    ``eda/*.verdict.json`` as its evidence source is then unevidenceable and the EDA figures
+    render as honest-degradation panels.
+
+    Those degradation panels are the enumerate-implies-emit fix working as designed: they
+    replaced a workflow-killing MissingOutputException with a survivable panel. That trade is
+    correct. Its side effect is that the LOUD failure is gone and no positive signal replaced
+    it. This check is the positive signal.
+
+    The predicate mirrors the Snakemake rule-all ENUMERATION GATE term for term, via
+    ``_enumerated_eda_templates``: if the workflow enumerated EDA figures, the EDA calc
+    owed verdicts. An analysis that enumerates none — a multisim, a ``benchmarking``
+    master, a master with ``enabled_plots`` empty, or one that disabled the renderer —
+    renders no degradation panels and passes trivially. Keying on ``enabled_plots``
+    alone would NOT do: it carries a non-empty default_factory and is therefore true on
+    essentially every analysis.
+    """
+    name = "EDA calc ran"
+    templates = _enumerated_eda_templates(analysis)
+    if not templates:
+        return CheckResult(
+            name=name,
+            level="aggregate",
+            passed=True,
+            summary="This analysis enumerates no EDA report targets — EDA completeness N/A.",
+            details=[],
+        )
+    n_targets = len(templates)
+    eda_dir = Path(analysis.analysis_paths.analysis_dir) / "eda"
+    verdicts = sorted(eda_dir.glob("*.verdict.json")) if eda_dir.is_dir() else []
+    if verdicts:
+        return CheckResult(
+            name=name,
+            level="aggregate",
+            passed=True,
+            summary=(
+                f"{n_targets} EDA report target(s) enumerated; {len(verdicts)} verdict artifact(s) present "
+                f"under {eda_dir.name}/."
+            ),
+            details=[],
+        )
+    return CheckResult(
+        name=name,
+        level="aggregate",
+        passed=False,
+        summary=(
+            f"{n_targets} EDA plot(s) are enumerated as report targets but {eda_dir} carries no "
+            "*.verdict.json — analysis.eda() never ran for this analysis. Every EDA figure in the "
+            "report is an honest-degradation panel, and any claim sourced from eda/*.verdict.json "
+            "is unevidenceable. Run `hhemt eda` (or analysis.eda()) BEFORE render_report() and "
+            "before bundle_report_data()."
+        ),
+        details=[
+            {
+                "scenario": "(analysis-level)",
+                "detail": (
+                    f"enumerated_targets={[t.rule_name for t in templates]}; "
+                    f"eda_dir_exists={eda_dir.is_dir()}; verdict_count=0"
+                ),
+            }
+        ],
+    )
+
+
 def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
@@ -1069,6 +1244,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_invalidating_fixes(analysis),  # ADR-17 registry surface
             check_coupled_resume_validity(analysis),  # post-fix retroactive coupled-resume invalidity warning
             check_resume_schedule_honored(analysis),  # Phase 5: replay_t / n_resumes vs configured schedule
+            check_eda_calc_ran(analysis),  # F4: enumerated EDA figures vs present eda/*.verdict.json
         ]
         + _read_persisted_eda_verdicts(analysis)
     )

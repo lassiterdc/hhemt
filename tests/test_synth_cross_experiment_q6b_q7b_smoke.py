@@ -77,7 +77,87 @@ def test_intercomparison_honest_placeholder_when_no_pairs(tmp_path):
     out = analysis_dir / "plots" / "cross_experiment_intercomparison.html"
     out.parent.mkdir(parents=True)
     cross_experiment_intercomparison.render(_stub_analysis(analysis_dir), report_cfg=None, output_path=out)
-    assert "No paired compute-configs" in out.read_text()
+    html = out.read_text()
+    assert "No paired compute-configs" in html
+    # N5: `heading` is shared with the populated path, so the asymmetry note must NOT
+    # render here — an unguarded note would disclose a denominator that was never measured.
+    assert "Why the row counts differ per model" not in html
+
+
+def _intercomparison_html(tmp_path, pairs) -> str:
+    """Render the intercomparison over a synthetic payload and return its HTML."""
+    analysis_dir = tmp_path / "combined"
+    analysis_dir.mkdir()
+    (analysis_dir / "combined_intercomparison.json").write_text(
+        json.dumps(
+            {
+                "experiments": [
+                    {"experiment": "clean", "role": "clean"},
+                    {"experiment": "resume", "role": "resume"},
+                ],
+                "pairs": pairs,
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = analysis_dir / "plots" / "cross_experiment_intercomparison.html"
+    out.parent.mkdir(parents=True)
+    cross_experiment_intercomparison.render(_stub_analysis(analysis_dir), report_cfg=None, output_path=out)
+    return out.read_text()
+
+
+def _pair(i: int, variable: str, model: str) -> dict:
+    cfg = f"run_mode=serial|n_mpi={i}|n_omp=1|n_gpus=0|n_nodes=1|partition=standard"
+    return {
+        "config": cfg,
+        "variable": variable,
+        "event_iloc": 0,
+        "identical": True,
+        "max_abs_diff": 0.0,
+        "model": model,
+    }
+
+
+def test_intercomparison_derives_the_per_model_row_denominator_n5():
+    """N5: the asymmetric per-model row counts must READ as correct, from DERIVED counts.
+
+    The uncoupled arm contributes one tracked variable and the coupled arm two, so their
+    row counts differ by construction rather than by coverage gap. Asserted on the DERIVED
+    numbers rather than on a hard-coded sentence: a payload with a third arm or a third
+    variable must produce a correspondingly different denominator, which is the whole
+    reason the spec derives it instead of writing it down.
+    """
+    import tempfile
+
+    pairs = [_pair(i, "max_wlevel_m", "TRITON") for i in range(14)]
+    pairs += [_pair(i, "max_wlevel_m", "TRITON-SWMM") for i in range(14)]
+    pairs += [_pair(i, "max_flow_cms", "TRITON-SWMM") for i in range(14)]
+
+    with tempfile.TemporaryDirectory() as td:
+        html = _intercomparison_html(Path(td), pairs)
+
+    assert "Why the row counts differ per model" in html
+    assert "TRITON: 14 rows = 1 variable(s)" in html
+    assert "TRITON-SWMM: 28 rows = 2 variable(s)" in html
+    assert "x 14 compute configs" in html
+
+
+def test_intercomparison_denominator_tracks_a_payload_it_was_not_written_against():
+    """Differently-positioned satisfying input: a THIRD arm must appear in the denominator.
+
+    A hard-coded sentence naming only TRITON and TRITON-SWMM passes the test above and
+    fails here, so this is what makes "derived" a measured property rather than a claim.
+    """
+    import tempfile
+
+    pairs = [_pair(i, "max_wlevel_m", "TRITON") for i in range(3)]
+    pairs += [_pair(i, "max_wlevel_m", "SWMM-only") for i in range(5)]
+
+    with tempfile.TemporaryDirectory() as td:
+        html = _intercomparison_html(Path(td), pairs)
+
+    assert "TRITON: 3 rows = 1 variable(s)" in html
+    assert "SWMM-only: 5 rows = 1 variable(s)" in html
 
 
 def test_cross_experiment_disk_utilization_pivots_per_child_q7b(tmp_path):

@@ -451,7 +451,15 @@ def _b4b_family_key(sub) -> str:
     c = getattr(sub, "cfg_analysis", None)
     if str(getattr(c, "run_mode", "") or "") != "gpu":
         return "cpu"
-    return _gpu_hardware(_b4b_config_attrs(sub)) or "gpu"
+    # N3 (user ruling): ONE GPU family, not one per GPU hardware. Every GPU config is
+    # compared against a SINGLE deterministically-chosen GPU reference, so "GPU results
+    # do not vary across hardware" becomes a testable claim the panel either confirms or
+    # refutes. Splitting by hardware made it unfalsifiable: each hardware was its own
+    # reference, so cross-hardware divergence could not appear. Serial CPU was rejected
+    # as the GPU reference because GPU-vs-CPU raw rasters are never bit-identical
+    # (BIT4BIT is a double-precision serial-oracle property), which would turn the panel
+    # into a magnitude view rather than an identity view.
+    return "gpu"
 
 
 def _b4b_device_key(sub) -> tuple:
@@ -466,6 +474,22 @@ def _b4b_device_key(sub) -> tuple:
     )
 
 
+
+def _b4b_ref_key(member: tuple) -> tuple:
+    """Within-family reference ordering for a (sa_id, sub) member — deterministic under ties.
+
+    _b4b_device_key alone ties GPU x1 (a6000) against GPU x1 (a100-80), and min() would then
+    resolve on members' arrival order (a glob order), so the starred reference row could move
+    between renders of the SAME data. Tiebreak on the ensemble partition alphabetically
+    (selects gpu-a100-80), then on sa_id. Which GPU hardware wins is immaterial; that the rule
+    is deterministic is not.
+    """
+    return (
+        _b4b_device_key(member[1]),
+        str(_b4b_config_attrs(member[1]).get("hpc.partition", "")),
+        str(member[0]),
+    )
+
 def _b4b_dataset(
     per_config: dict[str, dict[str, tuple[xr.DataArray, xr.DataArray]]],
     meta: dict[str, dict],
@@ -476,6 +500,7 @@ def _b4b_dataset(
     degraded: bool,
     degraded_reason: str,
     reference_config_by_family: dict[str, str],
+    n_replicates: dict[str, int] | None = None,
 ) -> xr.Dataset:
     """Stack {config: {var: (identical_da, mad_da)}} into the b4b DATA CONTRACT Dataset:
     `identical` + `max_abs_diff` on (compute_config, raw_output_type, timestep_min), plus
@@ -513,6 +538,15 @@ def _b4b_dataset(
         )
         ds["run_mode"] = _sa("run_mode")
         ds["hpc_partition"] = _sa("hpc_partition")
+        # N4: the replicate DENOMINATOR behind each collapsed row. Persisted so the
+        # renderer can disclose it (Gate-0 count-don't-eyeball) rather than the reader
+        # inferring that 9 rows means 9 runs. Legacy (pre-N4) datasets omit the variable
+        # entirely, which is the guard the caption code keys on.
+        ds["n_replicates"] = xr.DataArray(
+            [int((n_replicates or {}).get(c, 1)) for c in labels],
+            dims="compute_config",
+            coords={"compute_config": labels},
+        )
         for _k in ("n_gpus", "n_mpi", "n_omp", "n_nodes"):
             ds[_k] = xr.DataArray(
                 [int(meta[c][_k]) for c in labels], dims="compute_config", coords={"compute_config": labels}
@@ -533,13 +567,80 @@ def _b4b_dataset(
     return ds
 
 
+def _collapse_replicates(per_config: dict, meta: dict) -> tuple[dict, dict, dict[str, int]]:
+    """Fold sa_id-keyed b4b results into ONE entry per COMPUTE CONFIG (N4).
+
+    `per_config` is keyed by sa_id (`gpu_0_r1`, `gpu_0_r2`, ...) while the rendered row
+    LABEL is `meta[sa]["config_label"]`, which by contract omits the replicate suffix
+    (`_config_diff._derive_config_label`: "Replicate suffixes (``_r1``/``_r2``) are NOT
+    in the identity"). The figure therefore drew 16 rows carrying 9 distinct labels, and
+    two byte-identical y-labels read as a rendering bug rather than as two replicates.
+
+    Aggregation is worst-case and disclosed, not averaged:
+      * `identical` -> logical AND across replicates. A compute config is byte-identical
+        to the reference only if EVERY replicate of it is. An OR would let one lucky
+        replicate launder a real divergence.
+      * `max_abs_diff` -> max across replicates (worst case), matching the AND.
+    Both are elementwise over (raw_output_type, timestep_min). Returns
+    (per_label, meta_by_label, n_replicates_by_label); the caller MUST surface the
+    replicate denominator in the caption per the Gate-0 count-don't-eyeball rule.
+
+    RAGGED COORDINATES. Two replicates of one config need not share a timestep set:
+    `compare_triton_raw_timeseries` restricts each comparison to `ref_index & replicate_index`
+    PER PAIR, so replicates whose sims completed different numbers of reporting steps yield
+    different indices. Both folds therefore select the INTERSECTION before combining. Aligning
+    on the FIRST replicate's index instead would silently DROP every coordinate only later
+    replicates measured, so a divergence one replicate observed would render as
+    byte-identical -- the one claim this figure must never make falsely. Intersecting also
+    keeps the disclosed `n_replicates` denominator TRUE for every rendered cell: each
+    surviving cell rests on all N. A coordinate not measured by every replicate is out of
+    the collapsed comparison, mirroring the producer's own shared-index rule one layer down;
+    `_b4b_dataset` concatenates with `join="outer"`, so it survives in the grid as NaN.
+    """
+    import functools as _ft
+
+    import numpy as _np
+
+    by_label: dict[str, list[str]] = {}
+    for sa in per_config:
+        by_label.setdefault(str(meta[sa]["config_label"]), []).append(sa)
+
+    out_pc: dict[str, dict] = {}
+    out_meta: dict[str, dict] = {}
+    n_rep: dict[str, int] = {}
+    for label, sas in by_label.items():
+        n_rep[label] = len(sas)
+        # Reference status is a property of the CONFIG: if any replicate was chosen as
+        # the family reference, the collapsed row is the reference row.
+        out_meta[label] = dict(meta[sas[0]])
+        out_meta[label]["is_reference"] = any(bool(meta[s]["is_reference"]) for s in sas)
+        var_names: set[str] = set()
+        for s in sas:
+            var_names |= set(per_config[s])
+        merged: dict[str, tuple] = {}
+        for var in var_names:
+            ids = [per_config[s][var][0] for s in sas if var in per_config[s]]
+            mads = [per_config[s][var][1] for s in sas if var in per_config[s]]
+            if not ids:
+                continue
+            shared = _ft.reduce(_np.intersect1d, [d["timestep_min"].values for d in ids])
+            id_da = ids[0].sel(timestep_min=shared)
+            mad_da = mads[0].sel(timestep_min=shared)
+            for extra_id, extra_mad in zip(ids[1:], mads[1:], strict=False):
+                id_da = id_da & extra_id.sel(timestep_min=shared)
+                mad_da = _np.fmax(mad_da, extra_mad.sel(timestep_min=shared))
+            merged[var] = (id_da, mad_da)
+        out_pc[label] = merged
+    return out_pc, out_meta, n_rep
+
+
 def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     """WITHIN-MASTER raw per-timestep byte-for-byte producer for the b4b ReportingSet.
 
     Reads ONLY the passed master's own subs' raw outputs (single-arm; master R12(b)).
-    Writes eda/b4b_clean_identity.zarr ALWAYS (a real per-hardware-family cross-config grid
+    Writes eda/b4b_clean_identity.zarr ALWAYS (a real per-family cross-config grid
     or a degraded marker) so the single report() target renders. The comparison is
-    PER-HARDWARE-FAMILY over the master's OWN subs (each config vs its within-family
+    PER-FAMILY over the master's OWN subs (each config vs its within-family
     minimum-device reference), so the ONE figure is applicable + non-degraded on BOTH the
     clean and the resume master. The former within-master b4b_clean_vs_resume figure is
     removed (F8); the clean-vs-resume comparison lives on the combine surface
@@ -575,7 +676,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         label = str(sa_id) if sa_id is not None else "self"
         subs.append((label, sub, model, raw_bin, n_res))
 
-    # PER-HARDWARE-FAMILY cross-config raw byte-identity over the master's OWN subs. Applicable
+    # PER-FAMILY cross-config raw byte-identity over the master's OWN subs. Applicable
     # on BOTH the clean master (n_resumes==0) and the resume master (n_resumes>0): each family
     # is compared within itself against its minimum-device reference (serial-CPU for the cpu
     # family; 1-GPU for each GPU-hardware family), so a GPU config is NEVER compared to a CPU
@@ -607,7 +708,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         }
 
     for family, members in sorted(families.items()):
-        ref = min(members, key=lambda s: _b4b_device_key(s[1]))
+        ref = min(members, key=_b4b_ref_key)
         ref_meta = _meta_for(ref, family, True)
         reference_config_by_family[family] = ref_meta["config_label"]
         # the reference row itself (self-compare -> all-identical baseline marker, F3c)
@@ -629,6 +730,11 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
                 meta[s[0]] = _meta_for(s, family, False)
                 contrib.append(s[1])
 
+    # N4: collapse r1/r2 replicates so the figure draws ONE row per compute config.
+    # Done AFTER the per-family comparison loop (each replicate is compared against the
+    # reference in its own right) and BEFORE _b4b_dataset, so the compute_config DIM is
+    # the config label rather than the sa_id.
+    per_config, meta, n_replicates = _collapse_replicates(per_config, meta)
     degraded = not per_config
     degraded_reason = ""
     if degraded:
@@ -651,6 +757,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         degraded=degraded,
         degraded_reason=degraded_reason,
         reference_config_by_family=reference_config_by_family,
+        n_replicates=n_replicates,
     )
     _encoding = {"identical": {"dtype": "float64"}}
     if "max_abs_diff" in ds:
@@ -668,13 +775,13 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     n_diff = int((ds["identical"] == 0.0).sum()) if has_grid else 0
     passed = (not degraded) and (n_diff == 0)
     if degraded:
-        summary = f"per-hardware raw byte-identity: degraded ({degraded_reason})"
+        summary = f"per-family raw byte-identity: degraded ({degraded_reason})"
     elif n_diff == 0:
         fams = ", ".join(f"{k} (ref {v})" for k, v in sorted(reference_config_by_family.items()))
-        summary = f"per-hardware raw byte-identity: every config is byte-identical to its within-family reference [{fams}]"
+        summary = f"per-family raw byte-identity: every config is byte-identical to its within-family reference [{fams}]"
     else:
         summary = (
-            f"per-hardware raw byte-identity: {n_diff} (config, raw-type, timestep) cell(s) differ "
+            f"per-family raw byte-identity: {n_diff} (config, raw-type, timestep) cell(s) differ "
             f"from their within-family reference"
         )
     verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=summary)

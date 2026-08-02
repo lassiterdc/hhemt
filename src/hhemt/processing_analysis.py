@@ -604,12 +604,15 @@ def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
     try:
         _sha = _sys_log.triton_head_sha.get()
         _has_fix = _sys_log.triton_has_coupled_resume_fix.get()
+        _scatter = _sys_log.triton_has_swmm_depth_scatter_fix.get()
     except Exception:
         return
     if _sha is not None:
         tree.attrs["triton_producing_sha"] = str(_sha)
     if _has_fix is not None:
         tree.attrs["triton_has_coupled_resume_fix"] = bool(_has_fix)
+    if _scatter is not None:
+        tree.attrs["triton_has_swmm_depth_scatter_fix"] = bool(_scatter)
 
 
 def _parse_replay_t(text: str, marker: str) -> "float | None":

@@ -127,7 +127,7 @@ _RENDERER_KIND_LABELS: dict[str, str] = {
     "peak_flood_depth": "Peak flood depth",
     "conduit_flow": "Conduit flow",
     "config_diff_maps": "Config-diff maps",
-    "b4b_clean_identity": "Cross-hardware raw byte identity",
+    "b4b_clean_identity": "Cross-hardware raw byte identity over time",
     "eda_cross_sim_identity": "Cross-simulation byte identity",
     "eda_rank_sensitivity": "MPI-rank sensitivity",
     "eda_resume_sensitivity": "Resume sensitivity",

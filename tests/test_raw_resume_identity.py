@@ -228,3 +228,300 @@ def test_build_binary_timestep_figure_k_vlines_and_clean_vs_clean():
     # clean-vs-clean pair -> default () -> zero vlines
     fig0 = build_binary_timestep_figure(b4b, config_label="cpu_vs_cpu")
     assert len([s for s in fig0.layout.shapes if s.type == "line"]) == 0
+
+
+# --- N3: ONE GPU family, deterministically referenced. -------------------------------
+
+
+class _N3Cfg:
+    # hpc_ensemble_partition is the attr _b4b_config_attrs actually reads into
+    # 'hpc.partition'; setting it anywhere else makes the pre-N3 hardware lookup return
+    # empty, which the retired `or "gpu"` fallback then collapses to "gpu" — producing a
+    # permanently-green test that cannot tell the two rules apart.
+    def __init__(
+        self, run_mode, n_gpus=0, n_mpi_procs=0, n_omp_threads=0, n_nodes=0, partition=""
+    ):
+        self.run_mode = run_mode
+        self.n_gpus = n_gpus
+        self.n_mpi_procs = n_mpi_procs
+        self.n_omp_threads = n_omp_threads
+        self.n_nodes = n_nodes
+        self.hpc_ensemble_partition = partition
+
+
+class _N3Sub:
+    def __init__(self, cfg, partition=""):
+        self.cfg_analysis = cfg
+
+
+def test_b4b_family_key_collapses_every_gpu_hardware_to_one_family():
+    """N3: both GPU hardwares land in ONE 'gpu' family, so cross-hardware divergence is visible.
+
+    Under the retired per-hardware split each hardware was its own reference, which made
+    'GPU results do not vary across hardware' unfalsifiable — divergence could not appear
+    because nothing was compared across the split. This asserts the collapse directly.
+    """
+    from hhemt.eda.raw_resume_identity import _b4b_family_key
+
+    a6000 = _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a6000"))
+    a100 = _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a100-80"))
+    assert _b4b_family_key(a6000) == "gpu"
+    assert _b4b_family_key(a100) == "gpu"
+    # The property that matters is that they are the SAME family, not the token's spelling.
+    assert _b4b_family_key(a6000) == _b4b_family_key(a100), (
+        "two GPU hardwares in different families -> cross-hardware divergence is unfalsifiable"
+    )
+
+
+def test_b4b_family_key_keeps_cpu_separate_from_gpu():
+    """The collapse is GPU-internal only: CPU must stay its own family.
+
+    Anchored as a differently-positioned satisfying input — if the N3 edit had over-collapsed
+    (returning 'gpu' unconditionally, or merging CPU in), this assertion fails while the
+    test above still passes.
+    """
+    from hhemt.eda.raw_resume_identity import _b4b_family_key
+
+    serial = _N3Sub(_N3Cfg("serial", n_mpi_procs=1, n_omp_threads=1))
+    mpi = _N3Sub(_N3Cfg("mpi", n_mpi_procs=8, n_omp_threads=1))
+    gpu = _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a6000"))
+    assert _b4b_family_key(serial) == "cpu"
+    assert _b4b_family_key(mpi) == "cpu"
+    assert _b4b_family_key(serial) != _b4b_family_key(gpu)
+
+
+def test_b4b_family_title_renders_the_collapsed_gpu_token():
+    """N3c: with the family token collapsed to 'gpu', the panel title must not read 'GPU gpu'.
+
+    The legacy per-hardware branch is retained deliberately so a pre-N3 zarr still renders a
+    sensible caption; both are asserted so a future simplification cannot silently drop it.
+    """
+    from hhemt.eda._plotting import _b4b_family_title
+
+    assert _b4b_family_title("gpu") == "GPU"
+    assert _b4b_family_title("cpu") == "CPU"
+    assert _b4b_family_title("all") == "All configs"
+    # Legacy per-hardware token from a pre-N3 artifact still renders.
+    assert _b4b_family_title("a100-80") == "GPU a100-80"
+
+
+def test_b4b_ref_key_is_deterministic_under_a_device_count_tie():
+    """N3: two GPUs at one device each TIE on device count; the rule must still be stable.
+
+    Determinism is the property, not which hardware wins. The assertion therefore pins the
+    SAME selection across a shuffled arrival order rather than pinning a hardware name for
+    its own sake — arrival order is a glob order in production, so a rule that resolved on
+    it would move the starred row between renders of identical data.
+    """
+    from hhemt.eda.raw_resume_identity import _b4b_ref_key
+
+    a6000 = ("z_gpu_0_r1", _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a6000")))
+    a100 = ("a_gpu_1_r1", _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a100-80")))
+
+    assert min([a6000, a100], key=_b4b_ref_key)[0] == "a_gpu_1_r1"
+    # Shuffled arrival order selects the SAME member — this is the determinism claim.
+    assert min([a100, a6000], key=_b4b_ref_key)[0] == "a_gpu_1_r1"
+    # And it is the PARTITION that breaks the tie, not the sa_id: here the a100 sub carries
+    # the sa_id that sorts LAST, so a sa_id-only tiebreak would pick the other member.
+    a100_late = ("z_late", _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a100-80")))
+    a6000_early = ("a_early", _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a6000")))
+    assert min([a6000_early, a100_late], key=_b4b_ref_key)[0] == "z_late"
+
+
+def test_b4b_ref_key_prefers_fewer_devices_before_any_tiebreak():
+    """Device count leads the key — a differently-positioned satisfying input.
+
+    If the tiebreak terms had been ordered ahead of the device count, this fails while the
+    tie test above still passes.
+    """
+    from hhemt.eda.raw_resume_identity import _b4b_ref_key
+
+    one = ("z_one", _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a6000")))
+    three = ("a_three", _N3Sub(_N3Cfg("gpu", n_gpus=3, partition="gpu-a100-80")))
+    assert min([three, one], key=_b4b_ref_key)[0] == "z_one"
+
+
+def _b4b_pair(timesteps, identical, mad):
+    """One (identical, max_abs_diff) DataArray pair on the timestep_min coord."""
+    import xarray as xr
+
+    coords = {"timestep_min": np.asarray(timesteps, dtype=float)}
+    return (
+        xr.DataArray(np.asarray(identical, dtype=bool), dims="timestep_min", coords=coords),
+        xr.DataArray(np.asarray(mad, dtype="float64"), dims="timestep_min", coords=coords),
+    )
+
+
+def _b4b_meta(label: str, *, is_reference: bool = False) -> dict:
+    return {
+        "config_label": label,
+        "family": "cpu",
+        "is_reference": is_reference,
+        "run_mode": "serial",
+        "hpc_partition": "standard",
+        "n_gpus": 0,
+        "n_mpi": 1,
+        "n_omp": 1,
+        "n_nodes": 1,
+    }
+
+
+def test_collapse_replicates_folds_worst_case_across_replicates():
+    """N4: replicates of ONE config collapse to ONE row, worst-case in both channels.
+
+    `identical` is an AND (a config is byte-identical only if EVERY replicate was) and
+    `max_abs_diff` is a max, so a clean replicate cannot launder a diverging one. This is
+    the differently-positioned SATISFYING input for the ragged-coordinate test below: it
+    shares a coordinate set, so it exercises the fold's aggregation and nothing else, and
+    it passes under both the base-coords fold and the intersection fold.
+    """
+    from hhemt.eda.raw_resume_identity import _collapse_replicates
+
+    ts = [0.0, 10.0, 20.0]
+    per_config = {
+        "serial_0_r1": {"wlevel_m": _b4b_pair(ts, [True, True, True], [0.0, 0.0, 0.0])},
+        "serial_0_r2": {"wlevel_m": _b4b_pair(ts, [True, True, False], [0.0, 0.0, 0.5])},
+    }
+    meta = {"serial_0_r1": _b4b_meta("serial"), "serial_0_r2": _b4b_meta("serial")}
+
+    out_pc, out_meta, n_rep = _collapse_replicates(per_config, meta)
+
+    assert list(out_pc) == ["serial"], "two replicates must collapse to ONE labelled row"
+    assert n_rep == {"serial": 2}
+    assert set(out_meta) == {"serial"}
+    ident, mad = out_pc["serial"]["wlevel_m"]
+    assert list(ident.values) == [True, True, False], "the diverging replicate wins the AND"
+    assert list(mad.values) == [0.0, 0.0, 0.5], "max_abs_diff is the max over replicates"
+
+
+def test_collapse_replicates_does_not_manufacture_divergence_at_a_base_only_timestep():
+    """A timestep only the FIRST replicate measured must not render as a divergence.
+
+    Replicates need not share a timestep set: `compare_triton_raw_timeseries` restricts
+    each comparison to `ref_index & replicate_index` PER PAIR, so two sims of one config
+    that completed different numbers of reporting steps yield different indices. Folding on
+    the first replicate's index fills the absent replicate with `identical=False` there, so
+    the cell renders as DIFFERING with a `max_abs_diff` of 0.0 — a divergence that reflects
+    no measured difference. Intersecting drops the unshared coordinate instead, which also
+    keeps the disclosed `n_replicates` denominator true for every surviving cell.
+
+    This is the VIOLATING input of the two-arm differential: against the base-coords fold it
+    fails on the `False` at t=30. The satisfying arm is the shared-coordinate test above.
+    """
+    from hhemt.eda.raw_resume_identity import _collapse_replicates
+
+    per_config = {
+        # r1 reached t=30; r2 stopped at t=20.
+        "serial_0_r1": {
+            "wlevel_m": _b4b_pair([0.0, 10.0, 20.0, 30.0], [True] * 4, [0.0] * 4)
+        },
+        "serial_0_r2": {"wlevel_m": _b4b_pair([0.0, 10.0, 20.0], [True] * 3, [0.0] * 3)},
+    }
+    meta = {"serial_0_r1": _b4b_meta("serial"), "serial_0_r2": _b4b_meta("serial")}
+
+    ident, mad = _collapse_replicates(per_config, meta)[0]["serial"]["wlevel_m"]
+    coords = [float(t) for t in ident["timestep_min"].values]
+
+    assert coords == [0.0, 10.0, 20.0], "the unshared timestep is out of the collapsed comparison"
+    assert False not in list(ident.values), "no cell may report a divergence that was never measured"
+    assert list(mad.values) == [0.0, 0.0, 0.0]
+
+
+def _b4b_ds(per_config, meta):
+    """Build the real b4b Dataset through the shipped collapse + dataset builders."""
+    from hhemt.eda.raw_resume_identity import _b4b_dataset, _collapse_replicates
+
+    pc, mt, n_rep = _collapse_replicates(per_config, meta)
+    return _b4b_dataset(
+        pc,
+        mt,
+        boundaries=[],
+        raw_out_type="bin",
+        interval=600.0,
+        degraded=False,
+        degraded_reason="",
+        reference_config_by_family={"cpu": "serial"},
+        n_replicates=n_rep,
+    )
+
+
+def _b4b_caption(ds) -> str:
+    """The caption annotation `_b4b_faceted_figure` attaches to the rendered figure."""
+    from hhemt.eda._plotting import _b4b_faceted_figure
+
+    fig = _b4b_faceted_figure(
+        ds, ds["identical"], title="t", baseline_caption="BASE.", show_boundaries=False
+    )
+    texts = [a.text for a in fig.layout.annotations if a.text and a.text.startswith("BASE.")]
+    assert len(texts) == 1, f"expected exactly one caption annotation, got {len(texts)}"
+    return texts[0]
+
+
+def _b4b_two_configs(reps_per_label: dict[str, int]):
+    """per_config/meta for `{label: n_replicates}`, all cells identical."""
+    ts = [0.0, 10.0, 20.0]
+    per_config, meta = {}, {}
+    for label, n in reps_per_label.items():
+        for r in range(1, n + 1):
+            sa = f"{label}_r{r}"
+            per_config[sa] = {"wlevel_m": _b4b_pair(ts, [True] * 3, [0.0] * 3)}
+            meta[sa] = _b4b_meta(label, is_reference=(label == "serial" and r == 1))
+    return per_config, meta
+
+
+def test_b4b_dataset_draws_one_row_per_compute_config_not_per_replicate():
+    """N4: the rendered `compute_config` dim is the DISTINCT LABEL set, not the sa_id set.
+
+    The label omits the replicate suffix by contract, so before the collapse the figure drew
+    one row per sa_id and two byte-identical y-labels read as a rendering bug. This asserts
+    the collapse at the DATASET level; the fold-level tests above assert its aggregation.
+    """
+    per_config, meta = _b4b_two_configs({"serial": 2, "gpu x1": 2})
+    ds = _b4b_ds(per_config, meta)
+
+    assert len(per_config) == 4, "fixture must carry 4 sa_ids across 2 configs"
+    assert [str(c) for c in ds["compute_config"].values] == ["gpu x1", "serial"]
+    assert sorted(int(v) for v in ds["n_replicates"].values) == [2, 2]
+
+
+def test_b4b_caption_discloses_the_replicate_denominator():
+    """N4b / Gate-0 count-don't-eyeball: the collapsed rows hide a denominator, so state it.
+
+    Asserted on the DERIVED RANGE rather than the full sentence: the invariant is that the
+    measured denominator reaches the reader, and an assertion pinned to caption wording would
+    redden on an editorial rewrite that still discloses it.
+    """
+    per_config, meta = _b4b_two_configs({"serial": 1, "gpu x1": 2})
+    caption = _b4b_caption(_b4b_ds(per_config, meta))
+
+    assert "1–2" in caption, "the measured replicate range must reach the caption"
+    assert "replicate" in caption
+
+
+def test_b4b_caption_omits_the_replicate_clause_when_every_config_ran_once():
+    """One replicate per config discloses nothing, so no clause is appended.
+
+    This is the differently-positioned satisfying input for the test above: it exercises the
+    same code path and must produce NO finding, so an implementation that appends the clause
+    unconditionally fails here while still passing the disclosure test.
+    """
+    per_config, meta = _b4b_two_configs({"serial": 1, "gpu x1": 1})
+    caption = _b4b_caption(_b4b_ds(per_config, meta))
+
+    assert "replicate" not in caption, "a 1-replicate campaign has no denominator to disclose"
+
+
+def test_b4b_caption_unchanged_for_a_legacy_artifact_without_n_replicates():
+    """A pre-N4 zarr carries no `n_replicates`, and its caption must render unchanged.
+
+    Reachable rather than hypothetical: `_b4b_dataset` writes the variable unconditionally, so
+    only an artifact written BEFORE N4 reaches the `in ds` guard's False arm — which is the
+    state of every b4b zarr already on disk from the current campaign.
+    """
+    per_config, meta = _b4b_two_configs({"serial": 1, "gpu x1": 2})
+    ds = _b4b_ds(per_config, meta)
+
+    legacy = ds.drop_vars("n_replicates")
+    assert "n_replicates" not in legacy
+    assert "1–2" in _b4b_caption(ds), "the N4-era artifact discloses the denominator"
+    assert "replicate" not in _b4b_caption(legacy), "the legacy artifact's caption is untouched"
