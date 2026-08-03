@@ -77,6 +77,8 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "hpc_mem_allocation_for_setup_mb": "hpc",
     "hpc_runtime_min_for_setup": "hpc",
     "hpc_max_wait_for_inflight_min": "hpc",
+    "hpc_no_progress_timeout_min": "hpc",  # orchestrator stall backstop; mirrors hpc_max_wait_for_inflight_min
+    "hpc_max_queue_wait_min": "hpc",  # queue-starved cap; target-machine revisable, so Amend not Keep
     "local_gpus_for_workflow": "hpc",
     "mem_gb_per_cpu": "hpc",
     "hpc_time_min_per_sim": "hpc",

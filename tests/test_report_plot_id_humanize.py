@@ -15,7 +15,7 @@ def test_humanize_known_renderer_kinds():
     assert humanize_plot_id("config_diff_maps") == "Config-diff maps"
     assert humanize_plot_id("system_overview") == "System overview"
     # b4b renderer kind -> its human label
-    assert humanize_plot_id("b4b_clean_identity") == "Cross-hardware raw byte identity"
+    assert humanize_plot_id("b4b_clean_identity") == "Cross-hardware raw byte identity over time"
 
 
 def test_humanize_benchmarking_descriptor_and_extension_strip():

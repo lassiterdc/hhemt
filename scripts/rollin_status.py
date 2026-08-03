@@ -110,6 +110,9 @@ def main() -> int:
     for cluster, syms in CLUSTER_TESTS.items():
         h = tests_present(syms)
         print(f"| {cluster} | {h}/{len(syms)} symbol(s) found in tests/ |")
+    print()
+    print("_Presence, not outcome: a symbol found here may sit in a FAILING assertion._")
+    print("_Deciding command for outcome: `pytest tests/ -m \"not slow\"`._")
     return 0
 
 
