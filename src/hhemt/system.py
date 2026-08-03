@@ -532,7 +532,26 @@ class TRITONSWMM_system:
                 pass
             raise
 
-    def _sync_compilation_log_field(self, log_field, success: bool):
+    def _sync_compilation_log_field(
+        self,
+        log_field,
+        success: bool,
+        *,
+        derived_from_resolvable_input: bool = True,
+    ):
+        """Persist a derived compile verdict — ONLY when it was actually measured.
+
+        A verdict derived from an UNRESOLVABLE input (a `None` build-dir /
+        logfile path, which arises whenever this system was constructed without
+        a gpu_compilation_backend injection) is an ABSTENTION, not a
+        measurement. Persisting it silently overwrites a measured True with
+        False on every reconstruction — a property READ mutating provenance.
+        `_sync_compilation_status_on_init` (system.py) reads all five
+        compilation properties at EVERY construction, so this fires on
+        reconstruction, not only after a compile.
+        """
+        if not derived_from_resolvable_input:
+            return
         current_value = log_field.get()
         if current_value is None or current_value != success:
             log_field.set(success)
@@ -1643,8 +1662,17 @@ class TRITONSWMM_system:
     def compilation_triton_only_gpu_successful(self) -> bool:
         """Check if TRITON-only GPU backend compiled successfully."""
         if self.sys_paths.TRITON_build_dir_gpu is None:
+            # ABSTENTION, not a measurement: this system carries no resolvable
+            # GPU build dir (constructed without a gpu_compilation_backend
+            # injection; sys_paths is frozen at __init__ and is NOT rebuilt by a
+            # later attribute assignment — see sensitivity_analysis.py:2270-2271).
+            # Return False for the caller's boolean contract but do NOT persist.
             success = False
-            self._sync_compilation_log_field(self.log.compilation_triton_gpu_successful, success)
+            self._sync_compilation_log_field(
+                self.log.compilation_triton_gpu_successful,
+                success,
+                derived_from_resolvable_input=False,
+            )
             return success
         logfile = self.sys_paths.TRITON_build_dir_gpu / "compilation.log"
         if logfile.exists():
@@ -1659,10 +1687,21 @@ class TRITONSWMM_system:
     @property
     def compilation_triton_only_successful(self) -> bool:
         """
-        Returns True if TRITON-only (CPU and GPU if configured) compiled successfully.
+        Returns True if TRITON-only (CPU and GPU if configured AND RESOLVABLE) compiled successfully.
         For individual backend checks, use compilation_triton_only_cpu_successful and compilation_triton_only_gpu_successful.
+
+        The GPU term is evaluated ONLY when this system resolves a GPU build dir.
+        A system may declare a truthy `gpu_compilation_backend` and still resolve
+        `TRITON_build_dir_gpu is None`, because `sys_paths` is frozen at __init__
+        from the CONSTRUCTOR-INJECTED backend while the attribute may be mutated
+        afterwards (sensitivity_analysis.py:2272-2275 does exactly this on the
+        sensitivity-master template, and its own comment records that sys_paths is
+        NOT rebuilt). ANDing against that unresolvable term reported a false
+        "TRITON-only compilation failed" on a campaign whose 112 sims all completed.
+        A single-hardware system resolves a real path, so a genuinely-absent
+        compilation.log still returns False here — byte-identical to prior behavior.
         """
-        if self.gpu_compilation_backend:
+        if self.gpu_compilation_backend and self.sys_paths.TRITON_build_dir_gpu is not None:
             return self.compilation_triton_only_cpu_successful and self.compilation_triton_only_gpu_successful
         else:
             return self.compilation_triton_only_cpu_successful
@@ -1849,8 +1888,16 @@ class TRITONSWMM_system:
     def compilation_swmm_successful(self) -> bool:
         """Check if standalone SWMM compiled successfully."""
         if self.sys_paths.SWMM_build_dir is None:
+            # ABSTENTION, not a measurement: SWMM_build_dir is None whenever
+            # toggle_swmm_model is off OR SWMM_software_directory is unset, so this
+            # branch cannot distinguish "not compiled" from "not asked about".
+            # Return False for the caller's boolean contract but do NOT persist.
             success = False
-            self._sync_compilation_log_field(self.log.compilation_swmm_successful, success)
+            self._sync_compilation_log_field(
+                self.log.compilation_swmm_successful,
+                success,
+                derived_from_resolvable_input=False,
+            )
             return success
         logfile = self.sys_paths.SWMM_build_dir / "compilation.log"
         if not logfile.exists():
@@ -1915,8 +1962,17 @@ class TRITONSWMM_system:
     def compilation_gpu_successful(self) -> bool:
         """Check if TRITON-SWMM GPU backend compiled successfully."""
         if self.sys_paths.compilation_logfile_gpu is None:
+            # ABSTENTION, not a measurement: no resolvable GPU compilation log on
+            # this system (constructed without a gpu_compilation_backend injection;
+            # sys_paths is frozen at __init__ and is NOT rebuilt by a later attribute
+            # assignment — see sensitivity_analysis.py:2270-2271). Return False for
+            # the caller's boolean contract but do NOT persist.
             success = False
-            self._sync_compilation_log_field(self.log.compilation_tritonswmm_gpu_successful, success)
+            self._sync_compilation_log_field(
+                self.log.compilation_tritonswmm_gpu_successful,
+                success,
+                derived_from_resolvable_input=False,
+            )
             return success
         if not self.sys_paths.compilation_logfile_gpu.exists():
             success = False
@@ -1932,10 +1988,13 @@ class TRITONSWMM_system:
     @property
     def compilation_successful(self) -> bool:
         """
-        Returns True if CPU backend (and GPU if configured) compiled successfully.
+        Returns True if CPU backend (and GPU if configured AND RESOLVABLE) compiled successfully.
         For individual backend checks, use compilation_cpu_successful and compilation_gpu_successful.
+
+        See compilation_triton_only_successful for why the GPU term is gated on
+        path resolvability rather than on the backend attribute alone.
         """
-        if self.gpu_compilation_backend:
+        if self.gpu_compilation_backend and self.sys_paths.compilation_logfile_gpu is not None:
             success = self.compilation_cpu_successful and self.compilation_gpu_successful
         else:
             success = self.compilation_cpu_successful

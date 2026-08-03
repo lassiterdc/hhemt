@@ -126,6 +126,27 @@ def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
 
     passed = not issues
     summary = "System setup OK" if passed else f"System setup FAILED ({len(issues)} issue(s))"
+    # Gotcha 71(d) disclosed denominator: `passed` derives from len(issues)==0 and
+    # therefore cannot distinguish "evaluated and found nothing" from "did not
+    # evaluate". A system that declares a GPU backend but resolves NO GPU build dir
+    # (the sensitivity-master template, whose GPU hardware varies per sub-analysis)
+    # ABSTAINS on the GPU compile term; name that in the artifact itself.
+    if analysis.cfg_analysis.execution_environment != "container" and sys.gpu_compilation_backend:
+        _abstained = [
+            _label
+            for _label, _toggled, _gpu_path in (
+                ("TRITON-SWMM", cfg_sys.toggle_tritonswmm_model, sys.sys_paths.compilation_logfile_gpu),
+                ("TRITON-only", cfg_sys.toggle_triton_model, sys.sys_paths.TRITON_build_dir_gpu),
+            )
+            if _toggled and _gpu_path is None
+        ]
+        if _abstained:
+            summary += (
+                f" [GPU compile term NOT evaluated for {', '.join(_abstained)}: this system "
+                "declares a GPU backend but resolves no GPU build dir (master-level template; "
+                "GPU hardware varies per sub-analysis). CPU term evaluated; per-hardware GPU "
+                "compile status is certified downstream by each sub-analysis's own system.]"
+            )
     return CheckResult(name="System setup", level="system", passed=passed, summary=summary, details=issues)
 
 

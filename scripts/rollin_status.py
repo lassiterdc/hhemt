@@ -37,6 +37,11 @@ SPECS = [
     ("F2c",  "F2", "conftest.py",                                                     "worktree_mismatch_message"),
     ("F2d",  "F2", "$AW/library/prompts/instructions/protocols/worktree aware project testing.md", "RESOLVED. The objection was that a bare interpreter"),
     ("S4",   "S4", "src/hhemt/report_renderers/cross_experiment_errors_and_warnings.py", "_swmm_invisible_divergence_finding"),
+    ("CF1",  "CF", "src/hhemt/system.py",                          "derived_from_resolvable_input"),
+    ("CF2",  "CF", "src/hhemt/system.py",                          "TRITON_build_dir_gpu is not None"),
+    ("CF3",  "CF", "src/hhemt/system.py",                          "compilation_logfile_gpu is not None"),
+    ("CF4",  "CF", "src/hhemt/analysis_validation.py",             "GPU compile term NOT evaluated"),
+    ("CF5",  "CF", "tests/test_system_compile_flag_abstention.py", "__EXISTS__"),
 ]
 
 # cluster -> test symbols that must exist for the cluster to count as TESTED
@@ -54,6 +59,13 @@ CLUSTER_TESTS = {
     # F2's controls PRE-EXIST in tests/test_worktree_guard.py; F2c must not regress them.
     "F2": ["HHEMT_FORCE_WRONG_SRC", "worktree_mismatch_message"],
     "S4": ["_swmm_invisible_divergence_finding"],
+    # CF: the master-level compile-flag abstention cluster (8 specs, 2026-08-02).
+    "CF": [
+        "test_resolvable_gpu_path_with_missing_log_still_reports_failure",
+        "test_bare_then_mutated_system_abstains_and_does_not_clobber",
+        "test_summary_discloses_abstention_when_gpu_path_unresolvable",
+        "test_summary_is_silent_when_gpu_path_resolves",
+    ],
 }
 
 AW = "/home/dcl3nd/dev/agentic-workspace/.claude/worktrees/07-23_1017_pure-triton-arms-multi-resume-b4b-pwi"
