@@ -223,7 +223,30 @@ class TRITONSWMM_log(BaseModel):
                     try:
                         with self.logfile.open() as f:
                             disk = json.load(f)
-                    except (json.JSONDecodeError, OSError):
+                    except (json.JSONDecodeError, OSError) as exc:
+                        # An EXISTING log that will not parse/read is NOT the same as
+                        # an absent log. Degrading to {} here silently discards every
+                        # field this instance did not change, which is how a
+                        # reconstruction can emit an all-defaults document over a log
+                        # that carried irreplaceable provenance. Preserve the bytes
+                        # beside the log and say so, then proceed (write() must never
+                        # abort a run over a diagnostic).
+                        _quarantine = self.logfile.with_suffix(
+                            f"{self.logfile.suffix}.unreadable"
+                        )
+                        try:
+                            _quarantine.write_bytes(self.logfile.read_bytes())
+                        except OSError:
+                            _quarantine = None
+                        logging.getLogger(__name__).warning(
+                            "Log file %s exists but could not be read (%s: %s); "
+                            "this write will NOT preserve its unchanged fields. "
+                            "Original bytes preserved at %s.",
+                            self.logfile,
+                            type(exc).__name__,
+                            exc,
+                            _quarantine if _quarantine is not None else "<preserve failed>",
+                        )
                         disk = {}
                 mine = self.as_dict()
                 changed_keys = {
@@ -241,6 +264,30 @@ class TRITONSWMM_log(BaseModel):
                     if k not in changed_keys and k in mine
                 }
                 merged = {**mine, **overlay}
+                # A write must never turn a NON-NULL on-disk value into null/absent
+                # for a field this instance did not deliberately change. The overlay
+                # above restores every unchanged declared field, so the only way that
+                # happens is the `k in mine` filter: THIS process's model does not
+                # DECLARE a field the on-disk log carries — a version-skewed writer.
+                # Warn loudly and name the fields; the write still proceeds, because
+                # refusing it would strand a run over a diagnostic. A deliberate
+                # field REMOVAL shipped with a migration also lands here; that is
+                # why this is a warning and never a raise.
+                _dropped = sorted(
+                    k
+                    for k, v in disk.items()
+                    if v is not None and k not in changed_keys and merged.get(k) is None
+                )
+                if _dropped:
+                    logging.getLogger(__name__).warning(
+                        "Log write to %s DROPS %d non-null on-disk field(s) this "
+                        "model does not declare: %s. The writing process is running "
+                        "an hhemt version older than the one that wrote the log; the "
+                        "dropped values are NOT recoverable from the rewritten file.",
+                        self.logfile,
+                        len(_dropped),
+                        ", ".join(_dropped),
+                    )
                 write_json(merged, self.logfile)
                 self._baseline = merged
         except Timeout as exc:

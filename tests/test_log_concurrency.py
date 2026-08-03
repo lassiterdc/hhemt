@@ -124,3 +124,58 @@ def test_log_single_writer_invariant():
     src = Path(hhemt.__file__).parent
     assert "sub_analysis._update_log()" not in (src / "sensitivity_analysis.py").read_text()
     assert "skip_log_update=True" in (src / "report_renderers" / "_cli.py").read_text()
+
+
+# TEST-NEW-5 (hhemt-specialist, friction round 27 VMS-D2) — M3 version-skew field drop.
+# `write()`'s overlay is filtered by `k in mine`, so a writer whose model does not
+# DECLARE an on-disk field erases it silently. Arm (a): non-null undeclared key -> warn.
+def test_write_warns_when_it_drops_a_nonnull_undeclared_field(tmp_path, caplog):
+    import logging
+
+    from hhemt.log import TRITONSWMM_system_log
+
+    logfile = tmp_path / "system_log.json"
+    logfile.write_text(
+        json.dumps(
+            {
+                "logfile": str(logfile),
+                "dem_processed": True,
+                "triton_head_sha": "deadbeefcafe0000000000000000000000000000",
+                "legacy_only_field": "irreplaceable-provenance",
+            },
+            indent=4,
+        )
+    )
+    log = TRITONSWMM_system_log.from_json(logfile)
+    with caplog.at_level(logging.WARNING, logger="hhemt.log"):
+        log.write()
+    assert "legacy_only_field" not in json.loads(logfile.read_text())  # still dropped
+    assert [r for r in caplog.records if "legacy_only_field" in r.getMessage()]
+
+
+# Arm (b): a DIFFERENTLY-positioned satisfying state — the undeclared key is NULL on
+# disk (nothing is lost by dropping it) and a declared field is DELIBERATELY changed.
+# Must stay silent, or the warning over-fires on every legitimate write.
+def test_write_is_silent_when_the_undeclared_field_is_null(tmp_path, caplog):
+    import logging
+
+    from hhemt.log import TRITONSWMM_system_log
+
+    logfile = tmp_path / "system_log.json"
+    logfile.write_text(
+        json.dumps(
+            {
+                "logfile": str(logfile),
+                "dem_processed": True,
+                "triton_head_sha": "deadbeefcafe0000000000000000000000000000",
+                "legacy_only_field": None,
+            },
+            indent=4,
+        )
+    )
+    log = TRITONSWMM_system_log.from_json(logfile)
+    with caplog.at_level(logging.WARNING, logger="hhemt.log"):
+        log.dem_processed.set(False)
+        log.write()
+    assert json.loads(logfile.read_text())["dem_processed"] is False
+    assert not [r for r in caplog.records if "legacy_only_field" in r.getMessage()]
