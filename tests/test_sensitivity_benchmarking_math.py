@@ -431,50 +431,57 @@ class TestModelArmEncoding:
         )
         return fig
 
-    def test_uncoupled_panel12_open_markers_dashed_connector(self):
-        fig = self._panel12_fig("uncoupled")
-        markers = self._marker_traces(fig)
-        assert markers, "expected at least one marker trace"
-        assert all(str(t.marker.symbol).endswith("-open") for t in markers)
-        assert str(markers[0].marker.symbol) == "triangle-up-open"
-        lines = self._connector_lines(fig)
-        assert lines, "expected a connector line for the multi-point group"
-        assert all(t.line.dash == "dash" for t in lines)
+    # Iteration 4: these tests previously asserted the Phase-6 arm-conditioned encoding
+    # (marker FILL and connector DASH keyed on model_arm). That encoding made the two
+    # arms' symbology DISJOINT by construction, which violates the standing requirement
+    # that benchmarking symbology be IDENTICAL across models. The requirement was
+    # verified once, then silently regressed when the encoding landed, and nothing in
+    # the suite caught it -- because the suite asserted the encoding rather than the
+    # requirement. These tests now assert the REQUIREMENT, so the regression class
+    # cannot recur silently.
 
-    def test_coupled_panel12_filled_markers_solid_connector(self):
-        fig = self._panel12_fig("coupled")
-        markers = self._marker_traces(fig)
-        assert markers
-        assert not any(str(t.marker.symbol).endswith("-open") for t in markers)
-        assert str(markers[0].marker.symbol) == "triangle-up"
-        lines = self._connector_lines(fig)
-        assert lines
-        assert all(t.line.dash == "solid" for t in lines)
+    _ARMS = ("coupled", "uncoupled", None)
 
-    def test_uncoupled_panel34_open_markers_dashed_connector(self):
-        fig = self._panel34_fig("uncoupled")
-        markers = self._marker_traces(fig)
-        assert markers
-        assert all(str(t.marker.symbol).endswith("-open") for t in markers)
-        lines = self._connector_lines(fig)
-        assert lines
-        assert all(t.line.dash == "dash" for t in lines)
+    @staticmethod
+    def _encoding(fig):
+        """The figure's symbology as a comparable value: sorted marker symbols + dashes."""
+        markers = TestModelArmEncoding._marker_traces(fig)
+        lines = TestModelArmEncoding._connector_lines(fig)
+        return (
+            tuple(sorted(str(t.marker.symbol) for t in markers)),
+            tuple(sorted(str(t.line.dash) for t in lines)),
+        )
 
-    def test_coupled_panel34_filled_markers_solid_connector(self):
-        fig = self._panel34_fig("coupled")
-        markers = self._marker_traces(fig)
-        assert markers
-        assert not any(str(t.marker.symbol).endswith("-open") for t in markers)
-        lines = self._connector_lines(fig)
-        assert lines
-        assert all(t.line.dash == "solid" for t in lines)
+    def test_panel12_symbology_identical_across_every_arm(self):
+        # THE requirement: same figure, different arm -> byte-identical symbology.
+        encodings = {arm: self._encoding(self._panel12_fig(arm)) for arm in self._ARMS}
+        distinct = {enc for enc in encodings.values()}
+        assert len(distinct) == 1, (
+            "benchmarking symbology must be identical across model arms; got "
+            + repr(encodings)
+        )
 
-    def test_none_arm_is_byte_identical_default(self):
-        # model_arm=None preserves the pre-change default (filled + dashed), so the
-        # encoding cannot leak into a swmm-only / non-TRITON master.
-        fig = self._panel12_fig(None)
-        markers = self._marker_traces(fig)
-        assert not any(str(t.marker.symbol).endswith("-open") for t in markers)
-        assert str(markers[0].marker.symbol) == "triangle-up"
-        lines = self._connector_lines(fig)
-        assert all(t.line.dash == "dash" for t in lines)
+    def test_panel34_symbology_identical_across_every_arm(self):
+        encodings = {arm: self._encoding(self._panel34_fig(arm)) for arm in self._ARMS}
+        assert len({enc for enc in encodings.values()}) == 1, (
+            "benchmarking symbology must be identical across model arms; got "
+            + repr(encodings)
+        )
+
+    def test_no_arm_conditioned_fill_or_dash_survives(self):
+        # The specific mechanism that regressed the requirement: an `-open` fill variant
+        # keyed on the arm, and a non-constant connector dash. Assert on the MECHANISM as
+        # well as the parity, so a future change that breaks parity some OTHER way still
+        # fails the test above while this one names the known cause.
+        for arm in self._ARMS:
+            for fig in (self._panel12_fig(arm), self._panel34_fig(arm)):
+                markers = self._marker_traces(fig)
+                assert markers, "expected at least one marker trace"
+                assert not any(
+                    str(t.marker.symbol).endswith("-open") for t in markers
+                ), f"arm-conditioned open-fill survived for model_arm={arm!r}"
+                lines = self._connector_lines(fig)
+                assert lines, "expected a connector line for the multi-point group"
+                assert all(
+                    t.line.dash == "solid" for t in lines
+                ), f"connector dash is not the constant single-arm style for {arm!r}"

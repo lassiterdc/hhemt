@@ -127,17 +127,24 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     import xarray as xr
     from plotly.subplots import make_subplots
 
-    from hhemt.bundle._combine import _config_identity_from_node_attrs
     from hhemt.eda._config_diff import (
         _CONFIG_DIFF_DEPTH_BAND_M,
         _CONFIG_DIFF_FLOW_BAND_CMS,
         _DIVERGING,
+        _REF_DEPTH,
+        _REF_FLOW,
         _align_to,
         _apply_mask,
         _conduit_traces,
         _derive_config_label,
+        _device_count_key,
+        _group_by_identity,
+        _hw_family_key,
         _heatmap,
         _load_conduit_geometry,
+        _load_subs,
+        _signed_pct,
+        _symmetric_diff_range,
         _watershed_boundary_traces,
         _watershed_mask,
         _watershed_polygon,
@@ -228,63 +235,127 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         )
         return fig
 
-    # ---- differing pairs present: re-open each model's clean + resume child crates.
-    def _subs_by_config(root: Path) -> dict[str, dict]:
-        """config-identity key -> {label, attrs, wlevel DataArray, flow DataArray|None}."""
-        store = root / "sensitivity_datatree.zarr"
-        if not store.exists():
-            return {}
-        dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
-        out: dict[str, dict] = {}
-        for g in dt.groups:
-            if g.count("/") != 1 or not g.startswith("/sa_"):
-                continue
-            attrs = dict(dt[g].attrs)
-            key = _config_identity_from_node_attrs(attrs)
-            if key in out:
-                continue  # first representative per config wins (mirrors _combine)
-            tri = None
-            for cand in (g + "/tritonswmm/triton", g + "/triton_only/triton"):
-                try:
-                    tri = dt[cand]
-                    break
-                except KeyError:
-                    continue
-            if tri is None:
-                continue
-            try:
-                lnk = dt[g + "/tritonswmm/swmm_link"]
-            except KeyError:
-                lnk = None
-            out[key] = {
-                "attrs": attrs,
-                "label": _derive_config_label(attrs),
-                "wlevel": tri["max_wlevel_m"],
-                "flow": (lnk["max_flow_cms"] if lnk is not None else None),
-            }
-        return out
-
+    # ---- differing pairs present: per MODEL -> per HARDWARE FAMILY -> per identity group.
+    #
+    #      HARDWARE is the OUTER axis and identity is the INNER one, and that order is
+    #      load-bearing. A byte-identity group is NOT hardware-homogeneous -- on a
+    #      pure-TRITON master every config is byte-identical, so `_group_by_identity` returns
+    #      ONE group spanning serial, OpenMP, MPI, hybrid AND GPU. Partitioning identity
+    #      groups by "the representative's hardware" therefore yields a family key taken from
+    #      an arbitrary member and a baseline that is whichever config happened to be first.
+    #      Configs are partitioned by family FIRST; identity then collapses byte-identical
+    #      configs into one panel WITHIN a family, which is what it can actually express.
+    #
+    #      The family rule, the device ordering and the identity partition are all IMPORTED
+    #      from eda._config_diff rather than re-derived here, so this figure and
+    #      config_diff_maps cannot drift in which run they call the reference.
     crates = combined_root / "child_crates"
-    cache: dict[str, dict[str, dict]] = {}
+    _sub_cache: dict[tuple[str, int], dict] = {}
 
-    def _side(model: str, role: str) -> dict[str, dict]:
-        eid = roles.get(model, {}).get(role, "")
+    def _subs_for(eid: str, evt: int) -> dict:
         if not eid:
             return {}
-        if eid not in cache:
-            cache[eid] = _subs_by_config(crates / eid)
-        return cache[eid]
+        key = (eid, evt)
+        if key not in _sub_cache:
+            try:
+                _sub_cache[key] = _load_subs(crates / eid, event_iloc=evt)
+            except Exception:
+                _sub_cache[key] = {}
+        return _sub_cache[key]
 
-    n_rows = 1 + len(panel_keys)
-    specs = [[{"type": "table", "colspan": 2}, None]] + [[{"type": "xy"}, {"type": "xy"}] for _ in panel_keys]
-    plot_h = _TABLE_PX + 24 + len(panel_keys) * (_MAP_PX + 70)
-    row_heights = [_TABLE_PX / plot_h] + [(_MAP_PX + 70) / plot_h] * len(panel_keys)
-    fig = make_subplots(rows=n_rows, cols=2, specs=specs, row_heights=row_heights, vertical_spacing=0.02)
+    def _sub_family(s: dict) -> str:
+        """This ONE sub's hardware family, via the shared rule (cpu | a6000 | a100-80 | ...)."""
+        return _hw_family_key({"run_modes": [s.get("run_mode")], "attrs": s.get("attrs", {})})
+
+    def _sub_devkey(s: dict) -> tuple:
+        return _device_count_key({"attrs": s.get("attrs", {})})
+
+    def _family_title(fam: str) -> str:
+        return "CPU" if fam == "cpu" else f"GPU ({fam})"
+
+    # ---- row plan: model -> family subsection -> [table] + [reference] + (diff, pct) per group.
+    #      The model split stays strictly OUTSIDE the family split.
+    row_plan: list[dict] = []
+    for model in models:
+        evts = sorted({int(p["event_iloc"]) for p in differing_by_model[model]}) or [0]
+        clean_eid = roles.get(model, {}).get("clean", "")
+        resume_eid = roles.get(model, {}).get("resume", "")
+        for evt in evts:
+            clean_subs = _subs_for(clean_eid, evt)
+            resume_subs = _subs_for(resume_eid, evt)
+            if not clean_subs or not resume_subs:
+                continue
+            fams: dict[str, dict] = {}
+            for sa_id, s in clean_subs.items():
+                fams.setdefault(_sub_family(s), {})[sa_id] = s
+            for fam in sorted(fams):
+                fam_subs = fams[fam]
+                if not fam_subs:
+                    continue
+                # The family's baseline is its MINIMUM-device clean run: serial-CPU for the
+                # cpu family, the 1-GPU run for each GPU hardware token.
+                base_sa = min(fam_subs, key=lambda k: _sub_devkey(fam_subs[k]))
+                try:
+                    fam_groups = _group_by_identity(fam_subs, crates / clean_eid)
+                except Exception:
+                    fam_groups = [{"members": [k], "attrs": v.get("attrs", {}),
+                                   "run_modes": [v.get("run_mode")], "wlevel_da": v["wlevel"],
+                                   "flow_da": v.get("flow")} for k, v in fam_subs.items()]
+                if not fam_groups:
+                    continue
+                ctx = dict(model=model, evt=evt, fam=fam, base_sa=base_sa,
+                           fam_subs=fam_subs, clean_eid=clean_eid,
+                           resume_subs=resume_subs, groups=fam_groups)
+                row_plan.append(dict(kind="famtable", ctx=ctx))
+                row_plan.append(dict(kind="ref", ctx=ctx))
+                for g in fam_groups:
+                    row_plan.append(dict(kind="diff", ctx=ctx, g=g))
+                    row_plan.append(dict(kind="pct", ctx=ctx, g=g))
+
+    if not row_plan:
+        fig = go.Figure(
+            go.Table(
+                header=dict(
+                    values=["Model", "compared pairs", "clean-vs-resume verdict", "max |resume - clean|"],
+                    align="left", fill_color="#eef2f7", font=dict(size=11),
+                ),
+                cells=dict(
+                    values=list(zip(*verdict_rows, strict=False)) if verdict_rows else [[]],
+                    align="left", font=dict(size=11), height=22,
+                ),
+            )
+        )
+        plot_h = max(_TABLE_PX, 120)
+        b_px = add_figure_caption(fig, caption_text, content_w_px=_FIG_W - 60, plot_h_px=plot_h)
+        fig.update_layout(
+            height=plot_h + _T_MARGIN + b_px, width=_FIG_W,
+            margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
+            title="Clean vs resume, spatial: child bundles unavailable at render time",
+            paper_bgcolor="white",
+        )
+        return fig
+
+    # FQ7 applies here too: no coupled SWMM tier -> a ONE-column grid, no placeholder.
+    _ncols = 2 if has_coupled_arm else 1
+    n_rows = 1 + len(row_plan)
+    specs = [[{"type": "table", "colspan": 2}, None] if has_coupled_arm else [{"type": "table"}]]
+    for entry in row_plan:
+        if entry["kind"] == "famtable":
+            specs.append([{"type": "table", "colspan": 2}, None] if has_coupled_arm else [{"type": "table"}])
+        else:
+            specs.append([{"type": "xy"}, {"type": "xy"}] if has_coupled_arm else [{"type": "xy"}])
+
+    _FAMTABLE_PX = 110
+    _row_px = [_TABLE_PX] + [(_FAMTABLE_PX if e["kind"] == "famtable" else _MAP_PX + 70) for e in row_plan]
+    plot_h = sum(_row_px)
+    row_heights = [px / plot_h for px in _row_px]
+    fig = make_subplots(rows=n_rows, cols=_ncols, specs=specs,
+                        row_heights=row_heights, vertical_spacing=0.02)
 
     fig.add_trace(
         go.Table(
             header=dict(
-                values=["Model", "compared pairs", "clean-vs-resume verdict", "max |resume − clean|"],
+                values=["Model", "compared pairs", "clean-vs-resume verdict", "max |resume - clean|"],
                 align="left", fill_color="#eef2f7", font=dict(size=11),
             ),
             cells=dict(
@@ -295,79 +366,171 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         row=1, col=1,
     )
 
+    _mask_cache: dict[tuple[str, int], tuple] = {}
+
+    def _grid(ctx):
+        key = (ctx["clean_eid"], ctx["evt"])
+        if key not in _mask_cache:
+            base_da = ctx["fam_subs"][ctx["base_sa"]]["wlevel"]
+            xd = [float(v) for v in base_da["x"].values]
+            yd = [float(v) for v in base_da["y"].values]
+            wpoly = _watershed_polygon(crates / ctx["clean_eid"])
+            _mask_cache[key] = (xd, yd, wpoly, _watershed_mask(wpoly, xd, yd))
+        return _mask_cache[key]
+
+    def _resume_da(ctx, g):
+        """The resumed run for this identity group's representative config."""
+        for sa_id in g["members"]:
+            s = ctx["resume_subs"].get(sa_id)
+            if s is not None:
+                return s["wlevel"]
+        return None
+
+    def _glabel(g) -> str:
+        return _derive_config_label(g.get("attrs", {}))
+
+    # ONE shared symmetric range across every diff panel, quantised UP to the ladder, so
+    # panels stay mutually comparable and co-located arms coincide when their p99s share a
+    # bin. Computed on the MASKED arrays, exactly as the panels are drawn.
+    _dw, _pw = [], []
+    for entry in row_plan:
+        if entry["kind"] != "diff":
+            continue
+        ctx, g = entry["ctx"], entry["g"]
+        _, _, _, wmask = _grid(ctx)
+        base_da = ctx["fam_subs"][ctx["base_sa"]]["wlevel"]
+        rda = _resume_da(ctx, g)
+        if rda is None:
+            continue
+        d = _align_to(base_da, rda) - np.asarray(base_da.values)
+        _dw.append(_apply_mask(d, wmask))
+        _pw.append(_apply_mask(_signed_pct(d, np.asarray(base_da.values)), wmask))
+    wsym = _symmetric_diff_range(_dw, floor=1e-12) if _dw else _CONFIG_DIFF_DEPTH_BAND_M
+    psym = _symmetric_diff_range(_pw, floor=1e-12) if _pw else 0.1
+
     annotations = []
-    for i, (model, cfg_key, evt) in enumerate(panel_keys):
+    for i, entry in enumerate(row_plan):
         row = 2 + i
-        clean, resume = _side(model, "clean"), _side(model, "resume")
-        c, r = clean.get(cfg_key), resume.get(cfg_key)
-        label = (c or r or {}).get("label", cfg_key)
-        if c is None or r is None:
+        ctx, kind = entry["ctx"], entry["kind"]
+        model, fam, evt = ctx["model"], ctx["fam"], ctx["evt"]
+        base_s = ctx["fam_subs"][ctx["base_sa"]]
+        base_da = base_s["wlevel"]
+        base_label = _derive_config_label(base_s.get("attrs", {}))
+        xd, yd, wpoly, wmask = _grid(ctx)
+        y_top = 1 - (row - 1) / n_rows
+
+        if kind == "famtable":
+            rows_ = [[_glabel(g), f"group {gi + 1}", f"{len(g['members'])} config(s)"]
+                     for gi, g in enumerate(ctx["groups"])]
+            fig.add_trace(
+                go.Table(
+                    header=dict(values=["representative config", "identity group", "members"],
+                                align="left", fill_color="#f3f6fa", font=dict(size=10)),
+                    cells=dict(values=list(zip(*rows_, strict=False)) if rows_ else [[]],
+                               align="left", font=dict(size=10), height=20),
+                ),
+                row=row, col=1,
+            )
             annotations.append(dict(
-                x=0.5, y=0.5, xref=f"x{row} domain", yref=f"y{row} domain", xanchor="center", yanchor="middle",
-                showarrow=False, font=dict(size=11, color="#666"),
-                text=f"{model} — {label}: child bundle unavailable at render time",
+                x=0.0, y=y_top, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
+                showarrow=False, align="left", font=dict(size=12, color="#111"),
+                text=(f"<b>{model} - {_family_title(fam)}</b> - baseline: the clean, uninterrupted "
+                      f"run on this hardware family ({base_label})"),
             ))
             continue
 
-        cw = c["wlevel"].isel(event_iloc=evt)
-        rw = r["wlevel"].isel(event_iloc=evt)
-        xd = [float(v) for v in cw["x"].values]
-        yd = [float(v) for v in cw["y"].values]
-        wpoly = _watershed_polygon(crates / roles[model]["clean"])
-        wmask = _watershed_mask(wpoly, xd, yd)
-        dw = _apply_mask(_align_to(cw, rw) - np.asarray(cw.values), wmask)
-
-        fig.add_trace(
-            _heatmap(
-                dw, dw, x=xd, y=yd, colorscale=_DIVERGING, zmid=0,
-                zmin=-_CONFIG_DIFF_DEPTH_BAND_M, zmax=_CONFIG_DIFF_DEPTH_BAND_M,
-                cbar_title="m", cbar_x=0.44, cbar_y=1 - (row - 0.5) / n_rows, cbar_len=0.6 / n_rows,
-            ),
-            row=row, col=1,
-        )
-        # The watershed boundary overlay belongs on the RASTER column only; the conduit
-        # column carries no DEM raster for it to bound. Traces are built by _config_diff
-        # so the boundary encoding has one source and no artist is constructed here.
-        for _tr in _watershed_boundary_traces(wpoly):
-            fig.add_trace(_tr, row=row, col=1)
-
-        if c["flow"] is not None and r["flow"] is not None:
-            geom = _load_conduit_geometry(crates / roles[model]["clean"])
-            cf = c["flow"].isel(event_iloc=evt)
-            df = _align_to(cf, r["flow"].isel(event_iloc=evt)) - np.asarray(cf.values)
-            links = [str(v) for v in cf["link_id"].values]
-            for tr in _conduit_traces(
-                geom, dict(zip(links, np.asarray(df), strict=False)),
-                colorscale=_DIVERGING, vmin=-_CONFIG_DIFF_FLOW_BAND_CMS, vmax=_CONFIG_DIFF_FLOW_BAND_CMS,
-                cbar_title="cms", cbar_x=0.98, cbar_y=1 - (row - 0.5) / n_rows, cbar_len=0.6 / n_rows,
-                diverging=True,
-            ):
-                fig.add_trace(tr, row=row, col=2)
-        else:
+        if kind == "ref":
+            zref = _apply_mask(np.asarray(base_da.values), wmask)
+            fig.add_trace(
+                _heatmap(zref, zref, x=xd, y=yd, colorscale=_REF_DEPTH, cbar_title="m",
+                         cbar_x=0.44, cbar_y=1 - (row - 0.5) / n_rows, cbar_len=0.6 / n_rows),
+                row=row, col=1,
+            )
+            for _tr in _watershed_boundary_traces(wpoly):
+                fig.add_trace(_tr, row=row, col=1)
+            if has_coupled_arm and base_s.get("flow") is not None:
+                geom = _load_conduit_geometry(crates / ctx["clean_eid"])
+                bf = base_s["flow"]
+                links = [str(v) for v in bf["link_id"].values]
+                vmax = float(np.nanmax(np.abs(np.asarray(bf.values))))
+                for tr in _conduit_traces(
+                    geom, dict(zip(links, np.asarray(bf.values), strict=False)),
+                    colorscale=_REF_FLOW, vmin=0, vmax=(vmax if vmax > 0 else 1.0),
+                    cbar_title="cms", cbar_x=0.98, cbar_y=1 - (row - 0.5) / n_rows,
+                    cbar_len=0.6 / n_rows, diverging=False,
+                ):
+                    fig.add_trace(tr, row=row, col=2)
             annotations.append(dict(
-                x=0.5, y=0.5, xref=f"x{row * 2} domain", yref=f"y{row * 2} domain",
-                xanchor="center", yanchor="middle", showarrow=False, font=dict(size=11, color="#666"),
-                text="N/A — pure-TRITON<br>(no coupled SWMM conduits)",
+                x=0.0, y=y_top, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
+                showarrow=False, align="left", font=dict(size=11, color="#111"),
+                text=(f"Reference - {base_label}: the clean, uninterrupted run on this hardware "
+                      f"family (absolute peak water level, event {evt})"),
             ))
+            continue
 
+        g = entry["g"]
+        g_label = _glabel(g)
+        rda = _resume_da(ctx, g)
+        if rda is None:
+            annotations.append(dict(
+                x=0.5, y=0.5, xref=f"x{row} domain", yref=f"y{row} domain",
+                xanchor="center", yanchor="middle", showarrow=False, font=dict(size=11, color="#666"),
+                text=f"{model} - {g_label}: no resumed run for this config at render time",
+            ))
+            continue
+        d = _align_to(base_da, rda) - np.asarray(base_da.values)
+        if kind == "diff":
+            z = _apply_mask(d, wmask)
+            fig.add_trace(
+                _heatmap(z, z, x=xd, y=yd, colorscale=_DIVERGING, zmid=0, zmin=-wsym, zmax=wsym,
+                         cbar_title="m", cbar_x=0.44, cbar_y=1 - (row - 0.5) / n_rows,
+                         cbar_len=0.6 / n_rows),
+                row=row, col=1,
+            )
+            for _tr in _watershed_boundary_traces(wpoly):
+                fig.add_trace(_tr, row=row, col=1)
+            txt = (f"{g_label} (resumed) - {base_label} (clean baseline), same hardware family, "
+                   f"event {evt}")
+        else:
+            z = _apply_mask(_signed_pct(d, np.asarray(base_da.values)), wmask)
+            fig.add_trace(
+                _heatmap(z, z, x=xd, y=yd, colorscale=_DIVERGING, zmid=0, zmin=-psym, zmax=psym,
+                         cbar_title="%", cbar_x=0.44, cbar_y=1 - (row - 0.5) / n_rows,
+                         cbar_len=0.6 / n_rows),
+                row=row, col=1,
+            )
+            txt = f"{g_label}: percent difference vs the clean baseline on the same hardware family"
         annotations.append(dict(
-            x=0.0, y=1 - (row - 1) / n_rows, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
-            showarrow=False, align="left", font=dict(size=11, color="#111"),
-            text=f"<b>{model}</b> — {label}, event {evt}: max_wlevel_m peak-water-level difference (resume − clean)",
+            x=0.0, y=y_top, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
+            showarrow=False, align="left", font=dict(size=11, color="#111"), text=txt,
         ))
-        for col in (1, 2):
+
+    for ei, entry in enumerate(row_plan):
+        if entry["kind"] == "famtable":
+            continue
+        row = 2 + ei
+        for col in range(1, _ncols + 1):
             fig.update_xaxes(row=row, col=col, title_text="x (m)", title_font=dict(size=10),
                              tickfont=dict(size=9), showgrid=False, zeroline=False)
             fig.update_yaxes(row=row, col=col, title_text="y (m)" if col == 1 else "",
                              title_font=dict(size=10), tickfont=dict(size=9),
                              showgrid=False, zeroline=False, showticklabels=(col == 1))
 
-    b_px = add_figure_caption(fig, caption_text, content_w_px=_FIG_W - 60, plot_h_px=plot_h)
+    _caption = (
+        caption_text
+        + " Panels are grouped by HARDWARE FAMILY; within each family the baseline is the "
+        "clean, uninterrupted run on that same hardware (serial CPU for the CPU family, the "
+        "1-GPU run for each GPU hardware), and no comparison is drawn across families. "
+        "Byte-identical configs within a family share one panel. Diff panels share one "
+        f"symmetric range (+/-{wsym:.4g} m, +/-{psym:.4g} %), quantised to a shared ladder so "
+        "co-located model arms coincide whenever their percentiles share a bin."
+    )
+    b_px = add_figure_caption(fig, _caption, content_w_px=_FIG_W - 60, plot_h_px=plot_h)
     fig.update_layout(
         height=plot_h + _T_MARGIN + b_px,
         width=_FIG_W,
         margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
-        title="Clean vs resume, spatial: peak water-level difference per differing compute config",
+        title="Clean vs resume, spatial: resumed runs vs the clean baseline on the same hardware family",
         annotations=list(fig.layout.annotations) + annotations,
         showlegend=False,
         plot_bgcolor="white",

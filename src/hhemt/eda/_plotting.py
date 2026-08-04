@@ -520,10 +520,10 @@ def _render_b4b_clean_identity(root: Path, *, cfg_analysis: analysis_config, eda
         stem="b4b_clean_identity",
         title=(
             "Per-timestep water-level byte-for-byte comparison vs the hardware-category reference"
-            "<br><sub>non-serial configs vs the category minimum-device baseline "
-            "(CPU → serial-CPU, GPU → 1-GPU)</sub>"
         ),
         baseline_caption=(
+            "Non-serial configs are compared against their hardware category's minimum-device "
+            "baseline (CPU → serial-CPU, GPU → 1-GPU). "
             "Identical cells (Δ = 0) are green; differing cells show max |Δ| vs the per-family "
             "reference, colorbar band 0–τ (τ = 0.03 m)."
         ),

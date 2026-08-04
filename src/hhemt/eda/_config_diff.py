@@ -24,6 +24,7 @@ group; each group's panels carry a caption naming every member config.
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -189,6 +190,53 @@ def _device_count_key(g: dict) -> tuple:
     return (_to_int(a, "n_nodes"), _to_int(a, "n_gpus"), _to_int(a, "n_mpi_procs"), _to_int(a, "n_omp_threads"))
 
 
+@dataclass(frozen=True)
+class BaselineSpec:
+    """Declares HOW a set of identity groups is partitioned and which member of each
+    partition is the comparison baseline.
+
+    ``family_keyed=False`` reproduces the single-baseline rule build_config_diff_figure
+    uses today (the serial-CPU group is the one baseline for the whole figure).
+    ``family_keyed=True`` partitions by hardware family (``_hw_family_key``: 'cpu', or a
+    GPU hardware token) and gives each family its own minimum-device baseline, which is
+    the rule b4b_clean_identity and _family_reference_group already use.
+
+    Consumers MUST run ``_align_to`` against the resolved baseline's DataArray before any
+    positional subtraction. build_config_diff_figure documents that alignment as "the only
+    correctness gap vs the compliant cross_sim_identity comparison", and a new baseline
+    consumer that skips it reintroduces exactly that gap.
+    """
+
+    family_keyed: bool = False
+    serial_group_name: str = "serial"
+
+
+def resolve_baseline_groups(groups: list[dict], spec: BaselineSpec) -> dict[str, dict]:
+    """Return ``{family_key: baseline_group}`` for the given identity groups.
+
+    Single source of the baseline rule shared by config_diff_maps and the cross-experiment
+    clean-vs-resume maps, so the two figures cannot drift in which run they call the
+    reference. Returns an empty mapping when no baseline resolves (never an arbitrary
+    group) so a caller must handle absence explicitly rather than silently comparing
+    against whichever group happened to be first.
+    """
+    if not groups:
+        return {}
+    if not spec.family_keyed:
+        serial = next(
+            (g for g in groups if spec.serial_group_name in [str(rm) for rm in g.get("run_modes", [])]),
+            None,
+        )
+        return {"cpu": serial} if serial is not None else {}
+    out: dict[str, dict] = {}
+    for g in groups:
+        out.setdefault(_hw_family_key(g), [])
+    for fam in out:
+        peers = [g for g in groups if _hw_family_key(g) == fam]
+        out[fam] = min(peers, key=_device_count_key)
+    return out
+
+
 def _family_reference_group(g: dict, groups: list[dict]) -> dict:
     """The within-hardware-family minimum-device reference group for g (matches
     b4b_clean_identity: cpu -> serial-CPU, each GPU-hardware -> its 1-GPU). Falls back to g
@@ -196,6 +244,30 @@ def _family_reference_group(g: dict, groups: list[dict]) -> dict:
     fam = _hw_family_key(g)
     peers = [x for x in groups if _hw_family_key(x) == fam]
     return min(peers, key=_device_count_key) if peers else g
+
+
+def partition_groups_by_family(groups: list[dict]) -> dict[str, list[dict]]:
+    """Return ``{family_key: [groups in panel order]}`` over the shared family rule.
+
+    The family key is ``_hw_family_key``: ``'cpu'`` for any group with no GPU member, else
+    that group's GPU hardware token, so an a6000 config is never bucketed with an a100-80
+    one. Within a family the order is ``_panel_order_key`` -- the SAME ordering the
+    config-diff panels already use, so a reader who has learned one figure's panel order has
+    learned the other's.
+
+    Companion to ``resolve_baseline_groups``: that returns each family's BASELINE, this
+    returns each family's MEMBERS. Callers that need both must call both rather than
+    re-deriving either, which is the duplication the shared seam exists to prevent.
+
+    Every input group lands in exactly one bucket; nothing is dropped. A group with no
+    resolvable run mode buckets as ``'cpu'`` rather than disappearing, because a dropped
+    group is a silently missing panel and there is no channel on the figure that would
+    disclose it.
+    """
+    out: dict[str, list[dict]] = {}
+    for g in groups:
+        out.setdefault(_hw_family_key(g), []).append(g)
+    return {fam: sorted(members, key=_panel_order_key) for fam, members in out.items()}
 
 
 def _gpu_hardware(attrs: dict) -> str:
@@ -261,8 +333,16 @@ def _n_resumes_by_sa_id(root: Path) -> dict[str, int]:
     return out
 
 
-def _load_subs(root: Path) -> dict[str, dict]:
-    """Load per-sub compute-config + spatial arrays from sensitivity_datatree.zarr."""
+def _load_subs(root: Path, *, event_iloc: int = 0) -> dict[str, dict]:
+    """Load per-sub compute-config + spatial arrays from sensitivity_datatree.zarr.
+
+    ``event_iloc`` selects the weather event. It defaults to 0, which is the value this
+    function hardcoded before the cross-experiment maps renderer became a second consumer;
+    every pre-existing caller therefore reads byte-identically. The parameter exists because
+    that renderer's read model (``combined_intercomparison.json``) carries a per-pair
+    ``event_iloc``, and reusing this loader without threading it would narrow every panel to
+    event 0 while looking like a pure refactor.
+    """
     dt = xr.open_datatree(str(root / "sensitivity_datatree.zarr"), engine="zarr", consolidated=False)
     n_res = _n_resumes_by_sa_id(root)  # b5: sa_id -> max n_resumes from scenario_status.csv
     subs: dict[str, dict] = {}
@@ -294,8 +374,8 @@ def _load_subs(root: Path) -> dict[str, dict]:
             "label": _derive_config_label(node.attrs),
             "run_mode": str(node.attrs.get("run_mode", "")),
             "n_resumes": int(n_res.get(sa_id, 0)),  # b5
-            "wlevel": tri["max_wlevel_m"].isel(event_iloc=0),  # (y, x) with x/y coords
-            "flow": (lnk["max_flow_cms"].isel(event_iloc=0) if lnk is not None else None),  # coupled-only
+            "wlevel": tri["max_wlevel_m"].isel(event_iloc=event_iloc),  # (y, x) with x/y coords
+            "flow": (lnk["max_flow_cms"].isel(event_iloc=event_iloc) if lnk is not None else None),  # coupled-only
         }
     return subs
 
@@ -365,6 +445,44 @@ def _signed_pct(delta: np.ndarray, base: np.ndarray) -> np.ndarray:
         pct = 100.0 * delta / base
     pct[np.abs(base) < 1e-12] = np.nan
     return pct
+
+
+def _symmetric_diff_range(arrays: list, *, floor: float, percentile: float = 99.0) -> float:
+    """One SHARED symmetric half-range across every supplied diff array, quantised UP.
+
+    The fixed physically-anchored bands this replaces are wider than the data on a typical
+    master, so every diff panel renders uniform white. A percentile rather than a max,
+    because a single boundary cell otherwise re-widens the band to the state being fixed;
+    SHARED across panels rather than per-panel, because per-panel auto-scale destroys
+    within-figure comparability, which is a worse defect than the one being fixed.
+
+    Quantising UP to a decade-relative ladder is the same instrument Panel A already uses
+    for its depth cap (``_DEPTH_CAP_STEP_M``): it is deterministic, never clips, and makes
+    two co-located model arms COINCIDE whenever their percentiles share a bin -- which is
+    what preserves the cross-arm fungibility the fixed band existed to protect, now that
+    the range is data-driven. The ladder is decade-relative so one rule is scale-free
+    across depth in metres, flow in cms, and percent.
+
+    Returns ``floor`` when no finite value exists or the percentile is non-positive.
+    """
+    vals = []
+    for a in arrays:
+        arr = np.abs(np.asarray(a, dtype=float))
+        arr = arr[np.isfinite(arr)]
+        if arr.size:
+            vals.append(arr)
+    if not vals:
+        return floor
+    allv = np.concatenate(vals)
+    if not allv.size:
+        return floor
+    p = float(np.percentile(allv, percentile))
+    if not np.isfinite(p) or p <= 0:
+        return floor
+    step = (10.0 ** np.floor(np.log10(p))) / 4.0
+    if step <= 0:
+        return floor
+    return float(np.ceil(p / step) * step)
 
 
 def _load_conduit_geometry(root: Path) -> dict[str, tuple[tuple[float, float], tuple[float, float]]]:
@@ -796,9 +914,19 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     #      then per differing group a diff row + a percent-diff row. ----
     map_rows = 1 + 2 * len(diff_groups)  # serial + per-group (diff, pct)
     total_rows = 1 + map_rows
-    specs = [[{"type": "table", "colspan": 2}, None]]
-    for _ in range(map_rows):
-        specs.append([{"type": "xy"}, {"type": "xy"}])
+    # Iteration 4 (FQ7): applicability decides the GRID, not the CONTENT. On a pure-TRITON
+    # master (has_flow False) the conduit column is not allocated a subplot spec at all --
+    # previously it was allocated and filled with an "N/A" placeholder, which occupies
+    # layout for a comparison that does not exist and reads as a missing result.
+    _ncols = 2 if has_flow else 1
+    if has_flow:
+        specs = [[{"type": "table", "colspan": 2}, None]]
+        for _ in range(map_rows):
+            specs.append([{"type": "xy"}, {"type": "xy"}])
+    else:
+        specs = [[{"type": "table"}]]
+        for _ in range(map_rows):
+            specs.append([{"type": "xy"}])
 
     # Top summary table is now single-line per group (keyed by Panel letter); the config
     # lists live in the per-panel side tables. Height = header + one row per group.
@@ -812,7 +940,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # column CELL, mis-aligning them from the narrow maps.
     fig = make_subplots(
         rows=total_rows,
-        cols=2,
+        cols=_ncols,
         specs=specs,
         row_heights=row_heights,
         vertical_spacing=min(0.07, 0.6 / max(total_rows, 1)),
@@ -923,9 +1051,10 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             cur -= _f(G_INTER)
     for r, yd_ in row_ydom.items():
         next(fig.select_xaxes(row=r, col=1)).domain = dom1
-        next(fig.select_xaxes(row=r, col=2)).domain = dom2
         next(fig.select_yaxes(row=r, col=1)).domain = yd_
-        next(fig.select_yaxes(row=r, col=2)).domain = yd_
+        if has_flow:
+            next(fig.select_xaxes(row=r, col=2)).domain = dom2
+            next(fig.select_yaxes(row=r, col=2)).domain = yd_
     fig.data[0].domain = dict(x=[0.03, 0.97], y=[table_bot, table_top])  # summary table
 
     def _ydom(r, c=1):
@@ -958,9 +1087,31 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     #      knowledge doc), because the co-located comparison is a cross-arm small-multiple where a
     #      shared scale is the correct proportional-ink reading. The sequential serial-reference
     #      maps (DIFFERENT colorscales) are exempt and keep their own per-arm auto-scale.
-    wsym = _CONFIG_DIFF_DEPTH_BAND_M
-    fsym = _CONFIG_DIFF_FLOW_BAND_CMS
-    pct_sym = _CONFIG_DIFF_PCT_BAND
+    # Iteration 4 (FQ6): the FIXED bands above are wider than the data on this master, so
+    # every diff panel rendered uniform white. Replace the constant with a SHARED
+    # percentile-clipped symmetric range, quantised UP to a ladder -- the same instrument
+    # Panel A uses for its depth cap (_DEPTH_CAP_STEP_M), which is what preserves cross-arm
+    # coincidence now that the range is data-driven: two arms coincide whenever their p99s
+    # share a bin. SHARED across panels (not per-panel) so panels stay mutually comparable.
+    # The physical thresholds are retained as CAPTION content, not as the range.
+    # Masked exactly as the panels are (:_apply_mask below): an unmasked percentile would be
+    # computed over cells the figure does not display, including the high boundary-condition
+    # region north of the sea wall that the watershed mask exists to exclude.
+    wsym = _symmetric_diff_range(
+        [_apply_mask(g["wlevel"] - base_w, wmask) for g in diff_groups], floor=_RANGE_EPS
+    )
+    # NOT masked: wmask is a RASTER (y, x) mask and the flow arrays are per-LINK
+    # (one value per SWMM conduit), so applying it raises a broadcast error. The
+    # watershed masking is meaningful only for the depth rasters above.
+    fsym = (
+        _symmetric_diff_range([g["flow"] - base_f for g in diff_groups], floor=_RANGE_EPS)
+        if has_flow
+        else _CONFIG_DIFF_FLOW_BAND_CMS
+    )
+    pct_sym = _symmetric_diff_range(
+        [_apply_mask(_signed_pct(g["wlevel"] - base_w, base_w), wmask) for g in diff_groups],
+        floor=_RANGE_EPS,
+    )
 
     def _links(g):
         return [str(x) for x in g["flow_da"]["link_id"].values]
@@ -988,24 +1139,8 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             )
         )
 
-    def _col2_na(row):
-        # Deterministic col-2 placeholder for a pure-TRITON master (F9: clear backend
-        # commentary, not a silent blank). Centered over the col-2 map domain.
-        d0, d1 = row_ydom[row]
-        annotations.append(
-            dict(
-                x=(dom2[0] + dom2[1]) / 2.0,
-                y=(d0 + d1) / 2.0,
-                xref="paper",
-                yref="paper",
-                xanchor="center",
-                yanchor="middle",
-                showarrow=False,
-                font=dict(size=11, color="#666"),
-                text="N/A — pure-TRITON<br>(no coupled SWMM conduits)",
-            )
-        )
-
+    # FQ7: the col-2 'N/A - pure-TRITON' placeholder is REMOVED. An inapplicable panel
+    # is not allocated a subplot spec at all (see the specs construction above).
     def _panel_config_table(g, first_row, last_row):
         # Per-panel table (left of the maps) listing the byte-identical configs in the
         # group, so the panel LABEL can stay short ("Panel X"). Positioned by explicit
@@ -1086,8 +1221,6 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             diverging=False,
         ):
             fig.add_trace(tr, row=serial_row, col=2)
-    else:
-        _col2_na(serial_row)
     _panel_label("<b>Panel A</b> — Serial CPU reference", serial_row, serial_row)
     _panel_config_table(serial_grp, serial_row, serial_row)
 
@@ -1138,9 +1271,6 @@ def build_config_diff_figure(root: Path) -> go.Figure:
                 diverging=True,
             ):
                 fig.add_trace(tr, row=diff_row, col=2)
-        else:
-            _col2_na(diff_row)
-
         # percent-diff row: depth % (raster) | flow % (conduits)
         fig.add_trace(
             _heatmap(
@@ -1174,9 +1304,6 @@ def build_config_diff_figure(root: Path) -> go.Figure:
                 diverging=True,
             ):
                 fig.add_trace(tr, row=pct_row, col=2)
-        else:
-            _col2_na(pct_row)
-
         panel = chr(ord("B") + gi)
         # Left-margin rotated label; group title from the SAME _configs(g) as the table
         # (all hardware variants, never a single a6000 rep), so panel + table stay aligned.
@@ -1187,7 +1314,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # these rows carry the "x (m)" title (item: every panel has an x label).
     panel_bottom_rows = {serial_row + 2 * k for k in range(len(diff_groups) + 1)}
     for r in range(2, total_rows + 1):
-        for c in (1, 2):
+        for c in ((1, 2) if has_flow else (1,)):
             # No DEM boundary box (showline/mirror OFF) — the watershed boundary overlay is
             # the only frame now (item). Buffered range gives breathing room. Ticks + labels
             # stay; x-title on each panel's bottom row; y-title on col-1 only (col-2 shares y,
@@ -1237,7 +1364,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     #      is drawn below each panel's x-axis instead) ----
     rings = _polygon_boundary_rings(wpoly)
     for r in range(2, total_rows + 1):
-        for c in (1, 2):
+        for c in ((1, 2) if has_flow else (1,)):
             for xs, ys in rings:
                 fig.add_trace(
                     go.Scatter(
@@ -1293,7 +1420,8 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # Watershed swatch sits on the "x (m)" title line, in the gap BETWEEN the two maps'
     # x-titles (col-1 title ~dom1 center, col-2 ~dom2 center) — compact, inside the panel,
     # not down in the inter-panel seam.
-    ws_cx = (dom1[1] + dom2[0]) / 2.0
+    # FQ7: with no col-2, the swatch centres under the col-1 map instead of between columns.
+    ws_cx = ((dom1[1] + dom2[0]) / 2.0) if has_flow else ((dom1[0] + dom1[1]) / 2.0)
     # px-based swatch dims so they're consistent regardless of the figure height and fit in
     # the G_FOOTER budget: 28 px wide × 16 px tall (WIDER than tall; ~1.3× the 10-pt text).
     _SW_HALF_W = 14 / fig_width  # paper-x
@@ -1346,7 +1474,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
                 xref="paper",
                 yref="paper",
                 x0=0.006,
-                x1=cb_x[2] + 0.12,
+                x1=(cb_x[2] if has_flow else cb_x[1]) + 0.12,
                 y0=sw_y - _SW_HALF_H - _f(12),
                 y1=y_top + _f(12),
                 line=dict(color="black", width=1, dash="dash"),
@@ -1364,7 +1492,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # replaces the hardcoded B_MARGIN. The old `y=-0.02` was a fraction of plot_h, so the
     # caption sank further below the axes as config groups were added while b=140 stayed
     # fixed: it fit on small masters and clipped on large ones.
-    _caption_w_px = (cb_x[2] + 0.12 - 0.006) * fig_width  # dashed panel-outline extent
+    _caption_w_px = ((cb_x[2] if has_flow else cb_x[1]) + 0.12 - 0.006) * fig_width  # dashed panel-outline extent
     _caption_b_px = add_figure_caption(
         fig,
         (

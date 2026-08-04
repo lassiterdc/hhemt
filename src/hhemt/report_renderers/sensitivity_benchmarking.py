@@ -178,6 +178,31 @@ def render(
                 f"resolvable columns: {sorted(df_setup.columns)}"
             )
         df["group_value"] = df["sa_id"].map(df_setup[group_by_var])
+        # Iteration 4 (FQ2): replicate identity. The trailing `_rN` token is the
+        # replicate marker (cross_experiment_overtime_maxabsdiff._replicate_token) and is
+        # deliberately NOT part of config identity (_config_diff._derive_config_label:
+        # "Replicate suffixes are NOT in the identity, so replicates share one label").
+        # n_replicates drives marker FILL (open = this config has repeated runs) and the
+        # line aggregation averages over replicates before the per-N min is taken, so the
+        # min rule selects the best distinct CONFIG rather than the luckiest RUN.
+        df["config_id"] = df["sa_id"].astype(str).str.replace(r"_r\d+$", "", regex=True)
+        df["n_replicates"] = df["config_id"].map(
+            df.groupby("config_id")["sa_id"].nunique()
+        ).astype(int)
+        # Iteration 4 (FQ3 + FQ9b): qualify GPU group names with their hardware token when
+        # -- and only when -- more than one token is present. Unqualified, `gpu-a6000` and
+        # `gpu-a100-80` collapse into ONE series, and because the line is drawn through
+        # groupby(indep_value).min() its vertices are a100-80 at every device count while the
+        # a6000 data contributes none. Splitting the key carries hardware on colour + legend
+        # (strictly better than a fourth glyph channel, which cannot fix the line selection)
+        # and gives _resolve_family_baselines a per-hardware family to anchor on.
+        _part_col = _resolve_setup_col(df_setup, "hpc.partition")
+        if _part_col is not None:
+            _part = df["sa_id"].map(df_setup[_part_col]).astype(str)
+            _is_gpu = df["group_value"].astype(str).str.lower().eq("gpu") & _part.str.startswith("gpu-")
+            _tokens = _part[_is_gpu].str.replace(r"^gpu-", "", regex=True)
+            if _tokens.nunique() > 1:
+                df.loc[_is_gpu, "group_value"] = "gpu (" + _tokens + ")"
     else:
         df["group_value"] = "all"
     df["n_mpi_procs"] = df["sa_id"].map(
@@ -210,18 +235,40 @@ def render(
     # is never promoted to publication (KEEP-no-hybrid invariant).
     use_plotly = False if static_cfg is not None else (static_backend == "plotly")
     if use_plotly:
-        # Pre-compute speedup + efficiency. Baseline anchors against the serial
-        # group's wallclock at N=1 (strong-scaling convention) rather than the
-        # global N=1 min (which would land on GPU, not serial, since 1 GPU is
-        # much faster than 1 CPU and yields meaningless speedups).
-        speedup_pg = _compute_speedup_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices",
-            group_col="group_value", baseline_mode="serial",
+        # Iteration 4 (FQ3): anchor PER HARDWARE FAMILY -- CPU curves against the serial
+        # CPU run, each GPU hardware against its own minimum-device run. The prior
+        # global-serial anchor reported a6000 3-GPU as S = 1.51 ("this scales") where the
+        # within-hardware statement is S = 0.255. The in-source objection this replaces
+        # argued against a global N=1-MINIMUM anchor (which would land on GPU); a
+        # per-family anchor never compares across families, so that failure cannot arise.
+        # Falls back to the serial anchor when no family resolves, which is the exact
+        # pre-change behaviour for a single-hardware master.
+        family_baselines = _resolve_family_baselines(
+            df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
         )
-        strong_eff_pg = _compute_efficiency_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices",
-            group_col="group_value", mode="strong", baseline_mode="serial",
-        )
+        if family_baselines:
+            speedup_pg, strong_eff_pg = {}, {}
+            for _gv, _anchor in family_baselines.items():
+                _sub = df[df["group_value"].astype(str) == _gv]
+                if _sub.empty:
+                    continue
+                speedup_pg.update(_compute_metric_all_rows_per_group(
+                    _sub, t_col="wallclock_s", indep_col="n_devices",
+                    group_col="group_value", kind="speedup", anchor=_anchor,
+                ))
+                strong_eff_pg.update(_compute_metric_all_rows_per_group(
+                    _sub, t_col="wallclock_s", indep_col="n_devices",
+                    group_col="group_value", kind="efficiency", anchor=_anchor,
+                ))
+        else:
+            speedup_pg = _compute_speedup_per_group(
+                df, t_col="wallclock_s", indep_col="n_devices",
+                group_col="group_value", baseline_mode="serial",
+            )
+            strong_eff_pg = _compute_efficiency_per_group(
+                df, t_col="wallclock_s", indep_col="n_devices",
+                group_col="group_value", mode="strong", baseline_mode="serial",
+            )
         # All-row variants for the markers trace on panels 3+4 (shows every hybrid
         # configuration, not just the per-N min). Line goes through min; markers
         # at all points. Mirrors the panels 1+2 behavior.
@@ -474,6 +521,64 @@ def _resolve_global_baseline(
     if t_baseline <= 0:
         return None
     return t_baseline
+
+
+def _resolve_family_baselines(
+    df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str
+) -> dict[str, float]:
+    """Return ``{group_value: baseline_wallclock}``, anchored PER HARDWARE FAMILY.
+
+    Mirrors the family rule the codebase already implements twice -- ``_config_diff``'s
+    ``_hw_family_key`` / ``_device_count_key`` / ``_family_reference_group`` and
+    ``raw_resume_identity``'s ``_b4b_family_key`` / ``_b4b_ref_key``: CPU configs anchor on
+    the serial-CPU run, and each GPU hardware token anchors on ITS OWN minimum-device run.
+    A third, differently-shaped implementation here would be the divergence those two
+    already avoid, so the semantics are copied rather than re-derived.
+
+    Why this is not a mode on ``_resolve_serial_baseline``: that function returns a SCALAR
+    and feeds a scalar ``anchor=`` parameter, while the per-family answer is a MAPPING --
+    there are three families on a two-GPU master (``cpu``, plus one per GPU token), not two.
+
+    The global-serial anchor this replaces reports a6000 3-GPU as S = 400.30/265.20 = 1.51,
+    which reads as "this scales"; the per-family anchor gives 67.64/265.20 = 0.255, the
+    correct within-hardware statement. The in-source objection to a global N=1-minimum
+    anchor does not reach this: a per-family anchor never compares across families, so the
+    "N=1 GPU is faster than serial" failure it names cannot arise.
+
+    Returns ``{}`` when no family resolves, so callers fall back to the serial anchor
+    rather than silently comparing against an arbitrary group.
+    """
+    if df.empty or group_col not in df.columns or indep_col not in df.columns:
+        return {}
+    groups = [str(g) for g in df[group_col].dropna().unique()]
+    if not groups:
+        return {}
+
+    def _family_of(gv: str) -> str:
+        # A hardware-qualified GPU group name is `gpu (<token>)` after the series split;
+        # every non-GPU group shares the single `cpu` family.
+        low = gv.lower()
+        return gv if low.startswith("gpu") else "cpu"
+
+    fam_members: dict[str, list[str]] = {}
+    for gv in groups:
+        fam_members.setdefault(_family_of(gv), []).append(gv)
+
+    out: dict[str, float] = {}
+    for members in fam_members.values():
+        sub = df[df[group_col].astype(str).isin(members)]
+        if sub.empty:
+            continue
+        min_n = sub[indep_col].min()
+        ref = sub[sub[indep_col] == min_n]
+        if ref.empty:
+            continue
+        t_baseline = float(ref[t_col].min())
+        if t_baseline <= 0:
+            continue
+        for gv in members:
+            out[gv] = t_baseline
+    return out
 
 
 def _resolve_serial_baseline(
@@ -770,7 +875,7 @@ def _draw_panel(
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
         color = _stable_group_color(gv, palette, groups)
-        is_gpu_group = str(gv).lower() == "gpu"
+        is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         marker = gpu_marker if is_gpu_group else cpu_marker
         is_single_point_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
@@ -1034,8 +1139,11 @@ def _build_sensitivity_benchmarking_figure(
     fig.update_xaxes(title_text=xlabel_text, row=4, col=1)
     fig.update_yaxes(title_text=f"Wall-clock ({wall_unit})", row=1, col=1)
     fig.update_yaxes(title_text=f"Compute cost ({cost_unit} × devices)", row=2, col=1)
-    fig.update_yaxes(title_text="Strong-Scaling Speedup<br>S(N) = t(1) / t(N)", row=3, col=1)
-    fig.update_yaxes(title_text="Strong-Scaling Efficiency<br>E<sub>s</sub>(N) = t(1) / (N · t(N))", row=4, col=1)
+    # OE-1: the numerator is the FAMILY baseline (CPU -> serial CPU; each GPU hardware ->
+    # its own 1-GPU run), not the plotted series' own t(1) and not a global serial. The
+    # subscript is load-bearing: S = 1.0 denotes a DIFFERENT wall-clock on each curve.
+    fig.update_yaxes(title_text="Strong-Scaling Speedup<br>S(N) = t<sub>family</sub>(1) / t(N)", row=3, col=1)
+    fig.update_yaxes(title_text="Strong-Scaling Efficiency<br>E<sub>s</sub>(N) = t<sub>family</sub>(1) / (N · t(N))", row=4, col=1)
     # Footnote (matches matplotlib reference): explain the n_mpi_procs annotations on hybrid markers.
     # v5 tuning — middle ground between v3 (y=-0.14, b=110, too far) and v4
     # (y=-0.07, b=85, too close).
@@ -1169,7 +1277,7 @@ def _plotly_metric_panel(
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
         color = _stable_group_color(gv, sens_cfg.palette, groups)
-        is_gpu_group = str(gv).lower() == "gpu"
+        is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         is_single_point_group = is_serial_group or len(sub) == 1
@@ -1179,13 +1287,16 @@ def _plotly_metric_panel(
             marker_symbol = "star"
         else:
             marker_symbol = "circle"
-        # Phase 6 change (2): model arm on marker FILL (open=uncoupled) layered on
-        # the group-type base symbol so the group encoding is preserved, plus a
-        # redundant connector dash (solid=coupled / dashed=uncoupled). model_arm
-        # None (e.g. swmm-only) keeps the pre-change filled/dashed default.
-        if model_arm == "uncoupled":
-            marker_symbol = f"{marker_symbol}-open"
-        arm_dash = "solid" if model_arm == "coupled" else "dash"
+        # Iteration 4: model-arm encoding REMOVED. This renderer is structurally
+        # single-arm (see _resolve_model_arm's docstring: each sibling master enables
+        # exactly one TRITON arm) and no cross_experiment_* renderer consumes it, so
+        # the arm is carried by the figure's title and its position in the combined
+        # report's paired_figures small-multiple. Arm-conditioned fill and dash made
+        # the two arms' symbology DISJOINT by construction, which is what regressed
+        # the standing "symbology identical across models" requirement. The freed
+        # marker FILL channel now encodes replicate count; the connector dash is a
+        # single constant style.
+        arm_dash = "solid"
         if is_gpu_group:
             legend_name = f"{gv}{gpu_legend_suffix}"
         elif is_hybrid_group:
@@ -1193,7 +1304,16 @@ def _plotly_metric_panel(
         else:
             legend_name = str(gv)
         if not is_single_point_group:
-            per_x_min = sub.groupby("indep_value", as_index=True)[y_col].min().sort_index()
+            # Average replicates of one config first, THEN take the per-N min across
+            # distinct configs (the documented "best configuration at that resource
+            # level" rule). Without the first step the min is a min over RUNS, which on
+            # the staged master discards a 159.3 s vs 275.9 s replicate spread silently.
+            _by_cfg = (
+                sub.groupby(["indep_value", "config_id"], as_index=False)[y_col].mean()
+                if "config_id" in sub.columns
+                else sub
+            )
+            per_x_min = _by_cfg.groupby("indep_value", as_index=True)[y_col].min().sort_index()
             with prov.artist(
                 axes_id=panel_id, kind="line",
                 note=f"multi-point line {gv} (panel {panel_id})",
@@ -1344,7 +1464,7 @@ def _plotly_metric_panel_precomputed(
                 # Empty all-rows fall back to line data for markers.
                 marker_xs, marker_ys, marker_sa = line_xs, line_ys, line_sa
         color = _stable_group_color(gv, sens_cfg.palette, groups)
-        is_gpu_group = str(gv).lower() == "gpu"
+        is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         if is_gpu_group:
@@ -1353,14 +1473,10 @@ def _plotly_metric_panel_precomputed(
             marker_symbol = "star"
         else:
             marker_symbol = "circle"
-        # Phase 6 change (2): model arm on marker FILL (open=uncoupled) layered on
-        # the group-type base symbol so the group encoding is preserved, plus a
-        # redundant connector dash (solid=coupled / dashed=uncoupled). model_arm
-        # None (e.g. swmm-only) keeps the pre-change filled/dashed default. The
-        # ideal-reference line below is NOT a data connector and is left unchanged.
-        if model_arm == "uncoupled":
-            marker_symbol = f"{marker_symbol}-open"
-        arm_dash = "solid" if model_arm == "coupled" else "dash"
+        # Iteration 4: model-arm encoding REMOVED (see _plotly_metric_panel for the
+        # rationale). The ideal-reference line below is NOT a data connector and was
+        # never arm-encoded.
+        arm_dash = "solid"
         legend_name = f"{gv}{gpu_legend_suffix}" if is_gpu_group else (
             f"{gv}*" if is_hybrid_group else str(gv)
         )

@@ -150,18 +150,81 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
     return rows
 
 
+_EXPECTED_TOGGLE_FIELDS = frozenset(
+    {"toggle_triton_model", "toggle_tritonswmm_model", "toggle_swmm_model"}
+)
+
+
+def _divergence_is_expected(d: dict) -> bool:
+    """True when this divergence is the combine's intended structure, not a finding.
+
+    ``check_bundle_compatibility`` compares bundles PAIRWISE, so a four-bundle combine
+    (two model arms x clean/resume) yields six pairs and the model-toggle fields differ in
+    the four cross-arm ones. ``_downgrade_paired_model_arms`` already admits those rows --
+    it detects the collapse to fewer base experiments and downgrades them BLOCKING ->
+    WARNING -- but that admission is invisible in the rendered table, so a reader sees
+    warnings with no way to learn the toolkit deliberately allowed them.
+    """
+    field = str(d.get("field_name") or "")
+    bucket = str(d.get("bucket") or "")
+    return field in _EXPECTED_TOGGLE_FIELDS or bucket == "hpc"
+
+
+def _divergence_message(d: dict) -> str:
+    """Deterministic plain-language reason for one divergence row.
+
+    A pure function of ``(field_name, bucket, severity)`` -- every branch reads fields that
+    are already in ``combined_compatibility.json``, so this adds no read and needs no
+    combine re-run. Branch precedence is load-bearing: an unknown field name in the ``hpc``
+    bucket must render the hpc message, not the fallback.
+    """
+    field = str(d.get("field_name") or "")
+    bucket = str(d.get("bucket") or "")
+    severity = str(d.get("severity") or "")
+    if field in _EXPECTED_TOGGLE_FIELDS:
+        return (
+            "Expected: these bundles are the two model arms of one experiment; the toggle "
+            "divergence is what makes them arms. Admitted by the paired-model-arm rule."
+        )
+    if bucket == "hpc":
+        return (
+            "Expected: the bundles ran on different HPC systems or partitions. Compute "
+            "environment is not part of experiment identity."
+        )
+    if field == "schemaVersion":
+        return (
+            "Layout-version skew between bundles; figures render, but cross-bundle field "
+            "semantics may differ."
+        )
+    if bucket == "experiment" and severity == "warning":
+        return (
+            "Sensitivity-axis divergence: the two bundles sweep different rows or columns "
+            "of the compute matrix."
+        )
+    return f"Divergence in `{field}` ({bucket} bucket, {severity})."
+
+
 def _render_compatibility_html(source: Path, prov_rows: list[dict] | None = None) -> str:
     if source.exists():
         payload = _json.loads(source.read_text())
     else:  # combine may not have run; render an honest placeholder
         payload = {"is_compatible": True, "divergences": []}
     divs = payload.get("divergences", [])
+    verdict = (
+        "<p class='note'>{n} identity-field divergence(s) across the combined bundles; "
+        "{e} are expected under a both-arms / cross-system combine.</p>".format(
+            n=len(divs),
+            e=sum(1 for d in divs if _divergence_is_expected(d)),
+        )
+        if divs
+        else ""
+    )
     if divs:
         rows = "\n".join(
-            "<tr><td>{f}</td><td>{bk}</td><td>{sev}</td><td>{ba}: {va}</td><td>{bb}: {vb}</td></tr>".format(
+            "<tr><td>{f}</td><td>{sev}</td><td>{msg}</td><td>{ba}: {va}</td><td>{bb}: {vb}</td></tr>".format(
                 f=_html.escape(str(d.get("field_name"))),
-                bk=_html.escape(str(d.get("bucket"))),
                 sev=_html.escape(str(d.get("severity"))),
+                msg=_html.escape(_divergence_message(d)),
                 ba=_html.escape(str(d.get("bundle_a"))),
                 va=_html.escape(str(d.get("value_a"))),
                 bb=_html.escape(str(d.get("bundle_b"))),
@@ -169,9 +232,13 @@ def _render_compatibility_html(source: Path, prov_rows: list[dict] | None = None
             )
             for d in divs
         )
+        # Iteration 4 (FQ8): `Bucket` is dropped -- it is a three-valued taxonomy whose only
+        # consumer is _classify, and once the message states WHY a row is informational or
+        # warning the bucket is fully carried by the message. Keeping both invites the
+        # reader to reconcile two codings of one fact.
         table = (
-            "<table class='compat'><thead><tr><th>Field</th><th>Bucket</th>"
-            "<th>Severity</th><th>Bundle A</th><th>Bundle B</th></tr></thead>"
+            "<table class='compat'><thead><tr><th>Field</th>"
+            "<th>Severity</th><th>What it means</th><th>Bundle A</th><th>Bundle B</th></tr></thead>"
             "<tbody>" + rows + "</tbody></table>"
         )
     else:
@@ -186,6 +253,7 @@ def _render_compatibility_html(source: Path, prov_rows: list[dict] | None = None
         "<h2>What Was Combined (combine provenance) &amp; compatibility</h2>"
         + _provenance_table_html(prov_rows)
         + "<h3>Identity-field compatibility</h3>"
+        + verdict
         + table
         + "</section>"
     )
