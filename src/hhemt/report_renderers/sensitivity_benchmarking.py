@@ -179,7 +179,7 @@ def render(
             )
         df["group_value"] = df["sa_id"].map(df_setup[group_by_var])
         # Iteration 4 (FQ2): replicate identity. The trailing `_rN` token is the
-        # replicate marker (cross_experiment_overtime_maxabsdiff._replicate_token) and is
+        # replicate marker and is
         # deliberately NOT part of config identity (_config_diff._derive_config_label:
         # "Replicate suffixes are NOT in the identity, so replicates share one label").
         # n_replicates drives marker FILL (open = this config has repeated runs) and the
