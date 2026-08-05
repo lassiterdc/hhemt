@@ -402,8 +402,13 @@ def _distinct_child_categories(bundle_root: Path) -> list[str]:
     return seen
 
 
-def generate_combined_snakefile(bundle_root: Path) -> str:
-    """Generate the combined regeneration-scoped Snakefile body as a string."""
+def generate_combined_snakefile(bundle_root: Path) -> tuple[str, tuple[Path, ...]]:
+    """Generate the combined regeneration-scoped Snakefile body as a string.
+
+    Returns (body, expected_figures) — the absolute paths of every figure the
+    emitted `rule all` requires, computed from the SAME traversal that wrote it so
+    the two cannot disagree about which figures must exist.
+    """
     bundle_root = Path(bundle_root).resolve()
     ctx = RuleEmissionContext(
         python_executable="python",
@@ -420,11 +425,19 @@ def generate_combined_snakefile(bundle_root: Path) -> str:
     preamble = _combined_preamble()
     report_directive = 'report: "report/workflow_description.rst"\n'
 
-    def _plot_out(spec: RuleSpec) -> str:
-        ext = _output_ext_for(ctx.static_backend, spec.renderer_module)
-        return '"' + spec.output_path_template.replace("__OUTPUT_EXT__", ext) + '"'
+    def _plot_rel(spec: RuleSpec) -> str:
+        """The rule's output path, extension resolved, UNQUOTED.
 
-    plot_output_paths = tuple(_plot_out(spec) for spec in rule_specs)
+        Resolved once and quoted at the point of use so the Snakefile literal and
+        the Path handed to the caller's preflight are provably the same string.
+        Deriving the Path by stripping quotes back off the literal would be a
+        second derivation and could drift.
+        """
+        ext = _output_ext_for(ctx.static_backend, spec.renderer_module)
+        return spec.output_path_template.replace("__OUTPUT_EXT__", ext)
+
+    plot_rel_paths = tuple(_plot_rel(spec) for spec in rule_specs)
+    plot_output_paths = tuple('"' + rel + '"' for rel in plot_rel_paths)
     # NO render_report rule: the report is produced by the direct `snakemake --report`
     # call (render_combined_report_via_snakemake), so rule all lists only the figures.
     rule_all_block = _emit_rule_all(
@@ -434,15 +447,22 @@ def generate_combined_snakefile(bundle_root: Path) -> str:
         ctx=ctx,
     )
     plot_rule_blocks = "".join(_emit_plot_rule(spec, ctx) for spec in rule_specs)
-    return "\n".join([preamble, report_directive, rule_all_block, plot_rule_blocks])
+    body = "\n".join([preamble, report_directive, rule_all_block, plot_rule_blocks])
+    return body, tuple(bundle_root / rel for rel in plot_rel_paths)
 
 
-def write_combined_snakefile(bundle_root: Path) -> Path:
-    """Overwrite {bundle_root}/Snakefile with the combined regeneration Snakefile."""
+def write_combined_snakefile(bundle_root: Path) -> tuple[Path, tuple[Path, ...]]:
+    """Overwrite {bundle_root}/Snakefile; return (snakefile_path, expected_figures).
+
+    The expected-figure set comes from the SAME traversal that produced the
+    Snakefile, so the preflight in render_combined_report_via_snakemake and the
+    rule-all enumeration cannot disagree about which figures must exist.
+    """
     bundle_root = Path(bundle_root).resolve()
     out = bundle_root / "Snakefile"
-    out.write_text(generate_combined_snakefile(bundle_root) + "\n")
-    return out
+    body, expected = generate_combined_snakefile(bundle_root)
+    out.write_text(body + "\n")
+    return out, expected
 
 
 def stage_combined_report_artifacts(bundle_root: Path) -> None:
@@ -468,7 +488,30 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
     """
     bundle_root = Path(bundle_root).resolve()
     stage_combined_report_artifacts(bundle_root)
-    write_combined_snakefile(bundle_root)
+    _, _expected_figures = write_combined_snakefile(bundle_root)
+
+    # Preflight (FQ2): a combined bundle is portability-scrubbed and carries NO root
+    # cfg_system.yaml / cfg_analysis.yaml — only a single-analysis bundle does. The
+    # normal path never needs them (figures are direct-rendered by
+    # _render_combined_report and --touch marks them current, so no plot-rule shell
+    # runs), but any invocation that DOES re-execute a rule dies inside _cli at
+    # TRITONSWMM_system(cfg_system.yaml) with a bare FileNotFoundError naming a path
+    # the user never created. Convert that silent cliff into an instruction.
+    #
+    # The expected set is threaded from write_combined_snakefile rather than
+    # recomputed: _harvest_per_experiment_rule_specs COMPOSES AND WRITES the paired
+    # pages, so re-invoking it here would rewrite the paired_figures/ tree as a side
+    # effect of a read-only check AND raise from its own read_text() on exactly the
+    # missing-figure case this guard exists to report.
+    _unstaged = [p for p in _expected_figures if not p.exists()]
+    if _unstaged and not (bundle_root / "cfg_system.yaml").exists():
+        raise FileNotFoundError(
+            f"Combined bundle {bundle_root} is missing {len(_unstaged)} pre-rendered "
+            f"figure(s) (first: {_unstaged[0].name}) and carries no cfg_system.yaml, so "
+            "the plot rules cannot be re-executed here. Combined bundles are rendered "
+            "in-process, not by Snakemake: use CombinedBundle.regenerate_report() "
+            "instead of `snakemake --forcerun` / a manual rule invocation."
+        )
 
     # Defense-in-depth stale-lock check (mirrors Bundle.regenerate_report).
     locks_dir = bundle_root / ".snakemake" / "locks"

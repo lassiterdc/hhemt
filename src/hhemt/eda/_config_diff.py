@@ -724,8 +724,8 @@ def _config_diff_absent_panel(*, headline: str, observed: str, remedy: str) -> g
     fig.add_annotation(
         text=(
             f"<b>{headline}</b><br><br>"
-            "This figure compares every compute-configuration group against the serial-CPU "
-            "baseline (signed difference and percent-difference maps over DEM cells and SWMM "
+            "This figure compares every alternate configuration group against the serial-CPU "
+            "minimum-device reference (signed difference and percent-difference maps over DEM cells and SWMM "
             "conduits).<br><br>"
             f"{observed}<br><br>"
             "<b>This is the expected result for this analysis, not a rendering failure.</b><br>"
@@ -800,7 +800,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             headline="Config-diff maps not applicable (single compute configuration)",
             observed=(
                 f"This master carries exactly one sub-analysis (<code>{_only}</code>), so no "
-                "second compute configuration exists to difference against a baseline and the "
+                "second compute configuration exists to difference against a reference and the "
                 "comparison is mathematically undefined."
             ),
             remedy=(
@@ -834,7 +834,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     serial_grp = next((g for g in groups if "serial" in g["run_modes"]), None)
     if serial_grp is None:
         fig = go.Figure()
-        fig.update_layout(height=_PANEL_H_PX, title="Config diff maps (no serial-CPU baseline sub found)")
+        fig.update_layout(height=_PANEL_H_PX, title="Config diff maps (no serial-CPU reference sub found)")
         return fig
     # Align every group's arrays to the serial reference's coords/dim-order BEFORE any
     # positional subtraction or identity flag (artifact-vector 1: a per-sub dim/coord
@@ -1500,7 +1500,8 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             "(max over time) vs each config's hardware-family minimum-device reference "
             "(CPU → serial-CPU, GPU → 1-GPU). A max summary can read byte-identical even where "
             "individual timesteps differ — per-timestep byte-for-byte agreement is in the "
-            "“Per-timestep water-level” (b4b) figure. Diff/percent maps below are vs the serial-CPU baseline."
+            "“Per-timestep water-level” (b4b) figure. Diff/percent maps below are vs the "
+            "serial-CPU minimum-device reference."
             + (
                 " Serial-reference depth is scaled over the watershed north of the sea wall, "
                 f"capped at {depth_vmax:.2f} m."
@@ -1515,7 +1516,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         height=plot_h + T_MARGIN + _caption_b_px,
         width=fig_width,
         margin=dict(t=T_MARGIN, l=30, r=30, b=_caption_b_px),
-        title="Config diff maps: spatial difference vs serial-CPU baseline, per byte-identical config group",
+        title="Config diff maps: spatial difference vs the minimum-device reference, per byte-identical config group",
         annotations=list(fig.layout.annotations) + annotations,
         shapes=shapes,
         showlegend=False,

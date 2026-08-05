@@ -35,14 +35,15 @@ _PINNED_TRITON_COUPLED_RESUME_FIX_SHA = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f
 
 #: The upstream TRITON commit that distributes replayed SWMM node depths from rank 0's
 #: ``global_new_depth[]`` into the per-rank ``new_depth[]`` on the RESUME path
-#: (``global_to_local`` + ``MPI_Scatterv``). ``None`` means NO SUCH COMMIT EXISTS YET —
-#: the defect is present at ``3a832f7d`` and at every descendant, so a coupled resume at
-#: ANY currently-reachable pin produces a first-post-resume step that evaluates every
-#: manhole at ``new_depth = 0``, forces the Case-1 exchange branch, and writes a
-#: permanent perturbation into TRITON's depth field. Set this to the fix sha when it
-#: lands upstream; the ancestry capture below then starts stamping True and the
-#: validation arm keyed on it goes quiet with no other code change.
-_PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA: str | None = None
+#: (``global_to_local`` + ``MPI_Scatterv``). The fix landed upstream as ``9db367dd``
+#: ("restore per-rank new_depth after hotstart-exchange replay"), a DESCENDANT of the
+#: coupled-resume fix ``3a832f7d``. Below that commit, a coupled resume produces a
+#: first-post-resume step that evaluates every manhole at ``new_depth = 0``, forces the
+#: Case-1 exchange branch, and writes a permanent perturbation into TRITON's depth field.
+#: The ancestry capture below stamps True at ``9db367dd`` and at every descendant, so a
+#: routine pin bump keeps the validation arm keyed on it quiet; a clone in which this sha
+#: is not a known object leaves the stamp None (INDETERMINATE), never a false warn.
+_PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA: str | None = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"
 
 #: Wall-clock cap on waiting for a sibling process's compile of the SAME build dir.
 #: Keyed on the BUILD DIR (not the software dir) so a CPU and a GPU compile of one

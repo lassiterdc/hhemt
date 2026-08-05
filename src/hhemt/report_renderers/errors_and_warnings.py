@@ -39,6 +39,9 @@ tr:nth-child(even) td { background-color: #F1F1EF; }
 tr:hover td { background-color: #FFE4C4; }
 td.pass { color: #1F7A1F; font-weight: 600; text-align: center; width: 60px; }
 td.fail { color: #B11E1E; font-weight: 600; text-align: center; width: 60px; }
+td.pass-qualified { color: #9A6700; font-weight: 600; text-align: center; width: 60px; }
+td.na { color: #6E7781; font-weight: 600; text-align: center; width: 60px; }
+span.floor-note { color: #6E7781; font-weight: 400; font-style: italic; }
 .banner { padding: 10px 14px; border-radius: 6px; margin: 10px 0 18px;
           font-weight: 600; font-size: 14px; }
 .banner.pass { background-color: #DDEEDD; color: #1F7A1F; border: 1px solid #1F7A1F; }
@@ -49,11 +52,65 @@ td.fail { color: #B11E1E; font-weight: 600; text-align: center; width: 60px; }
 
 def _render_overall_banner(report: ValidationReport) -> str:
     n_total = len(report.checks)
-    n_passed = sum(1 for c in report.checks if c.passed)
+    applicable = [c for c in report.checks if getattr(c, "applicable", True)]
+    n_na = n_total - len(applicable)
+    n_passed = sum(1 for c in applicable if c.passed)
+    n_qualified = sum(
+        1
+        for c in applicable
+        if c.passed and getattr(c, "instrument", None) not in (None, "raw_rasters")
+    )
     if report.overall_passed:
-        return f'<div class="banner pass">✓ All {n_total} checks passed.</div>'
-    n_failed = n_total - n_passed
-    return f'<div class="banner fail">✗ {n_failed} of {n_total} checks failed. See tables below for details.</div>'
+        # Do NOT pool qualified with unqualified passes: a pass computed from the
+        # derived summary tier cannot see below its detection floor, so folding it
+        # into "all checks passed" restates the defect this banner exists to expose.
+        bits = [f"{n_passed - n_qualified} verified at full precision"]
+        if n_qualified:
+            bits.append(f"{n_qualified} verified only to the derived-summary floor")
+        if n_na:
+            bits.append(f"{n_na} not applicable")
+        cls = "pass" if not (n_qualified or n_na) else "info"
+        return f'<div class="banner {cls}">✓ {n_total} checks: ' + "; ".join(bits) + ".</div>"
+    n_failed = len(applicable) - n_passed
+    return (
+        f'<div class="banner fail">✗ {n_failed} of {len(applicable)} applicable '
+        "checks failed. See tables below for details.</div>"
+    )
+
+
+def _status_of(c: CheckResult) -> tuple[str, str, str]:
+    """(css_class, glyph, qualifier) for one check. Four outcomes, not two.
+
+    A pass from a derived tier discloses its detection floor inline, because at
+    float32 (max_wlevel_m) a true 2.4e-08 difference quantizes to ~1.19e-07 and a
+    true 1.68e-13 rounds to exactly 0.0 -- so "identical" there means "identical to
+    within float32 rounding", which is not what an unqualified green tick says.
+
+    An UNDECLARED instrument is NOT "precision unknown" -- it means the check made
+    no precision claim. Most checks are existence/status/config assertions
+    ("scenario_status.csv created", "System setup") that perform no numeric
+    comparison and therefore have no detection floor; a float32 disclaimer on those
+    is a category error. Qualify only where a check DECLARED that it compared
+    numerically at a coarser-than-raw resolution. This is the same principle the
+    tri-state itself serves, one level up: a disclaimer that fires on every row is
+    one no reader attends to, which would destroy the signal for the checks that
+    genuinely need it. A check that DOES compare numerically is responsible for
+    stamping its instrument, and a regression test pins the one that does today.
+
+    getattr-with-default throughout: a validation_report.json written before these
+    fields existed deserializes without them, and must keep rendering.
+    """
+    if not getattr(c, "applicable", True):
+        return ("na", "N/A", "")
+    if not c.passed:
+        return ("fail", "✗", "")
+    instrument = getattr(c, "instrument", None)
+    if instrument is None or instrument == "raw_rasters":
+        return ("pass", "✓", "")
+    floor = getattr(c, "detection_floor", None)
+    if floor is None:
+        return ("pass-qualified", "✓", f"verified only at the {instrument} tier")
+    return ("pass-qualified", "✓", f"identical only to within {floor:.3g} (derived-summary floor)")
 
 
 def _render_system_level_table(checks: list[CheckResult]) -> str:
@@ -61,10 +118,11 @@ def _render_system_level_table(checks: list[CheckResult]) -> str:
         return ""
     rows = []
     for c in checks:
-        status_cls = "pass" if c.passed else "fail"
-        status_glyph = "✓" if c.passed else "✗"
+        status_cls, status_glyph, qualifier = _status_of(c)
         # Show the summary for both pass and fail; on fail, also list per-issue details
         detail_text = c.summary
+        if qualifier:
+            detail_text += f'<br><span class="floor-note">{qualifier}</span>'
         if not c.passed and c.details:
             detail_lines = [d.get("detail", "") for d in c.details]
             detail_text = c.summary + "<br>" + "<br>".join(f"&nbsp;&nbsp;• {d}" for d in detail_lines)
@@ -82,9 +140,11 @@ def _render_aggregate_table(checks: list[CheckResult]) -> str:
         return ""
     rows = []
     for c in checks:
-        status_cls = "pass" if c.passed else "fail"
-        status_glyph = "✓" if c.passed else "✗"
-        rows.append(f'<tr><td>{c.name}</td><td class="{status_cls}">{status_glyph}</td><td>{c.summary}</td></tr>')
+        status_cls, status_glyph, qualifier = _status_of(c)
+        _summary = c.summary
+        if qualifier:
+            _summary += f'<br><span class="floor-note">{qualifier}</span>'
+        rows.append(f'<tr><td>{c.name}</td><td class="{status_cls}">{status_glyph}</td><td>{_summary}</td></tr>')
     return (
         "<h3>Aggregate Per-Scenario Checks</h3>\n"
         "<table>\n"

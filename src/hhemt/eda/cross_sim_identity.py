@@ -224,6 +224,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                 name=name,
                 level="aggregate",
                 passed=True,
+                applicable=False,
                 summary="N/A — single sim per event iloc",
             ),
         )
@@ -237,6 +238,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                 name=name,
                 level="aggregate",
                 passed=True,
+                applicable=False,
                 summary="N/A — no sub-analysis has present summaries",
             ),
         )
@@ -446,6 +448,15 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
         passed=passed,
         summary=summary,
         details=details,
+        # SELF-REPORTED from the path actually taken: this check compares the FLAT
+        # per-scenario summaries (`_retrieve_combined_output` above), never the raw
+        # per-timestep rasters and never the consolidated tree. The floor is the
+        # COARSEST across the compared variables -- max_wlevel_m is stored float32
+        # while the SWMM-side variables are float64, so float32 eps bounds what this
+        # verdict can see at all. Never derive this from cfg_analysis.clear_raw:
+        # that records configured intent, not the path taken.
+        instrument="summary_tier",
+        detection_floor=float(np.finfo(np.float32).eps),
     )
 
     # Persist artifact + verdict under {analysis_dir}/eda/. plot_id == stem (ADR-2).

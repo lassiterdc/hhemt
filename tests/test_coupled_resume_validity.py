@@ -782,3 +782,30 @@ def test_armc_quiet_when_scatter_fix_present(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is True
     assert res.details == []
+
+
+def test_armc_indeterminate_when_scatter_stamp_absent(monkeypatch, tmp_path):
+    """has_fix=True, scatter=None -> INDETERMINATE, never a positive invalidity claim.
+
+    The third member of the Arm C fixture, and the one whose absence let the defect ship:
+    :753 covers scatter=False (fires) and :772 covers scatter=True (quiet), but the
+    INDETERMINATE input was untested, so the bare-truthiness guard `not has_scatter_fix`
+    read None as False and warned on every unstamped tree.
+
+    Reachable two ways: a pre-Arm-C consolidated tree carries no attr at all, and
+    `system.py`'s ancestry capture stamps only when `merge-base` returns 0 or 1 — a clone
+    that does not know the pinned sha returns 128 and leaves the log field unset.
+
+    Anchored on `passed` / `details` rather than on summary wording: both properties exist
+    in the pre-fix and post-fix worlds, so the assertion discriminates on BEHAVIOUR. Run
+    against a reconstructed pre-fix guard it reports passed=False / 1 detail, i.e. it goes
+    red — it is not a permanently-green assertion.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, None))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "lacking the SWMM node-depth scatter" not in res.summary

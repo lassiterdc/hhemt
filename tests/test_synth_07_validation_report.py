@@ -127,7 +127,10 @@ def test_synthetic_report_granular_failures_aggregated():
 def test_renders_overall_banner_failure():
     html = _render_overall_banner(_synthetic_report())
     assert 'class="banner fail"' in html
-    assert "6 of 7 checks failed" in html
+    # "applicable checks" — the banner scopes its denominator to applicable checks so
+    # an N/A row is not counted as a pass or a failure. No synthetic check here is
+    # applicable=False, so the denominator is still 7.
+    assert "6 of 7 applicable checks failed" in html
 
 
 def test_renders_system_level_table_marks_pass_and_fail():
@@ -137,6 +140,37 @@ def test_renders_system_level_table_marks_pass_and_fail():
     assert "TRITON-SWMM compilation failed" in html
     assert 'class="fail"' in html
     assert 'class="pass"' in html  # scenario_status.csv check passes
+
+
+def test_status_of_qualifies_only_a_declared_derived_instrument():
+    """Four outcomes, and an UNDECLARED instrument is a plain pass — not a warning.
+
+    Most checks are existence/status/config assertions that perform no numeric
+    comparison, so they have no detection floor and must not carry a precision
+    disclaimer; a disclaimer on every row is one no reader attends to, which would
+    destroy the signal for the checks that genuinely need it. The qualifier is
+    reserved for a check that DECLARED it compared at a coarser-than-raw tier.
+    """
+    from hhemt.analysis_validation import CheckResult
+    from hhemt.report_renderers.errors_and_warnings import _status_of
+
+    def mk(**kw):
+        base = dict(name="x", level="system", passed=True, summary="s")
+        base.update(kw)
+        return CheckResult(**base)
+
+    # VIOLATING input: a declared derived-tier pass MUST disclose its floor.
+    cls, _, qual = _status_of(mk(instrument="summary_tier", detection_floor=1.1920929e-07))
+    assert cls == "pass-qualified"
+    assert qual  # non-empty disclosure
+
+    # DIFFERENTLY-POSITIONED SATISFYING inputs — each a distinct correct state that
+    # must NOT be qualified. These are what catch an over-firing qualifier.
+    assert _status_of(mk(instrument="raw_rasters")) == ("pass", "✓", "")
+    assert _status_of(mk()) == ("pass", "✓", "")  # no precision claim made
+
+    assert _status_of(mk(applicable=False))[0] == "na"
+    assert _status_of(mk(passed=False))[0] == "fail"
 
 
 def test_renders_aggregate_table_has_three_failed_rows():

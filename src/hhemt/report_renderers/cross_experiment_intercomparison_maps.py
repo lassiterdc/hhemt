@@ -434,8 +434,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             annotations.append(dict(
                 x=0.0, y=y_top, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
                 showarrow=False, align="left", font=dict(size=12, color="#111"),
-                text=(f"<b>{model} - {_family_title(fam)}</b> - baseline: the clean, uninterrupted "
-                      f"run on this hardware family ({base_label})"),
+                text=(f"<b>{model} - {_family_title(fam)}</b> - clean reference: the clean, "
+                      f"uninterrupted run on this hardware family ({base_label})"),
             ))
             continue
 
@@ -489,8 +489,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             )
             for _tr in _watershed_boundary_traces(wpoly):
                 fig.add_trace(_tr, row=row, col=1)
-            txt = (f"{g_label} (resumed) - {base_label} (clean baseline), same hardware family, "
-                   f"event {evt}")
+            txt = (f"{g_label} (resumed alternate) - {base_label} (clean reference), same "
+                   f"hardware family, event {evt}")
         else:
             z = _apply_mask(_signed_pct(d, np.asarray(base_da.values)), wmask)
             fig.add_trace(
@@ -499,7 +499,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                          cbar_len=0.6 / n_rows),
                 row=row, col=1,
             )
-            txt = f"{g_label}: percent difference vs the clean baseline on the same hardware family"
+            txt = f"{g_label}: percent difference vs the clean reference on the same hardware family"
         annotations.append(dict(
             x=0.0, y=y_top, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
             showarrow=False, align="left", font=dict(size=11, color="#111"), text=txt,
@@ -518,7 +518,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
 
     _caption = (
         caption_text
-        + " Panels are grouped by HARDWARE FAMILY; within each family the baseline is the "
+        + " Panels are grouped by HARDWARE FAMILY; within each family the clean reference is the "
         "clean, uninterrupted run on that same hardware (serial CPU for the CPU family, the "
         "1-GPU run for each GPU hardware), and no comparison is drawn across families. "
         "Byte-identical configs within a family share one panel. Diff panels share one "
@@ -530,7 +530,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         height=plot_h + _T_MARGIN + b_px,
         width=_FIG_W,
         margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
-        title="Clean vs resume, spatial: resumed runs vs the clean baseline on the same hardware family",
+        title="Clean vs resume, spatial: resumed alternates vs the clean reference on the same hardware family",
         annotations=list(fig.layout.annotations) + annotations,
         showlegend=False,
         plot_bgcolor="white",

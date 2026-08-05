@@ -453,6 +453,65 @@ rule all:
 """
 
 
+def _per_sim_per_sa_rule_all_inputs(
+    *,
+    sa_event_pairs_sa,
+    disabled: "list[str] | None",
+    ext: "dict[str, str]",
+    has_swmm_link_outputs: bool = True,
+) -> list[str]:
+    """Return the per-sa `rule all` input entries, or [] when not applicable.
+
+    Hoisted from two byte-identical copies in the master and reprocess sensitivity
+    generators. The guard lives HERE, not at the call sites: two copies of the
+    condition is the duplication this hoist removes, and a per-figure predicate
+    added later must land at ONE site or emission and enumeration desync (a
+    renderer dropped from emission but left enumerated yields
+    MissingInputException; the inverse yields an orphan rule).
+
+    BYTE-NEUTRAL BY CONTRACT: the returned strings, and their order, are exactly
+    what the two inlined copies appended. `_emit_rule_all` joins its inputs with a
+    fixed separator, so an unchanged list yields an unchanged `rule all` block.
+    tests/test_synth_reporting_sets_byte_identity.py is the guard on that claim.
+    """
+    # Function-local, matching the two call sites this helper replaces: workflow.py
+    # imports renderer_active inside methods rather than at module scope, and hoisting
+    # to module level here would be the one behavioural change a byte-neutral commit
+    # must not make.
+    from hhemt.report_renderers._reporting_sets import renderer_active
+
+    if not (sa_event_pairs_sa and renderer_active("per_sim_per_sa", disabled)):
+        return []
+    _e_pfd = ext["per_sim_per_sa_peak_flood_depth"]
+    _e_cf = ext["per_sim_per_sa_conduit_flow"]
+    # ADR-2 OE-1: per-sa input stems derive from the single-source helper
+    # so a future stem-grammar change cannot desync them from the outputs.
+    _pfd_sa = _plot_output_template(
+        renderer_kind="peak_flood_depth",
+        subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
+        sa_id="{sa_id}",
+        event_id="{event_id}",
+    ).replace("__OUTPUT_EXT__", _e_pfd)
+    _cf_sa = _plot_output_template(
+        renderer_kind="conduit_flow",
+        subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
+        sa_id="{sa_id}",
+        event_id="{event_id}",
+    ).replace("__OUTPUT_EXT__", _e_cf)
+    entries = [
+        f'expand("{_pfd_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)',
+    ]
+    # FQ1 ENUMERATION half. Its EMISSION counterpart gates _emit_plot_rule(conduit_emit)
+    # on the identical expression; both derive from _get_enabled_model_types(), so they
+    # cannot disagree. Enumerating a figure emission drops yields MissingInputException;
+    # emitting one enumeration drops yields an orphan rule.
+    if has_swmm_link_outputs:
+        entries.append(
+            f'expand("{_cf_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
+        )
+    return entries
+
+
 def _brand_theme_css_map(theme) -> "dict[str, str]":
     """Map a resolved brand_theme model -> report.css.j2 placeholder names."""
     return {
@@ -638,6 +697,11 @@ class _ReportingSetDispatchMixin:
         # an on-disk sweep here is O(configs x events) login-node work. The
         # renderer carries the on-disk check and degrades honestly.
         "has_preserved_raw_outputs": lambda inp: bool(inp.get("has_preserved_raw_outputs")),
+        # FQ1: a SWMM-derived figure (conduit flow) is not applicable to a TRITON-only
+        # analysis. Threaded from analysis._get_enabled_model_types() at the generator
+        # sites. Consumed PER TEMPLATE (RuleSpecTemplate.predicate_key), not per
+        # selection: per_sim_per_sa's two templates differ in applicability.
+        "has_swmm_link_outputs": lambda inp: bool(inp.get("has_swmm_link_outputs")),
     }
 
     def _resolve_active_reporting_set(self, analysis):
@@ -7698,29 +7762,16 @@ onerror:
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
 
-        if sa_event_pairs_sa and renderer_active("per_sim_per_sa", _disabled):
-            _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
-            _e_cf = _ext["per_sim_per_sa_conduit_flow"]
-            # ADR-2 OE-1: per-sa input stems derive from the single-source helper
-            # so a future stem-grammar change cannot desync them from the outputs.
-            _pfd_sa = _plot_output_template(
-                renderer_kind="peak_flood_depth",
-                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
-                sa_id="{sa_id}",
-                event_id="{event_id}",
-            ).replace("__OUTPUT_EXT__", _e_pfd)
-            _cf_sa = _plot_output_template(
-                renderer_kind="conduit_flow",
-                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
-                sa_id="{sa_id}",
-                event_id="{event_id}",
-            ).replace("__OUTPUT_EXT__", _e_cf)
-            rule_all_inputs.append(
-                f'expand("{_pfd_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
+        rule_all_inputs.extend(
+            _per_sim_per_sa_rule_all_inputs(
+                sa_event_pairs_sa=sa_event_pairs_sa,
+                disabled=_disabled,
+                ext=_ext,
+                has_swmm_link_outputs=bool(
+                    {"tritonswmm", "swmm"} & set(self.master_analysis._get_enabled_model_types())
+                ),
             )
-            rule_all_inputs.append(
-                f'expand("{_cf_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
-            )
+        )
         if _independent_vars and renderer_active("sensitivity_benchmarking", _disabled):
             _e_bench = _ext["sensitivity_benchmarking"]
             # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
@@ -8138,6 +8189,9 @@ onerror:
                 "sa_event_pairs_sa": sa_event_pairs_sa,
                 "has_eda_artifact": _has_eda_artifact,
                 "has_preserved_raw_outputs": _has_preserved_raw_outputs,
+                "has_swmm_link_outputs": bool(
+                    {"tritonswmm", "swmm"} & set(self.master_analysis._get_enabled_model_types())
+                ),
             },
             disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
@@ -8444,29 +8498,16 @@ onerror:
             rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
-        if sa_event_pairs_sa and renderer_active("per_sim_per_sa", _disabled):
-            _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
-            _e_cf = _ext["per_sim_per_sa_conduit_flow"]
-            # ADR-2 OE-1: per-sa input stems derive from the single-source helper
-            # so a future stem-grammar change cannot desync them from the outputs.
-            _pfd_sa = _plot_output_template(
-                renderer_kind="peak_flood_depth",
-                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
-                sa_id="{sa_id}",
-                event_id="{event_id}",
-            ).replace("__OUTPUT_EXT__", _e_pfd)
-            _cf_sa = _plot_output_template(
-                renderer_kind="conduit_flow",
-                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
-                sa_id="{sa_id}",
-                event_id="{event_id}",
-            ).replace("__OUTPUT_EXT__", _e_cf)
-            rule_all_inputs.append(
-                f'expand("{_pfd_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
+        rule_all_inputs.extend(
+            _per_sim_per_sa_rule_all_inputs(
+                sa_event_pairs_sa=sa_event_pairs_sa,
+                disabled=_disabled,
+                ext=_ext,
+                has_swmm_link_outputs=bool(
+                    {"tritonswmm", "swmm"} & set(self.master_analysis._get_enabled_model_types())
+                ),
             )
-            rule_all_inputs.append(
-                f'expand("{_cf_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
-            )
+        )
         if _independent_vars and renderer_active("sensitivity_benchmarking", _disabled):
             _e_bench = _ext["sensitivity_benchmarking"]
             # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
@@ -8760,6 +8801,9 @@ onerror:
                 "sa_event_pairs_sa": sa_event_pairs_sa,
                 "has_eda_artifact": _has_eda_artifact,
                 "has_preserved_raw_outputs": _has_preserved_raw_outputs,
+                "has_swmm_link_outputs": bool(
+                    {"tritonswmm", "swmm"} & set(self.master_analysis._get_enabled_model_types())
+                ),
             },
             disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
@@ -9057,7 +9101,17 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             input_label="master",
         )
         conduit_emit = RuleSpec(**{**conduit_spec.__dict__, "renderer_module": "per_sim_conduit_flow"})
-        return helpers + _emit_plot_rule(flood_emit, ctx) + _emit_plot_rule(conduit_emit, ctx)
+        # FQ1: conduit flow is SWMM-derived and not applicable to a TRITON-only
+        # analysis. This is the EMISSION half; the ENUMERATION half is the same
+        # predicate inside _per_sim_per_sa_rule_all_inputs. Both read
+        # _get_enabled_model_types() so they cannot disagree — a renderer dropped
+        # from emission but left enumerated yields MissingInputException, and the
+        # inverse yields an orphan rule.
+        _swmm = bool({"tritonswmm", "swmm"} & set(self.master_analysis._get_enabled_model_types()))
+        out = helpers + _emit_plot_rule(flood_emit, ctx)
+        if _swmm:
+            out += _emit_plot_rule(conduit_emit, ctx)
+        return out
 
     def _reconcile_sensitivity_alive(self) -> tuple[dict[str, str], dict[str, str]]:
         """Reconcile in-flight sensitivity sims across all sub-analysis dirs.

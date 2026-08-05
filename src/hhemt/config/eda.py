@@ -72,8 +72,6 @@ class eda_config(cfgBaseModel):
     enabled_plots: list[str] = Field(
         default_factory=lambda: [
             "config_diff_maps",
-            "eda_rank_sensitivity",
-            "eda_cross_hardware_magnitude",
         ],
         # NOTE (combine-first): eda_resume_sensitivity is a general per-master figure that
         # requires a single master carrying BOTH clean and resume rows (check_resume_sensitivity

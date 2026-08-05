@@ -156,6 +156,15 @@ def test_sensitivity_master_identical_passes(synthetic_sensitivity_completed):
     vp = json.loads(verdict_json.read_text())
     assert vp["name"] == "Cross-sim byte-identity"
     assert vp["passed"] is True
+    # This check is the one PRECISION-BEARING verdict in the suite: it compares the
+    # FLAT per-scenario summaries, where max_wlevel_m is float32. It must declare
+    # that, or the renderer shows an unqualified green tick meaning "identical to
+    # within float32 rounding" -- the defect that shipped. An unstamped check renders
+    # a plain pass by design, so losing this stamp fails SILENTLY; that is precisely
+    # why it is pinned here and not left to the renderer's default.
+    assert vp["instrument"] == "summary_tier"
+    assert vp["detection_floor"] == pytest.approx(float(np.finfo(np.float32).eps))
+    assert result.verdict.applicable is True
 
 
 @pytest.mark.requires_snakemake_subprocess

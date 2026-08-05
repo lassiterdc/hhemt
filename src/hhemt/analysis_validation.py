@@ -31,13 +31,58 @@ CheckLevel = Literal["system", "aggregate", "scenario", "resource"]
 
 @dataclass
 class CheckResult:
-    """One pass/fail check result, with optional per-scenario detail rows."""
+    """One check result, with optional per-scenario detail rows.
+
+    THREE-VALUED ON APPLICABILITY, and SELF-DESCRIBING ON INSTRUMENT. Two separate
+    overloads of ``passed`` are removed here, and they are independent axes:
+
+    1. ``passed`` alone cannot distinguish "verified good" from "did not apply": a
+       check returning ``passed=True`` with an ``N/A`` summary rendered as a green
+       PASS, so a PASS carried no information. ``applicable=False`` is that third
+       state; the renderer greys it and shows ``N/A``.
+    2. ``passed`` alone cannot distinguish a verdict computed from RAW double
+       rasters from one computed from the derived summary tier. Those have
+       different detection floors, so an identical-looking PASS means different
+       things. Measured on the compute-sensitivity campaign: the summary tier
+       stores ``max_wlevel_m`` (the TRITON depth field, the one variable carrying
+       the coupled-resume perturbation) as FLOAT32 while every SWMM-side variable
+       is float64. float32 eps is 1.1920928955078125e-07, so a true 2.4e-08
+       difference quantizes UP to ~1.19e-07 and a true 1.68e-13 difference rounds
+       to EXACTLY 0.0 -- manufacturing a false "bit-identical" control. A pass at
+       that floor may not render like a pass on raws (principle P7: pass should
+       mean something).
+
+    ``instrument`` vocabulary: ``"raw_rasters"`` (raw per-timestep binary output,
+    the full-precision instrument), ``"summary_tier"`` (the FLAT per-scenario
+    summaries -- NOT the consolidated DataTree, which the flat-summaries
+    stipulation forbids these members from reading), or None when the check
+    reads neither. It is SELF-REPORTED by the check from the path it actually
+    took, and MUST NOT be derived from ``cfg_analysis.clear_raw``: that records
+    configured intent, so a run configured to preserve raws whose outputs were
+    nonetheless purged would stamp a false provenance claim on the very field
+    that exists to make the verdict honest.
+
+    ``detection_floor`` is the smallest absolute difference the instrument can
+    resolve at unit magnitude -- the COARSEST floor across the variables actually
+    compared, since that is the bound below which the verdict cannot see anything.
+    A summary-tier verdict touching ``max_wlevel_m`` therefore reports float32
+    eps, not float64 eps, even though its SWMM-side variables are float64.
+
+    All three fields are DEFAULTED so a ``validation_report.json`` written before
+    they existed deserialises unchanged. The dataclass crosses the bundle boundary
+    via ``dataclasses.asdict`` and is read back by
+    ``report_renderers/cross_experiment_errors_and_warnings.py``; a required field
+    would break every shipped bundle.
+    """
 
     name: str
     level: CheckLevel
     passed: bool
     summary: str
     details: list[dict] = field(default_factory=list)
+    applicable: bool = True
+    instrument: str | None = None
+    detection_floor: float | None = None
 
 
 @dataclass
@@ -638,6 +683,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             name="Coupled resume validity",
             level="aggregate",
             passed=True,
+            applicable=False,
             summary="Coupled model not enabled — coupled-resume validity N/A.",
             details=[],
         )
@@ -877,7 +923,12 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     # receive contradictory guidance): when has_fix is False, Arm A has already fired and
     # its remedy — re-run at a pin carrying BOTH fixes — subsumes this one. Arm C is
     # therefore evaluated only on the post-fix branch.
-    if has_fix and not has_scatter_fix:
+    #
+    # `is False`, NOT `not`: an ABSENT or unstampable scatter attr reads None
+    # (INDETERMINATE — the clone did not know the sha, system.py:830), and `not None` is
+    # True, so the bare-truthiness form turned "unknown" into a positive invalidity claim
+    # on every unstamped tree. This mirrors the has_fix is-None early return above.
+    if has_fix and has_scatter_fix is False:
         for _, row in resume_candidates.iterrows():
             details.append(
                 {
@@ -918,7 +969,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             f"{n} coupled sim(s) produced by PRE-FIX TRITON WITH a hotstart resume — "
             f"summaries likely invalid ({_denom})."
         )
-    elif not has_scatter_fix:
+    elif has_scatter_fix is False:
         # Arm C: post-fix pin, replay marker PRESENT, but the replayed depths never reach
         # the per-rank new_depth[]. Distinguished from Arm B because the remedy differs —
         # Arm B is re-runnable now, Arm C waits on an upstream TRITON fix.
@@ -978,6 +1029,7 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis) -> CheckResult:
             name="Resume schedule honored",
             level="aggregate",
             passed=True,
+            applicable=False,
             summary="Neither coupled nor pure-TRITON model enabled — resume-schedule verification N/A.",
             details=[],
         )
@@ -1204,6 +1256,7 @@ def check_eda_calc_ran(analysis: TRITONSWMM_analysis) -> CheckResult:
             name=name,
             level="aggregate",
             passed=True,
+            applicable=False,
             summary="This analysis enumerates no EDA report targets — EDA completeness N/A.",
             details=[],
         )

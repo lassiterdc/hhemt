@@ -53,6 +53,13 @@ class RuleSpecTemplate:
     wildcards: tuple[str, ...] = ()
     resources_yaml: str = "mem_mb=2000, time_min=10"
     log_path_template: str = ""
+    #: Per-TEMPLATE gate, distinct from RendererSelection.predicate_key which gates a
+    #: whole selection. A selection may carry N templates that are not all applicable
+    #: to the same analysis -- per_sim_per_sa carries peak_flood_depth (any model) and
+    #: conduit_flow (SWMM-derived only). Splitting the selection instead is UNSAFE:
+    #: every consumer takes the FIRST selection per builder_key, so a second same-key
+    #: selection is silently dropped. None = always emitted.
+    predicate_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -413,6 +420,7 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
                 wildcards=("event_id",),
                 resources_yaml="mem_mb=4000, time_min=15",
                 log_path_template="_logs/plots/per_sim_conduit_flow_{event_id}.log",
+                predicate_key="has_swmm_link_outputs",
             ),
         ),
     ),
@@ -440,7 +448,14 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
         rule_spec_template=(
             RuleSpecTemplate(
                 rule_name="plot_per_sim_per_sa_peak_flood_depth",
-                renderer_module="per_sim_per_sa_peak_flood_depth",
+                # The REAL module; sa-routing is via the --sa-id flag, not a separate
+                # module. There is no per_sim_per_sa_* module on disk, and this field is
+                # copied verbatim into the bundle-side regen RuleSpec
+                # (bundle/snakefile_generator.py), which then shells out to a module that
+                # does not exist. Safe to rename: this field reaches only output_ext_for,
+                # whose per_sim_* and per_sim_per_sa_* entries are identical under both
+                # backends; plot IDs are minted from renderer_kind, not from this value.
+                renderer_module="per_sim_peak_flood_depth",
                 output_path_template="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}__OUTPUT_EXT__",
                 report_kwargs={
                     "caption": "report/captions/per_sim_peak_flood_depth.rst",
@@ -453,7 +468,8 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
             ),
             RuleSpecTemplate(
                 rule_name="plot_per_sim_per_sa_conduit_flow",
-                renderer_module="per_sim_per_sa_conduit_flow",
+                # The REAL module — see the note on the peak_flood_depth template above.
+                renderer_module="per_sim_conduit_flow",
                 output_path_template="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}__OUTPUT_EXT__",
                 report_kwargs={
                     "caption": "report/captions/per_sim_conduit_flow.rst",
@@ -463,6 +479,7 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
                 wildcards=("sa_id", "event_id"),
                 resources_yaml="mem_mb=4000, time_min=15",
                 log_path_template="_logs/plots/per_sim_per_sa_conduit_flow_sa-{sa_id}_{event_id}.log",
+                predicate_key="has_swmm_link_outputs",
             ),
         ),
     ),

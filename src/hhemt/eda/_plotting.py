@@ -367,7 +367,7 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
                     z=z_diff, x=x, y=y, colorscale=_B4B_DIFF_RAMP, zmin=0.0, zmax=_B4B_TAU_M,
                     showscale=not shown_colorbar,
                     colorbar=dict(
-                        title=f"max |Δ| vs baseline (m)<br>scale 0–τ ({_B4B_TAU_M} m)",
+                        title=f"max |Δ| vs reference (m)<br>scale 0–τ ({_B4B_TAU_M} m)",
                         len=0.5, thickness=14, x=1.02, xanchor="left",
                         y=0.85, yanchor="top",
                     ),
@@ -522,8 +522,8 @@ def _render_b4b_clean_identity(root: Path, *, cfg_analysis: analysis_config, eda
             "Per-timestep water-level byte-for-byte comparison vs the hardware-category reference"
         ),
         baseline_caption=(
-            "Non-serial configs are compared against their hardware category's minimum-device "
-            "baseline (CPU → serial-CPU, GPU → 1-GPU). "
+            "Alternate configurations are compared against their hardware category's "
+            "minimum-device reference (CPU → serial-CPU, GPU → 1-GPU). "
             "Identical cells (Δ = 0) are green; differing cells show max |Δ| vs the per-family "
             "reference, colorbar band 0–τ (τ = 0.03 m)."
         ),
