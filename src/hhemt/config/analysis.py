@@ -14,7 +14,137 @@ from hhemt.config.eda import eda_config
 from hhemt.config.report import report_config as _report_config_model
 
 ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "swmm"]]
-ForceRerunValue = Literal["all", "none"] | dict[Literal["sa_id", "event_iloc"], list[int | str]]
+# Legacy shape, RETAINED as the accepted input form and as `ForceRerunSpec.subject`'s type.
+# Every existing config value stays valid and keeps its exact present meaning; the
+# `mode="before"` coercion below maps it to `stage="simulate"`, which is what force_rerun
+# has always done (it deletes an upstream sim flag and lets Snakemake cascade downstream --
+# see workflow.py::_delete_flags_for_force_rerun).
+ForceRerunSubject = Literal["all", "none"] | dict[Literal["sa_id", "event_iloc"], list[int | str]]
+
+
+class ForceRerunSpec(cfgBaseModel):
+    """WHICH simulations to force, and from WHICH stage down.
+
+    Two ORTHOGONAL axes as separate fields rather than keys in one dict. The subject keys
+    are mutually exclusive by construction -- `sa_id` requires `toggle_sensitivity_analysis`
+    True and `event_iloc` requires it False -- which is why the shipped validator's
+    `next(iter(...))` is correct. A `stage` key added to that same dict would make the
+    first-key read insertion-order-dependent and silently skip subject validation.
+
+    `stage` is a FLOOR, not a set: forcing from a stage re-runs it and everything
+    downstream. That is the shipped semantics twice over -- by Snakemake cascade in
+    `force_rerun`, and by strict containment in
+    `reprocess_snakefile_generator.START_STAGES`.
+
+    Base is `cfgBaseModel`, which already supplies `extra="forbid"`; its `_check_paths_exist`
+    field validator skips non-Path fields and is therefore inert here.
+    """
+
+    subject: ForceRerunSubject = "none"
+    stage: Literal["simulate", "process", "consolidate", "render"] = Field(
+        "simulate",
+        description=(
+            "Earliest stage to force; that stage and everything downstream re-run. "
+            "'simulate' (default) preserves the historical force_rerun meaning. "
+            "'render' -- the plot + export + render rule family that produces "
+            "analysis_report.html. Bundling is NOT on this axis: it emits no Snakemake "
+            "rule and is always explicit and user-invoked."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy(cls, value):
+        """Accept every historical value unchanged.
+
+        `"all"` / `"none"` / `{"sa_id": [...]}` / `{"event_iloc": [...]}` all map to
+        `subject=<value>, stage="simulate"` -- fixed points of the coercion. Only a mapping
+        that already carries `subject` or `stage` is treated as the new form, so a legacy
+        `{"sa_id": [...]}` can never be misread as it.
+        """
+        if isinstance(value, ForceRerunSpec):
+            return value
+        if isinstance(value, dict) and ("subject" in value or "stage" in value):
+            return value
+        return {"subject": value}
+
+    @model_validator(mode="after")
+    def _validate_subject_shape(self):
+        """The dict-shape rules, lifted from `analysis_config._validate_force_rerun`.
+
+        They live HERE rather than on analysis_config because they are properties of the
+        SUBJECT VALUE and need no sibling-field context -- so one implementation covers both
+        the legacy flat form and the two-axis form, which are the same `subject` by the time
+        this runs. Left on analysis_config they validated only the shape analysis_config
+        happened to inspect, which is how they went silent when the field type changed.
+
+        Message text is PRESERVED VERBATIM from the original validator: the
+        test_force_rerun_rejects_invalid_dict_shapes params match on these strings.
+
+        DEFINITION ORDER IS LOAD-BEARING: this runs before _reject_subject_scoped_render so
+        a malformed subject reports its own shape error rather than the render error.
+        """
+        v = self.subject
+        _SA_ID_RE = re.compile(r"^[A-Za-z0-9_.]+$")
+        if isinstance(v, dict):
+            if len(v) != 1:
+                raise ValueError(
+                    f"force_rerun dict form must have exactly one key (either "
+                    f"'sa_id' or 'event_iloc'); got {len(v)} keys: {list(v.keys())}"
+                )
+            key = next(iter(v))
+            if key not in ("sa_id", "event_iloc"):
+                raise ValueError(f"force_rerun dict key must be 'sa_id' or 'event_iloc'; got {key!r}")
+            values = v[key]
+            if not isinstance(values, list) or not values:
+                raise ValueError(f"force_rerun.{key} value must be a non-empty list; got {values!r}")
+            if len(values) != len(set(map(str, values))):
+                raise ValueError(f"force_rerun.{key} list contains duplicates: {values}")
+            if key == "sa_id":
+                bad = [str(x) for x in values if not _SA_ID_RE.match(str(x))]
+                if bad:
+                    raise ValueError(
+                        f"force_rerun.sa_id values must match ^[A-Za-z0-9_.]+$ "
+                        f"(per accepted decision 'All user-provided identifiers that "
+                        f"become Snakemake wildcards must match ^[A-Za-z0-9_.]+$'); "
+                        f"got invalid: {bad}"
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_subject_scoped_render(self):
+        """A subject-scoped ``render`` floor is not a capability of this design.
+
+        `plots/` is not partitioned by subject: alongside the per-sim figures that carry
+        `__sa.{sa_id}__` it holds CROSS-SUB aggregates (`b4b_clean_identity`,
+        `config_diff_maps`, `eda_cross_hardware_magnitude`) whose inputs span every
+        sub-analysis and which carry no subject token at all. Honouring a subject-scoped
+        render would refresh some figures and leave the aggregates stale -- an artifact
+        inconsistent with its own inputs, which is the defect class the stage axis exists
+        to remove. So the render floor is subject-blind, and asking for a subset must FAIL
+        LOUD rather than silently re-render more than the caller requested.
+
+        The other three floors ARE subject-composable -- their flags are per-subject and
+        Snakemake's cascade re-derives everything downstream consistently.
+        """
+        if self.stage == "render" and isinstance(self.subject, dict):
+            requested = ", ".join(f"{k}={v!r}" for k, v in self.subject.items())
+            raise ValueError(
+                "force_rerun stage='render' cannot be scoped to a subject "
+                f"({requested}): the render stage's outputs are not partitioned by "
+                "subject -- plots/ also holds cross-sub aggregate figures with no subject "
+                "token -- so a scoped re-render would leave those aggregates stale. Use "
+                "{'subject': 'all', 'stage': 'render'} to re-render everything, or choose "
+                "an earlier floor ('process' / 'consolidate'), which ARE subject-scopable "
+                "and whose cascade re-renders consistently."
+            )
+        return self
+
+
+# Back-compat alias; the coercion accepts every legacy form. Deliberately NOT a union with
+# ForceRerunSubject: measured, smart-union resolves heterogeneously (str | dict | Spec by
+# input), which is the multi-shape problem this change exists to remove.
+ForceRerunValue = ForceRerunSpec
 
 
 def _read_cgroup_memory_limit_mib() -> float | None:
@@ -611,35 +741,6 @@ class analysis_config(cfgBaseModel):
             )
         return v
 
-    @field_validator("force_rerun", mode="after")
-    @classmethod
-    def _validate_force_rerun(cls, v):
-        _SA_ID_RE = re.compile(r"^[A-Za-z0-9_.]+$")
-        if isinstance(v, dict):
-            if len(v) != 1:
-                raise ValueError(
-                    f"force_rerun dict form must have exactly one key (either "
-                    f"'sa_id' or 'event_iloc'); got {len(v)} keys: {list(v.keys())}"
-                )
-            key = next(iter(v))
-            if key not in ("sa_id", "event_iloc"):
-                raise ValueError(f"force_rerun dict key must be 'sa_id' or 'event_iloc'; got {key!r}")
-            values = v[key]
-            if not isinstance(values, list) or not values:
-                raise ValueError(f"force_rerun.{key} value must be a non-empty list; got {values!r}")
-            if len(values) != len(set(map(str, values))):
-                raise ValueError(f"force_rerun.{key} list contains duplicates: {values}")
-            if key == "sa_id":
-                bad = [str(x) for x in values if not _SA_ID_RE.match(str(x))]
-                if bad:
-                    raise ValueError(
-                        f"force_rerun.sa_id values must match ^[A-Za-z0-9_.]+$ "
-                        f"(per accepted decision 'All user-provided identifiers that "
-                        f"become Snakemake wildcards must match ^[A-Za-z0-9_.]+$'); "
-                        f"got invalid: {bad}"
-                    )
-        return v
-
     @model_validator(mode="before")
     @classmethod
     def validate_toggle_dependencies(cls, values):
@@ -811,8 +912,14 @@ class analysis_config(cfgBaseModel):
 
     @model_validator(mode="after")
     def _validate_force_rerun_against_sensitivity_toggle(self):
-        if isinstance(self.force_rerun, dict):
-            key = next(iter(self.force_rerun))
+        # Read the SUBJECT axis. With force_rerun pinned to ForceRerunSpec the outer value
+        # is never a dict, so `isinstance(self.force_rerun, dict)` would be always False and
+        # this guard would silently validate NOTHING -- accepting {"sa_id": [...]} under
+        # toggle_sensitivity_analysis=False, which is precisely what it exists to reject.
+        # getattr with a fallback keeps this correct if the value ever arrives unwrapped.
+        subject = getattr(self.force_rerun, "subject", self.force_rerun)
+        if isinstance(subject, dict):
+            key = next(iter(subject))
             if key == "sa_id" and not self.toggle_sensitivity_analysis:
                 raise ValueError("force_rerun.sa_id requires toggle_sensitivity_analysis=True")
             if key == "event_iloc" and self.toggle_sensitivity_analysis:

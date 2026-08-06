@@ -605,10 +605,16 @@ def test_clear_raw_rejects_invalid(value, tmp_path: Path):
 
 def test_force_rerun_accepts_all_none_sentinels(tmp_path: Path):
     cfg = _minimal_analysis_config_dict(tmp_path)
+    # force_rerun is a ForceRerunSpec: the sentinel round-trips on the SUBJECT axis, and
+    # the stage floor defaults to "simulate" (the historical meaning of a bare sentinel).
     cfg["force_rerun"] = "all"
-    assert analysis_config.model_validate(cfg).force_rerun == "all"
+    spec = analysis_config.model_validate(cfg).force_rerun
+    assert spec.subject == "all"
+    assert spec.stage == "simulate"
     cfg["force_rerun"] = "none"
-    assert analysis_config.model_validate(cfg).force_rerun == "none"
+    spec = analysis_config.model_validate(cfg).force_rerun
+    assert spec.subject == "none"
+    assert spec.stage == "simulate"
 
 
 def test_force_rerun_event_iloc_accepts_list(tmp_path: Path):
@@ -616,7 +622,10 @@ def test_force_rerun_event_iloc_accepts_list(tmp_path: Path):
     cfg["toggle_sensitivity_analysis"] = False
     cfg["force_rerun"] = {"event_iloc": [3, 7]}
     result = analysis_config.model_validate(cfg)
-    assert result.force_rerun == {"event_iloc": [3, 7]}
+    # Same claim against the field's new representation: the subject round-trips unchanged
+    # and a legacy dict form defaults to the simulate floor.
+    assert result.force_rerun.subject == {"event_iloc": [3, 7]}
+    assert result.force_rerun.stage == "simulate"
 
 
 def test_force_rerun_sa_id_requires_sensitivity_toggle(tmp_path: Path):

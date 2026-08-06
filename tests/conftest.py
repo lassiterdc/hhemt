@@ -904,7 +904,14 @@ def synthetic_two_bundle_fixture(rendered_synth_multi_sim, tmp_path):
         f"got: {sorted(p.name for p in dir_a.iterdir())}"
     )
     dir_b = tmp_path / "bundle_b"
-    shutil.copytree(dir_a, dir_b)
+    # symlinks=True: copy links AS links instead of following them. A scenario dir carries
+    # `build_triton -> {software}/build_triton_cpu`, a link into a SHARED cache another
+    # workstream re-clones as routine setup — measured, job 18069686 did exactly that and
+    # left the target absent, after which the default follow-symlinks copytree raised
+    # shutil.Error at fixture setup. The fixture does not own that tree and has no business
+    # dereferencing it; copying the link preserves the scenario's structure and is
+    # insensitive to whether the target currently exists.
+    shutil.copytree(dir_a, dir_b, symlinks=True)
     # Non-blocking WARNING (safe: rocrate schemaVersion is plain JSON, not Pydantic-loaded).
     rocrate_b = dir_b / "ro-crate-metadata.json"
     if rocrate_b.exists():
@@ -945,5 +952,12 @@ def synthetic_two_sensitivity_bundle_fixture(rendered_synth_sensitivity, tmp_pat
         f"for combine merge; got: {sorted(p.name for p in dir_a.iterdir())}"
     )
     dir_b = tmp_path / "sens_bundle_b"
-    shutil.copytree(dir_a, dir_b)
+    # symlinks=True: copy links AS links instead of following them. A scenario dir carries
+    # `build_triton -> {software}/build_triton_cpu`, a link into a SHARED cache another
+    # workstream re-clones as routine setup — measured, job 18069686 did exactly that and
+    # left the target absent, after which the default follow-symlinks copytree raised
+    # shutil.Error at fixture setup. The fixture does not own that tree and has no business
+    # dereferencing it; copying the link preserves the scenario's structure and is
+    # insensitive to whether the target currently exists.
+    shutil.copytree(dir_a, dir_b, symlinks=True)
     return dir_a, dir_b

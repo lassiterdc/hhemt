@@ -46,12 +46,23 @@ def _parse_override_clear_raw(value: str | None) -> str | list | None:
 def _parse_override_force_rerun(value: str | None) -> str | dict | None:
     """Parse the ``--override-force-rerun`` CLI flag value.
 
-    Accepts ``"all"``, ``"none"``, or a JSON dict with one of
-    ``"sa_id"`` / ``"event_iloc"`` keys mapping to a list of values
-    (e.g. ``'{"sa_id":[0,5,22]}'`` for sensitivity, or
-    ``'{"event_iloc":[3,7]}'`` for non-sensitivity).
+    Accepts the legacy subject-only forms -- ``"all"``, ``"none"``, or a JSON dict with one
+    of ``"sa_id"`` / ``"event_iloc"`` keys mapping to a list of values (e.g.
+    ``'{"sa_id":[0,5,22]}'`` for sensitivity, ``'{"event_iloc":[3,7]}'`` otherwise) -- and
+    the two-axis form carrying a stage floor::
 
-    Per cleanup-rerun-delete-redesign Phase 4.
+        '{"subject": "all", "stage": "render"}'
+        '{"subject": {"sa_id": ["serial_6_r1"]}, "stage": "process"}'
+
+    ``stage`` is a FLOOR: that stage and everything downstream re-run. Values are
+    ``simulate`` (default, the historical meaning) / ``process`` / ``consolidate`` /
+    ``render``. The last three are ``reprocess_snakefile_generator.START_STAGES``, so the
+    toolkit carries one stage vocabulary. Bundling is not on the axis -- it emits no
+    Snakemake rule and is always explicit. A subject-scoped ``render`` floor is rejected at
+    config-load: ``plots/`` holds cross-sub aggregates with no subject token, so a scoped
+    re-render would leave them stale.
+
+    Per cleanup-rerun-delete-redesign Phase 4; stage axis per [Q106].
     """
     if value is None:
         return None
@@ -61,8 +72,9 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(
-            f"--override-force-rerun expects 'all', 'none', or a JSON dict "
-            f"like '{{\"sa_id\":[0,5]}}'; got: {value!r} ({exc})"
+            f"--override-force-rerun expects 'all', 'none', a JSON subject dict like "
+            f"'{{\"sa_id\":[0,5]}}', or a JSON stage form like "
+            f"'{{\"subject\":\"all\",\"stage\":\"render\"}}'; got: {value!r} ({exc})"
         ) from exc
 
 

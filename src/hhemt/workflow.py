@@ -1668,26 +1668,79 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         if not status_dir.exists():
             return
 
-        matched_flags: set[Path] = set()
-        if spec.scope == "all":
-            matched_flags.update(status_dir.glob("*.flag"))
-        elif spec.scope == "sa":
-            for v in spec.tokens:
-                matched_flags.update(status_dir.glob(f"*sa-{v}_*.flag"))
-                matched_flags.update(status_dir.glob(f"*sa-{v}.flag"))
-        elif spec.scope == "event":
-            for v in spec.tokens:
-                matched_flags.update(status_dir.glob(f"*evt-{v}_*.flag"))
-                matched_flags.update(status_dir.glob(f"*evt-{v}.flag"))
-        else:
-            raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
+        # FLOOR -> flag-family prefixes. The floor stage and everything downstream are
+        # invalidated; Snakemake's DAG re-planning then cascades the rest, exactly as this
+        # method has always relied on. Selecting from this table is what keeps the delete
+        # bounded: a floor at `render` must never reach `d_process_*`, because with
+        # clear_raw in play re-running process can destroy raw BIN rasters.
+        _FLOOR_FLAG_PREFIXES: dict[str, tuple[str, ...]] = {
+            "simulate": ("c_run_", "d_process_", "e_consolidate_", "f_consolidate_master"),
+            "process": ("d_process_", "e_consolidate_", "f_consolidate_master"),
+            "consolidate": ("e_consolidate_", "f_consolidate_master"),
+            "render": (),  # no completion flag exists for the plot/export/render family
+        }
+        stage = getattr(spec, "stage", "simulate") or "simulate"
+        if stage not in _FLOOR_FLAG_PREFIXES:
+            raise ValueError(f"Unrecognized force-rerun stage: {stage!r}")
+        prefixes = _FLOOR_FLAG_PREFIXES[stage]
 
-        for flag_path in matched_flags:
+        def _subject_matches(name: str) -> bool:
+            """True when a flag belongs to the requested subject.
+
+            Delimiter-anchored per the FQ3 canonical flag-name table -- ``sa-{v}_``
+            (non-terminal) and ``sa-{v}.flag`` (terminal). Substring-only matching is NOT
+            used: it false-matches `sa-1` against `sa-10`, `sa-11`, `sa-100`.
+            """
+            if spec.scope == "all":
+                return True
+            tag = "sa-" if spec.scope == "sa" else "evt-"
+            return any(f"{tag}{v}_" in name or name.endswith(f"{tag}{v}.flag") for v in spec.tokens)
+
+        # NEVER a bare glob over _status/: the family is selected from the floor table and
+        # the subject filter is applied on top. `scope == "all"` widens the SUBJECT, not the
+        # STAGE -- it must not resurrect the pre-floor behaviour of deleting every flag.
+        if spec.scope not in ("all", "sa", "event"):
+            raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
+        matched_flags: set[Path] = {
+            p
+            for p in status_dir.glob("*.flag")
+            if p.name.startswith(prefixes) and _subject_matches(p.name)
+        }
+
+        for flag_path in sorted(matched_flags):
+            logger.info("force_rerun[stage=%s]: deleting flag %s", stage, flag_path)
             # EXEMPT-DU: status-flag
             flag_path.unlink(missing_ok=True)
             sidecar = flag_path.with_suffix(flag_path.suffix + ".json")
             # EXEMPT-DU: status-flag
             sidecar.unlink(missing_ok=True)
+
+        # The `render` floor has no completion flag to delete, so the CALLER must invalidate
+        # what the plot/export/render rules read -- reprocess_snakefile_generator.py:39-42
+        # says exactly that ("Snakemake's mtime trigger re-fires only what the caller
+        # invalidated"), and today no caller does. That is why a Snakefile regeneration at
+        # 2026-08-05 17:19 left 28 figures from 2026-08-04 13:59 untouched.
+        #
+        # SUBJECT-BLIND, DELIBERATELY -- not an accident of a filter that fails to match.
+        # `plots/` holds CROSS-SUB figures (plots/eda/b4b_clean_identity, config_diff_maps,
+        # eda_cross_hardware_magnitude) whose inputs span every sub-analysis and which carry
+        # NO subject token in their names or paths. A subject-scoped delete would refresh the
+        # named sa_ids' per-sim panels and leave those aggregates on disk built from pre-rerun
+        # data -- a bundle internally inconsistent with its own inputs. A subject-scoped
+        # render is rejected at config-load; see ForceRerunSpec._reject_subject_scoped_render.
+        #
+        # The figure AND its .manifest.json sidecar go together: the sidecar is what the
+        # bundle harvest reads, so a figure removed without it leaves a dangling declaration.
+        if stage == "render":
+            plots_dir = self.analysis_paths.analysis_dir / "plots"
+            if plots_dir.exists():
+                for fig_path in sorted(plots_dir.rglob("*")):
+                    if fig_path.is_dir() or fig_path.name.endswith(".manifest.json"):
+                        continue
+                    logger.info("force_rerun[stage=render]: deleting figure %s", fig_path)
+                    fig_path.unlink(missing_ok=True)
+                    sidecar = fig_path.with_suffix(fig_path.suffix + ".manifest.json")
+                    sidecar.unlink(missing_ok=True)
 
     def _cpu_sim_partition(self) -> str | None:
         """Resolve the SLURM partition for CPU-ONLY simulation rules (``run_swmm``).

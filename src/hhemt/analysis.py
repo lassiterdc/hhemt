@@ -4144,6 +4144,13 @@ class TRITONSWMM_analysis:
         """
         from .exceptions import ConfigurationError
 
+        # The value now arrives as a ForceRerunSpec (the field is pinned to it and its
+        # mode="before" coercion accepts every legacy form). Take the SUBJECT axis here so
+        # the body below is unchanged: `next(iter(...))` then reads a dict whose keys are
+        # still mutually exclusive by construction. A `stage` key in that same dict would
+        # make the read insertion-order-dependent and silently validate nothing.
+        resolved_force_rerun = getattr(resolved_force_rerun, "subject", resolved_force_rerun)
+
         if resolved_force_rerun in ("all", "none"):
             return
         if not isinstance(resolved_force_rerun, dict):
@@ -4188,6 +4195,11 @@ class TRITONSWMM_analysis:
         """
         from hhemt.scenario import compute_event_id_slug
         from hhemt.workflow import ResolvedForceRerunSpec
+
+        # Same unwrap as _validate_force_rerun_targets, and idempotent for the same reason:
+        # a ForceRerunSpec yields its subject, a bare subject passes through unchanged.
+        # Without it the `assert isinstance(..., dict)` below fails on every spec-valued call.
+        resolved_force_rerun = getattr(resolved_force_rerun, "subject", resolved_force_rerun)
 
         if resolved_force_rerun == "all":
             return ResolvedForceRerunSpec(scope="all", tokens=())

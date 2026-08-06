@@ -117,12 +117,25 @@ def test_delete_flags_for_force_rerun_none_scope_noop(synth_sensitivity_analysis
 
 
 def test_delete_flags_for_force_rerun_all_clears_status_dir(synth_sensitivity_analysis):
-    """scope='all' deletes every *.flag (and sidecars) under _status/."""
+    """scope='all' widens the SUBJECT, not the STAGE.
+
+    The default `simulate` floor clears `c_run_*` and everything downstream and leaves the
+    UPSTREAM `a_setup_*` / `b_prepare_*` flags intact. The `_status/` families are ordered
+    by their letter prefix -- a_setup -> b_prepare -> c_run -> d_process -> e_consolidate ->
+    f_consolidate -- and the stage axis starts at `c_run`, because that is what "force
+    re-run" has always meant. `a_setup_*` gates compilation and DEM/Manning's
+    preprocessing; regenerating scenario inputs is `from_scratch`, not `force_rerun`.
+
+    Previously this asserted that scope='all' deleted EVERY `*.flag` via a bare glob. That
+    described the implementation rather than a contract, and the glob silently triggered a
+    recompile on every `force_rerun: "all"`.
+    """
     analysis = synth_sensitivity_analysis
     status_dir = analysis.analysis_paths.analysis_dir / "_status"
     status_dir.mkdir(parents=True, exist_ok=True)
-    names = ["a_setup_complete.flag", "c_run_tritonswmm_sa-0_evt-x_complete.flag"]
-    for name in names:
+    upstream = "a_setup_complete.flag"
+    in_axis = "c_run_tritonswmm_sa-0_evt-x_complete.flag"
+    for name in (upstream, in_axis):
         (status_dir / name).touch()
         (status_dir / (name + ".json")).touch()
 
@@ -130,9 +143,14 @@ def test_delete_flags_for_force_rerun_all_clears_status_dir(synth_sensitivity_an
     spec = ResolvedForceRerunSpec(scope="all", tokens=())
     builder._delete_flags_for_force_rerun(spec)
 
-    for name in names:
-        assert not (status_dir / name).exists()
-        assert not (status_dir / (name + ".json")).exists()
+    # In-axis: deleted, with its sidecar.
+    assert not (status_dir / in_axis).exists()
+    assert not (status_dir / (in_axis + ".json")).exists()
+    # Upstream of the axis: SURVIVES. This is the assertion that would catch a regression
+    # to the bare-glob behaviour, which is why it replaces the old one rather than the old
+    # one simply being deleted.
+    assert (status_dir / upstream).exists()
+    assert (status_dir / (upstream + ".json")).exists()
 
 
 def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivity_completed_isolated):

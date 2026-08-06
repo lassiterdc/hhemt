@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -61,6 +62,105 @@ if TYPE_CHECKING:
     from hhemt.config.bundle_exclude import BundleExcludeConfig
 
 
+_EDA_SUBDIR = "eda"
+
+
+def _figure_stem(name: str) -> str:
+    """Figure identity: the canonical plot ID's leading segment, or the bare stem.
+
+    ADR-2 stems are `{renderer_kind}[__{descriptor}][__sa.{id}][__evt.{id}]`, so the part
+    before the first `__` identifies the figure family. Keying on this rather than on the
+    full path is what lets BOTH extension siblings of a live figure survive: a rule declares
+    one `output:` with a literal extension, and matplotlib emits .html AND .svg.
+    """
+    return name.split("__")[0] if "__" in name else name.rsplit(".", 1)[0]
+
+
+def _declared_figure_stems(analysis_dir: Path) -> set[str] | None:
+    """Figure stems every plot rule in the analysis Snakefile declares it produces.
+
+    Returns None when no Snakefile exists, so the caller SKIPS pruning rather than reading
+    "no declarations" as "everything is an orphan" — that collapse would delete every figure.
+    """
+    snakefile = analysis_dir / "Snakefile"
+    if not snakefile.is_file():
+        return None
+    stems: set[str] = set()
+    in_output = False
+    for raw in snakefile.read_text().splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("output:"):
+            in_output = True
+            stripped = stripped[len("output:") :].strip()
+        elif stripped and not raw.startswith((" ", "\t")):
+            in_output = False
+        if in_output and stripped:
+            for tok in stripped.split(","):
+                tok = tok.strip().strip("\"'")
+                if tok and not tok.endswith(":"):
+                    stems.add(_figure_stem(Path(re.sub(r"\{[^}]*\}", "*", tok)).name))
+    return stems
+
+
+def _prune_undeclared_figures(analysis_dir: Path, plots_dir: Path) -> list[str]:
+    """Delete figures whose stem no plot rule declares, with their manifest sidecars.
+
+    Returns the analysis-relative paths removed, for carriage in the bundle manifest. A
+    warning would not do: this file records at _harvest_and_copy_sources:195-199 that a
+    warnings.warn inside a Snakemake rule log "is lost by the time anyone reads the bundle",
+    which is why declared_sources_absent is threaded into the manifest instead. A prune whose
+    audit trail is lost is a silent deletion.
+
+    plots/eda/ is EXEMPT: those figures come from analysis.eda(), a non-Snakemake in-process
+    facade, so the Snakefile is not the authority for that subtree and their absence from it
+    is not orphanhood. Measured — without the exemption the count is 29/1 rather than 28/0,
+    the extra being a live eda_cross_hardware_magnitude figure on each arm.
+    """
+    declared = _declared_figure_stems(analysis_dir)
+    if declared is None or not plots_dir.exists():
+        return []
+    removed: list[str] = []
+    for path in sorted(plots_dir.rglob("*")):
+        if path.is_dir() or path.name.endswith(".manifest.json"):
+            continue
+        if _EDA_SUBDIR in path.relative_to(plots_dir).parts:
+            continue
+        if _figure_stem(path.name) in declared:
+            continue
+        removed.append(str(path.relative_to(analysis_dir)))
+        path.unlink(missing_ok=True)
+        path.with_suffix(path.suffix + ".manifest.json").unlink(missing_ok=True)
+    return removed
+
+
+def _render_sha(plots_dir: Path, length: int = 12) -> str:
+    """Short content hash over the RENDERED FIGURE SET under ``plots_dir`` (post-prune).
+
+    Hashes relative path + file bytes for every non-sidecar file. Content-derived, not
+    time-derived: two builds at one source pin were measured to produce different bytes,
+    so a timestamp does not establish identity.
+
+    HONEST LIMIT, stated rather than implied: this detects a CONTENT change, not a render
+    EVENT. A deterministic renderer re-run over unchanged data yields the same hash, and
+    that is the correct behaviour for the purpose — the failure being caught is stale
+    figures under a fresh stamp, and figures that are byte-identical are not stale. What it
+    cannot do is prove that a render was attempted.
+    """
+    import hashlib
+
+    digest = hashlib.sha256()
+    if not plots_dir.exists():
+        return "norender"
+    for path in sorted(plots_dir.rglob("*")):
+        if path.is_dir() or path.name.endswith(".manifest.json"):
+            continue
+        digest.update(str(path.relative_to(plots_dir)).encode())
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+    return digest.hexdigest()[:length]
+
+
 def emit_bundle(
     analysis: TRITONSWMM_analysis,
     output_path: Path | None = None,
@@ -94,12 +194,28 @@ def emit_bundle(
             f"Run analysis.render_report() on HPC first."
         )
 
+    # PRUNE BEFORE HARVEST. The harvest globs plots/**/*.manifest.json and
+    # _copy_supporting_files copytrees the whole plots_dir, so a figure whose rule no longer
+    # exists is collected into the manifest AND carried in the payload. Deleting figure +
+    # sidecar from disk first fixes both populations. No filter on sources_by_renderer: its
+    # values are the renderers' INPUT paths keyed by figure stem, disjoint from the outputs.
+    pruned_orphan_figures = _prune_undeclared_figures(analysis_dir, plots_dir)
     sources_by_renderer = harvest_source_paths(plots_dir, analysis_dir)
     git_sha = _get_toolkit_git_sha()
     analysis_id = analysis.cfg_analysis.analysis_id
 
     if output_path is None:
-        output_path = analysis_dir / BUNDLE_OUTPUT_SUBDIR / f"{analysis_id}_{git_sha}_v{BUNDLE_SCHEMA_VERSION}.zip"
+        # `{toolkit_sha}` alone was truthful about the code and SILENT about the figures,
+        # which is how three re-bundle rounds shipped the same stale plots under three fresh
+        # names. render_sha hashes the RENDERED FIGURES (post-prune), not the harvested
+        # inputs — hashing inputs cannot separate "re-rendered" from "re-zipped", since a
+        # re-render from unchanged inputs leaves every input byte identical.
+        render_sha = _render_sha(plots_dir)
+        output_path = (
+            analysis_dir
+            / BUNDLE_OUTPUT_SUBDIR
+            / f"{analysis_id}_{git_sha}_{render_sha}_v{BUNDLE_SCHEMA_VERSION}.zip"
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Function-local import: config/bundle_exclude.py imports hhemt.bundle._path_policy
@@ -168,6 +284,7 @@ def emit_bundle(
             input_deposits=input_deposits,
             container_build=container_build,
             declared_sources_absent=declared_sources_absent,
+            pruned_orphan_figures=pruned_orphan_figures,
         )
         _emit_bundle_zip(staging, output_path)
 
@@ -1184,6 +1301,7 @@ def _write_bundle_manifest(
     input_deposits: list[dict] | None = None,
     container_build: dict | None = None,
     declared_sources_absent: list[str] | None = None,
+    pruned_orphan_figures: list[str] | None = None,
 ) -> None:
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
@@ -1202,6 +1320,14 @@ def _write_bundle_manifest(
         # empty) when every declared source resolved, so a clean bundle's manifest is
         # byte-identical to what it was before this key existed.
         manifest["declared_sources_absent"] = declared_sources_absent
+    if pruned_orphan_figures:
+        # The prune's audit trail, carried IN the bundle for the same reason
+        # declared_sources_absent is: a warnings.warn inside a Snakemake rule log is lost by
+        # the time anyone reads the bundle, and a reader finding 28 fewer figures than a
+        # prior generation needs the removal list here rather than in a rotated job log.
+        # Absent (not empty) when nothing was pruned, so a clean manifest stays
+        # byte-identical to what it was before this key existed.
+        manifest["pruned_orphan_figures"] = pruned_orphan_figures
     if input_deposits:
         # ADR-20: the by-reference record for each EXCLUDED input. Absent (not empty) when
         # the bundle is self-contained, so a self-contained manifest is byte-identical to
