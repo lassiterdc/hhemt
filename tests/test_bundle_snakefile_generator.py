@@ -405,3 +405,84 @@ def test_unknown_reporting_set_raises_named_configuration_error(sensitivity_bund
     assert "reporting_set" in message
     assert "dem-resolutoin" in message
     assert "dem-resolution" in message, "the error should list the registered sets"
+
+
+@pytest.fixture
+def pure_triton_sensitivity_bundle(sensitivity_bundle: Path) -> Path:
+    """A SINGLE-MODEL (pure-TRITON) sensitivity bundle whose conduit family is empty.
+
+    Derived from the checked-in coupled fixture rather than added as a second checked-in
+    tree: the only differences that matter are the model toggles and the absence of the
+    conduit artifacts, and expressing them here keeps the single-model-ness visible in the
+    test instead of buried in a fixture directory.
+
+    Deleting the conduit *.manifest.json sidecars is load-bearing. The coupled fixture
+    carries sidecars but no conduit .html, so _expand_wildcards_to_existing_files' SIDECAR
+    fallback succeeds on it and the double-miss branch is never reached — which is why the
+    existing suite is blind to this defect.
+    """
+    import yaml as _yaml
+
+    sys_path = sensitivity_bundle / "cfg_system.yaml"
+    cfg_system = _yaml.safe_load(sys_path.read_text())
+    cfg_system["toggle_triton_model"] = True
+    cfg_system["toggle_tritonswmm_model"] = False
+    cfg_system["toggle_swmm_model"] = False
+    sys_path.write_text(_yaml.safe_dump(cfg_system))
+
+    for stale in sensitivity_bundle.rglob("*conduit*"):
+        stale.unlink()
+    return sensitivity_bundle
+
+
+def _input_block(text: str, rule: str) -> str:
+    """The `input:` block of `rule {rule}`, up to the next directive or rule."""
+    body = text.split(f"rule {rule}:", 1)[1]
+    body = body.split("input:", 1)[1]
+    out: list[str] = []
+    for line in body.splitlines():
+        if line.strip() and not line.startswith((" ", "\t")):
+            break
+        if re.match(r"\s+(output|shell|log|params|resources|run|report):", line):
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
+def test_single_model_empty_family_emits_no_wildcards(pure_triton_sensitivity_bundle: Path) -> None:
+    """A family that expands to nothing is OMITTED, never emitted wildcarded.
+
+    rule all and render_report cannot carry wildcards; a raw templated path in either is
+    a WildcardError at `snakemake --touch`. Asserted on the BRACE COUNT rather than by
+    invoking Snakemake, so this stays a unit test and still discriminates: pre-fix both
+    blocks contain {sa_id}/{event_id}, post-fix neither does.
+    """
+    text = generate_regeneration_snakefile(pure_triton_sensitivity_bundle, static_backend="plotly")
+
+    for rule in ("all", "render_report"):
+        block = _input_block(text, rule)
+        assert "{" not in block, f"rule {rule} input block carries a wildcard: {block!r}"
+
+    # Distinguishes the harvest gate from the expansion fix alone: with only the latter,
+    # rule all is clean but the orphan conduit rule is still emitted.
+    assert "rule plot_per_sim_per_sa_conduit_flow:" not in text
+
+
+def test_coupled_bundle_emission_unaffected_by_the_gate(sensitivity_bundle: Path) -> None:
+    """The satisfying arm: the gate does not fire on a SWMM-bearing bundle.
+
+    Guards against over-firing — a fix for the empty case narrowing the populated one.
+
+    Asserts RULE PRESENCE, not expansion contents. Expansion is the wrong probe on this
+    fixture: its per-sim manifest sidecars are named `conduit_flow.manifest.json` (the bare
+    renderer name) while the glob builds `conduit_flow__sa.*__evt.*.manifest.json`, so BOTH
+    per-sim families expand to nothing here for a NAMING reason unrelated to model gating.
+    An earlier version of this test asserted `"conduit_flow" in` the rule-all input block
+    and passed only because the WILDCARDED TEMPLATE contains that substring — i.e. it was
+    asserting on an artifact of the very bug under repair. Rule presence is what the
+    predicate gate actually controls, and it survives a later fixture rename.
+    """
+    text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="plotly")
+
+    assert "rule plot_per_sim_per_sa_conduit_flow:" in text
+    assert "{" not in _input_block(text, "all")

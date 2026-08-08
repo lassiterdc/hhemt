@@ -193,11 +193,48 @@ def _harvest_rule_specs(
     # lockstep in one place.
     _disabled = _report.get("disabled_renderers") or []
 
+    # Predicate gates, BOTH fields. The registry declares predicate_key at two levels —
+    # RendererSelection.predicate_key (whole selection) and RuleSpecTemplate.predicate_key
+    # (one figure within a selection) — and the SOURCE-side dispatcher honours both.
+    # Without the same gates here the bundle Snakefile carries rules its own source
+    # Snakefile never had, and those figure families then glob-expand to nothing.
+    #
+    # ONLY a predicate whose backing field CANNOT be absent may be evaluated. That is the
+    # whole rule, and it admits exactly one key today: has_swmm_link_outputs reads the
+    # toggle_*_model fields, which are REQUIRED, so absence is impossible.
+    #
+    # Every other predicate reads an OPTIONAL cfg_analysis key — eda.enabled_plots,
+    # clear_raw, independent_vars, n_sub_analyses — and for those, absence is
+    # indistinguishable from false. Reading an absent field as false converts a missing
+    # RECORD into a positive gating DECISION, which silently drops a figure family that is
+    # present on disk. Measured: the checked-in sensitivity_master fixture carries no `eda`
+    # block, so evaluating has_eda_artifact gates out the EDA selection and reintroduces
+    # the exact silent omission tests/test_bundle_snakefile_generator.py already guards.
+    # Unlisted keys therefore fail OPEN via the .get(..., True) default below, and the
+    # on-disk glob plus _expand_wildcards_to_existing_files' omission handles those
+    # families instead.
+    _sys_path = bundle_root / "cfg_system.yaml"
+    _cfg_system = yaml.safe_load(_sys_path.read_text()) if _sys_path.is_file() else {}
+    _predicate_inputs = {
+        "has_swmm_link_outputs": bool(
+            (_cfg_system or {}).get("toggle_tritonswmm_model")
+            or (_cfg_system or {}).get("toggle_swmm_model")
+        ),
+    }
+
+    def _predicate_passes(key: str | None) -> bool:
+        """True when `key` is absent, unlisted (fail-open), or evaluates True."""
+        return key is None or bool(_predicate_inputs.get(key, True))
+
     specs: list[RuleSpec] = []
     for sel in active_set.renderer_selection:
         if not renderer_active(sel.builder_key, _disabled):
             continue
+        if not _predicate_passes(sel.predicate_key):
+            continue
         for tmpl in sel.rule_spec_template:
+            if not _predicate_passes(tmpl.predicate_key):
+                continue
             if tmpl.wildcards:
                 source_paths: tuple[str, ...] = ()
             else:
@@ -297,8 +334,11 @@ def _expand_wildcards_to_existing_files(template: str, bundle_root: Path) -> tup
     globbing against the corresponding ``.manifest.json`` sidecar
     (since bundle fixtures may carry only the manifest sidecars, not
     the rendered plot files). Each wildcard match yields one expanded
-    path. If neither matches, return the template verbatim so the
-    Snakefile remains parseable for empty plot subsets.
+    path. If neither matches, return ``()`` — the family is OMITTED from
+    rule_all and render_report. Returning the template verbatim is NOT an
+    option: it is wildcarded, which the first paragraph rules out, and the
+    emitted Snakefile then fails to parse (measured: WildcardError in rule
+    all on a pure-TRITON bundle whose conduit family has no files).
     """
     import re as _re
 
@@ -312,12 +352,34 @@ def _expand_wildcards_to_existing_files(template: str, bundle_root: Path) -> tup
     # stem with the originally-templated extension.
     ext_match = _re.search(r"\.[^./{}]+$", template)
     if not ext_match:
-        return (template,)
+        # Same omission rule as the sidecar miss below: a wildcarded template can never be
+        # returned to rule_all / render_report. Unreachable today (every registry
+        # output_path_template carries __OUTPUT_EXT__, which _resolve_output_path
+        # substitutes before this call), but repaired so the class cannot re-open when a
+        # template is added without the token.
+        return ()
     ext = ext_match.group(0)
     manifest_glob = glob_pat[: -len(ext)] + ".manifest.json"
     sidecars = sorted(bundle_root.glob(manifest_glob))
     if not sidecars:
-        return (template,)
+        # OMIT, never return the wildcarded template: rule_all and render_report cannot
+        # carry wildcards (see this function's own contract above), so returning it emits
+        # an unparseable Snakefile — measured as WildcardError in rule all on a
+        # pure-TRITON bundle. With the harvest's predicate gate in place, a family that
+        # reaches here is UNEXPECTEDLY absent (its predicate passed, or it has none, yet
+        # no file and no sidecar exists) — the failed-render state, not the empty-by-
+        # design one. Warn rather than omit silently: this runs in-process from
+        # Bundle.regenerate_report, not inside a rule shell, so the warning is seen.
+        import warnings as _warnings
+
+        _warnings.warn(
+            f"Bundle regeneration: no files and no manifest sidecars matched "
+            f"{glob_pat!r}; this figure family is omitted from rule all and "
+            f"render_report. If the family was expected, its figures failed to render "
+            f"or were deleted.",
+            stacklevel=2,
+        )
+        return ()
     return tuple(str(s.relative_to(bundle_root)).removesuffix(".manifest.json") + ext for s in sidecars)
 
 
