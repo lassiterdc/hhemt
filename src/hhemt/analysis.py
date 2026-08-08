@@ -4304,17 +4304,36 @@ class TRITONSWMM_analysis:
            produces fresh flags but stale outputs.
         """
         resolved = override_force_rerun if override_force_rerun is not None else self.cfg_analysis.force_rerun
-        self._validate_force_rerun_targets(resolved)
         # SINGLE COERCION BOUNDARY. Pydantic's mode="before" coercion fires only on
         # assignment to the force_rerun config FIELD, which the override path never
         # touches, so a raw str/dict arrives here from both the CLI (json.loads) and the
         # programmatic API. This is the one point BOTH consumers funnel through
         # (analysis.submit_workflow and sensitivity_analysis's master delegation), and it
         # already owns validate + resolve — so coercing anywhere else leaves one path raw.
+        #
+        # ORDER IS LOAD-BEARING: this MUST precede _validate_force_rerun_targets. That
+        # function's own getattr(..., "subject", ...) is a no-op on a dict, so a raw
+        # two-axis {"subject": ..., "stage": ...} falls through to next(iter(...)) ->
+        # "subject" and set(map(str, "all")) -> {'a','l'}. Coercing after it leaves the
+        # CLI's json.loads dict — the ONLY form --override-force-rerun produces — broken.
         from hhemt.config.analysis import ForceRerunSpec
+        from .exceptions import ConfigurationError
 
         if not isinstance(resolved, ForceRerunSpec):
-            resolved = ForceRerunSpec.model_validate(resolved)
+            # Re-raised as ConfigurationError because the spec's _validate_subject_shape
+            # and _reject_subject_scoped_render now fire BEFORE the analysis-side
+            # validator. cli.py maps ConfigurationError -> typer.Exit(2) at five sites and
+            # has no ValidationError handler, so a bare pydantic error would escape every
+            # except clause and crash at exit 1 — turning a documented config error into
+            # an unhandled traceback. Pydantic's message is preserved as the payload.
+            try:
+                resolved = ForceRerunSpec.model_validate(resolved)
+            except Exception as exc:  # pydantic ValidationError, and any coercion failure
+                raise ConfigurationError(
+                    field="override_force_rerun",
+                    message=f"could not be parsed as a force-rerun spec: {exc}",
+                ) from exc
+        self._validate_force_rerun_targets(resolved)
         spec = self._build_force_rerun_spec(resolved)
         self._workflow_builder._delete_flags_for_force_rerun(spec)
         # STAGE-GATED. _invalidate_processing_log_for_force_rerun clears

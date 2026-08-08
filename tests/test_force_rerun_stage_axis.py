@@ -13,7 +13,10 @@ actuator floors on.
 
 from __future__ import annotations
 
+import pytest
+
 from hhemt.config.analysis import ForceRerunSpec
+from hhemt.exceptions import ConfigurationError
 
 
 def _seed_status_and_plots(analysis):
@@ -128,6 +131,43 @@ def test_simulate_floor_deletes_flags_as_before(synth_sensitivity_analysis):
         assert not (status_dir / name).exists(), (
             f"{name} survived a simulate floor -- the historical default path changed"
         )
+
+
+def test_raw_two_axis_dict_from_the_cli_is_coerced(synth_sensitivity_analysis):
+    """THE PRODUCTION INPUT CLASS: a raw dict, exactly what `json.loads` hands the CLI.
+
+    `--override-force-rerun '{"subject":"all","stage":"render"}'` reaches
+    `_apply_force_rerun` as a plain dict, NOT as a `ForceRerunSpec`. Every other
+    test in this module enters with an already-coerced spec or the legacy string,
+    so none of them crosses the raw-dict path — which is the path the defect lives
+    on and the only one the CLI ever takes.
+    """
+    analysis = synth_sensitivity_analysis
+    status_dir, flags, snakemake_fig, _eda_fig = _seed_status_and_plots(analysis)
+
+    analysis._apply_force_rerun({"subject": "all", "stage": "render"})
+
+    for name in flags:
+        assert (status_dir / name).exists(), (
+            f"{name} was deleted — the raw dict was not coerced before the floor resolved"
+        )
+    assert not snakemake_fig.exists()
+
+
+def test_malformed_subject_raises_configuration_error_not_validation_error(synth_sensitivity_analysis):
+    """The coercion wrap pins the CLI exit-code contract.
+
+    With coercion now running FIRST, `ForceRerunSpec`'s own `_validate_subject_shape`
+    fires before the analysis-side validator — so a malformed subject would raise a
+    pydantic `ValidationError`. `cli.py` maps `ConfigurationError` to `typer.Exit(2)`
+    at five sites and has no pydantic-`ValidationError` handler (its 15 `ValidationError`
+    matches are all `CLIValidationError`, a different class), so an unwrapped error
+    would escape every `except` clause and crash at exit 1 — silently converting a
+    documented exit-2 config error into an unhandled traceback.
+    """
+    analysis = synth_sensitivity_analysis
+    with pytest.raises(ConfigurationError):
+        analysis._apply_force_rerun({"subject": {"sa_id": []}, "stage": "simulate"})
 
 
 def test_legacy_string_form_still_coerces(synth_sensitivity_analysis):
