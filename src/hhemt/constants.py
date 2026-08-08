@@ -11,6 +11,15 @@ NORFOLK_ANALYSIS_CONFIG = "template_analysis_config.yaml"
 NORFOLK_SYSTEM_CONFIG = "template_system_config.yaml"
 NORFOLK_CASE_CONFIG = "case.yaml"
 
+#: The EDA subdirectory name under an analysis's ``plots/``. Read by BOTH figure-deleting
+#: consumers -- bundle/_emit.py::_prune_undeclared_figures and workflow.py's render-floor
+#: branch -- which must exempt it for the same reason: those figures come from
+#: analysis.eda(), a non-Snakemake in-process facade, so no rule regenerates them after
+#: deletion. It lives HERE rather than in either consumer because bundle/ imports
+#: workflow.py (four module-level sites) and not the reverse, so the constant cannot sit in
+#: bundle/ without inverting that direction.
+EDA_PLOTS_SUBDIR = "eda"
+
 # POST PROCESSING
 
 LST_COL_HEADERS_NODE_FLOOD_SUMMARY = [

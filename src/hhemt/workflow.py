@@ -103,6 +103,10 @@ class ResolvedForceRerunSpec:
 
     scope: Literal["all", "none", "sa", "event"]
     tokens: tuple[str, ...]  # () for "all"/"none"; sa_id strings for "sa"; event_id slugs for "event"
+    # REQUIRED, deliberately no default. A default would let every construction site keep
+    # "simulate" without saying so, which is exactly the silence this field exists to end:
+    # the axis was declared in config and honoured by the actuator, and dropped here.
+    stage: Literal["simulate", "process", "consolidate", "render"]
 
 
 @dataclass(frozen=True)
@@ -1679,7 +1683,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             "consolidate": ("e_consolidate_", "f_consolidate_master"),
             "render": (),  # no completion flag exists for the plot/export/render family
         }
-        stage = getattr(spec, "stage", "simulate") or "simulate"
+        # Direct attribute read, NOT getattr-with-default: the default could never fail on a
+        # dataclass lacking the field, so it silently floored every force at "simulate" and
+        # made the `render` branch below unreachable. An omission must now raise.
+        stage = spec.stage
         if stage not in _FLOOR_FLAG_PREFIXES:
             raise ValueError(f"Unrecognized force-rerun stage: {stage!r}")
         prefixes = _FLOOR_FLAG_PREFIXES[stage]
@@ -1736,6 +1743,16 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             if plots_dir.exists():
                 for fig_path in sorted(plots_dir.rglob("*")):
                     if fig_path.is_dir() or fig_path.name.endswith(".manifest.json"):
+                        continue
+                    # plots/eda/ is EXEMPT, from the SAME constant
+                    # bundle/_emit.py::_prune_undeclared_figures reads: those figures come
+                    # from analysis.eda(), a non-Snakemake in-process facade, so NO rule
+                    # regenerates them after deletion. Deleting them here removes the EDA
+                    # family permanently and silently -- a re-render restores only the
+                    # Snakemake-driven figures.
+                    from hhemt.constants import EDA_PLOTS_SUBDIR
+
+                    if EDA_PLOTS_SUBDIR in fig_path.relative_to(plots_dir).parts:
                         continue
                     logger.info("force_rerun[stage=render]: deleting figure %s", fig_path)
                     fig_path.unlink(missing_ok=True)

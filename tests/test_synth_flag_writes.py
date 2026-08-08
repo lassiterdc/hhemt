@@ -54,8 +54,8 @@ def test_build_force_rerun_spec_all_none():
     from hhemt.analysis import TRITONSWMM_analysis  # noqa: F401
 
     # Pure dataclass shape test — no analysis fixture needed.
-    spec_all = ResolvedForceRerunSpec(scope="all", tokens=())
-    spec_none = ResolvedForceRerunSpec(scope="none", tokens=())
+    spec_all = ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
+    spec_none = ResolvedForceRerunSpec(scope="none", tokens=(), stage="simulate")
     assert spec_all.scope == "all"
     assert spec_none.scope == "none"
 
@@ -85,7 +85,7 @@ def test_delete_flags_for_force_rerun_sa_prefix_no_false_match(tmp_path, synth_s
         (status_dir / (name + ".json")).touch()
 
     builder = analysis._workflow_builder
-    spec = ResolvedForceRerunSpec(scope="sa", tokens=("1",))
+    spec = ResolvedForceRerunSpec(scope="sa", tokens=("1",), stage="simulate")
     builder._delete_flags_for_force_rerun(spec)
 
     # The two sa-1 flags should be gone; sa-10 / sa-11 / sa-100 untouched.
@@ -110,7 +110,7 @@ def test_delete_flags_for_force_rerun_none_scope_noop(synth_sensitivity_analysis
     seeded.touch()
 
     builder = analysis._workflow_builder
-    spec = ResolvedForceRerunSpec(scope="none", tokens=())
+    spec = ResolvedForceRerunSpec(scope="none", tokens=(), stage="simulate")
     builder._delete_flags_for_force_rerun(spec)
 
     assert seeded.exists()
@@ -140,7 +140,7 @@ def test_delete_flags_for_force_rerun_all_clears_status_dir(synth_sensitivity_an
         (status_dir / (name + ".json")).touch()
 
     builder = analysis._workflow_builder
-    spec = ResolvedForceRerunSpec(scope="all", tokens=())
+    spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
     builder._delete_flags_for_force_rerun(spec)
 
     # In-axis: deleted, with its sidecar.

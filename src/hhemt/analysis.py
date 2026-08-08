@@ -3821,7 +3821,9 @@ class TRITONSWMM_analysis:
             if start_with == "process" and regenerate_existing and not dry_run:
                 from hhemt.workflow import ResolvedForceRerunSpec
 
-                self._invalidate_processing_log_for_force_rerun(ResolvedForceRerunSpec(scope="all", tokens=()))
+                self._invalidate_processing_log_for_force_rerun(
+                    ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
+                )
         else:
             self._delete_processed_outputs_for_reprocess(
                 start_with, regenerate_existing=regenerate_existing, dry_run=dry_run
@@ -4113,7 +4115,9 @@ class TRITONSWMM_analysis:
         # 1) Clear per-scenario per-model processing_log.outputs so the runner's
         #    _already_written gate returns False and write paths re-execute.
         #    Scope "all" — a process-stage reprocess rebuilds every scenario.
-        self._invalidate_processing_log_for_force_rerun(ResolvedForceRerunSpec(scope="all", tokens=()))
+        self._invalidate_processing_log_for_force_rerun(
+            ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
+        )
         if dry_run:
             return  # dry-run performs no destructive filesystem mutation
 
@@ -4196,25 +4200,28 @@ class TRITONSWMM_analysis:
         from hhemt.scenario import compute_event_id_slug
         from hhemt.workflow import ResolvedForceRerunSpec
 
-        # Same unwrap as _validate_force_rerun_targets, and idempotent for the same reason:
-        # a ForceRerunSpec yields its subject, a bare subject passes through unchanged.
-        # Without it the `assert isinstance(..., dict)` below fails on every spec-valued call.
-        resolved_force_rerun = getattr(resolved_force_rerun, "subject", resolved_force_rerun)
+        # STRICT, no getattr-with-default on either axis. The caller (_apply_force_rerun)
+        # coerces to ForceRerunSpec immediately above, so both attributes are present by
+        # construction; an uncoerced future caller must RAISE rather than silently floor at
+        # "simulate", which is the defect this whole change closes. Read the stage BEFORE
+        # rebinding the name below — the subject read discards the object carrying it.
+        _stage = resolved_force_rerun.stage
+        resolved_force_rerun = resolved_force_rerun.subject
 
         if resolved_force_rerun == "all":
-            return ResolvedForceRerunSpec(scope="all", tokens=())
+            return ResolvedForceRerunSpec(scope="all", tokens=(), stage=_stage)
         if resolved_force_rerun == "none":
-            return ResolvedForceRerunSpec(scope="none", tokens=())
+            return ResolvedForceRerunSpec(scope="none", tokens=(), stage=_stage)
         assert isinstance(resolved_force_rerun, dict)
         key = next(iter(resolved_force_rerun))
         values = resolved_force_rerun[key]
         if key == "sa_id":
-            return ResolvedForceRerunSpec(scope="sa", tokens=tuple(str(v) for v in values))
+            return ResolvedForceRerunSpec(scope="sa", tokens=tuple(str(v) for v in values), stage=_stage)
         # event_iloc → event_id slug per V0001 stable slug invariant.
         slugs = tuple(
             compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(int(iloc))) for iloc in values
         )
-        return ResolvedForceRerunSpec(scope="event", tokens=slugs)
+        return ResolvedForceRerunSpec(scope="event", tokens=slugs, stage=_stage)
 
     def _clean_restart_wipe(self, sa_ids: list[str]) -> None:
         """Targeted clean-restart wipe for a resume-sweep recovery: remove ONLY the
@@ -4273,7 +4280,7 @@ class TRITONSWMM_analysis:
                 _ledger = _simlogs / "_walltime" / f"{_log.stem}.jsonl"
                 _ledger.unlink(missing_ok=True)  # EXEMPT-DU: runtime log
         self._workflow_builder._delete_flags_for_force_rerun(
-            ResolvedForceRerunSpec(scope="sa", tokens=tuple(restart_ids))
+            ResolvedForceRerunSpec(scope="sa", tokens=tuple(restart_ids), stage="simulate")
         )
 
     def _apply_force_rerun(self, override_force_rerun) -> None:
@@ -4298,9 +4305,25 @@ class TRITONSWMM_analysis:
         """
         resolved = override_force_rerun if override_force_rerun is not None else self.cfg_analysis.force_rerun
         self._validate_force_rerun_targets(resolved)
+        # SINGLE COERCION BOUNDARY. Pydantic's mode="before" coercion fires only on
+        # assignment to the force_rerun config FIELD, which the override path never
+        # touches, so a raw str/dict arrives here from both the CLI (json.loads) and the
+        # programmatic API. This is the one point BOTH consumers funnel through
+        # (analysis.submit_workflow and sensitivity_analysis's master delegation), and it
+        # already owns validate + resolve — so coercing anywhere else leaves one path raw.
+        from hhemt.config.analysis import ForceRerunSpec
+
+        if not isinstance(resolved, ForceRerunSpec):
+            resolved = ForceRerunSpec.model_validate(resolved)
         spec = self._build_force_rerun_spec(resolved)
         self._workflow_builder._delete_flags_for_force_rerun(spec)
-        self._invalidate_processing_log_for_force_rerun(spec)
+        # STAGE-GATED. _invalidate_processing_log_for_force_rerun clears
+        # processing_log.outputs AND resets both raw_*_outputs_cleared markers, so calling
+        # it under a consolidate/render floor re-arms the clear-raw step and re-runs
+        # processing — the exact harm _FLOOR_FLAG_PREFIXES' comment says a render floor
+        # must never cause. The flag floor closed the flag route; this closes the log route.
+        if spec.stage in ("simulate", "process"):
+            self._invalidate_processing_log_for_force_rerun(spec)
 
     def _invalidate_consolidate_flag_on_scenario_set_change(self) -> None:
         """Delete e_consolidate_complete.flag (and orphan per-event flags) when the
@@ -4486,7 +4509,7 @@ class TRITONSWMM_analysis:
             # event-scoped force-rerun log invalidator (cheap per-scenario JSON
             # rewrites; no GPFS tree walk).
             self._invalidate_processing_log_for_force_rerun(
-                ResolvedForceRerunSpec(scope="event", tokens=tuple(reconciled_event_ids))
+                ResolvedForceRerunSpec(scope="event", tokens=tuple(reconciled_event_ids), stage="simulate")
             )
         return reconciled
 

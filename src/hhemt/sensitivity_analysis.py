@@ -528,7 +528,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         from hhemt.workflow import ResolvedForceRerunSpec
 
-        all_spec = ResolvedForceRerunSpec(scope="all", tokens=())
+        all_spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
         for sa_id in sa_id_tokens:
             sub_analysis = self.sub_analyses.get(sa_id)
             if sub_analysis is None:

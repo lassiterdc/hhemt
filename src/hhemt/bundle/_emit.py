@@ -62,7 +62,11 @@ if TYPE_CHECKING:
     from hhemt.config.bundle_exclude import BundleExcludeConfig
 
 
-_EDA_SUBDIR = "eda"
+from hhemt.constants import EDA_PLOTS_SUBDIR
+
+# Local alias: the shared constant is the single source, and keeping the historical name
+# means the existing in-file references need no edit.
+_EDA_SUBDIR = EDA_PLOTS_SUBDIR
 
 
 def _figure_stem(name: str) -> str:

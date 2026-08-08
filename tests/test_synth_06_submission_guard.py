@@ -405,7 +405,7 @@ def test_force_rerun_does_not_descend_into_status_subdirs(synthetic_multisim_bui
     nested_flag.touch()
 
     try:
-        b._delete_flags_for_force_rerun(ResolvedForceRerunSpec(scope="all", tokens=()))
+        b._delete_flags_for_force_rerun(ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate"))
 
         assert not top_flag.exists(), "top-level _status/*.flag must be deleted by scope='all'"
         assert nested_flag.exists(), "nested _status/**/*.flag must survive — glob is non-recursive (R10)"
@@ -436,7 +436,7 @@ def test_force_rerun_sa_scope_does_not_touch_submitted_sentinels(synthetic_multi
     other_sa_flag.touch()
 
     try:
-        b._delete_flags_for_force_rerun(ResolvedForceRerunSpec(scope="sa", tokens=("0",)))
+        b._delete_flags_for_force_rerun(ResolvedForceRerunSpec(scope="sa", tokens=("0",), stage="simulate"))
 
         assert not sa_flag.exists(), "sa-0 flag must be deleted by scope='sa' tokens=('0',)"
         assert other_sa_flag.exists(), "sa-10 must NOT be matched by sa-0 (delimiter-anchored glob)"
