@@ -27,14 +27,32 @@ import hhemt.workflow as wf
 from hhemt.report_renderers._reporting_sets import get_reporting_set
 
 
-def _capture_source_categories(generate_call: Callable[[], object]) -> dict[str, str]:
+#: The report_kwargs keys the co-sourcing guard compares. `category` alone left
+#: `labels` and `caption` unguarded, and both are hand-maintained in TWO places
+#: (workflow.py's generators and _reporting_sets.py's templates) with nothing
+#: comparing them -- so an edit to one copy shipped silently. `subcategory` IS
+#: included: `_kwargs_subset` calls .get() on both sides, so a key absent from both
+#: compares None == None, and absent-on-one-side-only is a true divergence the guard
+#: should catch. (An earlier revision excluded it on the reasoning that a
+#: None-vs-missing comparison would fail on rules that never declared one; that
+#: reasoning was wrong, and excluding it narrowed the guard for no benefit.)
+_CO_SOURCED_KEYS = ("category", "labels", "caption", "subcategory")
+
+
+def _kwargs_subset(report_kwargs) -> dict[str, str]:
+    """The co-sourced slice of one rule's ``report_kwargs``, missing keys as None."""
+    return {k: report_kwargs.get(k) for k in _CO_SOURCED_KEYS}
+
+
+def _capture_source_categories(generate_call: Callable[[], object]) -> dict[str, dict]:
     """Run a source-side generator with ``_emit_plot_rule`` patched to record each
-    rule's category by ``rule_name``. Returns ``{rule_name: category}``."""
-    captured: dict[str, str] = {}
+    rule's co-sourced report_kwargs by ``rule_name``.
+    Returns ``{rule_name: {category, labels, caption}}``."""
+    captured: dict[str, dict] = {}
     orig = wf._emit_plot_rule
 
     def _cap(spec, ctx):
-        captured[spec.rule_name] = spec.report_kwargs.get("category")
+        captured[spec.rule_name] = _kwargs_subset(spec.report_kwargs)
         return orig(spec, ctx)
 
     wf._emit_plot_rule = _cap
@@ -45,11 +63,12 @@ def _capture_source_categories(generate_call: Callable[[], object]) -> dict[str,
     return captured
 
 
-def _template_categories(set_name: str) -> dict[str, str]:
-    """Registry-side ``{rule_name: category}`` for every figure template in a set."""
+def _template_categories(set_name: str) -> dict[str, dict]:
+    """Registry-side ``{rule_name: {category, labels, caption}}`` for every figure
+    template in a set."""
     rset = get_reporting_set(set_name)
     return {
-        tmpl.rule_name: tmpl.report_kwargs.get("category")
+        tmpl.rule_name: _kwargs_subset(tmpl.report_kwargs)
         for sel in rset.renderer_selection
         for tmpl in sel.rule_spec_template
     }
@@ -157,7 +176,10 @@ def test_b4b_set_config_diff_maps_wired_and_ordered():
         "the report-wiring edit did not land (or was dropped as a second same-key "
         "eda_compute_sensitivity selection)."
     )
-    category = templates["plot_eda_compute_sensitivity"]
+    # _template_categories now returns the co-sourced kwargs SUBSET per rule, so the
+    # category must be selected out of it; `dict in set(...)` would raise TypeError:
+    # unhashable type rather than failing an assertion.
+    category = templates["plot_eda_compute_sensitivity"]["category"]
     assert category in set(rset.category_order), (
         f"config_diff_maps template declares category {category!r} not in the b4b "
         f"set's category_order {sorted(rset.category_order)}; it would render in the "

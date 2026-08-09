@@ -78,19 +78,63 @@ def render(analysis, report_cfg, output_path: Path) -> Path:
                     breakdown = sent.get("sub_path_breakdown", {}) or {}
                     per_col.append({str(k): int(v) for k, v in breakdown.items()})
                     totals.append(int(sent.get("disk_utilization_bytes", 0)))
+        import pandas as pd
+
+        from hhemt.report_renderers._tabulator_defaults import (
+            build_columns_spec,
+            build_html_document,
+            build_options_dict,
+        )
+
+        # Values are carried as MiB FLOATS, never as the pre-formatted byte strings
+        # this table used to emit. A Tabulator column of "1.1 GiB" strings sorts
+        # lexically (9.9 MiB above 1.1 GiB) and cannot be summed; a single-unit float
+        # sorts numerically, sums correctly, and formats through Tabulator's built-in
+        # "money" formatter, which needs no JS callable and so survives the JSON
+        # options round-trip. MiB is chosen over raw bytes for readability at this
+        # corpus's scale (per-scope values span KiB to low GiB).
+        _MIB = 1024.0 * 1024.0
         scopes = sorted({s for col in per_col for s in col})
-        header = "".join(f"<th style='text-align:right'>{c}</th>" for c in cols)
-        body = ""
-        for scope in scopes:
-            cells = "".join(f"<td style='text-align:right'>{_fmt_bytes(col.get(scope, 0))}</td>" for col in per_col)
-            body += f"<tr><td>{scope}</td>{cells}</tr>"
-        foot = "".join(f"<th style='text-align:right'>{_fmt_bytes(t)}</th>" for t in totals)
-        html = (
-            "<section class='cross-experiment-disk-utilization'>"
-            "<h2>Cross-Experiment Disk Utilization</h2>"
-            "<table class='du-table'><thead><tr><th>Scope</th>" + header + "</tr></thead>"
-            "<tbody>" + body + "</tbody>"
-            "<tfoot><tr><th>Total</th>" + foot + "</tr></tfoot></table></section>"
+        _unit_cols = [f"{c} (MiB)" for c in cols]
+        _records = [
+            {"Scope": scope, **{
+                _unit_cols[i]: round(col.get(scope, 0) / _MIB, 1)
+                for i, col in enumerate(per_col)
+            }}
+            for scope in scopes
+        ]
+        df_du = pd.DataFrame(_records, columns=["Scope", *_unit_cols])
+        columns_spec = build_columns_spec(
+            df_du, visible_columns_default=None, header_filter=True,
+        )
+        # The Total row is Tabulator's own column calculation over the displayed
+        # values. The shared surface ships no totals feature -- no column spec sets
+        # bottomCalc and build_html_document renders no calc row -- but the columns
+        # list it returns is the caller's to extend, so this needs no change to
+        # _tabulator_defaults. Measured on all four bundles of this generation:
+        # sum(sub_path_breakdown) == disk_utilization_bytes exactly, so the summed
+        # Total equals the sentinel total this table displayed before.
+        for _spec in columns_spec:
+            if _spec.get("field") in _unit_cols:
+                _spec["bottomCalc"] = "sum"
+                _spec["formatter"] = "money"
+                _spec["formatterParams"] = {"precision": 1, "symbol": ""}
+                _spec["bottomCalcFormatter"] = "money"
+                _spec["bottomCalcFormatterParams"] = {"precision": 1, "symbol": ""}
+        options = build_options_dict(
+            df_du,
+            columns_spec=columns_spec,
+            table_height="420px",
+            pagination_size=0,
+            persistence_id="cross_experiment_disk_utilization",
+        )
+        html = build_html_document(
+            title="Cross-Experiment Disk Utilization",
+            container_id="cross-experiment-disk-utilization",
+            body_heading_html="<h2>Cross-Experiment Disk Utilization</h2>",
+            options=options,
+            js_mode="cdn",
+            renderer_name="cross_experiment_disk_utilization",
         )
         if not source_paths:  # honest empty state + declare the expected dir (ADR-6 D3)
             html = "<section class='cross-experiment-disk-utilization'><p class='note'>No child crates recorded.</p></section>"

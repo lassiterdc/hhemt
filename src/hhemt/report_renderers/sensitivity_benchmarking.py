@@ -235,31 +235,63 @@ def render(
     # is never promoted to publication (KEEP-no-hybrid invariant).
     use_plotly = False if static_cfg is not None else (static_backend == "plotly")
     if use_plotly:
-        # Iteration 4 (FQ3): anchor PER HARDWARE FAMILY -- CPU curves against the serial
-        # CPU run, each GPU hardware against its own minimum-device run. The prior
-        # global-serial anchor reported a6000 3-GPU as S = 1.51 ("this scales") where the
-        # within-hardware statement is S = 0.255. The in-source objection this replaces
-        # argued against a global N=1-MINIMUM anchor (which would land on GPU); a
-        # per-family anchor never compares across families, so that failure cannot arise.
-        # Falls back to the serial anchor when no family resolves, which is the exact
-        # pre-change behaviour for a single-hardware master.
+        # Panels 3+4 carry TWO series per group and they answer different questions.
+        # The LINE is the per-N envelope over replicate-AVERAGED configs, so a vertex
+        # is the best distinct CONFIG at that device count rather than the luckiest RUN.
+        # The MARKERS are every raw row, so the replicate spread stays visible. Before
+        # this change the "line" was itself an all-rows series (measured: panel-3 line
+        # x = [1,1,2,2,3,3], not [1,2,3]), so the min rule the comment claimed was never
+        # applied on these two panels and the two series were the same points twice.
+        #
+        # Both series anchor on the SAME per-family baseline. They share an axis, a
+        # colour and a legendgroup, which asserts to the reader that they are one
+        # series; a global-serial anchor against a per-family anchor made that
+        # assertion false for every GPU family and made the y-axis title's t_family(1)
+        # true of the line only.
+        #
+        # The anchor is resolved from the AVERAGED frame. Resolving it from the raw
+        # frame would divide averaged line values by an un-averaged minimum, so the
+        # reference config would not land at 1.0 under its own line.
+        _df_avg = (
+            df.groupby(["group_value", "n_devices", "config_id"], as_index=False)
+            .agg(wallclock_s=("wallclock_s", "mean"), sa_id=("sa_id", "first"))
+        )
         family_baselines = _resolve_family_baselines(
-            df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
+            _df_avg, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
         )
         if family_baselines:
             speedup_pg, strong_eff_pg = {}, {}
+            speedup_all, efficiency_all = {}, {}
             for _gv, _anchor in family_baselines.items():
-                _sub = df[df["group_value"].astype(str) == _gv]
-                if _sub.empty:
+                _sub_avg = _df_avg[_df_avg["group_value"].astype(str) == _gv]
+                _sub_raw = df[df["group_value"].astype(str) == _gv]
+                if _sub_avg.empty:
                     continue
+                # Line: per-N minimum over the replicate-averaged configs.
+                _line_sub = _sub_avg.loc[
+                    _sub_avg.groupby("n_devices")["wallclock_s"].idxmin()
+                ]
                 speedup_pg.update(_compute_metric_all_rows_per_group(
-                    _sub, t_col="wallclock_s", indep_col="n_devices",
+                    _line_sub, t_col="wallclock_s", indep_col="n_devices",
                     group_col="group_value", kind="speedup", anchor=_anchor,
                 ))
                 strong_eff_pg.update(_compute_metric_all_rows_per_group(
-                    _sub, t_col="wallclock_s", indep_col="n_devices",
+                    _line_sub, t_col="wallclock_s", indep_col="n_devices",
                     group_col="group_value", kind="efficiency", anchor=_anchor,
                 ))
+                # Markers: every raw row, same anchor.
+                if _sub_raw.empty:
+                    continue
+                speedup_all.update(_compute_metric_all_rows_per_group(
+                    _sub_raw, t_col="wallclock_s", indep_col="n_devices",
+                    group_col="group_value", kind="speedup", anchor=_anchor,
+                ))
+                efficiency_all.update(_compute_metric_all_rows_per_group(
+                    _sub_raw, t_col="wallclock_s", indep_col="n_devices",
+                    group_col="group_value", kind="efficiency", anchor=_anchor,
+                ))
+            speedup_all = speedup_all or None
+            efficiency_all = efficiency_all or None
         else:
             speedup_pg = _compute_speedup_per_group(
                 df, t_col="wallclock_s", indep_col="n_devices",
@@ -269,24 +301,21 @@ def render(
                 df, t_col="wallclock_s", indep_col="n_devices",
                 group_col="group_value", mode="strong", baseline_mode="serial",
             )
-        # All-row variants for the markers trace on panels 3+4 (shows every hybrid
-        # configuration, not just the per-N min). Line goes through min; markers
-        # at all points. Mirrors the panels 1+2 behavior.
-        serial_anchor = _resolve_serial_baseline(
-            df, t_col="wallclock_s", group_col="group_value",
-        )
-        if serial_anchor is not None:
-            speedup_all = _compute_metric_all_rows_per_group(
-                df, t_col="wallclock_s", indep_col="n_devices",
-                group_col="group_value", kind="speedup", anchor=serial_anchor,
+            serial_anchor = _resolve_serial_baseline(
+                df, t_col="wallclock_s", group_col="group_value",
             )
-            efficiency_all = _compute_metric_all_rows_per_group(
-                df, t_col="wallclock_s", indep_col="n_devices",
-                group_col="group_value", kind="efficiency", anchor=serial_anchor,
-            )
-        else:
-            speedup_all = None
-            efficiency_all = None
+            if serial_anchor is not None:
+                speedup_all = _compute_metric_all_rows_per_group(
+                    df, t_col="wallclock_s", indep_col="n_devices",
+                    group_col="group_value", kind="speedup", anchor=serial_anchor,
+                )
+                efficiency_all = _compute_metric_all_rows_per_group(
+                    df, t_col="wallclock_s", indep_col="n_devices",
+                    group_col="group_value", kind="efficiency", anchor=serial_anchor,
+                )
+            else:
+                speedup_all = None
+                efficiency_all = None
         if analysis.cfg_analysis.sensitivity_analysis is not None:
             source_paths.append(Path(analysis.cfg_analysis.sensitivity_analysis))
         # F1: GPU hardware suffix (e.g., "gpu (a6000)"). Phase-4 (4c, D3): gpu_hardware
@@ -1423,6 +1452,20 @@ def _plotly_metric_panel_precomputed(
     else:
         sa_cfg_lookup = None
 
+    # BM-3: n_replicates drives marker FILL -- a config with repeated runs renders
+    # hollow. The column is computed in render() at the `_r\d+`-strip and was never
+    # read again; this is the lookup that consumes it. Built here rather than passed
+    # in because `df_for_groups` IS the same frame render() computed it on, so a new
+    # parameter would thread a value already in scope.
+    if "n_replicates" in df_for_groups.columns and "sa_id" in df_for_groups.columns:
+        n_rep_by_sa = (
+            df_for_groups.drop_duplicates(subset=["sa_id"])
+            .set_index("sa_id")["n_replicates"]
+            .astype(int)
+        )
+    else:
+        n_rep_by_sa = None
+
     def _extract_xyz(data):
         """Return (xs, ys, sa_ids) from one of the supported per-group data formats."""
         if isinstance(data, dict):
@@ -1517,12 +1560,22 @@ def _plotly_metric_panel_precomputed(
                 a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
                 fig.add_trace(go.Scatter(**line_trace), row=row, col=1)
         # Markers trace — all-row points (or fall back to per-N-min if all-row not provided).
+        # BM-3: hollow marker == this config has repeated runs. Per-POINT, not
+        # per-trace: a group can mix replicated and single-run configs, so the fill
+        # is a list aligned to marker_xs. `rgba(0,0,0,0)` rather than "white" keeps
+        # the plot background visible through the marker on any template.
+        _marker_fill = color
+        if n_rep_by_sa is not None and marker_sa is not None:
+            _reps = n_rep_by_sa.reindex(marker_sa)
+            _marker_fill = [
+                "rgba(0,0,0,0)" if (r == r and int(r) > 1) else color for r in _reps
+            ]
         marker_kwargs = dict(
             x=marker_xs, y=marker_ys, mode=marker_mode,
             marker=dict(
                 symbol=marker_symbol,
                 size=max(int(sens_cfg.point_size ** 0.5), 6),
-                color=color, line=dict(color="black", width=1.0),
+                color=_marker_fill, line=dict(color=color, width=1.4),
             ),
             legendgroup=str(gv), name=legend_name,
             showlegend=show_in_legend,

@@ -878,7 +878,7 @@ def test_render_report_includes_disk_utilization_card(synth_multi_sim_analysis_c
     # Either the populated table or the missing-sentinel banner is a valid
     # rendered output (both are emitted by the same renderer). On a
     # successful end-to-end run the analysis-level sentinel must be present.
-    assert "du-table" in du_html, f"Disk Utilization card did not render the populated table; got: {du_html[:200]!r}"
+    assert 'id="disk-utilization"' in du_html, f"Disk Utilization card did not render the populated table; got: {du_html[:200]!r}"
 
 
 def _set_batch_job_fields(cfg_analysis):

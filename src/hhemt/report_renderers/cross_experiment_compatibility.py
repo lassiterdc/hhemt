@@ -221,10 +221,9 @@ def _render_compatibility_html(source: Path, prov_rows: list[dict] | None = None
     )
     if divs:
         rows = "\n".join(
-            "<tr><td>{f}</td><td>{sev}</td><td>{msg}</td><td>{ba}: {va}</td><td>{bb}: {vb}</td></tr>".format(
+            "<tr><td>{f}</td><td>{status}</td><td>{ba}: {va}</td><td>{bb}: {vb}</td></tr>".format(
                 f=_html.escape(str(d.get("field_name"))),
-                sev=_html.escape(str(d.get("severity"))),
-                msg=_html.escape(_divergence_message(d)),
+                status="Expected" if _divergence_is_expected(d) else "Review",
                 ba=_html.escape(str(d.get("bundle_a"))),
                 va=_html.escape(str(d.get("value_a"))),
                 bb=_html.escape(str(d.get("bundle_b"))),
@@ -236,9 +235,18 @@ def _render_compatibility_html(source: Path, prov_rows: list[dict] | None = None
         # consumer is _classify, and once the message states WHY a row is informational or
         # warning the bucket is fully carried by the message. Keeping both invites the
         # reader to reconcile two codings of one fact.
+        #
+        # Iteration 5: the message column is dropped at the user's request, and the raw
+        # severity string goes with it. Severity is single-valued on this artifact -- all
+        # twelve divergences of the reviewed combine are `warning` -- so the column
+        # discriminated nothing while reading as an alarm. `_divergence_is_expected` is the
+        # distinction that does carry information: it splits the same rows 8/4, and the
+        # verdict line above the table already reports that split in aggregate. Per-row
+        # Expected/Review makes the aggregate locatable, which is what the dropped message
+        # column was doing.
         table = (
             "<table class='compat'><thead><tr><th>Field</th>"
-            "<th>Severity</th><th>What it means</th><th>Bundle A</th><th>Bundle B</th></tr></thead>"
+            "<th>Status</th><th>Bundle A</th><th>Bundle B</th></tr></thead>"
             "<tbody>" + rows + "</tbody></table>"
         )
     else:
@@ -247,9 +255,25 @@ def _render_compatibility_html(source: Path, prov_rows: list[dict] | None = None
     # combine_bundle before any render), so only genuine informational/warning divergence rows
     # are informative. The R6 deferred-panel prose is removed (deterministic-only content, F9);
     # the physically meaningful clean-vs-resume comparison lives in the Cross-Experiment Results
-    # section. Data-viz owns the .compat cell-border CSS.
+    # section.
+    #
+    # The .compat cell-border CSS ships INSIDE this fragment. report.css.j2 carries a
+    # complete table.compat rule set, but emit_plot_with_sources writes this fragment
+    # verbatim with no <head>, and Snakemake embeds figure HTML in an iframe -- a separate
+    # document the parent stylesheet does not cascade into. The shell rule is therefore
+    # unreachable from here, which is why the rendered table has no cell boundaries even
+    # though a correct rule for it exists. A fragment that must survive iframe embedding
+    # carries its own declarations.
     return (
         "<section class='cross-experiment-compatibility'>"
+        "<style>"
+        "table.compat{border-collapse:collapse;margin:1rem 0;font-size:0.95rem;"
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+        "table.compat th,table.compat td{border:1px solid #DADADA;padding:6px 12px;"
+        "text-align:left;vertical-align:top}"
+        "table.compat th{background-color:#232D4B;color:white;font-weight:600}"
+        "table.compat tbody tr:nth-child(even){background-color:#F1F1EF}"
+        "</style>"
         "<h2>What Was Combined (combine provenance) &amp; compatibility</h2>"
         + _provenance_table_html(prov_rows)
         + "<h3>Identity-field compatibility</h3>"

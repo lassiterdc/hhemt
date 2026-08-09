@@ -402,7 +402,7 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
                 report_kwargs={
                     "caption": "report/captions/per_sim_peak_flood_depth.rst",
                     "category": "Per Simulation Results",
-                    "labels": '{"event_id": "{event_id}", "figure": "Peak Flood Depth"}',
+                    "labels": '{"event_id": "{event_id}", "figure": "Peak flood depth"}',
                 },
                 wildcards=("event_id",),
                 resources_yaml="mem_mb=4000, time_min=15",
@@ -415,7 +415,7 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
                 report_kwargs={
                     "caption": "report/captions/per_sim_conduit_flow.rst",
                     "category": "Per Simulation Results",
-                    "labels": '{"event_id": "{event_id}", "figure": "Conduit Flow"}',
+                    "labels": '{"event_id": "{event_id}", "figure": "Conduit flow"}',
                 },
                 wildcards=("event_id",),
                 resources_yaml="mem_mb=4000, time_min=15",
@@ -460,7 +460,7 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
                 report_kwargs={
                     "caption": "report/captions/per_sim_peak_flood_depth.rst",
                     "category": "Per Simulation Results",
-                    "labels": '{"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "Peak Flood Depth"}',
+                    "labels": '{"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "Peak flood depth"}',
                 },
                 wildcards=("sa_id", "event_id"),
                 resources_yaml="mem_mb=4000, time_min=15",
@@ -474,7 +474,7 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
                 report_kwargs={
                     "caption": "report/captions/per_sim_conduit_flow.rst",
                     "category": "Per Simulation Results",
-                    "labels": '{"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "Conduit Flow"}',
+                    "labels": '{"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "Conduit flow"}',
                 },
                 wildcards=("sa_id", "event_id"),
                 resources_yaml="mem_mb=4000, time_min=15",

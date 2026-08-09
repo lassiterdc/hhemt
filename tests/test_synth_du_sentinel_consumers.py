@@ -133,7 +133,7 @@ def test_disk_utilization_renderer_emits_table_when_sentinel_present(tmp_path):
 
     assert output_path.exists()
     html = output_path.read_text()
-    assert "du-table" in html
+    assert 'id="disk-utilization"' in html
     assert "Disk utilization sentinel absent" not in html
     # Total formatted to MiB:
     assert "MiB" in html
@@ -160,7 +160,11 @@ def test_disk_utilization_renderer_emits_missing_banner_when_absent(tmp_path):
     assert output_path.exists()
     html = output_path.read_text()
     assert "Disk utilization sentinel absent" in html
-    assert "du-table" not in html
+    # Mirror of the populated-path assertion above, deliberately over the SAME token.
+    # Asserting `"du-table" not in html` would go vacuous under the Tabulator route --
+    # that string appears in NEITHER state, so it would keep passing even if the banner
+    # branch were deleted and the renderer emitted an empty string.
+    assert 'id="disk-utilization"' not in html
 
 
 # ---------------------------------------------------------------------------

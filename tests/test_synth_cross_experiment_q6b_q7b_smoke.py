@@ -182,7 +182,10 @@ def test_cross_experiment_disk_utilization_pivots_per_child_q7b(tmp_path):
     cross_experiment_disk_utilization.render(_stub_analysis(analysis_dir), report_cfg=None, output_path=out)
 
     html = out.read_text()
-    assert "du-table" in html and "Cross-Experiment Disk Utilization" in html
+    # Spec DU: the hand-rolled <table class='du-table'> is gone — the cross-experiment
+    # disk-utilization table is now a Tabulator document, so the structural equivalent
+    # is its container id. The heading literal is carried through body_heading_html.
+    assert 'id="cross-experiment-disk-utilization"' in html and "Cross-Experiment Disk Utilization" in html
     assert "MiB" in html and "sims" in html and "_status" in html
 
     manifest = json.loads((out.parent / "disk_utilization.manifest.json").read_text())

@@ -506,7 +506,8 @@ def _load_conduit_geometry(root: Path) -> dict[str, tuple[tuple[float, float], t
 
 def _watershed_polygon(root: Path):
     """The watershed polygon, or None. It is the drainage area north of the sea wall — used
-    both as the display/colorbar mask and as a boundary overlay labeled 'watershed'.
+    both as the display/colorbar mask and as a boundary overlay labeled 'watershed extent
+    (bbox)' — the label names the supplied geometry, which may be a bounding box.
 
     Resolves in BOTH render roots. ``external/watershed.geojson`` is a bundle-EMIT artifact:
     ``bundle/_path_policy`` rewrites ``cfg_system.watershed_gis_polygon`` to
@@ -1073,7 +1074,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
 
     # Watershed (north of the sea wall): mask displayed water level + depth colorbar range
     # to the drainage area (excludes the coastal storm-tide extreme), and overlay its
-    # boundary on every map labeled 'watershed'.
+    # boundary on every map labeled 'watershed extent (bbox)'.
     wpoly = _watershed_polygon(root)
     wmask = _watershed_mask(wpoly, xd, yd)
 
@@ -1462,7 +1463,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
                 yanchor="middle",
                 showarrow=False,
                 font=dict(size=10, color="#111"),
-                text="watershed",
+                text="watershed extent (bbox)",
             )
         )
         # dashed panel outline: left of the table -> right of the colorbar labels; bottom
@@ -1496,18 +1497,10 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     _caption_b_px = add_figure_caption(
         fig,
         (
-            "Identity column = byte-identity of the <b>max_wlevel_m PEAK water-level summary</b> "
-            "(max over time) vs each config's hardware-family minimum-device reference "
-            "(CPU → serial-CPU, GPU → 1-GPU). A max summary can read byte-identical even where "
-            "individual timesteps differ — per-timestep byte-for-byte agreement is in the "
-            "“Per-timestep water-level” (b4b) figure. Diff/percent maps below are vs the "
+            "Identity column = byte-identity of the <b>max_wlevel_m PEAK water-level summary</b>, "
+            "evaluated after the max over time, vs each config's hardware-family minimum-device "
+            "reference (CPU → serial-CPU, GPU → 1-GPU). Diff/percent maps below are vs the "
             "serial-CPU minimum-device reference."
-            + (
-                " Serial-reference depth is scaled over the watershed north of the sea wall, "
-                f"capped at {depth_vmax:.2f} m."
-                if _has_watershed and depth_vmax
-                else " Serial-reference depth is scaled over the full DEM extent, including the seaward boundary."
-            )
         ),
         content_w_px=_caption_w_px,
         plot_h_px=plot_h,

@@ -25,6 +25,7 @@ from hhemt.eda._dem_resolution_plots import (
     _render_dem_resolution_diff_maps,
     _render_dem_resolution_error_ecdf,
 )
+from hhemt.figure_caption import add_figure_caption
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 
@@ -430,17 +431,26 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
             )
 
     total_rows = sum(row_heights)
+    # Caption layout is owned by hhemt.figure_caption (ONE deterministic module for every
+    # figure). This call site predates the module and hand-tuned b=150 against a caption
+    # whose length is DATA-DEPENDENT: the per-family reference list and the replicate
+    # disclosure are appended above, so the text that must fit is not the text this
+    # constant was tuned against. add_figure_caption wraps the text itself and RETURNS the
+    # bottom margin the wrapped result needs, which is what replaces the constant.
+    # G3 fungibility: content_w_px derives from the two layout margins, which are shared by
+    # the pure-TRITON and coupled arms, so the same caption wraps identically on both.
+    _CAPTION_L_PX, _CAPTION_R_PX, _CAPTION_T_PX = 180, 140, 64
+    _caption_w_px = 700 - _CAPTION_L_PX - _CAPTION_R_PX  # plotly default fig width; no width= is set
+    _plot_h_px = max(126, 26 * total_rows + 46 * n_panels + 26)
+    fig.update_xaxes(title_text="reporting timestep (min)", row=n_panels, col=1)
+    _caption_b_px = add_figure_caption(
+        fig, caption, content_w_px=_caption_w_px, plot_h_px=_plot_h_px
+    )
     fig.update_layout(
         title=title,
-        height=max(340, 90 + 26 * total_rows + 46 * n_panels),
-        margin=dict(l=180, r=140, t=64, b=150),
+        height=_plot_h_px + _CAPTION_T_PX + _caption_b_px,
+        margin=dict(l=_CAPTION_L_PX, r=_CAPTION_R_PX, t=_CAPTION_T_PX, b=_caption_b_px),
         legend=dict(orientation="v", yanchor="top", y=1.0, x=1.02, xanchor="left"),
-    )
-    fig.update_xaxes(title_text="reporting timestep (min)", row=n_panels, col=1)
-    fig.add_annotation(
-        text=caption, showarrow=False, xref="paper", yref="paper",
-        x=0.0, y=-0.14, yanchor="top", align="left", font=dict(size=11),
-        width=400,
     )
     return fig
 

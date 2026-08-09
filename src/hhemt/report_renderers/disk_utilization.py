@@ -28,27 +28,65 @@ if TYPE_CHECKING:
     from hhemt.config.report import report_config
 
 
-def _fmt_bytes(size_bytes: int) -> str:
-    size: float = float(size_bytes)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if size < 1024.0:
-            return f"{size:.1f} {unit}"
-        size /= 1024.0
-    return f"{size:.1f} PiB"
+def _du_table_html(rows: list[tuple[str, int]]) -> str:
+    """The scope/bytes breakdown as a sortable Tabulator document.
 
+    Values are carried as MiB FLOATS, never as formatted byte strings. A column
+    of "1.1 GiB" strings sorts lexically (9.9 MiB above 1.1 GiB) and cannot be
+    summed; a single-unit float sorts numerically, sums correctly, and formats
+    through Tabulator's built-in "money" formatter, which needs no JS callable
+    and so survives the JSON options round-trip.
 
-def _render_table_html(rows: list[tuple[str, int]], total_bytes: int) -> str:
-    body_rows = "".join(
-        f"<tr><td>{name}</td><td style='text-align:right'>{_fmt_bytes(b)}</td></tr>" for name, b in rows
+    The Total row is Tabulator's own column calculation. The shared surface
+    ships no totals feature, but the columns list build_columns_spec returns is
+    the caller's to extend, so this needs no change to _tabulator_defaults.
+    Measured on all four bundles of the reviewed generation:
+    sum(sub_path_breakdown) == disk_utilization_bytes exactly, so the summed
+    Total equals the sentinel total this card displayed before.
+
+    `initialSort` preserves the descending-by-size order the caller sorted into
+    `rows`; without it Tabulator would render in insertion order and the card's
+    "biggest consumers first" reading would be lost on the default view.
+    """
+    import pandas as pd
+
+    from hhemt.report_renderers._tabulator_defaults import (
+        build_columns_spec,
+        build_html_document,
+        build_options_dict,
     )
-    return (
-        "<table class='du-table'>"
-        "<thead><tr><th>Scope</th>"
-        "<th style='text-align:right'>Bytes</th></tr></thead>"
-        f"<tbody>{body_rows}</tbody>"
-        "<tfoot><tr><th>Total</th>"
-        f"<th style='text-align:right'>{_fmt_bytes(total_bytes)}</th></tr></tfoot>"
-        "</table>"
+
+    _MIB = 1024.0 * 1024.0
+    _SIZE_COL = "Size (MiB)"
+    df_du = pd.DataFrame(
+        [{"Scope": name, _SIZE_COL: round(b / _MIB, 1)} for name, b in rows],
+        columns=["Scope", _SIZE_COL],
+    )
+    columns_spec = build_columns_spec(
+        df_du, visible_columns_default=None, header_filter=True,
+    )
+    for _spec in columns_spec:
+        if _spec.get("field") == _SIZE_COL:
+            _spec["bottomCalc"] = "sum"
+            _spec["formatter"] = "money"
+            _spec["formatterParams"] = {"precision": 1, "symbol": ""}
+            _spec["bottomCalcFormatter"] = "money"
+            _spec["bottomCalcFormatterParams"] = {"precision": 1, "symbol": ""}
+    options = build_options_dict(
+        df_du,
+        columns_spec=columns_spec,
+        table_height="320px",
+        pagination_size=0,
+        persistence_id="disk_utilization",
+        extra_options={"initialSort": [{"column": _SIZE_COL, "dir": "desc"}]},
+    )
+    return build_html_document(
+        title="Disk Utilization",
+        container_id="disk-utilization",
+        body_heading_html="<h2>Disk Utilization</h2>",
+        options=options,
+        js_mode="cdn",
+        renderer_name="disk_utilization",
     )
 
 
@@ -76,13 +114,12 @@ def render(
             # is the named source even when the sentinel is absent.
             source_paths: list[Path] = [sentinel_path]
         else:
-            total = int(analysis_sentinel.get("disk_utilization_bytes", 0))
             breakdown = analysis_sentinel.get("sub_path_breakdown", {}) or {}
             rows = sorted(
                 ((str(name), int(b)) for name, b in breakdown.items()),
                 key=lambda r: -r[1],
             )
-            html = _render_table_html(rows, total)
+            html = _du_table_html(rows)
             source_paths = [sentinel_path]
             a.add_channel(
                 "data",
