@@ -64,18 +64,28 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
     if not rows:
         return "<p class='note'>No child crates recorded for this combine.</p>"
     body = "\n".join(
-        "<tr><td>{e}</td><td>{r}</td><td>{m}</td><td>{n}</td><td>{s}</td></tr>".format(
+        "<tr><td>{e}</td><td>{r}</td><td>{m}</td><td>{n}</td>"
+        "<td>{s}</td><td>{tv}</td><td>{sv}</td></tr>".format(
             e=_html.escape(str(row.get("experiment_id"))),
             r=_html.escape(str(row.get("role"))),
             m=_html.escape(str(row.get("model"))),
             n=_html.escape(str(row.get("n_subs"))),
             s=_html.escape(str(row.get("toolkit_sha"))),
+            tv=_html.escape(str(row.get("toolkit_version") or "n/a")),
+            sv=_html.escape(str(row.get("solver_sha") or "n/a")),
         )
         for row in rows
     )
+    # CP-5: ONE solver column, not a TRITON column plus a TRITON-SWMM column. The
+    # measured pin is IDENTICAL across the coupled and pure-TRITON arms because
+    # TRITON-SWMM is the coupled build and a pure-TRITON run is that same binary
+    # with SWMM off -- two columns would print n/a opposite a sha and imply the
+    # arms ran different codebases. The Model column already states which arm the
+    # row is. `n/a` renders when a child ships no tree or a pre-provenance one.
     return (
         "<table class='compat'><thead><tr><th>Experiment</th><th>Role</th><th>Model</th>"
-        "<th># sub-analyses</th><th>Toolkit sha</th></tr></thead><tbody>" + body + "</tbody></table>"
+        "<th># sub-analyses</th><th>Toolkit sha</th><th>Toolkit version</th>"
+        "<th>Solver sha</th></tr></thead><tbody>" + body + "</tbody></table>"
     )
 
 
@@ -110,12 +120,20 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
                 pass
         # model + n_subs from the consolidated tree tiers
         model, n_subs = "TRITON", 0
+        solver_sha, toolkit_version = "", ""
         store = child / "sensitivity_datatree.zarr"
         if store.exists():
             try:
                 import xarray as _xr
 
                 dt = _xr.open_datatree(str(store), engine="zarr", consolidated=False)
+                # CP-5: the solver pin and toolkit version are ROOT ATTRS on this
+                # same tree, stamped at consolidation (processing_analysis stamps
+                # triton_producing_sha; analysis_validation already reads it back).
+                # No new read: `dt` is already open for the model/n_subs derivation
+                # below, so this costs nothing and cannot introduce a new failure.
+                solver_sha = str(dt.attrs.get("triton_producing_sha") or "")
+                toolkit_version = str(dt.attrs.get("hhemt_producing_version") or "")
                 grps = set(dt.groups)
                 sa = sorted(g for g in grps if g.count("/") == 1 and g.startswith("/sa_"))
                 n_subs = len(sa)
@@ -144,15 +162,35 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
                 "model": model,
                 "n_subs": n_subs,
                 "toolkit_sha": sha,
+                "toolkit_version": toolkit_version,
+                "solver_sha": solver_sha,
                 "_source_rel": f"child_crates/{eid}/scenario_status.csv",
             }
         )
     return rows
 
 
-_EXPECTED_TOGGLE_FIELDS = frozenset(
+#: The model-toggle fields ALONE. Kept separate from the expected-set below because
+#: `_divergence_message`'s first branch is keyed on it and renders "these bundles are
+#: the two model arms of one experiment" -- a sentence that is TRUE only for a toggle.
+_MODEL_TOGGLE_FIELDS = frozenset(
     {"toggle_triton_model", "toggle_tritonswmm_model", "toggle_swmm_model"}
 )
+
+#: Identity fields whose divergence IS the combine's intended structure. The model
+#: toggles differ because the bundles are the two model arms of one experiment.
+#: `sensitivity_analysis` differs because a cross-experiment combine PRESUPPOSES
+#: differently-scoped experiments -- two bundles that swept identical matrices would
+#: be a degenerate combine with nothing to compare. Unconditional rather than gated
+#: on clean-vs-resume roles: the divergence dict carries no role, only bundle NAMES
+#: and file paths, and keying correctness on a filename is a proxy instrument.
+#:
+#: This is a SUPERSET of `_MODEL_TOGGLE_FIELDS`, not a replacement. Every measured
+#: divergence carries `bucket=experiment, severity=warning` -- the toggles included --
+#: so `_divergence_message` cannot be fixed by reordering its branches: that would
+#: route the toggle rows into the sensitivity-axis sentence. The two sets are what
+#: keep "is this expected" and "what do I say about it" independently correct.
+_EXPECTED_IDENTITY_FIELDS = _MODEL_TOGGLE_FIELDS | frozenset({"sensitivity_analysis"})
 
 
 def _divergence_is_expected(d: dict) -> bool:
@@ -167,7 +205,7 @@ def _divergence_is_expected(d: dict) -> bool:
     """
     field = str(d.get("field_name") or "")
     bucket = str(d.get("bucket") or "")
-    return field in _EXPECTED_TOGGLE_FIELDS or bucket == "hpc"
+    return field in _EXPECTED_IDENTITY_FIELDS or bucket == "hpc"
 
 
 def _divergence_message(d: dict) -> str:
@@ -181,7 +219,10 @@ def _divergence_message(d: dict) -> str:
     field = str(d.get("field_name") or "")
     bucket = str(d.get("bucket") or "")
     severity = str(d.get("severity") or "")
-    if field in _EXPECTED_TOGGLE_FIELDS:
+    # Keyed on the TOGGLE set, never on `_EXPECTED_IDENTITY_FIELDS`: the sentence below
+    # is true only of a model toggle, and every divergence -- toggles included -- carries
+    # bucket=experiment/severity=warning, so branch order cannot separate them.
+    if field in _MODEL_TOGGLE_FIELDS:
         return (
             "Expected: these bundles are the two model arms of one experiment; the toggle "
             "divergence is what makes them arms. Admitted by the paired-model-arm rule."
@@ -209,48 +250,21 @@ def _render_compatibility_html(source: Path, prov_rows: list[dict] | None = None
         payload = _json.loads(source.read_text())
     else:  # combine may not have run; render an honest placeholder
         payload = {"is_compatible": True, "divergences": []}
-    divs = payload.get("divergences", [])
-    verdict = (
-        "<p class='note'>{n} identity-field divergence(s) across the combined bundles; "
-        "{e} are expected under a both-arms / cross-system combine.</p>".format(
-            n=len(divs),
-            e=sum(1 for d in divs if _divergence_is_expected(d)),
-        )
-        if divs
-        else ""
-    )
-    if divs:
-        rows = "\n".join(
-            "<tr><td>{f}</td><td>{status}</td><td>{ba}: {va}</td><td>{bb}: {vb}</td></tr>".format(
-                f=_html.escape(str(d.get("field_name"))),
-                status="Expected" if _divergence_is_expected(d) else "Review",
-                ba=_html.escape(str(d.get("bundle_a"))),
-                va=_html.escape(str(d.get("value_a"))),
-                bb=_html.escape(str(d.get("bundle_b"))),
-                vb=_html.escape(str(d.get("value_b"))),
-            )
-            for d in divs
-        )
-        # Iteration 4 (FQ8): `Bucket` is dropped -- it is a three-valued taxonomy whose only
-        # consumer is _classify, and once the message states WHY a row is informational or
-        # warning the bucket is fully carried by the message. Keeping both invites the
-        # reader to reconcile two codings of one fact.
-        #
-        # Iteration 5: the message column is dropped at the user's request, and the raw
-        # severity string goes with it. Severity is single-valued on this artifact -- all
-        # twelve divergences of the reviewed combine are `warning` -- so the column
-        # discriminated nothing while reading as an alarm. `_divergence_is_expected` is the
-        # distinction that does carry information: it splits the same rows 8/4, and the
-        # verdict line above the table already reports that split in aggregate. Per-row
-        # Expected/Review makes the aggregate locatable, which is what the dropped message
-        # column was doing.
-        table = (
-            "<table class='compat'><thead><tr><th>Field</th>"
-            "<th>Status</th><th>Bundle A</th><th>Bundle B</th></tr></thead>"
-            "<tbody>" + rows + "</tbody></table>"
-        )
-    else:
-        table = "<p class='note'>All compared identity fields agree — the bundles are combine-compatible.</p>"
+    # CP-4: the identity-field section is removed at the user's request and the heading
+    # below is reframed as data provenance. What it reported was not actionable: a
+    # BLOCKING divergence aborts combine_bundle before any render, so only non-blocking
+    # rows reached this table, and on the measured generation all twelve were the
+    # combine's intended structure. The one class that WOULD have mattered --
+    # schemaVersion layout skew between bundles -- now routes to
+    # cross_experiment_errors_and_warnings, the sanctioned warnings surface; without
+    # that hop this deletion would have retired that warning silently.
+    #
+    # The payload read and the declared `source` are KEPT deliberately even though this
+    # function no longer consumes `divergences`: render() declares
+    # combined_compatibility.json as its provenance source, and a declared source that
+    # is never opened makes that declaration false (the ADR-6 non-empty-source concern).
+    # `_divergence_is_expected` / `_divergence_message` are likewise kept -- they are
+    # the exact logic the errors-and-warnings hop imports.
     # c2: reaching this renderer already implies compatibility (a BLOCKING divergence aborts
     # combine_bundle before any render), so only genuine informational/warning divergence rows
     # are informative. The R6 deferred-panel prose is removed (deterministic-only content, F9);
@@ -274,10 +288,7 @@ def _render_compatibility_html(source: Path, prov_rows: list[dict] | None = None
         "table.compat th{background-color:#232D4B;color:white;font-weight:600}"
         "table.compat tbody tr:nth-child(even){background-color:#F1F1EF}"
         "</style>"
-        "<h2>What Was Combined (combine provenance) &amp; compatibility</h2>"
+        "<h2>What Was Combined (data provenance)</h2>"
         + _provenance_table_html(prov_rows)
-        + "<h3>Identity-field compatibility</h3>"
-        + verdict
-        + table
         + "</section>"
     )

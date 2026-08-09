@@ -94,6 +94,52 @@ def _swmm_invisible_divergence_finding(combined_root: Path) -> dict | None:
     }
 
 
+def _compat_divergence_finding(combined_root: Path) -> dict | None:
+    """Non-expected identity-field divergences, as one warning row.
+
+    Carries the class the compatibility renderer's identity-field section used to
+    surface before CP-4 removed it. A BLOCKING divergence aborts combine_bundle
+    before any render, so everything reaching this read-model is non-blocking; the
+    only rows worth a reader's attention are those `_divergence_is_expected` does
+    NOT account for -- today that is layout-version (schemaVersion) skew between
+    bundles, which changes cross-bundle field semantics while figures still render.
+
+    Returns None when every divergence is expected, so a clean combine renders
+    nothing for this class rather than an empty section (P9).
+    """
+    from hhemt.report_renderers.cross_experiment_compatibility import (
+        _divergence_is_expected,
+        _divergence_message,
+    )
+
+    rm = combined_root / "combined_compatibility.json"
+    if not rm.exists():
+        return None
+    try:
+        divs = _json.loads(rm.read_text()).get("divergences", [])
+    except (OSError, ValueError):
+        return None
+    unexpected = [d for d in divs if not _divergence_is_expected(d)]
+    if not unexpected:
+        return None
+    _lines = "; ".join(
+        f"{d.get('field_name')} ({d.get('bundle_a')} vs {d.get('bundle_b')}): "
+        f"{_divergence_message(d)}"
+        for d in unexpected
+    )
+    return {
+        "name": "Unaccounted identity-field divergence across combined bundles",
+        "level": "aggregate",
+        "passed": False,
+        "summary": (
+            f"{len(unexpected)} of {len(divs)} identity-field divergence(s) are not "
+            f"accounted for by the combine's intended structure: {_lines}. Figures "
+            "render, but cross-bundle field semantics may differ."
+        ),
+        "details": [],
+    }
+
+
 def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     analysis_dir = Path(analysis.analysis_paths.analysis_dir)
     crates = analysis_dir / "child_crates"
@@ -119,7 +165,21 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     # fatal), matching the child_crates/*/validation_report.json treatment above.
     _derived_rm = analysis_dir / "combined_intercomparison.json"
     sources.append(_derived_rm)
-    derived = _swmm_invisible_divergence_finding(analysis_dir)
+    # CP-4C: combined_compatibility.json is declared UNCONDITIONALLY for the same
+    # Gotcha-53 reason as the line above -- declared-but-absent only warns, while
+    # undeclared-but-read raises ProcessingError under HHEMT_ENABLE_PROVENANCE_AUDIT.
+    # This is the read the compatibility renderer gave up when CP-4 removed its
+    # identity-field section; without it that class is retired silently.
+    _compat_rm = analysis_dir / "combined_compatibility.json"
+    sources.append(_compat_rm)
+    derived_findings = [
+        f
+        for f in (
+            _swmm_invisible_divergence_finding(analysis_dir),
+            _compat_divergence_finding(analysis_dir),
+        )
+        if f is not None
+    ] or None
 
     prov = ProvenanceLog()
     with prov.artist(
@@ -132,7 +192,7 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
                 "data",
                 ProvenanceRef(source_path=src.relative_to(analysis_dir).as_posix()),
             )
-        html = _render_rollup_html(child_reports, derived=derived)
+        html = _render_rollup_html(child_reports, derived=derived_findings)
 
     emit_plot_with_sources(
         html,
@@ -146,7 +206,7 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
 
 
 def _render_rollup_html(
-    child_reports: list[tuple[str, list[dict]]], *, derived: dict | None = None
+    child_reports: list[tuple[str, list[dict]]], *, derived: list[dict] | None = None
 ) -> str:
     # Union of check names across experiments, preserving first-seen order.
     check_names: list[str] = []
@@ -160,8 +220,8 @@ def _render_rollup_html(
 
     if not child_reports or not check_names:
         body = "<p class='note'>No per-experiment validation reports were found in child_crates/.</p>"
-        if derived is not None:
-            body += _derived_block_html(derived)
+        for _d in derived or ():
+            body += _derived_block_html(_d)
         return (
             "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
             + _INLINE_STYLE
@@ -185,13 +245,13 @@ def _render_rollup_html(
                 cells.append(f"<td class='fail' title='{summ}'>FAIL</td>")
         rows.append(f"<tr><td>{_html.escape(name)}</td>{''.join(cells)}</tr>")
 
-    if derived is not None:
+    for _d in derived or ():
         # Spans every experiment column: this finding is DERIVED across the combine, so it
         # belongs to no single child. A per-column cell would assert it about one
         # experiment, which is not what was measured.
         _n_cols = len(child_reports) + 1
-        _summ = _html.escape(str(derived.get("summary", "")))
-        _nm = _html.escape(str(derived.get("name", "")))
+        _summ = _html.escape(str(_d.get("summary", "")))
+        _nm = _html.escape(str(_d.get("name", "")))
         rows.append(
             f"<tr><td colspan='{_n_cols}' class='fail'>"
             f"<b>{_nm}</b> (derived across experiments) &mdash; {_summ}</td></tr>"

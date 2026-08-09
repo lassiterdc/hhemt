@@ -552,6 +552,18 @@ def _resolve_global_baseline(
     return t_baseline
 
 
+def _hardware_family(gv: str) -> str:
+    """The hardware COLUMN a group belongs to: every GPU token is its own family,
+    every non-GPU group shares the single `cpu` family.
+
+    Promoted from `_resolve_family_baselines`'s nested `_family_of` so the figure
+    builder can partition columns by the SAME rule the baselines anchor on. Two
+    rules would let a group be anchored against one family and drawn in another.
+    """
+    low = gv.lower()
+    return gv if low.startswith("gpu") else "cpu"
+
+
 def _resolve_family_baselines(
     df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str
 ) -> dict[str, float]:
@@ -583,15 +595,9 @@ def _resolve_family_baselines(
     if not groups:
         return {}
 
-    def _family_of(gv: str) -> str:
-        # A hardware-qualified GPU group name is `gpu (<token>)` after the series split;
-        # every non-GPU group shares the single `cpu` family.
-        low = gv.lower()
-        return gv if low.startswith("gpu") else "cpu"
-
     fam_members: dict[str, list[str]] = {}
     for gv in groups:
-        fam_members.setdefault(_family_of(gv), []).append(gv)
+        fam_members.setdefault(_hardware_family(gv), []).append(gv)
 
     out: dict[str, float] = {}
     for members in fam_members.values():
@@ -1087,9 +1093,29 @@ def _build_sensitivity_benchmarking_figure(
     # Side-effect import: registers `triton_journal` Plotly template.
     from hhemt.report_renderers import _plotly_theme  # noqa: F401
 
+    # BM-6: the two SCALING panels get one column per hardware family (CPU, then
+    # one per GPU token); the wall-clock and compute-cost panels above stay full
+    # width via colspan. Columns are DERIVED from the data, so a family absent
+    # from this master produces no column rather than an empty one (P9).
+    _hw_cols = sorted(
+        {_hardware_family(str(gv)) for gv in df["group_value"].dropna().unique()},
+        key=lambda f: (f != "cpu", f),
+    )
+    _n_hw = max(len(_hw_cols), 1)
+    # P10: spacing is derived, never hard-coded. Plotly's own default is
+    # 0.2/cols; a third of that keeps the per-column y-axis titles clear of the
+    # neighbouring panel at the column counts this campaign produces.
+    _h_space = min(0.09, 0.20 / _n_hw)
     fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True,
-        vertical_spacing=0.06,
+        rows=4, cols=_n_hw, shared_xaxes=True,
+        vertical_spacing=0.06, horizontal_spacing=_h_space,
+        specs=[
+            [{"colspan": _n_hw}] + [None] * (_n_hw - 1),
+            [{"colspan": _n_hw}] + [None] * (_n_hw - 1),
+            [{} for _ in range(_n_hw)],
+            [{} for _ in range(_n_hw)],
+        ],
+        subplot_titles=[""] * 2 + [f"{f}" for f in _hw_cols] + [""] * _n_hw,
     )
     fig.update_layout(
         template="plotly_white",
@@ -1116,45 +1142,65 @@ def _build_sensitivity_benchmarking_figure(
             model_arm=model_arm,
         )
 
-    # ---- Panels 3 + 4: speedup + efficiency -----------------------------
-    # Single legendgroup-pooled entry for both ideal-reference lines (speedup
-    # row 3 + efficiency row 4 share `legendgroup="ideal"`); the speedup trace
-    # carries the combined display name and is the only one with showlegend=True
-    # so the legend has ONE row that toggles both red lines.
-    _plotly_metric_panel_precomputed(
-        fig, speedup_per_group, df_for_groups=df, row=3,
-        panel_id="ax_speedup_plotly",
-        ideal_kind="linear", x_max=float(df["n_devices"].max()),
-        ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
-        sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
-        gpu_legend_suffix=gpu_legend_suffix,
-        all_rows_per_group=speedup_all_rows,
-        ideal_show_in_legend=True,
-        model_arm=model_arm,
-    )
-    _plotly_metric_panel_precomputed(
-        fig, strong_eff_per_group, df_for_groups=df, row=4,
-        panel_id="ax_efficiency_plotly",
-        ideal_kind="constant", ideal_value=1.0, x_max=float(df["n_devices"].max()),
-        ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
-        sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
-        gpu_legend_suffix=gpu_legend_suffix,
-        all_rows_per_group=efficiency_all_rows,
-        ideal_show_in_legend=False,
-        model_arm=model_arm,
-    )
+    # ---- Panels 3 + 4: speedup + efficiency, one column per hardware family --
+    # Groups are DISJOINT across families, so filtering the per-group dicts
+    # partitions the data with no group drawn twice and no legend entry
+    # duplicated. The ideal reference is emitted per column -- BM-6's "a single
+    # reference case in each one to define perfect scaling" -- but only column 1
+    # carries the legend entry, so the legend keeps ONE row for both red lines.
+    for _ci, _fam in enumerate(_hw_cols, start=1):
+        _df_c = df[df["group_value"].astype(str).map(_hardware_family) == _fam]
+        if _df_c.empty:
+            continue
+        _sp_c = {k: v for k, v in speedup_per_group.items() if _hardware_family(str(k)) == _fam}
+        _ef_c = {k: v for k, v in strong_eff_per_group.items() if _hardware_family(str(k)) == _fam}
+        _sp_all_c = {
+            k: v for k, v in (speedup_all_rows or {}).items() if _hardware_family(str(k)) == _fam
+        } or None
+        _ef_all_c = {
+            k: v for k, v in (efficiency_all_rows or {}).items() if _hardware_family(str(k)) == _fam
+        } or None
+        _x_max_c = float(_df_c["n_devices"].max())
+        _plotly_metric_panel_precomputed(
+            fig, _sp_c, df_for_groups=_df_c, row=3, col=_ci,
+            panel_id=f"ax_speedup_plotly_c{_ci}",
+            ideal_kind="linear", x_max=_x_max_c,
+            ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
+            sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
+            gpu_legend_suffix=gpu_legend_suffix,
+            all_rows_per_group=_sp_all_c,
+            ideal_show_in_legend=(_ci == 1),
+            model_arm=model_arm,
+        )
+        _plotly_metric_panel_precomputed(
+            fig, _ef_c, df_for_groups=_df_c, row=4, col=_ci,
+            panel_id=f"ax_efficiency_plotly_c{_ci}",
+            ideal_kind="constant", ideal_value=1.0, x_max=_x_max_c,
+            ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
+            sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
+            gpu_legend_suffix=gpu_legend_suffix,
+            all_rows_per_group=_ef_all_c,
+            ideal_show_in_legend=False,
+            model_arm=model_arm,
+        )
     # F-FU-6 / Q1: speedup panel range mode. Default `full_ideal` shows the full
     # ideal line; `empirical_clipped` clips y to the empirical max for better
     # discrimination of low-speedup points (Kelleher Guideline 4) and adds a
     # corner annotation naming the ideal slope so the reader doesn't lose the
     # reference.
     if speedup_range_mode == "empirical_clipped" and speedup_all_rows:
+        # BM-6: max_empirical stays GLOBAL -- computed over the unfiltered
+        # speedup_all_rows, before the per-family column split. A per-column max
+        # would give each hardware family its own y-scale, which makes the columns
+        # silently non-comparable; that is worse than not clipping at all, because
+        # the reader has no cue that the axes differ.
         max_empirical = max(
             (p[1] for pts in speedup_all_rows.values() for p in pts),
             default=None,
         )
         if max_empirical is not None and max_empirical > 0:
-            fig.update_yaxes(range=[0, max_empirical * 1.1], row=3, col=1)
+            for _ci in range(1, _n_hw + 1):
+                fig.update_yaxes(range=[0, max_empirical * 1.1], row=3, col=_ci)
             # The ideal-reference line's truncation is communicated via the legend
             # entry "Ideal speedup (S=N)" rather than a corner annotation (v5
             # feedback); the legend entry stays visible at the clipped y-range,
@@ -1164,8 +1210,9 @@ def _build_sensitivity_benchmarking_figure(
     xlabel_text = sens_cfg.independent_var_labels.get(independent_var, independent_var)
     fig.update_xaxes(title_text="", row=1, col=1)
     fig.update_xaxes(title_text="", row=2, col=1)
-    fig.update_xaxes(title_text="", row=3, col=1)
-    fig.update_xaxes(title_text=xlabel_text, row=4, col=1)
+    for _ci in range(1, _n_hw + 1):
+        fig.update_xaxes(title_text="", row=3, col=_ci)
+        fig.update_xaxes(title_text=xlabel_text, row=4, col=_ci)
     fig.update_yaxes(title_text=f"Wall-clock ({wall_unit})", row=1, col=1)
     fig.update_yaxes(title_text=f"Compute cost ({cost_unit} × devices)", row=2, col=1)
     # OE-1: the numerator is the FAMILY baseline (CPU -> serial CPU; each GPU hardware ->
@@ -1176,22 +1223,45 @@ def _build_sensitivity_benchmarking_figure(
     # Footnote (matches matplotlib reference): explain the n_mpi_procs annotations on hybrid markers.
     # v5 tuning — middle ground between v3 (y=-0.14, b=110, too far) and v4
     # (y=-0.07, b=85, too close).
-    fig.update_layout(margin=dict(l=90, r=120, t=30, b=95))
+    # BM-4: b=95 was tuned for a ONE-LINE footnote (see the v3/v4/v5 history above).
+    # The baseline disclosure takes it to four lines, so the reserved space must grow
+    # by the three added line boxes. 140 is an ESTIMATE, not a measurement: at font
+    # size 10 with plotly's ~1.36 leading a line box is ~14 px, so 3 extra lines need
+    # ~42 px and 95 + 42 = 137, rounded to 140. Verify on the re-render rather than
+    # trusting it -- a hand-tuned bottom margin against a hand-counted line count is
+    # the exact failure `hhemt.figure_caption` exists to retire, and this annotation
+    # predates that module.
+    fig.update_layout(margin=dict(l=90, r=120, t=30, b=140))
+    # BM-4: state the speedup baseline in the figure. The axis titles carry the
+    # SYMBOL t_family(1); this states what it denotes, which is the disclosure
+    # the item asks for. Hollow markers are disclosed in the same footnote
+    # because an unexplained fill channel is the reader's next question.
+    # Segments are <= 98 chars: the annotation sets no `width`, so plotly does
+    # NOT auto-wrap -- explicit breaks are what make the line count knowable.
     fig.add_annotation(
-        text="* number next to hybrid scenarios indicates number of MPI processes",
+        text=(
+            "* number next to hybrid scenarios indicates number of MPI processes"
+            "<br>Speedup and efficiency are measured against each hardware family's own"
+            " minimum-device run (CPU → serial CPU; each GPU → its own 1-GPU run),"
+            "<br>so S = 1.0 denotes a different wall-clock on each curve."
+            "<br>Hollow markers mark compute configurations run more than once;"
+            " every replicate is plotted."
+        ),
         xref="paper", yref="paper", x=0.5, y=-0.10,
         showarrow=False, font=dict(size=10, color="gray"), xanchor="center",
     )
     if sens_cfg.show_gridlines:
         for r in range(1, 5):
-            fig.update_xaxes(
-                showgrid=True, gridcolor=sens_cfg.gridline_color,
-                gridwidth=sens_cfg.gridline_width, row=r, col=1,
-            )
-            fig.update_yaxes(
-                showgrid=True, gridcolor=sens_cfg.gridline_color,
-                gridwidth=sens_cfg.gridline_width, row=r, col=1,
-            )
+            _cols = range(1, _n_hw + 1) if r >= 3 else range(1, 2)
+            for _c in _cols:
+                fig.update_xaxes(
+                    showgrid=True, gridcolor=sens_cfg.gridline_color,
+                    gridwidth=sens_cfg.gridline_width, row=r, col=_c,
+                )
+                fig.update_yaxes(
+                    showgrid=True, gridcolor=sens_cfg.gridline_color,
+                    gridwidth=sens_cfg.gridline_width, row=r, col=_c,
+                )
 
     # ---- Emit -----------------------------------------------------------
     plotly_config = {
@@ -1373,11 +1443,19 @@ def _plotly_metric_panel(
             customdata = None
         hover_lines = [f"<b>{legend_name}</b>", "x: %{x}", "y: %{y:.3f}"]
         if customdata is not None:
-            for j, col in enumerate(available_cfg_cols):
+            # `_cfg_col`, NOT `col`: this iterates DataFrame COLUMN NAMES, a
+            # different sense of "col" from plotly's subplot-grid `col=`. The
+            # sibling `_plotly_metric_panel_precomputed` took a `col` parameter and
+            # this same loop shadowed it -- and because the loop sits BELOW the
+            # first add_trace, only groups 2+ were corrupted, so a single-group
+            # fixture would have passed. This function takes no `col` parameter
+            # today; the rename is here so that adding one later cannot re-form the
+            # collision silently.
+            for j, _cfg_col in enumerate(available_cfg_cols):
                 label = {"n_mpi_procs": "MPI ranks",
                          "n_omp_threads": "OMP threads",
                          "n_gpus": "GPUs",
-                         "n_nodes": "Nodes"}.get(col, col)
+                         "n_nodes": "Nodes"}.get(_cfg_col, _cfg_col)
                 hover_lines.append(f"{label}: %{{customdata[{j}]}}")
         hovertemplate_str = "<br>".join(hover_lines) + "<extra></extra>"
         with prov.artist(
@@ -1385,6 +1463,17 @@ def _plotly_metric_panel(
             note=f"markers {gv} (panel {panel_id})",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            # BM-3: hollow marker == this config has repeated runs, matching the
+            # encoding already applied on panels 3+4. No sa_id lookup is needed
+            # here: the marker arrays ARE `sub`'s rows in `sub`'s order, so the
+            # n_replicates column is already point-aligned. `rgba(0,0,0,0)` over
+            # "white" keeps the plot background visible through the marker.
+            _fill = color
+            if "n_replicates" in sub.columns:
+                _fill = [
+                    "rgba(0,0,0,0)" if int(r) > 1 else color
+                    for r in sub["n_replicates"].fillna(1)
+                ]
             scatter_kwargs = dict(
                 x=sub["indep_value"], y=sub[y_col],
                 mode=marker_mode,
@@ -1394,7 +1483,7 @@ def _plotly_metric_panel(
                 marker=dict(
                     symbol=marker_symbol,
                     size=max(int(sens_cfg.point_size ** 0.5), 6),
-                    color=color, line=dict(color="black", width=1.0),
+                    color=_fill, line=dict(color=color, width=1.4),
                 ),
                 legendgroup=str(gv), name=legend_name,
                 showlegend=show_in_legend,
@@ -1414,6 +1503,7 @@ def _plotly_metric_panel_precomputed(
     *,
     df_for_groups: pd.DataFrame,
     row: int,
+    col: int = 1,
     panel_id: str,
     ideal_kind: str,
     x_max: float,
@@ -1535,11 +1625,15 @@ def _plotly_metric_panel_precomputed(
                        "x: %{x}",
                        "y: %{y:.3f}"]
         if marker_customdata is not None and available_cfg_cols:
-            for j, col in enumerate(available_cfg_cols):
+            # `_cfg_col`, NOT `col`: this function now takes a `col` PARAMETER
+            # (the subplot column), and a loop variable of that name rebinds it
+            # to the last config field for every statement below. The free-name
+            # check cannot see this -- the name is bound, just to the wrong thing.
+            for j, _cfg_col in enumerate(available_cfg_cols):
                 label = {"n_mpi_procs": "MPI ranks",
                          "n_omp_threads": "OMP threads",
                          "n_gpus": "GPUs",
-                         "n_nodes": "Nodes"}.get(col, col)
+                         "n_nodes": "Nodes"}.get(_cfg_col, _cfg_col)
                 hover_lines.append(f"{label}: %{{customdata[{j}]}}")
         hovertemplate_str = "<br>".join(hover_lines) + "<extra></extra>"
         # Line trace through per-N min — dashed, no markers, no hover (line is connective only).
@@ -1558,7 +1652,7 @@ def _plotly_metric_panel_precomputed(
                 note=f"metric min-line {gv} (panel {panel_id})",
             ) as a:
                 a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
-                fig.add_trace(go.Scatter(**line_trace), row=row, col=1)
+                fig.add_trace(go.Scatter(**line_trace), row=row, col=col)
         # Markers trace — all-row points (or fall back to per-N-min if all-row not provided).
         # BM-3: hollow marker == this config has repeated runs. Per-POINT, not
         # per-trace: a group can mix replicated and single-run configs, so the fill
@@ -1592,7 +1686,7 @@ def _plotly_metric_panel_precomputed(
             note=f"metric markers {gv} (panel {panel_id})",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
-            fig.add_trace(go.Scatter(**marker_kwargs), row=row, col=1)
+            fig.add_trace(go.Scatter(**marker_kwargs), row=row, col=col)
     # Ideal reference line: linear (S=N) or constant (E=1.0).
     if ideal_kind == "linear":
         ideal_x = [1.0, x_max]
@@ -1618,5 +1712,5 @@ def _plotly_metric_panel_precomputed(
                     showlegend=ideal_show_in_legend,
                     hoverinfo="skip",
                 ),
-                row=row, col=1,
+                row=row, col=col,
             )

@@ -118,14 +118,18 @@ def _pair(i: int, variable: str, model: str) -> dict:
     }
 
 
-def test_intercomparison_derives_the_per_model_row_denominator_n5():
-    """N5: the asymmetric per-model row counts must READ as correct, from DERIVED counts.
+def test_intercomparison_top_of_page_carries_only_the_title_ic1_g1():
+    """IC-1 + G1: the page's leading block is the title and nothing else.
 
-    The uncoupled arm contributes one tracked variable and the coupled arm two, so their
-    row counts differ by construction rather than by coverage gap. Asserted on the DERIVED
-    numbers rather than on a hard-coded sentence: a payload with a third arm or a third
-    variable must produce a correspondingly different denominator, which is the whole
-    reason the spec derives it instead of writing it down.
+    Supersedes the two N5 denominator tests. Those asserted the presence of an
+    explanatory paragraph that the IC-1 instruction removes outright, so they
+    encoded a presentation decision that has since been reversed rather than a
+    property the page must hold.
+
+    Anchored on a property true in BOTH states -- the ``<h2>`` is present before
+    and after -- so the assertion discriminates on the paragraph's presence
+    rather than on wording that could not exist pre-fix. ``uncoupled`` is G1's
+    banned word and occurred only inside that paragraph.
     """
     import tempfile
 
@@ -136,28 +140,10 @@ def test_intercomparison_derives_the_per_model_row_denominator_n5():
     with tempfile.TemporaryDirectory() as td:
         html = _intercomparison_html(Path(td), pairs)
 
-    assert "Why the row counts differ per model" in html
-    assert "TRITON: 14 rows = 1 variable(s)" in html
-    assert "TRITON-SWMM: 28 rows = 2 variable(s)" in html
-    assert "x 14 compute configs" in html
-
-
-def test_intercomparison_denominator_tracks_a_payload_it_was_not_written_against():
-    """Differently-positioned satisfying input: a THIRD arm must appear in the denominator.
-
-    A hard-coded sentence naming only TRITON and TRITON-SWMM passes the test above and
-    fails here, so this is what makes "derived" a measured property rather than a claim.
-    """
-    import tempfile
-
-    pairs = [_pair(i, "max_wlevel_m", "TRITON") for i in range(3)]
-    pairs += [_pair(i, "max_wlevel_m", "SWMM-only") for i in range(5)]
-
-    with tempfile.TemporaryDirectory() as td:
-        html = _intercomparison_html(Path(td), pairs)
-
-    assert "TRITON: 3 rows = 1 variable(s)" in html
-    assert "SWMM-only: 5 rows = 1 variable(s)" in html
+    assert "<h2>Cross-Experiment Results: clean vs resume</h2>" in html
+    assert "Why the row counts differ per model" not in html
+    assert "uncoupled" not in html
+    assert "<p>Experiments:" not in html
 
 
 def test_cross_experiment_disk_utilization_pivots_per_child_q7b(tmp_path):
