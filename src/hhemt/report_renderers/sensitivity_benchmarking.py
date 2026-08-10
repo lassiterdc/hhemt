@@ -249,15 +249,39 @@ def render(
         # assertion false for every GPU family and made the y-axis title's t_family(1)
         # true of the line only.
         #
-        # The anchor is resolved from the AVERAGED frame. Resolving it from the raw
-        # frame would divide averaged line values by an un-averaged minimum, so the
-        # reference config would not land at 1.0 under its own line.
+        # THE ANCHOR IS RESOLVED FROM THE RAW FRAME. This reverses a deliberate earlier
+        # choice, and the earlier reasoning is preserved because it is still true:
+        # resolving from the raw frame divides averaged line values by an un-averaged
+        # minimum, so the reference config no longer lands at EXACTLY 1.0 under its own
+        # line -- it lands slightly below.
+        #
+        # That was traded away because of what the averaged anchor cost. _resolve_family_
+        # baselines takes float(ref[t_col].min()) over the min-N rows of whatever frame it
+        # is handed, so an AVERAGED frame yields `min over configs of (mean over
+        # replicates)`. The line is then pinned to anchor/anchor = 1.0000 at min-N, while a
+        # marker is anchor/T_i over RAW rows -- and a single replicate that beat the mean
+        # including its slower sibling plots ABOVE 1.0. The line sat outside the spread of
+        # the points it summarises. MEASURED on the e581fffb0b1c generation:
+        # synth_cc_resume_triton panel x4/y4, gpu (a100-80), line 1.0000 vs BOTH markers at
+        # 1.2586; across all four masters, 18 of 208 line-vs-marker points deviate >1%,
+        # worst 25.85%.
+        #
+        # A raw anchor is <= every raw row at min-N by construction, so no marker can plot
+        # above its own family's reference. A line beginning marginally under 1.0 says "the
+        # averaged configuration is slower than the single best run", which is true and
+        # readable; a line beneath which its own points float says something false about the
+        # relationship between the two series. BM-2 ("use averages for drawing all lines")
+        # is unaffected -- the LINE is still built from _df_avg; only the shared scalar it
+        # divides by changes.
+        #
+        # This scalar feeds ALL FOUR metric calls below -- speedup line, speedup markers,
+        # efficiency line, efficiency markers -- so this one argument moves BOTH panels.
         _df_avg = (
             df.groupby(["group_value", "n_devices", "config_id"], as_index=False)
             .agg(wallclock_s=("wallclock_s", "mean"), sa_id=("sa_id", "first"))
         )
         family_baselines = _resolve_family_baselines(
-            _df_avg, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
+            df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
         )
         if family_baselines:
             speedup_pg, strong_eff_pg = {}, {}

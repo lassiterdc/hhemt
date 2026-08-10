@@ -27,7 +27,10 @@ _INLINE_STYLE = (
     "padding-bottom:4px;margin-top:0;}table{border-collapse:collapse;width:100%;font-size:13px;}"
     "th,td{padding:6px 10px;border:1px solid #DADADA;text-align:left;}th{background:#232D4B;"
     "color:#fff;}td.pass{color:#1F7A1F;font-weight:600;text-align:center;}"
-    "td.fail{color:#B11E1E;font-weight:600;text-align:center;}</style>"
+    "td.fail{color:#B11E1E;font-weight:600;text-align:center;}"
+    "td.na{color:#8A8A8A;font-weight:500;text-align:center;font-style:italic;}"
+    "td.pass-qualified{color:#1F7A1F;font-weight:600;text-align:center;}"
+    "td.pass-qualified::after{content:'';}</style>"
 )
 
 
@@ -236,10 +239,42 @@ def _render_rollup_html(
         cells: list[str] = []
         for _eid, checks in child_reports:
             match = next((c for c in checks if str(c.get("name")) == name), None)
+            # FOUR producer states arrive; branching on `passed` alone surfaced two.
+            # CheckResult (analysis_validation.py:83) carries `applicable`, `instrument` and
+            # `detection_floor`, and its docstring names THIS module as the reader that
+            # receives them across the bundle boundary. Until 2026-08-10 this renderer read
+            # none of them, so `applicable=False, passed=True` -- which all three N/A returns
+            # set (:686, :1032, :1259) -- rendered as a green PASS, and a verdict computed at
+            # the summary tier rendered identically to one computed on raw rasters. Principle
+            # P7: a PASS must mean something. getattr-style .get() with defaults throughout,
+            # because a validation_report.json written before these fields existed must keep
+            # rendering.
             if match is None:
                 cells.append("<td>-</td>")
+            elif not match.get("applicable", True):
+                # Not a pass and not a failure: the check did not apply to this experiment.
+                summ = _html.escape(str(match.get("summary", "")))
+                cells.append(f"<td class='na' title='{summ}'>N/A</td>")
             elif match.get("passed"):
-                cells.append("<td class='pass'>PASS</td>")
+                _inst = match.get("instrument")
+                _floor = match.get("detection_floor")
+                if _inst is None or _inst == "raw_rasters":
+                    cells.append("<td class='pass'>PASS</td>")
+                else:
+                    # QUALIFIED pass. The one producer of this state today is the EDA
+                    # cross-sim identity verdict (eda/cross_sim_identity.py:458,
+                    # instrument="summary_tier"), and the summary tier stores max_wlevel_m --
+                    # the variable carrying the coupled-resume perturbation -- as float32.
+                    # float32 eps is 1.19e-07, so a true 1.68e-13 difference rounds to
+                    # EXACTLY 0.0 and manufactures a false bit-identical control. Rendering
+                    # that as a clean PASS is the drop this branch exists to close.
+                    _q = (
+                        f"verified only at the {_inst} tier"
+                        if _floor is None
+                        else f"identical only to within {float(_floor):.3g} ({_inst} floor)"
+                    )
+                    _t = _html.escape(f"{match.get('summary', '')} — {_q}")
+                    cells.append(f"<td class='pass-qualified' title='{_t}'>PASS*</td>")
             else:
                 summ = _html.escape(str(match.get("summary", "")))
                 cells.append(f"<td class='fail' title='{summ}'>FAIL</td>")
