@@ -1075,6 +1075,12 @@ class TRITONSWMM_sensitivity_analysis:
                 )
                 _active_set = get_reporting_set("default")
         _category_order = list(_active_set.category_order)
+        # S4: resolve sa_id card names to derived compute-config labels. Threaded to
+        # BOTH branches -- the html and the zip carry the same card names, and
+        # resolving one alone would ship a divergence between two delivered artifacts.
+        from .report_plot_ids import sa_labels_from_status
+
+        _sa_labels = sa_labels_from_status(self.analysis_paths.analysis_dir)
         try:
             if format == "html":
                 out.write_text(
@@ -1082,10 +1088,16 @@ class TRITONSWMM_sensitivity_analysis:
                         out.read_text(),
                         navbar_text=_navbar,
                         category_order=_category_order,
+                        sa_labels=_sa_labels,
                     )
                 )
             else:
-                apply_post_process_surgery_to_zip(out, navbar_text=_navbar, category_order=_category_order)
+                apply_post_process_surgery_to_zip(
+                    out,
+                    navbar_text=_navbar,
+                    category_order=_category_order,
+                    sa_labels=_sa_labels,
+                )
         except Exception:
             pass
         if format != "html":

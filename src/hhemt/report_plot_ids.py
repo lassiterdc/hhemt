@@ -146,7 +146,52 @@ _RENDERER_KIND_LABELS: dict[str, str] = {
 }
 
 
-def humanize_plot_id(plot_id: str) -> str:
+def sa_labels_from_status(analysis_dir) -> dict[str, str]:
+    """``{sa_id: derived compute-config label}`` from scenario_status.csv, or ``{}``.
+
+    The CSV ships in every bundle AND sits in every live analysis dir, and carries
+    every column ``_derive_config_label`` reads (run_mode, n_gpus, n_mpi_procs,
+    n_omp_threads, n_nodes, hpc.partition) keyed by sa_id -- so ONE reader serves
+    the source-side and bundle-side callers alike.
+
+    The replicate ordinal is appended because ``_derive_config_label`` strips
+    ``_rN`` by design ("Replicate suffixes are NOT in the identity, so replicates
+    share one label"). Measured on a 28-row status CSV: 14 distinct labels for 28
+    sa_ids, so without the ordinal every per-replicate figure would collapse onto
+    one card name.
+
+    NEVER raises: an absent or unreadable CSV yields ``{}``, and the caller then
+    falls back to today's text, so a bundle without the CSV renders unchanged.
+
+    The ``_config_diff`` import is LOCAL, not module-scope: a module-level edge
+    from the plot-id grammar to the EDA package would bind every consumer to it,
+    including those that never resolve a label.
+    """
+    import csv as _csv
+    import re as _re
+    from pathlib import Path as _Path
+
+    from hhemt.eda._config_diff import _derive_config_label
+
+    path = _Path(analysis_dir) / "scenario_status.csv"
+    if not path.exists():
+        return {}
+    out: dict[str, str] = {}
+    try:
+        with path.open() as fh:
+            for row in _csv.DictReader(fh):
+                sa_id = str(row.get("sa_id") or "")
+                if not sa_id:
+                    continue
+                label = _derive_config_label(row)
+                m = _re.search(r"_r(\d+)$", sa_id)
+                out[sa_id] = f"{label}, replicate {m.group(1)}" if m else label
+    except (OSError, ValueError, KeyError):
+        return {}
+    return out
+
+
+def humanize_plot_id(plot_id: str, sa_labels=None) -> str:
     """Deterministic plot-id -> human display label (K1).
 
     Parses the ADR-2 grammar (segments joined by "__"; "." within a segment) and
@@ -169,7 +214,12 @@ def humanize_plot_id(plot_id: str) -> str:
     extras: list[str] = []
     for seg in segments[1:]:
         if seg.startswith("sa."):
-            extras.append(f"sub-analysis {seg[3:]}")
+            # S4 reframing: an sa_id is admissible as a nominal id, inadmissible where
+            # the reader is being shown a compute-config variation -- which is what a
+            # card name in a list of sibling figures is. Falls back to the id when no
+            # map is supplied, so every non-threading caller renders unchanged.
+            _sa = seg[3:]
+            extras.append((sa_labels or {}).get(_sa) or f"sub-analysis {_sa}")
         elif seg.startswith("evt."):
             extras.append(f"event {seg[4:]}")
         else:

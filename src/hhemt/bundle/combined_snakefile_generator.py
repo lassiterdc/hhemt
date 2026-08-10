@@ -188,7 +188,12 @@ def _extract_root_css_vars(bundle_root: Path) -> str:
 
 
 def _compose_model_pair_page(
-    base_eid: str, plot_id: str, ts_html: str, tri_html: str | None, root_css_vars: str = ""
+    base_eid: str,
+    plot_id: str,
+    ts_html: str,
+    tri_html: str | None,
+    root_css_vars: str = "",
+    sa_labels: dict[str, str] | None = None,
 ) -> str:
     """Compose ONE self-contained page STACKING the TRITON-SWMM figure (top) and its pure-TRITON
     counterpart (below, when present) as a data-viz .model-stack / .model-section[data-model] column
@@ -217,10 +222,10 @@ def _compose_model_pair_page(
         body += _section("triton", tri_html)
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
-        f"<title>{_html.escape(base_eid)} — {_html.escape(humanize_plot_id(plot_id))}</title>"
+        f"<title>{_html.escape(base_eid)} — {_html.escape(humanize_plot_id(plot_id, sa_labels))}</title>"
         f"<style>{root_css_vars}\n{_MODEL_STACK_CSS}</style></head>"
         '<body class="model-pair-page">'
-        f'<h2 class="model-pair-heading">{_html.escape(base_eid)} — {_html.escape(humanize_plot_id(plot_id))}</h2>'
+        f'<h2 class="model-pair-heading">{_html.escape(base_eid)} — {_html.escape(humanize_plot_id(plot_id, sa_labels))}</h2>'
         f'<div class="model-stack" data-plot="{_html.escape(plot_id, quote=True)}" '
         f'data-config="{_html.escape(base_eid, quote=True)}">{body}</div>'
         "</body></html>"
@@ -238,6 +243,19 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
     hashed child_crates/; CR4-safe -- the whole harvest runs under the CR4-monkeypatched
     _render_combined_report). R5-1's .model-stack CSS is inlined per page (FQ2); its var(--uva-*)
     resolves from the staged report.css :root{} (brand_theme stipulation)."""
+    # S4: one sa_id -> derived-config-label map for every label this harvest emits --
+    # the paired-page <title>/<h2> and the sidebar `labels.figure` facet. Merged across
+    # child crates because the combined bundle has no top-level scenario_status.csv.
+    # Built ONCE here rather than per figure: the harvest emits one page per
+    # (base-experiment, plot_id) pair and re-reading per page would re-parse the same
+    # CSVs for every figure.
+    from ..report_plot_ids import sa_labels_from_status
+
+    _sa_labels: dict[str, str] = {}
+    _crates_dir = bundle_root / "child_crates"
+    if _crates_dir.exists():
+        for _c in sorted(p for p in _crates_dir.iterdir() if p.is_dir()):
+            _sa_labels.update(sa_labels_from_status(_c))
     import json as _json
     import re as _re
 
@@ -323,7 +341,9 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
             ts_html = fpath.read_text(encoding="utf-8", errors="replace")
             cf = counterpart.get(plot_id)
             tri_html = cf[4].read_text(encoding="utf-8", errors="replace") if cf is not None else None
-            page_html = _compose_model_pair_page(base, plot_id, ts_html, tri_html, root_css_vars)
+            page_html = _compose_model_pair_page(
+                base, plot_id, ts_html, tri_html, root_css_vars, _sa_labels
+            )
             (paired_dir / _re.sub(r"[^A-Za-z0-9_.]", "_", base)).mkdir(parents=True, exist_ok=True)
             # Per-base SUBDIRECTORY, so the page's filename STEM is exactly the plot id: the
             # Snakemake figure-card name derives from that stem, and the ADR-2 humanizer's
@@ -357,7 +377,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         "labels": _json.dumps(
                             {
                                 "experiment": base,
-                                "figure": humanize_plot_id(plot_id),
+                                "figure": humanize_plot_id(plot_id, _sa_labels),
                                 "models": "tritonswmm+triton" if tri_html is not None else (_model_of(primary_eid) or "tritonswmm"),
                             }
                         ),
@@ -592,6 +612,20 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
                 f"combined snakemake --report ({fmt}) failed (exit {proc.returncode}). "
                 f"See {logs_dir / f'combined_report_{fmt}.log'}"
             )
+        # S4: the combined bundle has NO top-level scenario_status.csv -- its per-sim
+        # data lives under child_crates/. Reading the root would yield {} and leave the
+        # combined report's card names unresolved while the per-arm reports resolve,
+        # which is a P5 divergence between two views of the same figure. Merge across
+        # the children instead. sa_ids are unique per child by construction, and a
+        # collision would mean two children ran the same sub-analysis, in which case
+        # either label is correct.
+        from ..report_plot_ids import sa_labels_from_status
+
+        _sa_labels: dict[str, str] = {}
+        _crates = bundle_root / "child_crates"
+        if _crates.exists():
+            for _child in sorted(p for p in _crates.iterdir() if p.is_dir()):
+                _sa_labels.update(sa_labels_from_status(_child))
         try:
             if fmt == "html":
                 output_path.write_text(
@@ -600,6 +634,7 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
                         bundle_mode=True,
                         navbar_text=_COMBINED_NAVBAR_TEXT,
                         category_order=category_order,
+                        sa_labels=_sa_labels,
                     )
                 )
             else:
@@ -608,6 +643,7 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
                     bundle_mode=True,
                     navbar_text=_COMBINED_NAVBAR_TEXT,
                     category_order=category_order,
+                    sa_labels=_sa_labels,
                 )
         except Exception:
             pass
