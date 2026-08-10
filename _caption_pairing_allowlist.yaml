@@ -1,0 +1,25 @@
+# An entry exempts ONE (renderer, caption) PAIR from the caption-pairing
+# requirement, for the EXACT renderer content recorded in renderer_sha256.
+#
+# Keyed by the PAIR, not by the renderer: a module-keyed exemption would let one
+# justification cover every caption that module owns -- six, for
+# eda_compute_sensitivity -- which is a blanket rather than an exemption. One
+# justification covers one re-read. The verbosity is deliberate: it makes "one
+# sentence covers six documents" unwriteable.
+#
+# The digest makes the exemption EXPIRE. Change the renderer again and it stops
+# matching, so the guard fires and someone re-reads the caption. Compare
+# _layout_relevant_files.yaml's non_breaking_allowlist, whose scenario.py entry
+# has already accreted "Two collapsed non-breaking changes" because a path-keyed
+# exemption never expires -- the permanent-hole outcome, already realised in the
+# sibling machinery this guard is modelled on.
+unpaired_allowlist:
+  - renderer: sensitivity_benchmarking
+    caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
+    renderer_sha256: d1525c03559cda209a6601f8d85eb401eaad32e0bca68960f0b19bb64ccc08ec
+    justification: >-
+      Iteration-5 Unit A (BM-6 column split, BM-3B marker fill, BM-4D/4E
+      footnote). Caption re-read 2026-08-10: it describes the dependent
+      variable, aggregation mode and SWMM-only routing, and makes no
+      structural claim about panels or columns, so the 4->8 axis-pair split
+      does not falsify it. Looked; no change needed.

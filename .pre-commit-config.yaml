@@ -29,6 +29,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: check-caption-pairing
+        name: check captioned renderer changes are paired with caption edits
+        entry: python scripts/check_caption_pairing.py HEAD~1
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # DU-sentinel mutation-site restamp discipline (scripts/check_du_sentinel_sites.py)
   # Flags fast_rmtree(...) missing analysis_dir= and .unlink() not adjacent-followed
   # by restamp_parent_sentinels(...), unless the site carries # EXEMPT-DU: {category}.
