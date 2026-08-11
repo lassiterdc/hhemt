@@ -778,7 +778,19 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         summary = f"per-family raw byte-identity: degraded ({degraded_reason})"
     elif n_diff == 0:
         fams = ", ".join(f"{k} (ref {v})" for k, v in sorted(reference_config_by_family.items()))
-        summary = f"per-family raw byte-identity: every config is byte-identical to its within-family reference [{fams}]"
+        # DISCLOSED DENOMINATOR. The comparison is variable-scoped, not tree-wide: its file list
+        # comes from return_fpath_wlevels, which globs exactly four hardcoded prefixes
+        # (MH/H/QX/QY, process_simulation.py:1842-1845). Naming them here matters under a SPLIT
+        # PIN, where the arms' output-file SETS legitimately differ -- a resume arm at 5d2ad1e8
+        # also writes one GR_* ghost-ring side-file per checkpoint per rank, which this check
+        # neither reads nor should read (the clean arm has none, so a cross-arm comparison of
+        # them is undefined). Without the denominator an unqualified "byte-identical" invites a
+        # reader to assume the ring files were covered.
+        _rots = ", ".join(str(v) for v in ds["raw_output_type"].values)
+        summary = (
+            f"per-family raw byte-identity: every config is byte-identical to its within-family "
+            f"reference across raw output type(s) [{_rots}] [{fams}]"
+        )
     else:
         summary = (
             f"per-family raw byte-identity: {n_diff} (config, raw-type, timestep) cell(s) differ "
