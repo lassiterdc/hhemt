@@ -651,23 +651,28 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     # SWMM compilation
     compilation_swmm_successful: LogField[bool] = Field(default_factory=LogField)
 
-    # TRITON provenance capture (D2). Captured at compile time in system.py against
-    # the ACTUAL cloned TRITON tree, immediately after _verify_tritonswmm_pin. These
-    # are the named persistence carrier between the compile process (setup_workflow)
-    # and the consolidation process (consolidate_workflow) — different SLURM jobs on
-    # HPC — that the two consolidation stamp sites read via
-    # analysis._system.log.triton_head_sha.get() / .triton_has_coupled_resume_fix.get().
-    # triton_head_sha is the full `git rev-parse HEAD`; triton_has_coupled_resume_fix
-    # is `git merge-base --is-ancestor 3a832f7d… HEAD` (ancestry, NOT sha-equality — a
-    # descendant of the fix commit is still post-fix).
+    # TRITON provenance capture (D2). Captured at compile time in system.py against the
+    # ACTUAL cloned TRITON tree, immediately after _verify_tritonswmm_pin. This is the named
+    # persistence carrier between the compile process (setup_workflow) and the consolidation
+    # process (consolidate_workflow) — different SLURM jobs on HPC — read by the two
+    # consolidation stamp sites via analysis._system.log.triton_head_sha.get() and stamped
+    # onto the consolidated tree root as `triton_producing_sha` (the rename is deliberate;
+    # grepping either name alone finds only half the chain).
+    #
+    # ONE FIELD, NOT THREE. The two sibling booleans that lived here
+    # (triton_has_coupled_resume_fix, triton_has_swmm_depth_scatter_fix) are RETIRED: they were
+    # per-defect verdicts DERIVED from a toolkit constant and frozen into durable state at run
+    # time, so a later toolkit change could not correct them. Dated instance: the scatter
+    # constant was introduced as None in 463ab9e (2026-08-02) beside an `is None -> set(False)`
+    # branch, the synth_cc campaign ran 2026-08-04 inside that window and was stamped False on
+    # every arm, and the constant received its real value at 7b7b573 (2026-08-05) — after the
+    # sims were on disk. The stamp is refuted by direct measurement (the producing sha IS the
+    # fix commit) and no re-consolidation can correct it, because the flag is re-derived only on
+    # the compile path. Defect applicability is now DERIVED at read time from this sha by
+    # `model_defects.resolve_for_tree_attrs`, so nothing durable is written that a later registry
+    # edit can contradict. Retiring the two keys is safe on legacy logs: TRITONSWMM_log sets no
+    # `extra` policy, so pydantic's default `ignore` absorbs them on from_json.
     triton_head_sha: LogField[str] = Field(default_factory=LogField)
-    triton_has_coupled_resume_fix: LogField[bool] = Field(default_factory=LogField)
-    # Sibling ancestry stamp for the SWMM node-depth SCATTER fix on the coupled resume
-    # path. Like triton_has_coupled_resume_fix this is a `git merge-base --is-ancestor`
-    # RESULT, not a sha — but its pinned sha is None today (no upstream fix exists), and
-    # system.py stamps False rather than None in that case, because the defect is MEASURED
-    # to be present rather than indeterminate.
-    triton_has_swmm_depth_scatter_fix: LogField[bool] = Field(default_factory=LogField)
 
     # System-level DataTree consolidation
     system_datatree_consolidation_complete: LogField[bool] = Field(
@@ -688,8 +693,6 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_triton_gpu_successful",
         "compilation_swmm_successful",
         "system_datatree_consolidation_complete",
-        "triton_has_coupled_resume_fix",
-        "triton_has_swmm_depth_scatter_fix",
         mode="before",
     )(_create_logfield_validator(bool))
 
@@ -725,8 +728,6 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_swmm_successful",
         "system_datatree_consolidation_complete",
         "triton_head_sha",
-        "triton_has_coupled_resume_fix",
-        "triton_has_swmm_depth_scatter_fix",
         "dem_crs_epsg",
         "vertical_crs_epsg",
     )(_logfield_serializer)

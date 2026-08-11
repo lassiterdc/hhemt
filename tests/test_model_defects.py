@@ -25,7 +25,15 @@ def _clone_has(sha: str) -> bool:
     return r.returncode == 0 and r.stdout.strip() == "commit"
 
 
-_PREFIX_SHA = "b3820a4"
+#: A real commit in NO cached set, so resolving it EXERCISES the live-ancestry path. Picking a
+#: sha that VMS 32 later cached would silently route the "live" assertion through the override
+#: rule instead -- which is what happened to this test and is why the sha is chosen for its
+#: ABSENCE from the sets rather than for its position in history.
+_PREFIX_SHA = "1642a7d47b1460253c9ad7626004453c633ce846"
+#: b3820a4 itself, for the two tests NAMED for its position in history. Kept separate from
+#: _PREFIX_SHA: that one is chosen for its ABSENCE from the cached sets, this one for where it
+#: sits in the history, and collapsing them made the live-path test silently take the override rule.
+_SHA_B3820A4 = "b3820a448f304b3f732f4b6fac5564adf86ac333"
 #: The live arm needs BOTH the pre-fix sha and the two fix shas resolvable in one object DB.
 _LIVE = pytest.mark.skipif(
     not (_clone_has(_PREFIX_SHA) and _clone_has(SHA_DEPTH_SCATTER_FIX)),
@@ -79,6 +87,10 @@ def test_the_false_stamp_is_contradicted():
 @_LIVE
 def test_rule_names_distinguish_cached_from_live_from_override():
     assert _v("TRITON-RESUME-DEPTH-SCATTER", SHA_DEPTH_SCATTER_FIX).rule == "known_absent_set"
+    # Cached CANNOT answer this sha (it is in no set); live ancestry CAN. Asserting both is
+    # what proves the three rules are distinguishable rather than merely that the status is right.
+    cached = _v("TRITON-RESUME-DEPTH-SCATTER", _PREFIX_SHA)
+    assert cached.rule == "ancestry_unresolvable" and cached.status == "indeterminate"
     live = _v("TRITON-RESUME-DEPTH-SCATTER", _PREFIX_SHA, is_ancestor=_git_is_ancestor)
     assert live.rule == "default_present" and live.status == "present"
     assert _v("TRITON-RESUME-EXTBC-GHOST-RING", SHA_DEPTH_SCATTER_FIX).rule == "also_present_set"
@@ -96,7 +108,7 @@ def test_registry_reproduces_the_user_ruled_mapping_at_b3820a4():
     got = {
         did: resolve(
             ModelDefect(d.defect_id, d.title, fixed_in=d.fixed_in, trigger=d.trigger),
-            _PREFIX_SHA,
+            _SHA_B3820A4,
             is_ancestor=_git_is_ancestor,
         ).status
         for did, d in REGISTRY_BY_ID.items()
@@ -124,7 +136,7 @@ def test_live_ancestry_agrees_with_the_cached_set():
 def test_prefix_sha_is_prefix_matched_and_classified_present():
     d = REGISTRY_BY_ID["TRITON-RESUME-DEPTH-SCATTER"]
     bare = ModelDefect(d.defect_id, d.title, fixed_in=d.fixed_in, trigger=d.trigger)
-    v = resolve(bare, _PREFIX_SHA, is_ancestor=_git_is_ancestor)
+    v = resolve(bare, _SHA_B3820A4, is_ancestor=_git_is_ancestor)
     assert v.status == "present" and v.rule == "default_present"
 
 

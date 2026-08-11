@@ -47,12 +47,25 @@ non_breaking_allowlist:
       No on-disk artifact, filename, zarr group, log field, or _version.json changes.
   - path: src/hhemt/log.py
     justification: >-
-      reprocess-orchestrator-liveness-gate Phase 1 + log-write-race-fix +
-      resume-retry-resilience P2/P3 — additive LogFields (orchestrator_slurm_jobid,
-      n_resumes, multi_allocation_in_progress) and removal of the 7 persisted all_*
-      rollup LogFields (now @property). Legacy log.json files load cleanly via
-      pydantic extra=ignore / default_factory; no Snakemake rule reads log.json;
-      on-disk layout unchanged.
+      model-defect-registry commit 2 — retires the two DERIVED per-defect LogFields
+      (triton_has_coupled_resume_fix, triton_has_swmm_depth_scatter_fix). triton_head_sha is
+      RETAINED; only the two booleans go. Same change class as this file's existing allowlisted
+      removal of the 7 persisted all_* rollup LogFields. Verified rather than asserted:
+      TRITONSWMM_system_log sets no `extra` policy (model_config at log.py:199 carries only
+      arbitrary_types_allowed), so pydantic's default `ignore` absorbs the retired keys, and a
+      legacy system_log.json carrying both retired keys plus an unknown key loads cleanly
+      through from_json — the production path — with triton_head_sha intact. No on-disk
+      filename, zarr group, or _version.json change.
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      model-defect-registry commit 2 — _stamp_triton_provenance stops stamping the two derived
+      booleans onto the consolidated-tree root. triton_producing_sha is RETAINED (it is the
+      registry's input and the CP-5 per-arm solver column). The retired attrs were PLAIN root
+      attrs deliberately kept out of metadata._EMBEDDED_PROV_KEYS, so they never entered the
+      Gotcha-63 byte-identity golden fixtures and their removal cannot churn them. An old tree
+      carrying them still classifies correctly, because applicability is now derived from the
+      sha; a new tree read by an old toolkit shows them absent, which that toolkit already
+      treats as INDETERMINATE rather than as a false warn.
   - path: src/hhemt/processing_analysis.py
     justification: >-
       reprocess-regeneration-toggle Phase 2 R4 — behavior-only early-return re-key

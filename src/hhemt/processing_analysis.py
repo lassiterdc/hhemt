@@ -603,16 +603,17 @@ def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
         pass
     try:
         _sha = _sys_log.triton_head_sha.get()
-        _has_fix = _sys_log.triton_has_coupled_resume_fix.get()
-        _scatter = _sys_log.triton_has_swmm_depth_scatter_fix.get()
     except Exception:
         return
+    # ONE ATTR. `triton_producing_sha` is retained deliberately and is now the ONLY TRITON
+    # provenance this stamps: it is the registry's input, it is what the CP-5 provenance table
+    # prints per arm, and under a split pin it is what makes the per-arm solver difference
+    # legible in the report. The two per-defect booleans that were stamped beside it are
+    # retired — see log.py. An OLD tree carrying them still reads correctly, because nothing
+    # consults them any more; a NEW tree read by an OLD toolkit shows them absent, which that
+    # toolkit already treats as INDETERMINATE rather than as a false warn.
     if _sha is not None:
         tree.attrs["triton_producing_sha"] = str(_sha)
-    if _has_fix is not None:
-        tree.attrs["triton_has_coupled_resume_fix"] = bool(_has_fix)
-    if _scatter is not None:
-        tree.attrs["triton_has_swmm_depth_scatter_fix"] = bool(_scatter)
 
 
 def _parse_replay_t(text: str, marker: str) -> "float | None":

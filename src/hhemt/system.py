@@ -26,24 +26,11 @@ from hhemt._filelock_compat import resolve_filelock
 
 _ROW_BLOCK_SIZE = 1024  # row-streaming block size for _write_raster (D-PR-5 B)
 
-#: The pinned TRITON coupled-resume-fix commit. Canonical definition is mirrored in
-#: analysis_validation.py::_PINNED_TRITON_COUPLED_RESUME_FIX_SHA; duplicated here (not
-#: imported) to keep the compile path free of a validation-module dependency. Used to
-#: stamp `triton_has_coupled_resume_fix` via `git merge-base --is-ancestor` at compile
-#: time — ancestry, NOT sha-equality, so a descendant of the fix is still post-fix.
-_PINNED_TRITON_COUPLED_RESUME_FIX_SHA = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
-
-#: The upstream TRITON commit that distributes replayed SWMM node depths from rank 0's
-#: ``global_new_depth[]`` into the per-rank ``new_depth[]`` on the RESUME path
-#: (``global_to_local`` + ``MPI_Scatterv``). The fix landed upstream as ``9db367dd``
-#: ("restore per-rank new_depth after hotstart-exchange replay"), a DESCENDANT of the
-#: coupled-resume fix ``3a832f7d``. Below that commit, a coupled resume produces a
-#: first-post-resume step that evaluates every manhole at ``new_depth = 0``, forces the
-#: Case-1 exchange branch, and writes a permanent perturbation into TRITON's depth field.
-#: The ancestry capture below stamps True at ``9db367dd`` and at every descendant, so a
-#: routine pin bump keeps the validation arm keyed on it quiet; a clone in which this sha
-#: is not a known object leaves the stamp None (INDETERMINATE), never a false warn.
-_PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA: str | None = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"
+#: Pinned-fix shas MOVED to `model_defects.REGISTRY`, which is now the single place a
+#: fix commit is named. Both constants that lived here were duplicated (the coupled-resume
+#: one was mirrored in analysis_validation.py with an in-code note about the duplication),
+#: and each existed only to derive one boolean at compile time. Applicability is now derived
+#: at READ time from the recorded producing sha, so the compile path names no fix at all.
 
 #: Wall-clock cap on waiting for a sibling process's compile of the SAME build dir.
 #: Keyed on the BUILD DIR (not the software dir) so a CPU and a GPU compile of one
@@ -844,44 +831,14 @@ class TRITONSWMM_system:
         head_sha = head.stdout.strip()
         self.log.triton_head_sha.set(head_sha)
 
-        ancestor = subprocess.run(
-            [
-                "git", "-C", str(d), "merge-base", "--is-ancestor",
-                _PINNED_TRITON_COUPLED_RESUME_FIX_SHA, "HEAD",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        # returncode 0 -> the fix commit IS an ancestor of HEAD (post-fix); 1 -> not an
-        # ancestor (pre-fix); anything else (128) -> the fix sha is not a known object in
-        # this clone -> leave has_fix None (INDETERMINATE), never a false pre-fix warn.
-        if ancestor.returncode in (0, 1):
-            self.log.triton_has_coupled_resume_fix.set(ancestor.returncode == 0)
-
-        # Sibling ancestry stamp for the SWMM node-depth scatter fix. When the constant is
-        # None no fix exists yet, so every clone is pre-fix -> stamp False (defect present).
-        # A None-constant must NOT stamp None: None means INDETERMINATE, which would make
-        # the validation arm silently skip on a defect we have MEASURED to be present.
-        if _PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA is None:
-            self.log.triton_has_swmm_depth_scatter_fix.set(False)
-        else:
-            _sc = subprocess.run(
-                [
-                    "git", "-C", str(d), "merge-base", "--is-ancestor",
-                    _PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA, "HEAD",
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if _sc.returncode in (0, 1):
-                self.log.triton_has_swmm_depth_scatter_fix.set(_sc.returncode == 0)
+        # NO ancestry queries here. This method now records WHAT BUILT THE DATA and nothing
+        # about which defects that build carries: `merge-base --is-ancestor` needs both shas in
+        # one object DB, and the compile-time clone is not guaranteed to contain a fix sha named
+        # by a registry entry written later. Applicability is derived at read time by
+        # `model_defects`, from the sha captured above.
         self.log.write()
         if verbose:
-            print(
-                f"[Provenance] TRITON producing sha {head_sha} "
-                f"(coupled_resume_fix={self.log.triton_has_coupled_resume_fix.get()})",
-                flush=True,
-            )
+            print(f"[Provenance] TRITON producing sha {head_sha}", flush=True)
 
     def _emit_libstdcpp_ld_preamble_lines(self) -> list:
         # Container mode (M-7): the SIF's %post build owns its own self-consistent

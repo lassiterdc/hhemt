@@ -509,12 +509,6 @@ def check_invalidating_fixes(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-#: The pinned TRITON coupled-resume-fix commit. Every experiment's TRITON binary is
-#: pinned here (D3 clone-gate enforcement); a consolidated tree whose
-#: ``triton_has_coupled_resume_fix`` is False was produced by PRE-FIX TRITON. Full
-#: 40-char sha (the short pin ``3a832f7d`` resolves to this). Mirrored in
-#: ``system.py::_PINNED_TRITON_COUPLED_RESUME_FIX_SHA`` (compile-time capture).
-_PINNED_TRITON_COUPLED_RESUME_FIX_SHA = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
 
 #: The positive marker TRITON prints to its stderr log on every SUCCESSFUL exchange-
 #: history replay (``swmm_triton.h:672-673`` @ 3a832f7d). Its ABSENCE from a resumed
@@ -573,17 +567,16 @@ _TRITON_CHECKPOINT_READ_MARKER = "Checkpoint files read"
 _TRITON_CHECKPOINT_ATTEMPT_MARKER = "Reading checkpoint files"
 
 
-def _read_triton_provenance(
-    analysis: TRITONSWMM_analysis,
-) -> tuple[str | None, bool | None, bool | None]:
-    """Graceful-absent read of the consolidated-tree TRITON provenance root attrs.
+def _read_triton_provenance(analysis: TRITONSWMM_analysis) -> str | None:
+    """Graceful-absent read of the consolidated tree's ``triton_producing_sha`` root attr.
 
-    Returns ``(triton_producing_sha, triton_has_coupled_resume_fix)``. Mirrors
-    ``recompute.py::_iter_scope_stamps``: a sensitivity master resolves
-    ``sensitivity_datatree.zarr``, else ``analysis_datatree.zarr``. Either element is
-    None when the attr / tree is absent or unreadable (a pre-provenance tree, or an
-    off-checkout install) -> the caller treats None as INDETERMINATE, never a false
-    pre-fix warn. NEVER raises.
+    Returns the producing sha, or None when the attr / tree is absent or unreadable (a
+    pre-provenance tree, or an off-checkout install) -> the caller treats None as
+    INDETERMINATE, never a false pre-fix warn. NEVER raises.
+
+    Returns the SHA ONLY. The two per-defect booleans this used to return are retired;
+    applicability is derived from the sha by ``model_defects.resolve``, so a defect added to
+    the registry later classifies trees already on disk.
     """
     import xarray as xr
 
@@ -593,7 +586,7 @@ def _read_triton_provenance(
     else:
         zarr_path = getattr(paths, "analysis_datatree_zarr", None)
     if zarr_path is None or not zarr_path.exists():
-        return None, None, None
+        return None
     # NO chunking: this reader consumes ONLY root attrs, and `chunks="auto"` raises
     # NotImplementedError ("Can not use auto rechunking with object dtype") on any
     # tree carrying an object-dtype variable — which the bare except below then
@@ -607,7 +600,7 @@ def _read_triton_provenance(
     except (FileNotFoundError, OSError, KeyError, ValueError):
         # Genuinely absent / unreadable tree (pre-provenance or off-checkout) —
         # the documented graceful-absent path. Quiet by design.
-        return None, None, None
+        return None
     except Exception as e:
         # NEVER raise (validation must not abort a run over a diagnostic), but do
         # NOT swallow silently: an unexpected exception here means this check is
@@ -616,16 +609,9 @@ def _read_triton_provenance(
             f"TRITON provenance read failed unexpectedly for {zarr_path} "
             f"({type(e).__name__}: {e}); coupled-resume validity is INDETERMINATE."
         )
-        return None, None, None
+        return None
     sha = tree.attrs.get("triton_producing_sha")
-    has_fix = tree.attrs.get("triton_has_coupled_resume_fix")
-    # zarr may round-trip the bool as numpy bool_/0-1; normalize to Python bool-or-None.
-    if has_fix is not None:
-        has_fix = bool(has_fix)
-    scatter = tree.attrs.get("triton_has_swmm_depth_scatter_fix")
-    if scatter is not None:
-        scatter = bool(scatter)
-    return (str(sha) if sha is not None else None), has_fix, scatter
+    return str(sha) if sha is not None else None
 
 
 def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
@@ -687,16 +673,26 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             summary="Coupled model not enabled — coupled-resume validity N/A.",
             details=[],
         )
-    triton_sha, has_fix, has_scatter_fix = _read_triton_provenance(analysis)
-    if has_fix is None:
+    triton_sha = _read_triton_provenance(analysis)
+    from hhemt.model_defects import REGISTRY_BY_ID, resolve
+
+    # Behavior-preserving mapping of the three retired flag states onto registry verdicts:
+    #   has_fix is None  -> replay.status == "indeterminate"   (INDETERMINATE early return)
+    #   not has_fix      -> replay.status == "present"         (Arm A, pre-fix TRITON)
+    #   has_fix          -> replay.status == "absent"          (Arm B, post-fix)
+    #   scatter is False -> scatter.status == "present"        (Arm C, missing node-depth scatter)
+    # No live ancestry is attempted here: the read path has no guaranteed clone, and the
+    # registry's cached sets are authored for exactly that reason.
+    replay = resolve(REGISTRY_BY_ID["TRITON-COUPLED-RESUME-REPLAY"], triton_sha)
+    scatter = resolve(REGISTRY_BY_ID["TRITON-RESUME-DEPTH-SCATTER"], triton_sha)
+    if replay.status == "indeterminate":
         return CheckResult(
             name="Coupled resume validity",
             level="aggregate",
             passed=True,
             summary=(
-                "Producing-TRITON coupled-resume-fix status unknown (pre-provenance tree "
-                "or off-checkout); cannot determine coupled-resume validity. Re-consolidate "
-                "to stamp it."
+                f"Producing-TRITON coupled-resume status unknown ({replay.detail}); "
+                "cannot determine coupled-resume validity."
             ),
             details=[],
         )
@@ -751,7 +747,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     examined = 0
     indeterminate = 0
     not_resumed_last_exec = 0
-    if not has_fix:
+    if replay.status == "present":
         # Arm A — PRE-FIX TRITON: every resumed coupled sim is invalid. The stamped
         # boolean alone decides, so every candidate row is examined by construction.
         #
@@ -928,7 +924,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     # (INDETERMINATE — the clone did not know the sha, system.py:830), and `not None` is
     # True, so the bare-truthiness form turned "unknown" into a positive invalidity claim
     # on every unstamped tree. This mirrors the has_fix is-None early return above.
-    if has_fix and has_scatter_fix is False:
+    if replay.status == "absent" and scatter.status == "present":
         for _, row in resume_candidates.iterrows():
             details.append(
                 {
@@ -990,12 +986,12 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
         )
     if passed:
         summary = f"No coupled-resume invalidity detected ({_denom})."
-    elif not has_fix:
+    elif replay.status == "present":
         summary = (
             f"{n} coupled sim(s) produced by PRE-FIX TRITON WITH a hotstart resume — "
             f"summaries likely invalid ({_denom})."
         )
-    elif has_scatter_fix is False:
+    elif scatter.status == "present":
         # Arm C: post-fix pin, replay marker PRESENT, but the replayed depths never reach
         # the per-rank new_depth[]. Distinguished from Arm B because the remedy differs —
         # Arm B is re-runnable now, Arm C waits on an upstream TRITON fix.

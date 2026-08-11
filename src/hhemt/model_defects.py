@@ -164,12 +164,23 @@ SHA_COUPLED_RESUME_FIX = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
 SHA_DEPTH_SCATTER_FIX = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"
 SHA_EXTBC_GHOST_RING_FIX = "5d2ad1e8adf9a85d7df14e885b76e59a10f9a98b"
 
+#: Historical PRODUCING shas whose ancestry was resolved ONCE here, at registry-authoring time,
+#: against a clone that had them — the read path has no clone (see module docstring) and would
+#: otherwise return INDETERMINATE for every sha not already named above, leaving the pre-fix arms
+#: unreachable in production. These are project-relevant, not illustrative: 15eb18a5 is the pin the
+#: container-validation suite names, and b3820a4 is the sha the defect-to-version ruling keys on.
+SHA_PRE_COUPLED_RESUME = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"
+SHA_PRE_DEPTH_SCATTER = "b3820a448f304b3f732f4b6fac5564adf86ac333"
+
 REGISTRY: tuple[ModelDefect, ...] = (
     ModelDefect(
         defect_id="TRITON-COUPLED-RESUME-REPLAY",
         title="Coupled SWMM re-initializes from t=0 on a hotstart resume",
         fixed_in=SHA_COUPLED_RESUME_FIX,
-        known_absent_in=frozenset({SHA_DEPTH_SCATTER_FIX, SHA_EXTBC_GHOST_RING_FIX}),
+        known_absent_in=frozenset(
+            {SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER, SHA_DEPTH_SCATTER_FIX, SHA_EXTBC_GHOST_RING_FIX}
+        ),
+        also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
         trigger="resumed_coupled",
         remedy="Re-run these sims at a TRITON carrying the coupled-resume fix.",
     ),
@@ -178,6 +189,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
         title="Replayed SWMM node depths are never scattered to the per-rank new_depth[]",
         fixed_in=SHA_DEPTH_SCATTER_FIX,
         known_absent_in=frozenset({SHA_DEPTH_SCATTER_FIX, SHA_EXTBC_GHOST_RING_FIX}),
+        also_present_in=frozenset(
+            {SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}
+        ),
         trigger="resumed_coupled",
         remedy="Re-run at a TRITON carrying the node-depth scatter fix (9db367d or a descendant).",
     ),
@@ -186,7 +200,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
         title="The extbc perimeter ghost ring is not restored across a hotstart resume",
         fixed_in=SHA_EXTBC_GHOST_RING_FIX,
         known_absent_in=frozenset({SHA_EXTBC_GHOST_RING_FIX}),
-        also_present_in=frozenset({SHA_DEPTH_SCATTER_FIX}),
+        also_present_in=frozenset(
+            {SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER, SHA_DEPTH_SCATTER_FIX}
+        ),
         trigger="resumed_any",
         remedy="Re-run resumed sims at 5d2ad1e8 or a descendant.",
         bug_report=(
