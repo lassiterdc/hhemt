@@ -113,6 +113,8 @@ def _build_case(
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
+    tritonswmm_git_url: str | None = None,
+    tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
     resume_interruption_schedule: tuple[int, ...] = _RESUME_INTERRUPTION_SCHEDULE,
     ensemble_partition: str = "gpu-a6000",
@@ -142,6 +144,17 @@ def _build_case(
     # experiment runs under the pinned TRITON while the synth test tier keeps the fixture default.
     if tritonswmm_branch_key is not None:
         system_cfg["TRITONSWMM_branch_key"] = tritonswmm_branch_key
+    # Config-injectable sibling fields, threaded exactly as the pin above and for the same
+    # reason (CLAUDE.md style #9). BOTH are required to express a non-default model source:
+    # the URL because the fork carrying a fix is a DIFFERENT REMOTE from ORNL upstream, and
+    # the software directory because two remotes both named `triton.git` would otherwise share
+    # one clone path -- and `_verify_tritonswmm_pin` compares the COMMIT, never the REMOTE, so
+    # nothing else would catch the collision. Keying the directory on the pin is what makes
+    # `_software/<dir>` stop silently meaning "whatever version ran last".
+    if tritonswmm_git_url is not None:
+        system_cfg["TRITONSWMM_git_URL"] = tritonswmm_git_url
+    if tritonswmm_software_directory is not None:
+        system_cfg["TRITONSWMM_software_directory"] = tritonswmm_software_directory
 
     # Config-injectable (no hardcoded config — CLAUDE.md style #9): callers (the private-estate
     # runner) pass the git-tracked estate config carrying the real account; None preserves the
@@ -250,6 +263,8 @@ def clean_case(
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
+    tritonswmm_git_url: str | None = None,
+    tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
 ) -> _Case:
     """Clean determinism experiment: 28-config sweep, single-allocation walltime.
@@ -274,6 +289,8 @@ def clean_case(
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
+        tritonswmm_git_url=tritonswmm_git_url,
+        tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
     )
 
@@ -285,6 +302,8 @@ def resume_case(
     runtime_min_by_sa: dict[str, float] | None = None,
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
+    tritonswmm_git_url: str | None = None,
+    tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
 ) -> _Case:
     """Resume demo (Option-D deterministic single kill): the runner SIGKILLs the
@@ -324,6 +343,8 @@ def resume_case(
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
+        tritonswmm_git_url=tritonswmm_git_url,
+        tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
     )
 
@@ -333,6 +354,8 @@ def smoke_case(
     system_directory: str | None = None,
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
+    tritonswmm_git_url: str | None = None,
+    tritonswmm_software_directory: str | None = None,
 ) -> _Case:
     """Phase-2 Empirical-Testing cheap confirmation of the multi-resume interruption
     harness. ONE serial-CPU sub-analysis on ``standard`` (pure-TRITON / uncoupled
@@ -356,6 +379,8 @@ def smoke_case(
         cell_size_m=3.5,
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
+        tritonswmm_git_url=tritonswmm_git_url,
+        tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm="triton",
         resume_interruption_schedule=_SMOKE_SCHEDULE,
         ensemble_partition="standard",
@@ -369,6 +394,8 @@ def build_resume_from_clean_runtimes(
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
+    tritonswmm_git_url: str | None = None,
+    tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
 ) -> _Case:
     """Two-pass (FQ3): read each completed clean-sweep sa_id's full-completion
@@ -387,6 +414,8 @@ def build_resume_from_clean_runtimes(
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
+        tritonswmm_git_url=tritonswmm_git_url,
+        tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
     )
     runtime_min_by_sa = size_resume_walltimes(clean.analysis)
@@ -396,6 +425,8 @@ def build_resume_from_clean_runtimes(
         runtime_min_by_sa=runtime_min_by_sa,
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
+        tritonswmm_git_url=tritonswmm_git_url,
+        tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
     )
 
@@ -428,6 +459,10 @@ def _cli() -> None:
         sp.add_argument("--hpc-system-config", type=Path, default=None)
         sp.add_argument("--cell-size-m", type=float, default=3.5)
         sp.add_argument("--tritonswmm-sha", default="3a832f7d")
+        # Siblings of --tritonswmm-sha. Default None so every existing invocation keeps
+        # today's behaviour: the case builder only writes a key when the value is not None.
+        sp.add_argument("--tritonswmm-git-url", default=None)
+        sp.add_argument("--tritonswmm-software-directory", default=None)
         sp.add_argument("--eda", action="store_true")
         sp.add_argument("--bundle", action="store_true")
     ip = sub.add_parser("intercomparison")
@@ -453,6 +488,8 @@ def _cli() -> None:
             cell_size_m=args.cell_size_m,
             hpc_system_config_yaml=args.hpc_system_config,
             tritonswmm_branch_key=args.tritonswmm_sha,
+            tritonswmm_git_url=args.tritonswmm_git_url,
+            tritonswmm_software_directory=args.tritonswmm_software_directory,
         )
         if args.eda or args.bundle:
             print("BUNDLE:", _emit_bundle(case))  # eda+bundle folded in (first-class emit)
@@ -488,6 +525,8 @@ def _cli() -> None:
         cell_size_m=args.cell_size_m,
         hpc_system_config_yaml=args.hpc_system_config,
         tritonswmm_branch_key=args.tritonswmm_sha,
+        tritonswmm_git_url=args.tritonswmm_git_url,
+        tritonswmm_software_directory=args.tritonswmm_software_directory,
     )
     resume_root = _emit_bundle(resume_case_obj)  # ensure the resume bundle (df_status must be complete)
     combined = combine_bundle([clean_root, Path(resume_root)], output_path=args.output)

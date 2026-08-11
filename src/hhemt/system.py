@@ -728,10 +728,21 @@ class TRITONSWMM_system:
             # EXEMPT-DU: system-dir
             ut.fast_rmtree(TRITONSWMM_software_directory)
 
-        # Clone and checkout
+        # Clone and checkout. The clone TARGET is named EXPLICITLY from the configured
+        # directory, and the `cd` uses that same name. Neither may be inferred from the repo
+        # URL: `git clone <url>` derives the directory from the repo NAME, so the previous
+        # hardcoded `cd triton` only worked while TRITONSWMM_software_directory happened to
+        # end in `triton`. Point the config at any other basename -- a per-pin cache dir such
+        # as `triton_5d2ad1e8adf9` -- and the clone landed in `triton/` while the configured
+        # directory was never created. Worse, ORNL upstream and the user's fork are BOTH named
+        # `triton.git`, so two different remotes collided on one path; and since
+        # `_verify_tritonswmm_pin` compares the COMMIT and never the REMOTE, a clone from the
+        # wrong remote whose HEAD matched the pin would verify clean.
         subprocess.run(
-            f'cd "{TRITONSWMM_software_directory.parent}" && {clone_cmd} && '
-            f"cd triton{branch_checkout_cmd} && git submodule update --init --recursive",
+            f'cd "{TRITONSWMM_software_directory.parent}" && '
+            f'{clone_cmd} "{TRITONSWMM_software_directory.name}" && '
+            f'cd "{TRITONSWMM_software_directory.name}"{branch_checkout_cmd} && '
+            f"git submodule update --init --recursive",
             shell=True,
             check=True,
         )
