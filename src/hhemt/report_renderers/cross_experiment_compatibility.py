@@ -63,6 +63,30 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
     rows = prov_rows or []
     if not rows:
         return "<p class='note'>No child crates recorded for this combine.</p>"
+    # CP-5 (user ruling 2026-08-11): abbreviate the solver sha and MARK the rows whose
+    # solver differs from the others, so a split pin is visible at a glance instead of
+    # requiring a reader to diff four 40-char shas across rows. The marker is keyed on
+    # the row set actually present, never on a hardcoded pin, so it stays correct when
+    # every arm shares one solver (no marker, no caption) and when they do not.
+    _solvers = {str(row.get("solver_sha")) for row in rows if row.get("solver_sha")}
+    _split = len(_solvers) > 1
+    # Tie-break on the SHA, not on set iteration order: an even split (two clean arms
+    # and two resume arms is the ordinary shape) has no true minority, and `min` over a
+    # set would let Python's hash ordering decide which side gets marked -- a
+    # nondeterministic report. Marking is stable either way, because with an even split
+    # "differs from the others" is true of whichever side carries the marker.
+    _minority = min(
+        _solvers,
+        key=lambda s: (sum(1 for row in rows if str(row.get("solver_sha")) == s), s),
+    ) if _split else None
+
+    def _sv(row) -> str:
+        raw = row.get("solver_sha")
+        if not raw:
+            return "n/a"
+        short = _html.escape(str(raw)[:8])
+        return f"{short} *" if _split and str(raw) == _minority else short
+
     body = "\n".join(
         "<tr><td>{e}</td><td>{r}</td><td>{m}</td><td>{n}</td>"
         "<td>{s}</td><td>{tv}</td><td>{sv}</td></tr>".format(
@@ -72,10 +96,15 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
             n=_html.escape(str(row.get("n_subs"))),
             s=_html.escape(str(row.get("toolkit_sha"))),
             tv=_html.escape(str(row.get("toolkit_version") or "n/a")),
-            sv=_html.escape(str(row.get("solver_sha") or "n/a")),
+            sv=_sv(row),
         )
         for row in rows
     )
+    _caption = (
+        "<p class='note'>* this experiment was run on a different solver build than the "
+        "others. Full shas are recorded on each child crate; the abbreviation here is for "
+        "reading, not for identification.</p>"
+    ) if _split else ""
     # CP-5: ONE solver column, not a TRITON column plus a TRITON-SWMM column. The
     # measured pin is IDENTICAL across the coupled and pure-TRITON arms because
     # TRITON-SWMM is the coupled build and a pure-TRITON run is that same binary
@@ -85,7 +114,7 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
     return (
         "<table class='compat'><thead><tr><th>Experiment</th><th>Role</th><th>Model</th>"
         "<th># sub-analyses</th><th>Toolkit sha</th><th>Toolkit version</th>"
-        "<th>Solver sha</th></tr></thead><tbody>" + body + "</tbody></table>"
+        "<th>Solver sha</th></tr></thead><tbody>" + body + "</tbody></table>" + _caption
     )
 
 
