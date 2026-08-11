@@ -4,12 +4,18 @@ Verifies that key results — peak flood depth (``max_wlevel_m``) and conduit
 flow / over-full-flow / over-full-depth (``max_flow_cms`` /
 ``max_over_full_flow`` / ``max_over_full_depth``) — are bit-identical across all
 sims sharing an event iloc on a SENSITIVITY MASTER (sub-analyses that vary only
-compute config must produce identical physics). Reference-anchored to the
+compute config must produce identical physics). On the strict path
+(``within_family=True``) the reference is anchored PER HARDWARE FAMILY
+(``raw_resume_identity._b4b_family_key``: cpu / gpu): within each family it is the
 SERIAL-CPU sub whose summaries are present (falling back to the smallest present
-compute config, then lexicographic ``sa_id``); verdict passes iff every non-reference
-sub is exactly equal to the reference for every tracked variable. Serial CPU is the
-reference because BIT4BIT is a double-precision serial-oracle property — anchoring
-on any other config reports differences from a run rather than from the oracle.
+compute config, then lexicographic ``sa_id``); verdict passes iff every sub is exactly
+equal to ITS OWN family's reference for every tracked variable. Serial CPU is the CPU
+family's reference because BIT4BIT is a double-precision serial-oracle property —
+anchoring on any other config reports differences from a run rather than from the
+oracle. The family partition exists because BIT4BIT is also a WITHIN-BACKEND property:
+a GPU-vs-serial-CPU float32 summary difference at exactly ``np.finfo(float32).eps`` is
+expected physics, not a reproducibility failure, and asserting equality across the
+boundary raised 24 false FAIL tuples on the Iteration-5 campaign (0 intra-family).
 
 Reads the per-sub FLAT summaries via ``sub.process._retrieve_combined_output(mode)``
 — NOT the consolidated ``analysis_datatree.zarr`` (consolidation CF-stamps,
@@ -189,23 +195,67 @@ def _ref_rank(item: tuple[str, object]) -> tuple:
     return (0 if rm == "serial" else 1, nn, ng, nm * max(no, 1), sa)
 
 
+def _family_key(sub) -> str:
+    """Hardware-family bucket for a sub — DELEGATES to ``raw_resume_identity._b4b_family_key``.
+
+    NOT a fourth family rule. ``_b4b_family_key`` already takes a sub and already encodes the
+    N3 user ruling (ONE gpu family, not one per GPU hardware); ``_config_diff``'s
+    ``_hw_family_key`` is the group-shaped sibling of the same rule and its docstring names a
+    third differently-shaped implementation as the divergence to avoid.
+
+    The import is FUNCTION-LOCAL and must stay that way: ``raw_resume_identity.py:35`` imports
+    ``compare_variable_exact`` from THIS module at module level, and ``hhemt/eda/__init__.py``
+    loads ``cross_sim_identity`` (line 38) BEFORE ``raw_resume_identity`` (line 39) — so a
+    module-level import here re-enters this module before ``compare_variable_exact`` (line 94)
+    is defined and raises at package load. ``_b4b_family_key`` itself reaches
+    ``_config_diff._gpu_hardware`` by the same local-import idiom.
+    """
+    from hhemt.eda.raw_resume_identity import _b4b_family_key
+
+    return _b4b_family_key(sub)
+
+
+def _references_by_family(ordered_present: list[tuple[str, object]]) -> dict[str, str]:
+    """``{family_key: reference sa_id}`` — the ``_ref_rank`` winner WITHIN each hardware family.
+
+    ``ordered_present`` MUST already be in ``_ref_rank`` order and MUST already be filtered to
+    subs with present summaries; the first sub encountered per family is therefore that
+    family's ``_ref_rank`` winner. Selecting by first-encounter rather than re-sorting is what
+    guarantees the within-family rule can never drift from the global ``_ref_rank`` rule — a
+    second sort key would be a second rule to keep in sync.
+
+    Pure (no disk reads), so the family-partition contract is unit-testable with stub subs the
+    same way ``_ref_rank`` already is.
+    """
+    out: dict[str, str] = {}
+    for sa, sub in ordered_present:
+        out.setdefault(_family_key(sub), sa)
+    return out
+
+
 def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bool = True) -> EdaResult:
     """ADR-4: verify cross-sim reproducibility and EMIT a characterized-divergence verdict.
 
     Returns a skipped ``EdaResult`` on a non-sensitivity analysis. On a sensitivity
     master, compares each enabled ``(event_iloc, mode, variable)`` across
-    sub-analyses against the SERIAL-CPU reference (smallest present compute config,
-    then lexicographic ``sa_id``, as deterministic fallbacks),
+    sub-analyses against ITS OWN HARDWARE FAMILY's reference (serial-CPU for the cpu
+    family, 1-GPU for the gpu family; smallest present compute config, then
+    lexicographic ``sa_id``, as deterministic fallbacks),
     writes ``{analysis_dir}/eda/<plot_id>.zarr`` (max-abs-diff + identical maps) and
     ``<plot_id>.verdict.json``, and returns an ``EdaResult`` carrying the verdict +
     artifact path.
 
-    ``within_family=True`` (default — same signed SIF / same hardware family): assert
-    bit-identity (``np.array_equal(equal_nan=True)``); a divergence is a
-    ``CheckResult`` ``passed=False``. This is today's behavior, unchanged.
+    ``within_family=True`` (default): each sub is compared against its OWN hardware
+    family's reference and bit-identity is asserted
+    (``np.array_equal(equal_nan=True)``); a divergence is a ``CheckResult``
+    ``passed=False``. The STRICTNESS is unchanged — only the reference each sub is
+    measured against is. A cross-family pair is no longer compared at all, so it can
+    neither pass nor fail; ``within_family=False`` is where that pair is measured.
 
     ``within_family=False`` (across hardware families, e.g. Frontier-ROCm vs
-    UVA-CUDA): do NOT assert equality — ADR-4 concedes cross-family bit-identity is
+    UVA-CUDA): ONE global reference (no family partition — partitioning here would
+    make this arm measure within-family divergence and label it "across-family").
+    Do NOT assert equality — ADR-4 concedes cross-family bit-identity is
     not achievable. Instead compute the BOUNDED divergence (max abs diff and max
     relative diff per tracked variable) and emit it as a ``passed=True``
     characterized-divergence verdict. The boundary disclosure IS the contribution
@@ -230,8 +280,8 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
         )
 
     subs = dict(sorted(((str(sa), sub) for sa, sub in sub_items), key=_ref_rank))
-    ref_id = next((sa for sa, sub in subs.items() if _enabled_modes(sub)), None)
-    if ref_id is None:
+    present = [(sa, sub) for sa, sub in subs.items() if _enabled_modes(sub)]
+    if not present:
         return EdaResult(
             skipped=True,
             verdict=CheckResult(
@@ -242,8 +292,37 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                 summary="N/A — no sub-analysis has present summaries",
             ),
         )
+    # PRIMARY reference = the global _ref_rank winner among present subs (serial-CPU when a CPU
+    # family is present). It alone is EXCLUDED from the comparison loop below, so the artifact's
+    # (sa_id,) coord — and therefore `identity_group`, the ONLY thing
+    # _config_diff._identity_labels reads — keeps exactly today's membership. Its label still
+    # rides in the scalar `reference_group` attr, so _config_diff needs no change.
+    ref_id = present[0][0]
     ref_sub = subs[ref_id]
-    ref_modes = _enabled_modes(ref_sub)
+    # PER-FAMILY references (EW-4), STRICT PATH ONLY. Partition by hardware family first, then
+    # apply the EXISTING _ref_rank ordering within each family, so a GPU sub is measured against
+    # the 1-GPU reference and a CPU sub against serial-CPU — never across the boundary. BIT4BIT
+    # is a within-backend property: a GPU-vs-serial-CPU float32 summary difference at exactly
+    # np.finfo(float32).eps is expected physics, and reporting it as a verdict FAILURE is a false
+    # alarm (24 such tuples on the Iteration-5 campaign; 0 intra-family).
+    #
+    # NOT applied on the across-family path: `within_family=False` exists precisely TO measure
+    # the cross-boundary bound, so partitioning there would make it measure within-family
+    # divergence and label the result "across-family". One global reference is correct for it,
+    # and `{"all": ref_id}` reproduces today's single-reference behavior exactly.
+    #
+    # A NON-PRIMARY family reference is deliberately NOT skipped below: its own family reference
+    # is itself, so it self-compares to identical/0.0 and KEEPS its artifact row. That is the
+    # same self-compare baseline marker raw_resume_identity uses (F3c, raw_resume_identity.py
+    # :700-706). Skipping it instead would drop it from the artifact's sa_id coord, leaving
+    # _config_diff._identity_labels with no label for the 1-GPU group — and since
+    # _config_diff.py:898 re-references every GPU group to that group, the whole GPU half of the
+    # config-diff identity column would render "differs". Do not "simplify" this to skip all
+    # references.
+    fam_of: dict[str, str] = (
+        {sa: _family_key(sub) for sa, sub in subs.items()} if within_family else dict.fromkeys(subs, "all")
+    )
+    ref_by_family: dict[str, str] = _references_by_family(present) if within_family else {"all": ref_id}
 
     details: list[dict] = []
     diff_arrays: dict[str, list[xr.DataArray]] = {}
@@ -259,9 +338,14 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
         if not _enabled_modes(sub):
             details.append({"sa_id": sa_id, "detail": "summaries absent — skipped"})
             continue
-        for mode in ref_modes:
+        # Compare against THIS sub's own family reference. For a non-primary family reference
+        # this resolves to itself (self-compare -> identical / 0.0), which is what keeps its row
+        # in the artifact's sa_id coord — see the selection block above.
+        fam_ref_id = ref_by_family[fam_of[sa_id]]
+        fam_ref_sub = subs[fam_ref_id]
+        for mode in _enabled_modes(fam_ref_sub):
             try:
-                ds_ref = ref_sub.process._retrieve_combined_output(mode)
+                ds_ref = fam_ref_sub.process._retrieve_combined_output(mode)
                 ds_cmp = sub.process._retrieve_combined_output(mode)
             except (FileNotFoundError, ValueError):
                 continue
@@ -279,6 +363,12 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                             details.append(
                                 {
                                     "sa_id": sa_id,
+                                    # WHICH reference this row was measured against. With one
+                                    # global reference the summary could name it once; with a
+                                    # per-family reference a bare sa_id is unreadable, because
+                                    # two rows can carry the same sa_id semantics against
+                                    # different baselines.
+                                    "ref_sa_id": fam_ref_id,
                                     "event_iloc": int(e),
                                     "variable": var,
                                     "detail": (
@@ -330,6 +420,15 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
         ds_vars[f"identical__{var}"] = _combine_cells(arrs)
     artifact_ds = xr.Dataset(ds_vars)
     artifact_ds.attrs["reference_sa_id"] = ref_id
+
+    # Per-family reference map (EW-4). `reference_sa_id` above remains the PRIMARY reference and
+    # is the ONLY one _config_diff._identity_labels folds back in from `reference_group` — that
+    # contract is deliberately unchanged, because the non-primary family references self-compare
+    # and therefore already carry their own `identity_group` label in the array. This attr is
+    # pure disclosure: it lets a reader of the artifact tell WHICH reference each row was
+    # measured against. JSON-encoded to match raw_resume_identity's
+    # `reference_config_by_family` attr convention.
+    artifact_ds.attrs["reference_sa_id_by_family"] = json.dumps(ref_by_family)
 
     # ---- Byte-identity PARTITION (full equivalence classes) ----
     # The per-reference verdict above is a one-reference relation: if sub A and sub B each
@@ -409,12 +508,13 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
             )
 
     if within_family:
+        _ref_desc = ", ".join(f"{fam}->{sa}" for fam, sa in sorted(ref_by_family.items()))
         summary = (
-            f"All tracked variables bit-identical across {len(subs) - 1} "
-            f"non-reference sub-analyses (ref sa_id={ref_id})."
+            f"All tracked variables bit-identical within every hardware family across "
+            f"{len(subs) - 1} compared sub-analyses (per-family refs: {_ref_desc})."
             if all_identical
             else f"{len([d for d in details if 'variable' in d])} (sa, event, variable) "
-            f"tuple(s) diverged from reference sa_id={ref_id}."
+            f"tuple(s) diverged from their OWN family's reference (per-family refs: {_ref_desc})."
         )
         passed = all_identical
     else:

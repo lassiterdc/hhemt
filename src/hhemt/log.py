@@ -49,6 +49,29 @@ class LogField(Generic[T]):
         self.value = new_value
         self._log.write()
 
+    def clear(self):
+        """Set this field to None (NOT MEASURED) and persist.
+
+        `set(None)` CANNOT express this. On any log loaded via `from_json` ->
+        `model_validate`, the pydantic before-validator constructs
+        `LogField(v, expected_type=bool)`, so `set(None)` coerces to
+        `bool(None)` == False and rewrites the very value it was asked to clear.
+        A log built fresh (default_factory, no expected_type) does NOT coerce —
+        which is why the failure is invisible in any test that constructs a bare
+        LogField and only appears on a hydrated one. MEASURED 2026-08-10.
+
+        `write()` persists None correctly: its delta keys on
+        `mine[k] != baseline[k]`, and None != False, so the field lands in
+        changed_keys and the lost-update overlay does not restore the old value.
+
+        Deliberately a separate verb rather than widening `set()`: `set()` is
+        called throughout the codebase and its coercion contract is relied upon.
+        Making `set(None)` mean "clear" is the more general fix and is a tracked
+        follow-up needing its own blast-radius review.
+        """
+        self.value = None
+        self._log.write()
+
     def get(self) -> Optional[T]:
         if self.value is None or self._expected_type is None:
             return self.value

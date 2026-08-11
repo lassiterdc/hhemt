@@ -202,11 +202,18 @@ def test_prefix_with_resume_warns(monkeypatch):
     assert "PRE-FIX" in res.details[0]["detail"]
 
 
-def test_prefix_without_resume_passes(monkeypatch):
+def test_prefix_without_resume_is_na(monkeypatch):
+    """Pre-fix TRITON but NOTHING resumed: examined == 0, so the cell is N/A, not a PASS.
+
+    Renamed from `test_prefix_without_resume_passes` under EW-2b. `passed is True` alone no
+    longer describes the outcome — it is true of the N/A return as well — so the applicable
+    assertion is what keeps this test discriminating.
+    """
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("deadbeef", False, True))
     empty = pd.DataFrame([{"model_type": "tritonswmm", "n_resumes": 0, "scenario_directory": ""}])
     res = check_coupled_resume_validity(_analysis_stub(df=empty))
     assert res.passed is True
+    assert res.applicable is False, res.summary
 
 
 def test_postfix_missing_replay_marker_warns(monkeypatch, tmp_path):
@@ -809,3 +816,130 @@ def test_armc_indeterminate_when_scatter_stamp_absent(monkeypatch, tmp_path):
     assert res.passed is True
     assert res.details == []
     assert "lacking the SWMM node-depth scatter" not in res.summary
+
+# --- EW-2b: a check that EXAMINED NOTHING has not applied (P7 generalized). ------------
+# `passed = len(details) == 0` cannot distinguish "examined 28, found nothing" from
+# "examined 0", and the second is a green cell asserting a verification that never ran.
+# Measured on the Iteration-5 combined report, three cells across BOTH models:
+# clean_tritonswmm/Coupled resume validity, clean_tritonswmm/Resume schedule honored, and
+# clean_triton/Resume schedule honored all rendered PASS carrying "(0 ... examined)".
+# The disclosed denominator (Gotcha-71(d)) is NOT a substitute — it lives behind a hover
+# title while the grid shows green.
+#
+# The gate is `examined == 0 AND not details`, and the second conjunct is load-bearing
+# rather than defensive: see test_armc_zero_examined_finding_is_not_silenced below.
+
+
+def test_coupled_zero_examined_is_na_not_a_green_pass(monkeypatch):
+    """No resumed coupled sim -> N/A, not PASS.
+
+    FAILS PRE-FIX: today this returns applicable=True with
+    "No coupled-resume invalidity detected (0 resumed coupled sim(s) examined)", which the
+    roll-up renderer draws as a green PASS.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
+    df = pd.DataFrame([{"model_type": "tritonswmm", "n_resumes": 0, "scenario_directory": ""}])
+    res = check_coupled_resume_validity(_analysis_stub(df=df))
+    assert res.applicable is False, res.summary
+    assert res.passed is True
+    assert res.details == []
+    # The denominator survives into the N/A summary — the reason stays legible on hover.
+    assert "0 resumed coupled sim(s) examined" in res.summary
+
+
+def test_coupled_examined_population_stays_a_real_pass(monkeypatch, tmp_path):
+    """A resumed sim that WAS examined and was clean stays a genuine PASS (applicable=True).
+
+    Pairs with the N/A test above: without this, the same three cells would go grey under a
+    change that made the check unconditionally inapplicable, which would destroy the real
+    finding rather than fix the vacuous one.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, True))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.applicable is True, res.summary
+    assert res.passed is True
+    assert "1 resumed coupled sim(s) examined" in res.summary
+
+
+def test_armc_zero_examined_finding_is_not_silenced(monkeypatch, tmp_path):
+    """THE SILENCING GUARD — why the gate is `examined == 0 AND not details`.
+
+    Arm C (the SWMM node-depth scatter arm) appends a detail row for every resume candidate
+    WITHOUT incrementing `examined`: the counter is touched only on the Arm A and Arm B
+    paths. So a scatter-pin analysis whose per-sim logs were purged produces
+    examined == 0 WITH findings, and a bare `examined == 0` gate would convert that real
+    FAIL into a grey N/A — silencing exactly the class of finding this campaign's
+    resume_tritonswmm cell carries.
+
+    Green both before and after: it is a preservation test against a WRONG fix, not a
+    discriminator between pre and post.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True, False))
+    scen = tmp_path / "sim_0"
+    # No _write_real_log: the producer path is absent, so Arm B concedes INDETERMINATE and
+    # `examined` stays 0 while Arm C still fires on the pin.
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    res = check_coupled_resume_validity(a)
+    assert res.details, "Arm C must have fired on the scatter-less pin"
+    assert "0 resumed coupled sim(s) examined" in res.summary, "the zero-examined shape is the premise"
+    assert res.applicable is True, f"Arm-C finding was silenced into N/A: {res.summary}"
+    assert res.passed is False
+
+
+def test_schedule_zero_examined_is_na_not_a_green_pass():
+    """No resumed sim -> N/A, not PASS. Covers BOTH clean arms' schedule cell.
+
+    FAILS PRE-FIX: today this returns applicable=True with "All resumed sims honored their
+    configured resume schedule (0 resumed sim(s) schedule-verified)".
+    """
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    df = pd.DataFrame([{"model_type": "triton", "n_resumes": 0, "scenario_directory": "sim_0"}])
+    res = check_resume_schedule_honored(_triton_arm_b_stub(df))
+    assert res.applicable is False, res.summary
+    assert res.passed is True
+    assert res.details == []
+    assert "0 resumed sim(s) schedule-verified" in res.summary
+
+
+def test_schedule_examined_population_stays_a_real_pass():
+    """A schedule-verified population stays a genuine PASS — the resume arms' cells."""
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    df = pd.DataFrame(
+        [
+            {
+                "model_type": "triton",
+                "n_resumes": 3,
+                "scenario_directory": "sim_0",
+                "resume_reporting_tsteps": [36, 72, 108],
+            }
+        ]
+    )
+    res = check_resume_schedule_honored(_triton_arm_b_stub(df))
+    assert res.applicable is True, res.summary
+    assert res.passed is True
+    assert "1 resumed sim(s) schedule-verified" in res.summary
+
+
+def test_schedule_examined_population_still_fails():
+    """A real schedule violation still FAILS with applicable=True."""
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    df = pd.DataFrame(
+        [
+            {
+                "model_type": "triton",
+                "n_resumes": 5,
+                "scenario_directory": "sim_0",
+                "resume_reporting_tsteps": [36, 72, 108],
+            }
+        ]
+    )
+    res = check_resume_schedule_honored(_triton_arm_b_stub(df))
+    assert res.applicable is True
+    assert res.passed is False
+    assert res.details

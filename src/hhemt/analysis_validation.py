@@ -962,6 +962,32 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             "cumulative record of superseded executions)"
         )
     _denom = "; ".join(_parts)
+    # EW-2b (principle P7, generalized): a check that EXAMINED NOTHING has not applied.
+    # `passed = n == 0` cannot distinguish "examined 28, found nothing" from "examined 0",
+    # and the second is a green cell asserting a verification that never ran — measured on
+    # the Iteration-5 combined report as clean_tritonswmm rendering PASS with
+    # "(0 resumed coupled sim(s) examined)". The disclosed denominator (Gotcha-71(d)) is NOT
+    # a substitute: it lives behind a hover title while the grid shows green.
+    #
+    # `not details` is LOAD-BEARING, not defensive. Arm C (:931) appends a detail row for
+    # EVERY resume candidate WITHOUT incrementing `examined` — the counter is touched only at
+    # :766 (Arm A) and :847/:881 (Arm B). So a scatter-pin analysis whose logs were purged
+    # yields examined == 0 WITH findings, and a bare `examined == 0` test would convert that
+    # real FAIL into a grey N/A. Gate on BOTH conjuncts, and see
+    # test_armc_zero_examined_finding_is_not_silenced.
+    #
+    # `_denom` is REUSED rather than replaced so the three zero-examined causes stay
+    # distinguishable on hover (nothing in scope / all INDETERMINATE / all out of scope), and
+    # so the four existing INDETERMINATE + out-of-scope tests keep passing unchanged.
+    if examined == 0 and not details:
+        return CheckResult(
+            name="Coupled resume validity",
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary=f"No resumed coupled sim was examined — coupled-resume validity N/A ({_denom}).",
+            details=[],
+        )
     if passed:
         summary = f"No coupled-resume invalidity detected ({_denom})."
     elif not has_fix:
@@ -1163,6 +1189,22 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis) -> CheckResult:
     if indeterminate:
         _parts.append(f"{indeterminate} INDETERMINATE (no replay_t / no configured schedule)")
     _denom = "; ".join(_parts)
+    # EW-2b: see the twin gate in check_coupled_resume_validity. Both clean arms rendered a
+    # green PASS here carrying "(0 resumed sim(s) schedule-verified)" — this check touches
+    # BOTH models, so the vacuous cell appeared on clean_triton as well as clean_tritonswmm.
+    # `not details` is kept for symmetry AND because Arm B's unverifiable-boundaries branch
+    # (:1129) increments `indeterminate` while ALSO appending a detail row, so details can be
+    # non-empty with examined == 0 here too; that row is a real surfaced finding and must not
+    # be greyed out.
+    if examined == 0 and not details:
+        return CheckResult(
+            name="Resume schedule honored",
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary=f"No resumed sim was examined — resume-schedule verification N/A ({_denom}).",
+            details=[],
+        )
     summary = (
         f"All resumed sims honored their configured resume schedule ({_denom})."
         if passed

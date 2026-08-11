@@ -9,7 +9,7 @@ import pytest
 import xarray as xr
 
 from hhemt.eda import EdaResult, check_cross_sim_identity
-from hhemt.eda.cross_sim_identity import _ref_rank, compare_variable_exact
+from hhemt.eda.cross_sim_identity import _ref_rank, _references_by_family, compare_variable_exact
 
 # ---- Fast tier (no build): non-sensitivity skip + graceful-absent + kernel ----
 
@@ -355,3 +355,280 @@ def test_reference_rank_tiebreaks_are_ordered_as_documented():
         ("a_gpu_1", _StubSub(_StubCfg("gpu", n_gpus=1))),
     ]
     assert [sa for sa, _ in sorted(tied, key=_ref_rank)] == ["a_gpu_1", "z_gpu_1"]
+
+# ---- EW-4: per-family reference selection (strict path) ----
+#
+# Fast tier, no solver build and no HPC: the harness stubs the three surfaces
+# check_cross_sim_identity touches on a sub (`cfg_analysis`, `process._MODE_CONFIG` +
+# `process._retrieve_combined_output`, `analysis_paths.analysis_dir`) and the two it touches on the
+# master (`cfg_analysis.toggle_sensitivity_analysis`, `sensitivity.sub_analyses`). Divergence has to
+# be synthetic for these arms either way — no real solver emits a controlled one-ULP difference on
+# demand — so a fast stub is strictly better than a slow fixture here: it runs on every change, and
+# CI is CPU-only so a GPU family cannot be materialized any other way.
+#
+# Why the existing slow tier does not cover this: BOTH real fixtures are single-hardware-family.
+# _write_synth_sensitivity_csv is mpi/openmp/hybrid/serial with n_gpus=[0,0,0,0] -> one 'cpu' family;
+# container_validation_suite.csv is four rows all run_mode=gpu -> one 'gpu' family. In a single
+# family the per-family reference IS the global reference, so every slow test in this file is a
+# provable no-op under EW-4. Their green is a regression check, never evidence the change works.
+
+_DEPTH_MODE = "tritonswmm"
+_LINK_MODE = "tritonswmm_swmm_link"
+
+#: One float32 ULP at 1.0 — the EXACT magnitude of all 24 GPU-vs-serial-CPU tuples EW-4 stops
+#: failing, and (see test_within_family_cpu_divergence_still_fails) the magnitude that must STILL be
+#: fatal within a family. Pinning one number to both roles is what makes "we re-referenced" and "we
+#: widened tolerance" distinguishable outcomes rather than two stories about the same green suite.
+_ULP32 = float(np.finfo(np.float32).eps)
+
+
+def _summaries(depth_bump: float = 0.0):
+    """The flat per-scenario summaries a sub returns, optionally perturbed by `depth_bump`.
+
+    Two modes so the partition signature (_PARTITION_VARS = max_wlevel_m, max_flow_cms) is fully
+    populated. max_wlevel_m is float32 to match the on-disk dtype the detection floor is derived
+    from; the link-mode var is float64, as in the real pipeline.
+    """
+    base = np.array([[1.0, 2.0], [3.0, 4.0]], dtype="float32")
+    depth = xr.Dataset(
+        {"max_wlevel_m": (("event_iloc", "y", "x"), (base + np.float32(depth_bump))[None, :, :])},
+        coords={"event_iloc": [0], "y": [0, 1], "x": [0, 1]},
+    )
+    link = xr.Dataset(
+        {"max_flow_cms": (("event_iloc", "link_id"), np.array([[5.0, 6.0]], dtype="float64"))},
+        coords={"event_iloc": [0], "link_id": ["c1", "c2"]},
+    )
+    return {_DEPTH_MODE: depth, _LINK_MODE: link}
+
+
+class _StubProcess:
+    """Stands in for TRITONSWMM_analysis_post_processing.
+
+    _MODE_CONFIG must be reachable via the live `.process` instance (never module-level) and
+    _retrieve_combined_output must raise FileNotFoundError on an absent mode — that is the
+    existence guard _enabled_modes keys on.
+    """
+
+    _MODE_CONFIG = {_DEPTH_MODE: None, _LINK_MODE: None}
+
+    def __init__(self, datasets):
+        self._datasets = datasets
+
+    def _retrieve_combined_output(self, mode):
+        if mode not in self._datasets:
+            raise FileNotFoundError(mode)
+        return self._datasets[mode]
+
+
+class _Paths:
+    def __init__(self, d):
+        self.analysis_dir = d
+
+
+class _Sub:
+    def __init__(self, cfg, datasets, d):
+        self.cfg_analysis = cfg
+        self.process = _StubProcess(datasets)
+        self.analysis_paths = _Paths(d)
+
+
+class _MasterCfg:
+    toggle_sensitivity_analysis = True
+
+
+class _Sens:
+    def __init__(self, subs):
+        self.sub_analyses = subs
+
+
+class _Master:
+    def __init__(self, subs, d):
+        self.cfg_analysis = _MasterCfg()
+        self.sensitivity = _Sens(subs)
+        self.analysis_paths = _Paths(d)
+
+
+def _master(tmp_path, spec):
+    """Build a stub sensitivity master from {sa_id: (cfg, depth_bump)}.
+
+    Each sub gets a real on-disk analysis_dir because the emitted provenance source path is
+    `{sub analysis_dir}/analysis_datatree.zarr`; that file need not exist (_validate_source_path
+    accepts a non-existent path, and the `.zarr` suffix clears the directory-as-source gate anyway).
+    """
+    subs = {}
+    for sa_id, (cfg, bump) in spec.items():
+        d = tmp_path / sa_id
+        d.mkdir(parents=True, exist_ok=True)
+        subs[sa_id] = _Sub(cfg, _summaries(bump), d)
+    root = tmp_path / "master"
+    root.mkdir(parents=True, exist_ok=True)
+    return _Master(subs, root)
+
+
+def test_references_by_family_partitions_cpu_and_gpu():
+    """Each hardware family gets its OWN _ref_rank winner (the CPU one is not the GPU one).
+
+    Adversarial by construction, in the same style as the _ref_rank tests above: the GPU sa_id sorts
+    FIRST lexicographically and the serial sa_id sorts LAST, so a rule that merely returned the
+    global winner would produce {'cpu': 'z_serial_0_r1'} alone and fail the equality. The trailing
+    control pins that the global winner is still serial, so the two rules are visibly different
+    on this fixture rather than coincidentally equal.
+    """
+    items = [
+        ("a_gpu_0_r1", _StubSub(_StubCfg("gpu", n_gpus=1))),
+        ("b_gpu_1_r1", _StubSub(_StubCfg("gpu", n_gpus=4))),
+        ("m_mpi_8_r1", _StubSub(_StubCfg("mpi", n_mpi_procs=8, n_omp_threads=1))),
+        ("z_serial_0_r1", _StubSub(_StubCfg("serial", n_mpi_procs=1, n_omp_threads=1))),
+    ]
+    ordered = sorted(items, key=_ref_rank)
+    assert _references_by_family(ordered) == {"cpu": "z_serial_0_r1", "gpu": "a_gpu_0_r1"}
+    assert ordered[0][0] == "z_serial_0_r1"
+
+
+def test_references_by_family_single_family_is_todays_reference():
+    """On a SINGLE-family master the per-family reference IS the pre-EW-4 global reference.
+
+    Both real fixtures are single-family, so this is the guard that keeps their verdicts bit-identical
+    if the family predicate is ever changed. The two frames are transcribed from the fixtures rather
+    than invented: the synth compute-config sweep (_write_synth_sensitivity_csv) and the
+    container-validation suite CSV. The container case additionally pins that _ref_rank's final
+    lexicographic tiebreak still selects `container_1g` once serial-first and device count both tie.
+    """
+    synth = [
+        ("0", _StubSub(_StubCfg("mpi", n_mpi_procs=2, n_omp_threads=1, n_nodes=1))),
+        ("1", _StubSub(_StubCfg("openmp", n_mpi_procs=1, n_omp_threads=2, n_nodes=1))),
+        ("2", _StubSub(_StubCfg("hybrid", n_mpi_procs=2, n_omp_threads=2, n_nodes=1))),
+        ("3", _StubSub(_StubCfg("serial", n_mpi_procs=1, n_omp_threads=1, n_nodes=1))),
+    ]
+    assert _references_by_family(sorted(synth, key=_ref_rank)) == {"cpu": "3"}
+
+    container = [
+        ("native_1g", _StubSub(_StubCfg("gpu", n_gpus=1, n_mpi_procs=1, n_omp_threads=1, n_nodes=1))),
+        ("container_1g", _StubSub(_StubCfg("gpu", n_gpus=1, n_mpi_procs=1, n_omp_threads=1, n_nodes=1))),
+        ("native_2g", _StubSub(_StubCfg("gpu", n_gpus=2, n_mpi_procs=2, n_omp_threads=1, n_nodes=1))),
+        ("container_2g", _StubSub(_StubCfg("gpu", n_gpus=2, n_mpi_procs=2, n_omp_threads=1, n_nodes=1))),
+    ]
+    ordered_c = sorted(container, key=_ref_rank)
+    assert _references_by_family(ordered_c) == {"gpu": "container_1g"}
+    assert ordered_c[0][0] == "container_1g"
+
+
+def test_within_family_cpu_divergence_still_fails(tmp_path):
+    """P7 GUARD — DO NOT DELETE OR RELAX. A CPU-vs-CPU divergence MUST still fail the verdict.
+
+    This is a PRESERVATION test: it is green both before and after EW-4, and that is the point. EW-4
+    re-references the comparison; it does not widen it. Without this arm, "the false GPU FAILs are
+    gone" and "the strict path was silently widened" are indistinguishable outcomes — both produce a
+    passing verdict on the campaign, and the second is exactly what rejecting a within_family=False
+    flip was meant to avoid.
+
+    The magnitude is load-bearing: the perturbation is ONE float32 ULP, bit-for-bit the same
+    max_abs_diff as every GPU-family tuple EW-4 stops failing. So the pair of assertions states the
+    fix's actual semantics — the same magnitude that is no longer compared ACROSS families is still
+    fatal WITHIN one. Any tolerance added to the strict path turns this red.
+    """
+    master = _master(
+        tmp_path,
+        {
+            "serial_0_r1": (_StubCfg("serial", n_mpi_procs=1, n_omp_threads=1), 0.0),
+            "mpi_8_r1": (_StubCfg("mpi", n_mpi_procs=8, n_omp_threads=1), _ULP32),
+        },
+    )
+    result = check_cross_sim_identity(master)
+    assert result.skipped is False
+    assert result.verdict.passed is False, result.verdict.summary
+    rows = [d for d in result.verdict.details if d.get("variable") == "max_wlevel_m"]
+    assert rows, result.verdict.details
+    assert {r["sa_id"] for r in rows} == {"mpi_8_r1"}
+    # The divergent row names the family reference it was measured against, not just an sa_id.
+    assert {r["ref_sa_id"] for r in rows} == {"serial_0_r1"}
+    ds = xr.open_zarr(result.artifact_path, consolidated=False)
+    mad = float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(sa_id="mpi_8_r1").values))
+    assert mad == pytest.approx(_ULP32)
+
+
+def test_cross_family_gpu_divergence_no_longer_fails(tmp_path):
+    """A GPU sub diverging from serial-CPU by one float32 ULP no longer fails — and KEEPS its row.
+
+    Pre-EW-4 this verdict was `passed=False` with '1 (sa, event, variable) tuple(s) diverged from
+    reference sa_id=serial_0_r1' — the two false FAIL cells on the combined report's
+    errors-and-warnings page, in miniature.
+
+    The second half is the part that matters structurally. The lone GPU sub is its own family's
+    reference, so it self-compares and stays in the artifact's sa_id coord with identical=True /
+    max_abs_diff=0.0. Had the change excluded EVERY family reference from the loop instead of only
+    the primary one, this sub would vanish from the coord, _config_diff._identity_labels would have
+    no label for the 1-GPU group, and — because _config_diff re-references every GPU group to that
+    group — the whole GPU half of the config-diff identity column would render 'differs'. These
+    assertions are what make that design decision falsifiable from the test suite.
+    """
+    master = _master(
+        tmp_path,
+        {
+            "serial_0_r1": (_StubCfg("serial", n_mpi_procs=1, n_omp_threads=1), 0.0),
+            "mpi_8_r1": (_StubCfg("mpi", n_mpi_procs=8, n_omp_threads=1), 0.0),
+            "gpu_0_r1": (_StubCfg("gpu", n_gpus=1), _ULP32),
+        },
+    )
+    result = check_cross_sim_identity(master)
+    assert result.verdict.passed is True, result.verdict.summary
+    ds = xr.open_zarr(result.artifact_path, consolidated=False)
+    sa_ids = {str(s) for s in np.atleast_1d(ds["sa_id"].values)}
+    assert "gpu_0_r1" in sa_ids
+    assert bool(np.all(ds["identical__max_wlevel_m"].sel(sa_id="gpu_0_r1").values))
+    assert float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(sa_id="gpu_0_r1").values)) == 0.0
+
+
+def test_artifact_sa_id_coord_excludes_only_the_primary_reference(tmp_path):
+    """EXACTLY ONE sub is excluded from the artifact's sa_id coord, whatever the family count.
+
+    Stated as a coord-membership invariant on purpose. The downstream symptom of breaking it is a
+    false 'differs' in a renderer two modules away (_config_diff), which nobody would trace back to
+    this loop; the invariant is checkable right here. The companion assertion pins VMS 8's
+    per-family reference map, which is pure disclosure — _config_diff still folds back only the
+    single scalar `reference_sa_id`, and that contract is deliberately unchanged.
+    """
+    master = _master(
+        tmp_path,
+        {
+            "serial_0_r1": (_StubCfg("serial", n_mpi_procs=1, n_omp_threads=1), 0.0),
+            "mpi_8_r1": (_StubCfg("mpi", n_mpi_procs=8, n_omp_threads=1), 0.0),
+            "gpu_0_r1": (_StubCfg("gpu", n_gpus=1), _ULP32),
+            "gpu_1_r1": (_StubCfg("gpu", n_gpus=4), _ULP32),
+        },
+    )
+    result = check_cross_sim_identity(master)
+    ds = xr.open_zarr(result.artifact_path, consolidated=False)
+    sa_ids = {str(s) for s in np.atleast_1d(ds["sa_id"].values)}
+    all_ids = {"serial_0_r1", "mpi_8_r1", "gpu_0_r1", "gpu_1_r1"}
+    assert sa_ids == all_ids - {str(ds.attrs["reference_sa_id"])}
+    assert json.loads(ds.attrs["reference_sa_id_by_family"]) == {
+        "cpu": "serial_0_r1",
+        "gpu": "gpu_0_r1",
+    }
+
+
+def test_across_family_path_keeps_one_global_reference(tmp_path):
+    """within_family=False is NOT partitioned — it keeps ONE global reference.
+
+    That arm exists precisely to measure the cross-boundary bound, so partitioning it would make it
+    measure WITHIN-family divergence and label the result 'across-family'. The disclosed bound would
+    silently become a different quantity under the same name — a wrong number, not a missing one.
+    This is the arm most likely to be lost to a future 'why is the family logic conditional?'
+    simplification, which is why the map is asserted to be exactly {'all': <global ref>} rather than
+    merely non-empty, and why the bound is asserted to be strictly positive.
+    """
+    master = _master(
+        tmp_path,
+        {
+            "serial_0_r1": (_StubCfg("serial", n_mpi_procs=1, n_omp_threads=1), 0.0),
+            "gpu_0_r1": (_StubCfg("gpu", n_gpus=1), _ULP32),
+        },
+    )
+    result = check_cross_sim_identity(master, within_family=False)
+    assert result.verdict.passed is True
+    assert "haracterized divergence" in result.verdict.summary
+    ds = xr.open_zarr(result.artifact_path, consolidated=False)
+    assert json.loads(ds.attrs["reference_sa_id_by_family"]) == {"all": "serial_0_r1"}
+    bounds = [d for d in result.verdict.details if d.get("variable") == "max_wlevel_m"]
+    assert bounds and bounds[0]["max_abs_diff"] > 0.0

@@ -542,16 +542,61 @@ class TRITONSWMM_system:
     ):
         """Persist a derived compile verdict — ONLY when it was actually measured.
 
-        A verdict derived from an UNRESOLVABLE input (a `None` build-dir /
-        logfile path, which arises whenever this system was constructed without
-        a gpu_compilation_backend injection) is an ABSTENTION, not a
-        measurement. Persisting it silently overwrites a measured True with
-        False on every reconstruction — a property READ mutating provenance.
-        `_sync_compilation_status_on_init` (system.py) reads all five
-        compilation properties at EVERY construction, so this fires on
-        reconstruction, not only after a compile.
+        TWO distinct conditions are ABSTENTIONS, not measurements, and both must
+        pass `derived_from_resolvable_input=False`:
+
+          1. UNRESOLVABLE INPUT — a `None` build-dir / logfile path, which arises
+             whenever this system was constructed without a gpu_compilation_backend
+             injection.
+          2. RESOLVABLE PATH, ABSENT ARTIFACT — the path resolves (every non-GPU
+             build dir is hardcoded in SysPaths and always does) but the
+             compilation.log is GONE. A build tree is a TRANSIENT INPUT: it is
+             consumed at sim time and may legitimately be cleaned up afterwards.
+             Its absence months later is not evidence the compile failed.
+
+        Condition 2 is why this parameter's NAME is narrower than its meaning —
+        read it as "was this a measurement". MEASURED 2026-08-10: the four synth_cc
+        arms compiled successfully on Aug 4 (`logs/setup_target_0.log`:
+        "[TRITON-only CPU] Already compiled successfully (skipping)"), the build
+        trees were removed, and reconstruction on Aug 5 17:13-17:16 overwrote a
+        measured True with False on all four — dated by the log writes themselves,
+        because this helper writes ONLY on change.
+
+        Persisting an abstention silently overwrites a measured True with False on
+        every reconstruction — a property READ mutating provenance.
+        `_sync_compilation_status_on_init` (system.py) reads all five compilation
+        properties at EVERY construction, so this fires on reconstruction, not only
+        after a compile.
         """
         if not derived_from_resolvable_input:
+            # RESTORE, don't just abstain. Returning early leaves a STALE value — and on
+            # the four synth_cc arms that stale value is a False this very helper wrote on
+            # 2026-08-05 17:13-17:16, overwriting a True measured on Aug 4. Abstaining
+            # going forward stops the recurrence but cannot repair the record, so clear a
+            # stale False to None: the in-schema value for "not measured"
+            # (compilation_swmm_successful already reads null on all four arms).
+            #
+            # ASYMMETRIC BY DESIGN. Only a False is cleared:
+            #   False -> None  (unverifiable now; do not assert a failure we cannot see)
+            #   True  -> True  (LEFT ALONE — this is the historical record being protected;
+            #                   clearing it would be the very destruction this fix exists
+            #                   to stop)
+            #   None  -> None  (no write; preserves write-only-on-change)
+            # Cost, accepted: a genuinely measured failure whose artifact is later removed
+            # also becomes None. That is honest — the instrument can no longer see it — and
+            # a truly failed compile would not have produced completed sims.
+            #
+            # DEPENDS ON AN UNWIRED FEATURE. set(None) writes None only because
+            # LogField._expected_type is None: set_type() (log.py:42) is defined and never
+            # called, so the coercion at log.py:46-47 is skipped. If auto-registration is
+            # ever wired up as the LogField docstring promises, set(None) becomes
+            # bool(None) == False and this restoration silently inverts into the defect.
+            if log_field.get() is False:
+                # clear(), NOT set(None): on a hydrated log the pydantic
+                # before-validator supplies expected_type=bool, so set(None)
+                # coerces to False and rewrites the stale value this branch
+                # exists to clear. See LogField.clear.
+                log_field.clear()
             return
         current_value = log_field.get()
         if current_value is None or current_value != success:
@@ -1655,7 +1700,16 @@ class TRITONSWMM_system:
             triton_check = "[100%] Built target triton.exe" in log
             success = triton_check
         else:
-            success = False
+            # ABSTENTION (helper condition 2): the path RESOLVES — TRITON_build_dir_cpu
+            # is hardcoded at system.py:200 and always does — but the artifact is gone.
+            # A build tree is transient; its absence is not evidence of failure.
+            # Return False for the caller's boolean contract, persist NOTHING.
+            self._sync_compilation_log_field(
+                self.log.compilation_triton_cpu_successful,
+                False,
+                derived_from_resolvable_input=False,
+            )
+            return False
         self._sync_compilation_log_field(self.log.compilation_triton_cpu_successful, success)
         return success
 
@@ -1952,6 +2006,19 @@ class TRITONSWMM_system:
     @property
     def compilation_cpu_successful(self) -> bool:
         """Check if TRITON-SWMM CPU backend compiled successfully."""
+        # ABSTENTION CHECK MUST PRECEDE THE READ. retrieve_compilation_log returns a
+        # PLACEHOLDER STRING ("No compilation log found for ...") when the file is
+        # absent, which fails the marker tests below and is indistinguishable from a
+        # genuine build failure — so without this guard a cleaned-up build tree
+        # persists as a measured False. See helper condition 2.
+        _logfile = self.sys_paths.compilation_logfile_cpu
+        if _logfile is None or not _logfile.exists():
+            self._sync_compilation_log_field(
+                self.log.compilation_tritonswmm_cpu_successful,
+                False,
+                derived_from_resolvable_input=False,
+            )
+            return False
         log = self.retrieve_compilation_log("cpu")
         swmm_check = "Built target swmm5" in log
         triton_check = "[100%] Built target triton.exe" in log

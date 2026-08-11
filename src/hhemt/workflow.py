@@ -3230,8 +3230,10 @@ rule render_report:
             {
                 "path": "../system_log.json",
                 "variables": [
-                    "compilation_successful",
-                    "compilation_triton_only_successful",
+                    "compilation_tritonswmm_cpu_successful",
+                    "compilation_tritonswmm_gpu_successful",
+                    "compilation_triton_cpu_successful",
+                    "compilation_triton_gpu_successful",
                     "compilation_swmm_successful",
                 ],
             },
