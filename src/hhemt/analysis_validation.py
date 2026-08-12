@@ -614,6 +614,155 @@ def _read_triton_provenance(analysis: TRITONSWMM_analysis) -> str | None:
     return str(sha) if sha is not None else None
 
 
+_PROVENANCE_STAGES = ("sim", "processing", "consolidate", "plots", "report", "bundle", "combine")
+
+
+def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
+    """Per-stage producing stamps for this analysis; ``None`` where none was captured.
+
+    One entry per named stage, ALWAYS all keys present, so the caller's coverage
+    arithmetic has a fixed denominator and a stage that gained a capture site later
+    does not silently change the ratio's meaning.
+
+    Never infers one stage's stamp from another's. The temptation is real -- the
+    bundle manifest's sha is right there and it is almost certainly the sha the plots
+    ran at -- and it is exactly the fabrication this subsystem exists to prevent: a
+    back-filled value is indistinguishable from a captured one at read time, which is
+    what makes it worse than the absence it replaces. Every read is independently
+    graceful-absent; nothing raises.
+    """
+    import json
+
+    out: dict[str, dict | None] = dict.fromkeys(_PROVENANCE_STAGES)
+    try:
+        adir = Path(analysis.analysis_paths.analysis_dir)
+    except Exception:
+        return out
+
+    def _from_json(path: Path) -> dict | None:
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            return None
+        got = {k: payload[k] for k in ("hhemt_sha", "hhemt_version", "hhemt_dirty") if k in payload}
+        return got or None
+
+    def _from_tree_attrs(store: Path) -> dict | None:
+        if not store.exists():
+            return None
+        try:
+            import xarray as _xr
+
+            attrs = _xr.open_datatree(str(store), engine="zarr", consolidated=False).attrs
+        except Exception:
+            return None
+        sha = attrs.get("hhemt_producing_sha")
+        if not sha:
+            return None
+        return {
+            "hhemt_sha": str(sha),
+            "hhemt_version": str(attrs.get("hhemt_producing_version") or ""),
+            "hhemt_dirty": str(attrs.get("hhemt_producing_dirty") or "unknown"),
+        }
+
+    # consolidate / processing: the consolidated tree root carries the ADR-15 scalar
+    # fast-path, and the per-event coordinate underneath it is the processing stage's
+    # own capture. Resolved by existence over both tree names rather than by branching
+    # on toggle_sensitivity_analysis -- a sensitivity master ships the sensitivity tree
+    # and no regular one, and keying on the config would misreport a partially-built
+    # tree as uncaptured.
+    for name in ("analysis_datatree.zarr", "sensitivity_datatree.zarr"):
+        got = _from_tree_attrs(adir / name)
+        if got:
+            out["consolidate"] = got
+            out["processing"] = got
+            break
+
+    # plots: any figure sidecar. The stamp is per-figure and uniform within a render,
+    # so the first readable sidecar is representative; a genuinely mixed render is a
+    # different finding and belongs to the caller's build-disagreement branch.
+    plots = adir / "plots"
+    if plots.exists():
+        for sidecar in sorted(plots.rglob("*.manifest.json")):
+            got = _from_json(sidecar)
+            if got:
+                out["plots"] = got
+                break
+
+    for stage, rel in (("bundle", "bundle_manifest.json"), ("combine", "combined_bundle_manifest.json")):
+        out[stage] = _from_json(adir / rel)
+
+    # sim / report have no capture site yet -- left as None deliberately. When those
+    # sites land they wire here; until then the check reports them uncaptured, which is
+    # the true statement about every analysis produced so far.
+    return out
+
+
+def check_provenance_completeness(analysis) -> CheckResult:
+    """How many of the six named stages left a version stamp on this analysis (ADR-15 widening).
+
+    Reports COVERAGE, never a back-filled value. A stage with no stamp is reported as
+    "not captured", which is the honest state for any analysis produced before that
+    stage gained a capture site -- inferring its version from a sibling stage's stamp
+    would launder an assumption into an apparent measurement, which is the EW-3 failure
+    shape this subsystem exists to avoid.
+
+    Lives here rather than only in pytest because the audience is the READER of a
+    delivered report, not CI: a green build is invisible inside a bundle, whereas an
+    Errors-and-Warnings row saying "3 of 6 stages captured" travels with the artifact.
+    Graceful-absent throughout -- an unreadable carrier degrades that stage to "not
+    captured" and never raises, because a provenance check that can abort
+    validate_analysis takes the whole sidebar down with it.
+    """
+    stages = _collect_stage_stamps(analysis)  # {stage: stamp-dict-or-None}
+    captured = sorted(s for s, v in stages.items() if v)
+    missing = sorted(s for s, v in stages.items() if not v)
+    dirty = sorted(s for s, v in stages.items() if v and v.get("hhemt_dirty") == "true")
+    builds = {v.get("hhemt_version") for v in stages.values() if v and v.get("hhemt_version")}
+
+    detail = [{"stage": s, "captured": bool(stages[s]), **(stages[s] or {})} for s in sorted(stages)]
+    if dirty:
+        return CheckResult(
+            name="provenance_completeness",
+            passed=False,
+            summary=(
+                f"{len(captured)}/{len(stages)} stages stamped, but {len(dirty)} were produced "
+                f"from a DIRTY toolkit checkout ({', '.join(dirty)}). The recorded sha names a "
+                "commit whose content is not what ran, so a re-run at that sha would NOT "
+                "reproduce this product."
+            ),
+            detail=detail,
+        )
+    if len(builds) > 1:
+        return CheckResult(
+            name="provenance_completeness",
+            passed=False,
+            summary=(
+                f"{len(captured)}/{len(stages)} stages stamped, but they disagree on the hhemt "
+                f"build ({', '.join(sorted(builds))}). Some stage was produced by different code "
+                "than the others; a single re-run cannot reproduce this mixture."
+            ),
+            detail=detail,
+        )
+    if missing:
+        return CheckResult(
+            name="provenance_completeness",
+            passed=True,
+            summary=(
+                f"{len(captured)}/{len(stages)} stages stamped; not captured: {', '.join(missing)}. "
+                "Informational, not a failure -- an analysis produced before a stage gained its "
+                "capture site legitimately has no stamp there, and no value is inferred for it."
+            ),
+            detail=detail,
+        )
+    return CheckResult(
+        name="provenance_completeness",
+        passed=True,
+        summary=f"all {len(stages)} stages stamped at one clean hhemt build.",
+        detail=detail,
+    )
+
+
 def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     """Warn when a COMPLETED coupled analysis's resumed data is invalid.
 

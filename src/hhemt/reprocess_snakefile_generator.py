@@ -235,8 +235,13 @@ from datetime import datetime as _dt
 from hhemt.report_renderers._figure_emission import format_sources_rst as _fmt_sources_rst
 
 try:
-    from importlib.metadata import version as _pkg_version
-    _toolkit_version = _pkg_version("hhemt")
+    # Was importlib.metadata, which returns the static pyproject pin "0.1.0" and so
+    # printed the same banner on every report ever generated. Routed through the
+    # single ADR-15 minter so the report banner, the zarr coordinate, and the
+    # provenance table all state ONE version -- three surfaces disagreeing about
+    # which code produced a report is the failure this consolidation prevents.
+    from hhemt.provenance import _describe_version
+    _toolkit_version = _describe_version()
 except Exception:
     _toolkit_version = "unknown"
 

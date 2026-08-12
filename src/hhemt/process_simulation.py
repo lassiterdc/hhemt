@@ -1002,12 +1002,16 @@ class TRITONSWMM_sim_post_processing:
         from hhemt.provenance import _toolkit_git_sha
 
         producing_sha = _toolkit_git_sha()
-        try:
-            from importlib.metadata import version
+        # Was `importlib.metadata.version("hhemt")`, which returns the STATIC
+        # pyproject pin "0.1.0" -- unmoved across 241 commits, so it was a constant
+        # that distinguished nothing and was identical on all four arms of the
+        # delivered generation. `_describe_version` derives {tag}+{N}.g{sha} from
+        # `git describe`, which distinguishes generations AND is recomputable from an
+        # archived sha alone. Same fallback contract: never raises, degrades to the
+        # installed metadata version on a wheel install.
+        from hhemt.provenance import _describe_version
 
-            producing_version = version("hhemt")
-        except Exception:
-            producing_version = "0+unknown"
+        producing_version = _describe_version()
         return producing_sha, producing_version
 
     def _write_output(

@@ -332,7 +332,12 @@ def _provenance_identity(graph: list[dict], root: dict) -> str:
 def _provenance_software(app: dict, src: dict) -> str:
     rows: list[tuple[str, str]] = []
     if _prop(src, "name"):
-        rows.append(("Toolkit", _esc(_prop(src, "name"))))
+        # Label is the product IDENTIFIER, value is its expansion -- the pairing the
+        # RO-Crate already models (`#hhemt-app` name "hhemt" alongside
+        # `#hhemt-toolkit-src` name "H&H Ensemble Modeling Toolkit"). Was labelled
+        # "Toolkit", which rendered a word and its own expansion side by side and
+        # named the product nowhere.
+        rows.append(("hhemt", _esc(_prop(src, "name"))))
     if _prop(src, "codeRepository"):
         rows.append(("Code repository", _code(_prop(src, "codeRepository"))))
     git_sha = _prop(app, "softwareVersion") or _prop(src, "version")

@@ -49,6 +49,90 @@ def _toolkit_git_sha() -> str:
     from hhemt.bundle._emit import _get_toolkit_git_sha
 
     return _get_toolkit_git_sha(strict=False)
+def _describe_version() -> str:
+    """PEP-440 local version derived from `git describe`, not from the static pin.
+
+    `pyproject.toml` carries a STATIC `version = "0.1.0"` that has not moved in 241
+    commits, so `importlib.metadata.version("hhemt")` is a constant that distinguishes
+    nothing — it was identical on all four arms of the delivered generation. This
+    derives `{tag}+{N}.g{sha}` from `git describe --tags --long`, which DOES
+    distinguish generations and is deterministically recomputable from an archived
+    sha alone (verified: `git describe --tags --long 01655abb60c2` -> `v0.1.0-241-g01655ab`).
+
+    Falls back to the installed metadata version when git is unavailable — a wheel
+    install is the intended fallback case, not a failure. NEVER raises: a provenance
+    minter that can abort a 3-hour consolidation is worse than one that degrades.
+    """
+    import subprocess
+
+    from hhemt.bundle._emit import _toolkit_source_dir
+
+    try:
+        out = subprocess.run(
+            ["git", "describe", "--tags", "--long", "--abbrev=12"],
+            cwd=_toolkit_source_dir(),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        tag, n, gsha = out.rsplit("-", 2)
+        return f"{tag.lstrip('v')}+{n}.{gsha}"
+    except Exception:
+        try:
+            return importlib.metadata.version("hhemt")
+        except Exception:
+            return "0+unknown"
+
+
+def _is_dirty() -> bool:
+    """True when the toolkit checkout has uncommitted changes at mint time.
+
+    This closes a hole the codebase currently states but does not enforce:
+    `process_simulation._resolve_producing_stamp`'s docstring claims the sha is
+    `"unknown"` when the working tree is dirty, but `_get_toolkit_git_sha` only
+    degrades on CalledProcessError/FileNotFoundError — `git rev-parse HEAD` succeeds
+    on a dirty tree, so a run with uncommitted edits stamps a CLEAN sha and reads
+    authoritative. The only dirty check in the toolkit today is `_carry_source_tree`'s
+    emit-time warning, which fires long after capture. False on any error: an
+    undeterminable tree must not be asserted dirty.
+    """
+    import subprocess
+
+    from hhemt.bundle._emit import _toolkit_source_dir
+
+    try:
+        return bool(
+            subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=_toolkit_source_dir(),
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        )
+    except Exception:
+        return False
+
+
+def producing_stamp() -> dict[str, str]:
+    """THE single minter for every stage's hhemt version-provenance stamp (ADR-15 widening).
+
+    Every stage that writes an artifact calls THIS, at write time, from the running
+    process. Three fields, one shape, six carriers. The minting rule this enforces:
+    a stamp records the code that ACTUALLY ran the stage, so it may never be resolved
+    from a module-level constant, a config field, or a value carried over from an
+    earlier stage. EW-3 is the counter-example — a field stamped from a constant that
+    had no value yet at run time, which read authoritative and was wrong.
+
+    Corollary the CALL SITES must honor and this function cannot: if the stage did not
+    execute, do not call this. An unconditional stamp cannot distinguish
+    "re-ran at this sha" from "skipped, carrying an older artifact".
+    """
+    return {
+        "hhemt_sha": _toolkit_git_sha(),
+        "hhemt_version": _describe_version(),
+        "hhemt_dirty": "true" if _is_dirty() else "false",
+    }
 
 
 def _resolve_case_manifest(analysis):

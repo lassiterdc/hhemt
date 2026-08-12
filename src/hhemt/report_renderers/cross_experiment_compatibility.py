@@ -87,6 +87,31 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
         short = _html.escape(str(raw)[:8])
         return f"{short} *" if _split and str(raw) == _minority else short
 
+    # CP-5 amendment: mark the hhemt-build axis with the SAME present-set-keyed logic
+    # the solver column uses, so the reader can see what did NOT vary as well as what
+    # did. On the delivered generation the solver splits (two clean arms at one build,
+    # two resume arms at another) while hhemt is constant -- and that combination is
+    # exactly the claim the clean-vs-resume comparison rests on: one variable moved.
+    # Marking only the axis that varied leaves the constancy of the other to be
+    # inferred from silence, and silence is not evidence.
+    _builds = {str(row.get("toolkit_version")) for row in rows if row.get("toolkit_version")}
+    _build_split = len(_builds) > 1
+    # Same sha-keyed tie-break as _sv, for the same reason: an even split has no true
+    # minority and `min` over a set would let hash ordering pick a side, making the
+    # rendered bytes nondeterministic across re-renders -- which would also make every
+    # re-bundle look like a content change to _render_sha.
+    _build_minority = min(
+        _builds,
+        key=lambda b: (sum(1 for row in rows if str(row.get("toolkit_version")) == b), b),
+    ) if _build_split else None
+
+    def _bv(row) -> str:
+        raw = row.get("toolkit_version")
+        if not raw:
+            return "n/a"
+        shown = _html.escape(str(raw))
+        return f"{shown} *" if _build_split and str(raw) == _build_minority else shown
+
     body = "\n".join(
         "<tr><td>{e}</td><td>{r}</td><td>{m}</td><td>{n}</td>"
         "<td>{s}</td><td>{tv}</td><td>{sv}</td></tr>".format(
@@ -95,16 +120,35 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
             m=_html.escape(str(row.get("model"))),
             n=_html.escape(str(row.get("n_subs"))),
             s=_html.escape(str(row.get("toolkit_sha"))),
-            tv=_html.escape(str(row.get("toolkit_version") or "n/a")),
+            tv=_bv(row),
             sv=_sv(row),
         )
         for row in rows
     )
-    _caption = (
-        "<p class='note'>* this experiment was run on a different solver build than the "
-        "others. Full shas are recorded on each child crate; the abbreviation here is for "
-        "reading, not for identification.</p>"
-    ) if _split else ""
+    # Two independent axes, so two independent clauses -- and the "identical across
+    # every row" sentence is emitted for the axis that did NOT split, because a reader
+    # verifying that this was a controlled comparison needs the constancy stated, not
+    # left to be inferred from an unmarked column.
+    _notes = []
+    if _split:
+        _notes.append(
+            "* on the Solver sha column marks an experiment run on a different solver "
+            "build than the others. Full shas are recorded on each child crate; the "
+            "abbreviation here is for reading, not for identification."
+        )
+    elif rows:
+        _notes.append("Solver sha is identical across every row.")
+    if _build_split:
+        _notes.append(
+            "* on the hhemt build column marks an experiment produced by a different "
+            "hhemt build than the others."
+        )
+    elif rows:
+        _notes.append(
+            "hhemt build is identical across every row, so any difference between these "
+            "experiments is not attributable to the toolkit code."
+        )
+    _caption = ("<p class='note'>" + " ".join(_notes) + "</p>") if _notes else ""
     # CP-5: ONE solver column, not a TRITON column plus a TRITON-SWMM column. The
     # measured pin is IDENTICAL across the coupled and pure-TRITON arms because
     # TRITON-SWMM is the coupled build and a pure-TRITON run is that same binary
@@ -113,11 +157,49 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
     # row is. `n/a` renders when a child ships no tree or a pre-provenance one.
     return (
         "<table class='compat'><thead><tr><th>Experiment</th><th>Role</th><th>Model</th>"
-        "<th># sub-analyses</th><th>Toolkit sha</th><th>Toolkit version</th>"
+        # "Toolkit" named the product nowhere -- the user measured `hhemt` zero times
+        # on this figure. "build" rather than "version" because the value is a
+        # git-describe-derived PEP-440 local version, and calling it a "version"
+        # invites reading it as an install target, which the ToolkitPin stipulation
+        # reserves for a resolvable published artifact.
+        "<th># sub-analyses</th><th>hhemt sha</th><th>hhemt build</th>"
         "<th>Solver sha</th></tr></thead><tbody>" + body + "</tbody></table>" + _caption
     )
 
 
+def _derive_version_from_sha(sha: str) -> str | None:
+    """PEP-440 local version for an ARCHIVED sha, or None when underivable.
+
+    This is a DERIVATION, not a splice. It reads nothing but the sha the artifact
+    already carries and the local git object DB, and it is recomputable by anyone with
+    the repo -- which is what lets a reader check it rather than trust it. Returns None
+    (never a guess) when the sha is not in the object DB, when git is unavailable, or
+    when the derived sha does not prefix-match the input; the caller then keeps the raw
+    stamped value. The prefix-match is the falsifiability check: a mis-derivation fails
+    it, where an unchecked lookup would not.
+
+    Deliberately does NOT back-fill any stage that was never captured. A never-captured
+    value cannot be recovered, only guessed, and a guessed provenance value is worse
+    than an absent one -- it launders uncertainty into apparent certainty, which is the
+    EW-3 failure shape (a field stamped from a value that had no meaning at run time,
+    reading authoritative and wrong).
+    """
+    import subprocess as _sp
+
+    try:
+        out = _sp.run(
+            ["git", "describe", "--tags", "--long", "--abbrev=12", sha],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        ).stdout.strip()
+        tag, n, gsha = out.rsplit("-", 2)
+    except Exception:
+        return None
+    if not gsha.startswith("g") or not sha.startswith(gsha[1:]):
+        return None  # derived sha does not match the input -- refuse rather than guess
+    return f"{tag.lstrip('v')}+{n}.g{sha}"
 def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
     """One deterministic provenance row per combined child crate. Each field is derived from
     a bundled, deterministic source (no HPC re-run): experiment_id from the dir name; role
@@ -162,7 +244,23 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
                 # No new read: `dt` is already open for the model/n_subs derivation
                 # below, so this costs nothing and cannot introduce a new failure.
                 solver_sha = str(dt.attrs.get("triton_producing_sha") or "")
+                hhemt_sha = str(dt.attrs.get("hhemt_producing_sha") or "")
+                # The DELIVERED generation stamped the static pyproject pin here, so
+                # this reads "0.1.0" on every pre-fix tree -- true, and useless. Rather
+                # than splice a corrected value into an archived DOI-candidate artifact,
+                # derive it from the sha the artifact ALREADY carries: the mapping is a
+                # pure function of the commit and is recomputable at any time
+                # (`git describe --tags --long 01655abb60c2` -> `v0.1.0-241-g01655ab`).
+                # A tree stamped by the fixed minter already carries the derived form
+                # and is passed through untouched -- detected by the "+" that a
+                # PEP-440 local version has and a bare pin does not, never by a
+                # hardcoded "0.1.0" comparison, which would silently stop firing at
+                # the next release.
                 toolkit_version = str(dt.attrs.get("hhemt_producing_version") or "")
+                if toolkit_version and "+" not in toolkit_version and hhemt_sha:
+                    derived = _derive_version_from_sha(hhemt_sha)
+                    if derived:
+                        toolkit_version = derived
                 grps = set(dt.groups)
                 sa = sorted(g for g in grps if g.count("/") == 1 and g.startswith("/sa_"))
                 n_subs = len(sa)

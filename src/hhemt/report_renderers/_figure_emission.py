@@ -405,6 +405,17 @@ def _emit_manifest_sidecar(output_path: Path, manifest_payload: dict[str, Any]) 
     # per-plot static configs key on it. Equal to the stem by construction, so
     # harvest_source_paths' stem-keying and the manifest field never drift.
     manifest_payload.setdefault("plot_id", output_path.stem)
+    # ADR-15 widening — the PLOTS-stage capture site. This helper is the single
+    # writer for every figure sidecar (both emit branches + the artifact branch call
+    # it), and the renderer-uniform-signature stipulation forbids renderers from
+    # writing figures any other way, so this ONE line stamps every figure in every
+    # reporting set. It fires only when a figure is actually emitted, which is what
+    # gives the skipped-stage corollary for free: a stale figure carried forward
+    # from an earlier generation keeps its OLD stamp rather than gaining a fresh one.
+    from hhemt.provenance import producing_stamp
+
+    for _k, _v in producing_stamp().items():
+        manifest_payload.setdefault(_k, _v)
     manifest_path.write_text(
         json.dumps(manifest_payload, indent=2, default=str),
         encoding="utf-8",
