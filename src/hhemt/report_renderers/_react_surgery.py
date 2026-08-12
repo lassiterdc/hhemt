@@ -61,6 +61,65 @@ _SHOW_CATEGORY_NEW = (
     "    }"
 )
 
+_GUARD_RENDER_OLD = (
+    "    render() {\n"
+    "        if (this.state.data.toggleLabels.size > 0) {"
+)
+
+_GUARD_RENDER_NEW = (
+    "    render() {\n"
+    "        try {\n"
+    "            return e(\n"
+    "                ReportRenderGuard,\n"
+    "                { key: String(this.getCategory()), where: this.getCategory() },\n"
+    "                this.renderGuardedContent()\n"
+    "            );\n"
+    "        } catch (err) {\n"
+    "            return reportRenderGuardPanel(err, undefined);\n"
+    "        }\n"
+    "    }\n"
+    "\n"
+    "    renderGuardedContent() {\n"
+    "        if (this.state.data.toggleLabels.size > 0) {"
+)
+
+_GUARD_DEFS = """
+<script>
+class ReportRenderGuard extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { error: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { error: error };
+    }
+    render() {
+        if (this.state.error === null) {
+            return this.props.children;
+        }
+        return reportRenderGuardPanel(this.state.error, this.props.where);
+    }
+}
+
+function reportRenderGuardPanel(err, where) {
+    return e(
+        "div",
+        { className: "m-2 p-3 rounded border-2 border-red-700 bg-red-50 text-sm" },
+        e("div", { className: "font-bold text-red-700 mb-1" },
+          "This results view could not be displayed."),
+        e("div", { className: "mb-1" },
+          "Category: " + (where === undefined || where === null ? "(unknown)" : String(where))),
+        e("div", { className: "font-mono text-xs whitespace-pre-wrap break-all" },
+          String((err && err.name) || "Error") + ": " + String((err && err.message) || err)),
+        e("div", { className: "mt-2 text-xs" },
+          "The rest of the report is unaffected \\u2014 use the sidebar to open another " +
+          "category. Please copy the line above into a bug report.")
+    );
+}
+</script>
+"""
+
+
 _CLICK_DELEGATE = """
 <script>
 (function(){
@@ -176,6 +235,44 @@ def apply_post_process_surgery(
         "return toggleLabels.entries().map(function (entry) {",
         "return Array.from(toggleLabels.entries()).map(function (entry) {",
     )
+
+    # 4c. Render guard (blank-page failure class). The bundled React is the
+    # PRODUCTION build (`react.production.min` / `react-dom.production.min` are
+    # each present exactly once in the rendered HTML), and production React
+    # unmounts the ENTIRE tree on an uncaught render error -- which is why a throw
+    # anywhere below the results view yields a white page rather than a broken
+    # panel. Step 4b removes ONE known throw (the ES2025 iterator-helper call);
+    # this bounds the CLASS.
+    #
+    # Two layers, both confined to AbstractResults, because each misses what the
+    # other catches: the try/catch covers throws in the component's OWN render body
+    # (getData / getToggleControls / getResultsTable / renderHeader / renderEntries,
+    # all synchronous), and the ReportRenderGuard error boundary covers throws in
+    # DESCENDANTS (ResultViewButton, Toggle, Button), which reconcile after the
+    # parent's render() has returned. Subcategory and SearchResults both inherit
+    # this render(), so one edit covers the category view and the search view.
+    # A boundary at App level was rejected: it would swallow rulegraph/statistics/
+    # metadata failures the user can currently see, and its fallback would replace
+    # the navbar, leaving no way to navigate to a working category.
+    #
+    # Inert when nothing throws: the boundary returns `this.props.children`, so it
+    # emits no DOM node and the rendered output is the original element by IDENTITY.
+    # Measured on the delivered 33,221,667-byte report: two `insert` opcodes, zero
+    # `replace`, zero `delete`, +1583 bytes (0.0048%). `key` tracks the category so
+    # an errored boundary cannot persist across a category switch.
+    #
+    # The defs are gated on the render patch having landed, so a report whose
+    # AbstractResults shape has drifted upstream is left byte-identical rather than
+    # receiving an orphan <script>. Idempotent on both halves.
+    if _GUARD_RENDER_NEW not in html_text:
+        html_text = html_text.replace(_GUARD_RENDER_OLD, _GUARD_RENDER_NEW, 1)
+    if (
+        _GUARD_RENDER_NEW in html_text
+        and "class ReportRenderGuard extends React.Component" not in html_text
+    ):
+        _guard_body = html_text.rfind("</body>")
+        if _guard_body != -1:
+            html_text = html_text[:_guard_body] + _GUARD_DEFS + html_text[_guard_body:]
 
     # 5. Placeholder category injection (idempotent: check before injecting).
     # F2 (v9): suppress the empty "Simulation Health (placeholder)" reserved slot in
