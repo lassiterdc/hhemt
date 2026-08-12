@@ -219,7 +219,16 @@ _MODEL_TOGGLE_FIELDS = frozenset(
 #: so `_divergence_message` cannot be fixed by reordering its branches: that would
 #: route the toggle rows into the sensitivity-axis sentence. The two sets are what
 #: keep "is this expected" and "what do I say about it" independently correct.
-_EXPECTED_IDENTITY_FIELDS = _MODEL_TOGGLE_FIELDS | frozenset({"sensitivity_analysis"})
+#: `TRITONSWMM_branch_key` is admitted UNCONDITIONALLY, and that is sound rather than
+#: permissive: the field is in `_EXPERIMENT_IDENTITY_FIELDS` and classifies BLOCKING by
+#: default (`bundle/_compatibility.py:137`), only `declare_solver_split=True` downgrades it
+#: to WARNING (`:356-370`), and a BLOCKING divergence aborts `combine_bundle` before any
+#: render (`bundle/_combine.py:131`). An UNdeclared split therefore never reaches a
+#: renderer at all -- so the presence of this field here IS the declaration, and the
+#: renderer needs no access to the flag.
+_EXPECTED_IDENTITY_FIELDS = _MODEL_TOGGLE_FIELDS | frozenset(
+    {"sensitivity_analysis", "TRITONSWMM_branch_key"}
+)
 
 
 def _divergence_is_expected(d: dict) -> bool:
@@ -265,6 +274,18 @@ def _divergence_message(d: dict) -> str:
         return (
             "Layout-version skew between bundles; figures render, but cross-bundle field "
             "semantics may differ."
+        )
+    # Must precede the `bucket == "experiment" and severity == "warning"` catch-all: a
+    # solver-sha divergence carries exactly that bucket/severity pair, so without its own
+    # branch it printed "the two bundles sweep different rows or columns of the compute
+    # matrix" -- a sentence that is factually wrong about a pinned solver sha. Measured on
+    # the delivered combined bundle: 4 TRITONSWMM_branch_key rows, 4 sensitivity-axis
+    # sentences.
+    if field == "TRITONSWMM_branch_key":
+        return (
+            "Expected: the bundles run different pinned TRITON-SWMM solvers, declared at "
+            "combine time. Running one arm at a fix and the other at its ancestor is what "
+            "makes a bit-identical result evidence for both."
         )
     if bucket == "experiment" and severity == "warning":
         return (

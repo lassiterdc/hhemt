@@ -210,30 +210,30 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         + (" " + _TRUNCATION_CAVEAT if has_coupled_arm else "")
     )
 
-    if not panel_keys:
-        # Honest no-difference state: the verdict table IS the figure. No empty axes.
-        fig = go.Figure(
-            go.Table(
-                header=dict(
-                    values=["Model", "compared pairs", "clean-vs-resume verdict", "max |resume − clean|"],
-                    align="left", fill_color="#eef2f7", font=dict(size=11),
-                ),
-                cells=dict(
-                    values=list(zip(*verdict_rows, strict=False)) if verdict_rows else [[]],
-                    align="left", font=dict(size=11), height=22,
-                ),
-            )
+    # THREE-STATE CONTRACT (user ruling, Track 4). The figure has three legitimate
+    # shapes and the middle one was missing:
+    #   FULL           differing pairs exist -> verdict table + famtable + reference
+    #                  + (diff, pct) per identity group.
+    #   REFERENCE-ONLY zero differing pairs but child bundles loadable -> verdict table
+    #                  + famtable + reference panel per family, NO diff panels, and a
+    #                  conditional caption stating why they are absent. Measured on
+    #                  generation 01655abb60c2 this is the true state: TRITON 14/14 and
+    #                  TRITON-SWMM 28/28 bit-identical, max |resume - clean| = 0.
+    #   DEGENERATE     child bundles unavailable at render time -> verdict table only
+    #                  (the existing `if not row_plan:` return below).
+    # Previously the zero-differing case returned the table alone, which is a table and
+    # not a plot -- the reference result map is still a result and still belongs.
+    # P9: the diff panels are ABSENT rather than placeheld, and the caption says so in
+    # words rather than drawing empty axes.
+    diffs_present = bool(panel_keys)
+
+    if not diffs_present:
+        caption_text += (
+            " No difference panels are drawn: every compared pair is bit-identical, so "
+            "resume minus clean is exactly zero everywhere and a difference map would "
+            "carry no information. The reference panel below is the clean, uninterrupted "
+            "run on each hardware family."
         )
-        plot_h = max(_TABLE_PX, 120)
-        b_px = add_figure_caption(fig, caption_text, content_w_px=_FIG_W - 60, plot_h_px=plot_h)
-        fig.update_layout(
-            height=plot_h + _T_MARGIN + b_px,
-            width=_FIG_W,
-            margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
-            title="Clean vs resume, spatial: resume reproduces clean on every compared pair",
-            paper_bgcolor="white",
-        )
-        return fig
 
     # ---- differing pairs present: per MODEL -> per HARDWARE FAMILY -> per identity group.
     #
@@ -308,9 +308,10 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                            resume_subs=resume_subs, groups=fam_groups)
                 row_plan.append(dict(kind="famtable", ctx=ctx))
                 row_plan.append(dict(kind="ref", ctx=ctx))
-                for g in fam_groups:
-                    row_plan.append(dict(kind="diff", ctx=ctx, g=g))
-                    row_plan.append(dict(kind="pct", ctx=ctx, g=g))
+                if diffs_present:
+                    for g in fam_groups:
+                        row_plan.append(dict(kind="diff", ctx=ctx, g=g))
+                        row_plan.append(dict(kind="pct", ctx=ctx, g=g))
 
     if not row_plan:
         fig = go.Figure(
