@@ -412,3 +412,89 @@ def test_eda_rule_spec_templates_pins_the_sets_check_eda_calc_ran_depends_on():
     enumerating = {n for n, s in REPORTING_SETS.items() if eda_rule_spec_templates(s)}
 
     assert enumerating == {"b4b", "compute-sensitivity", "dem-resolution"}
+def test_resume_validity_is_applicable_on_a_pure_triton_resumed_arm():
+    """VMS-9: the widened check evaluates the pure-TRITON resume arm instead of
+    returning N/A on the coupled toggle.
+
+    PRE-FIX this FAILS twice over: the check is named "Coupled resume validity"
+    and it returns applicable=False for any analysis whose tritonswmm toggle is off.
+    """
+    from hhemt.model_defects import REGISTRY, resolve
+
+    # The sha the delivered resume arms actually ran at (measured from the
+    # consolidated tree root attr `triton_producing_sha`).
+    resume_sha = "5d2ad1e8adf9a85d7df14e885b76e59a10f9a98b"
+    by_trigger = {d.trigger for d in REGISTRY}
+    assert "resumed_any" in by_trigger, (
+        "no registry defect applies to both model selections; the widened check "
+        "would have nothing to evaluate on a pure-TRITON arm"
+    )
+    both_arms = [d for d in REGISTRY if d.trigger == "resumed_any"]
+    verdicts = [resolve(d, resume_sha) for d in both_arms]
+    assert all(v.status == "absent" for v in verdicts), [
+        (v.defect_id, v.status, v.rule) for v in verdicts
+    ]
+
+
+def test_clean_arm_carries_an_affected_build_but_stays_not_applicable():
+    """VMS-9 / [Q130]: the clean arms run a build where the both-arms defect is
+    PRESENT, and only the trigger population keeps that from becoming a warning.
+
+    This is the P7 case the TriggerKind docstring names. It pins that a
+    version-only predicate would be wrong.
+    """
+    from hhemt.model_defects import REGISTRY, resolve
+
+    clean_sha = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"
+    ghost = [d for d in REGISTRY if d.trigger == "resumed_any"]
+    assert ghost, "expected a resumed_any defect"
+    assert any(resolve(d, clean_sha).status == "present" for d in ghost), (
+        "the clean-arm build is expected to CARRY the both-arms defect; if this "
+        "flips, the trigger-population argument needs re-deriving"
+    )
+
+
+def _stub_absent_record():
+    """An analysis whose resume record is absent but whose structural attributes exist.
+
+    `analysis_paths` and `cfg_analysis` are STRUCTURAL preconditions of a real
+    TRITONSWMM_analysis -- `_read_triton_provenance` reads both directly. Empty
+    namespaces are enough: every zarr-path lookup inside it is a getattr-with-None
+    default, so it takes its documented graceful-absent path and returns None.
+    """
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=True)),
+        analysis_paths=SimpleNamespace(),
+        cfg_analysis=SimpleNamespace(),
+        df_status=None,
+    )
+
+
+def test_provenance_helper_is_graceful_absent_on_this_stub():
+    """POSITIVE CONTROL for the test below. Proves the stub reaches the helper's
+    graceful-absent path, so a failure there is an ASSERTION failure and not a
+    setup crash -- the two are indistinguishable in a `1 failed` summary line."""
+    from hhemt.analysis_validation import _read_triton_provenance
+
+    assert _read_triton_provenance(_stub_absent_record()) is None
+
+
+def test_absent_resume_record_renders_not_applicable_not_pass():
+    """VMS-9B / VMS-9C / [Q130]: a not-verified state is NOT a negative finding.
+
+    PRE-FIX this fails on its assertion with applicable=True, passed=True and the
+    summary "Producing-TRITON coupled-resume status unknown ...; cannot determine
+    coupled-resume validity" -- a branch whose own prose says it could not decide,
+    rendered green.
+    """
+    from hhemt.analysis_validation import check_coupled_resume_validity
+
+    result = check_coupled_resume_validity(_stub_absent_record())
+    assert result.applicable is False, (
+        "an absent resume record must render N/A, not a disclosed-denominator PASS; "
+        f"got applicable={result.applicable!r} passed={result.passed!r} "
+        f"summary={result.summary!r}"
+    )
+    assert result.name == "resume validity"

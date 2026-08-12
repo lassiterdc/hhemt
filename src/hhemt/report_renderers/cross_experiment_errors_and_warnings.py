@@ -91,7 +91,7 @@ def _swmm_invisible_divergence_finding(combined_root: Path) -> dict | None:
             "manhole, and the perturbation lands permanently in TRITON's depth field while the "
             "interface error decays below SWMM's reported precision within ~1000 steps. "
             "SWMM-side agreement is NOT evidence that the resume reproduced the clean run. "
-            "See the per-analysis 'Coupled resume validity' check."
+            "See the per-analysis 'resume validity' check."
         ),
         "details": [],
     }

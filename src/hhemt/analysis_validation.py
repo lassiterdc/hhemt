@@ -664,15 +664,40 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     """
     import pandas as pd
 
-    if not getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False):
+    # WIDENED (Track 4): applicability is decided by each registry defect's TRIGGER, not by
+    # the coupled toggle. `TriggerKind` is documented as a POPULATION SELECTOR whose selected
+    # rows ARE the `examined` population, so an empty selection flows into the existing
+    # examined-zero gate and renders N/A rather than a warning. The old toggle gate returned
+    # N/A for EVERY pure-TRITON analysis, which silently excluded the one registered defect
+    # that applies to both model selections (TRITON-RESUME-EXTBC-GHOST-RING, trigger=
+    # "resumed_any") -- an entry no code path read at all: `resolve_all` and
+    # `resolve_for_tree_attrs` have zero consumers outside model_defects.py.
+    _coupled = bool(getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False))
+    # MOVED (Track 4, VMS-9B) from its former position below the registry resolution.
+    # `_any_resumed` is the SELECTION half of the version x selection cross, so the record
+    # has to be loaded before the predicate rather than after it. Moved, never duplicated:
+    # a second `analysis.df_status` read would be a second chance to disagree with the first.
+    try:
+        df = analysis.df_status
+    except Exception:
+        df = None
+    if df is None or not {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
+        # [Q130], second application. This branch previously returned passed=True with no
+        # applicable flag -- a PASS asserting "no invalidity found" from a record it could
+        # not read, i.e. a disclosed-denominator PASS over an UNKNOWN denominator. It now
+        # renders N/A, matching the examined-zero gate below. The two not-verified states
+        # share a VERDICT and are distinguished by their SUMMARY, the same way `_denom`
+        # already distinguishes the three zero-examined causes.
         return CheckResult(
-            name="Coupled resume validity",
+            name="resume validity",
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="Coupled model not enabled — coupled-resume validity N/A.",
+            summary="No resume record available — resume validity N/A (scenario_status.csv absent or missing model_type/n_resumes).",
             details=[],
         )
+    _n_resumes_col = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
+    _any_resumed = bool((_n_resumes_col >= 1).any())
     triton_sha = _read_triton_provenance(analysis)
     from hhemt.model_defects import REGISTRY_BY_ID, resolve
 
@@ -683,35 +708,47 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     #   scatter is False -> scatter.status == "present"        (Arm C, missing node-depth scatter)
     # No live ancestry is attempted here: the read path has no guaranteed clone, and the
     # registry's cached sets are authored for exactly that reason.
+    from hhemt.model_defects import REGISTRY, TriggerKind  # noqa: F401  (TriggerKind documents the axis)
+
+    def _trigger_applies(trigger: str, *, any_resumed: bool, coupled: bool) -> bool:
+        """The selection half of the version x selection cross.
+
+        `always` is unconditional; `resumed_any` needs a resume on either model selection;
+        `resumed_coupled` needs a resume AND the coupled model. Returning False makes the
+        defect contribute no rows, which is what routes an unaffected arm to the
+        examined-zero N/A gate instead of a vacuous PASS.
+        """
+        if trigger == "always":
+            return True
+        if trigger == "resumed_any":
+            return any_resumed
+        if trigger == "resumed_coupled":
+            return any_resumed and coupled
+        return False
+
+    # Resolved over EVERY registry entry rather than two by name, so a defect added to the
+    # registry later is evaluated without editing this check. `replay` / `scatter` are kept
+    # as named locals because the arm-specific summaries below still distinguish them.
     replay = resolve(REGISTRY_BY_ID["TRITON-COUPLED-RESUME-REPLAY"], triton_sha)
     scatter = resolve(REGISTRY_BY_ID["TRITON-RESUME-DEPTH-SCATTER"], triton_sha)
+    _applicable = [
+        (d, resolve(d, triton_sha))
+        for d in REGISTRY
+        if _trigger_applies(d.trigger, any_resumed=_any_resumed, coupled=_coupled)
+    ]
     if replay.status == "indeterminate":
         return CheckResult(
-            name="Coupled resume validity",
+            name="resume validity",
             level="aggregate",
             passed=True,
+            applicable=False,
             summary=(
-                f"Producing-TRITON coupled-resume status unknown ({replay.detail}); "
-                "cannot determine coupled-resume validity."
+                f"Producing-TRITON resume status unknown ({replay.detail}); "
+                "resume validity NOT verified."
             ),
             details=[],
         )
 
-    # Resume record needed for BOTH the pre-fix arm and the replay-marker arm.
-    try:
-        df = analysis.df_status
-    except Exception:
-        df = None
-    if df is None or not {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
-        return CheckResult(
-            name="Coupled resume validity",
-            level="aggregate",
-            passed=True,
-            summary=(
-                "Coupled-resume-fix status known but no resume record available — no coupled-resume invalidity found."
-            ),
-            details=[],
-        )
     # `n_resumes >= 1` is a PRE-FILTER, not a verdict: it bounds which logs we open, and
     # it is SOUND for that because TRITON reads checkpoints IFF the runner passed a hotstart
     # cfg IFF n_resumes was incremented (the same `if` branch, run_simulation.py:539-544), so
@@ -720,8 +757,23 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     # last-exec-only. Whether a row's LAST exec actually resumed is decided in-loop below by
     # _TRITON_CHECKPOINT_READ_MARKER. Named `resume_candidates`, not `resumed`, so the
     # distinction cannot be re-collapsed by a future reader.
-    n_resumes = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
-    resume_candidates = df[(df["model_type"] == "tritonswmm") & (n_resumes >= 1)]
+    # WIDENED with the predicate. A hardcoded "tritonswmm" selects ZERO rows on a pure-TRITON
+    # arm, so leaving it would route resume_triton to the examined-zero N/A gate no matter
+    # what the trigger logic upstream decided -- a vacuous widening by a second route.
+    # `resumed_coupled` defects contribute the coupled model only; `resumed_any` contributes
+    # both. The name stays `resume_candidates` (not `resumed`): n_resumes is CUMULATIVE across
+    # execs while the log is last-exec-only, so this remains a PRE-FILTER and the in-loop
+    # _TRITON_CHECKPOINT_READ_MARKER still decides whether a row's LAST exec resumed.
+    #
+    # `_n_resumes_col` is the column computed in the moved block above; the former local
+    # `n_resumes` was read at exactly this one site and is deleted rather than duplicated.
+    _candidate_models: set[str] = set()
+    for _d, _v in _applicable:
+        if _d.trigger == "resumed_coupled":
+            _candidate_models.add("tritonswmm")
+        elif _d.trigger in ("resumed_any", "always"):
+            _candidate_models.update(("tritonswmm", "triton"))
+    resume_candidates = df[df["model_type"].isin(_candidate_models) & (_n_resumes_col >= 1)]
 
     details: list[dict] = []
     # DISCLOSED DENOMINATOR (R6 hardening). `passed = len(details) == 0` cannot, on its
@@ -832,7 +884,16 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
                 indeterminate += 1
                 continue  # INDETERMINATE — cannot resolve the owning (sub-)analysis
             try:
-                text = model_logfile_for(sub, int(row["event_iloc"]), "tritonswmm").read_text()
+                # FOURTH hardcoded-coupled site (Track 4). The widened `_candidate_models`
+                # filter now selects pure-TRITON rows, but a literal "tritonswmm" here builds
+                # a log path that does not exist for them -- the read raises, the row falls to
+                # the stamp fallback, finds nothing, and is counted INDETERMINATE, so the arm
+                # is selected and then silently dropped. Measured with a row-model x log-path
+                # probe against the applied code: a row declaring model_type="triton" became
+                # EXAMINED only when a model_tritonswmm_*.log was present, proving the read
+                # ignored the row. Key the path on the row's own model_type.
+                _row_model = str(row.get("model_type") or "tritonswmm")
+                text = model_logfile_for(sub, int(row["event_iloc"]), _row_model).read_text()
             except Exception:
                 # Log gone (purged / cache-cleared): fall back to the durable consolidation-time
                 # stamp before conceding INDETERMINATE. A stamped resumed+completed sub is EXAMINED
@@ -977,7 +1038,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     # so the four existing INDETERMINATE + out-of-scope tests keep passing unchanged.
     if examined == 0 and not details:
         return CheckResult(
-            name="Coupled resume validity",
+            name="resume validity",
             level="aggregate",
             passed=True,
             applicable=False,
@@ -1005,7 +1066,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             f"marker — replay did not engage; summaries likely truncated ({_denom})."
         )
     return CheckResult(
-        name="Coupled resume validity",
+        name="resume validity",
         level="aggregate",
         passed=passed,
         summary=summary,

@@ -23,6 +23,7 @@ import pytest
 import hhemt.analysis_validation as av
 from hhemt.analysis_validation import check_coupled_resume_validity
 from hhemt.exceptions import ConfigurationError
+from hhemt.model_defects import SHA_EXTBC_GHOST_RING_FIX
 from hhemt.system import TRITONSWMM_system
 
 
@@ -150,9 +151,9 @@ def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None)
     )
 
 
-def _resumed_df(scenario_directory="", event_iloc=0, sa_id=None):
+def _resumed_df(scenario_directory="", event_iloc=0, sa_id=None, model_type="tritonswmm"):
     row = {
-        "model_type": "tritonswmm",
+        "model_type": model_type,
         "n_resumes": 2,
         "scenario_directory": scenario_directory,
         "event_iloc": event_iloc,
@@ -162,11 +163,20 @@ def _resumed_df(scenario_directory="", event_iloc=0, sa_id=None):
     return pd.DataFrame([row])
 
 
-def _write_real_log(analysis, event_iloc, text):
-    """Place the log at the path the PRODUCER writes — resolved by the real convention."""
+def _write_real_log(analysis, event_iloc, text, model_type="tritonswmm"):
+    """Place the log at the path the PRODUCER writes — resolved by the real convention.
+
+    `model_type` mirrors `_resumed_df`'s parameter of the same name and exists so the two
+    fixtures cannot disagree: the row declares which model it is, and the log must be
+    written where THAT model's log lives. A mismatched pair produces a test that passes
+    for the wrong reason -- a pure-TRITON row whose fixture sits at the coupled path is
+    EXAMINED only because the check's log read was itself hardcoded (see VMS-9D), so the
+    test goes green while the defect it pins is still present. Default preserves all
+    existing callers, every one of which passes three positional arguments.
+    """
     from hhemt.run_simulation import model_logfile_for
 
-    p = model_logfile_for(analysis, event_iloc, "tritonswmm")
+    p = model_logfile_for(analysis, event_iloc, model_type)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text)
     return p
@@ -186,11 +196,46 @@ def _write_dead_path_decoy(scen_dir, text):
     return p
 
 
-def test_coupled_off_is_na(monkeypatch):
-    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: None)
+def test_coupled_off_without_resumes_is_na(monkeypatch):
+    """Coupled-off is N/A for a POPULATION reason, not a toggle reason.
+
+    Retired property: `test_coupled_off_is_na` asserted "not enabled" in the summary,
+    pinning the old toggle gate that returned N/A for EVERY pure-TRITON analysis. The
+    widening deliberately falsifies that universal -- a coupled-off arm WITH resumes is
+    now evaluated (see the companion test below). What survives is the narrower true
+    property: with nothing resumed there is nothing to verify.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: SHA_EXTBC_GHOST_RING_FIX)
     res = check_coupled_resume_validity(_analysis_stub(coupled=False))
     assert res.passed is True
-    assert "not enabled" in res.summary
+    assert res.applicable is False
+
+
+def test_coupled_off_with_resumes_is_evaluated(monkeypatch, tmp_path):
+    """THE arm that pins the widening: a pure-TRITON arm that resumed is EVALUATED.
+
+    Red before VMS-9/9B/9D (the toggle gate returned N/A on `coupled=False` before any
+    registry read), and red after VMS-9B alone (the row is selected but its log read is
+    keyed on a hardcoded "tritonswmm", so it counts INDETERMINATE and examined stays 0).
+    Green only once the log path follows the row's model_type.
+
+    `model_type="triton"` is passed to BOTH fixtures, once each. That pairing is the
+    coherence property VMS-9F exists to buy: a row declaring one model with its log
+    written at another's path is EXAMINED only via the very hardcoding VMS-9D removes,
+    i.e. a test that passes for the wrong reason.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: SHA_EXTBC_GHOST_RING_FIX)
+    a = _analysis_stub(
+        coupled=False,
+        df=_resumed_df(str(tmp_path), model_type="triton"),
+        simlog_dir=tmp_path / "logs" / "sims",
+    )
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS, model_type="triton")
+    res = check_coupled_resume_validity(a)
+    assert res.applicable is True, (
+        "a pure-TRITON arm that resumed must be EVALUATED, not N/A; "
+        f"got applicable={res.applicable!r} summary={res.summary!r}"
+    )
 
 
 def test_unstamped_is_indeterminate(monkeypatch):
