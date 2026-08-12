@@ -51,6 +51,45 @@ _LINE_LEADING = 1.36
 #: Pixel gap between the bottom of the plot area and the caption's first line.
 _GAP_PX = 14
 
+#: Vertical band, in pixels, occupied below the plot area by tick labels plus an
+#: x-axis title. `_GAP_PX` alone places the caption INSIDE that band -- 14 px below
+#: the plot area is where plotly is already drawing the axis title, which is the
+#: b4b "caption sits left of the x-axis title at the same level" defect. The band is
+#: DECLARED by the caller (only the caller knows whether it drew a bottom axis title)
+#: and reserved on top of the gap, so a figure that draws no bottom axis title is
+#: unchanged at axis_band_px=0.
+_AXIS_BAND_PX_DEFAULT = 0
+
+
+def content_width_px(fig, *, fallback_px: float | None = None) -> float:
+    """Drawn content width of ``fig`` in pixels: declared width minus l/r margins.
+
+    A caption's wrap is only reproducible against a width the figure DECLARES.
+    ``fig.layout.width is None`` means plotly will size the figure to its browser
+    container, and no wrap computed here can be correct for an unknown width -- so
+    this raises rather than substituting plotly's 700 px default, which is the
+    number a responsive figure never actually renders at. (Measured: b4b passed
+    ``700 - 180 - 140 = 380``, wrapping a 552-char caption to 9 lines at 59
+    chars/line while the browser rendered the figure far wider.)
+
+    Pass ``fallback_px`` only for a figure that is deliberately export-only at a
+    fixed size set downstream.
+    """
+    w = getattr(fig.layout, "width", None)
+    if w is None:
+        if fallback_px is not None:
+            return float(fallback_px)
+        raise ValueError(
+            "content_width_px requires fig.layout.width to be set: a caption wrapped "
+            "against an undeclared width is wrapped against a width the figure never "
+            "renders at. Set width= on the figure, or pass fallback_px explicitly."
+        )
+    m = fig.layout.margin
+    left = float(getattr(m, "l", 0) or 0)
+    right = float(getattr(m, "r", 0) or 0)
+    return max(40.0, float(w) - left - right)
+
+
 #: Pixel pad below the caption's last line, before the figure edge.
 _PAD_PX = 12
 
@@ -104,15 +143,16 @@ def caption_block_px(
     font_px: int = CAPTION_FONT_PX,
     gap_px: int = _GAP_PX,
     pad_px: int = _PAD_PX,
+    axis_band_px: float = _AXIS_BAND_PX_DEFAULT,
 ) -> int:
-    """Bottom-margin pixels a caption needs: gap + wrapped line boxes + pad.
+    """Bottom-margin pixels a caption needs: band + gap + wrapped line boxes + pad.
 
     Pure function of the caption and its content width -- callable BEFORE the figure
     exists, so a caller that must size ``fig_height`` up front can budget the margin
     without laying the caption out first.
     """
     n_lines = len(wrap_caption(text, content_w_px=content_w_px, font_px=font_px))
-    return int(gap_px + n_lines * round(font_px * _LINE_LEADING) + pad_px)
+    return int(gap_px + axis_band_px + n_lines * round(font_px * _LINE_LEADING) + pad_px)
 
 
 def add_figure_caption(
@@ -125,6 +165,7 @@ def add_figure_caption(
     x: float = 0.0,
     gap_px: int = _GAP_PX,
     pad_px: int = _PAD_PX,
+    axis_band_px: float = _AXIS_BAND_PX_DEFAULT,
 ) -> int:
     """Place a bottom-left caption on ``fig`` and RETURN the bottom margin it needs.
 
@@ -147,7 +188,7 @@ def add_figure_caption(
         xref="paper",
         yref="paper",
         x=x,
-        y=-(gap_px / max(float(plot_h_px), 1.0)),
+        y=-((gap_px + axis_band_px) / max(float(plot_h_px), 1.0)),
         xanchor="left",
         yanchor="top",
         align="left",
@@ -155,4 +196,4 @@ def add_figure_caption(
         font=dict(size=font_px),
         text="<br>".join(lines),
     )
-    return int(gap_px + len(lines) * round(font_px * _LINE_LEADING) + pad_px)
+    return int(gap_px + axis_band_px + len(lines) * round(font_px * _LINE_LEADING) + pad_px)

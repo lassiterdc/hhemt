@@ -796,6 +796,18 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
             f"per-family raw byte-identity: {n_diff} (config, raw-type, timestep) cell(s) differ "
             f"from their within-family reference"
         )
-    verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=summary)
+    verdict = CheckResult(
+        name=name,
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        # SELF-REPORTED from the path actually taken: this check byte-compares the RAW
+        # per-timestep rasters, never the consolidated summary tier, so its floor is
+        # float64 eps. `_status_of` treats instrument="raw_rasters" as an UNQUALIFIED
+        # pass -- which is correct here and is why the tier must be self-reported
+        # rather than assumed from the check's name.
+        instrument="raw_rasters",
+        detection_floor=float(np.finfo(np.float64).eps),
+    )
     (eda_dir / "b4b_clean_identity.verdict.json").write_text(_json.dumps(_dc.asdict(verdict), indent=2, default=str))
     return EdaResult(verdict=verdict, artifact_path=artifact, plot_id="b4b_clean_identity", skipped=False)

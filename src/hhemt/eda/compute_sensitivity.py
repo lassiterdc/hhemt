@@ -427,9 +427,23 @@ def _artifact_vars(labeled_records: list[tuple[str, list[dict]]]) -> dict[str, x
 
 
 def _skipped(name: str, summary: str) -> EdaResult:
+    # A check that examined nothing has not PASSED -- it did not apply. `applicable`
+    # is the third state analysis_validation.py's docstring says exists for exactly
+    # this, and `errors_and_warnings._status_of` tests it FIRST, returning
+    # ("na", "N/A", "") before it reaches the instrument branch. That ordering is why
+    # this needs no coordination with the instrument/detection_floor stamping: a
+    # skipped check must never be stamped (stamping it would assert a tier-verified
+    # identity for a comparison that did not happen), and with applicable=False it
+    # cannot reach that branch at all.
     return EdaResult(
         skipped=True,
-        verdict=CheckResult(name=name, level="aggregate", passed=True, summary=summary),
+        verdict=CheckResult(
+            name=name,
+            level="aggregate",
+            passed=True,
+            summary=summary,
+            applicable=False,
+        ),
     )
 
 
@@ -510,7 +524,22 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
         if all_identical
         else f"{n_div} (sa, event, variable) tuple(s) diverged from the rank-1 reference{dropped_note}."
     )
-    verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=summary, details=details)
+    verdict = CheckResult(
+        name=name,
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+        # SELF-REPORTED from the path actually taken (analysis_validation.py:55-71):
+        # this check compares the FLAT per-scenario summaries via _compare_pair, whose
+        # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
+        # float32 eps is the coarsest floor across the variables actually compared.
+        # Leaving these None is what stopped `errors_and_warnings._status_of` from
+        # qualifying the pass. Never derive from cfg_analysis.clear_raw: that records
+        # configured intent, not the path taken.
+        instrument="summary_tier",
+        detection_floor=float(np.finfo(np.float32).eps),
+    )
 
     ds_vars = _artifact_vars(labeled)
     _, plot_id = _emit(master, "eda_rank_sensitivity", ds_vars, contributing)
@@ -603,7 +632,22 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
         if all_identical
         else f"{n_div} (sa, event, variable) tuple(s) diverged from the clean counterpart{dropped_note}."
     )
-    verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=summary, details=details)
+    verdict = CheckResult(
+        name=name,
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+        # SELF-REPORTED from the path actually taken (analysis_validation.py:55-71):
+        # this check compares the FLAT per-scenario summaries via _compare_pair, whose
+        # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
+        # float32 eps is the coarsest floor across the variables actually compared.
+        # Leaving these None is what stopped `errors_and_warnings._status_of` from
+        # qualifying the pass. Never derive from cfg_analysis.clear_raw: that records
+        # configured intent, not the path taken.
+        instrument="summary_tier",
+        detection_floor=float(np.finfo(np.float32).eps),
+    )
 
     ds_vars = _artifact_vars(labeled)
     _, plot_id = _emit(master, "eda_resume_sensitivity", ds_vars, contributing)
@@ -692,7 +736,22 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
         else f"Characterized cross-hardware divergence: no comparable depth field "
         f"(ref sa_id={serial_id}; {n_gpu_compared} GPU pair(s) compared{dropped_note})."
     )
-    verdict = CheckResult(name=name, level="aggregate", passed=True, summary=summary, details=details)
+    verdict = CheckResult(
+        name=name,
+        level="aggregate",
+        passed=True,
+        summary=summary,
+        details=details,
+        # SELF-REPORTED from the path actually taken (analysis_validation.py:55-71):
+        # this check compares the FLAT per-scenario summaries via _compare_pair, whose
+        # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
+        # float32 eps is the coarsest floor across the variables actually compared.
+        # Leaving these None is what stopped `errors_and_warnings._status_of` from
+        # qualifying the pass. Never derive from cfg_analysis.clear_raw: that records
+        # configured intent, not the path taken.
+        instrument="summary_tier",
+        detection_floor=float(np.finfo(np.float32).eps),
+    )
 
     ds_vars = _artifact_vars(labeled)
     _, plot_id = _emit(master, "eda_cross_hardware_magnitude", ds_vars, contributing)

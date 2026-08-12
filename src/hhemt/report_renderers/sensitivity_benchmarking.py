@@ -47,17 +47,48 @@ from plotly.subplots import make_subplots
 # same hardware family would read as two colors across the co-located figures.
 # Canonical order pins the known families to fixed slots; unknowns append
 # deterministically (sorted) after the known block.
+#: Recognized group SPELLINGS. NOT the palette index source -- `_stable_group_color`
+#: indexes `_CANONICAL_FAMILIES` below, because this tuple's alias slots shift every
+#: family two positions right. Do not reintroduce it as an ordering.
 _CANONICAL_GROUP_ORDER = ("serial", "single_cpu", "single-cpu", "cpu", "gpu", "hybrid")
 
 
-def _stable_group_color(group_value, palette, all_groups):
-    gv = str(group_value)
-    known = [g for g in _CANONICAL_GROUP_ORDER if g in {str(x) for x in all_groups}]
-    unknown = sorted({str(x) for x in all_groups} - set(_CANONICAL_GROUP_ORDER))
-    order = known + unknown
-    idx = order.index(gv) if gv in order else 0
+#: Hardware FAMILIES, de-aliased. `_CANONICAL_GROUP_ORDER` spent six slots on four
+#: concepts (`single_cpu`/`single-cpu` are spellings of `serial`), so indexing against
+#: it directly pushes every family two positions right and lands gpu on #56B4E9 beside
+#: serial's #0072B2 -- two blues in the figure whose whole job is CPU-vs-GPU comparison.
+_CANONICAL_FAMILIES = ("serial", "cpu", "gpu", "hybrid")
+_FAMILY_ALIASES = {"single_cpu": "serial", "single-cpu": "serial"}
+
+
+def _stable_group_color(group_value, palette, all_groups=None):
+    """Palette colour for ``group_value``, INDEPENDENT of which groups are present.
+
+    The previous implementation filtered the canonical order by `all_groups`, which
+    reintroduced exactly the set-sensitivity the header comment says this function
+    exists to remove: a panel filtered to one hardware family resolved that family to
+    index 0, so every singleton group rendered #0072B2 while the legend -- built from
+    the unfiltered frame -- showed its true slot. Measured against the shipped
+    Okabe-Ito palette, gpu read blue in the panel and green in the legend.
+
+    `all_groups` is retained and IGNORED for signature compatibility with the four
+    call sites; unknown groups still sort deterministically after the known block.
+    """
+    gv = _FAMILY_ALIASES.get(str(group_value), str(group_value))
+    if gv in _CANONICAL_FAMILIES:
+        idx = _CANONICAL_FAMILIES.index(gv)
+    else:
+        extras = sorted(
+            {
+                _FAMILY_ALIASES.get(str(x), str(x))
+                for x in (all_groups or [])
+            }
+            - set(_CANONICAL_FAMILIES)
+        )
+        idx = len(_CANONICAL_FAMILIES) + (extras.index(gv) if gv in extras else 0)
     return palette[idx % len(palette)]
 
+from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 from hhemt.swmm_output_parser import parse_total_elapsed
@@ -1180,7 +1211,11 @@ def _build_sensitivity_benchmarking_figure(
             title=group_by_var if group_by_var is not None else "",
             orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.02,
         ),
-        margin=dict(l=90, r=120, t=30, b=80),
+        # No `b=` here: the bottom margin is DERIVED from the caption and set at the
+        # add_figure_caption call site below. This b=80 was superseded by that call
+        # (same figure, no intervening def) and survived only as a leftover -- exactly
+        # the hand-tuned constant the geometry guard now detects.
+        margin=dict(l=90, r=120, t=30),
         height=1000,
     )
 
@@ -1219,6 +1254,7 @@ def _build_sensitivity_benchmarking_figure(
         _plotly_metric_panel_precomputed(
             fig, _sp_c, df_for_groups=_df_c, row=3, col=_ci,
             panel_id=f"ax_speedup_plotly_c{_ci}",
+            color_groups=sorted(df["group_value"].dropna().unique(), key=str),
             ideal_kind="linear", x_max=_x_max_c,
             ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
             sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
@@ -1230,6 +1266,7 @@ def _build_sensitivity_benchmarking_figure(
         _plotly_metric_panel_precomputed(
             fig, _ef_c, df_for_groups=_df_c, row=4, col=_ci,
             panel_id=f"ax_efficiency_plotly_c{_ci}",
+            color_groups=sorted(df["group_value"].dropna().unique(), key=str),
             ideal_kind="constant", ideal_value=1.0, x_max=_x_max_c,
             ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
             sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
@@ -1271,40 +1308,37 @@ def _build_sensitivity_benchmarking_figure(
     fig.update_yaxes(title_text=f"Wall-clock ({wall_unit})", row=1, col=1)
     fig.update_yaxes(title_text=f"Compute cost ({cost_unit} × devices)", row=2, col=1)
     # OE-1: the numerator is the FAMILY baseline (CPU -> serial CPU; each GPU hardware ->
-    # its own 1-GPU run), not the plotted series' own t(1) and not a global serial. The
-    # subscript is load-bearing: S = 1.0 denotes a DIFFERENT wall-clock on each curve.
-    fig.update_yaxes(title_text="Strong-Scaling Speedup<br>S(N) = t<sub>family</sub>(1) / t(N)", row=3, col=1)
-    fig.update_yaxes(title_text="Strong-Scaling Efficiency<br>E<sub>s</sub>(N) = t<sub>family</sub>(1) / (N · t(N))", row=4, col=1)
-    # Footnote (matches matplotlib reference): explain the n_mpi_procs annotations on hybrid markers.
-    # v5 tuning — middle ground between v3 (y=-0.14, b=110, too far) and v4
-    # (y=-0.07, b=85, too close).
-    # BM-4: b=95 was tuned for a ONE-LINE footnote (see the v3/v4/v5 history above).
-    # The baseline disclosure takes it to four lines, so the reserved space must grow
-    # by the three added line boxes. 140 is an ESTIMATE, not a measurement: at font
-    # size 10 with plotly's ~1.36 leading a line box is ~14 px, so 3 extra lines need
-    # ~42 px and 95 + 42 = 137, rounded to 140. Verify on the re-render rather than
-    # trusting it -- a hand-tuned bottom margin against a hand-counted line count is
-    # the exact failure `hhemt.figure_caption` exists to retire, and this annotation
-    # predates that module.
-    fig.update_layout(margin=dict(l=90, r=120, t=30, b=140))
-    # BM-4: state the speedup baseline in the figure. The axis titles carry the
-    # SYMBOL t_family(1); this states what it denotes, which is the disclosure
-    # the item asks for. Hollow markers are disclosed in the same footnote
-    # because an unexplained fill channel is the reader's next question.
-    # Segments are <= 98 chars: the annotation sets no `width`, so plotly does
-    # NOT auto-wrap -- explicit breaks are what make the line count knowable.
-    fig.add_annotation(
-        text=(
-            "* number next to hybrid scenarios indicates number of MPI processes"
-            "<br>Speedup and efficiency are measured against each hardware family's own"
-            " minimum-device run (CPU → serial CPU; each GPU → its own 1-GPU run),"
-            "<br>so S = 1.0 denotes a different wall-clock on each curve."
-            "<br>Hollow markers mark compute configurations run more than once;"
-            " every replicate is plotted."
-        ),
-        xref="paper", yref="paper", x=0.5, y=-0.10,
-        showarrow=False, font=dict(size=10, color="gray"), xanchor="center",
+    # its own 1-GPU run), not the plotted series' own t(1) and not a global serial.
+    # The `family` subscript distinguished baselines ACROSS panels; each column is now
+    # one hardware family, so it distinguishes nothing within a panel. The cross-panel
+    # fact it carried ("S = 1.0 is a different wall-clock on each curve") is stated in
+    # full by the footnote below and is NOT weakened by this relabel -- but do not drop
+    # that footnote in the same pass, because it is now the sole carrier.
+    fig.update_yaxes(title_text="Strong-Scaling Speedup<br>S(N) = t(1) / t(N)", row=3, col=1)
+    fig.update_yaxes(title_text="Strong-Scaling Efficiency<br>E<sub>s</sub>(N) = t(1) / (N · t(N))", row=4, col=1)
+    # Adopt hhemt.figure_caption: this annotation predated the module (see the retired
+    # v3/v4/v5 b= history in git). `y=-0.10` was a FRACTION of the plot area while the
+    # x-axis-title band below it is a fixed pixel height, so the two converge as the
+    # hardware-column count grows -- which is why the middle column's long
+    # "Number of Devices (CPUs or GPUs)" title is the one that reaches the block first.
+    _bench_caption = (
+        "* number next to hybrid scenarios indicates number of MPI processes"
+        " Speedup and efficiency are measured against each hardware family's own"
+        " minimum-device run (CPU → serial CPU; each GPU → its own 1-GPU run),"
+        " so S = 1.0 denotes a different wall-clock on each curve."
+        " Hollow markers mark compute configurations run more than once;"
+        " every replicate is plotted."
     )
+    _bench_plot_h = 1000 - 30  # height minus top margin; bottom is what we are deriving
+    _bench_b_px = add_figure_caption(
+        fig,
+        _bench_caption,
+        content_w_px=content_width_px(fig, fallback_px=1000) - 90 - 120,
+        plot_h_px=_bench_plot_h,
+        font_px=10,
+        axis_band_px=46,
+    )
+    fig.update_layout(margin=dict(l=90, r=120, t=30, b=_bench_b_px))
     if sens_cfg.show_gridlines:
         for r in range(1, 5):
             _cols = range(1, _n_hw + 1) if r >= 3 else range(1, 2)
@@ -1571,6 +1605,7 @@ def _plotly_metric_panel_precomputed(
     all_rows_per_group: dict | None = None,
     ideal_show_in_legend: bool = False,
     model_arm: str | None = None,
+    color_groups: list | None = None,
 ) -> None:
     """Plot speedup / efficiency panel from precomputed per-group data.
 
@@ -1584,6 +1619,15 @@ def _plotly_metric_panel_precomputed(
     on hybrid markers (matplotlib reference parity for panels 3+4).
     """
     groups = sorted(df_for_groups["group_value"].dropna().unique(), key=str)
+    # `_stable_group_color`'s third parameter is named `all_groups` and its whole
+    # purpose is a palette index that does not shift when the group set shrinks.
+    # `df_for_groups` here is ALREADY filtered to one hardware family, so passing
+    # `groups` gives a GPU-only column order.index("gpu") == 0 while the legend --
+    # built solely from row 1 on the UNFILTERED frame (show_in_legend=(row == 1)) --
+    # gives order.index("gpu") == 2. Same series, two palette slots. `color_groups`
+    # is the unfiltered list; it defaults to `groups` so single-panel callers are
+    # unchanged.
+    _color_groups = color_groups if color_groups is not None else groups
     # Per-sa_id config lookup for hover customdata + hybrid annotations (F2, F3).
     sa_cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"]
     available_cfg_cols = [c for c in sa_cfg_cols if c in df_for_groups.columns]
@@ -1651,7 +1695,7 @@ def _plotly_metric_panel_precomputed(
             if not marker_xs:
                 # Empty all-rows fall back to line data for markers.
                 marker_xs, marker_ys, marker_sa = line_xs, line_ys, line_sa
-        color = _stable_group_color(gv, sens_cfg.palette, groups)
+        color = _stable_group_color(gv, sens_cfg.palette, _color_groups)
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}

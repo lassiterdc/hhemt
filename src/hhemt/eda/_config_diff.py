@@ -35,6 +35,7 @@ from plotly.subplots import make_subplots
 
 from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption
+from hhemt.figure_layout import align_x
 
 #: Diverging colorscale for signed diffs (iter-2 user feedback): RED = NEGATIVE
 #: (lower than serial), white = 0, BLUE = POSITIVE. Plotly "RdBu" maps low->red,
@@ -1020,6 +1021,10 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     G_INTER = 30  # between-panel extra gap ≈ watershed-box width (item: more space)
     G_TABLE = 16
     T_MARGIN = 80  # bottom margin is DERIVED from the caption (hhemt.figure_caption), never a constant
+    # Tick labels PLUS the "x (m)" axis title. ONE constant, shared by the swatch
+    # placement below and the caption's own reservation, so both clear the same
+    # furniture rather than each carrying its own eyeballed number.
+    _AXIS_BAND_PX = 46
 
     plot_h = table_px + G_TABLE + G_INTER * (len(panel_rows) - 1)
     for prows in panel_rows:
@@ -1418,11 +1423,16 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     panel_spans = [(serial_row, serial_row)] + [
         (serial_row + 1 + 2 * gi, serial_row + 2 + 2 * gi) for gi in range(len(diff_groups))
     ]
-    # Watershed swatch sits on the "x (m)" title line, in the gap BETWEEN the two maps'
-    # x-titles (col-1 title ~dom1 center, col-2 ~dom2 center) — compact, inside the panel,
-    # not down in the inter-panel seam.
-    # FQ7: with no col-2, the swatch centres under the col-1 map instead of between columns.
-    ws_cx = ((dom1[1] + dom2[0]) / 2.0) if has_flow else ((dom1[0] + dom1[1]) / 2.0)
+    # Alignment is DECLARED against a named layout edge, never centred by arithmetic on
+    # domains. `align_x` returns the paper-x of the requested edge of the requested
+    # reference box, so the same call reads identically on pure-TRITON (1 map column)
+    # and coupled (2 map columns) -- the has_flow branch moved INTO the domain lookup,
+    # which is where the arm difference actually lives.
+    ws_x_left = align_x(
+        {"table": [0.006, dom1[0]], "maps": [dom1[0], (dom2[1] if has_flow else dom1[1])]},
+        ref="table",
+        edge="left",
+    )
     # px-based swatch dims so they're consistent regardless of the figure height and fit in
     # the G_FOOTER budget: 28 px wide × 16 px tall (WIDER than tall; ~1.3× the 10-pt text).
     _SW_HALF_W = 14 / fig_width  # paper-x
@@ -1438,15 +1448,19 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             continue
         y_top = _ydom(first_row, 1)[1]
         y_bot = _ydom(last_row, 1)[0]
-        sw_y = y_bot - _f(34)  # below the x-axis "x (m)" title
+        # The band below the plot area is tick labels PLUS the "x (m)" axis title. 34 px
+        # was measured against one panel-count and collides at others -- the same
+        # fraction-vs-pixel drift hhemt.figure_caption documents. Reuse the one band
+        # constant so the swatch and the caption clear the same axis furniture.
+        sw_y = y_bot - _f(_AXIS_BAND_PX)
         # watershed legend swatch = small UNFILLED rectangle, wider than tall (item)
         shapes.append(
             dict(
                 type="rect",
                 xref="paper",
                 yref="paper",
-                x0=ws_cx - _SW_HALF_W,
-                x1=ws_cx + _SW_HALF_W,
+                x0=ws_x_left,
+                x1=ws_x_left + 2 * _SW_HALF_W,
                 y0=sw_y - _SW_HALF_H,
                 y1=sw_y + _SW_HALF_H,
                 line=dict(color="#111", width=1.2),
@@ -1455,7 +1469,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         )
         annotations.append(
             dict(
-                x=ws_cx + _SW_HALF_W + 0.006,  # AFTER the box's right edge (item: text was overlapping the box)
+                x=ws_x_left + 2 * _SW_HALF_W + 0.006,  # AFTER the box's right edge (item: text was overlapping the box)
                 y=sw_y,
                 xref="paper",
                 yref="paper",
@@ -1500,9 +1514,19 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             "Identity column = byte-identity of the <b>max_wlevel_m PEAK water-level summary</b>, "
             "evaluated after the max over time, vs each config's hardware-family minimum-device "
             "reference (CPU → serial-CPU, GPU → 1-GPU). Diff/percent maps below are vs the "
-            "serial-CPU minimum-device reference."
+            "serial-CPU minimum-device reference. "
+            # P1 (state what cannot be seen) + P2 (no experiment-specific values): the
+            # mechanism is a property of the storage cast and transfers to any system,
+            # so no residual magnitude appears here. BOTH directions are stated -- a
+            # one-directional "values are quantized to float32" understates the second,
+            # which is the one that manufactures a false byte-identical control.
+            "Differences are read from the float32 <code>.zarr</code> summary tier: a "
+            "residual below one float32 ULP is reported at that ULP, and a residual far "
+            "below it is reported as exactly zero. Both bounds are properties of the "
+            "storage cast, not of the model."
         ),
         content_w_px=_caption_w_px,
+        axis_band_px=_AXIS_BAND_PX,
         plot_h_px=plot_h,
     )
     fig.update_layout(

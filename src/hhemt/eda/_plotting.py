@@ -461,14 +461,26 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
     # G3 fungibility: content_w_px derives from the two layout margins, which are shared by
     # the pure-TRITON and coupled arms, so the same caption wraps identically on both.
     _CAPTION_L_PX, _CAPTION_R_PX, _CAPTION_T_PX = 180, 140, 64
-    _caption_w_px = 700 - _CAPTION_L_PX - _CAPTION_R_PX  # plotly default fig width; no width= is set
+    # The caption must wrap against the width the figure ACTUALLY renders at. This
+    # figure set no width=, so the previous `700 - l - r` wrapped 552 chars to 9 lines
+    # against a 380 px content box the browser never used. Declaring the width is what
+    # makes hhemt.figure_caption's "pure function of (text, content_w_px, font_px)"
+    # guarantee true here; it is not a cosmetic change. User-ruled 2026-08-12: 1000,
+    # matching _config_diff's fig_width so co-located figures wrap alike (P5).
+    _FIG_W_PX = 1000
+    _caption_w_px = _FIG_W_PX - _CAPTION_L_PX - _CAPTION_R_PX
     _plot_h_px = max(126, 26 * total_rows + 46 * n_panels + 26)
     fig.update_xaxes(title_text="reporting timestep (min)", row=n_panels, col=1)
+    # axis_band_px reserves the tick-label + x-axis-title band below the plot area, so
+    # the caption clears the "reporting timestep (min)" title instead of landing beside
+    # it. 46 is this function's OWN per-panel axis allowance, reused from _plot_h_px
+    # above rather than introduced as a new constant.
     _caption_b_px = add_figure_caption(
-        fig, caption, content_w_px=_caption_w_px, plot_h_px=_plot_h_px
+        fig, caption, content_w_px=_caption_w_px, plot_h_px=_plot_h_px, axis_band_px=46
     )
     fig.update_layout(
         title=title,
+        width=_FIG_W_PX,
         height=_plot_h_px + _CAPTION_T_PX + _caption_b_px,
         margin=dict(l=_CAPTION_L_PX, r=_CAPTION_R_PX, t=_CAPTION_T_PX, b=_caption_b_px),
         legend=dict(orientation="v", yanchor="top", y=1.0, x=1.02, xanchor="left"),
@@ -556,7 +568,18 @@ def _render_b4b_clean_identity(root: Path, *, cfg_analysis: analysis_config, eda
             "Alternate configurations are compared against their hardware category's "
             "minimum-device reference (CPU → serial-CPU, GPU → 1-GPU). "
             "Identical cells (Δ = 0) are green; differing cells show max |Δ| vs the per-family "
-            "reference, colorbar band 0–τ (τ = 0.03 m)."
+            "reference, colorbar band 0–τ (τ = 0.03 m). "
+            # P1 (state what cannot be seen) + P2 (no experiment-specific values): the
+            # mechanism is a property of the storage cast and transfers to any system,
+            # so no residual magnitude appears here. BOTH directions are stated -- a
+            # one-directional "values are quantized to float32" understates the second,
+            # which is the one that manufactures a false byte-identical control. The
+            # user has confirmed the second direction already truncated a real
+            # pure-TRITON resume sensitivity to apparent zero.
+            "Differences are read from the float32 <code>.zarr</code> summary tier: a "
+            "residual below one float32 ULP is reported at that ULP, and a residual far "
+            "below it is reported as exactly zero. Both bounds are properties of the "
+            "storage cast, not of the model."
         ),
         eda_cfg=eda_cfg,
         show_boundaries=False,
