@@ -25,10 +25,14 @@ Edge cases under test:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
+import xarray as xr
 
 from hhemt.report_renderers.sensitivity_benchmarking import (
+    _collect_rows,
     _compute_efficiency_per_group,
     _compute_speedup_per_group,
     _find_perf_node,
@@ -485,3 +489,86 @@ class TestModelArmEncoding:
                 assert all(
                     t.line.dash == "solid" for t in lines
                 ), f"connector dash is not the constant single-arm style for {arm!r}"
+
+
+def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=200.0):
+    tree_path = tmp_path / "sensitivity_datatree.zarr"
+    ds = xr.Dataset(
+        {"Total": ("event_iloc", [perf_total])},
+        coords={"event_iloc": [0]},
+    )
+    xr.DataTree.from_dict({"/sa_serial_6_r1/tritonswmm/performance": ds}).to_zarr(
+        tree_path, consolidated=False
+    )
+    if write_csv:
+        pd.DataFrame(
+            {
+                "sa_id": ["serial_6_r1"],
+                "event_iloc": [0],
+                "wall_clock_ledger_s": [ledger_value],
+                "perf_Total": [perf_total],
+            }
+        ).to_csv(tmp_path / "scenario_status.csv", index=False)
+    sub = SimpleNamespace(
+        df_sims=pd.DataFrame(index=[0]),
+        _get_enabled_model_types=lambda: {"tritonswmm"},
+    )
+    return SimpleNamespace(
+        sensitivity=SimpleNamespace(sub_analyses={"serial_6_r1": sub}),
+        analysis_paths=SimpleNamespace(
+            sensitivity_datatree_zarr=tree_path,
+            analysis_dir=tmp_path,
+        ),
+    )
+
+
+def test_collect_rows_prefers_wall_clock_ledger_for_total(tmp_path):
+    """SUBSTITUTION arm. A resumed sim's plotted wallclock must be the
+    kill-survivable ledger sum, not performance.Total (which on a resumed sim
+    covers only the checkpoints present on disk at process time)."""
+    analysis = _stub_analysis(tmp_path)
+    rows, source_paths = _collect_rows(analysis, "performance.Total")
+    assert len(rows) == 1
+    assert rows[0]["value"] == pytest.approx(900.0), (
+        f"expected wall_clock_ledger_s (900.0), got {rows[0]['value']!r} "
+        "-- the renderer is still sourcing performance.Total"
+    )
+    assert any(p.name == "scenario_status.csv" for p in source_paths), (
+        "scenario_status.csv must be declared as a source path when the ledger is used"
+    )
+
+
+def test_collect_rows_falls_back_to_datatree_when_csv_absent(tmp_path):
+    """NON-OVER-FIRE arm 1. With no scenario_status.csv the renderer degrades
+    to performance.Total rather than raising."""
+    analysis = _stub_analysis(tmp_path, write_csv=False)
+    rows, _ = _collect_rows(analysis, "performance.Total")
+    assert rows[0]["value"] == pytest.approx(200.0)
+
+
+def test_collect_rows_does_not_substitute_ledger_for_simulation(tmp_path):
+    """NON-OVER-FIRE arm 2. The ledger is a whole-process wall and must NOT be
+    substituted for the Init/Simulation decompositions."""
+    tree_path = tmp_path / "sensitivity_datatree.zarr"
+    ds = xr.Dataset(
+        {"Total": ("event_iloc", [200.0]), "Simulation": ("event_iloc", [150.0])},
+        coords={"event_iloc": [0]},
+    )
+    xr.DataTree.from_dict({"/sa_serial_6_r1/tritonswmm/performance": ds}).to_zarr(
+        tree_path, consolidated=False
+    )
+    pd.DataFrame(
+        {"sa_id": ["serial_6_r1"], "event_iloc": [0], "wall_clock_ledger_s": [900.0]}
+    ).to_csv(tmp_path / "scenario_status.csv", index=False)
+    sub = SimpleNamespace(
+        df_sims=pd.DataFrame(index=[0]),
+        _get_enabled_model_types=lambda: {"tritonswmm"},
+    )
+    analysis = SimpleNamespace(
+        sensitivity=SimpleNamespace(sub_analyses={"serial_6_r1": sub}),
+        analysis_paths=SimpleNamespace(
+            sensitivity_datatree_zarr=tree_path, analysis_dir=tmp_path
+        ),
+    )
+    rows, _ = _collect_rows(analysis, "performance.Simulation")
+    assert rows[0]["value"] == pytest.approx(150.0)

@@ -1005,6 +1005,35 @@ def _collect_rows(
     rows: list[dict[str, Any]] = []
     source_paths: list[Path] = []
 
+    # RESUME CORRECTNESS. `performance.{col}` is the slowest-rank sum over the
+    # performance{N}.txt checkpoints PRESENT ON DISK when the process rule ran. On a
+    # hotstart-resumed sim that set is not the whole run, so the column under-reports
+    # the run's wallclock -- and by a factor that is NOT constant, so it also reorders
+    # configurations. Measured on delivered generation 01655abb60c2, n=28 per arm:
+    # perf_Total / wall_clock_ledger_s = 0.975 (clean triton) / 0.985 (clean coupled)
+    # vs 0.527 +/- 0.133 (resume triton, range 0.21-0.72) / 0.215 +/- 0.012 (resume
+    # coupled). Spearman(perf_Total, ledger) falls from 0.996/0.9995 on the clean arms
+    # to 0.909 on resume-triton -- i.e. the plotted metric disagrees with true wallclock
+    # about which configuration is faster.
+    #
+    # `wall_clock_ledger_s` is the append-only per-attempt ledger summed by
+    # run_simulation.read_walltime_ledger_total_s, the only kill-survivable per-attempt
+    # wall source (the perf files and sim_run_time_minutes are overwrite-prone). It is
+    # preferred for Total ONLY: it is a whole-process wall and is not a substitute for
+    # the Init or Simulation decompositions, which stay datatree-sourced.
+    _ledger: dict[tuple[str, int], float] = {}
+    _csv = analysis.analysis_paths.analysis_dir / "scenario_status.csv"
+    if col == "Total" and _csv.exists():
+        _df_status = pd.read_csv(_csv)
+        if {"sa_id", "event_iloc", "wall_clock_ledger_s"} <= set(_df_status.columns):
+            for _r in _df_status.itertuples(index=False):
+                _v = getattr(_r, "wall_clock_ledger_s", None)
+                if _v is None or pd.isna(_v):
+                    continue
+                _ledger[(str(_r.sa_id), int(_r.event_iloc))] = float(_v)
+            if _ledger:
+                source_paths.append(_csv)
+
     datatree_path = analysis.analysis_paths.sensitivity_datatree_zarr
     tree: xr.DataTree | None = None
     if datatree_path is not None and datatree_path.exists():
@@ -1015,7 +1044,9 @@ def _collect_rows(
         node_ds = _find_perf_node(tree, sa_id) if tree is not None else None
         if node_ds is not None and col in node_ds.data_vars:
             for event_iloc in sub_analysis.df_sims.index:
-                value = _scalar_at_event(node_ds[col], int(event_iloc))
+                value = _ledger.get((str(sa_id), int(event_iloc)))
+                if value is None:
+                    value = _scalar_at_event(node_ds[col], int(event_iloc))
                 if value is None:
                     continue
                 rows.append({"sa_id": sa_id, "event_iloc": int(event_iloc), "value": value})

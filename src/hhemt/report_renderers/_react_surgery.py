@@ -160,6 +160,23 @@ def apply_post_process_surgery(
     )
     html_text = html_text.replace("(a, b) => a.localeCompare(b)", _comparator)
 
+    # 4b. Toggle-controls iterator-helper compat. AbstractResults.getToggleControls
+    # calls `toggleLabels.entries().map(...)`. `Map.prototype.entries()` returns a
+    # MapIterator, and `.map` on an ITERATOR is ES2025 Iterator Helpers (Chrome/Edge
+    # 122+, Firefox 131+, Safari 18.4+). On an older engine this raises
+    # `TypeError: toggleLabels.entries(...).map is not a function` inside React's
+    # render, React unmounts the tree, and the category renders as a blank white page.
+    # The branch is reached only when a non-first label has exactly two values each
+    # occurring in exactly half the results -- today that is `figure` on the coupled
+    # per-sim category (28 Conduit flow + 28 Peak flood depth = 56). VMS-2 removes that
+    # trigger at the source; this removes the engine dependency for any future category
+    # that hits the same 50/50 accident. Idempotent: the old literal is gone after the
+    # first pass.
+    html_text = html_text.replace(
+        "return toggleLabels.entries().map(function (entry) {",
+        "return Array.from(toggleLabels.entries()).map(function (entry) {",
+    )
+
     # 5. Placeholder category injection (idempotent: check before injecting).
     # F2 (v9): suppress the empty "Simulation Health (placeholder)" reserved slot in
     # bundle_mode (combined + single-bundle regenerated reports) — it is meaningless chrome

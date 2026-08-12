@@ -3255,7 +3255,17 @@ rule render_report:
             },
             resources_yaml="mem_mb=1000, time_min=5",
             log_path_template="logs/plots/errors_and_warnings.log",
-            additional_inputs=("scenario_status.csv",),
+            # validation_report.json is the READ-MODEL this renderer transcribes
+            # (errors_and_warnings.render -> load_validation_report; never
+            # validate_analysis at render time, Gotcha 53 Class-Y). Without it as a
+            # declared input, Snakemake has no dependency on the read-model and a
+            # re-persist never re-renders. Measured on delivered generation
+            # 01655abb60c2: the persisted JSON carried 14 checks all passing while the
+            # shipped HTML rendered an 11-check model with `EDA calc ran` FAILING at
+            # `eda_dir_exists=False` -- the HTML predated analysis.eda(), and
+            # persist_validation_report re-ran afterwards (consolidate_workflow.py:487,
+            # export_scenario_status.py:444 and :477) with no re-render.
+            additional_inputs=("scenario_status.csv", "validation_report.json"),
         )
         return _emit_plot_rule(spec, ctx)
 
@@ -3384,7 +3394,7 @@ def _per_sim_conduit_flow_sources(wildcards):
             report_kwargs={
                 "caption": "report/captions/per_sim_peak_flood_depth.rst",
                 "category": "Per Simulation Results",
-                "labels": '{"event_id": "{event_id}", "figure": "Peak flood depth"}',
+                "labels": '{"figure": "Peak flood depth", "event_id": "{event_id}"}',
             },
             resources_yaml="mem_mb=4000, time_min=15",
             log_path_template="logs/plots/per_sim_peak_flood_depth_{event_id}.log",
@@ -3406,7 +3416,7 @@ def _per_sim_conduit_flow_sources(wildcards):
             report_kwargs={
                 "caption": "report/captions/per_sim_conduit_flow.rst",
                 "category": "Per Simulation Results",
-                "labels": '{"event_id": "{event_id}", "figure": "Conduit flow"}',
+                "labels": '{"figure": "Conduit flow", "event_id": "{event_id}"}',
             },
             resources_yaml="mem_mb=4000, time_min=15",
             log_path_template="logs/plots/per_sim_conduit_flow_{event_id}.log",
@@ -9132,7 +9142,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             report_kwargs={
                 "caption": "report/captions/per_sim_peak_flood_depth.rst",
                 "category": "Per Simulation Results",
-                "labels": '{"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "Peak flood depth"}',
+                "labels": '{"figure": "Peak flood depth", "sa_id": "{sa_id}", "event_id": "{event_id}"}',
             },
             resources_yaml="mem_mb=4000, time_min=15",
             log_path_template="logs/plots/per_sim_per_sa_peak_flood_depth_sa-{sa_id}_{event_id}.log",
@@ -9165,7 +9175,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             report_kwargs={
                 "caption": "report/captions/per_sim_conduit_flow.rst",
                 "category": "Per Simulation Results",
-                "labels": '{"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "Conduit flow"}',
+                "labels": '{"figure": "Conduit flow", "sa_id": "{sa_id}", "event_id": "{event_id}"}',
             },
             resources_yaml="mem_mb=4000, time_min=15",
             log_path_template="logs/plots/per_sim_per_sa_conduit_flow_sa-{sa_id}_{event_id}.log",
