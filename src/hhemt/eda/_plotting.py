@@ -344,7 +344,28 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
     )
     shown_colorbar = False
     for r, fam in enumerate(families, start=1):
-        rows = fam_to_rows[fam]
+        # Reference row at the BOTTOM of every family panel. Plotly draws a categorical
+        # y-axis with y[0] at the BOTTOM (verified: a 3-category heatmap computes
+        # yaxis.range=(-0.5, 2.5), low end at the bottom), and this figure sets no
+        # reversed axis -- so "ref first in the array" IS "ref at the bottom".
+        #
+        # Before this, row order was the dataset's compute_config order, which is
+        # alphabetical by label: `Serial 1r x 1t` sorted LAST among CPU labels (index 7 of
+        # 8 -> drawn at the TOP) while `GPU x1 (a100-80)` sorted FIRST among GPU labels
+        # (index 0 of 6 -> drawn at the BOTTOM). The two panels of one figure therefore
+        # placed their reference at opposite ends, by coincidence rather than by rule, and
+        # any relabelling would have moved them again.
+        #
+        # A stable sort on the is_reference key ONLY -- not a reversal, which would also
+        # invert the non-reference ordering. Reference SELECTION is untouched: which config
+        # is the reference is decided upstream by eda/raw_resume_identity.py's
+        # `min(members, key=_b4b_ref_key)` per family (the EW-4 work), and this reorders
+        # display only. `rows` is the single source for the y-labels, `ident` and `mrows`
+        # alike, so one reorder propagates consistently to all three heatmaps.
+        rows = sorted(
+            fam_to_rows[fam],
+            key=lambda i: (not is_ref_by_cfg.get(configs[i], False),),
+        )
         y = [_label(configs[i]) for i in rows]
         ident = identical[rows, :]  # (n_rows, n_t)
         z_ident = [[1 if v == 1 else None for v in ident[a]] for a in range(len(rows))]
