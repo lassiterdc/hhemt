@@ -126,10 +126,14 @@ _EXPERIMENT_IDENTITY_FIELDS: frozenset[str] = frozenset(
         "toggle_tritonswmm_model",
         "toggle_triton_model",
         "toggle_swmm_model",
-        # A different pinned TRITON sha is a different solver = a different experiment: combining a
-        # fixed-TRITON clean against a stale-TRITON resume would be a silently-wrong North-Star figure,
-        # so a cross-sha combine is BLOCKING. The two arms of THIS experiment share 3a832f7d, so this
-        # never fires on the intended pair — it guards against an accidental cross-sha combine.
+        # A different pinned TRITON sha is a different solver, so an UNDECLARED cross-sha combine is
+        # BLOCKING: combining two arms at different solver versions without saying so would publish a
+        # silently-wrong North-Star figure. A DECLARED split (combine_bundle(declare_solver_split=True))
+        # downgrades this one field to WARNING, which admits the combine while leaving the divergence
+        # visible in the report — non-silence is the property this guard protects, not the refusal.
+        # A split pin is a legitimate design: running the clean arm at a fix's ANCESTOR and the resume
+        # arm at the fix makes a bit-identical result evidence for BOTH the fix working AND no
+        # regression against that ancestor, which one shared pin cannot show.
         "TRITONSWMM_branch_key",
     }
 )
@@ -305,12 +309,21 @@ def _downgrade_paired_model_arms(report: CompatibilityReport, eids: list[str]) -
     ]
 
 
-def check_bundle_compatibility(bundle_roots: list[Path]) -> CompatibilityReport:
+def check_bundle_compatibility(
+    bundle_roots: list[Path],
+    *,
+    declare_solver_split: bool = False,
+) -> CompatibilityReport:
     """Compare N bundles' metadata pairwise; return a CompatibilityReport.
 
     Iterates each pair, unions their comparison field sets (excluding reserved
     label keys), and emits a CompatibilityDivergence (classified via _classify)
     for each field whose values differ. R2/R3: callers abort on report.blocking.
+
+    ``declare_solver_split`` is the operator asserting that the bundles run DIFFERENT
+    pinned solvers on purpose. It downgrades the ``TRITONSWMM_branch_key`` divergence
+    from BLOCKING to WARNING — the divergence is still reported, so the combined report
+    still carries it. Default False keeps an accidental cross-sha combine refused.
     """
     report = CompatibilityReport()
     roots = sorted(bundle_roots)
@@ -334,5 +347,26 @@ def check_bundle_compatibility(bundle_roots: list[Path]) -> CompatibilityReport:
                             value_b=vb,
                         )
                     )
+    # ORDER IS THE MECHANISM. This runs BEFORE _downgrade_paired_model_arms because that function
+    # relaxes the model toggles only when `all_blocking <= _PAIRED_MODEL_TOGGLES`. Leaving the sha
+    # BLOCKING here would keep it in `all_blocking`, fail that subset test, and re-block the paired
+    # model toggles too — so a 4-way clean/resume x triton/tritonswmm combine that worked at a shared
+    # pin would stop working, for a reason the error text never names. Downgrading first shrinks
+    # `all_blocking` back to the toggles and the existing test passes untouched.
+    if declare_solver_split:
+        report.divergences = [
+            CompatibilityDivergence(
+                field_name=d.field_name,
+                bucket=d.bucket,
+                severity=CompatibilitySeverity.WARNING,
+                bundle_a=d.bundle_a,
+                bundle_b=d.bundle_b,
+                value_a=d.value_a,
+                value_b=d.value_b,
+            )
+            if d.field_name == "TRITONSWMM_branch_key"
+            else d
+            for d in report.divergences
+        ]
     _downgrade_paired_model_arms(report, [cores[r].get("analysis_id", str(r)) for r in roots])
     return report

@@ -458,7 +458,15 @@ def _cli() -> None:
         sp.add_argument("--system-directory", required=True)
         sp.add_argument("--hpc-system-config", type=Path, default=None)
         sp.add_argument("--cell-size-m", type=float, default=3.5)
-        sp.add_argument("--tritonswmm-sha", default="3a832f7d")
+        # FAIL CLOSED. This flag decides what is CLONED AND BUILT, not merely what is
+        # asserted, so a default silently builds a version nobody chose -- the previous
+        # "3a832f7d" default was stale against every pin used since it was written and
+        # nothing surfaced that.
+        sp.add_argument(
+            "--tritonswmm-sha",
+            required=True,
+            help="TRITON commit to BUILD for this case. No default: an invocation that names no version fails.",
+        )
         # Siblings of --tritonswmm-sha. Default None so every existing invocation keeps
         # today's behaviour: the case builder only writes a key when the value is not None.
         sp.add_argument("--tritonswmm-git-url", default=None)
@@ -477,7 +485,26 @@ def _cli() -> None:
     )
     ip.add_argument("--hpc-system-config", type=Path, default=None)
     ip.add_argument("--cell-size-m", type=float, default=3.5)
-    ip.add_argument("--tritonswmm-sha", default="3a832f7d")
+    # TWO SHAS, because under a split pin they are different versions and one flag cannot
+    # mean both. --tritonswmm-sha is the version the RESUME case BUILDS; --clean-tritonswmm-sha
+    # is the version the CLEAN bundle being depended on was BUILT WITH, which resolve_dependency
+    # verifies rather than builds. Both fail closed.
+    ip.add_argument(
+        "--tritonswmm-sha",
+        required=True,
+        help="TRITON commit to BUILD for the resume case.",
+    )
+    ip.add_argument(
+        "--clean-tritonswmm-sha",
+        required=True,
+        help="TRITON commit the CLEAN bundle was built with; verified, not built.",
+    )
+    # Siblings of --tritonswmm-sha, MISSING from this subparser until now while the code path
+    # below read args.tritonswmm_git_url / args.tritonswmm_software_directory -- an AttributeError
+    # on every invocation that got past dependency resolution, latent only because
+    # resolve_dependency halts first when the clean bundle is absent.
+    ip.add_argument("--tritonswmm-git-url", default=None)
+    ip.add_argument("--tritonswmm-software-directory", default=None)
     ip.add_argument("--output", type=Path, default=None)
     args = p.parse_args()
 
@@ -510,14 +537,14 @@ def _cli() -> None:
     # halt message is always a copy-paste-valid command (no literal "None" path).
     hpc_flag = f"--hpc-system-config {args.hpc_system_config} " if args.hpc_system_config is not None else ""
     clean_root = resolve_dependency(
-        resume_depends_on(tritonswmm_sha=args.tritonswmm_sha),
+        resume_depends_on(tritonswmm_sha=args.clean_tritonswmm_sha),
         search_roots=list(args.clean_bundle_search_root),
         auto_satisfy=None,
         emitted_command=(
             f"python -m scripts.experiments.synth_compute_config clean "
             f"--system-directory {args.clean_system_directory} "
             f"{hpc_flag}"
-            f"--tritonswmm-sha {args.tritonswmm_sha} --eda --bundle"
+            f"--tritonswmm-sha {args.clean_tritonswmm_sha} --eda --bundle"
         ),
     )
     resume_case_obj = resume_case(

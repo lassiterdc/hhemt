@@ -2360,6 +2360,15 @@ def combine_command(
             "Target directory for the combined bundle. Defaults to {first_bundle}/../combined_{n}bundles_{git_sha}/."
         ),
     ),
+    declare_solver_split: bool = typer.Option(
+        False,
+        "--declare-solver-split",
+        help=(
+            "Assert that these bundles run DIFFERENT pinned solver versions ON PURPOSE. Downgrades the "
+            "cross-sha block to a warning; the divergence is still reported and still appears in the "
+            "combined report. Without this, a cross-sha combine is refused."
+        ),
+    ),
 ) -> None:
     """Combine N completed render bundles into one cross-experiment report + standalone bundle.
 
@@ -2370,7 +2379,7 @@ def combine_command(
     """
     from hhemt.bundle import combine_bundle
 
-    cb = combine_bundle(bundles, output_path=output)
+    cb = combine_bundle(bundles, output_path=output, declare_solver_split=declare_solver_split)
     console.print(f"[green]Combined bundle emitted:[/green] {cb.root}")
 
 

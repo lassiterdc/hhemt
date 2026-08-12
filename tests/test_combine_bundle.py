@@ -37,7 +37,9 @@ def test_blocking_aborts(tmp_path, monkeypatch):
             CompatibilityDivergence("case_name", "experiment", S.BLOCKING, "a", "b", "norfolk", "houston"),
         ]
     )
-    monkeypatch.setattr(CB, "check_bundle_compatibility", lambda roots: rep)
+    # **kwargs so the double tracks check_bundle_compatibility's keyword-only options
+    # (declare_solver_split) without this test asserting anything about them.
+    monkeypatch.setattr(CB, "check_bundle_compatibility", lambda roots, **_kw: rep)
     a = tmp_path / "a"
     a.mkdir()
     b = tmp_path / "b"

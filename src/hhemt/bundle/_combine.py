@@ -70,6 +70,8 @@ _COMBINED_CONFORMS_TO = (
 def combine_bundle(
     bundle_paths: list[Path],
     output_path: Path | None = None,
+    *,
+    declare_solver_split: bool = False,
 ) -> CombinedBundle:
     """Combine N completed render bundles into one standalone combined bundle.
 
@@ -119,15 +121,27 @@ def combine_bundle(
             message=f"combine_bundle needs >=2 bundles, got {len(roots)}.",
             config_path=None,
         )
-    report = check_bundle_compatibility(roots)
+    report = check_bundle_compatibility(roots, declare_solver_split=declare_solver_split)
     if not report.is_compatible:
         blocking = "; ".join(
             f"{d.field_name} ({d.bucket}): {d.bundle_a}={d.value_a!r} vs {d.bundle_b}={d.value_b!r}"
             for d in report.blocking
         )
+        _hint = ""
+        if any(d.field_name == "TRITONSWMM_branch_key" for d in report.blocking):
+            _hint = (
+                "\n\nThese bundles were built at DIFFERENT pinned solver versions. If that is "
+                "deliberate — e.g. a clean arm at a fix's ancestor against a resume arm at the fix — "
+                "re-run with `hhemt combine --declare-solver-split` (or "
+                "`combine_bundle(..., declare_solver_split=True)`). The divergence is still reported "
+                "and still appears in the combined report; declaring it only stops it aborting the "
+                "combine. Do NOT pass it to silence a split you did not intend: two arms at different "
+                "solvers answer different questions, and combining them unknowingly publishes a "
+                "silently-wrong figure."
+            )
         raise ConfigurationError(
             field="bundle_paths",
-            message=f"Bundles are not combine-compatible (blocking divergences): {blocking}",
+            message=f"Bundles are not combine-compatible (blocking divergences): {blocking}{_hint}",
             config_path=None,
         )
     merged = merge_experiment_trees(roots)  # consumed by the emit-time render step
