@@ -668,6 +668,7 @@ rule plot_scenario_status_appendix:
 rule plot_errors_and_warnings:
     input:
         "scenario_status.csv",
+        "validation_report.json",
         consolidated = "_status/f_consolidate_master_complete.flag",
     output:
         report(
@@ -678,8 +679,8 @@ rule plot_errors_and_warnings:
             labels={"figure": "Validation report"},
         )
     params:
-        source_paths = [{'path': 'scenario_status.csv', 'variables': ['scenario_setup', 'run_completed', 'actual_nTasks', 'actual_omp_threads', 'actual_total_gpus', 'actual_gpu_backend']}, {'path': 'sims/<event_id>/log_<model_type>.json', 'variables': ['simulation_completed (per scenario × model_type)']}, {'path': '../system_log.json', 'variables': ['compilation_successful', 'compilation_triton_only_successful', 'compilation_swmm_successful']}],
-        source_paths_rst = '- ``scenario_status.csv``\n\n  - ``scenario_setup``\n  - ``run_completed``\n  - ``actual_nTasks``\n  - ``actual_omp_threads``\n  - ``actual_total_gpus``\n  - ``actual_gpu_backend``\n\n- ``sims/<event_id>/log_<model_type>.json``\n\n  - ``simulation_completed (per scenario × model_type)``\n\n- ``../system_log.json``\n\n  - ``compilation_successful``\n  - ``compilation_triton_only_successful``\n  - ``compilation_swmm_successful``\n',
+        source_paths = [{'path': 'scenario_status.csv', 'variables': ['scenario_setup', 'run_completed', 'actual_nTasks', 'actual_omp_threads', 'actual_total_gpus', 'actual_gpu_backend']}, {'path': 'sims/<event_id>/log_<model_type>.json', 'variables': ['simulation_completed (per scenario × model_type)']}, {'path': '../system_log.json', 'variables': ['compilation_tritonswmm_cpu_successful', 'compilation_tritonswmm_gpu_successful', 'compilation_triton_cpu_successful', 'compilation_triton_gpu_successful', 'compilation_swmm_successful']}],
+        source_paths_rst = '- ``scenario_status.csv``\n\n  - ``scenario_setup``\n  - ``run_completed``\n  - ``actual_nTasks``\n  - ``actual_omp_threads``\n  - ``actual_total_gpus``\n  - ``actual_gpu_backend``\n\n- ``sims/<event_id>/log_<model_type>.json``\n\n  - ``simulation_completed (per scenario × model_type)``\n\n- ``../system_log.json``\n\n  - ``compilation_tritonswmm_cpu_successful``\n  - ``compilation_tritonswmm_gpu_successful``\n  - ``compilation_triton_cpu_successful``\n  - ``compilation_triton_gpu_successful``\n  - ``compilation_swmm_successful``\n',
     log: "logs/plots/errors_and_warnings.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -800,7 +801,7 @@ rule plot_per_sim_per_sa_peak_flood_depth:
             "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html",
             caption="report/captions/per_sim_peak_flood_depth.rst",
             category="Per Simulation Results",
-            labels={"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "Peak flood depth"},
+            labels={"figure": "Peak flood depth", "sa_id": "{sa_id}", "event_id": "{event_id}"},
         )
     wildcard_constraints:
         sa_id="[A-Za-z0-9_.]+",
@@ -831,7 +832,7 @@ rule plot_per_sim_per_sa_conduit_flow:
             "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html",
             caption="report/captions/per_sim_conduit_flow.rst",
             category="Per Simulation Results",
-            labels={"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "Conduit flow"},
+            labels={"figure": "Conduit flow", "sa_id": "{sa_id}", "event_id": "{event_id}"},
         )
     wildcard_constraints:
         sa_id="[A-Za-z0-9_.]+",
