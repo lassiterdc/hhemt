@@ -769,6 +769,87 @@ def check_provenance_completeness(analysis) -> CheckResult:
     )
 
 
+def check_known_resume_defects(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Registry-verdict counterpart to ``check_coupled_resume_validity``.
+
+    SEPARATE from that check deliberately, and the separation is measured rather than
+    stylistic. That check answers an EVIDENCE question -- did the coupled replay engage
+    for these sims -- by reading per-sim logs. This one answers a BUILD question -- does
+    the pinned TRITON carry a known resume defect -- from the registry alone. They are
+    two questions, not two verdicts on one, and a build can legitimately be clean on one
+    and not the other.
+
+    Folding this into that check was tried and reverted: any in-check branch that turns a
+    present registry verdict into a non-pass flips fourteen coupled-path tests, because
+    TRITON-RESUME-EXTBC-GHOST-RING is PRESENT at all three pins they use
+    (15eb18a5 / b3820a44 / 9db367dd) and only 5d2ad1e8 clears it. An early return
+    suppressed the refined verdict outright; a merge would have flipped
+    test_postfix_with_replay_marker_passes; and firing only when no refined defect is
+    present still fires at 9db367dd, which is that very test's pin.
+
+    Trigger scoping mirrors the selection half of the version x selection cross: a
+    `resumed_coupled` defect is out of scope for a pure-TRITON arm, while `resumed_any`
+    and `always` apply to both. [Q130]: nothing resumed, no record, or an unresolvable
+    sha all render N/A rather than a disclosed-denominator PASS.
+    """
+    import pandas as pd
+
+    from hhemt.model_defects import REGISTRY, resolve
+
+    _name = "Known resume defects"
+    try:
+        df = analysis.df_status
+    except Exception:
+        df = None
+    if df is None or not {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
+        return CheckResult(
+            name=_name, level="aggregate", passed=True, applicable=False,
+            summary="No resume record available — known-resume-defect status N/A.", details=[],
+        )
+    n_resumed = int((pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0) >= 1).sum())
+    if n_resumed == 0:
+        return CheckResult(
+            name=_name, level="aggregate", passed=True, applicable=False,
+            summary="No sim was resumed — known-resume-defect status N/A (0 resumed sim(s)).",
+            details=[],
+        )
+    # Module-global call, NEVER a local import: every test in this module monkeypatches
+    # `av._read_triton_provenance`, and a locally-bound name would silently bypass the
+    # patch and exercise the real zarr reader.
+    sha = _read_triton_provenance(analysis)
+    if not sha:
+        return CheckResult(
+            name=_name, level="aggregate", passed=True, applicable=False,
+            summary="Producing-TRITON sha unknown — known-resume-defect status N/A.", details=[],
+        )
+    coupled = bool(getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False))
+    present = [
+        d for d in REGISTRY
+        if not (d.trigger == "resumed_coupled" and not coupled)
+        and resolve(d, sha).status == "present"
+    ]
+    if present:
+        return CheckResult(
+            name=_name, level="aggregate", passed=False,
+            summary=(
+                f"{n_resumed} resumed sim(s) at a TRITON build carrying {len(present)} known "
+                f"resume defect(s): {', '.join(d.defect_id for d in present)} (pin {sha[:12]})."
+            ),
+            details=[
+                {"scenario": "(analysis-level)", "detail": f"{d.defect_id}: {d.remedy}"}
+                for d in present
+            ],
+        )
+    return CheckResult(
+        name=_name, level="aggregate", passed=True,
+        summary=(
+            f"{n_resumed} resumed sim(s) at a build carrying no known resume defect "
+            f"(pin {sha[:12]})."
+        ),
+        details=[],
+    )
+
+
 def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     """Warn when a COMPLETED coupled analysis's resumed data is invalid.
 
@@ -1604,6 +1685,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_resource_usage(analysis),
             check_invalidating_fixes(analysis),  # ADR-17 registry surface
             check_coupled_resume_validity(analysis),  # post-fix retroactive coupled-resume invalidity warning
+            check_known_resume_defects(analysis),  # registry-verdict counterpart (build-level, no log evidence)
             check_resume_schedule_honored(analysis),  # Phase 5: replay_t / n_resumes vs configured schedule
             check_eda_calc_ran(analysis),  # F4: enumerated EDA figures vs present eda/*.verdict.json
         ]
