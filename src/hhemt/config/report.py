@@ -798,6 +798,9 @@ h3 {{ color: {primary_color}; margin-top: {h3_margin_top_px}px; margin-bottom: {
 table {{ margin-bottom: {table_margin_bottom_px}px; }}
 td.pass {{ color: {pass_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
 td.fail {{ color: {fail_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
+td.na {{ color: {na_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
+td.pass-qualified {{ color: {qualified_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
+span.floor-note {{ color: {na_text_color}; font-weight: 400; font-style: italic; }}
 .banner {{ padding: {banner_padding_v_px}px {banner_padding_h_px}px; border-radius: {banner_border_radius_px}px; margin: 10px 0 18px;
           font-weight: {th_font_weight}; font-size: {banner_font_size_px}px; }}
 .banner.pass {{ background-color: {pass_bg_color}; color: {pass_text_color}; border: 1px solid {pass_text_color}; }}
@@ -824,6 +827,13 @@ class ErrorsAndWarningsConfig(_HtmlTableStyleBase):
     banner_padding_h_px: int = Field(14)
     banner_border_radius_px: int = Field(6)
     banner_font_size_px: int = Field(14)
+    # `_status_of` returns four outcomes, not two. Before this the config CSS defined
+    # only `td.pass`/`td.fail`, so the `na` and `pass-qualified` classes the mapper
+    # emits had no rule at all -- an N/A cell would have rendered with no colour, no
+    # centring and no column width. Same greys as the module's (now deleted) dead
+    # `_INLINE_STYLE` twin, so the rendered bytes match what that constant intended.
+    na_text_color: str = Field("#6E7781")
+    qualified_text_color: str = Field("#9A6700")
 
     def render_inline_css(self) -> str:
         fields = self.model_dump()

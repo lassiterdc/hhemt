@@ -1763,6 +1763,18 @@ def load_validation_report(analysis: TRITONSWMM_analysis) -> ValidationReport:
                 passed=c["passed"],
                 summary=c["summary"],
                 details=c.get("details", []),
+                # The writer is `dataclasses.asdict` (total over the dataclass); this
+                # reader was a hand-listed five-field subset, so `applicable`,
+                # `instrument` and `detection_floor` deserialized to their defaults
+                # (True / None / None). That made `_status_of`'s N/A branch and both
+                # pass-qualified branches unreachable through the persisted path --
+                # measured on the delivered generation, where three `applicable=False`
+                # checks on each clean arm rendered as unqualified PASS and the whole
+                # figure's status-class set was `['pass']`. `.get` with the dataclass
+                # default keeps a pre-field validation_report.json loading unchanged.
+                applicable=c.get("applicable", True),
+                instrument=c.get("instrument"),
+                detection_floor=c.get("detection_floor"),
             )
             for c in payload.get("checks", [])
         ]

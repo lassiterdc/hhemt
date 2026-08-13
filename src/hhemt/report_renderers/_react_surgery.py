@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 
 from hhemt.report_plot_ids import humanize_plot_id
+from hhemt.exceptions import ProcessingError
 
 # Historical default category order (used when no category_order is passed —
 # byte-identical for non-passing callers, mirroring navbar_text's None default).
@@ -102,22 +103,104 @@ class ReportRenderGuard extends React.Component {
 }
 
 function reportRenderGuardPanel(err, where) {
+    // INLINE STYLES, NOT TAILWIND CLASSES. Snakemake ships a content-PURGED Tailwind
+    // build: only classes its own templates used at ITS build time have CSS rules.
+    // This panel is injected by post-process surgery, so the purge never saw it --
+    // measured on the delivered 150,109,331-byte report, `bg-red-50`, `text-red-700`,
+    // `border-red-700`, `font-mono`, `text-sm` and `font-bold` each had ZERO CSS
+    // selector occurrences and appeared exactly once in the document (here), while
+    // Snakemake's own `inline-flex` / `text-right` had 5 and 18 rules. The panel
+    // therefore rendered entirely unstyled and inherited ambient colour, which is why
+    // it was triaged as a BLANK PAGE across three rounds. Any class-based fix has the
+    // same defect regardless of which class is chosen; an inline style needs no
+    // stylesheet. Applies to every future injected VISUAL surface -- the behaviour-only
+    // injections (_SHOW_CATEGORY_NEW, _CLICK_DELEGATE) are unaffected.
+    var _mono = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
     return e(
         "div",
-        { className: "m-2 p-3 rounded border-2 border-red-700 bg-red-50 text-sm" },
-        e("div", { className: "font-bold text-red-700 mb-1" },
+        { style: { margin: "0.5rem", padding: "0.75rem", borderRadius: "6px",
+                   border: "2px solid #B11E1E", backgroundColor: "#FDECEC",
+                   color: "#1A1A1A", fontSize: "13px" } },
+        e("div", { style: { fontWeight: "700", color: "#B11E1E", marginBottom: "4px" } },
           "This results view could not be displayed."),
-        e("div", { className: "mb-1" },
+        e("div", { style: { marginBottom: "4px", color: "#1A1A1A" } },
           "Category: " + (where === undefined || where === null ? "(unknown)" : String(where))),
-        e("div", { className: "font-mono text-xs whitespace-pre-wrap break-all" },
+        e("div", { style: { fontFamily: _mono, fontSize: "12px", whiteSpace: "pre-wrap",
+                            wordBreak: "break-all", color: "#1A1A1A",
+                            backgroundColor: "#FFFFFF", padding: "6px",
+                            borderRadius: "4px", border: "1px solid #E0B4B4" } },
           String((err && err.name) || "Error") + ": " + String((err && err.message) || err)),
-        e("div", { className: "mt-2 text-xs" },
+        e("div", { style: { marginTop: "8px", fontSize: "12px", color: "#1A1A1A" } },
           "The rest of the report is unaffected \\u2014 use the sidebar to open another " +
           "category. Please copy the line above into a bug report.")
     );
 }
 </script>
 """
+
+
+# Toggle-cell fallback (the per-sim `results[undefined].mime_type` throw).
+#
+# `AbstractResults.getData` promotes a label to a TOGGLE when it has exactly two values
+# each occurring in exactly half the results. The heuristic's unstated precondition --
+# stated in its own upstream comment, "a plot which is created twice for each sample,
+# once with and once without legend" -- is that the two values are two RENDERINGS of one
+# figure, so every entry carries both. In the combined report the `models` label splits
+# 28/28 (`peak_flood_depth` pairs across both arms; `conduit_flow` is SWMM-dependent and
+# cannot), and the two values are two DIFFERENT figures. `figure` stays in the entry key,
+# so all 56 entries hold exactly ONE of the two toggle values and `entries.get(k).get(t)`
+# returns `undefined` for 28 of them. That `undefined` reaches `ResultViewButton.render`
+# -> `handleSelectedResult(undefined)` -> `results[undefined].mime_type` -> TypeError,
+# during RENDER, which is why the guard panel appears on merely opening the category.
+#
+# Fixing the label emission was tried once already (step 4b removed the same 50/50
+# accident from `figure`) and the collision reappeared on `models`; protecting `models`
+# by reordering would put `figure` back in the toggle slice. This guards the LOOKUP
+# instead, which closes the class rather than the instance. Behaviour when the cell IS
+# populated is byte-identical; when it is not, the row opens its own figure -- which is
+# the desired result for an unpaired entry. Idempotent: the old literals are gone after
+# the first pass.
+_TOGGLE_CELL_OLD = (
+    "            let entryPath = data.entries.get(arrayKey(entryLabels))"
+    ".get(arrayKey(toggleLabels));"
+)
+
+_TOGGLE_CELL_NEW = (
+    "            let _cell = data.entries.get(arrayKey(entryLabels));\n"
+    "            let entryPath = _cell.get(arrayKey(toggleLabels));\n"
+    "            if (entryPath === undefined) { entryPath = _cell.values().next().value; }"
+)
+
+_TOGGLE_CB_OLD = (
+    "                let targetPath = _this.state.data.entries.get(arrayKey(entryLabels))"
+    ".get(arrayKey(toggleLabels));"
+)
+
+_TOGGLE_CB_NEW = (
+    "                let _cbCell = _this.state.data.entries.get(arrayKey(entryLabels));\n"
+    "                let targetPath = _cbCell.get(arrayKey(toggleLabels));\n"
+    "                if (targetPath === undefined) { targetPath = _cbCell.values().next().value; }"
+)
+
+#: TIER-1 FEATURE SENTINEL for the step-6b match guard. Answers "does this document
+#: carry the toggle machinery step 6b patches?", which is the question that separates
+#: a document legitimately WITHOUT the lookup (a fragment fixture; VMS-5 inertness)
+#: from one whose lookup literal has DRIFTED (must fail loudly).
+#:
+#: `arrayKey` is chosen because it is a module-level HELPER that both OLD literals call
+#: twice, so it is a strict WEAKENING of them along every axis that drifts -- indentation,
+#: a refactor of the `.get().get()` chain, or a rename of `renderEntries` itself -- and it
+#: disappears only when the toggle feature is gone upstream, which is exactly when
+#: inertness is correct. The sentinel and the legitimate-absence condition are the same
+#: condition; that is what makes it a sentinel rather than a heuristic.
+#:
+#: Measured 2026-08-13 -- 0 occurrences in all three VMS-5 fixtures, 7 in each delivered
+#: real report. Do NOT substitute `AbstractResults` (1 in the fixtures) or `toggleLabels`
+#: (1, at the fixture body's `.size > 0` line): neither separates the classes.
+#:
+#: Every constant this module INJECTS is sentinel-free (verified), so a second pass cannot
+#: flip tier 1 from absent to present and raise on a document the first pass left alone.
+_TOGGLE_FEATURE_SENTINEL = "arrayKey("
 
 
 _CLICK_DELEGATE = """
@@ -290,6 +373,46 @@ def apply_post_process_surgery(
     # 6. showCategory auto-pop (idempotent: check before injecting)
     if _SHOW_CATEGORY_NEW not in html_text:
         html_text = html_text.replace(_SHOW_CATEGORY_OLD, _SHOW_CATEGORY_NEW, 1)
+
+    # 6b. Toggle-cell fallback. Must run BEFORE the row-click delegate injection so a
+    # delegated click can never reach an undefined result path. See _TOGGLE_CELL_OLD.
+    #
+    # MATCH GUARD, not merely an idempotency guard. `if NEW not in html_text` alone makes a
+    # drifted OLD literal a SILENT no-op: .replace returns the input unchanged, NEW stays
+    # absent, and every later invocation repeats the no-op forever -- indistinguishable from
+    # a report that never needed the fix. Assert OLD is present exactly once whenever NEW is
+    # absent, and RAISE rather than warn: a warning is swallowed in Snakemake's rule log.
+    # TIER-1 GATE. The match guard below is correct only on a document that actually
+    # carries the toggle machinery. This function is deliberately fragment-tolerant --
+    # VMS-5 pins that a document whose AbstractResults shape does not match receives
+    # neither the patch nor an error -- so an UNGATED match guard converts that tested
+    # inertness into a hard failure for the same document class. The two contracts do not
+    # conflict; they partition the document space, and this gate is the partition:
+    #
+    #   tier 1 absent                          -> inert          (VMS-5)
+    #   tier 1 present, exact literal absent   -> drift -> raise (match guard)
+    #
+    # Absent the gate, the three VMS-5 fixtures raise -- five red tests, all of them
+    # correct about the contract they defend.
+    if _TOGGLE_FEATURE_SENTINEL in html_text:
+        for _old, _new, _what in (
+            (_TOGGLE_CELL_OLD, _TOGGLE_CELL_NEW, "renderEntries"),
+            (_TOGGLE_CB_OLD, _TOGGLE_CB_NEW, "toggleCallback"),
+        ):
+            if _new in html_text:
+                continue
+            _n = html_text.count(_old)
+            if _n != 1:
+                raise ProcessingError(
+                    f"toggle-cell fallback: expected exactly 1 occurrence of the {_what} "
+                    f"lookup literal, found {_n}. The document carries the toggle "
+                    f"machinery ({_TOGGLE_FEATURE_SENTINEL!r} is present) but not this "
+                    "literal, so the bundled AbstractResults shape has DRIFTED rather "
+                    "than being absent; re-read the literal from the freshly rendered "
+                    "analysis_report.html (renderEntries uses 12 leading spaces, "
+                    "toggleCallback 16)."
+                )
+            html_text = html_text.replace(_old, _new, 1)
 
     # 7. Row-click delegate at LAST </body>
     if _CLICK_DELEGATE not in html_text:

@@ -123,3 +123,26 @@ def test_render_guard_does_not_fire_without_the_anchor():
     assert "ReportRenderGuard" not in out
     assert _GUARD_RENDER_NEW not in out
     assert "renderGuardedContent" not in out
+
+
+def test_toggle_guard_raises_on_drift_but_stays_inert_without_the_machinery():
+    """The tier-1 gate separates DRIFT from legitimate absence.
+
+    Without the sentinel the guard cannot tell a fragment (inert) from a report whose
+    lookup literal moved (fatal), and VMS-5's fixtures take the fatal branch.
+    """
+    import pytest
+    from hhemt.exceptions import ProcessingError
+    from hhemt.report_renderers._react_surgery import apply_post_process_surgery
+
+    # tier 1 present (arrayKey), exact literal ABSENT -> drift -> raise
+    drifted = (
+        "<html><body><script>function arrayKey(a){return a.join(',');}\n"
+        "let entryPath = data.entries.get(arrayKey(x)).get(arrayKey(y));\n"  # wrong indent
+        "</script></body></html>"
+    )
+    with pytest.raises(ProcessingError, match="DRIFTED"):
+        apply_post_process_surgery(drifted)
+
+    # tier 1 absent -> inert (this is the VMS-5 class; no raise)
+    apply_post_process_surgery("<html><body><p>no react here</p></body></html>")

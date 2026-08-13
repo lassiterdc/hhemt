@@ -679,7 +679,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     # PER-FAMILY cross-config raw byte-identity over the master's OWN subs. Applicable
     # on BOTH the clean master (n_resumes==0) and the resume master (n_resumes>0): each family
     # is compared within itself against its minimum-device reference (serial-CPU for the cpu
-    # family; 1-GPU for each GPU-hardware family), so a GPU config is NEVER compared to a CPU
+    # family; 1-GPU for the single GPU family; per the N3 user ruling at _b4b_family_key, GPU is ONE family and not one per hardware), so a GPU config is NEVER compared to a CPU
     # config. The clean-vs-resume comparison lives on the combine surface
     # (cross_experiment_intercomparison), NOT here (F8: the old within-master b4b_clean_vs_resume
     # figure is removed).

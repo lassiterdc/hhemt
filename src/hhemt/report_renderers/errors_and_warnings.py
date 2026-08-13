@@ -27,27 +27,6 @@ if TYPE_CHECKING:
     from hhemt.config.report import report_config
 
 
-_INLINE_STYLE = """
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-       padding: 12px; color: #333; margin: 0; }
-h2 { color: #232D4B; border-bottom: 2px solid #232D4B; padding-bottom: 4px; margin-top: 0; }
-h3 { color: #232D4B; margin-top: 24px; margin-bottom: 8px; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 8px; }
-th, td { padding: 6px 10px; border: 1px solid #DADADA; text-align: left; vertical-align: top; }
-th { background-color: #232D4B; color: white; font-weight: 600; }
-tr:nth-child(even) td { background-color: #F1F1EF; }
-tr:hover td { background-color: #FFE4C4; }
-td.pass { color: #1F7A1F; font-weight: 600; text-align: center; width: 60px; }
-td.fail { color: #B11E1E; font-weight: 600; text-align: center; width: 60px; }
-td.pass-qualified { color: #9A6700; font-weight: 600; text-align: center; width: 60px; }
-td.na { color: #6E7781; font-weight: 600; text-align: center; width: 60px; }
-span.floor-note { color: #6E7781; font-weight: 400; font-style: italic; }
-.banner { padding: 10px 14px; border-radius: 6px; margin: 10px 0 18px;
-          font-weight: 600; font-size: 14px; }
-.banner.pass { background-color: #DDEEDD; color: #1F7A1F; border: 1px solid #1F7A1F; }
-.banner.fail { background-color: #F4D4D4; color: #B11E1E; border: 1px solid #B11E1E; }
-.banner.info { background-color: #E5EBF5; color: #232D4B; border: 1px solid #232D4B; }
-"""
 
 
 def _render_overall_banner(report: ValidationReport) -> str:
@@ -182,10 +161,31 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
     for c in checks:
         if not c.passed:
             all_issues.extend(c.details)
+    # Resource-level checks reached NO status row: this section was written as a
+    # mismatch table (it read `c.details` off FAILING checks only), so the single
+    # `level="resource"` check -- `Resource usage matches config` -- was counted in
+    # the banner's 15 and rendered as one of only 14 rows. That is a different defect
+    # from the three aggregate-level siblings, which render as soon as their level is
+    # set. Emit the status rows first, then the mismatch detail. Reclassifying the
+    # check to `level="system"` would ALSO have made it render -- and would have
+    # emptied `by_level["resource"]`, deleting the per-scenario expected-vs-actual
+    # detail table below on failure. The status table is the fix that keeps both.
+    status_rows = "\n    ".join(
+        '<tr><td>{n}</td><td class="{cls}">{glyph}</td><td>{d}</td></tr>'.format(
+            n=c.name, cls=_status_of(c)[0], glyph=_status_of(c)[1], d=c.summary
+        )
+        for c in checks
+    )
+    status_table = (
+        "<table>\n"
+        "  <thead><tr><th>Check</th><th>Status</th><th>Details</th></tr></thead>\n"
+        "  <tbody>\n    " + status_rows + "\n  </tbody>\n</table>"
+    )
     if not all_issues:
         return (
             "<h3>Resource-Utilization Mismatches</h3>\n"
-            '<div class="banner pass">✓ No resource mismatches — '
+            + status_table
+            + '\n<div class="banner pass">✓ No resource mismatches — '
             "all scenarios used expected compute resources.</div>"
         )
     rows = []
@@ -195,9 +195,15 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
         expected = d.get("expected", "")
         actual = d.get("actual", "")
         rows.append(f"<tr><td>{scenario}</td><td>{resource}</td><td>{expected}</td><td>{actual}</td></tr>")
+    # The FAILING branch needs the status row as much as the passing one -- more so.
+    # This is the only branch a run with a real resource mismatch reaches, and it is
+    # the branch no delivered arm exercises (all four pass), so landing only the
+    # early-return above would leave the check invisible on precisely the runs the
+    # section exists to serve, with no artifact revealing it.
     return (
         "<h3>Resource-Utilization Mismatches</h3>\n"
-        "<table>\n"
+        + status_table
+        + "\n<table>\n"
         "  <thead><tr><th>Scenario</th><th>Resource</th><th>Expected</th><th>Actual</th></tr></thead>\n"
         "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>"
     )

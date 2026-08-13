@@ -162,7 +162,13 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
         # git-describe-derived PEP-440 local version, and calling it a "version"
         # invites reading it as an install target, which the ToolkitPin stipulation
         # reserves for a resolvable published artifact.
-        "<th># sub-analyses</th><th>hhemt sha</th><th>hhemt build</th>"
+        # These two columns are DIFFERENT provenance axes and were reading as one
+        # build's sha plus its version. `hhemt sha` is `toolkit_sha`, from the child
+        # bundle_manifest -- the build that EMITTED the bundle. `hhemt build` derives
+        # from `hhemt_producing_sha` on the consolidated tree -- the build that
+        # PRODUCED the data. On the delivered generation they were 17 commits apart
+        # (ad70cd3b416f vs 01655abb60c2) and a reader had no way to see that.
+        "<th># sub-analyses</th><th>hhemt bundle sha</th><th>hhemt build (data-producing)</th>"
         "<th>Solver sha</th></tr></thead><tbody>" + body + "</tbody></table>" + _caption
     )
 
@@ -186,9 +192,22 @@ def _derive_version_from_sha(sha: str) -> str | None:
     """
     import subprocess as _sp
 
+    from hhemt.bundle._emit import _toolkit_source_dir
+
     try:
         out = _sp.run(
             ["git", "describe", "--tags", "--long", "--abbrev=12", sha],
+            # Anchor on the toolkit source, never the process CWD. Under the render
+            # rule the CWD is the analysis/bundle directory, so an unanchored
+            # `git describe` either fails outright (non-repo -> check=True raises ->
+            # None) or resolves a FOREIGN repo that does not contain this sha (-> non-
+            # zero -> None). Both kept the raw stamped "0.1.0", which is what the
+            # delivered generation rendered on all four rows. `_emit._toolkit_source_dir`
+            # exists for exactly this: measured 2026-07-15, an unanchored git query from
+            # a foreign repo's CWD returned the foreign SHA while hhemt was imported
+            # from a different checkout. The `None` contract is unchanged -- with the
+            # anchor, git failure still means genuinely-absent git, not wrong-directory.
+            cwd=_toolkit_source_dir(),
             capture_output=True,
             text=True,
             check=True,
