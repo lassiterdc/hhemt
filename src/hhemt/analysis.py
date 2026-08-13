@@ -2886,7 +2886,13 @@ class TRITONSWMM_analysis:
         _tmp.replace(cfg_yaml)
         return cfg_yaml
 
-    def render_report(self, format: "Literal['html','zip']" = "zip", *, reprocess: bool = False) -> "Path":
+    def render_report(
+        self,
+        format: "Literal['html','zip']" = "zip",
+        *,
+        reprocess: bool = False,
+        declare_stale_plots: bool = False,
+    ) -> "Path":
         """Render the report from already-completed workflow outputs.
 
         Idempotent: invokes ``snakemake --report`` against the existing Snakefile
@@ -2919,6 +2925,18 @@ class TRITONSWMM_analysis:
 
         from .exceptions import WorkflowError
         from .workflow import _assert_snakefile_package_current
+
+        # Build-match gate (VMS-17/18). Safe at the TOP because this method executes NO
+        # rules: `snakemake --report` is a post-execution render, and when this runs as the
+        # DAG's `rule render_report` every plot rule is already a completed input. So the
+        # figures inspected here are exactly the figures the report will transcribe, and
+        # nothing between this line and the render can change them. A `--force-render`
+        # rebuild happens in run()/_apply_force_rerun, a different method, strictly earlier.
+        from hhemt.provenance import assert_plots_match_running_build
+
+        assert_plots_match_running_build(
+            self.analysis_paths.analysis_dir, declare_stale_plots=declare_stale_plots
+        )
 
         snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
         snakefile = self.analysis_paths.analysis_dir / snakefile_name
