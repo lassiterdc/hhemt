@@ -968,3 +968,40 @@ def test_schedule_examined_population_still_fails():
     assert res.applicable is True
     assert res.passed is False
     assert res.details
+
+
+def test_clean_pin_with_resumed_sims_passes_positively(monkeypatch):
+    """VMS-12 + VMS-13: at a pin where every registry defect resolves ABSENT, a resumed
+    arm must PASS with a real denominator -- not FAIL, and not N/A.
+
+    PRE-FIX (before VMS-12) this FAILS with passed=False: TRITON-RESUME-EXTBC-GHOST-RING
+    carries trigger="resumed_any" and status="absent" at 5d2ad1e8, and the old
+    `_applicable` filtered on TRIGGER only, so it admitted "triton" into
+    _candidate_models on an arm the registry had just cleared. The 28 admitted rows then
+    failed the coupling-only replay-marker test. This is the shipped defect in generation
+    e389264af7b9, where synth_cc_resume_triton reported
+    "28 resumed coupled sim(s) ... lack the exchange-replay marker".
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: SHA_EXTBC_GHOST_RING_FIX)
+    res = check_coupled_resume_validity(
+        _analysis_stub(coupled=False, df=_resumed_df(model_type="triton"))
+    )
+    assert res.passed is True, f"got passed={res.passed!r} summary={res.summary!r}"
+    assert res.applicable is True, "a clean pin with resumed sims is a POSITIVE pass, not N/A"
+    assert "no known resume defect" in res.summary
+
+
+def test_affected_pin_with_resumed_sims_still_selects(monkeypatch):
+    """OVER-FIRE arm: VMS-12 must not clear an arm whose pin genuinely carries a defect.
+
+    At 9db367dd, TRITON-RESUME-EXTBC-GHOST-RING resolves PRESENT (also_present_set), so
+    _affected is non-empty and the positive-PASS branch must NOT fire. Pins that the
+    status filter narrows selection without disabling it.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    res = check_coupled_resume_validity(
+        _analysis_stub(coupled=False, df=_resumed_df(model_type="triton"))
+    )
+    assert "no known resume defect" not in res.summary, (
+        "the positive-PASS branch fired on a pin carrying a PRESENT defect"
+    )
