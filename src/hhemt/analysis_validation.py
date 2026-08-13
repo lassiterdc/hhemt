@@ -689,12 +689,18 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
                 out["plots"] = got
                 break
 
-    for stage, rel in (("bundle", "bundle_manifest.json"), ("combine", "combined_bundle_manifest.json")):
+    for stage, rel in (
+        ("bundle", "bundle_manifest.json"),
+        ("combine", "combined_bundle_manifest.json"),
+        ("report", "report_manifest.json"),
+    ):
         out[stage] = _from_json(adir / rel)
 
-    # sim / report have no capture site yet -- left as None deliberately. When those
-    # sites land they wire here; until then the check reports them uncaptured, which is
-    # the true statement about every analysis produced so far.
+    # `sim` has no capture site yet -- left as None deliberately. When that site lands it
+    # wires here; until then the check reports it uncaptured, which is the true statement
+    # about every analysis produced so far. `report` LANDED with the ADR-15 widening
+    # (analysis.py render_report tail) and is read above; `bundle` moved from uncaptured
+    # to captured in the same change, at the WRITER rather than the reader.
     return out
 
 

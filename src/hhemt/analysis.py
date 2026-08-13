@@ -3066,6 +3066,23 @@ class TRITONSWMM_analysis:
                 )
         except Exception:
             pass
+        # ADR-15 widening — the REPORT-stage capture site, the missing operand.
+        # Written at the END, after the report file exists: a stamp written at entry
+        # would survive a failed render and claim a report that was never produced.
+        # Mirrors the PLOTS-stage site (_figure_emission._write_manifest) field-for-field
+        # via the same single minter, so the two are comparable by construction.
+        try:
+            import json as _json
+
+            from hhemt.provenance import producing_stamp
+
+            (self.analysis_paths.analysis_dir / "report_manifest.json").write_text(
+                _json.dumps({"report_path": str(out_html), **producing_stamp()}, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as _e:  # never fail a completed render on a provenance write
+            print(f"[render_report] report_manifest.json stamp failed (non-fatal): {_e}", flush=True)
+
         return out_html
 
     @property

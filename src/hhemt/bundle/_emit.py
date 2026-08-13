@@ -64,6 +64,7 @@ if TYPE_CHECKING:
 
 from hhemt.constants import EDA_PLOTS_SUBDIR
 from hhemt.exceptions import StaleReadModelError
+from hhemt.provenance import producing_stamp
 
 # Local alias: the shared constant is the single source, and keeping the historical name
 # means the existing in-file references need no edit.
@@ -1361,6 +1362,13 @@ def _write_bundle_manifest(
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
         "layout_version": LAYOUT_VERSION,
         "toolkit_git_sha": git_sha,
+        # ADR-15 widening — the BUNDLE-stage capture site. `toolkit_git_sha` is NOT this
+        # stamp under another name: it is one field where the stamp is three, and it
+        # carries no version and no dirty flag. Minting the full triple here is what moves
+        # `bundle` from uncaptured to captured; teaching the READER to accept the single
+        # field instead would fabricate the two missing values, which is the
+        # never-infer-one-stage's-stamp-from-another rule _collect_stage_stamps states.
+        **producing_stamp(),
         "analysis_id": analysis_id,
         "created_at_utc": datetime.now(UTC).isoformat(),
         "source_paths_by_renderer": {name: [str(p) for p in paths] for name, paths in sources_by_renderer.items()},
