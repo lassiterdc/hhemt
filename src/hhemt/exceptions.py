@@ -21,6 +21,17 @@ class TRITONSWMMError(Exception):
     pass
 
 
+class StalePlotsError(TRITONSWMMError):
+    """A report is being rendered from figures produced by a different toolkit build.
+
+    Equality on the (sha, dirty) tuple, never an ordering: shas are unordered in general
+    and the read path often has no object DB. Absent is never equal -- including absent
+    on both sides -- so a regression in the capture site fails LOUD.
+    """
+
+    pass
+
+
 class StaleReadModelError(TRITONSWMMError):
     """A rendered figure predates the persisted read-model it transcribes.
 

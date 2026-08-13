@@ -750,7 +750,9 @@ class CombinedBundle:
     def root(self) -> Path:
         return self._root
 
-    def regenerate_report(self, *, format: Literal["html", "zip"] = "zip") -> Path:
+    def regenerate_report(
+        self, *, format: Literal["html", "zip"] = "zip", declare_stale_plots: bool = False
+    ) -> Path:
         """Regenerate the combined report from the bundled data (mirrors Bundle.regenerate_report).
 
         Re-invokes the SAME render path against the bundle root — a REAL
@@ -758,6 +760,9 @@ class CombinedBundle:
         The renderers read the bundled ``combined_{compatibility,intercomparison}.json``
         read-models, so no re-merge is needed.
         """
+        from hhemt.provenance import assert_plots_match_running_build
+
+        assert_plots_match_running_build(self._root, declare_stale_plots=declare_stale_plots)
         _render_combined_report(None, None, self._root, formats=(format,))
         report = self._root / f"analysis_report.{format}"
         if not report.exists():

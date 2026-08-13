@@ -231,7 +231,9 @@ class Bundle:
         # so test code can monkey-patch for backend-override coverage.
         return self._cfg_analysis.report.interactive.static_backend
 
-    def regenerate_report(self, *, format: Literal["html", "zip"] = "zip") -> Path:
+    def regenerate_report(
+        self, *, format: Literal["html", "zip"] = "zip", declare_stale_plots: bool = False
+    ) -> Path:
         """Regenerate the analysis report from bundled data.
 
         Phase 2 wires (a) the regeneration-scoped Snakefile generator
@@ -253,6 +255,15 @@ class Bundle:
             user-visible default is config-controlled (per the
             project's no-in-code-defaults principle).
         """
+        from hhemt.provenance import assert_plots_match_running_build
+
+        # Guard BEFORE any regeneration work: this seam re-renders the REPORT from a
+        # bundle whose figures are already fixed, so the figures it will transcribe are
+        # exactly the ones on disk now. (Contrast Analysis.render_report(), which may
+        # itself rebuild the figures it would be judged against — that seam's placement
+        # is a separate question and is deliberately not wired here.)
+        assert_plots_match_running_build(self._root, declare_stale_plots=declare_stale_plots)
+
         from hhemt.bundle.snakefile_generator import (
             write_regeneration_snakefile,
         )

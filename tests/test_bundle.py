@@ -526,7 +526,12 @@ def test_regenerate_report_no_chdir(multi_sim_bundle, monkeypatch):
     bundle = Bundle.from_directory(multi_sim_bundle)
     cwd_before = os.getcwd()
     try:
-        bundle.regenerate_report(format="html")
+        # declare_stale_plots: these fixtures' figure sidecars carry no build stamp
+        # (they predate the ADR-15 plot capture site), so the version guard correctly
+        # refuses them. These tests assert regeneration MECHANICS -- cwd handling,
+        # subprocess cwd, stale-lock behaviour -- not build matching, so declaring the
+        # known-stale fixture is the sanctioned operator escape rather than a weakening.
+        bundle.regenerate_report(format="html", declare_stale_plots=True)
     except (RuntimeError, FileNotFoundError):
         # Subprocess stubbed; downstream output-path assertions don't
         # matter — this test only asserts cwd invariance.
@@ -559,7 +564,12 @@ def test_regenerate_report_subprocess_cwd_is_bundle_root(
 
     bundle = Bundle.from_directory(multi_sim_bundle)
     try:
-        bundle.regenerate_report(format="html")
+        # declare_stale_plots: these fixtures' figure sidecars carry no build stamp
+        # (they predate the ADR-15 plot capture site), so the version guard correctly
+        # refuses them. These tests assert regeneration MECHANICS -- cwd handling,
+        # subprocess cwd, stale-lock behaviour -- not build matching, so declaring the
+        # known-stale fixture is the sanctioned operator escape rather than a weakening.
+        bundle.regenerate_report(format="html", declare_stale_plots=True)
     except (RuntimeError, FileNotFoundError):
         pass
     assert captured["cwd"] == bundle.root, (
@@ -578,7 +588,12 @@ def test_regenerate_report_raises_on_stale_lock(multi_sim_bundle):
 
     bundle = Bundle.from_directory(multi_sim_bundle)
     with pytest.raises(RuntimeError, match="--unlock"):
-        bundle.regenerate_report(format="html")
+        # declare_stale_plots: these fixtures' figure sidecars carry no build stamp
+        # (they predate the ADR-15 plot capture site), so the version guard correctly
+        # refuses them. These tests assert regeneration MECHANICS -- cwd handling,
+        # subprocess cwd, stale-lock behaviour -- not build matching, so declaring the
+        # known-stale fixture is the sanctioned operator escape rather than a weakening.
+        bundle.regenerate_report(format="html", declare_stale_plots=True)
 
 def test_legacy_manifest_no_invariants_key(tmp_path):
     # Bundle.from_directory loads bundles that lack the

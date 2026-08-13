@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from rocrate.model.contextentity import ContextEntity
 
 from hhemt.constants import LAYOUT_VERSION
+from hhemt.exceptions import StalePlotsError
 from hhemt.metadata import (
     build_analysis_crate,
     canonical_jsonld,
@@ -133,6 +134,83 @@ def producing_stamp() -> dict[str, str]:
         "hhemt_version": _describe_version(),
         "hhemt_dirty": "true" if _is_dirty() else "false",
     }
+
+
+def collect_plot_stamps(analysis_dir: "Path") -> tuple[set[tuple[str, str]], int]:
+    """Distinct (sha, dirty) keys across every figure sidecar, and the sidecar count.
+
+    Reads ALL sidecars rather than one, because uniform-within-a-render is a measured
+    property and not a guaranteed one: a targeted re-render refreshes some sidecars and
+    leaves others, which yields two distinct keys and is its own staleness class
+    (figures inconsistent with EACH OTHER, remedied by a full stage:render force rather
+    than by re-rendering the report). An unreadable or unstamped sidecar contributes no
+    key and is counted, so `keys == set()` with `n > 0` means "figures present, none
+    stamped" -- absent, which the caller treats as never-equal.
+    """
+    import json
+    from pathlib import Path as _Path
+
+    keys: set[tuple[str, str]] = set()
+    n = 0
+    plots = _Path(analysis_dir) / "plots"
+    if not plots.exists():
+        return keys, 0
+    for sidecar in sorted(plots.rglob("*.manifest.json")):
+        n += 1
+        try:
+            payload = json.loads(sidecar.read_text())
+        except Exception:
+            continue
+        sha = str(payload.get("hhemt_sha") or "").strip()
+        if sha:
+            keys.add((sha, str(payload.get("hhemt_dirty") or "unknown")))
+    return keys, n
+
+
+def assert_plots_match_running_build(analysis_dir: "Path", *, declare_stale_plots: bool = False):
+    """Refuse a render whose figures were not produced by the build now running.
+
+    The report-side operand is `producing_stamp()` computed IN-PROCESS, never a
+    persisted report stamp: reading `report_manifest.json` would compare a render
+    against itself (the writer runs at the tail of the same call), would refuse every
+    first render for want of a prior stamp, and would depend on a writer that fails
+    non-fatally. Equality on the (sha, dirty) tuple, never an ordering.
+    """
+    keys, n = collect_plot_stamps(analysis_dir)
+    running = producing_stamp()
+    mine = (str(running.get("hhemt_sha") or "").strip(), str(running.get("hhemt_dirty") or "unknown"))
+    if len(keys) > 1:
+        why = (
+            f"the {n} figure sidecar(s) carry {len(keys)} DIFFERENT build stamps "
+            f"({sorted(s[:12] for s, _ in keys)}) -- the figures are inconsistent with each "
+            "other, which a partial re-render produces. Force a full re-render with "
+            'force_rerun {"subject": "all", "stage": "render"}'
+        )
+    elif not keys:
+        why = (
+            f"no figure carries a build stamp ({n} sidecar(s) found) -- the figures predate "
+            "the provenance capture site and cannot be shown to match this build"
+        )
+    elif not mine[0]:
+        why = "the running build could not be identified (no toolkit sha resolvable)"
+    elif keys == {mine}:
+        return None
+    else:
+        (psha, pdirty) = next(iter(keys))
+        why = (
+            f"figures built at {psha[:12]} (dirty={pdirty}), report rendering at "
+            f"{mine[0][:12]} (dirty={mine[1]})"
+        )
+    msg = (
+        f"Report/figure build mismatch: {why}. The figures may not reflect the renderer "
+        "code now producing this report. Re-render with force_rerun "
+        '{"subject": "all", "stage": "render"}, or pass --declare-stale-plots to proceed '
+        "and record the mismatch."
+    )
+    if declare_stale_plots:
+        print(f"[render_report] DECLARED STALE PLOTS: {msg}", flush=True)
+        return msg
+    raise StalePlotsError(msg)
 
 
 def _resolve_case_manifest(analysis):
