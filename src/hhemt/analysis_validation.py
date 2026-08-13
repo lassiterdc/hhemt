@@ -880,10 +880,24 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     # as named locals because the arm-specific summaries below still distinguish them.
     replay = resolve(REGISTRY_BY_ID["TRITON-COUPLED-RESUME-REPLAY"], triton_sha)
     scatter = resolve(REGISTRY_BY_ID["TRITON-RESUME-DEPTH-SCATTER"], triton_sha)
-    _applicable = [
+    # TWO gates, not one. TRIGGER decides whether a defect COULD have been exercised by this
+    # arm's run shape (did anything resume; is the coupled model selected). STATUS decides
+    # whether the pinned build actually CARRIES it. A defect that resolves `absent` must admit
+    # no rows at all -- it is certified not-present, and selecting rows for it converts a clean
+    # registry verdict into an examined population that the in-loop evidence test then fails.
+    #
+    # Measured on generation e389264af7b9: synth_cc_resume_triton is stamped 5d2ad1e8, at which
+    # all three registry defects resolve ABSENT, yet the shipped read-model reported
+    # "28 resumed coupled sim(s) ... lack the exchange-replay marker" -- a FAIL produced by
+    # TRITON-RESUME-EXTBC-GHOST-RING (trigger="resumed_any", status="absent") admitting
+    # "triton" into _candidate_models on an arm the registry had just cleared.
+    #
+    # The former name `_applicable` meant trigger-applicable and was read as actually-affected.
+    _affected = [
         (d, resolve(d, triton_sha))
         for d in REGISTRY
         if _trigger_applies(d.trigger, any_resumed=_any_resumed, coupled=_coupled)
+        and resolve(d, triton_sha).status != "absent"
     ]
     if replay.status == "indeterminate":
         return CheckResult(
@@ -916,8 +930,27 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     #
     # `_n_resumes_col` is the column computed in the moved block above; the former local
     # `n_resumes` was read at exactly this one site and is deleted rather than duplicated.
+    # POSITIVE PASS (surface-3 ruling: PASS iff no sim resumed OR the version x selection pair
+    # is not affected by a known issue). With _affected empty and sims that DID resume, the
+    # registry has positively certified this build clean for this model selection -- that is a
+    # verdict with a denominator, not an examined-zero. Falling through to the examined-zero
+    # gate would render N/A and understate what was actually established.
+    if _any_resumed and not _affected:
+        _n_resumed = int((_n_resumes_col >= 1).sum())
+        return CheckResult(
+            name="resume validity",
+            level="aggregate",
+            passed=True,
+            summary=(
+                f"{_n_resumed} resumed sim(s) at a TRITON build carrying no known resume defect "
+                f"for this model selection ({triton_sha[:12]}); resume validity verified from the "
+                "defect registry."
+            ),
+            details=[],
+        )
+
     _candidate_models: set[str] = set()
-    for _d, _v in _applicable:
+    for _d, _v in _affected:
         if _d.trigger == "resumed_coupled":
             _candidate_models.add("tritonswmm")
         elif _d.trigger in ("resumed_any", "always"):
