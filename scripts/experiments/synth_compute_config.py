@@ -435,20 +435,31 @@ def _emit_bundle(case: _Case) -> Path:
     """Committed emit step (supersedes the prior inline-heredoc runbook): eda + bundle a materialized
     case, returning the bundle path. Requires df_status all-complete (batch_job runs out-of-band)."""
     a = case.analysis
-    # ORDERING (Track 4, Round 8). analysis.eda() re-persists validation_report.json as its
-    # LAST act (analysis.py:1053, whose own SCOPE note says every check's verdict is
-    # recomputed at eda() time). eda() is a non-Snakemake in-process facade by accepted
-    # stipulation, so it exposes no rule output that plot_errors_and_warnings can depend on,
-    # and the report DAG has already exited by the time it runs. Measured on generation
-    # e389264af7b9: validation_report.html 19:30, validation_report.json 19:40 -- the figure
-    # was written ten minutes before its own input, and shipped the PREVIOUS generation's
-    # read-model (it still read `Coupled resume validity`, a name this branch retired).
+    # WHAT THIS FUNCTION IS: an out-of-band emit step. The workflow ran ELSEWHERE
+    # (docstring: "Requires df_status all-complete (batch_job runs out-of-band)"), so there
+    # is no _run_workflow on this path and no DAG executes here. The three calls are:
+    # eda() computes the EDA members, render_report() produces analysis_report.{html,zip},
+    # and bundle_report_data() harvests plots/eda/*.manifest.json into the bundle.
     #
-    # Re-rendering AFTER eda() closes the window. The rule declares validation_report.json
-    # as an input (workflow.py:3268) and the toolkit runs --rerun-triggers mtime only, so the
-    # now-newer JSON re-fires exactly this rule rather than the whole DAG.
+    # WHY render_report() STAYS: it is the ONLY producer of analysis_report.{html,zip} on
+    # this path. Deleting it is a regression, not dead-code removal.
+    #
+    # WHAT IT DOES NOT DO, and the earlier comment here claimed otherwise: it does NOT
+    # rebuild any figure. render_report() invokes `snakemake --report`, which renders and
+    # executes no rules (analysis.py:2899, :2970). Measured with a two-rule Snakefile whose
+    # output was older than its input -- under `--report` the rule did not execute; under a
+    # real invocation with the same --rerun-triggers mtime it did. The retired claim that
+    # "the now-newer JSON re-fires exactly this rule" was false and cost three cluster runs.
+    #
+    # KNOWN RESIDUAL: eda() re-persists validation_report.json as its last act
+    # (analysis.py:1053), so on this path the Errors-and-Warnings figure can end up older
+    # than the read-model it transcribes, and emit_bundle refuses that tree
+    # (StaleReadModelError, bundle/_emit.py). There is no actuator here that can fix it --
+    # rebuilding the figure needs a rule to execute, and nothing on this path executes rules.
+    # Closing it is a design decision about what _emit_bundle is for (hoist eda() above the
+    # out-of-band run, or add a rule-executing step here), NOT another mechanism bolted on.
     a.eda()  # writes eda/{plot_id}.zarr + .verdict.json + plots/eda/*.html
-    a.render_report()  # MUST follow eda(): re-transcribes the read-model eda() just rewrote
+    a.render_report()  # the only producer of analysis_report.{html,zip} here; rebuilds no figures
     return Path(a.sensitivity.bundle_report_data())  # harvests plots/eda/*.manifest.json -> carries eda zarr+verdict
 
 

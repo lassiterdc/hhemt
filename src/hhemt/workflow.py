@@ -3311,6 +3311,25 @@ rule export_scenario_status:
     output:
         csv = "scenario_status.csv",
         md  = "workflow_summary.md",
+        # The read-model is written by THIS rule's shell (export_scenario_status.py:444
+        # and :477) and was previously undeclared. Snakemake builds its DAG from declared
+        # interfaces, so an undeclared side-effect write to a file that
+        # plot_errors_and_warnings declares as an INPUT (:3268) cannot propagate: the plot
+        # rule is evaluated against the JSON's mtime at BUILD time, classified up to date,
+        # excluded -- and then this rule rewrites the JSON after the DAG is fixed, creating
+        # an inversion with no scheduled consumer.
+        #
+        # SAFETY (measured, Round 19): two rules declaring one output is NOT a silent smell
+        # -- Snakemake raises AmbiguousRuleException at DAG BUILD naming both rules. This
+        # declaration does not create that case: consolidate_workflow.py:489 writes the same
+        # file from its SHELL without declaring it. The invariant this rests on is that the
+        # read-model stays declared in EXACTLY ONE rule; break it and the failure is loud.
+        #
+        # SCOPE, stated so this is not over-read: declaring the output is a real fix for a
+        # real defect. It is NOT established as the cause of the 2026-08-13 failures --
+        # run 3's job stats ("all 1, render_report 1, total 2") show this rule never ran,
+        # so something else wrote the read-model at 01:44:50 and is still unidentified.
+        read_model = "validation_report.json",
     log: "{log_dir_str}/export_scenario_status.log"
     conda: "{conda_env_path}"
     resources:
