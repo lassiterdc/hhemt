@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 
 
 from hhemt.constants import EDA_PLOTS_SUBDIR
+from hhemt.exceptions import StaleReadModelError
 
 # Local alias: the shared constant is the single source, and keeping the historical name
 # means the existing in-file references need no edit.
@@ -165,6 +166,51 @@ def _render_sha(plots_dir: Path, length: int = 12) -> str:
     return digest.hexdigest()[:length]
 
 
+#: Relative paths of the one producer/transcriber pair that can silently disagree: the
+#: Errors-and-Warnings figure TRANSCRIBES the persisted read-model (errors_and_warnings.py
+#: reads validation_report.json via load_validation_report and never re-runs
+#: validate_analysis at render time -- the Gotcha-53 Class-Y split). Everything else a
+#: renderer reads is produced inside the DAG that renders it.
+_EW_FIGURE_REL = "plots/errors_and_warnings/validation_report.html"
+_VALIDATION_READ_MODEL_REL = "validation_report.json"
+
+
+def _assert_report_not_older_than_read_model(analysis_dir: Path) -> None:
+    """Refuse to ship an Errors-and-Warnings figure that predates its own read-model.
+
+    INVARIANT: when both files exist, mtime(figure) >= mtime(read-model). NOT a strict
+    `>`: two files written in the same filesystem timestamp tick are a correct tree, and
+    asserting strict-later would encode one satisfying position rather than the invariant.
+
+    Why this can happen at all: analysis.eda() re-persists validation_report.json as its
+    LAST act (analysis.py:1053), it is a non-Snakemake in-process facade by accepted
+    stipulation, and it therefore runs after the report DAG has already exited. Measured on
+    generation e389264af7b9: figure 19:30, read-model 19:40 -- the figure shipped the
+    previous generation's read-model, still carrying a check name this branch had retired.
+
+    Absent on either side is a SKIP, not a refusal: no read-model means nothing to be stale
+    against, and no figure means it is not in the bundle. The manifest-sidecar precondition
+    below already owns the did-a-render-happen-at-all question.
+
+    Runs BEFORE any staging copy, where mtimes are still real -- a bundle zip normalizes
+    every timestamp to 1980-01-01, so this comparison is only meaningful on the live tree.
+    """
+    figure = analysis_dir / _EW_FIGURE_REL
+    read_model = analysis_dir / _VALIDATION_READ_MODEL_REL
+    if not figure.exists() or not read_model.exists():
+        return
+    fig_m, rm_m = figure.stat().st_mtime, read_model.stat().st_mtime
+    if fig_m < rm_m:
+        raise StaleReadModelError(
+            f"{_EW_FIGURE_REL} is OLDER than {_VALIDATION_READ_MODEL_REL} by "
+            f"{rm_m - fig_m:.0f}s -- the figure transcribes a superseded read-model and "
+            "would ship one generation behind. Re-run analysis.render_report() (report "
+            "phase only: the rule declares validation_report.json as an input at "
+            "workflow.py:3268 and the toolkit runs --rerun-triggers mtime, so only this "
+            "figure rebuilds), then re-emit the bundle."
+        )
+
+
 def emit_bundle(
     analysis: TRITONSWMM_analysis,
     output_path: Path | None = None,
@@ -191,6 +237,10 @@ def emit_bundle(
     """
     analysis_dir = analysis.analysis_paths.analysis_dir
     plots_dir = analysis_dir / BUNDLE_PLOTS_SUBDIR
+    # Shipping-time staleness gate. Placed before the harvest so a stale tree is refused
+    # rather than packed; mtimes are real here and normalized to 1980-01-01 inside the zip.
+    _assert_report_not_older_than_read_model(analysis_dir)
+
     if not plots_dir.exists() or not list(plots_dir.rglob("*.manifest.json")):
         raise FileNotFoundError(
             f"No *.manifest.json sidecars found under {plots_dir}. "

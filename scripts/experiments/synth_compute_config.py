@@ -435,7 +435,20 @@ def _emit_bundle(case: _Case) -> Path:
     """Committed emit step (supersedes the prior inline-heredoc runbook): eda + bundle a materialized
     case, returning the bundle path. Requires df_status all-complete (batch_job runs out-of-band)."""
     a = case.analysis
+    # ORDERING (Track 4, Round 8). analysis.eda() re-persists validation_report.json as its
+    # LAST act (analysis.py:1053, whose own SCOPE note says every check's verdict is
+    # recomputed at eda() time). eda() is a non-Snakemake in-process facade by accepted
+    # stipulation, so it exposes no rule output that plot_errors_and_warnings can depend on,
+    # and the report DAG has already exited by the time it runs. Measured on generation
+    # e389264af7b9: validation_report.html 19:30, validation_report.json 19:40 -- the figure
+    # was written ten minutes before its own input, and shipped the PREVIOUS generation's
+    # read-model (it still read `Coupled resume validity`, a name this branch retired).
+    #
+    # Re-rendering AFTER eda() closes the window. The rule declares validation_report.json
+    # as an input (workflow.py:3268) and the toolkit runs --rerun-triggers mtime only, so the
+    # now-newer JSON re-fires exactly this rule rather than the whole DAG.
     a.eda()  # writes eda/{plot_id}.zarr + .verdict.json + plots/eda/*.html
+    a.render_report()  # MUST follow eda(): re-transcribes the read-model eda() just rewrote
     return Path(a.sensitivity.bundle_report_data())  # harvests plots/eda/*.manifest.json -> carries eda zarr+verdict
 
 

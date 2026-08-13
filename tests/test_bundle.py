@@ -25,13 +25,19 @@ import pytest
 import yaml
 
 from hhemt.bundle import Bundle
-from hhemt.bundle._emit import _rewrite_paths_to_relative
+from hhemt.bundle._emit import (
+    _EW_FIGURE_REL,
+    _VALIDATION_READ_MODEL_REL,
+    _assert_report_not_older_than_read_model,
+    _rewrite_paths_to_relative,
+)
 from hhemt.bundle._path_policy import (
     _PATH_FIELD_POLICY,
     PathPolicy,
     enumerate_path_fields,
 )
 from hhemt.config.analysis import analysis_config
+from hhemt.exceptions import StaleReadModelError
 from hhemt.config.system import system_config
 
 
@@ -848,3 +854,54 @@ def test_copy_reference_outputs_no_test_dir_is_noop(tmp_path: Path) -> None:
     )
     _copy_reference_outputs(analysis, staging)  # must not raise
     assert not (staging / "reference_outputs").exists()
+
+
+# --- VMS-11T: shipping-time read-model staleness guard -------------------------------
+# `import os` / `import pytest` are NOT re-imported here: this module already carries both.
+
+_STALE_T = 1_700_000_000
+
+
+def _stale_tree(tmp_path, figure_t=None, read_model_t=None):
+    if figure_t is not None:
+        p = tmp_path / _EW_FIGURE_REL
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+        os.utime(p, (figure_t, figure_t))
+    if read_model_t is not None:
+        p = tmp_path / _VALIDATION_READ_MODEL_REL
+        p.write_text("{}")
+        os.utime(p, (read_model_t, read_model_t))
+    return tmp_path
+
+
+def test_refuses_a_figure_older_than_its_read_model(tmp_path):
+    """CATCHES arm: the measured defect -- figure written before the read-model it
+    transcribes (e389264af7b9: 19:30 figure, 19:40 read-model)."""
+    d = _stale_tree(tmp_path, figure_t=_STALE_T, read_model_t=_STALE_T + 600)
+    with pytest.raises(StaleReadModelError) as exc:
+        _assert_report_not_older_than_read_model(d)
+    assert "OLDER than" in str(exc.value)
+    assert "render_report" in str(exc.value), "the refusal must name its remedy"
+
+
+@pytest.mark.parametrize(
+    "figure_t,read_model_t,case",
+    [
+        (_STALE_T + 600, _STALE_T, "figure newer -- correctly ordered"),
+        (_STALE_T, _STALE_T, "equal mtimes -- same filesystem tick is NOT stale"),
+        (_STALE_T + 5, _STALE_T, "eda() never ran; read-model written inside the DAG"),
+        (_STALE_T, None, "no read-model -- nothing to be stale against"),
+        (None, _STALE_T, "no figure -- not in the bundle"),
+        (None, None, "neither present"),
+    ],
+)
+def test_stays_quiet_on_a_legitimately_ordered_tree(tmp_path, figure_t, read_model_t, case):
+    """OVER-FIRE arm: the guard must not fire on any correct tree.
+
+    Asserted as the INVARIANT (non-staleness), not as the satisfying position
+    (strictly-later): the equal-mtimes row is the one a strict `>` would wrongly refuse.
+    """
+    d = _stale_tree(tmp_path, figure_t=figure_t, read_model_t=read_model_t)
+    _assert_report_not_older_than_read_model(d)  # must not raise
+

@@ -21,6 +21,20 @@ class TRITONSWMMError(Exception):
     pass
 
 
+class StaleReadModelError(TRITONSWMMError):
+    """A rendered figure predates the persisted read-model it transcribes.
+
+    Raised at bundle-emission time, before any staging copy, when the
+    Errors-and-Warnings figure is OLDER than validation_report.json. Shipping that
+    pair publishes a figure one generation behind its own data.
+
+    Subclasses TRITONSWMMError directly rather than ProcessingError: the latter takes
+    (operation, filepath, reason) and this error carries a single composed message.
+    """
+
+    pass
+
+
 class ConfigurationError(TRITONSWMMError):
     """Invalid configuration values or toggle conflicts.
 
