@@ -528,7 +528,17 @@ def _build_conduit_flow_figure(
 
     # Side-effect import: registers `triton_journal` Plotly template.
     from hhemt.report_renderers import _plotly_theme  # noqa: F401
+    from hhemt.report_renderers._figure_emission import (
+        PER_SIM_FIG_H_PX,
+        PER_SIM_FIG_W_PX,
+        PER_SIM_HSPACE,
+        PER_SIM_TOP_MARGIN_PX,
+        apply_per_sim_map_axes,
+        per_sim_bottom_margin_px,
+        per_sim_plot_area_h_px,
+    )
     from hhemt.report_renderers._hydrology_panel import (
+        draw_event_hydrology_panel_plotly,
         load_event_hydrology_data,
     )
     from hhemt.report_renderers._map_bounds import (
@@ -673,7 +683,7 @@ def _build_conduit_flow_figure(
         ],
         row_heights=[1, 1],
         column_widths=[1, 1, 0.8],
-        horizontal_spacing=0.06,
+        horizontal_spacing=PER_SIM_HSPACE,
         vertical_spacing=0.06,
         subplot_titles=("Max / full flow", "Peak flow", "Flood Drivers"),
     )
@@ -682,7 +692,26 @@ def _build_conduit_flow_figure(
     fig.update_layout(
         template="triton_journal",
         showlegend=False,
-        margin=dict(l=10, r=10, t=40, b=130),
+        # Width/height DECLARED (I7-7 prerequisite) and bottom margin DERIVED from the
+        # colorbar band -- identical treatment to per_sim_peak_flood_depth, from the
+        # same shared constants, which is the point.
+        width=PER_SIM_FIG_W_PX,
+        height=PER_SIM_FIG_H_PX,
+        margin=dict(
+            l=10,
+            r=10,
+            t=PER_SIM_TOP_MARGIN_PX,
+            b=per_sim_bottom_margin_px(),
+        ),
+    )
+
+    # Map-panel x geometry + centred colorbar paper-x, shared with
+    # per_sim_peak_flood_depth. Called before the panel loop because the colorbar
+    # dicts consume the returned x values.
+    _cb_x = apply_per_sim_map_axes(
+        fig,
+        bounds=bounds,
+        crs_epsg=_dem_da.rio.crs.to_epsg() if _dem_da.rio.crs is not None else None,
     )
 
     # ---- Utilization + peak-flow panels (binned-trace approach) ----------
@@ -700,7 +729,7 @@ def _build_conduit_flow_figure(
             "vmin": 0.0,
             "vmax": 1.0,
             "cmap_name": UTILIZATION_CMAP,
-            "colorbar_x": 0.16,
+            "colorbar_x": _cb_x[1],
         },
         {
             "col": 2,
@@ -712,7 +741,7 @@ def _build_conduit_flow_figure(
             "vmin": float(cfg.vmin) if cfg.vmin is not None else 0.0,
             "vmax": _resolve_peak_flow_vmax(peak_flow, cfg),
             "cmap_name": PEAK_FLOW_CMAP,
-            "colorbar_x": 0.52,
+            "colorbar_x": _cb_x[2],
         },
     ]
     values_by_id_per_panel = {p["axes_id"]: dict(zip(link_ids, p["values"], strict=True)) for p in panels}
@@ -822,6 +851,7 @@ def _build_conduit_flow_figure(
                             y=-0.22,
                             len=0.30,
                             x=p["colorbar_x"],
+                            xanchor="center",
                             thickness=12,
                         ),
                     ),
@@ -888,31 +918,25 @@ def _build_conduit_flow_figure(
         selection={"event_iloc": int(event_iloc)},
     )
     panel_cfg = report_cfg.per_sim.hydrology_panel
-    with prov.artist(
-        axes_id="ax_rain_plotly",
-        kind="bar",
-        note="rainfall time series (event hydrology — top sub-panel)",
-    ) as a:
-        a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
-        a.add_channel("y", rain_ref, units=rain_units)
-        fig.add_trace(
-            go.Bar(
-                x=times_hr,
-                y=rainfall,
-                marker=dict(color=panel_cfg.rain_color),
-                name="rainfall",
-                showlegend=False,
-                hovertemplate="t: %{x:.2f} hr<br>rain: %{y:.2f}<extra></extra>",
-            ),
-            row=1,
-            col=3,
-        )
     bc_ref = ProvenanceRef(
         source_path=weather_rel,
         variable=bc_var if bc_var is not None else "",
         attrs=bc_attrs,
         selection={"event_iloc": int(event_iloc)},
     )
+    # Both Flood Drivers traces and both wrapped y titles now come from the SAME shared
+    # helper per_sim_peak_flood_depth uses. This family previously drew rainfall with
+    # `go.Bar`, whose auto-width bars leave inter-bar gaps and render constant rainfall
+    # as a picket fence -- the defect the sibling family fixed in iteration 21 and this
+    # one never received. `kind` on the provenance artist changes from "bar" to "line2d"
+    # to match the trace that is now drawn.
+    with prov.artist(
+        axes_id="ax_rain_plotly",
+        kind="line2d",
+        note="rainfall time series (event hydrology — top sub-panel)",
+    ) as a:
+        a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
+        a.add_channel("y", rain_ref, units=rain_units)
     with prov.artist(
         axes_id="ax_bc_plotly",
         kind="line2d",
@@ -920,19 +944,18 @@ def _build_conduit_flow_figure(
     ) as a:
         a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", bc_ref, units=bc_units)
-        fig.add_trace(
-            go.Scatter(
-                x=times_hr,
-                y=bc_water_level,
-                mode="lines",
-                line=dict(color=panel_cfg.bc_line_color, width=panel_cfg.bc_line_width),
-                name="bc_water_level",
-                showlegend=False,
-                hovertemplate="t: %{x:.2f} hr<br>BC: %{y:.3f} m<extra></extra>",
-            ),
-            row=2,
-            col=3,
-        )
+    _col3_panel_h_px = per_sim_plot_area_h_px() * 0.47
+    draw_event_hydrology_panel_plotly(
+        fig,
+        times_hr=times_hr,
+        rainfall=rainfall,
+        bc_water_level=bc_water_level,
+        panel_cfg=panel_cfg,
+        rainfall_units=analysis.cfg_analysis.rainfall_units,
+        storm_tide_units=analysis.cfg_analysis.storm_tide_units,
+        axis_extent_px=_col3_panel_h_px,
+        time_axis_title=units.TIME_AXIS_FROM_EVENT_START_HOURS,
+    )
 
     # ---- Axes setup -----------------------------------------------------
     from hhemt.config.report import resolve_target_crs
@@ -941,13 +964,11 @@ def _build_conduit_flow_figure(
     crs_for_labels = target_crs.to_epsg()
     # Phase 3 inheritance (F-I-10): link col-2 map axes to col-1 via `matches=`
     # so interactive pan/zoom on either panel synchronises the other.
+    # Map x-axis range + cleared x titles are already applied by
+    # `apply_per_sim_map_axes` above (shared with per_sim_peak_flood_depth); the
+    # Flood Drivers axes are set inside `draw_event_hydrology_panel_plotly`. Only the
+    # map y-axes and the col-2 `matches=` links remain family-local here.
     for col in (1, 2):
-        x_kwargs = dict(
-            range=[bounds[0], bounds[2]],
-            title_text=units.easting_axis_label(crs_for_labels),
-            row=1,
-            col=col,
-        )
         y_kwargs = dict(
             range=[bounds[1], bounds[3]],
             scaleanchor=f"x{col}",
@@ -957,35 +978,9 @@ def _build_conduit_flow_figure(
             col=col,
         )
         if col == 2:
-            x_kwargs["matches"] = "x"
+            fig.update_xaxes(matches="x", row=1, col=col)
             y_kwargs["matches"] = "y"
-        fig.update_xaxes(**x_kwargs)
         fig.update_yaxes(**y_kwargs)
-    # Phase 3 inheritance (F-I-7): hydrology x-axes now in hours from event start.
-    fig.update_xaxes(
-        range=[float(times_hr[0]), float(times_hr[-1])],
-        title_text="",
-        row=1,
-        col=3,
-    )
-    fig.update_yaxes(
-        title_text=units.rainfall_axis_label(analysis.cfg_analysis.rainfall_units),
-        row=1,
-        col=3,
-    )
-    fig.update_xaxes(
-        range=[float(times_hr[0]), float(times_hr[-1])],
-        title_text=units.TIME_AXIS_FROM_EVENT_START_HOURS,
-        row=2,
-        col=3,
-    )
-    fig.update_yaxes(
-        title_text=units.bc_water_level_axis_label(
-            analysis.cfg_analysis.storm_tide_units or "m",
-        ),
-        row=2,
-        col=3,
-    )
 
     # ---- Emit -----------------------------------------------------------
     plotly_config = {
@@ -1026,6 +1021,8 @@ def _render_plotly_branch(
     no max_over_full filter slider, no legend-click magnitude-class toggling.
     """
     from hhemt.report_renderers._figure_emission import (
+        PER_SIM_FIG_H_PX,
+        PER_SIM_FIG_W_PX,
         emit_plot_with_sources,
     )
 
@@ -1074,8 +1071,8 @@ def _render_plotly_branch(
         fig.write_image(
             output_path.with_suffix(".svg"),
             engine="kaleido",
-            width=1400,
-            height=600,
+            width=PER_SIM_FIG_W_PX,
+            height=PER_SIM_FIG_H_PX,
             scale=1,
         )
     except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal

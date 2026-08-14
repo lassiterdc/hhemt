@@ -109,6 +109,111 @@ def _relativize(source_paths, analysis_dir) -> list[str]:
     return [os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths]
 
 
+#: Per-sim figure dimensions. ONE pair of numbers, consumed by BOTH `update_layout` and
+#: `write_image`. Before this, the layout declared no width/height at all while the SVG
+#: export hardcoded 1400x600, so every paper-fraction coordinate in the figure was
+#: eyeballed against one of two different geometries and wrong for the other -- the
+#: browser-vs-SVG divergence. Every pixel quantity below is uncomputable without these.
+PER_SIM_FIG_W_PX = 1400
+PER_SIM_FIG_H_PX = 600
+
+#: Top margin (subplot titles).
+PER_SIM_TOP_MARGIN_PX = 40
+
+#: Horizontal colorbars sit at paper-y = -PER_SIM_CBAR_PAPER_Y, a fraction of the
+#: PLOT-AREA height, so the bottom margin they require scales with the plot area.
+PER_SIM_CBAR_PAPER_Y = 0.22
+
+#: Colorbar thickness plus its tick-label band.
+PER_SIM_CBAR_FURNITURE_PX = 30
+
+#: `make_subplots(horizontal_spacing=...)` for the per-sim 2x3 layout.
+PER_SIM_HSPACE = 0.06
+
+
+def per_sim_bottom_margin_px(
+    fig_h_px: float = PER_SIM_FIG_H_PX,
+    top_px: float = PER_SIM_TOP_MARGIN_PX,
+) -> int:
+    """Bottom margin the horizontal colorbars require -- DERIVED, never a literal.
+
+    `margin=dict(..., b=130)` was a hand-tuned constant, and a hand-tuned bottom margin
+    is wrong by construction for the same reason `figure_caption` exists: the colorbar
+    offset is a FRACTION of the plot-area height, which itself depends on the margin.
+    The dependency is circular, which is why it was eyeballed. Solving it:
+
+        b = cbar_y * (H - top - b) + furniture
+        b * (1 + cbar_y) = cbar_y * (H - top) + furniture
+
+    At the shipped 1400x600 this returns 126 against the retired literal 130, so the
+    live figure was very nearly right -- and would have drifted arbitrarily on the next
+    height change, which is the point.
+    """
+    b = (PER_SIM_CBAR_PAPER_Y * (fig_h_px - top_px) + PER_SIM_CBAR_FURNITURE_PX) / (
+        1.0 + PER_SIM_CBAR_PAPER_Y
+    )
+    return int(round(b))
+
+
+def per_sim_plot_area_h_px(
+    fig_h_px: float = PER_SIM_FIG_H_PX,
+    top_px: float = PER_SIM_TOP_MARGIN_PX,
+) -> float:
+    """Plot-area height: figure height minus top and the DERIVED bottom margin."""
+    return float(fig_h_px) - float(top_px) - per_sim_bottom_margin_px(fig_h_px, top_px)
+
+
+def apply_per_sim_map_axes(
+    fig,
+    *,
+    bounds,
+    crs_epsg,
+    map_cols=(1, 2),
+    row=1,
+    clear_x_title: bool = True,
+) -> dict[int, float]:
+    """Map-panel axis geometry + centred colorbar x for both per-sim families.
+
+    Sibling to `per_sim_map_ticks` below, which both families already import. Owns the
+    two properties that were hand-authored IDENTICALLY in each renderer and therefore
+    drifted independently -- the whack-a-mole this iteration exists to stop:
+
+      * the map x-axis title, CLEARED, so the horizontal colorbar can occupy the band
+        the "Easting (m)" label held. Both families set the same title in the same loop
+        and neither cleared it.
+      * the colorbar paper-x, DERIVED from the panel's own domain via
+        `figure_layout.align_x`, replacing the eyeballed 0.16 / 0.52 literals. Measured
+        against the true panel centres (0.15714 / 0.53143) those literals are off by
+        +4.0 px and -16.0 px at 1400 px, and wrong by construction the moment
+        `column_widths` or `horizontal_spacing` changes.
+
+    Returns ``{col: paper_x}``. The caller MUST pass `xanchor="center"` alongside:
+    plotly.js coerces a horizontal colorbar's xanchor to "center" through a bundled
+    ternary, so an inherited anchor is a coordinate whose meaning lives outside this
+    repository. Stating it makes the intent readable at the call site.
+    """
+    from hhemt import units
+    from hhemt.figure_layout import align_x
+
+    domains: dict[str, list[float]] = {}
+    for col in map_cols:
+        xa = next(fig.select_xaxes(row=row, col=col))
+        domains[f"map{col}"] = list(xa.domain)
+
+    for col in map_cols:
+        fig.update_xaxes(
+            range=[bounds[0], bounds[2]],
+            title_text=None if clear_x_title else units.easting_axis_label(crs_epsg),
+            row=row,
+            col=col,
+        )
+
+    return {
+        col: align_x(domains, ref=f"map{col}", edge="center")
+        for col in map_cols
+    }
+
+
 def per_sim_map_ticks(bounds: tuple[float, float, float, float]) -> tuple[list[float], list[float]]:
     """Return identical (xticks, yticks) for per-sim map panels at a 50-unit
     step rounded to the nearest 50 below/above bounds.

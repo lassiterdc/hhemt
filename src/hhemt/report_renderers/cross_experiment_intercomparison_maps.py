@@ -149,7 +149,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _watershed_mask,
         _watershed_polygon,
     )
-    from hhemt.figure_caption import add_figure_caption
+    from hhemt.figure_caption import add_figure_caption, content_width_px
+    from hhemt.figure_layout import align_x
 
     read_model = combined_root / "combined_intercomparison.json"
     payload = _json.loads(read_model.read_text()) if read_model.exists() else {"experiments": [], "pairs": []}
@@ -327,7 +328,14 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             )
         )
         plot_h = max(_TABLE_PX, 120)
-        b_px = add_figure_caption(fig, caption_text, content_w_px=_FIG_W - 60, plot_h_px=plot_h)
+        # Declare width + side margins BEFORE wrapping, so the caption's content width
+        # is READ from the figure (`content_width_px`) rather than re-derived as
+        # `_FIG_W - 60` at the call site. Same number, but the figure is now the single
+        # source of it, so a margin change cannot silently desynchronise the wrap.
+        fig.update_layout(width=_FIG_W, margin=dict(t=_T_MARGIN, l=30, r=30))
+        b_px = add_figure_caption(
+            fig, caption_text, content_w_px=content_width_px(fig), plot_h_px=plot_h
+        )
         fig.update_layout(
             height=plot_h + _T_MARGIN + b_px, width=_FIG_W,
             margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
@@ -352,6 +360,20 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     row_heights = [px / plot_h for px in _row_px]
     fig = make_subplots(rows=n_rows, cols=_ncols, specs=specs,
                         row_heights=row_heights, vertical_spacing=0.02)
+
+    # Colorbar paper-x DERIVED from each map column's own domain, replacing the
+    # hand-placed 0.44 / 0.98 literals. Those two were also inconsistent with each
+    # other -- 10 px inside col 1's right edge but 20 px inside col 2's -- so the two
+    # colorbars sat at different insets from panels of identical width. One pad, read
+    # off the domains, makes them agree and survives a column-layout change.
+    _map_domains = {
+        f"map{c}": list(next(fig.select_xaxes(row=2, col=c)).domain)
+        for c in range(1, _ncols + 1)
+    }
+    _cbar_x = {
+        c: align_x(_map_domains, ref=f"map{c}", edge="right", pad_px=-14, fig_width_px=_FIG_W)
+        for c in range(1, _ncols + 1)
+    }
 
     fig.add_trace(
         go.Table(
@@ -444,7 +466,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             zref = _apply_mask(np.asarray(base_da.values), wmask)
             fig.add_trace(
                 _heatmap(zref, zref, x=xd, y=yd, colorscale=_REF_DEPTH, cbar_title="m",
-                         cbar_x=0.44, cbar_y=1 - (row - 0.5) / n_rows, cbar_len=0.6 / n_rows),
+                         cbar_x=_cbar_x[1], cbar_y=1 - (row - 0.5) / n_rows, cbar_len=0.6 / n_rows),
                 row=row, col=1,
             )
             for _tr in _watershed_boundary_traces(wpoly):
@@ -457,7 +479,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 for tr in _conduit_traces(
                     geom, dict(zip(links, np.asarray(bf.values), strict=False)),
                     colorscale=_REF_FLOW, vmin=0, vmax=(vmax if vmax > 0 else 1.0),
-                    cbar_title="cms", cbar_x=0.98, cbar_y=1 - (row - 0.5) / n_rows,
+                    cbar_title="cms", cbar_x=_cbar_x[2], cbar_y=1 - (row - 0.5) / n_rows,
                     cbar_len=0.6 / n_rows, diverging=False,
                 ):
                     fig.add_trace(tr, row=row, col=2)
@@ -484,7 +506,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             z = _apply_mask(d, wmask)
             fig.add_trace(
                 _heatmap(z, z, x=xd, y=yd, colorscale=_DIVERGING, zmid=0, zmin=-wsym, zmax=wsym,
-                         cbar_title="m", cbar_x=0.44, cbar_y=1 - (row - 0.5) / n_rows,
+                         cbar_title="m", cbar_x=_cbar_x[1], cbar_y=1 - (row - 0.5) / n_rows,
                          cbar_len=0.6 / n_rows),
                 row=row, col=1,
             )
@@ -496,7 +518,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             z = _apply_mask(_signed_pct(d, np.asarray(base_da.values)), wmask)
             fig.add_trace(
                 _heatmap(z, z, x=xd, y=yd, colorscale=_DIVERGING, zmid=0, zmin=-psym, zmax=psym,
-                         cbar_title="%", cbar_x=0.44, cbar_y=1 - (row - 0.5) / n_rows,
+                         cbar_title="%", cbar_x=_cbar_x[1], cbar_y=1 - (row - 0.5) / n_rows,
                          cbar_len=0.6 / n_rows),
                 row=row, col=1,
             )
@@ -526,7 +548,12 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         f"symmetric range (+/-{wsym:.4g} m, +/-{psym:.4g} %), quantised to a shared ladder so "
         "co-located model arms coincide whenever their percentiles share a bin."
     )
-    b_px = add_figure_caption(fig, _caption, content_w_px=_FIG_W - 60, plot_h_px=plot_h)
+    # As in the empty-plan branch: declare width + side margins first so the caption's
+    # content width is READ from the figure rather than re-derived at the call site.
+    fig.update_layout(width=_FIG_W, margin=dict(t=_T_MARGIN, l=30, r=30))
+    b_px = add_figure_caption(
+        fig, _caption, content_w_px=content_width_px(fig), plot_h_px=plot_h
+    )
     fig.update_layout(
         height=plot_h + _T_MARGIN + b_px,
         width=_FIG_W,

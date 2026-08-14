@@ -109,7 +109,13 @@ def visible_len(token: str) -> int:
     return len(_TAG_RE.sub("", _ENTITY_RE.sub("·", token)))
 
 
-def wrap_caption(text: str, *, content_w_px: float, font_px: int = CAPTION_FONT_PX) -> list[str]:
+def wrap_caption(
+    text: str,
+    *,
+    content_w_px: float,
+    font_px: int = CAPTION_FONT_PX,
+    min_chars: int = 40,
+) -> list[str]:
     """Wrap ``text`` to lines that fit ``content_w_px``, measuring RENDERED width.
 
     ``content_w_px`` is the figure's own drawn extent -- the plot area for a
@@ -119,20 +125,34 @@ def wrap_caption(text: str, *, content_w_px: float, font_px: int = CAPTION_FONT_
     Not ``textwrap.wrap``: that measures source characters, so ``<b>``/``</b>`` would
     consume 7 glyphs of budget each and the marked-up line would break early.
     """
-    max_chars = max(40, int(content_w_px / (font_px * _GLYPH_ADVANCE)))
+    # `min_chars` is the shortest line this wrapper will produce. 40 is calibrated for a
+    # caption block spanning a panel outline and MUST stay the default. A rotated axis
+    # title wraps against the AXIS EXTENT, which on a per-sim col-3 sub-panel is ~132 px
+    # -- 20 chars at 11 px, so the 40-char floor would swallow the computed width and the
+    # wrap would be a silent no-op. Callers wrapping to a short extent pass min_chars.
+    max_chars = max(min_chars, int(content_w_px / (font_px * _GLYPH_ADVANCE)))
+
+    # AUTHORED BREAKS ARE HONOURED. A newline in `text` is a break a human placed at a
+    # semantic boundary -- `units.bc_water_level_axis_label` returns
+    # "Boundary condition\nwater level (m)", splitting the phrase where it means to. The
+    # earlier `text.split()` discarded those breaks along with the spaces and re-derived
+    # a break from width alone, which put "(m)" on a line by itself. Wrapping each
+    # authored segment INDEPENDENTLY keeps the human break and applies width-wrapping
+    # only within a segment, so the widow cannot reappear at any figure height.
     lines: list[str] = []
-    cur: list[str] = []
-    cur_len = 0
-    for token in text.split():
-        tok_len = visible_len(token)
-        if cur and cur_len + 1 + tok_len > max_chars:
+    for segment in text.split("\n"):
+        cur: list[str] = []
+        cur_len = 0
+        for token in segment.split():
+            tok_len = visible_len(token)
+            if cur and cur_len + 1 + tok_len > max_chars:
+                lines.append(" ".join(cur))
+                cur, cur_len = [token], tok_len
+            else:
+                cur.append(token)
+                cur_len = cur_len + 1 + tok_len if cur_len else tok_len
+        if cur:
             lines.append(" ".join(cur))
-            cur, cur_len = [token], tok_len
-        else:
-            cur.append(token)
-            cur_len = cur_len + 1 + tok_len if cur_len else tok_len
-    if cur:
-        lines.append(" ".join(cur))
     return lines or [""]
 
 

@@ -172,3 +172,81 @@ def draw_event_hydrology_panel(
         ax_bc.spines[spine].set_visible(False)
 
     return bc_min, bc_max
+
+
+def draw_event_hydrology_panel_plotly(
+    fig,
+    *,
+    times_hr,
+    rainfall,
+    bc_water_level,
+    panel_cfg,
+    rainfall_units,
+    storm_tide_units,
+    axis_extent_px: float,
+    rain_row: int = 1,
+    bc_row: int = 2,
+    col: int = 3,
+    time_axis_title: str,
+) -> int:
+    """Draw the plotly Flood Drivers panel and RETURN the left space its titles need.
+
+    ONE implementation for both per-sim families. Before this function they hand-rolled
+    the same block twice and it diverged: `per_sim_peak_flood_depth` moved rainfall from
+    `go.Bar` to a `fill="tozeroy"` Scatter in iteration 21 because `go.Bar`'s auto-width
+    bars leave inter-bar gaps that render constant rainfall as a picket fence, and
+    `per_sim_conduit_flow` was never updated. The symbology below is the Scatter form,
+    which is also the one that matches the matplotlib twin above (gap-free `ax.bar`).
+
+    Both y titles are wrapped by `figure_layout.wrap_axis_title` against
+    ``axis_extent_px`` -- the sub-panel HEIGHT in pixels, because a y title is rotated.
+    The return value is the perpendicular space the widest wrapped title needs; the
+    caller must feed it back into the layout (subplot horizontal spacing or left margin)
+    rather than guessing it, the same contract `figure_caption.add_figure_caption` uses.
+    """
+    import plotly.graph_objects as go
+
+    from hhemt import units as _units
+    from hhemt.figure_layout import wrap_axis_title
+
+    fig.add_trace(
+        go.Scatter(
+            x=times_hr,
+            y=rainfall,
+            fill="tozeroy",
+            mode="lines",
+            line=dict(width=0, color=panel_cfg.rain_color),
+            fillcolor=panel_cfg.rain_color,
+            name="rainfall",
+            showlegend=False,
+            hovertemplate="t: %{x:.2f} hr<br>rain: %{y:.2f}<extra></extra>",
+        ),
+        row=rain_row,
+        col=col,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=times_hr,
+            y=bc_water_level,
+            mode="lines",
+            line=dict(color=panel_cfg.bc_line_color, width=panel_cfg.bc_line_width),
+            name="bc_water_level",
+            showlegend=False,
+            hovertemplate="t: %{x:.2f} hr<br>BC: %{y:.3f} m<extra></extra>",
+        ),
+        row=bc_row,
+        col=col,
+    )
+
+    rain_title, rain_px = wrap_axis_title(
+        _units.rainfall_axis_label(rainfall_units), axis_extent_px=axis_extent_px
+    )
+    bc_title, bc_px = wrap_axis_title(
+        _units.bc_water_level_axis_label(storm_tide_units or "m"), axis_extent_px=axis_extent_px
+    )
+    t0, t1 = float(times_hr[0]), float(times_hr[-1])
+    fig.update_xaxes(range=[t0, t1], title_text="", row=rain_row, col=col)
+    fig.update_yaxes(title_text=rain_title, row=rain_row, col=col)
+    fig.update_xaxes(range=[t0, t1], title_text=time_axis_title, row=bc_row, col=col)
+    fig.update_yaxes(title_text=bc_title, row=bc_row, col=col)
+    return max(rain_px, bc_px)

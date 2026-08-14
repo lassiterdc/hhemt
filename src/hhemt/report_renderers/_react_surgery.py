@@ -200,6 +200,23 @@ _TOGGLE_CB_NEW = (
 #:
 #: Every constant this module INJECTS is sentinel-free (verified), so a second pass cannot
 #: flip tier 1 from absent to present and raise on a document the first pass left alone.
+# Toggle SUPPRESSION (I7-6). The `models` label is promoted to a two-option radio pair by
+# `AbstractResults.getData`, rendered as `MODELS` by Tailwind's `uppercase` on the label
+# span (`toggle.js`) -- which is why a grep of the delivered report for "Models" returns
+# only library source. The control is a no-op by construction: its two values are two
+# DIFFERENT figure families, so selecting either re-opens the row's own figure via the
+# lookup guard above.
+#
+# Removing the `models` LABEL was rejected: `labels.slice(1)` would then leave `figure` as
+# the sole candidate, and `figure` is the label whose 50/50 split caused this same defect
+# before step 4b (see the note at the head of this block). Suppressing PROMOTION closes the
+# class; removing one label moves it. One character, and the literal occurs exactly once in
+# the delivered report (measured 2026-08-14: 1).
+#
+# Idempotent: after the first pass the OLD literal is gone, so a second pass is inert.
+_TOGGLE_SUPPRESS_OLD = "        if (toggleLabels.size > 1) {"
+_TOGGLE_SUPPRESS_NEW = "        if (toggleLabels.size > 0) {"
+
 _TOGGLE_FEATURE_SENTINEL = "arrayKey("
 
 
@@ -398,6 +415,7 @@ def apply_post_process_surgery(
         for _old, _new, _what in (
             (_TOGGLE_CELL_OLD, _TOGGLE_CELL_NEW, "renderEntries"),
             (_TOGGLE_CB_OLD, _TOGGLE_CB_NEW, "toggleCallback"),
+            (_TOGGLE_SUPPRESS_OLD, _TOGGLE_SUPPRESS_NEW, "getData toggle promotion"),
         ):
             if _new in html_text:
                 continue
