@@ -42,6 +42,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 
 from hhemt.figure_caption import add_figure_caption
+from hhemt.figure_panels import PanelBudget, panel_geometry
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import (
     emit_plot_with_sources,  # noqa: F401  # reserved for the /design-figure-authored bodies
@@ -646,51 +647,56 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
     map_aspect = x_extent / y_extent  # width / height
 
     _FIG_W = 1120  # widened so the long title does not clip (user item 3)
-    _H_MAP = _PANEL_H_PX  # per-map height (px)
-    _G_WITHIN = 34  # within-panel gap (diff -> pct): room for the pct-row subplot title
-    _G_TOP = 48  # above a panel's first map: subplot title + dashed-outline top (item E)
-    _G_FOOTER = 82  # below a panel's last map: x-ticks + "x (m)" title + outline bottom (item C)
-    _G_INTER = 22  # between-panel gap (each panel's outline carries its own padding)
     _T_MARGIN, _B_MARGIN = 120, 130  # bottom carries the caption (clip method + watershed scope)
 
     # panels: reference row (1 row) then each coarser rung's (diff_row, pct_row) pair.
     panel_spans = [(1, 1)] + [(2 + 2 * pi, 3 + 2 * pi) for pi in range(len(coarser))]
     _panel_bottoms = {b for _a, b in panel_spans}  # only these rows carry the x-axis (item F)
 
-    plot_h = _G_INTER * (len(panel_spans) - 1)
-    for a, b in panel_spans:
-        nr = b - a + 1
-        plot_h += _G_TOP + nr * _H_MAP + (nr - 1) * _G_WITHIN + _G_FOOTER
+    # This module's px budget is where `figure_panels.panel_geometry` was extracted FROM, so
+    # the migration is a swap of one implementation for the shared one -- NOT a re-styling.
+    # The budget below is this module's OWN numbers, deliberately NOT converged onto
+    # `PanelBudget`'s defaults (which are `_config_diff`'s); converging them would move this
+    # figure, and that is a separate reviewable change.
+    #
+    # `gap_table=0` is LOAD-BEARING: `panel_geometry` adds `gap_table` unconditionally, but
+    # this figure has no summary table. Leaving the 16 px default shifts every row domain --
+    # measured as `plot_h 1366 != 1382`, a 16 px delta small enough to read as a rounding
+    # artifact in review. `inter_gap=0.042` is likewise exact: `panel_geometry` computes
+    # `dom1[1] + 0.078 + inter_gap`, and only 0.042 reproduces the flat `+0.12` used here.
+    _budget = PanelBudget(
+        map_h=_PANEL_H_PX,
+        gap_within=34,   # within-panel gap (diff -> pct): room for the pct-row subplot title
+        gap_top=48,      # above a panel's first map: subplot title + dashed-outline top (item E)
+        gap_footer=82,   # below a panel's last map: x-ticks + "x (m)" title + outline bottom (item C)
+        gap_inter=22,    # between-panel gap (each panel's outline carries its own padding)
+        gap_table=0,     # no summary table in this figure -- see note above
+    )
+    _layout = panel_geometry(
+        [list(range(a, b + 1)) for a, b in panel_spans],
+        table_px=0,
+        map_aspect=map_aspect,
+        fig_width=_FIG_W,
+        n_map_cols=2,
+        budget=_budget,
+        map_start=0.11,  # room for the rotated panel label + newly-wet note + y-title + ticks
+        inter_gap=0.042,
+    )
+    _H_MAP = _PANEL_H_PX  # per-map height (px), still read by the annotation/outline code below
+    plot_h = _layout.plot_h
     fig_height = plot_h + _T_MARGIN + _B_MARGIN
+    _f = _layout.f  # px -> paper-y fraction (domain 0..1 spans plot_h px)
+    dom1 = _layout.map_domains[1]
+    dom2 = _layout.map_domains[2]
+    row_ydom = _layout.row_ydom
 
-    def _f(px: float) -> float:
-        return px / plot_h  # px -> paper-y fraction (domain 0..1 spans plot_h px)
-
-    _map_start = 0.11  # left room for the rotated panel label + newly-wet note + y-title + ticks
-    _wfrac = _H_MAP * map_aspect / _FIG_W  # 1:1: x-domain width == map-height-px × aspect
-    dom1 = [_map_start, _map_start + _wfrac]
-    dom2_start = dom1[1] + 0.12  # col-1 colorbar band + gap before col-2
-    dom2 = [dom2_start, dom2_start + _wfrac]
-
-    row_ydom: dict[int, list[float]] = {}
-    cur = 1.0
-    for pi, (a, b) in enumerate(panel_spans):
-        cur -= _f(_G_TOP)
-        for r in range(a, b + 1):
-            row_ydom[r] = [cur - _f(_H_MAP), cur]
-            cur -= _f(_H_MAP)
-            if r < b:
-                cur -= _f(_G_WITHIN)
-        cur -= _f(_G_FOOTER)
-        if pi < len(panel_spans) - 1:
-            cur -= _f(_G_INTER)
     for r, yd_ in row_ydom.items():
         next(fig.select_xaxes(row=r, col=1)).domain = dom1
         next(fig.select_xaxes(row=r, col=2)).domain = dom2
         next(fig.select_yaxes(row=r, col=1)).domain = yd_
         next(fig.select_yaxes(row=r, col=2)).domain = yd_
 
-    _cb_x = {1: dom1[1] + 0.006, 2: dom2[1] + 0.006}
+    _cb_x = _layout.colorbar_x
     # plotly places a vertical colorbar's LEFT edge at `x + xpad`, then draws `thickness` px of bar.
     # Both default to 10 px here, so the bar's true centre sits (10 + 10/2) px right of `x`. The
     # out-of-range labels are centred on THAT, not on `x` -- anchoring on `x` left them visibly

@@ -36,6 +36,7 @@ from plotly.subplots import make_subplots
 from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption
 from hhemt.figure_layout import align_x
+from hhemt.figure_panels import AXIS_BAND_PX, panel_geometry
 
 #: Diverging colorscale for signed diffs (iter-2 user feedback): RED = NEGATIVE
 #: (lower than serial), white = 0, BLUE = POSITIVE. Plotly "RdBu" maps low->red,
@@ -78,8 +79,10 @@ _CONFIG_DIFF_PCT_BAND = 0.1
 #: disclosure is owed (plotly Heatmap has no set_over triangle to carry one).
 _DEPTH_CAP_STEP_M = 0.25
 
+#: Per-map height (px). The panel budget that used to be derived from this here now lives in
+#: `figure_panels.PANEL_H_PX`, which carries the same value; this name survives for the
+#: EMPTY-STATE figure height below and because `_dem_resolution_plots` imports it.
 _PANEL_H_PX = 350
-_TABLE_H_PX = 40
 
 
 def _identity_labels(root: Path) -> dict[str, int] | None:
@@ -933,10 +936,11 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # Top summary table is now single-line per group (keyed by Panel letter); the config
     # lists live in the per-panel side tables. Height = header + one row per group.
     table_px = int((len(groups) + 2) * 26 + 20)
-    table_h = table_px / (table_px + _PANEL_H_PX * map_rows)
-    map_h = (1.0 - table_h) / max(map_rows, 1)
-    row_heights = [table_h] + [map_h] * map_rows
 
+    # No `row_heights`/`vertical_spacing`: EVERY row's x- and y-domain is reassigned below
+    # from `panel_geometry`, and the summary table's domain is set explicitly, so anything
+    # make_subplots computes here is overwritten. Passing a second, differently-derived row
+    # budget was the duplication this migration removes -- it never reached the output.
     # Subplot titles are placed MYSELF (centered over each map's tight x-domain, small
     # font) after the domains are pinned — make_subplots would center them over the full
     # column CELL, mis-aligning them from the narrow maps.
@@ -944,8 +948,6 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         rows=total_rows,
         cols=_ncols,
         specs=specs,
-        row_heights=row_heights,
-        vertical_spacing=min(0.07, 0.6 / max(total_rows, 1)),
         horizontal_spacing=0.13,
     )
 
@@ -1002,59 +1004,47 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # near the plot (not floating up by the panel edge).
     _top_buf_frac = _BUF / (1 + 2 * _BUF)
 
-    # ---- MANUAL layout (px budget) — make_subplots' UNIFORM vertical_spacing cannot give
-    #      SMALL within-panel row gaps AND a LARGER between-panel gap at the same time. We
-    #      assign every map row's y-domain (and the table's) explicitly. ----
-    fig_width = 1000
-    tbl_x = [0.035, 0.215]  # per-panel config-table region; narrowed so the y-tick labels +
-    map_start = 0.30  # "y (m)" title fit in the [0.215, 0.30] gap (item: no table overlap)
-    inter_gap = 0.025  # gap between the raster colorbar and the conduit column (item: tighter)
+    # ---- Layout comes from hhemt.figure_panels.panel_geometry. This block previously
+    #      carried its own copy of the px budget; `panel_geometry` IS that budget, extracted
+    #      verbatim, and `PanelBudget`'s defaults are these numbers. `make_subplots`' UNIFORM
+    #      vertical_spacing still cannot give SMALL within-panel row gaps AND a LARGER
+    #      between-panel gap at once, which is why every domain is still assigned explicitly
+    #      -- but the arithmetic that produces them is now shared, not duplicated. ----
 
     # Map rows per panel: Panel A = [serial] (row 2, below the row-1 summary table); each
     # diff panel = [diff, pct].
     serial_row = 2
     panel_rows = [[serial_row]] + [[serial_row + 1 + 2 * gi, serial_row + 2 + 2 * gi] for gi in range(len(diff_groups))]
-    H_MAP = _PANEL_H_PX  # map height (px)
-    G_WITHIN = 24  # within-panel row gap (diff→pct) — SMALL (item)
-    G_TOP = 26  # above a panel's first map (subplot title + outline top)
-    G_FOOTER = 62  # below a panel's last map (x-ticks + x-title + swatch + gap + outline)
-    G_INTER = 30  # between-panel extra gap ≈ watershed-box width (item: more space)
-    G_TABLE = 16
+
+    # `n_map_cols=2` unconditionally: the pre-migration code computed `dom2` whether or not
+    # `has_flow`, and several downstream expressions read it inside `has_flow` guards. Passing
+    # 1 here would KeyError at bind time rather than at those guards.
+    _layout = panel_geometry(
+        panel_rows,
+        table_px=table_px,
+        map_aspect=map_aspect,
+        fig_width=1000,
+        n_map_cols=2,
+        map_start=0.30,
+        inter_gap=0.025,
+    )
+    fig_width = _layout.fig_width
+    tbl_x = _layout.side_table_x       # per-panel config-table region
+    plot_h = _layout.plot_h
+    _f = _layout.f                     # px -> paper-height fraction
+    row_ydom = _layout.row_ydom
+    dom1 = _layout.map_domains[1]
+    dom2 = _layout.map_domains[2]
+    table_bot, table_top = _layout.table_domain["y"]
+
     T_MARGIN = 80  # bottom margin is DERIVED from the caption (hhemt.figure_caption), never a constant
     # Tick labels PLUS the "x (m)" axis title. ONE constant, shared by the swatch
     # placement below and the caption's own reservation, so both clear the same
     # furniture rather than each carrying its own eyeballed number.
-    _AXIS_BAND_PX = 46
-
-    plot_h = table_px + G_TABLE + G_INTER * (len(panel_rows) - 1)
-    for prows in panel_rows:
-        plot_h += G_TOP + len(prows) * H_MAP + (len(prows) - 1) * G_WITHIN + G_FOOTER
+    _AXIS_BAND_PX = AXIS_BAND_PX
     # No fig_height constant: the figure height is computed at layout time from plot_h plus
     # the bottom margin the caption module returns.
 
-    def _f(px):  # px -> paper-height fraction
-        return px / plot_h
-
-    # x-domain: 1:1 with H_MAP (map_width_px = H_MAP × data-aspect).
-    wfrac = H_MAP * map_aspect / fig_width
-    dom1 = [map_start, map_start + wfrac]
-    dom2_start = dom1[1] + 0.078 + inter_gap  # col-1 colorbar band + gap (widened: col-1 cbar
-    #   labels were touching col-2's left y-ticks — positive space now between them)
-    dom2 = [dom2_start, dom2_start + wfrac]
-
-    row_ydom: dict[int, list[float]] = {}
-    table_top, table_bot = 1.0, 1.0 - _f(table_px)
-    cur = table_bot - _f(G_TABLE)
-    for pi, prows in enumerate(panel_rows):
-        cur -= _f(G_TOP)
-        for ri, r in enumerate(prows):
-            row_ydom[r] = [cur - _f(H_MAP), cur]
-            cur -= _f(H_MAP)
-            if ri < len(prows) - 1:
-                cur -= _f(G_WITHIN)
-        cur -= _f(G_FOOTER)
-        if pi < len(panel_rows) - 1:
-            cur -= _f(G_INTER)
     for r, yd_ in row_ydom.items():
         next(fig.select_xaxes(row=r, col=1)).domain = dom1
         next(fig.select_yaxes(row=r, col=1)).domain = yd_
@@ -1070,8 +1060,8 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         return dom1 if c == 1 else dom2
 
     # Colorbars hug the right edge of their map, centered on the (uniform) map y-domain.
-    cb_x = {1: dom1[1] + 0.006, 2: dom2[1] + 0.006}
-    cb_len = _f(H_MAP) * 0.75  # 75% of the map's y-domain, centered — fully inside the ylim
+    cb_x = _layout.colorbar_x
+    cb_len = _layout.colorbar_len  # 75% of the map's y-domain, centered — fully inside the ylim
 
     def _cb_y(r):
         d0, d1 = row_ydom[r]

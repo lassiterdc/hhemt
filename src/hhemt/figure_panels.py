@@ -27,7 +27,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-#: Default per-map height (px). Matches the retired ``_config_diff._PANEL_H_PX``.
+#: Default per-map height (px). Same value as ``_config_diff._PANEL_H_PX``, which still
+#: exists there for that module's empty-state figure height.
 PANEL_H_PX = 350
 
 #: Vertical band below a panel's last map occupied by tick labels plus an x-axis title.

@@ -59,22 +59,59 @@ P2 = "P2 hardcoded colorbar paper-x"
 P3 = "P3 axis title set from an unwrapped label provider"
 P4 = "P4 caption width from figure width minus a literal"
 
-#: (module filename, predicate) -> justification. Every entry names its retirement path.
-_ALLOWLIST: dict[tuple[str, str], str] = {
-    ("_dem_resolution_plots.py", P1): (
-        "Pre-existing; third copy of the panel budget. Retired by migrating this "
-        "module onto figure_panels (follow-up)."
+#: (module filename, predicate, FUNCTION) -> justification. Every entry names its
+#: retirement path.
+#:
+#: KEYED BY FUNCTION, and that third element is load-bearing rather than cosmetic. Keyed
+#: only by (module, predicate), ONE entry excused EVERY occurrence of that predicate
+#: anywhere in the file. Measured on `_dem_resolution_plots.py`: a single
+#: (module, P1) entry was covering THREE separate builders, and (module, P4) two more --
+#: 3 entries doing the work of 6. Two consequences, both bad:
+#:   * A new hardcoded margin added to a builder nobody had ever looked at would have been
+#:     silently excused, in a 1500-line file, by an entry written about a different
+#:     function entirely. `test_allowlist_key_is_function_scoped` is the control proving
+#:     that is no longer true.
+#:   * Retiring the violation an entry was WRITTEN for did not retire the entry, so the
+#:     ratchet could not report progress. That is why predicting this migration would take
+#:     the allowlist 8 -> 6 was wrong: the panel budget lived in the diff-maps builder,
+#:     while these sites are in three other builders that were never part of it.
+#: Entry count rose 8 -> 11 in the re-key. That is not a loosening: the same 12 sites are
+#: covered, now by entries that each name exactly one function.
+_ALLOWLIST: dict[tuple[str, str, str], str] = {
+    ("_dem_resolution_plots.py", P1, "build_dem_resolution_cost_error_figure"): (
+        "Pre-existing (~502, 'no caption to house'). Retired by adopting "
+        "figure_caption.add_figure_caption's derived bottom margin."
     ),
-    ("_dem_resolution_plots.py", P4): "Pre-existing; same migration retires it.",
-    ("_plotting.py", P2): (
+    ("_dem_resolution_plots.py", P1, "build_dem_resolution_error_ecdf_figure"): (
+        "Pre-existing (~1294). Same retirement path."
+    ),
+    ("_dem_resolution_plots.py", P1, "build_dem_resolution_coupling_table_figure"): (
+        "Pre-existing (~1469). Same retirement path."
+    ),
+    ("_dem_resolution_plots.py", P4, "build_dem_resolution_error_ecdf_figure"): (
+        "Pre-existing (~1300). Retired by reading the width off the figure via "
+        "figure_caption.content_width_px instead of `1000 - l - r`."
+    ),
+    ("_dem_resolution_plots.py", P4, "build_dem_resolution_coupling_table_figure"): (
+        "Pre-existing (~1491). Same retirement path."
+    ),
+    ("_plotting.py", P2, "_b4b_faceted_figure"): (
         "Pre-existing EDA figure, no Iteration-7 feedback item. Retire when "
         "figure_layout.align_x is adopted here."
     ),
-    ("raw_resume_identity.py", P1): "Pre-existing EDA figure, out of Iteration-7 scope.",
-    ("raw_resume_identity.py", P2): "Pre-existing EDA figure, out of Iteration-7 scope.",
-    ("system_overview.py", P1): "Pre-existing; system-overview layout untouched this iteration.",
-    ("system_overview.py", P2): "Pre-existing; system-overview layout untouched this iteration.",
-    ("sensitivity_benchmarking.py", P4): (
+    ("raw_resume_identity.py", P1, "build_binary_timestep_figure"): (
+        "Pre-existing EDA figure, out of Iteration-7 scope."
+    ),
+    ("raw_resume_identity.py", P2, "build_binary_timestep_figure"): (
+        "Pre-existing EDA figure, out of Iteration-7 scope."
+    ),
+    ("system_overview.py", P1, "_build_system_overview_figure"): (
+        "Pre-existing; system-overview layout untouched this iteration."
+    ),
+    ("system_overview.py", P2, "_build_system_overview_figure"): (
+        "Pre-existing; system-overview layout untouched this iteration."
+    ),
+    ("sensitivity_benchmarking.py", P4, "_build_sensitivity_benchmarking_figure"): (
         "Pre-existing AND this module carries uncommitted work from a concurrent "
         "track; editing it here would collide. Retire in a later iteration."
     ),
@@ -144,13 +181,46 @@ def _callee_name(node) -> str:
     return ""
 
 
-def scan(source: str) -> list[tuple[str, int]]:
-    """(predicate, lineno) for every violation in `source`. Pure -- the control calls it."""
-    hits: list[tuple[str, int]] = []
+def _function_owner(tree: ast.AST) -> dict[int, str]:
+    """line number -> name of the INNERMOST function enclosing it, else ``"<module>"``.
+
+    Needed because the allowlist is keyed by function: ``ast.walk`` flattens the tree and
+    discards the enclosing scope, so a violation cannot otherwise say which builder it is
+    in. Recursing AFTER stamping a function's line range means a nested definition
+    overwrites its own lines, leaving the innermost name.
+    """
+    owner: dict[int, str] = {}
+
+    def visit(node: ast.AST, fname: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for ln in range(child.lineno, (child.end_lineno or child.lineno) + 1):
+                    owner[ln] = child.name
+                visit(child, child.name)
+            else:
+                visit(child, fname)
+
+    visit(tree, "<module>")
+    return owner
+
+
+def scan(source: str) -> list[tuple[str, int, str]]:
+    """(predicate, lineno, function) for every violation. Pure -- the control calls it.
+
+    The third element is what makes the allowlist mean what it says. Keyed only by
+    (module, predicate), an entry stayed alive on a violation in an unrelated function, so
+    in a file holding several figure builders, fixing the violation the entry was written
+    for did not retire it -- and a DIFFERENT builder's violation was silently excused.
+    """
+    hits: list[tuple[str, int, str]] = []
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return hits
+    _owner = _function_owner(tree)
+
+    def _add(pred: str, lineno: int) -> None:
+        hits.append((pred, lineno, _owner.get(lineno, "<module>")))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -158,35 +228,35 @@ def scan(source: str) -> list[tuple[str, int]]:
             if margin is not None:
                 for k, v in _mapping_items(margin):
                     if k == "b" and _numeric(v):
-                        hits.append((P1, v.lineno))
+                        _add(P1, v.lineno)
 
             colorbar = _kwarg(node, "colorbar")
             if colorbar is not None:
                 for k, v in _mapping_items(colorbar):
                     if k == "x" and _numeric(v):
-                        hits.append((P2, v.lineno))
+                        _add(P2, v.lineno)
 
             for kw in node.keywords:
                 if kw.arg in ("cbar_x", "colorbar_x") and _numeric(kw.value):
-                    hits.append((P2, kw.value.lineno))
+                    _add(P2, kw.value.lineno)
 
             if _callee_name(node) in ("update_yaxes", "update_xaxes"):
                 title = _kwarg(node, "title_text")
                 if isinstance(title, ast.Call):
                     inner = _callee_name(title)
                     if _LABEL_PROVIDER.search(inner) and _WRAPPER not in inner:
-                        hits.append((P3, title.lineno))
+                        _add(P3, title.lineno)
 
             width = _kwarg(node, "content_w_px")
             if isinstance(width, ast.BinOp) and isinstance(width.op, ast.Sub) and _numeric(width.right):
-                hits.append((P4, width.lineno))
+                _add(P4, width.lineno)
 
         # A colorbar paper-x carried as a dict-LITERAL entry (the per-sim `panels` list
         # form) is an ast.Dict, never a Call keyword, so the pass above cannot see it.
         elif isinstance(node, ast.Dict):
             for k, v in zip(node.keys, node.values, strict=True):
                 if isinstance(k, ast.Constant) and k.value in ("colorbar_x", "cbar_x") and _numeric(v):
-                    hits.append((P2, v.lineno))
+                    _add(P2, v.lineno)
 
     return hits
 
@@ -200,9 +270,9 @@ def test_denominator_is_non_empty():
 @pytest.mark.parametrize("module", figure_modules(), ids=lambda p: p.name)
 def test_no_hand_authored_geometry(module: Path):
     violations = [
-        f"{module.name}:{line}  {pred}"
-        for pred, line in sorted(scan(module.read_text()), key=lambda t: t[1])
-        if (module.name, pred) not in _ALLOWLIST
+        f"{module.name}:{line}  in {fn}()  {pred}"
+        for pred, line, fn in sorted(scan(module.read_text()), key=lambda t: t[1])
+        if (module.name, pred, fn) not in _ALLOWLIST
     ]
     assert not violations, (
         f"{module.relative_to(_SRC)} hand-authors geometry a shared module owns:\n  "
@@ -218,7 +288,11 @@ def test_allowlist_entries_are_all_live():
     Without this, the ratchet loosens silently: a fixed module keeps its exemption and
     a later regression there goes unreported.
     """
-    live = {(m.name, pred) for m in figure_modules() for pred, _ in scan(m.read_text())}
+    live = {
+        (m.name, pred, fn)
+        for m in figure_modules()
+        for pred, _, fn in scan(m.read_text())
+    }
     stale = sorted(k for k in _ALLOWLIST if k not in live)
     assert not stale, f"_ALLOWLIST entries no longer needed -- delete them: {stale}"
 
@@ -260,5 +334,43 @@ def test_checker_fires_on_bad_and_is_silent_on_good(bad: str, good: str, expecte
     proves it is not simply matching everything -- the failure mode of the regex draft,
     which fired on a comment.
     """
-    assert expected in [p for p, _ in scan(bad)], f"predicate did not fire on: {bad!r}"
-    assert expected not in [p for p, _ in scan(good)], f"predicate false-positives on: {good!r}"
+    assert expected in [p for p, _, _ in scan(bad)], f"predicate did not fire on: {bad!r}"
+    assert expected not in [p for p, _, _ in scan(good)], f"predicate false-positives on: {good!r}"
+
+
+def test_scan_reports_the_enclosing_function():
+    """The third element must name the INNERMOST enclosing function, including nesting."""
+    src = (
+        "def outer():\n"
+        "    fig.update_layout(margin=dict(b=130))\n"
+        "    def inner():\n"
+        "        fig.update_layout(margin=dict(b=140))\n"
+        "fig.update_layout(margin=dict(b=150))\n"
+    )
+    got = {line: fn for _p, line, fn in scan(src)}
+    assert got == {2: "outer", 4: "inner", 5: "<module>"}, got
+
+
+def test_allowlist_key_is_function_scoped():
+    """POSITIVE CONTROL for the re-key itself.
+
+    Proves the hole the (module, predicate) key left open is actually closed: a violation
+    introduced into a DIFFERENT function of an allowlisted module must NOT be excused by
+    that module's existing entry. Written against a synthetic source rather than the tree
+    so it keeps testing the key's shape after every real site is retired.
+    """
+    src = (
+        "def _build_system_overview_figure():\n"
+        "    fig.update_layout(margin=dict(b=40))\n"
+        "def some_other_builder():\n"
+        "    fig.update_layout(margin=dict(b=99))\n"
+    )
+    hits = scan(src)
+    module = "system_overview.py"
+    excused = [(p, fn) for p, _, fn in hits if (module, p, fn) in _ALLOWLIST]
+    exposed = [(p, fn) for p, _, fn in hits if (module, p, fn) not in _ALLOWLIST]
+    assert excused == [(P1, "_build_system_overview_figure")], excused
+    assert exposed == [(P1, "some_other_builder")], (
+        "a violation in an unrelated function was excused by another function's entry -- "
+        "this is exactly the over-excusing the function key exists to prevent"
+    )

@@ -150,7 +150,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _watershed_polygon,
     )
     from hhemt.figure_caption import add_figure_caption, content_width_px
-    from hhemt.figure_layout import align_x
+    from hhemt.figure_panels import panel_geometry, panel_outline_shape
 
     read_model = combined_root / "combined_intercomparison.json"
     payload = _json.loads(read_model.read_text()) if read_model.exists() else {"experiments": [], "pairs": []}
@@ -197,8 +197,9 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             if key not in panel_keys:
                 panel_keys.append(key)
 
+    # Same expression as `_config_diff`'s summary-table height, and now feeding the same
+    # `panel_geometry(table_px=...)` parameter in both.
     _TABLE_PX = int((len(verdict_rows) + 2) * 26 + 20)
-    _MAP_PX = 340
     _FIG_W = 1000
     _T_MARGIN = 70
 
@@ -213,10 +214,11 @@ def build_cross_experiment_diff_figure(combined_root: Path):
 
     # THREE-STATE CONTRACT (user ruling, Track 4). The figure has three legitimate
     # shapes and the middle one was missing:
-    #   FULL           differing pairs exist -> verdict table + famtable + reference
-    #                  + (diff, pct) per identity group.
+    #   FULL           differing pairs exist -> verdict table + reference
+    #                  + (diff, pct) per identity group. The family config listing is a
+    #                  SIDE table beside each panel, not a row of its own.
     #   REFERENCE-ONLY zero differing pairs but child bundles loadable -> verdict table
-    #                  + famtable + reference panel per family, NO diff panels, and a
+    #                  + reference panel per family (with its side table), NO diff panels, and a
     #                  conditional caption stating why they are absent. Measured on
     #                  generation 01655abb60c2 this is the true state: TRITON 14/14 and
     #                  TRITON-SWMM 28/28 bit-identical, max |resume - clean| = 0.
@@ -307,7 +309,12 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 ctx = dict(model=model, evt=evt, fam=fam, base_sa=base_sa,
                            fam_subs=fam_subs, clean_eid=clean_eid,
                            resume_subs=resume_subs, groups=fam_groups)
-                row_plan.append(dict(kind="famtable", ctx=ctx))
+                # No `famtable` row. The family's config listing used to occupy a 110 px
+                # FULL-WIDTH table row above each family's maps; it is now a SIDE table
+                # beside that family's panel, which is what `_config_diff` already does
+                # ("the config lists live in the per-panel side tables") and what
+                # `PanelLayout.side_table_x` exists to place. Rows are therefore uniform
+                # map rows, which is the precondition for `panel_geometry`.
                 row_plan.append(dict(kind="ref", ctx=ctx))
                 if diffs_present:
                     for g in fam_groups:
@@ -347,33 +354,14 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     # FQ7 applies here too: no coupled SWMM tier -> a ONE-column grid, no placeholder.
     _ncols = 2 if has_coupled_arm else 1
     n_rows = 1 + len(row_plan)
+    # Rows are now uniform: one summary-table row, then only map rows.
     specs = [[{"type": "table", "colspan": 2}, None] if has_coupled_arm else [{"type": "table"}]]
-    for entry in row_plan:
-        if entry["kind"] == "famtable":
-            specs.append([{"type": "table", "colspan": 2}, None] if has_coupled_arm else [{"type": "table"}])
-        else:
-            specs.append([{"type": "xy"}, {"type": "xy"}] if has_coupled_arm else [{"type": "xy"}])
+    for _entry in row_plan:
+        specs.append([{"type": "xy"}, {"type": "xy"}] if has_coupled_arm else [{"type": "xy"}])
 
-    _FAMTABLE_PX = 110
-    _row_px = [_TABLE_PX] + [(_FAMTABLE_PX if e["kind"] == "famtable" else _MAP_PX + 70) for e in row_plan]
-    plot_h = sum(_row_px)
-    row_heights = [px / plot_h for px in _row_px]
-    fig = make_subplots(rows=n_rows, cols=_ncols, specs=specs,
-                        row_heights=row_heights, vertical_spacing=0.02)
-
-    # Colorbar paper-x DERIVED from each map column's own domain, replacing the
-    # hand-placed 0.44 / 0.98 literals. Those two were also inconsistent with each
-    # other -- 10 px inside col 1's right edge but 20 px inside col 2's -- so the two
-    # colorbars sat at different insets from panels of identical width. One pad, read
-    # off the domains, makes them agree and survives a column-layout change.
-    _map_domains = {
-        f"map{c}": list(next(fig.select_xaxes(row=2, col=c)).domain)
-        for c in range(1, _ncols + 1)
-    }
-    _cbar_x = {
-        c: align_x(_map_domains, ref=f"map{c}", edge="right", pad_px=-14, fig_width_px=_FIG_W)
-        for c in range(1, _ncols + 1)
-    }
+    # No `row_heights`/`vertical_spacing`: every domain is assigned from `panel_geometry`
+    # below, once the data aspect is known. See the geometry block after `_grid`.
+    fig = make_subplots(rows=n_rows, cols=_ncols, specs=specs)
 
     fig.add_trace(
         go.Table(
@@ -412,6 +400,56 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     def _glabel(g) -> str:
         return _derive_config_label(g.get("attrs", {}))
 
+    # ---- Geometry from hhemt.figure_panels. One PANEL per family: its reference map row
+    #      followed by that family's (diff, pct) row pair per identity group. The budget is
+    #      `PanelBudget`'s defaults, which ARE `_config_diff`'s numbers -- the user asked for
+    #      this figure to be styled "practically identically to the config diff maps", so
+    #      adopting that budget rather than a bespoke one is the point, not a side effect.
+    #      Unlike the `_config_diff` and `_dem_resolution_plots` migrations, this one is NOT
+    #      geometry-preserving: dropping the famtable rows and adopting the shared budget
+    #      moves the figure deliberately. ----
+    _panel_rows: list[list[int]] = []
+    for i, entry in enumerate(row_plan):
+        r = 2 + i
+        if _panel_rows and entry["ctx"] is row_plan[i - 1]["ctx"]:
+            _panel_rows[-1].append(r)
+        else:
+            _panel_rows.append([r])
+
+    _xd0, _yd0, _, _ = _grid(row_plan[0]["ctx"])
+    _map_aspect = ((max(_xd0) - min(_xd0)) or 1.0) / ((max(_yd0) - min(_yd0)) or 1.0)
+
+    _layout = panel_geometry(
+        _panel_rows,
+        table_px=_TABLE_PX,
+        map_aspect=_map_aspect,
+        fig_width=_FIG_W,
+        n_map_cols=_ncols,
+    )
+    plot_h = _layout.plot_h
+    for _r, _yd in _layout.row_ydom.items():
+        for _c in range(1, _ncols + 1):
+            next(fig.select_xaxes(row=_r, col=_c)).domain = _layout.map_domains[_c]
+            next(fig.select_yaxes(row=_r, col=_c)).domain = _yd
+    fig.data[0].domain = dict(x=_layout.table_domain["x"], y=_layout.table_domain["y"])
+
+    # Colorbar paper-x DERIVED from each map column's own domain, replacing the
+    # hand-placed 0.44 / 0.98 literals. Those two were also inconsistent with each
+    # other -- 10 px inside col 1's right edge but 20 px inside col 2's -- so the two
+    # colorbars sat at different insets from panels of identical width. One pad, read
+    # off the domains, makes them agree and survives a column-layout change.
+    _cbar_x = _layout.colorbar_x
+
+    def _cbar_y(r: int) -> float:
+        """Centre of row `r`'s ACTUAL y-domain.
+
+        Previously `1 - (row - 0.5) / n_rows`, which assumed every row was the same height
+        -- true only while the uniform `row_heights` were in force. With explicit per-row
+        domains that expression drifts from the map it labels.
+        """
+        d0, d1 = _layout.ydom(r)
+        return (d0 + d1) / 2.0
+
     # ONE shared symmetric range across every diff panel, quantised UP to the ladder, so
     # panels stay mutually comparable and co-located arms coincide when their p99s share a
     # bin. Computed on the MASKED arrays, exactly as the panels are drawn.
@@ -440,9 +478,14 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         base_da = base_s["wlevel"]
         base_label = _derive_config_label(base_s.get("attrs", {}))
         xd, yd, wpoly, wmask = _grid(ctx)
-        y_top = 1 - (row - 1) / n_rows
+        y_top = _layout.ydom(row)[1]
 
-        if kind == "famtable":
+        if kind == "ref":
+            # First row of this family's panel: emit the family's config listing as a SIDE
+            # table spanning the whole panel, plus the panel title. This content used to
+            # occupy its own full-width row above the maps.
+            _span = next(p for p in _panel_rows if row in p)
+            _p_top, _p_bot = _layout.ydom(_span[0])[1], _layout.ydom(_span[-1])[0]
             rows_ = [[_glabel(g), f"group {gi + 1}", f"{len(g['members'])} config(s)"]
                      for gi, g in enumerate(ctx["groups"])]
             fig.add_trace(
@@ -451,22 +494,22 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                                 align="left", fill_color="#f3f6fa", font=dict(size=10)),
                     cells=dict(values=list(zip(*rows_, strict=False)) if rows_ else [[]],
                                align="left", font=dict(size=10), height=20),
+                    domain=dict(x=_layout.side_table_x, y=[max(0.0, _p_bot), min(1.0, _p_top)]),
                 ),
-                row=row, col=1,
             )
             annotations.append(dict(
-                x=0.0, y=y_top, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
+                x=0.0, y=_p_top, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
                 showarrow=False, align="left", font=dict(size=12, color="#111"),
                 text=(f"<b>{model} - {_family_title(fam)}</b> - clean reference: the clean, "
                       f"uninterrupted run on this hardware family ({base_label})"),
             ))
-            continue
+            fig.add_shape(panel_outline_shape(_layout, _span[0], _span[-1]))
 
         if kind == "ref":
             zref = _apply_mask(np.asarray(base_da.values), wmask)
             fig.add_trace(
                 _heatmap(zref, zref, x=xd, y=yd, colorscale=_REF_DEPTH, cbar_title="m",
-                         cbar_x=_cbar_x[1], cbar_y=1 - (row - 0.5) / n_rows, cbar_len=0.6 / n_rows),
+                         cbar_x=_cbar_x[1], cbar_y=_cbar_y(row), cbar_len=_layout.colorbar_len),
                 row=row, col=1,
             )
             for _tr in _watershed_boundary_traces(wpoly):
@@ -479,8 +522,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 for tr in _conduit_traces(
                     geom, dict(zip(links, np.asarray(bf.values), strict=False)),
                     colorscale=_REF_FLOW, vmin=0, vmax=(vmax if vmax > 0 else 1.0),
-                    cbar_title="cms", cbar_x=_cbar_x[2], cbar_y=1 - (row - 0.5) / n_rows,
-                    cbar_len=0.6 / n_rows, diverging=False,
+                    cbar_title="cms", cbar_x=_cbar_x[2], cbar_y=_cbar_y(row),
+                    cbar_len=_layout.colorbar_len, diverging=False,
                 ):
                     fig.add_trace(tr, row=row, col=2)
             annotations.append(dict(
@@ -506,8 +549,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             z = _apply_mask(d, wmask)
             fig.add_trace(
                 _heatmap(z, z, x=xd, y=yd, colorscale=_DIVERGING, zmid=0, zmin=-wsym, zmax=wsym,
-                         cbar_title="m", cbar_x=_cbar_x[1], cbar_y=1 - (row - 0.5) / n_rows,
-                         cbar_len=0.6 / n_rows),
+                         cbar_title="m", cbar_x=_cbar_x[1], cbar_y=_cbar_y(row),
+                         cbar_len=_layout.colorbar_len),
                 row=row, col=1,
             )
             for _tr in _watershed_boundary_traces(wpoly):
@@ -518,8 +561,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             z = _apply_mask(_signed_pct(d, np.asarray(base_da.values)), wmask)
             fig.add_trace(
                 _heatmap(z, z, x=xd, y=yd, colorscale=_DIVERGING, zmid=0, zmin=-psym, zmax=psym,
-                         cbar_title="%", cbar_x=_cbar_x[1], cbar_y=1 - (row - 0.5) / n_rows,
-                         cbar_len=0.6 / n_rows),
+                         cbar_title="%", cbar_x=_cbar_x[1], cbar_y=_cbar_y(row),
+                         cbar_len=_layout.colorbar_len),
                 row=row, col=1,
             )
             txt = f"{g_label}: percent difference vs the clean reference on the same hardware family"
@@ -528,9 +571,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             showarrow=False, align="left", font=dict(size=11, color="#111"), text=txt,
         ))
 
-    for ei, entry in enumerate(row_plan):
-        if entry["kind"] == "famtable":
-            continue
+    for ei, _entry in enumerate(row_plan):
         row = 2 + ei
         for col in range(1, _ncols + 1):
             fig.update_xaxes(row=row, col=col, title_text="x (m)", title_font=dict(size=10),
