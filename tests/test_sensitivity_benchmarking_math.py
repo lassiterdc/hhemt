@@ -492,6 +492,20 @@ class TestModelArmEncoding:
 
 
 def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=200.0):
+    """Build a stub analysis whose CSV ledger DISAGREES with its datatree, on purpose.
+
+    `ledger_value` (900.0) and `perf_total` (200.0) are deliberately different, and
+    `wall_clock_ledger_s` is written into scenario_status.csv even though the renderer
+    no longer reads it. That is NOT leftover scaffolding -- it is a DECOY, and it is what
+    makes the single-source assertions falsifiable. `_collect_rows` once preferred the
+    ledger for `Total`; it now reads every column from the consolidated datatree. With
+    the decoy present, asserting 200.0 proves the CSV lost. Remove the decoy and the
+    same assertion degenerates to "the datatree value came from the datatree", which no
+    bug could ever fail.
+
+    If you change `ledger_value` and observe no effect on any result: that is the
+    contract holding, not a broken renderer.
+    """
     tree_path = tmp_path / "sensitivity_datatree.zarr"
     ds = xr.Dataset(
         {"Total": ("event_iloc", [perf_total])},
@@ -522,33 +536,65 @@ def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=2
     )
 
 
-def test_collect_rows_prefers_wall_clock_ledger_for_total(tmp_path):
-    """SUBSTITUTION arm. A resumed sim's plotted wallclock must be the
-    kill-survivable ledger sum, not performance.Total (which on a resumed sim
-    covers only the checkpoints present on disk at process time)."""
+def test_collect_rows_reads_total_from_datatree_despite_a_conflicting_ledger_csv(tmp_path):
+    """SINGLE-SOURCE arm. `Total` comes from the consolidated datatree, NOT from
+    scenario_status.csv -- and the CSV present in this fixture carries a CONFLICTING
+    wall_clock_ledger_s (900.0 vs the datatree's 200.0) precisely so this can fail.
+
+    Inverted from the retired substitution contract. `_collect_rows` used to prefer the
+    ledger for `Total` because the datatree value was wrong on a resumed sim -- a missed
+    reset boundary subtracted a whole segment. That defect is fixed at its cause by the
+    ledger-driven `resume_steps` join in process_simulation._aggregate_perf_tseries, so
+    the rescue is retired and every plotted column now has one source.
+
+    A 900.0 here means the substitution has been reintroduced.
+    """
     analysis = _stub_analysis(tmp_path)
     rows, source_paths = _collect_rows(analysis, "performance.Total")
     assert len(rows) == 1
-    assert rows[0]["value"] == pytest.approx(900.0), (
-        f"expected wall_clock_ledger_s (900.0), got {rows[0]['value']!r} "
-        "-- the renderer is still sourcing performance.Total"
+    assert rows[0]["value"] == pytest.approx(200.0), (
+        f"expected the datatree value (200.0), got {rows[0]['value']!r} -- the renderer "
+        "is sourcing wall_clock_ledger_s again, which mixes a whole-process wall into a "
+        "per-category decomposition and plots Total ABOVE Simulation from incommensurable "
+        "sources"
     )
-    assert any(p.name == "scenario_status.csv" for p in source_paths), (
-        "scenario_status.csv must be declared as a source path when the ledger is used"
+    assert not any(p.name == "scenario_status.csv" for p in source_paths), (
+        "scenario_status.csv must NOT be a declared source: the renderer no longer reads "
+        "it, and declaring an unread file overstates the figure's provenance (ADR-6)"
     )
 
 
-def test_collect_rows_falls_back_to_datatree_when_csv_absent(tmp_path):
-    """NON-OVER-FIRE arm 1. With no scenario_status.csv the renderer degrades
-    to performance.Total rather than raising."""
-    analysis = _stub_analysis(tmp_path, write_csv=False)
-    rows, _ = _collect_rows(analysis, "performance.Total")
-    assert rows[0]["value"] == pytest.approx(200.0)
+def test_collect_rows_result_is_unchanged_when_the_ledger_csv_is_absent(tmp_path):
+    """SINGLE-SOURCE arm, contrapositive. Removing the CSV entirely must change NOTHING.
+
+    Retargeted from a fallback test. There is no fallback any more, so "degrades to
+    performance.Total" is not a property the design has. What IS a property -- and what
+    this now pins -- is that the CSV's presence is irrelevant to the result. Paired with
+    the test above, the two bracket the contract from both sides: with a conflicting CSV
+    and without any CSV, the answer is identically the datatree value.
+    """
+    with_csv, _ = _collect_rows(_stub_analysis(tmp_path / "a"), "performance.Total")
+    without_csv, _ = _collect_rows(
+        _stub_analysis(tmp_path / "b", write_csv=False), "performance.Total"
+    )
+    assert with_csv[0]["value"] == pytest.approx(200.0)
+    assert without_csv[0]["value"] == pytest.approx(with_csv[0]["value"]), (
+        "the presence of scenario_status.csv must not influence any plotted value"
+    )
 
 
-def test_collect_rows_does_not_substitute_ledger_for_simulation(tmp_path):
-    """NON-OVER-FIRE arm 2. The ledger is a whole-process wall and must NOT be
-    substituted for the Init/Simulation decompositions."""
+def test_collect_rows_reads_simulation_from_datatree_like_every_other_column(tmp_path):
+    """SINGLE-SOURCE arm, generalization. `Simulation` is read from the datatree, and
+    so is every other column -- no column is special-cased.
+
+    Retargeted. This used to be the NON-OVER-FIRE guard proving the ledger substitution
+    was confined to `Total`; with the substitution gone that claim is vacuously true and
+    could never fail. What it pins now is the property that replaced it: uniform sourcing.
+    The inlined CSV below carries the same conflicting 900.0 decoy as _stub_analysis, so
+    a 900.0 result would still catch a reintroduced substitution -- this time one that
+    had spread BEYOND `Total`, which is the more damaging direction because it would
+    silently zero out `Total - Simulation`.
+    """
     tree_path = tmp_path / "sensitivity_datatree.zarr"
     ds = xr.Dataset(
         {"Total": ("event_iloc", [200.0]), "Simulation": ("event_iloc", [150.0])},

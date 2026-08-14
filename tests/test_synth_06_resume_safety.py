@@ -2,8 +2,11 @@
 
 When a TRITON-SWMM workflow resumes across SLURM allocations, the per-checkpoint
 ``performance{N}.txt`` files from the pre-resume allocation MUST be preserved
-alongside the post-resume files so that V0008's `_aggregate_perf_tseries` can
-reconstruct end-to-end wallclock across the allocation boundary.
+alongside the post-resume files so that `_aggregate_perf_tseries` can reconstruct
+end-to-end wallclock across the allocation boundary. The aggregator no longer INFERS
+that boundary from the data -- it is named by the caller's `resume_steps` ledger -- but
+the preservation invariant is unchanged and is what this module pins: a ledger can name
+a boundary only if the checkpoints on both sides of it still exist.
 
 This test asserts the invariant codified by the stipulation
 ``library/docs/stipulations/hhemt/clear raw triton outputs deferred
@@ -95,7 +98,12 @@ def test_two_allocation_merge_recovers_full_wallclock(two_allocation_perf_dir):
     """
     from hhemt.process_simulation import _aggregate_perf_summary
 
-    summary = _aggregate_perf_summary(two_allocation_perf_dir)
+    # The ledger this fixture's allocation 2 implies: it resumes FROM checkpoint 5
+    # (allocation 1 wrote 1..5; allocation 2 restarts the timer at 6), so a real run
+    # would carry resume_reporting_tsteps == [5]. Stating it here is the point -- the
+    # boundary is now DECLARED by the test rather than inferred from the data betraying
+    # itself, which is the whole substance of the fix under test.
+    summary = _aggregate_perf_summary(two_allocation_perf_dir, resume_steps=[5])
 
     assert summary["Total"].item() == pytest.approx(160.0, rel=1e-6), (
         "With both allocation batches preserved, max(Rank).sum(timestep_min)[Total] "
@@ -118,14 +126,20 @@ def test_pre_resume_files_deleted_undercounts_wallclock(two_allocation_perf_dir)
     from hhemt.process_simulation import _aggregate_perf_summary
 
     # Capture the full summary first as the reference value.
-    full_summary = _aggregate_perf_summary(two_allocation_perf_dir)
+    full_summary = _aggregate_perf_summary(two_allocation_perf_dir, resume_steps=[5])
     full_total = full_summary["Total"].item()
 
     # Simulate mid-workflow _clear_raw_TRITON_outputs: delete pre-resume batch only.
     for tstep in range(1, 6):
         (two_allocation_perf_dir / f"performance{tstep}.txt").unlink()
 
-    truncated_summary = _aggregate_perf_summary(two_allocation_perf_dir)
+    # STILL [5], deliberately. Deleting performance{1..5}.txt does not un-resume the
+    # simulation -- the ledger records what the run DID, not what files survive. Passing
+    # [] here would be editing the ledger to match the data, which is the inference the
+    # ledger-driven design exists to forbid. With only 6..10 present the first index > 5
+    # is 6, which is also the head-fill row, so the substitution is idempotent and the
+    # 80.0 assertion below is unchanged.
+    truncated_summary = _aggregate_perf_summary(two_allocation_perf_dir, resume_steps=[5])
     truncated_total = truncated_summary["Total"].item()
 
     assert truncated_total < full_total, (

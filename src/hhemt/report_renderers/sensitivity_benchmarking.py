@@ -28,6 +28,7 @@ from the sensitivity CSV, the renderer computes it as
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1036,34 +1037,56 @@ def _collect_rows(
     rows: list[dict[str, Any]] = []
     source_paths: list[Path] = []
 
-    # RESUME CORRECTNESS. `performance.{col}` is the slowest-rank sum over the
-    # performance{N}.txt checkpoints PRESENT ON DISK when the process rule ran. On a
-    # hotstart-resumed sim that set is not the whole run, so the column under-reports
-    # the run's wallclock -- and by a factor that is NOT constant, so it also reorders
-    # configurations. Measured on delivered generation 01655abb60c2, n=28 per arm:
+    # RESUME CORRECTNESS -- FIXED AT THE CAUSE, SINGLE-SOURCED HERE.
+    # `performance.{col}` is the slowest-rank sum of per-rank deltas over the
+    # performance{N}.txt checkpoints. On a hotstart-resumed sim TRITON restarts its
+    # cumulative timer at each resume, and the pre-fix aggregator INFERRED those resets
+    # from the data via `(deltas <= 0).all(axis=1)` -- a conjunction requiring EVERY
+    # column to decrease. `Init` INCREASES at a real boundary (the restarted process
+    # re-pays init), so boundaries were missed and a whole segment was SUBTRACTED
+    # instead of added. The column then under-reported wallclock by a factor that was
+    # NOT constant, so it also reordered configurations.
+    #
+    # NOTE, measured -- this corrects an earlier reading of this comment: the cause was
+    # NOT that checkpoints were missing from disk. All 144 perf files are present for
+    # the resumed sa_serial_6_r1; the set IS the whole run. The fix is the ledger-driven
+    # `resume_steps` join in process_simulation._aggregate_perf_tseries, which takes the
+    # boundaries from TRITONSWMM_model_log.resume_reporting_tsteps instead of guessing.
+    #
+    # PRE-FIX baseline, retained as the regression reference. Measured on delivered
+    # generation 01655abb60c2, n=28 per arm:
     # perf_Total / wall_clock_ledger_s = 0.975 (clean triton) / 0.985 (clean coupled)
     # vs 0.527 +/- 0.133 (resume triton, range 0.21-0.72) / 0.215 +/- 0.012 (resume
     # coupled). Spearman(perf_Total, ledger) falls from 0.996/0.9995 on the clean arms
     # to 0.909 on resume-triton -- i.e. the plotted metric disagrees with true wallclock
     # about which configuration is faster.
     #
-    # `wall_clock_ledger_s` is the append-only per-attempt ledger summed by
-    # run_simulation.read_walltime_ledger_total_s, the only kill-survivable per-attempt
-    # wall source (the perf files and sim_run_time_minutes are overwrite-prone). It is
-    # preferred for Total ONLY: it is a whole-process wall and is not a substitute for
-    # the Init or Simulation decompositions, which stay datatree-sourced.
-    _ledger: dict[tuple[str, int], float] = {}
-    _csv = analysis.analysis_paths.analysis_dir / "scenario_status.csv"
-    if col == "Total" and _csv.exists():
-        _df_status = pd.read_csv(_csv)
-        if {"sa_id", "event_iloc", "wall_clock_ledger_s"} <= set(_df_status.columns):
-            for _r in _df_status.itertuples(index=False):
-                _v = getattr(_r, "wall_clock_ledger_s", None)
-                if _v is None or pd.isna(_v):
-                    continue
-                _ledger[(str(_r.sa_id), int(_r.event_iloc))] = float(_v)
-            if _ledger:
-                source_paths.append(_csv)
+    # POST-FIX, recomputed from raw performance{N}.txt + the ledger across all 56 resumed
+    # sims: 0.861 +/- 0.063 (resume triton) / 0.898 +/- 0.036 (resume coupled), and
+    # Spearman(perf_Total, ledger) recovers to 0.9934 / 0.9978 with only 2.1% / 1.1% of
+    # configuration pairs ordered differently. The residual gap is UNDERSTOOD, not noise:
+    # `ledger - perf_Total` is a near-constant ~6.3 s per attempt (process launch,
+    # checkpoint read, and the post-last-checkpoint work each killed attempt discarded
+    # and recomputed), so it is ADDITIVE and order-preserving. That is why the ratio
+    # still spreads 0.72-0.96 while the ordering does not move -- short sims pay the same
+    # seconds as a larger fraction. Do not read the ratio spread as reordering risk.
+    #
+    # WHY NO LEDGER SUBSTITUTION HERE. `wall_clock_ledger_s` is the append-only
+    # per-attempt ledger summed by run_simulation.read_walltime_ledger_total_s -- still
+    # the only kill-survivable per-attempt wall source, since the perf files and
+    # sim_run_time_minutes are overwrite-prone. It remains available in
+    # scenario_status.csv and is the right answer to "what did this configuration cost".
+    # It is deliberately NOT read here. This collector used to prefer it for `Total`
+    # only, as a rescue while the datatree value was wrong; that rescue is retired with
+    # the defect that justified it. Two reasons it is not merely unnecessary but wrong
+    # at this site: (1) it is a whole-process wall with no per-category decomposition, so
+    # mixing it in plotted `Total` ABOVE datatree `Simulation` from incommensurable
+    # sources and broke `Total - Simulation`; (2) its extra seconds are dominated by the
+    # 4-attempt structure of an ARTIFICIALLY scheduled 3-kill interruption, which is a
+    # property of the experiment design, not of the configuration under test. Every
+    # plotted column now comes from one source. If whole-process wall is wanted as a
+    # first-class quantity, add it as its OWN series -- do not substitute it into a
+    # decomposition.
 
     datatree_path = analysis.analysis_paths.sensitivity_datatree_zarr
     tree: xr.DataTree | None = None
@@ -1074,13 +1097,58 @@ def _collect_rows(
     for sa_id, sub_analysis in sensitivity.sub_analyses.items():
         node_ds = _find_perf_node(tree, sa_id) if tree is not None else None
         if node_ds is not None and col in node_ds.data_vars:
+            _emitted_for_sa = False
             for event_iloc in sub_analysis.df_sims.index:
-                value = _ledger.get((str(sa_id), int(event_iloc)))
+                # SINGLE SOURCE + FAIL LOUD. The ledger substitution that used to preempt
+                # this read existed because the datatree `Total` was wrong on resume -- a
+                # missed reset boundary subtracted a whole segment (measured 0.527 of the
+                # attempt ledger, and it reordered configurations). That defect is fixed at
+                # its cause by the ledger-driven `resume_steps` join in
+                # process_simulation._aggregate_perf_tseries, so every plotted column now
+                # comes from ONE source and `Total - Simulation` means what it says again.
+                #
+                # The `if value is None: continue` that used to sit here dropped a sim from
+                # the figure without a word. With the fallback gone that skip would be the
+                # only thing between a broken read and a missing bar, so it is replaced by
+                # an explicit raise carrying the operands needed to debug it: which sub,
+                # which event, which column, and what was actually found.
+                value = _scalar_at_event(node_ds[col], int(event_iloc))
                 if value is None:
-                    value = _scalar_at_event(node_ds[col], int(event_iloc))
-                if value is None:
-                    continue
+                    _dims = dict(node_ds[col].sizes)
+                    _events = (
+                        node_ds[col].coords["event_iloc"].values.tolist()
+                        if "event_iloc" in node_ds[col].coords
+                        else "<no event_iloc coord>"
+                    )
+                    raise ValueError(
+                        f"Benchmarking read failed: sa_id={sa_id!r} event_iloc={int(event_iloc)} "
+                        f"column={col!r} produced no scalar. Node dims={_dims}; "
+                        f"event_iloc values present={_events}. This is one of: the event index "
+                        "is absent from the consolidated node, or the selection is non-scalar, "
+                        "or the stored value is non-numeric. Until the ledger-driven resume-reset "
+                        "fix, a wall_clock_ledger_s fallback masked this for 'Total' and every "
+                        "other column skipped the row silently; the figure now refuses to plot "
+                        "a sub-analysis it cannot read."
+                    )
+                if not math.isfinite(value):
+                    raise ValueError(
+                        f"Benchmarking read produced a non-finite value: sa_id={sa_id!r} "
+                        f"event_iloc={int(event_iloc)} column={col!r} value={value!r}. "
+                        "NaN/inf passes the None-sentinel this code used before, so such a "
+                        "value was previously PLOTTED rather than caught. A non-finite entry "
+                        "here means the per-scenario perf zarr carries one -- regenerate it "
+                        "(V0018) rather than suppressing this check."
+                    )
+                _emitted_for_sa = True
                 rows.append({"sa_id": sa_id, "event_iloc": int(event_iloc), "value": value})
+            if not _emitted_for_sa:
+                raise ValueError(
+                    f"Benchmarking produced no rows for sa_id={sa_id!r} on column={col!r} "
+                    f"despite a resolvable performance node. df_sims index was "
+                    f"{list(sub_analysis.df_sims.index)}. A sub-analysis that silently "
+                    "contributes zero bars is indistinguishable in the rendered figure from "
+                    "one that was never configured; refuse rather than render a gap."
+                )
             continue
         enabled = sub_analysis._get_enabled_model_types()
         if "swmm" in enabled and len(enabled) == 1:

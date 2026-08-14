@@ -131,11 +131,24 @@ def _regenerate_perf_summary(sim_dir: Path, raw_perf_dir: Path) -> None:
         _aggregate_perf_tseries,
     )
 
-    ds_tseries = _aggregate_perf_tseries(raw_perf_dir)
+    # resume_steps=[] is a POSITIVE assertion, not a placeholder. V0008 targets trees
+    # written before resume_reporting_tsteps existed (pre-KR-b), which therefore carry no
+    # realized-boundary record of any kind. With no ledger there is nothing to join on, so
+    # this migration corrects the per-rank DIFF only -- its actual subject -- and never the
+    # resume boundary. A resumed sim in such a tree keeps a wrong Total; that is a known
+    # and accepted limit of V0008, not something an empty list is papering over. Do not
+    # "improve" this by inferring boundaries from the data: that guess is the defect V0018
+    # exists to remove.
+    #
+    # Verified byte-neutral on the fixture corpus: the pre-V0018 inferred predicate
+    # `(deltas <= 0).all(axis=1)` fires on 0 of 16 checkpoints across both ranks in
+    # tests/fixtures/legacy_layouts/v0008_unit_test/regenerate/, so passing [] reproduces
+    # this migration's prior output exactly and no golden fixture moves.
+    ds_tseries = _aggregate_perf_tseries(raw_perf_dir, resume_steps=[])
     perf_tseries_path = sim_dir / "processed" / "TRITONSWMM_perf_tseries.zarr"
     ds_tseries.to_zarr(perf_tseries_path, mode="w", consolidated=False)
 
-    ds_summary = _aggregate_perf_summary(raw_perf_dir)
+    ds_summary = _aggregate_perf_summary(raw_perf_dir, resume_steps=[])
     ds_summary.attrs["units"] = "seconds"
     ds_summary.attrs["notes"] = (
         "V0008-regenerated: slowest-rank cumulative cost. 'Total' / 'Simulation' "

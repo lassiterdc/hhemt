@@ -67,7 +67,9 @@ def test_zero_byte_perf_file_is_skipped(synthetic_perf_dir):
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        ds = _aggregate_perf_tseries(synthetic_perf_dir)  # raises EmptyDataError pre-fix
+        ds = _aggregate_perf_tseries(
+            synthetic_perf_dir, resume_steps=[]
+        )  # raises EmptyDataError pre-fix
 
     # The empty file is skipped: the series covers exactly the 10 valid checkpoints.
     assert ds.sizes["timestep_min"] == 10
@@ -89,7 +91,7 @@ def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
     """
     from hhemt.process_simulation import _aggregate_perf_summary
 
-    summary = _aggregate_perf_summary(synthetic_perf_dir)
+    summary = _aggregate_perf_summary(synthetic_perf_dir, resume_steps=[])
 
     assert summary["Total"].item() == pytest.approx(160.0, rel=1e-6), (
         "Rank-1 cumulative Total at checkpoint 10 is 160s; max(Rank).sum(timestep_min) "
@@ -107,7 +109,7 @@ def test_corrected_reconstruction_matches_final_performance_txt(synthetic_perf_d
     """Cross-validate per-rank deltas sum-equal the final cumulative per rank."""
     from hhemt.process_simulation import _aggregate_perf_tseries
 
-    ds = _aggregate_perf_tseries(synthetic_perf_dir)
+    ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])
     rank0_total = ds["Total"].sel(Rank=0).sum(dim="timestep_min").item()
     rank1_total = ds["Total"].sel(Rank=1).sum(dim="timestep_min").item()
     assert rank0_total == pytest.approx(150.0, rel=1e-6), (
@@ -118,23 +120,85 @@ def test_corrected_reconstruction_matches_final_performance_txt(synthetic_perf_d
     )
 
 
-def test_reset_detector_handles_resume(synthetic_perf_dir):
-    """Inject a non-monotonic checkpoint and assert reset is detected per-rank.
+def _write_resume_boundary(perf_dir):
+    """Rewrite checkpoints 9 and 10 so the boundary has PRODUCTION shape.
 
-    Overwrite the last checkpoint's content with smaller values to simulate a resume
-    that resets the counter; the corrected aggregator's reset-detector branch should
-    treat the post-reset row's absolute value as the new cumulative for that rank.
+    The original fixture wrote Init = 0 on every row, which made the reset row's Init
+    delta exactly 0 -- satisfying `<= 0` -- so the retired inferred predicate
+    `(deltas <= 0).all(axis=1)` detected this boundary. That is precisely the degeneracy
+    that made the old test pass while production failed: at a REAL boundary the restarted
+    process re-pays initialization and Init INCREASES (measured 0.05694 -> 0.07816 s on
+    sa_serial_6_r1), one positive column defeats `.all()`, and the reset is missed.
+
+    Giving checkpoint 9 a nonzero Init and checkpoint 10 a LARGER one reproduces that
+    shape, so the retired predicate and the ledger join now DISAGREE on this data. That
+    disagreement is what lets these tests pin which mechanism ran -- with the old fixture
+    both mechanisms produced the same answer and the test could not tell them apart.
+    """
+    # Checkpoint 9: as the shared fixture writes it, but with a nonzero Init so the
+    # boundary's Init delta can be positive rather than trivially zero.
+    pre = "%Rank, Compute, MPI, IO, Resize, SWMM, Other, Simulation, Init, Total\n"
+    pre += "0, 90, 0, 0, 0, 45, 0, 135, 0.3, 135\n"
+    pre += "1, 108, 0, 0, 0, 36, 0, 144, 0.3, 144\n"
+    pre += "Average, 99, 0, 0, 0, 40.5, 0, 139.5, 0.3, 139.5\n"
+    (perf_dir / "performance9.txt").write_text(pre)
+
+    # Checkpoint 10: the resumed attempt. Wallclock columns collapse (timer restart) but
+    # Init RISES 0.3 -> 0.5, which is what defeats the retired all-column conjunction.
+    post = "%Rank, Compute, MPI, IO, Resize, SWMM, Other, Simulation, Init, Total\n"
+    post += "0, 5, 0, 0, 0, 3, 0, 8, 0.5, 8\n"
+    post += "1, 6, 0, 0, 0, 2, 0, 8, 0.5, 8\n"
+    post += "Average, 5.5, 0, 0, 0, 2.5, 0, 8, 0.5, 8\n"
+    (perf_dir / "performance10.txt").write_text(post)
+
+
+def test_ledger_named_reset_row_is_corrected_despite_rising_init(synthetic_perf_dir):
+    """The ledger-named row is corrected even though Init INCREASES across the boundary.
+
+    This is the differential the retired predicate cannot pass. Pre-fix,
+    `(deltas <= 0).all(axis=1)` sees Init +0.2 at checkpoint 10, declines to call it a
+    reset, and records Total as 8 - 135 = -127 -- a large negative summed as elapsed
+    time. Post-fix the boundary comes from the ledger, not from the data's shape, so the
+    row is corrected and its absolute value IS the new cumulative.
     """
     from hhemt.process_simulation import _aggregate_perf_tseries
 
-    reset_tstep_file = synthetic_perf_dir / "performance10.txt"
-    content = "%Rank, Compute, MPI, IO, Resize, SWMM, Other, Simulation, Init, Total\n"
-    content += "0, 5, 0, 0, 0, 3, 0, 8, 0, 8\n"  # reset: smaller than prev rank-0 row
-    content += "1, 6, 0, 0, 0, 2, 0, 8, 0, 8\n"  # reset: smaller than prev rank-1 row
-    content += "Average, 5.5, 0, 0, 0, 2.5, 0, 8, 0, 8\n"
-    reset_tstep_file.write_text(content)
+    _write_resume_boundary(synthetic_perf_dir)
 
-    ds = _aggregate_perf_tseries(synthetic_perf_dir)
-    # At the reset row, the absolute value IS the new cumulative for that rank.
-    assert ds["Total"].sel(Rank=0, timestep_min=10).item() == pytest.approx(8.0, rel=1e-6)
+    # Allocation 2 resumed FROM checkpoint 9, so the reset row is the first surviving
+    # index above it -- checkpoint 10.
+    ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[9])
+
+    assert ds["Total"].sel(Rank=0, timestep_min=10).item() == pytest.approx(8.0, rel=1e-6), (
+        "At a ledger-named reset row the absolute value IS the new cumulative. A result "
+        "near -127 means the row was diffed against the pre-resume cumulative, i.e. the "
+        "boundary was not honoured."
+    )
     assert ds["Total"].sel(Rank=1, timestep_min=10).item() == pytest.approx(8.0, rel=1e-6)
+    # Init is the column that defeats the retired predicate, so assert it explicitly:
+    # the correction must take the absolute (0.5), NOT the +0.2 delta.
+    assert ds["Init"].sel(Rank=0, timestep_min=10).item() == pytest.approx(0.5, rel=1e-6), (
+        "Init at the reset row must be the restarted attempt's absolute re-init cost "
+        "(0.5), not the meaningless +0.2 delta against the previous attempt."
+    )
+
+
+def test_reset_is_not_corrected_when_the_ledger_is_empty(synthetic_perf_dir):
+    """Identical bytes, empty ledger -> NO correction. This is what pins the mechanism.
+
+    Same data as the test above; only the ledger differs. If the aggregator still
+    corrected checkpoint 10 here, something in it would be inferring resets from the
+    data -- which is the behaviour the ledger-driven design exists to remove. No
+    data-driven mechanism can satisfy both this test and the one above, because the
+    bytes they read are the same.
+    """
+    from hhemt.process_simulation import _aggregate_perf_tseries
+
+    _write_resume_boundary(synthetic_perf_dir)
+
+    ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])
+
+    assert ds["Total"].sel(Rank=0, timestep_min=10).item() == pytest.approx(-127.0, rel=1e-6), (
+        "With no ledger entry the row is a plain diff (8 - 135 = -127). A value of 8.0 "
+        "here means a reset was inferred from the data despite an empty ledger."
+    )

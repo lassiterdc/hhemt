@@ -517,6 +517,14 @@ def main():
                             "completed": bool(run.model_run_completed(model_type)),
                             "slurm_jobid": os.environ.get("SLURM_JOB_ID"),
                             "slurm_step_id": os.environ.get("SLURM_STEP_ID"),
+                            # The reporting step THIS attempt resumed from (0 = fresh).
+                            # Additive: makes this append-only, kill-survivable record
+                            # carry both the boundary index and the duration, so the
+                            # perf-aggregation test can cross-assert it against
+                            # log_{model}.json's resume_reporting_tsteps. Purely a
+                            # cross-check -- the aggregator joins on the model log, not
+                            # on this file.
+                            "resume_from_tstep": int(sim_start_reporting_tstep),
                         }
                     )
                     + "\n"

@@ -4,6 +4,7 @@ import json
 import xarray as xr
 import pandas as pd
 import numpy as np
+from collections.abc import Sequence
 from typing import Literal
 import warnings
 from pathlib import Path
@@ -606,7 +607,14 @@ class TRITONSWMM_sim_post_processing:
         # Delegate parsing + per-rank diff aggregation to the module-level helper so
         # the V0008 migration and the regression test share one source of truth.
         # The helper raises FileNotFoundError if no performance{N}.txt files match.
-        ds = _aggregate_perf_tseries(performance_dir, min_per_tstep=min_per_tstep)
+        # The ledger the corrected aggregator joins on. `self.log` IS the
+        # TRITONSWMM_model_log for the active model type (bound in __init__ /
+        # _set_active_model_log), so no plumbing is needed -- the exporter has always
+        # held it. Legacy pre-KR-b logs coalesce None -> [] (no claimed resumes).
+        _resume_steps = list(self.log.resume_reporting_tsteps.get() or [])
+        ds = _aggregate_perf_tseries(
+            performance_dir, min_per_tstep=min_per_tstep, resume_steps=_resume_steps
+        )
 
         event_iloc = self._scenario.event_iloc
         ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
@@ -698,8 +706,9 @@ class TRITONSWMM_sim_post_processing:
             "barrier (TRITON synchronizes ranks before every checkpoint per "
             "triton.h:2151-2162). On a hotstart-resumed sim these columns are the "
             "CUMULATIVE wallclock across every allocation, because _aggregate_perf_tseries "
-            "concatenates all preserved performance{N}.txt checkpoints and detects "
-            "the per-resume timer reset (process_simulation.py resume-reset branch); "
+            "concatenates all preserved performance{N}.txt checkpoints and applies the "
+            "reset boundaries named by the model log's resume_reporting_tsteps ledger "
+            "(never inferred from the data); "
             "they are therefore NOT the final-allocation-only figure that the SLURM "
             "Elapsed field reports. Category columns ('Compute','MPI','IO','SWMM',"
             "'Resize','Other') are upper bounds on the per-category contribution "
@@ -1652,7 +1661,12 @@ class TRITONSWMM_sim_post_processing:
         return node_ok and link_ok
 
 
-def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> xr.Dataset:
+def _aggregate_perf_tseries(
+    raw_perf_dir: Path,
+    min_per_tstep: float = 1.0,
+    *,
+    resume_steps: Sequence[int],
+) -> xr.Dataset:
     """Parse per-checkpoint ``performance{N}.txt`` files into an :class:`xr.Dataset`
     of corrected per-rank deltas.
 
@@ -1666,7 +1680,12 @@ def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> x
     production preserve its prior coord-value semantics (``timestep_min = filename_int *
     min_per_tstep``); the default ``1.0`` matches V0008's prescription and the
     regression-test fixtures.
-    """
+        ``resume_steps`` is REQUIRED and keyword-only, deliberately: it is the caller's
+    ``TRITONSWMM_model_log.resume_reporting_tsteps`` (``[]`` when the sim never resumed).
+    There is no default and no inference fallback -- a defaulted value would let a caller
+    silently reintroduce the ``(deltas <= 0).all(axis=1)`` guess this parameter replaces,
+    which is the failure mode the parameter exists to make impossible.
+"""
     import re
 
     files = sorted(
@@ -1681,6 +1700,13 @@ def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> x
             f"Performance directory {raw_perf_dir} contains no performance{{N}}.txt files."
         )
 
+    # Integer reporting-step index of every file actually parsed. The reset-row
+    # selection below joins on THIS, never on the `timestep_min` coord: that coord is
+    # `tstep_iloc * min_per_tstep` where `min_per_tstep = TRITON_reporting_timestep_s/60`,
+    # which is not exactly representable when the reporting interval is not a clean
+    # multiple of 60 s -- a float `.loc[]` lookup would then match nothing and drop the
+    # correction silently.
+    tstep_ilocs_seen: set[int] = set()
     dfs = []
     perfs_with_negatives: list[str] = []
     empty_perfs: list[str] = []
@@ -1701,6 +1727,7 @@ def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> x
             empty_perfs.append(str(f))
             continue
         tstep_iloc = int(m.group(1))
+        tstep_ilocs_seen.add(tstep_iloc)
         df_ranks, _ = parse_performance_file(f)
         df_ranks = df_ranks.reset_index()
         df_ranks["timestep_min"] = tstep_iloc * min_per_tstep
@@ -1744,15 +1771,68 @@ def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> x
     # process construction; see triton.h:362).
     first_per_rank = full.groupby(level="Rank").head(1)
     deltas.loc[first_per_rank.index, :] = first_per_rank
-    # Reset detector: per-rank deltas <= 0 imply a resume reset; the row's
-    # absolute value IS the new cumulative for that rank.
-    idx_resets = (deltas <= 0).all(axis=1)
-    idx = idx_resets[idx_resets].index
+    # LEDGER-DRIVEN reset correction. `resume_steps` is the caller's
+    # `TRITONSWMM_model_log.resume_reporting_tsteps` — the REALIZED reporting step of
+    # each hotstart resume, appended in run_simulation.py's hotstart branch BEFORE the
+    # attempt launches. It is the ONLY admissible source: inferring resets from the
+    # perf data itself is foreclosed, because the inferred predicate
+    # `(deltas <= 0).all(axis=1)` requires EVERY column to decrease and `Init` INCREASES
+    # at a real boundary (the restarted process re-pays init: measured 0.05694 -> 0.07816
+    # on sa_serial_6_r1). One positive column defeated `.all()` and a whole segment was
+    # subtracted instead of added -- 56 of 112 sims on the synth_cc campaign, every
+    # resumed sim on both models.
+    #
+    # Join: TRITON writes config_N.cfg 1-based contiguous and performance{N}.txt shares
+    # that index, so a resume FROM step t produces its first post-restart checkpoint at
+    # the smallest surviving index > t. Selection is on the INTEGER file index captured
+    # during the parse loop, NEVER on the `timestep_min` coord -- that coord is
+    # `tstep_iloc * min_per_tstep` and is not exactly representable when the reporting
+    # interval is not a clean multiple of 60 s, so a float `.loc[]` lookup would match
+    # nothing and drop the correction silently.
+    reset_ilocs: set[int] = set()
+    for _t in sorted({int(v) for v in resume_steps}):
+        _after = [i for i in sorted(tstep_ilocs_seen) if i > _t]
+        if _after:
+            reset_ilocs.add(_after[0])
+        else:
+            warnings.warn(
+                f"Resume ledger names a resume at reporting step {_t}, but no "
+                f"performance{{N}}.txt survives above it in {raw_perf_dir}. That attempt "
+                "wrote no checkpoint (hard kill before the first dump); no reset row to "
+                "correct.",
+                UserWarning,
+                stacklevel=2,
+            )
+    idx = full.index[[int(t) in reset_ilocs for t, _ in full.index]]
     deltas.loc[idx, :] = full.loc[idx, :]
+
+    # Reconciliation, NOT a fallback. The ledger decides; the data only corroborates.
+    # `resume_reporting_tsteps` is cumulative and is never reset, so a sim that resumed,
+    # lost its checkpoints, then ran FRESH to completion carries a stale list (the same
+    # staleness channel documented for its sibling `n_resumes`). Surface the disagreement
+    # loudly rather than silently mis-summing, and do NOT re-derive resets from the data.
+    _wallclock_drop = (deltas["Total"] < 0) if "Total" in deltas.columns else None
+    if _wallclock_drop is not None and bool(_wallclock_drop.any()):
+        _unclaimed = sorted({int(t) for t, _ in deltas.index[_wallclock_drop]})
+        warnings.warn(
+            f"Cumulative 'Total' decreases at reporting step(s) {_unclaimed} in "
+            f"{raw_perf_dir}, but the resume ledger claims resumes only at "
+            f"{sorted({int(v) for v in resume_steps})}. The ledger is authoritative and "
+            "was NOT overridden; these rows remain uncorrected. Most likely the analysis "
+            "was re-run without start_from_scratch, leaving a stale "
+            "resume_reporting_tsteps.",
+            UserWarning,
+            stacklevel=2,
+        )
     return deltas.to_xarray()
 
 
-def _aggregate_perf_summary(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> xr.Dataset:
+def _aggregate_perf_summary(
+    raw_perf_dir: Path,
+    min_per_tstep: float = 1.0,
+    *,
+    resume_steps: Sequence[int],
+) -> xr.Dataset:
     """Reduce per-rank deltas to a slowest-rank wallclock summary.
 
     Computes ``_aggregate_perf_tseries(...).sum(dim='timestep_min').max(dim='Rank')`` —
@@ -1764,8 +1844,16 @@ def _aggregate_perf_summary(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> x
     NOT call this helper — it retains its inline ``mean(Rank)`` aggregation at line ~530.
     Phase 2 of the ``superlinear-speedup-fixes`` plan wires the instance method through
     this helper, completing the aggregation-semantic switch.
-    """
-    ds = _aggregate_perf_tseries(raw_perf_dir, min_per_tstep=min_per_tstep)
+        ``resume_steps`` is REQUIRED and keyword-only, matching ``_aggregate_perf_tseries``
+    exactly. The symmetry is load-bearing, not stylistic: this function's whole body
+    forwards to that one, so a DEFAULT here would let ``_aggregate_perf_summary(dir)``
+    keep compiling while silently supplying an empty ledger to a required parameter --
+    reintroducing, one layer up, the very guess the required parameter removes. Callers
+    pass ``[]`` only when they positively know the sim never resumed.
+"""
+    ds = _aggregate_perf_tseries(
+        raw_perf_dir, min_per_tstep=min_per_tstep, resume_steps=resume_steps
+    )
     return ds.sum(dim="timestep_min").max(dim="Rank")
 
 
