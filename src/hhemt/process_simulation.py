@@ -1803,7 +1803,19 @@ def _aggregate_perf_tseries(
                 UserWarning,
                 stacklevel=2,
             )
-    idx = full.index[[int(t) in reset_ilocs for t, _ in full.index]]
+    # Compare in the SAME space the index was built in. `reset_ilocs` holds raw
+    # performance{N}.txt file indices, but `full.index`'s first level is
+    # `timestep_min = tstep_iloc * min_per_tstep` (the assignment ~100 lines above), so
+    # comparing `int(t)` against a file index silently matches NOTHING whenever
+    # min_per_tstep != 1.0 -- and production always passes 600/60 = 10.0 while every test
+    # and the V0018 migration use the 1.0 default, which is the one value where the two
+    # spaces coincide. Measured: sa_serial_6_r1 produced 89.51 s (the pure telescope to
+    # performance144.txt) instead of 409.30 s, with a correct ledger and correct raw.
+    # Deriving the coords by the identical multiplication keeps float equality exact even
+    # when min_per_tstep is not representable, because both sides are the same product of
+    # the same operands.
+    _reset_coords = {iloc * min_per_tstep for iloc in reset_ilocs}
+    idx = full.index[[t in _reset_coords for t, _ in full.index]]
     deltas.loc[idx, :] = full.loc[idx, :]
 
     # Reconciliation, NOT a fallback. The ledger decides; the data only corroborates.
