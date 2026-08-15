@@ -1,0 +1,8 @@
+{
+  "attributes": {
+    "units": "seconds",
+    "notes": "PRE-V0018 seed: values as written by the retired inferred-reset aggregation."
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

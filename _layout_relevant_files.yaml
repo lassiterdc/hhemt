@@ -23,7 +23,13 @@ non_breaking_allowlist:
       cleanup-rerun-delete-redesign Phase 3 — replaces structurally broken
       _clear_raw_TRITON_outputs + _clear_raw_SWMM_outputs with a single corrected
       _clear_raw_outputs(model_type). Behavior change; existing on-disk analyses
-      continue to work post-upgrade.
+      continue to work post-upgrade. SIGNATURE-SCOPED as of the ledger-driven
+      resume-reset change: this entry was previously path-keyed with no
+      layout_signature, which made the exemption PERMANENT — every later edit to this
+      file passed Check B silently, including numeric-correctness edits to the
+      per-scenario perf zarrs. Re-stamp layout_signature whenever a genuinely
+      non-breaking change lands; a breaking one must bump LAYOUT_VERSION instead.
+    layout_signature: "e76709d8fdce45397bd3d0e9ed7d9328f4fb84eea5719d3f5adbae34563b4a72"
   - path: src/hhemt/scenario.py
     justification: >-
       Two collapsed non-breaking changes. cleanup-rerun-delete-redesign Phase 3 —
