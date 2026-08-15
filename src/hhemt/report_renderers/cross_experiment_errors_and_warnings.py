@@ -20,6 +20,21 @@ from pathlib import Path
 
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
+from hhemt.report_renderers.errors_and_warnings import _CHECK_VOCABULARY
+
+#: Module-level import is cycle-free and verified: errors_and_warnings.py's module-level
+#: imports are `pathlib` and `typing` only -- every heavy import in it is function-local --
+#: and it references nothing in this module.
+
+
+def _vocab_name(name: str) -> str:
+    """Display name for a raw check name, identity for anything not in the vocabulary.
+
+    This matrix carries every child's checks, not only the two `Check`-table levels, so
+    most names legitimately have no vocabulary entry and must render unchanged. The
+    identity default is the whole mechanism by which this stays a four-name change.
+    """
+    return _CHECK_VOCABULARY.get(name, (name, ""))[0]
 
 _INLINE_STYLE = (
     "<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
@@ -278,7 +293,13 @@ def _render_rollup_html(
             else:
                 summ = _html.escape(str(match.get("summary", "")))
                 cells.append(f"<td class='fail' title='{summ}'>FAIL</td>")
-        rows.append(f"<tr><td>{_html.escape(name)}</td>{''.join(cells)}</tr>")
+        # The row label is the DISPLAY name; `name` remains the join key used above to
+        # match each child's check across bundles. Mapping the label without touching the
+        # key is what makes this safe: a producer-side rename would split this matrix into
+        # two rows with `-` cells whenever bundles from either side of it are combined.
+        # Names only, no descriptions -- a matrix row has no room for one, and the other
+        # thirteen names fall through _vocab_name's identity default unchanged.
+        rows.append(f"<tr><td>{_html.escape(_vocab_name(name))}</td>{''.join(cells)}</tr>")
 
     for _d in derived or ():
         # Spans every experiment column: this finding is DERIVED across the combine, so it
@@ -292,7 +313,10 @@ def _render_rollup_html(
             f"<b>{_nm}</b> (derived across experiments) &mdash; {_summ}</td></tr>"
         )
 
-    table = "<table><thead><tr><th>Check</th>" + header + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+    # `Name`, not `Check`: after I7-4 the per-analysis tables' `Check` column carries a
+    # DESCRIPTION of what is looked for, and this column carries names. Leaving `Check`
+    # here would make one header word mean two different things in one delivered report.
+    table = "<table><thead><tr><th>Name</th>" + header + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
         + _INLINE_STYLE

@@ -293,7 +293,11 @@ def test_errors_and_warnings_renders_html_multi_sim_real(failing_synth_multi_sim
     assert out_path.exists() and out_path.stat().st_size > 0
     html = out_path.read_text()
     assert "Errors and Warnings" in html
-    assert "Analysis summaries created" in html
+    # I7-4: the rendered label is the DISPLAY name; `CheckResult.name` is unchanged and
+    # is still asserted against `failed_check_names` above. Asserting BOTH halves is the
+    # point -- it pins the key/label split rather than just tracking the rename.
+    assert "Analysis summaries" in html
+    assert "Every consolidated DataTree the analysis owes is present on disk" in html
 
 
 @pytest.mark.slow
@@ -304,7 +308,11 @@ def test_errors_and_warnings_renders_html_sensitivity_real(failing_synth_sensiti
     assert out_path.exists() and out_path.stat().st_size > 0
     html = out_path.read_text()
     assert "Errors and Warnings" in html
-    assert "Analysis summaries created" in html
+    # I7-4: the rendered label is the DISPLAY name; `CheckResult.name` is unchanged and
+    # is still asserted against `failed_check_names` above. Asserting BOTH halves is the
+    # point -- it pins the key/label split rather than just tracking the rename.
+    assert "Analysis summaries" in html
+    assert "Every consolidated DataTree the analysis owes is present on disk" in html
 
 
 def _eda_stub(analysis_dir, enabled_plots, *, sensitivity=True, reporting_set="b4b"):

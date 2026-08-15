@@ -8,8 +8,10 @@ per the user's requested grouping:
 1. Overall pass/fail banner.
 2. System-Level Checks (compilation, summaries, CSV integrity).
 3. Aggregate Per-Scenario Checks (N of M setup / ran / processed).
-4. Granular Per-Scenario Failures (table; omitted with "no failures" banner if empty).
-5. Resource-Utilization Mismatches (table; omitted with "no mismatches" banner if empty).
+4. Resource-Utilization Mismatches (status table always; per-scenario mismatch table
+   only when a mismatch exists -- no "all clear" banner, it duplicates the status row).
+5. Granular Per-Scenario Failures (table when failures exist; the whole section is
+   ABSENT when there are none -- it applies no check, so it renders nothing to placehold).
 
 Snakemake's report engine renders `.html` outputs in an iframe; the embedded
 HTML must carry inline `<style>` for any visual styling (per snakemake-specialist
@@ -27,6 +29,58 @@ if TYPE_CHECKING:
     from hhemt.config.report import report_config
 
 
+
+
+#: Display vocabulary for the two `Check` tables ONLY -- the `system`-level and
+#: `resource`-level checks. Keyed on `CheckResult.name`, which stays the stable MACHINE
+#: key: `cross_experiment_errors_and_warnings.py` joins children across bundles on that
+#: string, so a producer-side rename splits the combined matrix into two rows with `-`
+#: cells whenever bundles from either side of the rename are combined. The display name
+#: and the description are therefore RENDERER-side, and the producer is untouched.
+#:
+#: Convention, enforced by tests/test_iter7_check_vocabulary.py: the display name is a
+#: Sentence-case noun phrase naming the SUBJECT under test, carrying no verb and no raw
+#: file/identifier token. The verb belongs in the description, which states what is
+#: LOOKED FOR rather than what the check is called.
+#:
+#: NOT extended to the `aggregate` (`Stage`) table by ruling: the user scoped cross-table
+#: naming consistency to the `Check` tables. Eleven further live names route there, five
+#: of them minted in `src/hhemt/eda/` and read back via `_read_persisted_eda_verdicts`.
+_CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
+    "System setup": (
+        "System setup",
+        "Every enabled model compiled (native mode), and the processed DEM and "
+        "Manning roughness rasters exist with matching, correctly-shaped geometry.",
+    ),
+    "Analysis summaries created": (
+        "Analysis summaries",
+        "Every consolidated DataTree the analysis owes is present on disk — the "
+        "analysis tree, and on a sensitivity master the master tree plus each "
+        "sub-analysis tree.",
+    ),
+    "scenario_status.csv created": (
+        "Scenario status export",
+        "The per-scenario status export exists, parses, and carries every resource "
+        "and performance column its downstream readers require.",
+    ),
+    "Resource usage matches config": (
+        "Resource usage",
+        "Every scenario ran on the MPI ranks, OMP threads, GPUs, GPU backend and "
+        "build type its configuration requested.",
+    ),
+}
+
+
+def _vocab(c: CheckResult) -> tuple[str, str]:
+    """(display_name, description) for one check, degrading to the raw name.
+
+    The fallback is NOT dead: a bundle produced by a future toolkit can carry a
+    check name this vocabulary predates, and a KeyError there would take the whole
+    sidebar down for a cosmetic gap. Falling back to the machine name renders a
+    correct-if-plain row, matching the graceful-absent posture the rest of this
+    module and `load_validation_report` already take.
+    """
+    return _CHECK_VOCABULARY.get(c.name, (c.name, ""))
 
 
 def _render_overall_banner(report: ValidationReport) -> str:
@@ -98,18 +152,29 @@ def _render_system_level_table(checks: list[CheckResult]) -> str:
     rows = []
     for c in checks:
         status_cls, status_glyph, qualifier = _status_of(c)
-        # Show the summary for both pass and fail; on fail, also list per-issue details
+        # I7-4: the `Check` cell now DESCRIBES what is looked for; the check's name moves
+        # to its own column. Both come from _CHECK_VOCABULARY so the two `Check` tables
+        # cannot drift from each other.
+        display_name, description = _vocab(c)
+        # Show the summary for both pass and fail; on fail, also list per-issue details.
+        # `Details` keeps a distinct job from the new description column: this is a
+        # per-RUN fact (this run's issues, this run's detection floor), the description
+        # is a per-CHECK fact. Both branches below are preserved verbatim -- the failing
+        # branch is exercised by no delivered arm, so it must survive by construction.
         detail_text = c.summary
         if qualifier:
             detail_text += f'<br><span class="floor-note">{qualifier}</span>'
         if not c.passed and c.details:
             detail_lines = [d.get("detail", "") for d in c.details]
             detail_text = c.summary + "<br>" + "<br>".join(f"&nbsp;&nbsp;• {d}" for d in detail_lines)
-        rows.append(f'<tr><td>{c.name}</td><td class="{status_cls}">{status_glyph}</td><td>{detail_text}</td></tr>')
+        rows.append(
+            f"<tr><td>{display_name}</td><td>{description}</td>"
+            f'<td class="{status_cls}">{status_glyph}</td><td>{detail_text}</td></tr>'
+        )
     return (
         "<h3>System-Level Checks</h3>\n"
         "<table>\n"
-        "  <thead><tr><th>Check</th><th>Status</th><th>Details</th></tr></thead>\n"
+        "  <thead><tr><th>Name</th><th>Check</th><th>Status</th><th>Details</th></tr></thead>\n"
         "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>"
     )
 
@@ -134,7 +199,13 @@ def _render_aggregate_table(checks: list[CheckResult]) -> str:
 
 def _render_granular_failures_table(granular: list[dict]) -> str:
     if not granular:
-        return '<h3>Granular Per-Scenario Failures</h3>\n<div class="banner pass">✓ No per-scenario failures.</div>'
+        # I7-3 / ledger P9: a section that does not apply is ABSENT, not placeheld. The
+        # empty string is filtered by render()'s `if b` join, so heading AND banner both
+        # vanish with no call-site edit. Measured: all four delivered arms have every
+        # check passing, so `granular_failures` is empty and this is the ONLY branch the
+        # delivered generation reaches -- the green "No per-scenario failures" banner was
+        # on every page, which is what the user was looking at.
+        return ""
     rows = []
     for d in granular:
         sa_id = d.get("sa_id", "")
@@ -171,23 +242,28 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
     # emptied `by_level["resource"]`, deleting the per-scenario expected-vs-actual
     # detail table below on failure. The status table is the fix that keeps both.
     status_rows = "\n    ".join(
-        '<tr><td>{n}</td><td class="{cls}">{glyph}</td><td>{d}</td></tr>'.format(
-            n=c.name, cls=_status_of(c)[0], glyph=_status_of(c)[1], d=c.summary
+        '<tr><td>{n}</td><td>{w}</td><td class="{cls}">{glyph}</td><td>{d}</td></tr>'.format(
+            n=_vocab(c)[0],
+            w=_vocab(c)[1],
+            cls=_status_of(c)[0],
+            glyph=_status_of(c)[1],
+            d=c.summary,
         )
         for c in checks
     )
     status_table = (
         "<table>\n"
-        "  <thead><tr><th>Check</th><th>Status</th><th>Details</th></tr></thead>\n"
+        "  <thead><tr><th>Name</th><th>Check</th><th>Status</th><th>Details</th></tr></thead>\n"
         "  <tbody>\n    " + status_rows + "\n  </tbody>\n</table>"
     )
     if not all_issues:
-        return (
-            "<h3>Resource-Utilization Mismatches</h3>\n"
-            + status_table
-            + '\n<div class="banner pass">✓ No resource mismatches — '
-            "all scenarios used expected compute resources.</div>"
-        )
+        # I7-3: the "No resource mismatches" banner is deleted as redundant with the
+        # status row directly above it, which already renders `Resource usage / OK /
+        # All scenarios used expected compute resources`. The SECTION and its status
+        # table stay: `Resource usage matches config` is a `Check`-table row, so
+        # omitting the section here would omit a check. That is the principled
+        # asymmetry with the granular section below, which carries no check at all.
+        return "<h3>Resource-Utilization Mismatches</h3>\n" + status_table
     rows = []
     for d in all_issues:
         scenario = d.get("scenario", d.get("scenario_dir", ""))
@@ -256,12 +332,16 @@ def render(
         # inspection. Graceful-absent -> empty report. See analysis_validation.
         report = load_validation_report(analysis)
     by_level = report.by_level
+    # I7-3: `Granular Per-Scenario Failures` moves LAST. It is the one section that
+    # applies no check -- it re-presents the detail rows of checks already listed above --
+    # so putting it between the aggregate and resource tables separated two check tables
+    # with a non-check table. Check-bearing sections are now contiguous.
     body_parts = [
         _render_overall_banner(report),
         _render_system_level_table(by_level.get("system", [])),
         _render_aggregate_table(by_level.get("aggregate", [])),
-        _render_granular_failures_table(report.granular_failures),
         _render_resource_mismatches_table(by_level.get("resource", [])),
+        _render_granular_failures_table(report.granular_failures),
     ]
     analysis_id = str(analysis.cfg_analysis.analysis_id)
     html = _wrap_html_doc(
