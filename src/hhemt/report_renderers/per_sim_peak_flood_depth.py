@@ -761,6 +761,7 @@ def _build_peak_flood_depth_figure(
         PER_SIM_TOP_MARGIN_PX,
         apply_per_sim_map_axes,
         per_sim_bottom_margin_px,
+        per_sim_colorbar,
         per_sim_plot_area_h_px,
     )
     from hhemt.report_renderers._hydrology_panel import (
@@ -988,10 +989,15 @@ def _build_peak_flood_depth_figure(
         showlegend=True,
         legend=dict(
             orientation="h",
+            # BELOW the colorbars, not above them. The user's rule was conditional -- left
+            # of the colorbar if natural space exists, otherwise below -- and the space
+            # left of colorbar 1 measures 9.9 px against a ~162 px legend item, so the
+            # condition resolves to "below". Sitting at y=-0.10 put this strip directly in
+            # the band the colorbar labels occupy.
             yanchor="top",
-            y=-0.10,
-            x=0.0,
-            xanchor="left",
+            y=-0.34,
+            x=0.5,
+            xanchor="center",
             bgcolor="rgba(255,255,255,0.8)",
             bordercolor="lightgrey",
             borderwidth=1,
@@ -1145,14 +1151,9 @@ def _build_peak_flood_depth_figure(
                 colorscale=map_cfg.depth_cmap,
                 zmin=depth_vmin,
                 zmax=depth_vmax,
-                colorbar=dict(
-                    title=units.depth_label(analysis._system.cfg_system.crs.vertical_epsg),
-                    orientation="h",
-                    y=-0.22,
-                    len=0.30,
-                    x=_cb_x[1],
-                    xanchor="center",
-                    thickness=12,
+                colorbar=per_sim_colorbar(
+                    units.depth_label(analysis._system.cfg_system.crs.vertical_epsg),
+                    _cb_x[1],
                 ),
                 hovertemplate="Depth: %{z:.3f} m<br>x: %{x}<br>y: %{y}<extra></extra>",
                 showlegend=False,
@@ -1224,14 +1225,9 @@ def _build_peak_flood_depth_figure(
                 colorscale=map_cfg.wse_cmap,
                 zmin=wse_min,
                 zmax=wse_max,
-                colorbar=dict(
-                    title=units.wse_label(analysis._system.cfg_system.crs.vertical_epsg),
-                    orientation="h",
-                    y=-0.22,
-                    len=0.30,
-                    x=_cb_x[2],
-                    xanchor="center",
-                    thickness=12,
+                colorbar=per_sim_colorbar(
+                    units.wse_label(analysis._system.cfg_system.crs.vertical_epsg),
+                    _cb_x[2],
                 ),
                 hovertemplate="WSE: %{z:.3f} m<br>x: %{x}<br>y: %{y}<extra></extra>",
                 showlegend=False,

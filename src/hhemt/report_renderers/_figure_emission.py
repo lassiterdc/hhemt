@@ -124,8 +124,12 @@ PER_SIM_TOP_MARGIN_PX = 40
 #: PLOT-AREA height, so the bottom margin they require scales with the plot area.
 PER_SIM_CBAR_PAPER_Y = 0.22
 
-#: Colorbar thickness plus its tick-label band.
-PER_SIM_CBAR_FURNITURE_PX = 30
+#: Furniture below the colorbar's paper-y anchor: the bar itself, plus the label now
+#: rendered BELOW it (`per_sim_colorbar`, side="bottom"), plus the dry-cell legend strip
+#: moved below the bars. Was 30 when the label sat ABOVE the bar and the legend sat in the
+#: band between bar and map; both now stack downward, so the reserved band must grow or the
+#: figure clips them. At 1400x600 this takes the derived bottom margin 126 -> 155 px.
+PER_SIM_CBAR_FURNITURE_PX = 66
 
 #: `make_subplots(horizontal_spacing=...)` for the per-sim 2x3 layout.
 PER_SIM_HSPACE = 0.06
@@ -207,6 +211,30 @@ def apply_per_sim_map_axes(
         )
 
     return {col: align_x(domains, ref=f"map{col}", edge="center") for col in map_cols}
+
+
+def per_sim_colorbar(title: str, x: float) -> dict:
+    """The horizontal colorbar spec both per-sim families use. ONE definition.
+
+    `side="bottom"` is load-bearing and was the D2 defect: plotly defaults a HORIZONTAL
+    colorbar's title to `side="top"`, which draws the label in the band between the bar
+    (paper-y -0.22) and the legend strip (paper-y -0.10), so the label and the dry-cell
+    legend item overprinted. Putting the label below the bar vacates that band entirely
+    rather than nudging one of the two colliding elements.
+
+    `xanchor="center"` must accompany `x`: plotly.js coerces a horizontal colorbar's
+    xanchor to "center" through a bundled ternary, so an inherited anchor is a coordinate
+    whose meaning lives outside this repository.
+    """
+    return dict(
+        title=dict(text=title, side="bottom"),
+        orientation="h",
+        y=PER_SIM_CBAR_PAPER_Y * -1.0,
+        len=0.30,
+        x=x,
+        xanchor="center",
+        thickness=12,
+    )
 
 
 def per_sim_map_ticks(bounds: tuple[float, float, float, float]) -> tuple[list[float], list[float]]:

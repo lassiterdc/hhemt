@@ -16,10 +16,24 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: d1525c03559cda209a6601f8d85eb401eaad32e0bca68960f0b19bb64ccc08ec
+    renderer_sha256: 9af752907fa02320901e1e849a3fbeed61a94eefc7927bdf6686c3c7d87d30e1
     justification: >-
-      Iteration-5 Unit A (BM-6 column split, BM-3B marker fill, BM-4D/4E
-      footnote). Caption re-read 2026-08-10: it describes the dependent
-      variable, aggregation mode and SWMM-only routing, and makes no
-      structural claim about panels or columns, so the 4->8 axis-pair split
-      does not falsify it. Looked; no change needed.
+      Iteration-8 caption-geometry group (D1.2 width declaration, D1.3
+      content_width_px adoption, R5.6 literal-subtraction retirement), plus a
+      whole-file ruff-format pass. Caption re-read: it describes the dependent
+      variable, aggregation mode, SWMM-only routing and the wallclock-reduction
+      stipulation, and makes no structural claim about panels, columns or
+      caption geometry, so none of those changes falsifies it. Looked; no
+      change needed.
+  - renderer: cross_experiment_intercomparison_maps
+    caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
+    renderer_sha256: f03f918dfef6119ca7d7217ace2b82b1dcb2258bc221f3598a07d263e7af2ba2
+    justification: >-
+      Iteration-8 annotation-carrier group (D3 annotation split and the
+      title-collision fix), plus a whole-file ruff-format pass. Caption re-read:
+      it describes diff-map semantics (resume minus clean over byte-identity
+      classes), the RdBu direction convention, and the variable-dt SWMM
+      final-period truncation. All three are data claims; the change moved
+      annotation anchoring only. Looked; no change needed. NOTE: the
+      cross-experiment RESTRUCTURE is still open on a user question, so this
+      exemption expires with the next renderer change by construction.

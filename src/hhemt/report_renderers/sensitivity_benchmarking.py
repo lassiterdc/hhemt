@@ -161,7 +161,8 @@ def render(
 
     if independent_var not in df_setup.columns:
         raise ValueError(
-            f"{independent_var!r} is not a resolvable benchmarking axis; resolvable columns: {sorted(df_setup.columns)}"
+            f"{independent_var!r} is not a resolvable benchmarking axis; "
+            f"resolvable columns: {sorted(df_setup.columns)}"
         )
 
     dependent_var = report_cfg.sensitivity.dependent_var
@@ -1401,6 +1402,13 @@ def _build_sensitivity_benchmarking_figure(
         # (same figure, no intervening def) and survived only as a leftover -- exactly
         # the hand-tuned constant the geometry guard now detects.
         margin=dict(l=90, r=120, t=30),
+        # WIDTH DECLARED. Without it the figure ships `responsive:true` and plotly sizes it
+        # to its container, so the rendered width is a browser fact unknown at build time --
+        # while the caption below is wrapped against a fixed number. Measured on the
+        # delivered artifact: caption wrapped at 790 px inside a figure rendering ~2300 px,
+        # i.e. a caption spanning one third of the figure. Declaring the width is what makes
+        # the wrap reproducible; it is not a styling choice.
+        width=1000,
         height=1000,
     )
 
@@ -1535,7 +1543,7 @@ def _build_sensitivity_benchmarking_figure(
     _bench_b_px = add_figure_caption(
         fig,
         _bench_caption,
-        content_w_px=content_width_px(fig, fallback_px=1000) - 90 - 120,
+        content_w_px=content_width_px(fig),
         plot_h_px=_bench_plot_h,
         font_px=10,
         axis_band_px=46,

@@ -33,12 +33,22 @@ def test_content_width_px_refuses_an_undeclared_width():
         content_width_px(fig)
 
 
-def test_content_width_px_honours_an_explicit_fallback():
+def test_content_width_px_returns_a_content_width_on_both_paths():
+    """The fallback path returns a CONTENT width, like the declared-width path.
+
+    This test previously asserted the opposite -- `fallback_px=1000` with margins
+    l=90/r=120 returning 1000.0 RAW -- and in doing so pinned the inconsistency that
+    shipped the benchmarking defect. Two paths returning two different KINDS of number
+    forced every fallback caller to re-subtract the margins by hand, which is exactly the
+    `content_width_px(fig, fallback_px=1000) - 90 - 120` the geometry checker flags as P4.
+    The margins here are the benchmarking figure's own, because that is where the number
+    came from.
+    """
     from hhemt.figure_caption import content_width_px
 
     fig = go.Figure()
     fig.update_layout(margin=dict(l=90, r=120))
-    assert content_width_px(fig, fallback_px=1000) == pytest.approx(1000.0)
+    assert content_width_px(fig, fallback_px=1000) == pytest.approx(790.0)
 
 
 # ---- FQ1/FQ2: the caption must clear the x-axis band, not sit inside it ----
@@ -134,9 +144,9 @@ def test_group_colour_is_invariant_to_filtering_the_group_set():
     palette = ["#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442"]
     all_groups = ["serial", "cpu", "gpu", "hybrid"]
     gpu_only = ["gpu"]
-    assert _stable_group_color("gpu", palette, all_groups) == _stable_group_color("gpu", palette, gpu_only), (
-        "GPU marker colour must not depend on which other families are in the panel"
-    )
+    assert _stable_group_color("gpu", palette, all_groups) == _stable_group_color(
+        "gpu", palette, gpu_only
+    ), "GPU marker colour must not depend on which other families are in the panel"
 
 
 def test_precomputed_panel_accepts_an_unfiltered_colour_group_list():

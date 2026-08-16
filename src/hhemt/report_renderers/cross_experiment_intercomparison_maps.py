@@ -529,10 +529,17 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     domain=dict(x=_layout.side_table_x, y=[max(0.0, _p_bot), min(1.0, _p_top)]),
                 ),
             )
+            # PANEL title: family identity ONLY, lifted into the panel's gap-top band. It
+            # previously also carried "clean reference: the clean, uninterrupted run on this
+            # hardware family", which the per-row Reference label below states verbatim --
+            # and a `ref` row IS its panel's first row, so `_p_top == y_top` and the two
+            # annotations resolved to the SAME (x, y, xanchor, yanchor). Two strings, one
+            # anchor, overprinted. Dividing the content fixes the duplication; the offset
+            # keeps them off one line even when a panel's first row moves.
             annotations.append(
                 dict(
                     x=0.0,
-                    y=_p_top,
+                    y=_p_top + _layout.f(10),
                     xref="paper",
                     yref="paper",
                     xanchor="left",
@@ -540,10 +547,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     showarrow=False,
                     align="left",
                     font=dict(size=12, color="#111"),
-                    text=(
-                        f"<b>{model} - {_family_title(fam)}</b> - clean reference: the clean, "
-                        f"uninterrupted run on this hardware family ({base_label})"
-                    ),
+                    text=f"<b>{model} - {_family_title(fam)}</b>",
                 )
             )
             fig.add_shape(panel_outline_shape(_layout, _span[0], _span[-1]))
@@ -596,10 +600,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     showarrow=False,
                     align="left",
                     font=dict(size=11, color="#111"),
-                    text=(
-                        f"Reference - {base_label}: the clean, uninterrupted run on this hardware "
-                        f"family (absolute peak water level, event {evt})"
-                    ),
+                    text=(f"Reference - {base_label}: absolute peak water level, event {evt}"),
                 )
             )
             continue
@@ -645,7 +646,9 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             )
             for _tr in _watershed_boundary_traces(wpoly):
                 fig.add_trace(_tr, row=row, col=1)
-            txt = f"{g_label} (resumed alternate) - {base_label} (clean reference), same hardware family, event {evt}"
+            txt = (
+                f"{g_label} (resumed alternate) - {base_label} (clean reference), same " f"hardware family, event {evt}"
+            )
         else:
             z = _apply_mask(_signed_pct(d, np.asarray(base_da.values)), wmask)
             fig.add_trace(

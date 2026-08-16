@@ -531,6 +531,7 @@ def _build_conduit_flow_figure(
         PER_SIM_TOP_MARGIN_PX,
         apply_per_sim_map_axes,
         per_sim_bottom_margin_px,
+        per_sim_colorbar,
         per_sim_plot_area_h_px,
     )
     from hhemt.report_renderers._hydrology_panel import (
@@ -841,15 +842,7 @@ def _build_conduit_flow_figure(
                         cmax=p["vmax"],
                         showscale=True,
                         color=[p["vmin"]],
-                        colorbar=dict(
-                            title=p["label"],
-                            orientation="h",
-                            y=-0.22,
-                            len=0.30,
-                            x=p["colorbar_x"],
-                            xanchor="center",
-                            thickness=12,
-                        ),
+                        colorbar=per_sim_colorbar(p["label"], p["colorbar_x"]),
                     ),
                     showlegend=False,
                     hoverinfo="skip",

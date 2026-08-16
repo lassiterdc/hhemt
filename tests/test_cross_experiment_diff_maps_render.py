@@ -7,6 +7,7 @@ import json
 from hhemt.report_renderers.cross_experiment_intercomparison_maps import (
     build_cross_experiment_diff_figure,
 )
+from tests._figure_invariant_helpers import assert_figure_invariants
 
 
 def _write(tmp_path, pairs, experiments):
@@ -38,6 +39,7 @@ def test_no_differences_yields_a_verdict_not_an_empty_plot(tmp_path):
     difference result should be communicated.'"""
     root = _write(tmp_path, [_pair("TRITON", True), _pair("TRITON-SWMM", True)], _EXPERIMENTS)
     fig = build_cross_experiment_diff_figure(root)
+    assert_figure_invariants(fig)
     # A verdict TABLE, not an axes-bearing figure.
     assert [t.type for t in fig.data] == ["table"]
     cells = fig.data[0].cells.values
@@ -53,6 +55,7 @@ def test_both_model_arms_are_reported(tmp_path):
         _EXPERIMENTS,
     )
     fig = build_cross_experiment_diff_figure(root)
+    assert_figure_invariants(fig)
     models = set(fig.data[0].cells.values[0])
     assert models == {"TRITON", "TRITON-SWMM"}
 
@@ -61,6 +64,7 @@ def test_compared_variable_is_named_as_a_peak_not_a_final_timestep(tmp_path):
     root = _write(tmp_path, [_pair("TRITON", True)], _EXPERIMENTS)
     fig = build_cross_experiment_diff_figure(root)
     text = " ".join(a.text or "" for a in fig.layout.annotations)
+    assert_figure_invariants(fig)
     assert "max_wlevel_m" in text
     assert "PEAK water level" in text and "maximum over the whole simulation" in text
 
@@ -70,4 +74,5 @@ def test_pure_triton_combine_omits_the_swmm_truncation_caveat(tmp_path):
     root = _write(tmp_path, [_pair("TRITON", True)], _EXPERIMENTS[:2])
     fig = build_cross_experiment_diff_figure(root)
     text = " ".join(a.text or "" for a in fig.layout.annotations)
+    assert_figure_invariants(fig)
     assert "Nperiods" not in text

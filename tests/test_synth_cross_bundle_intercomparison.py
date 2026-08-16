@@ -18,6 +18,7 @@ import pytest
 import xarray as xr
 
 from hhemt.bundle import _combine
+from tests._figure_invariant_helpers import assert_figure_invariants
 
 
 def _sub_nodes(sa_id: str, attrs: dict, wlevel: np.ndarray, flow: np.ndarray) -> dict:
@@ -240,6 +241,7 @@ def _diff_fig_caveat_present(out) -> bool:
     )
 
     fig = build_cross_experiment_diff_figure(out)
+    assert_figure_invariants(fig)
     # Captions are wrapped by hhemt.figure_caption, which joins lines with "<br>", so a
     # raw substring test would assert byte-CONTIGUITY rather than the invariant (the
     # caveat is communicated). Normalise the line breaks back to spaces before matching.

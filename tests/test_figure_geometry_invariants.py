@@ -88,15 +88,8 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("_dem_resolution_plots.py", P1, "build_dem_resolution_coupling_table_figure"): (
         "Pre-existing (~1469). Same retirement path."
     ),
-    ("_dem_resolution_plots.py", P4, "build_dem_resolution_error_ecdf_figure"): (
-        "Pre-existing (~1300). Retired by reading the width off the figure via "
-        "figure_caption.content_width_px instead of `1000 - l - r`."
-    ),
-    ("_dem_resolution_plots.py", P4, "build_dem_resolution_coupling_table_figure"): (
-        "Pre-existing (~1491). Same retirement path."
-    ),
     ("_plotting.py", P2, "_b4b_faceted_figure"): (
-        "Pre-existing EDA figure, no Iteration-7 feedback item. Retire when figure_layout.align_x is adopted here."
+        "Pre-existing EDA figure, no Iteration-7 feedback item. Retire when " "figure_layout.align_x is adopted here."
     ),
     ("raw_resume_identity.py", P1, "build_binary_timestep_figure"): (
         "Pre-existing EDA figure, out of Iteration-7 scope."
@@ -109,10 +102,6 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
     ),
     ("system_overview.py", P2, "_build_system_overview_figure"): (
         "Pre-existing; system-overview layout untouched this iteration."
-    ),
-    ("sensitivity_benchmarking.py", P4, "_build_sensitivity_benchmarking_figure"): (
-        "Pre-existing AND this module carries uncommitted work from a concurrent "
-        "track; editing it here would collide. Retire in a later iteration."
     ),
 }
 

@@ -25,7 +25,7 @@ from hhemt.eda._dem_resolution_plots import (
     _render_dem_resolution_diff_maps,
     _render_dem_resolution_error_ecdf,
 )
-from hhemt.figure_caption import add_figure_caption
+from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 
@@ -507,14 +507,29 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
     # guarantee true here; it is not a cosmetic change. User-ruled 2026-08-12: 1000,
     # matching _config_diff's fig_width so co-located figures wrap alike (P5).
     _FIG_W_PX = 1000
-    _caption_w_px = _FIG_W_PX - _CAPTION_L_PX - _CAPTION_R_PX
+    # WIDTH FIRST, then read the content width back off the figure. Two changes, one
+    # reason. (1) `_FIG_W_PX - _CAPTION_L_PX - _CAPTION_R_PX` re-derives what
+    # `content_width_px` computes, so the wrap and the layout could drift apart silently --
+    # the same hand-subtraction D1.3 removed from the benchmarking figure. P4 does not
+    # catch this one because it subtracts NAMES rather than literals. (2) The caption was
+    # placed before `update_layout` declared the width, so the stamp recorded
+    # `fig_content_w_px=None` and the invariant read it as a post-caption resize.
+    fig.update_layout(width=_FIG_W_PX, margin=dict(l=_CAPTION_L_PX, r=_CAPTION_R_PX, t=_CAPTION_T_PX))
+    _caption_w_px = content_width_px(fig)
     _plot_h_px = max(126, 26 * total_rows + 46 * n_panels + 26)
     fig.update_xaxes(title_text="reporting timestep (min)", row=n_panels, col=1)
     # axis_band_px reserves the tick-label + x-axis-title band below the plot area, so
     # the caption clears the "reporting timestep (min)" title instead of landing beside
     # it. 46 is this function's OWN per-panel axis allowance, reused from _plot_h_px
     # above rather than introduced as a new constant.
-    _caption_b_px = add_figure_caption(fig, caption, content_w_px=_caption_w_px, plot_h_px=_plot_h_px, axis_band_px=46)
+    _caption_b_px = add_figure_caption(
+        fig,
+        caption,
+        content_w_px=_caption_w_px,
+        plot_h_px=_plot_h_px,
+        axis_band_px=46,
+        wrap_reference="content",
+    )
     fig.update_layout(
         title=title,
         width=_FIG_W_PX,

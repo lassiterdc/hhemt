@@ -785,7 +785,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         return _config_diff_absent_panel(
             headline="Config-diff maps unavailable (no comparable sub-analyses)",
             observed=(
-                "The consolidated tree carries no sub-analysis with a TRITON node, so there is nothing to compare."
+                "The consolidated tree carries no sub-analysis with a TRITON node, so there is " "nothing to compare."
             ),
             remedy=(
                 "The figure populates once the master carries sub-analyses whose processed "
@@ -1493,6 +1493,13 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # replaces the hardcoded B_MARGIN. The old `y=-0.02` was a fraction of plot_h, so the
     # caption sank further below the axes as config groups were added while b=140 stayed
     # fixed: it fit on small masters and clipped on large ones.
+    # DECLARE THE WIDTH BEFORE WRAPPING. `add_figure_caption` stamps the figure's content
+    # width at caption time so a later resize is detectable; captioning first and sizing at
+    # the `update_layout` below stamps `fig_content_w_px=None`, which the invariant reads --
+    # correctly -- as "wrapped before the figure had a width". Same fix and same reason as
+    # the benchmarking figure, and the same ordering as
+    # cross_experiment_intercomparison_maps.py:342.
+    fig.update_layout(width=fig_width, margin=dict(t=T_MARGIN, l=30, r=30))
     _caption_w_px = ((cb_x[2] if has_flow else cb_x[1]) + 0.12 - 0.006) * fig_width  # dashed panel-outline extent
     _caption_b_px = add_figure_caption(
         fig,
@@ -1512,6 +1519,11 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             "storage cast, not of the model."
         ),
         content_w_px=_caption_w_px,
+        # PANEL, not content: `_caption_w_px` is the dashed panel-outline extent above,
+        # deliberately narrower than the figure's content width. Declaring it is what lets
+        # the caption invariant demand exact equality of every "content" caller without
+        # false-positiving here.
+        wrap_reference="panel",
         axis_band_px=_AXIS_BAND_PX,
         plot_h_px=plot_h,
     )

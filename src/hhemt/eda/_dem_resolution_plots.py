@@ -41,7 +41,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
 
-from hhemt.figure_caption import add_figure_caption
+from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.figure_panels import PanelBudget, panel_geometry
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import (
@@ -153,7 +153,9 @@ def _dem_diff_heatmap_trace(
     return go.Heatmap(z=z, x=xs, y=ys, colorscale=_DIVERGING, zmid=0), True
 
 
-def _add_caption(fig, text: str, *, content_w_px: float, font_px: int = 10, y: float = -0.05) -> None:
+def _add_caption(
+    fig, text: str, *, content_w_px: float, font_px: int = 10, y: float = -0.05, wrap_reference: str = "content"
+) -> None:
     """Backward-compatible shim over ``hhemt.figure_caption.add_figure_caption``.
 
     Caption geometry now lives in ONE module. This wrapper survives only so the three
@@ -166,7 +168,14 @@ def _add_caption(fig, text: str, *, content_w_px: float, font_px: int = 10, y: f
     bottom-margin constant.
     """
     _plot_h = float(fig.layout.height or 800) - float((fig.layout.margin.t or 0) + (fig.layout.margin.b or 0))
-    add_figure_caption(fig, text, content_w_px=content_w_px, plot_h_px=max(_plot_h, 1.0), font_px=font_px)
+    add_figure_caption(
+        fig,
+        text,
+        content_w_px=content_w_px,
+        plot_h_px=max(_plot_h, 1.0),
+        font_px=font_px,
+        wrap_reference=wrap_reference,
+    )
 
 
 def _maxabs(a: np.ndarray) -> float:
@@ -1035,6 +1044,7 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
         # Locked to the PANEL OUTLINE, not the figure width. The panels stop well short of the right
         # margin, so wrapping on figure width ran the caption past the dashed boundary.
         content_w_px=(_OUTLINE_X1 - _OUTLINE_X0) * (_FIG_W - 60),
+        wrap_reference="panel",
         y=-0.012,
     )
     return fig
@@ -1297,7 +1307,8 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
         fig,
         f"Wet cells are cells at or above {_TAU_M:g} m in either run, compared after regridding the "
         "coarse run onto the finest grid.",
-        content_w_px=1000 - 70 - 30,
+        content_w_px=content_width_px(fig),
+        wrap_reference="content",
         y=-0.05,
     )
 
@@ -1488,7 +1499,7 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
         # would be false, and `_apply_mask` is a pass-through in that case.
         "than the fine reference (over-estimation)." + _scope_txt
     )
-    _add_caption(fig, _caption_text, content_w_px=1000 - 20 - 20, y=-0.04)
+    _add_caption(fig, _caption_text, content_w_px=content_width_px(fig), y=-0.04, wrap_reference="content")
     return fig
 
 

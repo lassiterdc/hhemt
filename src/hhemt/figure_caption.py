@@ -75,10 +75,18 @@ def content_width_px(fig, *, fallback_px: float | None = None) -> float:
     Pass ``fallback_px`` only for a figure that is deliberately export-only at a
     fixed size set downstream.
     """
+    m0 = fig.layout.margin
+    _l = float(getattr(m0, "l", 0) or 0)
+    _r = float(getattr(m0, "r", 0) or 0)
     w = getattr(fig.layout, "width", None)
     if w is None:
         if fallback_px is not None:
-            return float(fallback_px)
+            # Subtract margins here too. This branch used to return `fallback_px` RAW
+            # while the declared-width branch below returns `w - l - r`, so the two paths
+            # returned different KINDS of number -- a full width vs a content width. Every
+            # caller of this branch therefore had to re-implement the margin subtraction
+            # by hand, which is exactly the `- 90 - 120` the geometry checker flags as P4.
+            return max(40.0, float(fallback_px) - _l - _r)
         raise ValueError(
             "content_width_px requires fig.layout.width to be set: a caption wrapped "
             "against an undeclared width is wrapped against a width the figure never "
@@ -89,6 +97,11 @@ def content_width_px(fig, *, fallback_px: float | None = None) -> float:
     right = float(getattr(m, "r", 0) or 0)
     return max(40.0, float(w) - left - right)
 
+
+#: Permissible ``wrap_reference`` values. A closed set, validated at call time: a mistyped
+#: value must not silently resolve to either arm, because the two arms differ in STRICTNESS
+#: and a typo would quietly pick one.
+_WRAP_REFERENCES = ("content", "panel")
 
 #: Pixel pad below the caption's last line, before the figure edge.
 _PAD_PX = 12
@@ -186,6 +199,7 @@ def add_figure_caption(
     gap_px: int = _GAP_PX,
     pad_px: int = _PAD_PX,
     axis_band_px: float = _AXIS_BAND_PX_DEFAULT,
+    wrap_reference: str = "content",
 ) -> int:
     """Place a bottom-left caption on ``fig`` and RETURN the bottom margin it needs.
 
@@ -203,7 +217,53 @@ def add_figure_caption(
     Never hardcode ``b=``. A hardcoded bottom margin is the defect this module exists
     to retire.
     """
+    if wrap_reference not in _WRAP_REFERENCES:
+        raise ValueError(
+            f"wrap_reference must be one of {_WRAP_REFERENCES}, got {wrap_reference!r}. "
+            f"Use 'content' when content_w_px is the figure's full drawn content width, "
+            f"'panel' when it is a narrower sub-region such as a panel outline."
+        )
     lines = wrap_caption(text, content_w_px=content_w_px, font_px=font_px)
+    # STAMP the wrap width so it is checkable from the BUILT figure. P4 can only see the
+    # syntax at the call site (`<width> - <literal>`); it cannot see a caption wrapped
+    # against a width the figure does not have, which is what shipped on the benchmarking
+    # figure. Recording the number actually used turns that into an assertable property
+    # of the output.
+    #
+    # CARRIER: `fig.layout.meta`, keyed by the annotation's `name`. NOT `annotation.meta`
+    # -- `meta` and `customdata` are trace/figure-level properties that a layout
+    # annotation does not carry, and setting either raises
+    # `ValueError: Invalid property specified for object of type
+    # plotly.graph_objs.layout.Annotation: 'meta'`. Measured on plotly 5.24.1:
+    # `go.layout.Annotation()._valid_props` has 43 entries and `meta` is not among them.
+    # `name` is, so the annotation carries the KEY and the layout carries the VALUE.
+    _key = f"figure-caption-{sum(1 for a in fig.layout.annotations if str(getattr(a, 'name', '') or '').startswith('figure-caption-'))}"
+    _w = getattr(fig.layout, "width", None)
+    # READ-MERGE-WRITE, not assignment. `update_layout(meta=...)` REPLACES the whole
+    # object rather than merging into it (measured: two successive calls with {"a": 1}
+    # then {"b": 2} leave {"b": 2}), so a second caption on the same figure would
+    # silently erase the first one's stamp.
+    _meta = dict(fig.layout.meta or {})
+    _meta[_key] = {
+        "wrap_w_px": float(content_w_px),
+        # The figure's content width AT BUILD TIME, or None if the figure declared no
+        # width. Stamping it lets a test catch a caption that was placed correctly and
+        # then invalidated by a later `update_layout(width=...)` -- which is a live
+        # pattern here, not a hypothetical: cross_experiment_intercomparison_maps.py
+        # re-calls update_layout after captioning at both :346 and :598.
+        "fig_content_w_px": (None if _w is None else content_width_px(fig)),
+        # WHAT `content_w_px` WAS MEASURED AGAINST, declared by the caller. Without it a
+        # test can only assert `wrap_w_px <= content_width_px(fig)`, which passes a caption
+        # wrapped far too NARROW -- and wrapping far too narrow is precisely what shipped on
+        # the benchmarking figure (790 px inside a figure rendering ~2300). "content" means
+        # `content_w_px` IS the figure's drawn content width and equality is demanded;
+        # "panel" means it is a deliberately narrower sub-region (a panel outline) and only
+        # the upper bound is checkable. The default is the STRICT arm on purpose: a caller
+        # that does not think about this gets the tight check, and opting out costs a
+        # keyword at the call site.
+        "wrap_reference": wrap_reference,
+    }
+    fig.update_layout(meta=_meta)
     fig.add_annotation(
         xref="paper",
         yref="paper",
@@ -215,5 +275,6 @@ def add_figure_caption(
         showarrow=False,
         font=dict(size=font_px),
         text="<br>".join(lines),
+        name=_key,
     )
     return int(gap_px + axis_band_px + len(lines) * round(font_px * _LINE_LEADING) + pad_px)
