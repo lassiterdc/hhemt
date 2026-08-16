@@ -133,6 +133,121 @@ _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
 }
 
 
+# Computed-quantity provenance: what each summary variable IS, mathematically.
+#
+# Keyed identically to `_CF_VARIABLE_MAP` and test-enforced to stay in bijection with it
+# (tests/test_quantity_provenance.py), so a variable added to one and not the other fails
+# CI rather than rendering an em-dash in a published report.
+#
+# WHY THIS EXISTS SEPARATELY FROM `cell_methods`. `cell_methods` is a CF construct with a
+# constrained grammar; it cannot say "value selected at the final timestep", and it cannot
+# say whether the value describes a grid cell, a node, or a conduit. Two entries in the map
+# above demonstrate the gap directly: `wlevel_m_last_tstep` carries `timestep_min: point`,
+# but `point` in CF means the variable RETAINS the time dimension with no method applied,
+# whereas process_simulation.py:2516 is `ds["wlevel_m"].sel(timestep_min=tsteps.max())` --
+# a selection, not a reduction; and the SWMM-tier entries name `time:`, which is not a
+# dimension or coordinate of those variables (their dims are `event_iloc, link_id`).
+#
+# This table is the human-facing answer, rendered by the metadata report page. It does NOT
+# replace `cell_methods` on the data -- whether `cell_methods` is the right CF construct for
+# line-geometry conduits, and what column set should replace it, is a separate open schema
+# question. Every entry below is grounded in the computing expression, not in the CF string.
+#
+# `spatial_representation` vocabulary: "grid cell" | "point (node)" | "line (conduit)" |
+# "whole domain (scalar)". `reduced_coordinate` names the coordinate the operation collapsed
+# (or selected along), and says so when the distinction matters.
+_QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
+    "max_wlevel_m": {
+        "spatial_representation": "grid cell",
+        "source_variables": "wlevel_m",
+        "operation": "maximum over all reported timesteps",
+        "reduced_coordinate": "timestep_min",
+    },
+    "max_velocity_mps": {
+        "spatial_representation": "grid cell",
+        "source_variables": "velocity_x_mps, velocity_y_mps",
+        "operation": "maximum over time of sqrt(vx^2 + vy^2)",
+        "reduced_coordinate": "timestep_min",
+    },
+    "velocity_x_mps": {
+        "spatial_representation": "grid cell",
+        "source_variables": "velocity_x_mps",
+        "operation": "raw model output (timeseries, no reduction)",
+        "reduced_coordinate": "none",
+    },
+    "velocity_y_mps": {
+        "spatial_representation": "grid cell",
+        "source_variables": "velocity_y_mps",
+        "operation": "raw model output (timeseries, no reduction)",
+        "reduced_coordinate": "none",
+    },
+    "wlevel_m": {
+        "spatial_representation": "grid cell",
+        "source_variables": "wlevel_m",
+        "operation": "raw model output (timeseries, no reduction)",
+        "reduced_coordinate": "none",
+    },
+    "time_of_max_velocity_min": {
+        "spatial_representation": "grid cell",
+        "source_variables": "velocity_x_mps, velocity_y_mps",
+        "operation": "timestep_min at the argmax of sqrt(vx^2 + vy^2)",
+        "reduced_coordinate": "timestep_min",
+    },
+    "wlevel_m_last_tstep": {
+        "spatial_representation": "grid cell",
+        "source_variables": "wlevel_m",
+        # NOT a reduction: process_simulation.py:2516 is
+        # ds["wlevel_m"].sel(timestep_min=tsteps.max()). The cell_methods string
+        # says "timestep_min: point", which describes a variable that KEEPS the
+        # time dimension with no method applied -- a different thing.
+        "operation": "value selected at the final reported timestep",
+        "reduced_coordinate": "timestep_min (selected, not reduced)",
+    },
+    "final_surface_flood_volume_m3": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "wlevel_m_last_tstep",
+        "operation": "sum over all grid cells of depth * |dx| * |dy|",
+        "reduced_coordinate": "x, y",
+    },
+    "total_inflow_vol_10e6_ltr": {
+        "spatial_representation": "point (node)",
+        "source_variables": "SWMM node inflow timeseries",
+        "operation": "time integral of inflow over the simulation period",
+        "reduced_coordinate": "reporting time (not retained in the summary)",
+    },
+    "max_flow_cms": {
+        "spatial_representation": "line (conduit)",
+        "source_variables": "SWMM link flow timeseries",
+        "operation": "maximum over the simulation period",
+        "reduced_coordinate": "reporting time (not retained in the summary)",
+    },
+    "max_over_full_flow": {
+        "spatial_representation": "line (conduit)",
+        "source_variables": "SWMM link flow timeseries, full-flow capacity",
+        "operation": "maximum over time of flow / full-flow capacity",
+        "reduced_coordinate": "reporting time (not retained in the summary)",
+    },
+    "max_over_full_depth": {
+        "spatial_representation": "line (conduit)",
+        "source_variables": "SWMM link depth timeseries, full depth",
+        "operation": "maximum over time of depth / full depth",
+        "reduced_coordinate": "reporting time (not retained in the summary)",
+    },
+}
+
+
+def quantity_provenance(var_name: str) -> dict[str, str] | None:
+    """Return the computed-quantity descriptor for ``var_name``, or None.
+
+    The single sanctioned reader of `_QUANTITY_PROVENANCE`. Returns a COPY so a
+    consumer cannot mutate the module-level table, and None (never a fabricated
+    default) for an unmapped variable -- the metadata renderer turns that into an
+    explicit em-dash rather than a guess.
+    """
+    entry = _QUANTITY_PROVENANCE.get(var_name)
+    return dict(entry) if entry is not None else None
+
+
 _COORD_ATTRS: dict[str, dict[str, str]] = {
     "x": {"standard_name": "projection_x_coordinate", "units": "m", "axis": "X"},
     "y": {"standard_name": "projection_y_coordinate", "units": "m", "axis": "Y"},

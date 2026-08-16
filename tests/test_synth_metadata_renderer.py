@@ -33,6 +33,19 @@ _SENTINEL_TIME = "2026-01-01T03:04:05"
 
 _ANCHORS = ("provenance", "reproduction-guide", "slurm-efficiency")
 
+# The REAL header snakemake-executor-plugin-slurm writes (efficiency_report.py:
+# parse_sacct_data -> df.to_csv, which emits the unnamed index column first). Tests
+# used to invent an ad-hoc `rule,job_id,cpu_efficiency` header, which no longer
+# survives the renderer's curated column projection -- and should not, since a
+# fabricated schema cannot catch a real schema drift.
+_EFF_HEADER = (
+    ",JobID,JobName,Elapsed,NNodes,NCPUS,MaxRSS,ReqMem,Elapsed_sec,TotalCPU_sec,"
+    "MaxRSS_MB,RequestedMem_MB,MainJobID,CPU Efficiency (%),Memory Usage (%)\n"
+)
+#: One realistic data row: a job step, as the plugin emits it (parent + .batch rows
+#: are dropped upstream, which is why JobName reads `python` rather than a rule name).
+_EFF_ROW = "2,18573918.0,python,00:00:23,1,1,710788K,,23.0,0.0,694.12,1000.0,18573918,0.0,69.41\n"
+
 _ROOT = {
     "@id": "./",
     "@type": "Dataset",
@@ -159,10 +172,55 @@ def test_page_title_and_jump_nav(tmp_path):
 
 
 def test_provenance_declares_only_sidecar(tmp_path):
-    """R3: the sole declared source is ro-crate-metadata.json when no SLURM CSV exists."""
+    """R3: with no SLURM CSV, the declared set is exactly the two persisted read-models.
+
+    Was `== ["ro-crate-metadata.json"]`. Two additions since, both ADR-6 D3 declared-
+    when-absent: `validation_report.json` (the Data Availability section, which reads
+    the SAME record the Errors-and-Warnings renderer reads rather than emitting a
+    second projection of it), and — when they exist — the `_status/*.flag.json`
+    sidecars plus the consolidated tree that back the provenance chain and run
+    timeline. This fixture writes neither, so the set stays at two.
+
+    Asserted as an exact set, not a containment: the point of this test is that the
+    page declares everything it opens and nothing it does not.
+    """
     _, manifest, _ = _render(tmp_path, doc=_full_crate())
-    assert manifest["source_paths_relative"] == ["ro-crate-metadata.json"]
+    assert manifest["source_paths_relative"] == [
+        "ro-crate-metadata.json",
+        "validation_report.json",
+    ]
     assert manifest["plot_id"] == "metadata"
+
+
+def test_status_sidecars_and_tree_are_declared_when_they_exist(tmp_path):
+    """Every `_status/*.flag.json` the page OPENS is declared (declared ⊆ actual).
+
+    Globbing is audit-invisible (os.scandir), but `read_text()` is not — so a sidecar
+    that is read and not declared would break the ADR-6 invariant, and one that is
+    declared and not read would put a false claim in the bundle manifest.
+    """
+    analysis_dir = tmp_path / "analysis"
+    (analysis_dir / "_status").mkdir(parents=True)
+    (analysis_dir / "ro-crate-metadata.json").write_text(json.dumps(_full_crate()))
+    for name, payload in (
+        ("a_setup_target_0_complete.flag.json", {"rule_name": "setup_target_0", "slurm_job_id": "1"}),
+        ("c_run_complete.flag.json", {"rule_name": "simulation_sa_x_evt_0", "slurm_job_id": "2"}),
+    ):
+        (analysis_dir / "_status" / name).write_text(json.dumps(payload))
+
+    output_path = analysis_dir / "plots" / "metadata.html"
+    metadata.render(_fake_analysis(analysis_dir), report_config(), output_path)
+    manifest = json.loads((analysis_dir / "plots" / "metadata.manifest.json").read_text())
+    declared = manifest["source_paths_relative"]
+
+    assert "_status/a_setup_target_0_complete.flag.json" in declared
+    assert "_status/c_run_complete.flag.json" in declared
+    assert manifest["renderer_data"]["status_flag_count"] == 2
+
+    # And the timeline they back is actually rendered, with derived purposes.
+    html = output_path.read_text()
+    assert "Run timeline" in html
+    assert "compile / setup" in html and "simulate" in html
 
 
 def test_volatile_fields_never_reach_the_rendered_page(tmp_path):
@@ -219,15 +277,79 @@ def test_verifiability_anchors_and_chain_are_rendered(tmp_path):
 # --- R4: reproduction guide, zero-user-info ----------------------------------
 
 
-def test_reprex_guide_takes_no_analysis_argument():
-    """R4 (structural): the guide cannot leak producer values because it never sees them.
+def _user_bucket_field_labels() -> list[str]:
+    """Every config field the reprex taxonomy buckets as USER, derived, not hardcoded.
 
-    Zero-user-info is enforced by the signature, not by discipline. If a future
-    maintainer re-introduces an `analysis` parameter, the capability to leak
-    returns and this test fails.
+    Enumerated from `reprex_taxonomy.all_field_bucket` — the SAME classifier
+    `bundle/_emit.py::_scrub_user_bucket_fields` trusts to decide what the bundle
+    nulls out — plus `reprex_config`'s own host-local fields, which are not keys of
+    that classifier (it is total over system_config | analysis_config only) and whose
+    USER/HPC split is declared by `metadata._REPREX_SELECTOR_FIELDS`.
+
+    Deriving the set is what makes the leak test exhaustive: a NEW user-bucket field
+    is automatically poisoned and automatically checked, with no test edit.
     """
-    assert list(inspect.signature(metadata._build_reprex_guide_html).parameters) == []
+    from hhemt.config import reprex_taxonomy
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.reprex_config import reprex_config
+    from hhemt.config.system import system_config
+
+    labels = [
+        f"reprex_config.{name}" for name in reprex_config.model_fields if name not in metadata._REPREX_SELECTOR_FIELDS
+    ]
+    for config_label, model in (("system_config", system_config), ("analysis_config", analysis_config)):
+        labels += [
+            f"{config_label}.{name}" for name in model.model_fields if reprex_taxonomy.all_field_bucket(name) == "user"
+        ]
+    return labels
+
+
+def test_config_field_rows_still_takes_no_analysis_argument():
+    """R4 (structural): the SCHEMA reader cannot leak a value because it never sees one.
+
+    This is the half of the original zero-user-info guard that survives unchanged.
+    `_config_field_rows` reads `model_fields` and nothing else; with no values in
+    hand it cannot disclose any field, enumerated or not. If a maintainer ever gives
+    it an `analysis` parameter, the capability returns and this fails.
+    """
     assert list(inspect.signature(metadata._config_field_rows).parameters) == []
+
+
+def test_reprex_guide_never_renders_a_user_bucket_value():
+    """R4 (behavioural): no USER-bucket value reaches the page, for EVERY such field.
+
+    `_build_reprex_guide_html` now accepts a pre-computed {field -> value} map so the
+    HPC/EXPERIMENT values — which the bundle already ships in cfg_*.yaml, after
+    `_scrub_user_bucket_fields` nulls the USER ones — can be displayed. The signature
+    check alone can no longer express the guarantee, so it is asserted behaviourally
+    here, and asserted over the DERIVED user-bucket set rather than a hand-picked
+    sample: a unique sentinel is planted in every USER field and none may surface.
+
+    Together with the signature check above this dominates the original guard on both
+    axes — it closes the module-global bypass a signature check cannot see, and it has
+    no unenumerated-field hole a hardcoded sample would have.
+    """
+    user_labels = _user_bucket_field_labels()
+    assert user_labels, "derived USER bucket is empty — the enumeration is broken, not clean"
+
+    poisoned = {label: f"SENTINEL-LEAK-{i}" for i, label in enumerate(user_labels)}
+    html = metadata._build_reprex_guide_html(poisoned)
+    leaked = [label for i, label in enumerate(user_labels) if f"SENTINEL-LEAK-{i}" in html]
+    assert not leaked, f"USER-bucket values reached the rendered page: {leaked}"
+
+
+def test_derived_user_bucket_matches_the_renderer_s_own_supply_block():
+    """The leak test's population is the same one the renderer calls USER.
+
+    Derived independently (from `all_field_bucket`) so it is not circular: if the
+    renderer's bucketing and the taxonomy ever disagree, the leak test would be
+    poisoning a different set than the page renders, and this catches that directly
+    rather than letting the leak test quietly go vacuous.
+    """
+    rows_by_bucket, unclassified = metadata._config_field_rows()
+    assert not unclassified, f"unbucketed config fields: {unclassified}"
+    rendered_user = {metadata._strip_code(row[0]) for row in rows_by_bucket["user"]}
+    assert rendered_user == set(_user_bucket_field_labels())
 
 
 def test_reprex_guide_groups_every_field_into_three_buckets(tmp_path):
@@ -311,10 +433,9 @@ def test_every_config_field_appears_exactly_once():
 
 def test_slurm_section_renders_table_and_declares_the_csv_file(tmp_path):
     """R5: the globbed CSV is rendered AND declared as a source — the FILE, not the dir."""
-    csv_text = "rule,job_id,cpu_efficiency\nplot_metadata,12345,91.2%\n"
-    html, manifest, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=csv_text)
-    assert "cpu_efficiency" in html
-    assert "91.2%" in html
+    html, manifest, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=_EFF_HEADER + _EFF_ROW)
+    assert "18573918.0" in html
+    assert "69.41" in html
     declared = manifest["source_paths_relative"]
     assert "ro-crate-metadata.json" in declared
     assert any(p.endswith(".csv") for p in declared), declared
@@ -346,17 +467,15 @@ def test_slurm_report_nested_inside_a_csv_named_directory(tmp_path):
     eff_dir = analysis_dir / "logs" / "slurm_efficiency_report"
     csv_named_dir = eff_dir / "slurm_efficiency_report_20260101T000000.csv"
     csv_named_dir.mkdir(parents=True, exist_ok=True)
-    (csv_named_dir / "efficiency_report_abc123.csv").write_text(
-        "rule,job_id,cpu_efficiency\nplot_metadata,12345,91.2%\n"
-    )
+    (csv_named_dir / "efficiency_report_abc123.csv").write_text(_EFF_HEADER + _EFF_ROW)
 
     output_path = analysis_dir / "plots" / "metadata.html"
     # Must not raise IsADirectoryError.
     metadata.render(_fake_analysis(analysis_dir), report_config(), output_path)
 
     html = output_path.read_text()
-    assert "cpu_efficiency" in html, "nested report was not found by the recursive glob"
-    assert "91.2%" in html
+    assert "18573918.0" in html, "nested report was not found by the recursive glob"
+    assert "69.41" in html
 
     manifest = json.loads((analysis_dir / "plots" / "metadata.manifest.json").read_text())
     declared = manifest["source_paths_relative"]
@@ -367,7 +486,7 @@ def test_slurm_report_nested_inside_a_csv_named_directory(tmp_path):
 
 def test_slurm_csv_with_header_only_degrades(tmp_path):
     """R5: a header-only CSV yields the heading + an info banner, not an empty table."""
-    html, _, _ = _render(tmp_path, doc=_full_crate(), slurm_csv="rule,cpu_efficiency\n")
+    html, _, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=_EFF_HEADER)
     assert 'id="slurm-efficiency"' in html
     assert "no job rows" in html
 
@@ -381,8 +500,12 @@ def test_absent_sidecar_degrades_gracefully(tmp_path):
     assert 'id="provenance"' in html
     assert "banner info" in html
     assert "ro-crate-metadata.json" in html
-    # ADR-6 D3: the expected source is declared even when absent.
-    assert manifest["source_paths_relative"] == ["ro-crate-metadata.json"]
+    # ADR-6 D3: both expected sources are declared even when absent, so the info-icon
+    # names what the page WOULD have read rather than going silent.
+    assert manifest["source_paths_relative"] == [
+        "ro-crate-metadata.json",
+        "validation_report.json",
+    ]
 
 
 def test_native_run_crate_has_no_sif_entity(tmp_path):
@@ -436,23 +559,124 @@ def test_slurm_report_path_is_a_directory_not_a_file(tmp_path):
     """Regression (Q8): the plugin writes efficiency_report_{uuid}.csv INSIDE a
     `.csv`-named directory; the renderer must descend to the inner file and must
     NOT raise IsADirectoryError on read_text()."""
-    csv_text = "rule,job_id,cpu_efficiency\nplot_metadata,12345,91.2%\n"
-    html, manifest, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=csv_text)
-    assert "cpu_efficiency" in html and "91.2%" in html
+    html, manifest, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=_EFF_HEADER + _EFF_ROW)
+    assert "18573918.0" in html and "69.41" in html
     declared = manifest["source_paths_relative"]
     assert any(p.endswith("efficiency_report_deadbeef.csv") for p in declared), declared
 
 
-def test_resolve_latest_efficiency_csv_flat_nested_and_absent(tmp_path):
-    """Unit: resolver returns None when empty, the inner file for the nested
-    plugin layout, and a flat file for the hypothetical future layout."""
-    from hhemt.report_renderers.metadata import _resolve_latest_efficiency_csv
+def test_resolve_all_efficiency_csvs_flat_nested_and_absent(tmp_path):
+    """Unit: resolver returns [] when empty, the inner file for the nested plugin
+    layout, and a flat file for the hypothetical future layout.
+
+    Returns EVERY report, not the newest: one report is written per Snakemake
+    invocation (the plugin builds it from `sacct --name={run_uuid}`), so the union
+    is the whole experiment and the newest file alone is one submission's jobs.
+    """
+    from hhemt.report_renderers.metadata import _resolve_all_efficiency_csvs
 
     eff = tmp_path / "logs" / "slurm_efficiency_report"
     eff.mkdir(parents=True)
-    assert _resolve_latest_efficiency_csv(eff) is None
+    assert _resolve_all_efficiency_csvs(eff) == []
+
     nested = eff / "slurm_efficiency_report_20260101T000000.csv"
     nested.mkdir()
     (nested / "efficiency_report_uuid.csv").write_text("a,b\n1,2\n")
-    got = _resolve_latest_efficiency_csv(eff)
-    assert got is not None and got.is_file() and got.name == "efficiency_report_uuid.csv"
+    got = _resolve_all_efficiency_csvs(eff)
+    assert [p.name for p in got] == ["efficiency_report_uuid.csv"]
+    assert got[0].is_file()
+
+    # A second submission's report must be ADDED, not replace the first.
+    older = eff / "slurm_efficiency_report_20260102T000000.csv"
+    older.mkdir()
+    (older / "efficiency_report_uuid2.csv").write_text("a,b\n3,4\n")
+    got = _resolve_all_efficiency_csvs(eff)
+    assert {p.name for p in got} == {"efficiency_report_uuid.csv", "efficiency_report_uuid2.csv"}
+
+    # Flat layout (hypothetical future plugin / driver cleanup) is still picked up.
+    (eff / "efficiency_report_flat.csv").write_text("a,b\n5,6\n")
+    assert "efficiency_report_flat.csv" in {p.name for p in _resolve_all_efficiency_csvs(eff)}
+
+
+def test_efficiency_reports_union_is_keyed_on_jobid_and_is_idempotent():
+    """Re-running part of an experiment ADDS rows; it never rewrites untouched ones.
+
+    That is the user-visible requirement ("only updated rows of things that were
+    ACTUALLY refreshed on a re run"), and it holds by construction rather than by
+    comparison: SLURM does not reissue a job id within a cluster's id epoch, so a
+    later report's rows are disjoint from an earlier one's.
+    """
+    first = _EFF_HEADER + "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0\n"
+    second = _EFF_HEADER + "0,222.0,python,00:00:26,1,1,780K,,26.0,0.0,760.0,2000.0,222,0.0,38.0\n"
+
+    _h, merged = metadata._parse_efficiency_csvs([("older", first), ("newer", second)])
+    assert sorted(merged) == ["111.0", "222.0"]
+
+    # Idempotent: re-parsing the same inputs yields identical rows.
+    _h2, again = metadata._parse_efficiency_csvs([("older", first), ("newer", second)])
+    assert again == merged
+
+    # Duplicate JobID across two reports: the LATER file wins (oldest-first ordering).
+    dup_old = _EFF_HEADER + "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0\n"
+    dup_new = _EFF_HEADER + "0,111.0,python,00:00:99,1,1,700K,,99.0,0.0,690.0,1000.0,111,0.0,69.0\n"
+    _h3, resolved = metadata._parse_efficiency_csvs([("older", dup_old), ("newer", dup_new)])
+    assert resolved["111.0"]["Elapsed"] == "00:00:99"
+
+
+def test_unrecognised_csv_column_is_disclosed_not_silently_dropped():
+    """A column the curated table does not display must be NAMED on the page.
+
+    The curated column set is what keeps the table readable, so dropping an
+    unexpected column is deliberate. Dropping it SILENTLY is not: a future plugin
+    version that starts reporting a new measurement would otherwise lose it with
+    nothing on the page to say so.
+    """
+    csv_text = _EFF_HEADER.rstrip("\n") + ",GPUUtilPct\n"
+    csv_text += "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0,87.5\n"
+    html = metadata._build_slurm_efficiency_html([("r", csv_text)], {}, {}, lambda p: "")
+    assert "Unrecognised column" in html
+    assert "GPUUtilPct" in html
+
+    # A report carrying only known columns emits no such note.
+    plain = _EFF_HEADER + "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0\n"
+    assert "Unrecognised column" not in metadata._build_slurm_efficiency_html([("r", plain)], {}, {}, lambda p: "")
+
+
+def test_job_purpose_and_hardware_are_joined_in_from_toolkit_records():
+    """The human-readable purpose is NOT read off the job — it is joined in.
+
+    SLURM reports every job step's command name as `python`, and on a cluster that
+    does not store job comments the plugin drops its RuleName column entirely. The
+    toolkit's own `_status/*.flag.json` sidecars carry `rule_name` keyed by the
+    parent `SLURM_JOB_ID`, which is exactly the CSV's `MainJobID`.
+    """
+    csv_text = _EFF_HEADER + "0,999.0,python,00:01:40,1,1,512K,,100.0,91.0,500.0,8000.0,999,91.0,6.4\n"
+    purpose_map = metadata._job_purpose_map(
+        [
+            {
+                "rule_name": "simulation_sa_gpu_0_r1_evt_event_index_0",
+                "slurm_job_id": "999",
+                "sa_id": "gpu_0_r1",
+                "event_id": "event_index.0",
+                "model_type": "tritonswmm",
+            }
+        ]
+    )
+    scenario_map = {
+        ("gpu_0_r1", "event_index.0", "tritonswmm"): {
+            "hpc.partition": "gpu-a6000",
+            "n_gpus": "1",
+            "n_mpi_procs": "1",
+            "n_omp_threads": "1",
+            "n_nodes": "1",
+            "run_mode": "gpu",
+            "backend_used": "gpu",
+        }
+    }
+    html = metadata._build_slurm_efficiency_html(
+        [("r", csv_text)], purpose_map, scenario_map, lambda p: "a6000" if p else ""
+    )
+    for expected in ("simulate", "gpu_0_r1", "tritonswmm", "gpu-a6000", "a6000"):
+        assert expected in html, expected
+    # JobName is `python` for every row, which is precisely why it is not a column.
+    assert "What the job did" in html
