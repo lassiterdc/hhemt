@@ -27,7 +27,7 @@ unpaired_allowlist:
       change needed.
   - renderer: cross_experiment_intercomparison_maps
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
-    renderer_sha256: f03f918dfef6119ca7d7217ace2b82b1dcb2258bc221f3598a07d263e7af2ba2
+    renderer_sha256: ff198c8b87d5bbaf87cecc2a0962872ad17915143d03b1bbca5a1f0b74795dcc
     justification: >-
       Iteration-8 annotation-carrier group (D3 annotation split and the
       title-collision fix), plus a whole-file ruff-format pass. Caption re-read:
