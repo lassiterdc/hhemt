@@ -155,9 +155,48 @@ def _status_of(c: CheckResult) -> tuple[str, str, str]:
     return ("pass-qualified", "✓", f"identical only to within {floor:.3g} (derived-summary floor)")
 
 
+def _partition_applicable(checks: list[CheckResult]) -> tuple[list[CheckResult], int]:
+    """Split off the checks that cannot apply to this analysis. Returns (kept, n_omitted).
+
+    Iter-10 E: a check whose arm cannot produce the thing being checked was rendering a
+    full N/A row -- "Resume schedule honored" on a CLEAN arm is N/A on every clean report,
+    for every scenario, forever. Those rows are noise proportional to the vocabulary rather
+    than to the run.
+
+    This does NOT relax the ruling that produced the N/A state in the first place: that
+    ruling forbade rendering an examined-zero check as a PASS carrying its denominator,
+    because a green cell over a check that examined nothing is a false claim. Omitting the
+    row makes no claim at all, which is the opposite failure mode from the one it fixed.
+    What omission WOULD lose is the reader's ability to tell "this check passed" from "this
+    check never ran" -- so every caller discloses the omitted COUNT beneath its table. The
+    count is the disclosure; the rows are the noise.
+
+    `applicable` defaults True via getattr: a validation_report.json written before the
+    field existed deserializes without it and must keep rendering every row.
+    """
+    kept = [c for c in checks if getattr(c, "applicable", True)]
+    return kept, len(checks) - len(kept)
+
+
+def _omitted_note(n_omitted: int) -> str:
+    """The disclosure line paired with every filtered table. Empty when nothing was cut."""
+    if n_omitted <= 0:
+        return ""
+    plural = "s" if n_omitted != 1 else ""
+    return (
+        f'\n<p class="floor-note">{n_omitted} check{plural} not applicable to this analysis '
+        f"{'were' if n_omitted != 1 else 'was'} omitted — these are checks whose subject this "
+        f"run cannot produce (for example, resume-schedule checks on a clean arm). They are "
+        f"omitted rather than shown as passing.</p>"
+    )
+
+
 def _render_system_level_table(checks: list[CheckResult]) -> str:
     if not checks:
         return ""
+    checks, n_omitted = _partition_applicable(checks)
+    if not checks:
+        return _omitted_note(n_omitted).lstrip("\n")
     rows = []
     for c in checks:
         status_cls, status_glyph, qualifier = _status_of(c)
@@ -184,13 +223,16 @@ def _render_system_level_table(checks: list[CheckResult]) -> str:
         "<h3>System-Level Checks</h3>\n"
         "<table>\n"
         "  <thead><tr><th>Name</th><th>Check</th><th>Status</th><th>Details</th></tr></thead>\n"
-        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>"
+        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>" + _omitted_note(n_omitted)
     )
 
 
 def _render_aggregate_table(checks: list[CheckResult]) -> str:
     if not checks:
         return ""
+    checks, n_omitted = _partition_applicable(checks)
+    if not checks:
+        return _omitted_note(n_omitted).lstrip("\n")
     rows = []
     for c in checks:
         status_cls, status_glyph, qualifier = _status_of(c)
@@ -202,7 +244,7 @@ def _render_aggregate_table(checks: list[CheckResult]) -> str:
         "<h3>Aggregate Per-Scenario Checks</h3>\n"
         "<table>\n"
         "  <thead><tr><th>Stage</th><th>Status</th><th>Summary</th></tr></thead>\n"
-        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>"
+        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>" + _omitted_note(n_omitted)
     )
 
 

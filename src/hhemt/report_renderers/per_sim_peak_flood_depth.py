@@ -1327,9 +1327,15 @@ def _build_peak_flood_depth_figure(
                 # boundary read as an unexplained line. It is now a legend entry, named to
                 # match `eda/_config_diff.py`'s swatch verbatim so one geometry has one name
                 # across figure families. The trace is emitted once per PANEL (depth here,
-                # WSE below); `legendgroup` + showlegend-on-the-first is what keeps that from
-                # rendering as two identical entries.
-                showlegend=True,
+                # WSE below); `legendgroup` is what couples them into one toggle.
+                #
+                # Iter-10 D: BOTH boundary traces are now showlegend=False and the entry is
+                # carried by the marker proxy below. A `mode="lines"` trace renders a LINE
+                # glyph in the legend, and plotly exposes no per-trace override for it — so
+                # the only way to key this geometry with a RECTANGLE, matching the swatch
+                # `figure_panels.watershed_swatch` draws for the config-diff family, is a
+                # separate markers-mode trace.
+                showlegend=False,
                 legendgroup="watershed_extent",
                 name="watershed extent (bbox)",
             ),
@@ -1359,6 +1365,41 @@ def _build_peak_flood_depth_figure(
             ),
             row=1,
             col=2,
+        )
+    with prov.artist(
+        axes_id="ax_depth_plotly",
+        kind="legend",
+        note="watershed legend key (dummy Scatter, no plotted points)",
+    ) as a:
+        a.add_channel("x", watershed_ref)
+        # Iter-10 D: the legend GLYPH, carried by a markers-mode proxy that plots no data.
+        # `square-open` is the unfilled square, which is what `watershed_swatch` draws as a
+        # rect with `fillcolor="rgba(0,0,0,0)"` — so both figure families now key one
+        # geometry with one shape as well as one name.
+        #
+        # The legend-togglability invariant above (tests/test_synth_legend_toggle_audit.py)
+        # is satisfied WITHOUT an invisible peer: this trace shares `watershed_extent` with
+        # the two boundary traces, which DO plot data. That is the difference from the dry
+        # swatch, whose base fill is an add_shape and therefore had no trace peer to group
+        # with. Toggling this entry hides the boundary on both maps.
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                marker=dict(
+                    symbol="square-open",
+                    size=12,
+                    color=map_cfg.watershed_overlay_color,
+                    line=dict(width=map_cfg.watershed_overlay_width),
+                ),
+                hoverinfo="skip",
+                showlegend=True,
+                legendgroup="watershed_extent",
+                name="watershed extent (bbox)",
+            ),
+            row=1,
+            col=1,
         )
 
     # ---- Hydrology panel: rainfall (row 1, col 3) -----------------------

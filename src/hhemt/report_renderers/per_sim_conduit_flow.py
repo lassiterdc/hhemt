@@ -888,15 +888,51 @@ def _build_conduit_flow_figure(
                     hoverinfo="skip",
                     # Iter-9 A1: surfaced as a legend entry, named identically to the
                     # peak-flood and config-diff swatches. This site is inside a per-COLUMN
-                    # loop, so showlegend is bound to the first column rather than written
-                    # True — a literal True here would emit one entry per map column.
-                    showlegend=(col_idx == 1),
+                    # loop, so a literal True would emit one entry per map column.
+                    #
+                    # Iter-10 D: every boundary trace is now showlegend=False and the entry
+                    # is carried by the marker proxy below — a `mode="lines"` trace renders
+                    # a LINE glyph and plotly exposes no per-trace override, so a RECTANGLE
+                    # key needs a markers-mode trace.
+                    showlegend=False,
                     legendgroup="watershed_extent",
                     name="watershed extent (bbox)",
                 ),
                 row=1,
                 col=col_idx,
             )
+    with prov.artist(
+        axes_id="ax_utilization_plotly",
+        kind="legend",
+        note="watershed legend key (dummy Scatter, no plotted points)",
+    ) as a:
+        a.add_channel("x", watershed_ref)
+        # Iter-10 D: one proxy for the whole figure, emitted OUTSIDE the per-column loop —
+        # inside it, this would reproduce the duplicate-entry defect the Iter-9 note above
+        # describes. `square-open` matches the unfilled rect `figure_panels.watershed_swatch`
+        # draws for the config-diff family. The togglability invariant
+        # (tests/test_synth_legend_toggle_audit.py) holds without an invisible peer: this
+        # trace shares `watershed_extent` with the per-column boundary traces, which plot
+        # data, so one legend click toggles the boundary on every map column.
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                marker=dict(
+                    symbol="square-open",
+                    size=12,
+                    color=map_cfg.watershed_overlay_color,
+                    line=dict(width=map_cfg.watershed_overlay_width),
+                ),
+                hoverinfo="skip",
+                showlegend=True,
+                legendgroup="watershed_extent",
+                name="watershed extent (bbox)",
+            ),
+            row=1,
+            col=1,
+        )
 
     # ---- Hydrology panel (rainfall row 1 + BC water level row 2) --------
     rain_units = units.rainfall_provenance_units(analysis.cfg_analysis.rainfall_units)

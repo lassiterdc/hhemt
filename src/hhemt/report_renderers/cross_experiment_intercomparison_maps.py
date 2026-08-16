@@ -149,7 +149,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _watershed_polygon,
     )
     from hhemt.eda.cross_sim_identity import config_identity_from_node_attrs
-    from hhemt.figure_caption import add_figure_caption, content_width_px
+    from hhemt.figure_caption import add_figure_caption, content_width_px, text_width_px
     from hhemt.figure_panels import (
         panel_geometry,
         panel_outline_shape,
@@ -343,7 +343,19 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         return _device_count_key({"attrs": s.get("attrs", {})})
 
     def _family_title(fam: str) -> str:
-        return "CPU" if fam == "cpu" else f"GPU ({fam})"
+        """Iter-10 B: GPU families collapse to a bare "GPU".
+
+        The per-model spelling (`GPU (a100-80)`) made a two-family class read
+        `GPU (a100-80) + GPU (a6000)`, which is what pushed the rotated panel label past its
+        own panel's vertical extent. The user's instruction is the design here: *"I wouldn't
+        list the GPUs, i would just say GPU."*
+
+        This is the label's ONLY consumer (`_class_descriptor`), so no other surface loses
+        the device model. The panel TABLE still carries each config's full identity — the
+        rotated label names the class, the table enumerates it, and duplicating the device
+        spelling in both is what made the label the longest string in the figure.
+        """
+        return "CPU" if fam == "cpu" else "GPU"
 
     # ---- row plan: model -> family subsection -> [table] + [reference] + (diff, pct) per group.
     #      The model split stays strictly OUTSIDE the family split.
@@ -532,7 +544,11 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         """
         fams = sorted({_sub_family(ctx_["fam_subs"][s]) for s in grp["members"] if s in ctx_["fam_subs"]})
         n = len({lbl for lbl in grp["labels"]})
-        span = " + ".join(_family_title(f) for f in fams) if fams else "unclassified"
+        # Dedupe AFTER titling, not before. `fams` is a set of RAW family keys, so two GPU
+        # families survive it distinctly and, once both title to "GPU", would join as
+        # "GPU + GPU". Sorting the titled set keeps the determinism the docstring promises
+        # while collapsing the duplicate: {a100-80, a6000} -> "GPU", {cpu, a100-80} -> "CPU + GPU".
+        span = " + ".join(sorted({_family_title(f) for f in fams})) if fams else "unclassified"
         return f"{span}, {n} b4b config{'s' if n != 1 else ''}"
 
     def _glabel(g) -> str:
@@ -861,6 +877,25 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 # so a stale reset would put two different names on one panel.
                 _panel_ix[0] = 0
                 _last_model_header[0] = model
+            # Iter-10 B: the rotated label is laid out along the panel's VERTICAL extent, so
+            # its overflow axis is the one `textangle=-90` makes counter-intuitive — a label
+            # that is "too long" runs past the panel's top and bottom dashed edges, not its
+            # sides. The user's success criterion is absolute: "there is no text that overlaps
+            # the panel dashed outline at all". Collapsing the GPU spelling above removes the
+            # cause in the shapes this dataset produces; this guard is what makes the criterion
+            # hold for a dataset that has not been seen, where a class could span more families
+            # or carry a longer descriptor.
+            #
+            # Shrink-to-fit rather than wrap: a wrapped rotated label grows along the
+            # PERPENDICULAR axis, which is the 0.016-wide left margin, so wrapping trades an
+            # overrun of the horizontal edges for an overrun of the vertical one. Font size is
+            # the axis with slack. The floor is 8px — below that the label stops being legible
+            # and the honest failure is a visibly small label rather than a silent overlap.
+            _label_text = f"<b>Panel {chr(ord('A') + _panel_ix[0])}</b> — {_class_descriptor(ctx, g_)}"
+            _panel_px = max(1.0, (_p_top - _p_bot) * _layout.plot_h)
+            _label_font = 13
+            while _label_font > 8 and text_width_px(_label_text, font_px=_label_font) > _panel_px * 0.92:
+                _label_font -= 1
             annotations.append(
                 dict(
                     x=0.016,
@@ -871,17 +906,14 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     yanchor="middle",
                     textangle=-90,
                     showarrow=False,
-                    font=dict(size=13, color="#111"),
+                    font=dict(size=_label_font, color="#111"),
                     # `<b>Panel X</b> — {descriptor}`, the format `_config_diff` uses. The
                     # descriptor names what the class CONTAINS, derived from the members the
                     # byte-identity partition actually produced -- so if a future dataset puts
                     # CPU and GPU configs in one class the label says so, rather than
                     # asserting a split that did not happen. The partition stays data-derived;
                     # only the NAME reads hardware, which is description, not classification.
-                    text=(
-                        f"<b>Panel {chr(ord('A') + _panel_ix[0])}</b> — "
-                        f"{_class_descriptor(ctx, g_)}"
-                    ),
+                    text=_label_text,
                 )
             )
             _panel_ix[0] += 1
@@ -933,14 +965,27 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     diverging=False,
                 ):
                     fig.add_trace(tr, row=row, col=2)
+            # Iter-10 A: this subtitle overlapped the dashed panel outline on BOTH axes, and
+            # each overlap had its own cause. Horizontally it began at x=0.0 while the outline
+            # begins at x0=0.006, so it started OUTSIDE the box and crossed the left edge.
+            # Vertically it was anchored `bottom` at exactly `y_top` — the outline's own top
+            # edge — so the dash ran through the glyphs, which is the strikethrough the user
+            # photographed.
+            #
+            # Moved INSIDE the panel rather than above it. Above is the tempting placement and
+            # it is the wrong one: the model subheader is emitted at `_p_top + MODEL_HEADER_GAP`
+            # and a ref row IS its panel's first row, so a subtitle lifted above the top edge
+            # collides with that header on the first panel of every model — trading an overlap
+            # with a line for an overlap with text. Inside, the band between the top edge and
+            # the table/map row is already empty, which is where this text was trying to sit.
             annotations.append(
                 dict(
-                    x=0.0,
-                    y=y_top,
+                    x=0.012,
+                    y=y_top - _layout.f(3),
                     xref="paper",
                     yref="paper",
                     xanchor="left",
-                    yanchor="bottom",
+                    yanchor="top",
                     showarrow=False,
                     align="left",
                     font=dict(size=11, color="#111"),
