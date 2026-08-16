@@ -500,6 +500,23 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 return s["wlevel"]
         return None
 
+    def _class_descriptor(ctx_, grp) -> str:
+        """Name an identity class by what it holds, not by how it was formed.
+
+        Config-diff can say "Serial CPU reference" because its Panel A IS that run. An
+        identity class has no such name, so it is described by its hardware span and size --
+        both READ OFF the members the partition produced. The distinction is load-bearing:
+        the user ruled panels are formed from byte identity "never from a hardware
+        taxonomy", which governs FORMATION. Describing the result is not forming it.
+
+        DETERMINISTIC per the user's ruling: `fams` is sorted before joining and `n` is a
+        cardinality, so neither reads set iteration order.
+        """
+        fams = sorted({_sub_family(ctx_["fam_subs"][s]) for s in grp["members"] if s in ctx_["fam_subs"]})
+        n = len({lbl for lbl in grp["labels"]})
+        span = " + ".join(_family_title(f) for f in fams) if fams else "unclassified"
+        return f"{span}, {n} b4b config{'s' if n != 1 else ''}"
+
     def _glabel(g) -> str:
         return _derive_config_label(g.get("attrs", {}))
 
@@ -672,7 +689,16 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     textangle=-90,
                     showarrow=False,
                     font=dict(size=13, color="#111"),
-                    text=f"<b>Panel {chr(ord('A') + _panel_ix[0])}</b>",
+                    # `<b>Panel X</b> — {descriptor}`, the format `_config_diff` uses. The
+                    # descriptor names what the class CONTAINS, derived from the members the
+                    # byte-identity partition actually produced -- so if a future dataset puts
+                    # CPU and GPU configs in one class the label says so, rather than
+                    # asserting a split that did not happen. The partition stays data-derived;
+                    # only the NAME reads hardware, which is description, not classification.
+                    text=(
+                        f"<b>Panel {chr(ord('A') + _panel_ix[0])}</b> — "
+                        f"{_class_descriptor(ctx, g_)}"
+                    ),
                 )
             )
             _panel_ix[0] += 1
