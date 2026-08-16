@@ -1065,18 +1065,22 @@ def _build_peak_flood_depth_figure(
     for _px, _py in zip(ws_fill_x, ws_fill_y, strict=False):
         if _px is None or _py is None:
             if _seg_x:
-                _seg = f"M {_seg_x[0]},{_seg_y[0]} " + " ".join(
-                    f"L {_x},{_y}" for _x, _y in zip(_seg_x[1:], _seg_y[1:], strict=False)
-                ) + " Z"
+                _seg = (
+                    f"M {_seg_x[0]},{_seg_y[0]} "
+                    + " ".join(f"L {_x},{_y}" for _x, _y in zip(_seg_x[1:], _seg_y[1:], strict=False))
+                    + " Z"
+                )
                 _ws_path_segments.append(_seg)
                 _seg_x, _seg_y = [], []
             continue
         _seg_x.append(_px)
         _seg_y.append(_py)
     if _seg_x:
-        _seg = f"M {_seg_x[0]},{_seg_y[0]} " + " ".join(
-            f"L {_x},{_y}" for _x, _y in zip(_seg_x[1:], _seg_y[1:], strict=False)
-        ) + " Z"
+        _seg = (
+            f"M {_seg_x[0]},{_seg_y[0]} "
+            + " ".join(f"L {_x},{_y}" for _x, _y in zip(_seg_x[1:], _seg_y[1:], strict=False))
+            + " Z"
+        )
         _ws_path_segments.append(_seg)
     ws_fill_path = " ".join(_ws_path_segments)
     dry_ref = ProvenanceRef(

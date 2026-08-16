@@ -124,7 +124,6 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     """
     import numpy as np
     import plotly.graph_objects as go
-    import xarray as xr
     from plotly.subplots import make_subplots
 
     from hhemt.eda._config_diff import (
@@ -139,8 +138,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _derive_config_label,
         _device_count_key,
         _group_by_identity,
-        _hw_family_key,
         _heatmap,
+        _hw_family_key,
         _load_conduit_geometry,
         _load_subs,
         _signed_pct,
@@ -204,7 +203,9 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     _T_MARGIN = 70
 
     caption_text = (
-        "Compared quantity: " + _VARIABLE_GLOSS["max_wlevel_m"] + ". "
+        "Compared quantity: "
+        + _VARIABLE_GLOSS["max_wlevel_m"]
+        + ". "
         + ("Coupled arm additionally compares " + _VARIABLE_GLOSS["max_flow_cms"] + ". " if has_coupled_arm else "")
         + "Maps show resume minus clean; blue = resume higher. Colour bands are the fixed "
         f"{_CONFIG_DIFF_DEPTH_BAND_M} m / {_CONFIG_DIFF_FLOW_BAND_CMS} cms meaningful-difference "
@@ -301,14 +302,28 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 try:
                     fam_groups = _group_by_identity(fam_subs, crates / clean_eid)
                 except Exception:
-                    fam_groups = [{"members": [k], "attrs": v.get("attrs", {}),
-                                   "run_modes": [v.get("run_mode")], "wlevel_da": v["wlevel"],
-                                   "flow_da": v.get("flow")} for k, v in fam_subs.items()]
+                    fam_groups = [
+                        {
+                            "members": [k],
+                            "attrs": v.get("attrs", {}),
+                            "run_modes": [v.get("run_mode")],
+                            "wlevel_da": v["wlevel"],
+                            "flow_da": v.get("flow"),
+                        }
+                        for k, v in fam_subs.items()
+                    ]
                 if not fam_groups:
                     continue
-                ctx = dict(model=model, evt=evt, fam=fam, base_sa=base_sa,
-                           fam_subs=fam_subs, clean_eid=clean_eid,
-                           resume_subs=resume_subs, groups=fam_groups)
+                ctx = dict(
+                    model=model,
+                    evt=evt,
+                    fam=fam,
+                    base_sa=base_sa,
+                    fam_subs=fam_subs,
+                    clean_eid=clean_eid,
+                    resume_subs=resume_subs,
+                    groups=fam_groups,
+                )
                 # No `famtable` row. The family's config listing used to occupy a 110 px
                 # FULL-WIDTH table row above each family's maps; it is now a SIDE table
                 # beside that family's panel, which is what `_config_diff` already does
@@ -326,11 +341,15 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             go.Table(
                 header=dict(
                     values=["Model", "compared pairs", "clean-vs-resume verdict", "max |resume - clean|"],
-                    align="left", fill_color="#eef2f7", font=dict(size=11),
+                    align="left",
+                    fill_color="#eef2f7",
+                    font=dict(size=11),
                 ),
                 cells=dict(
                     values=list(zip(*verdict_rows, strict=False)) if verdict_rows else [[]],
-                    align="left", font=dict(size=11), height=22,
+                    align="left",
+                    font=dict(size=11),
+                    height=22,
                 ),
             )
         )
@@ -340,11 +359,10 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         # `_FIG_W - 60` at the call site. Same number, but the figure is now the single
         # source of it, so a margin change cannot silently desynchronise the wrap.
         fig.update_layout(width=_FIG_W, margin=dict(t=_T_MARGIN, l=30, r=30))
-        b_px = add_figure_caption(
-            fig, caption_text, content_w_px=content_width_px(fig), plot_h_px=plot_h
-        )
+        b_px = add_figure_caption(fig, caption_text, content_w_px=content_width_px(fig), plot_h_px=plot_h)
         fig.update_layout(
-            height=plot_h + _T_MARGIN + b_px, width=_FIG_W,
+            height=plot_h + _T_MARGIN + b_px,
+            width=_FIG_W,
             margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
             title="Clean vs resume, spatial: child bundles unavailable at render time",
             paper_bgcolor="white",
@@ -367,14 +385,19 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         go.Table(
             header=dict(
                 values=["Model", "compared pairs", "clean-vs-resume verdict", "max |resume - clean|"],
-                align="left", fill_color="#eef2f7", font=dict(size=11),
+                align="left",
+                fill_color="#eef2f7",
+                font=dict(size=11),
             ),
             cells=dict(
                 values=list(zip(*verdict_rows, strict=False)) if verdict_rows else [[]],
-                align="left", font=dict(size=11), height=22,
+                align="left",
+                font=dict(size=11),
+                height=22,
             ),
         ),
-        row=1, col=1,
+        row=1,
+        col=1,
     )
 
     _mask_cache: dict[tuple[str, int], tuple] = {}
@@ -486,31 +509,61 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             # occupy its own full-width row above the maps.
             _span = next(p for p in _panel_rows if row in p)
             _p_top, _p_bot = _layout.ydom(_span[0])[1], _layout.ydom(_span[-1])[0]
-            rows_ = [[_glabel(g), f"group {gi + 1}", f"{len(g['members'])} config(s)"]
-                     for gi, g in enumerate(ctx["groups"])]
+            rows_ = [
+                [_glabel(g), f"group {gi + 1}", f"{len(g['members'])} config(s)"] for gi, g in enumerate(ctx["groups"])
+            ]
             fig.add_trace(
                 go.Table(
-                    header=dict(values=["representative config", "identity group", "members"],
-                                align="left", fill_color="#f3f6fa", font=dict(size=10)),
-                    cells=dict(values=list(zip(*rows_, strict=False)) if rows_ else [[]],
-                               align="left", font=dict(size=10), height=20),
+                    header=dict(
+                        values=["representative config", "identity group", "members"],
+                        align="left",
+                        fill_color="#f3f6fa",
+                        font=dict(size=10),
+                    ),
+                    cells=dict(
+                        values=list(zip(*rows_, strict=False)) if rows_ else [[]],
+                        align="left",
+                        font=dict(size=10),
+                        height=20,
+                    ),
                     domain=dict(x=_layout.side_table_x, y=[max(0.0, _p_bot), min(1.0, _p_top)]),
                 ),
             )
-            annotations.append(dict(
-                x=0.0, y=_p_top, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
-                showarrow=False, align="left", font=dict(size=12, color="#111"),
-                text=(f"<b>{model} - {_family_title(fam)}</b> - clean reference: the clean, "
-                      f"uninterrupted run on this hardware family ({base_label})"),
-            ))
+            annotations.append(
+                dict(
+                    x=0.0,
+                    y=_p_top,
+                    xref="paper",
+                    yref="paper",
+                    xanchor="left",
+                    yanchor="bottom",
+                    showarrow=False,
+                    align="left",
+                    font=dict(size=12, color="#111"),
+                    text=(
+                        f"<b>{model} - {_family_title(fam)}</b> - clean reference: the clean, "
+                        f"uninterrupted run on this hardware family ({base_label})"
+                    ),
+                )
+            )
             fig.add_shape(panel_outline_shape(_layout, _span[0], _span[-1]))
 
         if kind == "ref":
             zref = _apply_mask(np.asarray(base_da.values), wmask)
             fig.add_trace(
-                _heatmap(zref, zref, x=xd, y=yd, colorscale=_REF_DEPTH, cbar_title="m",
-                         cbar_x=_cbar_x[1], cbar_y=_cbar_y(row), cbar_len=_layout.colorbar_len),
-                row=row, col=1,
+                _heatmap(
+                    zref,
+                    zref,
+                    x=xd,
+                    y=yd,
+                    colorscale=_REF_DEPTH,
+                    cbar_title="m",
+                    cbar_x=_cbar_x[1],
+                    cbar_y=_cbar_y(row),
+                    cbar_len=_layout.colorbar_len,
+                ),
+                row=row,
+                col=1,
             )
             for _tr in _watershed_boundary_traces(wpoly):
                 fig.add_trace(_tr, row=row, col=1)
@@ -520,69 +573,140 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 links = [str(v) for v in bf["link_id"].values]
                 vmax = float(np.nanmax(np.abs(np.asarray(bf.values))))
                 for tr in _conduit_traces(
-                    geom, dict(zip(links, np.asarray(bf.values), strict=False)),
-                    colorscale=_REF_FLOW, vmin=0, vmax=(vmax if vmax > 0 else 1.0),
-                    cbar_title="cms", cbar_x=_cbar_x[2], cbar_y=_cbar_y(row),
-                    cbar_len=_layout.colorbar_len, diverging=False,
+                    geom,
+                    dict(zip(links, np.asarray(bf.values), strict=False)),
+                    colorscale=_REF_FLOW,
+                    vmin=0,
+                    vmax=(vmax if vmax > 0 else 1.0),
+                    cbar_title="cms",
+                    cbar_x=_cbar_x[2],
+                    cbar_y=_cbar_y(row),
+                    cbar_len=_layout.colorbar_len,
+                    diverging=False,
                 ):
                     fig.add_trace(tr, row=row, col=2)
-            annotations.append(dict(
-                x=0.0, y=y_top, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
-                showarrow=False, align="left", font=dict(size=11, color="#111"),
-                text=(f"Reference - {base_label}: the clean, uninterrupted run on this hardware "
-                      f"family (absolute peak water level, event {evt})"),
-            ))
+            annotations.append(
+                dict(
+                    x=0.0,
+                    y=y_top,
+                    xref="paper",
+                    yref="paper",
+                    xanchor="left",
+                    yanchor="bottom",
+                    showarrow=False,
+                    align="left",
+                    font=dict(size=11, color="#111"),
+                    text=(
+                        f"Reference - {base_label}: the clean, uninterrupted run on this hardware "
+                        f"family (absolute peak water level, event {evt})"
+                    ),
+                )
+            )
             continue
 
         g = entry["g"]
         g_label = _glabel(g)
         rda = _resume_da(ctx, g)
         if rda is None:
-            annotations.append(dict(
-                x=0.5, y=0.5, xref=f"x{row} domain", yref=f"y{row} domain",
-                xanchor="center", yanchor="middle", showarrow=False, font=dict(size=11, color="#666"),
-                text=f"{model} - {g_label}: no resumed run for this config at render time",
-            ))
+            annotations.append(
+                dict(
+                    x=0.5,
+                    y=0.5,
+                    xref=f"x{row} domain",
+                    yref=f"y{row} domain",
+                    xanchor="center",
+                    yanchor="middle",
+                    showarrow=False,
+                    font=dict(size=11, color="#666"),
+                    text=f"{model} - {g_label}: no resumed run for this config at render time",
+                )
+            )
             continue
         d = _align_to(base_da, rda) - np.asarray(base_da.values)
         if kind == "diff":
             z = _apply_mask(d, wmask)
             fig.add_trace(
-                _heatmap(z, z, x=xd, y=yd, colorscale=_DIVERGING, zmid=0, zmin=-wsym, zmax=wsym,
-                         cbar_title="m", cbar_x=_cbar_x[1], cbar_y=_cbar_y(row),
-                         cbar_len=_layout.colorbar_len),
-                row=row, col=1,
+                _heatmap(
+                    z,
+                    z,
+                    x=xd,
+                    y=yd,
+                    colorscale=_DIVERGING,
+                    zmid=0,
+                    zmin=-wsym,
+                    zmax=wsym,
+                    cbar_title="m",
+                    cbar_x=_cbar_x[1],
+                    cbar_y=_cbar_y(row),
+                    cbar_len=_layout.colorbar_len,
+                ),
+                row=row,
+                col=1,
             )
             for _tr in _watershed_boundary_traces(wpoly):
                 fig.add_trace(_tr, row=row, col=1)
-            txt = (f"{g_label} (resumed alternate) - {base_label} (clean reference), same "
-                   f"hardware family, event {evt}")
+            txt = f"{g_label} (resumed alternate) - {base_label} (clean reference), same hardware family, event {evt}"
         else:
             z = _apply_mask(_signed_pct(d, np.asarray(base_da.values)), wmask)
             fig.add_trace(
-                _heatmap(z, z, x=xd, y=yd, colorscale=_DIVERGING, zmid=0, zmin=-psym, zmax=psym,
-                         cbar_title="%", cbar_x=_cbar_x[1], cbar_y=_cbar_y(row),
-                         cbar_len=_layout.colorbar_len),
-                row=row, col=1,
+                _heatmap(
+                    z,
+                    z,
+                    x=xd,
+                    y=yd,
+                    colorscale=_DIVERGING,
+                    zmid=0,
+                    zmin=-psym,
+                    zmax=psym,
+                    cbar_title="%",
+                    cbar_x=_cbar_x[1],
+                    cbar_y=_cbar_y(row),
+                    cbar_len=_layout.colorbar_len,
+                ),
+                row=row,
+                col=1,
             )
             txt = f"{g_label}: percent difference vs the clean reference on the same hardware family"
-        annotations.append(dict(
-            x=0.0, y=y_top, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
-            showarrow=False, align="left", font=dict(size=11, color="#111"), text=txt,
-        ))
+        annotations.append(
+            dict(
+                x=0.0,
+                y=y_top,
+                xref="paper",
+                yref="paper",
+                xanchor="left",
+                yanchor="bottom",
+                showarrow=False,
+                align="left",
+                font=dict(size=11, color="#111"),
+                text=txt,
+            )
+        )
 
     for ei, _entry in enumerate(row_plan):
         row = 2 + ei
         for col in range(1, _ncols + 1):
-            fig.update_xaxes(row=row, col=col, title_text="x (m)", title_font=dict(size=10),
-                             tickfont=dict(size=9), showgrid=False, zeroline=False)
-            fig.update_yaxes(row=row, col=col, title_text="y (m)" if col == 1 else "",
-                             title_font=dict(size=10), tickfont=dict(size=9),
-                             showgrid=False, zeroline=False, showticklabels=(col == 1))
+            fig.update_xaxes(
+                row=row,
+                col=col,
+                title_text="x (m)",
+                title_font=dict(size=10),
+                tickfont=dict(size=9),
+                showgrid=False,
+                zeroline=False,
+            )
+            fig.update_yaxes(
+                row=row,
+                col=col,
+                title_text="y (m)" if col == 1 else "",
+                title_font=dict(size=10),
+                tickfont=dict(size=9),
+                showgrid=False,
+                zeroline=False,
+                showticklabels=(col == 1),
+            )
 
     _caption = (
-        caption_text
-        + " Panels are grouped by HARDWARE FAMILY; within each family the clean reference is the "
+        caption_text + " Panels are grouped by HARDWARE FAMILY; within each family the clean reference is the "
         "clean, uninterrupted run on that same hardware (serial CPU for the CPU family, the "
         "1-GPU run for each GPU hardware), and no comparison is drawn across families. "
         "Byte-identical configs within a family share one panel. Diff panels share one "
@@ -592,9 +716,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     # As in the empty-plan branch: declare width + side margins first so the caption's
     # content width is READ from the figure rather than re-derived at the call site.
     fig.update_layout(width=_FIG_W, margin=dict(t=_T_MARGIN, l=30, r=30))
-    b_px = add_figure_caption(
-        fig, _caption, content_w_px=content_width_px(fig), plot_h_px=plot_h
-    )
+    b_px = add_figure_caption(fig, _caption, content_w_px=content_width_px(fig), plot_h_px=plot_h)
     fig.update_layout(
         height=plot_h + _T_MARGIN + b_px,
         width=_FIG_W,

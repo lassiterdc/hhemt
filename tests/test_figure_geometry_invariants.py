@@ -96,8 +96,7 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "Pre-existing (~1491). Same retirement path."
     ),
     ("_plotting.py", P2, "_b4b_faceted_figure"): (
-        "Pre-existing EDA figure, no Iteration-7 feedback item. Retire when "
-        "figure_layout.align_x is adopted here."
+        "Pre-existing EDA figure, no Iteration-7 feedback item. Retire when figure_layout.align_x is adopted here."
     ),
     ("raw_resume_identity.py", P1, "build_binary_timestep_figure"): (
         "Pre-existing EDA figure, out of Iteration-7 scope."
@@ -288,11 +287,7 @@ def test_allowlist_entries_are_all_live():
     Without this, the ratchet loosens silently: a fixed module keeps its exemption and
     a later regression there goes unreported.
     """
-    live = {
-        (m.name, pred, fn)
-        for m in figure_modules()
-        for pred, _, fn in scan(m.read_text())
-    }
+    live = {(m.name, pred, fn) for m in figure_modules() for pred, _, fn in scan(m.read_text())}
     stale = sorted(k for k in _ALLOWLIST if k not in live)
     assert not stale, f"_ALLOWLIST entries no longer needed -- delete them: {stale}"
 

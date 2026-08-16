@@ -19,7 +19,7 @@ import pytest
 _PEP440_LOCAL = re.compile(r"^\d+\.\d+\.\d+\+\d+\.g[0-9a-f]{7,40}$")
 
 
-#---- S1 provenance._describe_version -------------------------------------- #
+# ---- S1 provenance._describe_version -------------------------------------- #
 def test_s1_describe_version_is_pep440_local_not_the_static_pin():
     from hhemt.provenance import _describe_version
 
@@ -28,7 +28,7 @@ def test_s1_describe_version_is_pep440_local_not_the_static_pin():
     assert v != "0.1.0", "returned the static pyproject pin"
 
 
-#---- S2 provenance._is_dirty ---------------------------------------------- #
+# ---- S2 provenance._is_dirty ---------------------------------------------- #
 def test_s2_is_dirty_agrees_with_git_status():
     from hhemt.bundle._emit import _toolkit_source_dir
     from hhemt.provenance import _is_dirty
@@ -44,7 +44,7 @@ def test_s2_is_dirty_agrees_with_git_status():
     assert _is_dirty() is actual
 
 
-#---- S3 provenance.producing_stamp ---------------------------------------- #
+# ---- S3 provenance.producing_stamp ---------------------------------------- #
 def test_s3_producing_stamp_has_exactly_three_fields():
     from hhemt.provenance import producing_stamp
 
@@ -53,7 +53,7 @@ def test_s3_producing_stamp_has_exactly_three_fields():
     assert s["hhemt_dirty"] in ("true", "false")
 
 
-#---- S4 process_simulation._resolve_producing_stamp ----------------------- #
+# ---- S4 process_simulation._resolve_producing_stamp ----------------------- #
 def test_s4_resolve_producing_stamp_version_is_derived_not_static():
     from hhemt.process_simulation import TRITONSWMM_sim_post_processing as P
 
@@ -61,14 +61,14 @@ def test_s4_resolve_producing_stamp_version_is_derived_not_static():
     assert "+" in semver, f"still the static pyproject pin: {semver!r}"
 
 
-#---- S5 reprocess_snakefile_generator emitted preamble -------------------- #
+# ---- S5 reprocess_snakefile_generator emitted preamble -------------------- #
 def test_s5_reprocess_preamble_routes_through_the_single_minter():
     src = Path(__import__("hhemt.reprocess_snakefile_generator", fromlist=["x"]).__file__).read_text()
     assert "_describe_version" in src
     assert '_pkg_version("hhemt")' not in src
 
 
-#---- S6 _derive_version_from_sha ------------------------------------------ #
+# ---- S6 _derive_version_from_sha ------------------------------------------ #
 def test_s6_derive_version_from_sha_derives_and_refuses():
     from hhemt.report_renderers.cross_experiment_compatibility import _derive_version_from_sha
 
@@ -77,7 +77,7 @@ def test_s6_derive_version_from_sha_derives_and_refuses():
     assert _derive_version_from_sha("deadbeefdead") is None
 
 
-#---- S7 the "+"-absent fallback branch in _combine_provenance_rows -------- #
+# ---- S7 the "+"-absent fallback branch in _combine_provenance_rows -------- #
 def test_s7_combine_rows_backfills_a_static_pin_from_the_tree_sha(tmp_path):
     xr = pytest.importorskip("xarray")
     from hhemt.report_renderers.cross_experiment_compatibility import _combine_provenance_rows
@@ -94,48 +94,92 @@ def test_s7_combine_rows_backfills_a_static_pin_from_the_tree_sha(tmp_path):
     assert rows and rows[0]["toolkit_version"] == "0.1.0+241.g01655abb60c2"
 
 
-#---- S8 _bv build-split marker -------------------------------------------- #
+# ---- S8 _bv build-split marker -------------------------------------------- #
 def test_s8_build_split_is_marked_in_the_build_column():
     from hhemt.report_renderers.cross_experiment_compatibility import _provenance_table_html
 
     rows = [
-        {"experiment_id": "a", "role": "clean", "model": "TRITON", "n_subs": 1,
-         "toolkit_sha": "aaa", "toolkit_version": "0.1.0+240.gaaa", "solver_sha": "s1"},
-        {"experiment_id": "b", "role": "clean", "model": "TRITON", "n_subs": 1,
-         "toolkit_sha": "aaa", "toolkit_version": "0.1.0+240.gaaa", "solver_sha": "s1"},
-        {"experiment_id": "c", "role": "resume", "model": "TRITON", "n_subs": 1,
-         "toolkit_sha": "bbb", "toolkit_version": "0.1.0+241.gbbb", "solver_sha": "s1"},
+        {
+            "experiment_id": "a",
+            "role": "clean",
+            "model": "TRITON",
+            "n_subs": 1,
+            "toolkit_sha": "aaa",
+            "toolkit_version": "0.1.0+240.gaaa",
+            "solver_sha": "s1",
+        },
+        {
+            "experiment_id": "b",
+            "role": "clean",
+            "model": "TRITON",
+            "n_subs": 1,
+            "toolkit_sha": "aaa",
+            "toolkit_version": "0.1.0+240.gaaa",
+            "solver_sha": "s1",
+        },
+        {
+            "experiment_id": "c",
+            "role": "resume",
+            "model": "TRITON",
+            "n_subs": 1,
+            "toolkit_sha": "bbb",
+            "toolkit_version": "0.1.0+241.gbbb",
+            "solver_sha": "s1",
+        },
     ]
     html = _provenance_table_html(rows)
     assert "0.1.0+241.gbbb *" in html, "minority build not marked"
 
 
-#---- S9 caption states constancy on the axis that did NOT split ----------- #
+# ---- S9 caption states constancy on the axis that did NOT split ----------- #
 def test_s9_caption_states_build_constancy_when_builds_agree():
     from hhemt.report_renderers.cross_experiment_compatibility import _provenance_table_html
 
     rows = [
-        {"experiment_id": "a", "role": "clean", "model": "TRITON", "n_subs": 1,
-         "toolkit_sha": "aaa", "toolkit_version": "0.1.0+241.gaaa", "solver_sha": "s1"},
-        {"experiment_id": "b", "role": "resume", "model": "TRITON", "n_subs": 1,
-         "toolkit_sha": "aaa", "toolkit_version": "0.1.0+241.gaaa", "solver_sha": "s2"},
+        {
+            "experiment_id": "a",
+            "role": "clean",
+            "model": "TRITON",
+            "n_subs": 1,
+            "toolkit_sha": "aaa",
+            "toolkit_version": "0.1.0+241.gaaa",
+            "solver_sha": "s1",
+        },
+        {
+            "experiment_id": "b",
+            "role": "resume",
+            "model": "TRITON",
+            "n_subs": 1,
+            "toolkit_sha": "aaa",
+            "toolkit_version": "0.1.0+241.gaaa",
+            "solver_sha": "s2",
+        },
     ]
     html = _provenance_table_html(rows)
     assert "hhemt build is identical across every row" in html
 
 
-#---- S10 header relabel ---------------------------------------------------- #
+# ---- S10 header relabel ---------------------------------------------------- #
 def test_s10_headers_name_the_product_not_the_word_toolkit():
     from hhemt.report_renderers.cross_experiment_compatibility import _provenance_table_html
 
-    rows = [{"experiment_id": "a", "role": "clean", "model": "TRITON", "n_subs": 1,
-             "toolkit_sha": "aaa", "toolkit_version": "0.1.0+241.gaaa", "solver_sha": "s1"}]
+    rows = [
+        {
+            "experiment_id": "a",
+            "role": "clean",
+            "model": "TRITON",
+            "n_subs": 1,
+            "toolkit_sha": "aaa",
+            "toolkit_version": "0.1.0+241.gaaa",
+            "solver_sha": "s1",
+        }
+    ]
     html = _provenance_table_html(rows)
     assert "<th>hhemt sha</th>" in html and "<th>hhemt build</th>" in html
     assert "Toolkit sha" not in html and "Toolkit version" not in html
 
 
-#---- S11 plots-stage capture at the sidecar choke point ------------------- #
+# ---- S11 plots-stage capture at the sidecar choke point ------------------- #
 def test_s11_manifest_sidecar_carries_the_producing_stamp(tmp_path):
     import json
 
@@ -146,7 +190,7 @@ def test_s11_manifest_sidecar_carries_the_producing_stamp(tmp_path):
     assert {"hhemt_sha", "hhemt_version", "hhemt_dirty"} <= set(payload)
 
 
-#---- S12 / S13 completeness check + its collector -------------------------- #
+# ---- S12 / S13 completeness check + its collector -------------------------- #
 def test_s12_check_provenance_completeness_is_registered_and_graceful():
     from hhemt import analysis_validation as av
 

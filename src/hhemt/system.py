@@ -15,14 +15,13 @@ from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 
 import hhemt.utils as ut
+from hhemt._filelock_compat import resolve_filelock
 from hhemt.analysis import TRITONSWMM_analysis
 from hhemt.config.loaders import load_system_config
 from hhemt.exceptions import CompilationError, ConfigurationError, ProcessingError
 from hhemt.log import TRITONSWMM_system_log
 from hhemt.paths import SysPaths
 from hhemt.plot_system import TRITONSWMM_system_plotting
-from hhemt._filelock_compat import resolve_filelock
-
 
 _ROW_BLOCK_SIZE = 1024  # row-streaming block size for _write_raster (D-PR-5 B)
 
@@ -167,11 +166,7 @@ class TRITONSWMM_system:
                 config_path=self.system_config_yaml,
             )
 
-        gpu_suffix = (
-            f"_{self.gpu_hardware}"
-            if self.gpu_compilation_backend and self.gpu_hardware
-            else ""
-        )
+        gpu_suffix = f"_{self.gpu_hardware}" if self.gpu_compilation_backend and self.gpu_hardware else ""
         # Initialize paths with backend split
         self.sys_paths = SysPaths(
             dem_processed=system_dir / f"elevation_{self.cfg_system.target_dem_resolution:.2f}m.dem",
@@ -179,9 +174,7 @@ class TRITONSWMM_system:
             # TRITON-SWMM build dirs (coupled model)
             TRITONSWMM_build_dir_cpu=tritonswmm_dir / "build_tritonswmm_cpu",
             TRITONSWMM_build_dir_gpu=(
-                tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}"
-                if self.gpu_compilation_backend
-                else None
+                tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}" if self.gpu_compilation_backend else None
             ),
             # TRITON-only build dirs (no SWMM coupling)
             TRITON_build_dir_cpu=tritonswmm_dir / "build_triton_cpu",
@@ -391,8 +384,7 @@ class TRITONSWMM_system:
         configured = self.cfg_system.crs.horizontal_epsg
         if epsg is not None and configured != epsg:
             raise ConfigurationError(
-                f"DEM CRS (EPSG:{epsg}) does not match configured "
-                f"cfg_system.crs.horizontal_epsg (EPSG:{configured})."
+                f"DEM CRS (EPSG:{epsg}) does not match configured cfg_system.crs.horizontal_epsg (EPSG:{configured})."
             )
         if epsg is None:
             raise ConfigurationError(
@@ -685,8 +677,7 @@ class TRITONSWMM_system:
                 else:
                     raise ConfigurationError(
                         field="gpu_compilation_backend",
-                        message=f"Invalid value '{self.gpu_compilation_backend}'.\n"
-                        "  Must be 'HIP' or 'CUDA'.",
+                        message=f"Invalid value '{self.gpu_compilation_backend}'.\n  Must be 'HIP' or 'CUDA'.",
                         config_path=self.system_config_yaml,
                     )
 
@@ -1146,7 +1137,10 @@ class TRITONSWMM_system:
                 "-DCMAKE_CXX_FLAGS='-O3 -fopenmp' "
                 "-DCMAKE_C_FLAGS='-fopenmp' "
                 "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
+                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
+                + '-DCMAKE_CXX_STANDARD_LIBRARIES="'
+                + self._libstdcpp_linker_flag_fragment()
+                + '"'
             )
         else:
             # GPU: Enable GPU backend, disable OpenMP for Kokkos
@@ -1167,7 +1161,10 @@ class TRITONSWMM_system:
                     "-DCMAKE_CXX_FLAGS='-O3' "
                     "-DCMAKE_C_FLAGS='-fopenmp' "
                     "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
+                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
+                    + '-DCMAKE_CXX_STANDARD_LIBRARIES="'
+                    + self._libstdcpp_linker_flag_fragment()
+                    + '"'
                 )
             else:
                 cmake_flags = (
@@ -1177,7 +1174,10 @@ class TRITONSWMM_system:
                     "-DCMAKE_CXX_FLAGS='-O3' "
                     "-DCMAKE_C_FLAGS='-fopenmp' "
                     "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
+                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
+                    + '-DCMAKE_CXX_STANDARD_LIBRARIES="'
+                    + self._libstdcpp_linker_flag_fragment()
+                    + '"'
                 )
 
         # Build commands
@@ -1547,7 +1547,10 @@ class TRITONSWMM_system:
                 "-DCMAKE_CXX_FLAGS='-O3 -fopenmp' "
                 "-DCMAKE_C_FLAGS='-fopenmp' "
                 "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
+                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
+                + '-DCMAKE_CXX_STANDARD_LIBRARIES="'
+                + self._libstdcpp_linker_flag_fragment()
+                + '"'
             )
         else:
             # GPU backend

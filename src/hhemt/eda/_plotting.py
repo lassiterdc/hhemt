@@ -238,7 +238,7 @@ def _b4b_str_map(ds, name: str) -> dict:
     if ds is None or name not in ds:
         return {}
     da = ds[name]
-    return {str(c): str(v) for c, v in zip(da["compute_config"].values, da.values)}
+    return {str(c): str(v) for c, v in zip(da["compute_config"].values, da.values, strict=False)}
 
 
 def _b4b_bool_map(ds, name: str) -> dict:
@@ -246,7 +246,7 @@ def _b4b_bool_map(ds, name: str) -> dict:
     if ds is None or name not in ds:
         return {}
     da = ds[name]
-    return {str(c): bool(v) for c, v in zip(da["compute_config"].values, da.values)}
+    return {str(c): bool(v) for c, v in zip(da["compute_config"].values, da.values, strict=False)}
 
 
 def _b4b_category(fam: str) -> str:
@@ -282,7 +282,7 @@ def _b4b_family_title(fam: str) -> str:
     return f"GPU {fam}"
 
 
-def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_boundaries: bool) -> "go.Figure":
+def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_boundaries: bool) -> go.Figure:
     """Disclosure-regime b4b figure: ONE subplot per hardware family (CPU + one per GPU
     hardware). Identical cells render solid Okabe-Ito bluish-green; differing cells are colored
     by max |Δ| vs the per-family baseline on a white->vermillion colorbar anchored to [0, τ].
@@ -317,10 +317,12 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
             mad = mad.sel(raw_output_type=_RAW_WLEVEL)
         else:
             mad = mad.max(dim="raw_output_type", skipna=True)
-    mad_vals = np.asarray(mad.transpose("compute_config", "timestep_min").values, dtype=float) if mad is not None else None
+    mad_vals = (
+        np.asarray(mad.transpose("compute_config", "timestep_min").values, dtype=float) if mad is not None else None
+    )
 
-    label_by_cfg = _b4b_str_map(ds, "config_label")   # already deterministic (F2)
-    family_by_cfg = _b4b_str_map(ds, "family")        # "cpu" / "a6000" / "a100-80"
+    label_by_cfg = _b4b_str_map(ds, "config_label")  # already deterministic (F2)
+    family_by_cfg = _b4b_str_map(ds, "family")  # "cpu" / "a6000" / "a100-80"
     is_ref_by_cfg = _b4b_bool_map(ds, "is_reference")
 
     def _label(cfg: str) -> str:
@@ -335,10 +337,13 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
         fam_to_rows.setdefault(_b4b_category(_family(cfg)), []).append(i)  # Q4a: one CPU + one GPU panel
     families = sorted(fam_to_rows, key=lambda f: (f != "cpu", f))  # CPU panel first
     n_panels = len(families)
-    row_heights = [max(2, len(fam_to_rows[f]) ) for f in families]  # Q2: floor a 1-config panel
+    row_heights = [max(2, len(fam_to_rows[f])) for f in families]  # Q2: floor a 1-config panel
 
     fig = make_subplots(
-        rows=n_panels, cols=1, shared_xaxes=True, row_heights=row_heights,
+        rows=n_panels,
+        cols=1,
+        shared_xaxes=True,
+        row_heights=row_heights,
         subplot_titles=[_b4b_category_title(f) for f in families],
         vertical_spacing=min(0.08, 0.3 / max(n_panels, 1)),
     )
@@ -371,59 +376,93 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
         z_ident = [[1 if v == 1 else None for v in ident[a]] for a in range(len(rows))]
         fig.add_trace(
             go.Heatmap(
-                z=z_ident, x=x, y=y,
+                z=z_ident,
+                x=x,
+                y=y,
                 colorscale=[[0.0, _B4B_IDENTICAL_COLOR], [1.0, _B4B_IDENTICAL_COLOR]],
-                showscale=False, xgap=1, ygap=1,
+                showscale=False,
+                xgap=1,
+                ygap=1,
                 hovertemplate="%{y}<br>t=%{x} min<br>byte-identical<extra></extra>",
             ),
-            row=r, col=1,
+            row=r,
+            col=1,
         )
         if mad_vals is not None:
             mrows = mad_vals[rows, :]
             z_diff = [
-                [None if (ident[a, b] == 1 or mrows[a, b] != mrows[a, b]) else float(mrows[a, b]) for b in range(len(x))]
+                [
+                    None if (ident[a, b] == 1 or mrows[a, b] != mrows[a, b]) else float(mrows[a, b])
+                    for b in range(len(x))
+                ]
                 for a in range(len(rows))
             ]
             fig.add_trace(
                 go.Heatmap(
-                    z=z_diff, x=x, y=y, colorscale=_B4B_DIFF_RAMP, zmin=0.0, zmax=_B4B_TAU_M,
+                    z=z_diff,
+                    x=x,
+                    y=y,
+                    colorscale=_B4B_DIFF_RAMP,
+                    zmin=0.0,
+                    zmax=_B4B_TAU_M,
                     showscale=not shown_colorbar,
                     colorbar=dict(
                         title=f"max |Δ| vs reference (m)<br>scale 0–τ ({_B4B_TAU_M} m)",
-                        len=0.5, thickness=14, x=1.02, xanchor="left",
-                        y=0.85, yanchor="top",
+                        len=0.5,
+                        thickness=14,
+                        x=1.02,
+                        xanchor="left",
+                        y=0.85,
+                        yanchor="top",
                     ),
-                    xgap=1, ygap=1,
+                    xgap=1,
+                    ygap=1,
                     hovertemplate="%{y}<br>t=%{x} min<br>max |Δ|=%{z:.3g} m<extra></extra>",
                 ),
-                row=r, col=1,
+                row=r,
+                col=1,
             )
             shown_colorbar = True
         else:
             z_diff = [[1 if ident[a, b] == 0 else None for b in range(len(x))] for a in range(len(rows))]
             fig.add_trace(
                 go.Heatmap(
-                    z=z_diff, x=x, y=y, colorscale=[[0.0, "#D55E00"], [1.0, "#D55E00"]],
-                    showscale=False, xgap=1, ygap=1,
+                    z=z_diff,
+                    x=x,
+                    y=y,
+                    colorscale=[[0.0, "#D55E00"], [1.0, "#D55E00"]],
+                    showscale=False,
+                    xgap=1,
+                    ygap=1,
                     hovertemplate="%{y}<br>t=%{x} min<br>differs<extra></extra>",
                 ),
-                row=r, col=1,
+                row=r,
+                col=1,
             )
         if show_boundaries and ds is not None:
             for k, t in enumerate(ds.attrs.get("resume_boundaries_min", []) or [], start=1):
                 fig.add_vline(
-                    x=float(t), line_dash="dash", line_color="black",
-                    annotation_text=f"r{k}", annotation_position="top", row=r, col=1,
+                    x=float(t),
+                    line_dash="dash",
+                    line_color="black",
+                    annotation_text=f"r{k}",
+                    annotation_position="top",
+                    row=r,
+                    col=1,
                 )
 
     # Legend proxy for the identical color (Heatmap emits no legend entry) — redundant channel.
     fig.add_trace(
         go.Scatter(
-            x=[None], y=[None], mode="markers",
+            x=[None],
+            y=[None],
+            mode="markers",
             marker=dict(size=12, color=_B4B_IDENTICAL_COLOR, symbol="square"),
-            name="byte-identical (Δ = 0)", showlegend=True,
+            name="byte-identical (Δ = 0)",
+            showlegend=True,
         ),
-        row=1, col=1,
+        row=1,
+        col=1,
     )
 
     # Caption: generic prefix + the deterministic per-family reference list (Δ = 0 by definition).
@@ -475,9 +514,7 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
     # the caption clears the "reporting timestep (min)" title instead of landing beside
     # it. 46 is this function's OWN per-panel axis allowance, reused from _plot_h_px
     # above rather than introduced as a new constant.
-    _caption_b_px = add_figure_caption(
-        fig, caption, content_w_px=_caption_w_px, plot_h_px=_plot_h_px, axis_band_px=46
-    )
+    _caption_b_px = add_figure_caption(fig, caption, content_w_px=_caption_w_px, plot_h_px=_plot_h_px, axis_band_px=46)
     fig.update_layout(
         title=title,
         width=_FIG_W_PX,
@@ -561,9 +598,7 @@ def _render_b4b_clean_identity(root: Path, *, cfg_analysis: analysis_config, eda
     return _render_b4b(
         root,
         stem="b4b_clean_identity",
-        title=(
-            "Per-timestep water-level byte-for-byte comparison vs the hardware-category reference"
-        ),
+        title=("Per-timestep water-level byte-for-byte comparison vs the hardware-category reference"),
         baseline_caption=(
             "Alternate configurations are compared against their hardware category's "
             "minimum-device reference (CPU → serial-CPU, GPU → 1-GPU). "

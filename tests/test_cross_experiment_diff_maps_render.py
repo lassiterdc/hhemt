@@ -10,9 +10,7 @@ from hhemt.report_renderers.cross_experiment_intercomparison_maps import (
 
 
 def _write(tmp_path, pairs, experiments):
-    (tmp_path / "combined_intercomparison.json").write_text(
-        json.dumps({"experiments": experiments, "pairs": pairs})
-    )
+    (tmp_path / "combined_intercomparison.json").write_text(json.dumps({"experiments": experiments, "pairs": pairs}))
     return tmp_path
 
 
@@ -27,8 +25,11 @@ _EXPERIMENTS = [
 def _pair(model, identical, variable="max_wlevel_m"):
     return {
         "config": "run_mode=serial|n_mpi=1|n_omp=1|n_gpus=0|n_nodes=1|partition=",
-        "variable": variable, "event_iloc": 0, "identical": identical,
-        "model": model, "max_abs_diff": 0.0 if identical else 0.02,
+        "variable": variable,
+        "event_iloc": 0,
+        "identical": identical,
+        "model": model,
+        "max_abs_diff": 0.0 if identical else 0.02,
     }
 
 

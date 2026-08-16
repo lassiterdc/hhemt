@@ -243,9 +243,7 @@ def render(
     PEAK_FLOW_CMAP = static_cfg.peak_flow_cmap if static_cfg is not None else map_cfg.peak_flow_cmap
     if static_cfg is not None:
         peak_flow_vmax = (
-            float(static_cfg.peak_flow_vmax)
-            if static_cfg.peak_flow_vmax is not None
-            else float(peak_flow.max() or 1.0)
+            float(static_cfg.peak_flow_vmax) if static_cfg.peak_flow_vmax is not None else float(peak_flow.max() or 1.0)
         )
     else:
         peak_flow_vmax = _resolve_peak_flow_vmax(peak_flow, cfg)
@@ -425,9 +423,7 @@ def render(
         analysis_dir=analysis.analysis_paths.analysis_dir,
         dpi=(static_cfg.savefig_dpi if static_cfg is not None else report_cfg.figure_defaults.savefig_dpi),
         output_format=(
-            static_cfg.output_format
-            if static_cfg is not None
-            else ("svg" if output_path.suffix == ".svg" else "png")
+            static_cfg.output_format if static_cfg is not None else ("svg" if output_path.suffix == ".svg" else "png")
         ),
         bbox_inches_tight=(static_cfg.bbox_inches_tight if static_cfg is not None else True),
         emit_preview=(static_cfg is None),
@@ -491,7 +487,7 @@ def _emit_model_type_skip_placeholder(
             '<html lang="en"><head><meta charset="utf-8">'
             f"<title>{safe}</title></head>"
             '<body style="margin:0;height:100vh;display:flex;'
-            'align-items:center;justify-content:center;'
+            "align-items:center;justify-content:center;"
             'font-family:system-ui,-apple-system,sans-serif;">'
             f'<div style="max-width:80%;text-align:center;color:#555;'
             f'font-size:1rem;line-height:1.4;">{safe}</div>'
@@ -1001,8 +997,17 @@ def _build_conduit_flow_figure(
         },
     }
     return (
-        fig, plotly_config, link_summary_path, inp_path, weather_path,
-        sys_paths, watershed_shp, max_over_full, peak_flow, coords_by_id, N_BINS,
+        fig,
+        plotly_config,
+        link_summary_path,
+        inp_path,
+        weather_path,
+        sys_paths,
+        watershed_shp,
+        max_over_full,
+        peak_flow,
+        coords_by_id,
+        N_BINS,
     )
 
 
@@ -1027,14 +1032,26 @@ def _render_plotly_branch(
     )
 
     _built = _build_conduit_flow_figure(
-        analysis, report_cfg, output_path,
-        event_iloc=event_iloc, prov=prov,
+        analysis,
+        report_cfg,
+        output_path,
+        event_iloc=event_iloc,
+        prov=prov,
     )
     if isinstance(_built, Path):
         return _built
     (
-        fig, plotly_config, link_summary_path, inp_path, weather_path,
-        sys_paths, watershed_shp, max_over_full, peak_flow, coords_by_id, N_BINS,
+        fig,
+        plotly_config,
+        link_summary_path,
+        inp_path,
+        weather_path,
+        sys_paths,
+        watershed_shp,
+        max_over_full,
+        peak_flow,
+        coords_by_id,
+        N_BINS,
     ) = _built
 
     html_text = pio.to_html(

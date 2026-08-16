@@ -442,7 +442,6 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
     return groups
 
 
-
 def _signed_pct(delta: np.ndarray, base: np.ndarray) -> np.ndarray:
     """100*(group-serial)/serial, NaN where the serial baseline is ~0 (undefined)."""
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -786,8 +785,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         return _config_diff_absent_panel(
             headline="Config-diff maps unavailable (no comparable sub-analyses)",
             observed=(
-                "The consolidated tree carries no sub-analysis with a TRITON node, so there is "
-                "nothing to compare."
+                "The consolidated tree carries no sub-analysis with a TRITON node, so there is nothing to compare."
             ),
             remedy=(
                 "The figure populates once the master carries sub-analyses whose processed "
@@ -1029,9 +1027,9 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         inter_gap=0.025,
     )
     fig_width = _layout.fig_width
-    tbl_x = _layout.side_table_x       # per-panel config-table region
+    tbl_x = _layout.side_table_x  # per-panel config-table region
     plot_h = _layout.plot_h
-    _f = _layout.f                     # px -> paper-height fraction
+    _f = _layout.f  # px -> paper-height fraction
     row_ydom = _layout.row_ydom
     dom1 = _layout.map_domains[1]
     dom2 = _layout.map_domains[2]
@@ -1093,9 +1091,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # Masked exactly as the panels are (:_apply_mask below): an unmasked percentile would be
     # computed over cells the figure does not display, including the high boundary-condition
     # region north of the sea wall that the watershed mask exists to exclude.
-    wsym = _symmetric_diff_range(
-        [_apply_mask(g["wlevel"] - base_w, wmask) for g in diff_groups], floor=_RANGE_EPS
-    )
+    wsym = _symmetric_diff_range([_apply_mask(g["wlevel"] - base_w, wmask) for g in diff_groups], floor=_RANGE_EPS)
     # NOT masked: wmask is a RASTER (y, x) mask and the flow arrays are per-LINK
     # (one value per SWMM conduit), so applying it raises a broadcast error. The
     # watershed masking is meaningful only for the depth rasters above.
@@ -1310,7 +1306,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # these rows carry the "x (m)" title (item: every panel has an x label).
     panel_bottom_rows = {serial_row + 2 * k for k in range(len(diff_groups) + 1)}
     for r in range(2, total_rows + 1):
-        for c in ((1, 2) if has_flow else (1,)):
+        for c in (1, 2) if has_flow else (1,):
             # No DEM boundary box (showline/mirror OFF) — the watershed boundary overlay is
             # the only frame now (item). Buffered range gives breathing room. Ticks + labels
             # stay; x-title on each panel's bottom row; y-title on col-1 only (col-2 shares y,
@@ -1360,7 +1356,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     #      is drawn below each panel's x-axis instead) ----
     rings = _polygon_boundary_rings(wpoly)
     for r in range(2, total_rows + 1):
-        for c in ((1, 2) if has_flow else (1,)):
+        for c in (1, 2) if has_flow else (1,):
             for xs, ys in rings:
                 fig.add_trace(
                     go.Scatter(

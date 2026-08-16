@@ -41,7 +41,6 @@ import plotly.io as pio
 import xarray as xr
 from plotly.subplots import make_subplots
 
-
 # Q1 fungibility (iter-2): color must be STABLE per group_value across arms. A
 # pure-TRITON arm and a TRITON-SWMM arm that differ in which groups are present
 # would otherwise get shifted palette indices (color = palette[i % len]) and the
@@ -79,15 +78,10 @@ def _stable_group_color(group_value, palette, all_groups=None):
     if gv in _CANONICAL_FAMILIES:
         idx = _CANONICAL_FAMILIES.index(gv)
     else:
-        extras = sorted(
-            {
-                _FAMILY_ALIASES.get(str(x), str(x))
-                for x in (all_groups or [])
-            }
-            - set(_CANONICAL_FAMILIES)
-        )
+        extras = sorted({_FAMILY_ALIASES.get(str(x), str(x)) for x in (all_groups or [])} - set(_CANONICAL_FAMILIES))
         idx = len(_CANONICAL_FAMILIES) + (extras.index(gv) if gv in extras else 0)
     return palette[idx % len(palette)]
+
 
 from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
@@ -167,8 +161,7 @@ def render(
 
     if independent_var not in df_setup.columns:
         raise ValueError(
-            f"{independent_var!r} is not a resolvable benchmarking axis; "
-            f"resolvable columns: {sorted(df_setup.columns)}"
+            f"{independent_var!r} is not a resolvable benchmarking axis; resolvable columns: {sorted(df_setup.columns)}"
         )
 
     dependent_var = report_cfg.sensitivity.dependent_var
@@ -176,9 +169,7 @@ def render(
 
     rows, source_paths = _collect_rows(analysis, dependent_var)
     if not rows:
-        raise RuntimeError(
-            f"No data for benchmarking {independent_var} vs {dependent_var}"
-        )
+        raise RuntimeError(f"No data for benchmarking {independent_var} vs {dependent_var}")
 
     df = pd.DataFrame(rows)
     # Wallclock-safe column allowlist (V0008+): only barrier-synchronized
@@ -218,9 +209,7 @@ def render(
         # line aggregation averages over replicates before the per-N min is taken, so the
         # min rule selects the best distinct CONFIG rather than the luckiest RUN.
         df["config_id"] = df["sa_id"].astype(str).str.replace(r"_r\d+$", "", regex=True)
-        df["n_replicates"] = df["config_id"].map(
-            df.groupby("config_id")["sa_id"].nunique()
-        ).astype(int)
+        df["n_replicates"] = df["config_id"].map(df.groupby("config_id")["sa_id"].nunique()).astype(int)
         # Iteration 4 (FQ3 + FQ9b): qualify GPU group names with their hardware token when
         # -- and only when -- more than one token is present. Unqualified, `gpu-a6000` and
         # `gpu-a100-80` collapse into ONE series, and because the line is drawn through
@@ -237,9 +226,7 @@ def render(
                 df.loc[_is_gpu, "group_value"] = "gpu (" + _tokens + ")"
     else:
         df["group_value"] = "all"
-    df["n_mpi_procs"] = df["sa_id"].map(
-        df_setup[_resolve_setup_col(df_setup, "n_mpi_procs") or "n_mpi_procs"]
-    )
+    df["n_mpi_procs"] = df["sa_id"].map(df_setup[_resolve_setup_col(df_setup, "n_mpi_procs") or "n_mpi_procs"])
     # F2: extra config columns for hover customdata (OMP threads, GPUs, Nodes).
     # Use .get() semantics so missing columns degrade gracefully — hovertemplate
     # only includes labels for columns that map successfully. Each is resolved
@@ -308,12 +295,14 @@ def render(
         #
         # This scalar feeds ALL FOUR metric calls below -- speedup line, speedup markers,
         # efficiency line, efficiency markers -- so this one argument moves BOTH panels.
-        _df_avg = (
-            df.groupby(["group_value", "n_devices", "config_id"], as_index=False)
-            .agg(wallclock_s=("wallclock_s", "mean"), sa_id=("sa_id", "first"))
+        _df_avg = df.groupby(["group_value", "n_devices", "config_id"], as_index=False).agg(
+            wallclock_s=("wallclock_s", "mean"), sa_id=("sa_id", "first")
         )
         family_baselines = _resolve_family_baselines(
-            df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
+            df,
+            t_col="wallclock_s",
+            indep_col="n_devices",
+            group_col="group_value",
         )
         if family_baselines:
             speedup_pg, strong_eff_pg = {}, {}
@@ -324,50 +313,89 @@ def render(
                 if _sub_avg.empty:
                     continue
                 # Line: per-N minimum over the replicate-averaged configs.
-                _line_sub = _sub_avg.loc[
-                    _sub_avg.groupby("n_devices")["wallclock_s"].idxmin()
-                ]
-                speedup_pg.update(_compute_metric_all_rows_per_group(
-                    _line_sub, t_col="wallclock_s", indep_col="n_devices",
-                    group_col="group_value", kind="speedup", anchor=_anchor,
-                ))
-                strong_eff_pg.update(_compute_metric_all_rows_per_group(
-                    _line_sub, t_col="wallclock_s", indep_col="n_devices",
-                    group_col="group_value", kind="efficiency", anchor=_anchor,
-                ))
+                _line_sub = _sub_avg.loc[_sub_avg.groupby("n_devices")["wallclock_s"].idxmin()]
+                speedup_pg.update(
+                    _compute_metric_all_rows_per_group(
+                        _line_sub,
+                        t_col="wallclock_s",
+                        indep_col="n_devices",
+                        group_col="group_value",
+                        kind="speedup",
+                        anchor=_anchor,
+                    )
+                )
+                strong_eff_pg.update(
+                    _compute_metric_all_rows_per_group(
+                        _line_sub,
+                        t_col="wallclock_s",
+                        indep_col="n_devices",
+                        group_col="group_value",
+                        kind="efficiency",
+                        anchor=_anchor,
+                    )
+                )
                 # Markers: every raw row, same anchor.
                 if _sub_raw.empty:
                     continue
-                speedup_all.update(_compute_metric_all_rows_per_group(
-                    _sub_raw, t_col="wallclock_s", indep_col="n_devices",
-                    group_col="group_value", kind="speedup", anchor=_anchor,
-                ))
-                efficiency_all.update(_compute_metric_all_rows_per_group(
-                    _sub_raw, t_col="wallclock_s", indep_col="n_devices",
-                    group_col="group_value", kind="efficiency", anchor=_anchor,
-                ))
+                speedup_all.update(
+                    _compute_metric_all_rows_per_group(
+                        _sub_raw,
+                        t_col="wallclock_s",
+                        indep_col="n_devices",
+                        group_col="group_value",
+                        kind="speedup",
+                        anchor=_anchor,
+                    )
+                )
+                efficiency_all.update(
+                    _compute_metric_all_rows_per_group(
+                        _sub_raw,
+                        t_col="wallclock_s",
+                        indep_col="n_devices",
+                        group_col="group_value",
+                        kind="efficiency",
+                        anchor=_anchor,
+                    )
+                )
             speedup_all = speedup_all or None
             efficiency_all = efficiency_all or None
         else:
             speedup_pg = _compute_speedup_per_group(
-                df, t_col="wallclock_s", indep_col="n_devices",
-                group_col="group_value", baseline_mode="serial",
+                df,
+                t_col="wallclock_s",
+                indep_col="n_devices",
+                group_col="group_value",
+                baseline_mode="serial",
             )
             strong_eff_pg = _compute_efficiency_per_group(
-                df, t_col="wallclock_s", indep_col="n_devices",
-                group_col="group_value", mode="strong", baseline_mode="serial",
+                df,
+                t_col="wallclock_s",
+                indep_col="n_devices",
+                group_col="group_value",
+                mode="strong",
+                baseline_mode="serial",
             )
             serial_anchor = _resolve_serial_baseline(
-                df, t_col="wallclock_s", group_col="group_value",
+                df,
+                t_col="wallclock_s",
+                group_col="group_value",
             )
             if serial_anchor is not None:
                 speedup_all = _compute_metric_all_rows_per_group(
-                    df, t_col="wallclock_s", indep_col="n_devices",
-                    group_col="group_value", kind="speedup", anchor=serial_anchor,
+                    df,
+                    t_col="wallclock_s",
+                    indep_col="n_devices",
+                    group_col="group_value",
+                    kind="speedup",
+                    anchor=serial_anchor,
                 )
                 efficiency_all = _compute_metric_all_rows_per_group(
-                    df, t_col="wallclock_s", indep_col="n_devices",
-                    group_col="group_value", kind="efficiency", anchor=serial_anchor,
+                    df,
+                    t_col="wallclock_s",
+                    indep_col="n_devices",
+                    group_col="group_value",
+                    kind="efficiency",
+                    anchor=serial_anchor,
                 )
             else:
                 speedup_all = None
@@ -387,17 +415,13 @@ def render(
         _sens = getattr(analysis, "sensitivity", None)
         if _sens is not None:
             for _sub in _sens.sub_analyses.values():
-                _hw = resolve_gpu_target(
-                    _sub.cfg_hpc_system, _sub.cfg_analysis.hpc_ensemble_partition
-                )[0]
+                _hw = resolve_gpu_target(_sub.cfg_hpc_system, _sub.cfg_analysis.hpc_ensemble_partition)[0]
                 if _hw:
                     _hw_values.add(_hw)
         if len(_hw_values) == 1:
             gpu_hw = next(iter(_hw_values))
         elif len(_hw_values) == 0:
-            gpu_hw = resolve_gpu_target(
-                analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition
-            )[0]
+            gpu_hw = resolve_gpu_target(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition)[0]
         else:
             gpu_hw = None  # multi-hardware: suffix carried per-group, not globally
         gpu_legend_suffix = f" ({gpu_hw})" if gpu_hw else ""
@@ -405,16 +429,23 @@ def render(
         # default to `full_ideal`. Surface via kwarg for caller override (e.g.,
         # render-twice comparison during /design-figure iteration).
         speedup_range_mode = getattr(
-            getattr(report_cfg, "sensitivity", None), "speedup_panel_range_mode", "full_ideal",
+            getattr(report_cfg, "sensitivity", None),
+            "speedup_panel_range_mode",
+            "full_ideal",
         )
         _model_arm = _resolve_model_arm(analysis)
         return _render_plotly_branch(
-            df, speedup_pg, strong_eff_pg,
+            df,
+            speedup_pg,
+            strong_eff_pg,
             model_arm=_model_arm,
-            wall_unit=wall_unit, cost_unit=cost_unit,
-            independent_var=independent_var, group_by_var=group_by_var,
+            wall_unit=wall_unit,
+            cost_unit=cost_unit,
+            independent_var=independent_var,
+            group_by_var=group_by_var,
             sens_cfg=sens_cfg,
-            output_path=output_path, source_paths=source_paths,
+            output_path=output_path,
+            source_paths=source_paths,
             analysis_dir=analysis.analysis_paths.analysis_dir,
             plotly_js_mode=report_cfg.interactive.plotly_js_mode,
             prov=prov,
@@ -438,16 +469,24 @@ def render(
         if static_cfg is not None
         else tuple(sens_cfg.figsize_inches)
     )
-    fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(
-        4, 1, figsize=_figsize, sharex=True
+    fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(4, 1, figsize=_figsize, sharex=True)
+    _draw_panel(
+        ax_wall,
+        df,
+        y_col="wallclock_disp",
+        group_by_var=group_by_var,
+        sens_cfg=sens_cfg,
+        prov=prov,
+        static_cfg=static_cfg,
     )
     _draw_panel(
-        ax_wall, df, y_col="wallclock_disp", group_by_var=group_by_var,
-        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
-    )
-    _draw_panel(
-        ax_cost, df, y_col="compute_disp", group_by_var=group_by_var,
-        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
+        ax_cost,
+        df,
+        y_col="compute_disp",
+        group_by_var=group_by_var,
+        sens_cfg=sens_cfg,
+        prov=prov,
+        static_cfg=static_cfg,
     )
     # Optional publication log-y on the magnitude panels (wall-clock / compute-cost);
     # the speedup/efficiency panels are ratios and stay linear.
@@ -456,24 +495,42 @@ def render(
         ax_cost.set_yscale("log")
 
     speedup_per_group = _compute_speedup_per_group(
-        df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
+        df,
+        t_col="wallclock_s",
+        indep_col="n_devices",
+        group_col="group_value",
         baseline_mode="global",
     )
     strong_eff_per_group = _compute_efficiency_per_group(
-        df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value", mode="strong",
+        df,
+        t_col="wallclock_s",
+        indep_col="n_devices",
+        group_col="group_value",
+        mode="strong",
         baseline_mode="global",
     )
     _draw_metric_panel(
-        ax_speedup, speedup_per_group, df=df,
+        ax_speedup,
+        speedup_per_group,
+        df=df,
         x_max=df["n_devices"].max(),
-        ideal_kind="linear", ideal_label="Ideal speedup (S=N)",
-        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
+        ideal_kind="linear",
+        ideal_label="Ideal speedup (S=N)",
+        sens_cfg=sens_cfg,
+        prov=prov,
+        static_cfg=static_cfg,
     )
     _draw_metric_panel(
-        ax_eff, strong_eff_per_group, df=df,
+        ax_eff,
+        strong_eff_per_group,
+        df=df,
         x_max=df["n_devices"].max(),
-        ideal_kind="constant", ideal_value=1.0, ideal_label="Ideal efficiency (=1.0)",
-        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
+        ideal_kind="constant",
+        ideal_value=1.0,
+        ideal_label="Ideal efficiency (=1.0)",
+        sens_cfg=sens_cfg,
+        prov=prov,
+        static_cfg=static_cfg,
     )
 
     xlabel_text = sens_cfg.independent_var_labels.get(independent_var, independent_var)
@@ -486,7 +543,9 @@ def render(
         ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
         if report_cfg.sensitivity.show_gridlines:
             ax.grid(
-                True, which="major", axis="both",
+                True,
+                which="major",
+                axis="both",
                 color=sens_cfg.gridline_color,
                 linewidth=sens_cfg.gridline_width,
                 zorder=0,
@@ -512,10 +571,14 @@ def render(
     # on the plot area (fig.text x=0.5 is figure-center, not plot-center, because
     # the left y-axis labels offset the plot area rightward of figure-center).
     ax_eff.text(
-        0.5, -0.18,
+        0.5,
+        -0.18,
         sens_cfg.footnote_text,
         transform=ax_eff.transAxes,
-        ha="center", va="top", fontsize=sens_cfg.footnote_fontsize, style="italic",
+        ha="center",
+        va="top",
+        fontsize=sens_cfg.footnote_fontsize,
+        style="italic",
     )
 
     if analysis.cfg_analysis.sensitivity_analysis is not None:
@@ -560,8 +623,7 @@ def _ensure_n_devices_column(df_setup: pd.DataFrame, independent_var: str) -> pd
         return df_setup
 
     resolved = {
-        bare: _resolve_setup_col(df_setup, bare)
-        for bare in ("n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes")
+        bare: _resolve_setup_col(df_setup, bare) for bare in ("n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes")
     }
     missing = sorted(bare for bare, col in resolved.items() if col is None)
     if missing:
@@ -574,25 +636,19 @@ def _ensure_n_devices_column(df_setup: pd.DataFrame, independent_var: str) -> pd
         return df_setup
 
     run_mode_col = _resolve_setup_col(df_setup, "run_mode")
-    run_mode = (
-        df_setup[run_mode_col].astype(str).str.lower() if run_mode_col is not None else ""
-    )
+    run_mode = df_setup[run_mode_col].astype(str).str.lower() if run_mode_col is not None else ""
     n_gpus = df_setup[resolved["n_gpus"]]
     is_gpu = (run_mode == "gpu") | (n_gpus > 0)
     df_setup = df_setup.assign(
         n_devices=n_gpus.where(
             is_gpu,
-            df_setup[resolved["n_mpi_procs"]]
-            * df_setup[resolved["n_omp_threads"]]
-            * df_setup[resolved["n_nodes"]],
+            df_setup[resolved["n_mpi_procs"]] * df_setup[resolved["n_omp_threads"]] * df_setup[resolved["n_nodes"]],
         ).astype(int)
     )
     return df_setup
 
 
-def _resolve_global_baseline(
-    df: pd.DataFrame, *, t_col: str, indep_col: str
-) -> float | None:
+def _resolve_global_baseline(df: pd.DataFrame, *, t_col: str, indep_col: str) -> float | None:
     """Return the minimum wallclock at the smallest N across all groups, or None
     if the dataframe is empty / has no positive wallclock at N_min.
     """
@@ -620,9 +676,7 @@ def _hardware_family(gv: str) -> str:
     return gv if low.startswith("gpu") else "cpu"
 
 
-def _resolve_family_baselines(
-    df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str
-) -> dict[str, float]:
+def _resolve_family_baselines(df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str) -> dict[str, float]:
     """Return ``{group_value: baseline_wallclock}``, anchored PER HARDWARE FAMILY.
 
     Mirrors the family rule the codebase already implements twice -- ``_config_diff``'s
@@ -695,7 +749,11 @@ def _resolve_serial_baseline(
 
 
 def _compute_speedup_per_group(
-    df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str,
+    df: pd.DataFrame,
+    *,
+    t_col: str,
+    indep_col: str,
+    group_col: str,
     baseline_mode: str = "per_group",
 ) -> dict[str, list[tuple[float, float, str]]]:
     """Compute strong-scaling speedup S(N) = t_baseline / t(N) for each group.
@@ -751,7 +809,12 @@ def _compute_speedup_per_group(
 
 
 def _compute_efficiency_per_group(
-    df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str, mode: str,
+    df: pd.DataFrame,
+    *,
+    t_col: str,
+    indep_col: str,
+    group_col: str,
+    mode: str,
     baseline_mode: str = "per_group",
 ) -> dict[str, list[tuple[float, float, str]]]:
     """Compute scaling efficiency for each group.
@@ -807,8 +870,13 @@ def _compute_efficiency_per_group(
 
 
 def _compute_metric_all_rows_per_group(
-    df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str,
-    kind: str, anchor: float,
+    df: pd.DataFrame,
+    *,
+    t_col: str,
+    indep_col: str,
+    group_col: str,
+    kind: str,
+    anchor: float,
 ) -> dict[str, list[tuple[float, float, str]]]:
     """Compute speedup or efficiency for EVERY row (not just the per-N min row).
 
@@ -885,8 +953,7 @@ def _draw_metric_panel(
         else df
     )
     annotation_lookup = {
-        (str(r["group_value"]), int(r["n_devices"])): int(r["n_mpi_procs"])
-        for _, r in df_min.iterrows()
+        (str(r["group_value"]), int(r["n_devices"])): int(r["n_mpi_procs"]) for _, r in df_min.iterrows()
     }
     for i, gv in enumerate(groups):
         pts = metric_per_group[gv]
@@ -896,47 +963,62 @@ def _draw_metric_panel(
         ys = [p[1] for p in pts]
         color = _stable_group_color(gv, palette, groups)
         with prov.artist(
-            axes_id="ax_metric", kind="line",
+            axes_id="ax_metric",
+            kind="line",
             note=f"metric group {gv}",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
             ax.plot(xs, ys, color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2)
         with prov.artist(
-            axes_id="ax_metric", kind="scatter",
+            axes_id="ax_metric",
+            kind="scatter",
             note=f"metric points {gv}",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
             ax.scatter(
-                xs, ys, color=color, marker=cpu_marker, s=sens_cfg.point_size,
-                edgecolor="black", linewidth=1.0, zorder=3,
+                xs,
+                ys,
+                color=color,
+                marker=cpu_marker,
+                s=sens_cfg.point_size,
+                edgecolor="black",
+                linewidth=1.0,
+                zorder=3,
             )
         if str(gv).lower() == "hybrid":
             for x, y in zip(xs, ys, strict=True):
                 n_mpi = annotation_lookup.get((str(gv), int(x)))
                 if n_mpi is not None:
                     ax.annotate(
-                        str(n_mpi), xy=(x, y),
-                        xytext=(6, 6), textcoords="offset points",
-                        fontsize=8, color=color,
+                        str(n_mpi),
+                        xy=(x, y),
+                        xytext=(6, 6),
+                        textcoords="offset points",
+                        fontsize=8,
+                        color=color,
                     )
     if ideal_kind == "linear":
         with prov.artist(
-            axes_id="ax_metric", kind="line",
+            axes_id="ax_metric",
+            kind="line",
             note="ideal-reference line",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
             ax.plot(
-                [1, x_max], [1, x_max],
+                [1, x_max],
+                [1, x_max],
                 color=sens_cfg.ideal_line_color,
                 linewidth=sens_cfg.ideal_line_width,
-                zorder=2, label=ideal_label,
+                zorder=2,
+                label=ideal_label,
             )
     elif ideal_kind == "constant":
         ax.axhline(
             ideal_value,
             color=sens_cfg.ideal_line_color,
             linewidth=sens_cfg.ideal_line_width,
-            zorder=2, label=ideal_label,
+            zorder=2,
+            label=ideal_label,
         )
     else:
         raise ValueError(f"ideal_kind must be 'linear' or 'constant'; got {ideal_kind!r}")
@@ -955,7 +1037,14 @@ def _adaptive_time_unit(max_hours: float) -> tuple[str, float]:
 
 
 def _draw_panel(
-    ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None, sens_cfg, prov: ProvenanceLog, static_cfg=None,
+    ax,
+    df: pd.DataFrame,
+    *,
+    y_col: str,
+    group_by_var: str | None,
+    sens_cfg,
+    prov: ProvenanceLog,
+    static_cfg=None,
 ) -> None:
     """Draw one panel of the dual-panel benchmarking figure."""
     groups = sorted(df["group_value"].dropna().unique(), key=str)
@@ -972,44 +1061,65 @@ def _draw_panel(
         is_single_point_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         if is_single_point_group or len(sub) == 1:
             with prov.artist(
-                axes_id="ax_panel", kind="scatter",
+                axes_id="ax_panel",
+                kind="scatter",
                 note=f"single-point group {gv}",
             ) as a:
                 a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
                 ax.scatter(
-                    sub["indep_value"], sub[y_col],
-                    color=color, marker=marker, s=sens_cfg.point_size,
-                    edgecolor="black", linewidth=1.0, zorder=3, label=str(gv),
+                    sub["indep_value"],
+                    sub[y_col],
+                    color=color,
+                    marker=marker,
+                    s=sens_cfg.point_size,
+                    edgecolor="black",
+                    linewidth=1.0,
+                    zorder=3,
+                    label=str(gv),
                 )
             if is_hybrid_group:
                 for _, r in sub.iterrows():
                     ax.annotate(
                         str(int(r["n_mpi_procs"])),
                         xy=(r["indep_value"], r[y_col]),
-                        xytext=(6, 6), textcoords="offset points",
-                        fontsize=8, color=color,
+                        xytext=(6, 6),
+                        textcoords="offset points",
+                        fontsize=8,
+                        color=color,
                     )
             continue
         # Multi-point group: line through MIN-y at each x-value, all points as markers.
         per_x_min = sub.groupby("indep_value", as_index=True)[y_col].min().sort_index()
         with prov.artist(
-            axes_id="ax_panel", kind="line",
+            axes_id="ax_panel",
+            kind="line",
             note=f"multi-point line {gv}",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
             ax.plot(
-                per_x_min.index, per_x_min.values,
-                color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2,
+                per_x_min.index,
+                per_x_min.values,
+                color=color,
+                linestyle=sens_cfg.line_style,
+                linewidth=sens_cfg.line_width,
+                zorder=2,
             )
         with prov.artist(
-            axes_id="ax_panel", kind="scatter",
+            axes_id="ax_panel",
+            kind="scatter",
             note=f"multi-point markers {gv}",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
             ax.scatter(
-                sub["indep_value"], sub[y_col],
-                color=color, marker=marker, s=sens_cfg.point_size,
-                edgecolor="black", linewidth=1.0, zorder=3, label=str(gv),
+                sub["indep_value"],
+                sub[y_col],
+                color=color,
+                marker=marker,
+                s=sens_cfg.point_size,
+                edgecolor="black",
+                linewidth=1.0,
+                zorder=3,
+                label=str(gv),
             )
         # Hybrid: annotate every point with its n_mpi_procs value (per user spec).
         # Other groups: annotate only when duplicate x-values exist (helps disambiguate).
@@ -1018,14 +1128,14 @@ def _draw_panel(
                 ax.annotate(
                     str(int(r["n_mpi_procs"])),
                     xy=(r["indep_value"], r[y_col]),
-                    xytext=(6, 6), textcoords="offset points",
-                    fontsize=8, color=color,
+                    xytext=(6, 6),
+                    textcoords="offset points",
+                    fontsize=8,
+                    color=color,
                 )
 
 
-def _collect_rows(
-    analysis: TRITONSWMM_analysis, dependent_var: str
-) -> tuple[list[dict[str, Any]], list[Path]]:
+def _collect_rows(analysis: TRITONSWMM_analysis, dependent_var: str) -> tuple[list[dict[str, Any]], list[Path]]:
     """Collect (sa_id, event_iloc, value) rows + source paths for the dependent_var."""
     if not dependent_var.startswith("performance."):
         raise ValueError(
@@ -1261,8 +1371,11 @@ def _build_sensitivity_benchmarking_figure(
     # neighbouring panel at the column counts this campaign produces.
     _h_space = min(0.09, 0.20 / _n_hw)
     fig = make_subplots(
-        rows=4, cols=_n_hw, shared_xaxes=True,
-        vertical_spacing=0.06, horizontal_spacing=_h_space,
+        rows=4,
+        cols=_n_hw,
+        shared_xaxes=True,
+        vertical_spacing=0.06,
+        horizontal_spacing=_h_space,
         specs=[
             [{"colspan": _n_hw}] + [None] * (_n_hw - 1),
             [{"colspan": _n_hw}] + [None] * (_n_hw - 1),
@@ -1277,7 +1390,11 @@ def _build_sensitivity_benchmarking_figure(
         showlegend=True,
         legend=dict(
             title=group_by_var if group_by_var is not None else "",
-            orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.02,
+            orientation="v",
+            yanchor="top",
+            y=1.0,
+            xanchor="left",
+            x=1.02,
         ),
         # No `b=` here: the bottom margin is DERIVED from the caption and set at the
         # add_figure_caption call site below. This b=80 was superseded by that call
@@ -1293,8 +1410,14 @@ def _build_sensitivity_benchmarking_figure(
         (2, "compute_disp", "ax_cost_plotly"),
     ):
         _plotly_metric_panel(
-            fig, df, y_col=y_col, row=row, panel_id=panel_id,
-            group_by_var=group_by_var, sens_cfg=sens_cfg, prov=prov,
+            fig,
+            df,
+            y_col=y_col,
+            row=row,
+            panel_id=panel_id,
+            group_by_var=group_by_var,
+            sens_cfg=sens_cfg,
+            prov=prov,
             show_in_legend=(row == 1),
             gpu_legend_suffix=gpu_legend_suffix,
             model_arm=model_arm,
@@ -1312,32 +1435,43 @@ def _build_sensitivity_benchmarking_figure(
             continue
         _sp_c = {k: v for k, v in speedup_per_group.items() if _hardware_family(str(k)) == _fam}
         _ef_c = {k: v for k, v in strong_eff_per_group.items() if _hardware_family(str(k)) == _fam}
-        _sp_all_c = {
-            k: v for k, v in (speedup_all_rows or {}).items() if _hardware_family(str(k)) == _fam
-        } or None
-        _ef_all_c = {
-            k: v for k, v in (efficiency_all_rows or {}).items() if _hardware_family(str(k)) == _fam
-        } or None
+        _sp_all_c = {k: v for k, v in (speedup_all_rows or {}).items() if _hardware_family(str(k)) == _fam} or None
+        _ef_all_c = {k: v for k, v in (efficiency_all_rows or {}).items() if _hardware_family(str(k)) == _fam} or None
         _x_max_c = float(_df_c["n_devices"].max())
         _plotly_metric_panel_precomputed(
-            fig, _sp_c, df_for_groups=_df_c, row=3, col=_ci,
+            fig,
+            _sp_c,
+            df_for_groups=_df_c,
+            row=3,
+            col=_ci,
             panel_id=f"ax_speedup_plotly_c{_ci}",
             color_groups=sorted(df["group_value"].dropna().unique(), key=str),
-            ideal_kind="linear", x_max=_x_max_c,
+            ideal_kind="linear",
+            x_max=_x_max_c,
             ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
-            sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
+            sens_cfg=sens_cfg,
+            prov=prov,
+            show_in_legend=False,
             gpu_legend_suffix=gpu_legend_suffix,
             all_rows_per_group=_sp_all_c,
             ideal_show_in_legend=(_ci == 1),
             model_arm=model_arm,
         )
         _plotly_metric_panel_precomputed(
-            fig, _ef_c, df_for_groups=_df_c, row=4, col=_ci,
+            fig,
+            _ef_c,
+            df_for_groups=_df_c,
+            row=4,
+            col=_ci,
             panel_id=f"ax_efficiency_plotly_c{_ci}",
             color_groups=sorted(df["group_value"].dropna().unique(), key=str),
-            ideal_kind="constant", ideal_value=1.0, x_max=_x_max_c,
+            ideal_kind="constant",
+            ideal_value=1.0,
+            x_max=_x_max_c,
             ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
-            sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
+            sens_cfg=sens_cfg,
+            prov=prov,
+            show_in_legend=False,
             gpu_legend_suffix=gpu_legend_suffix,
             all_rows_per_group=_ef_all_c,
             ideal_show_in_legend=False,
@@ -1412,12 +1546,18 @@ def _build_sensitivity_benchmarking_figure(
             _cols = range(1, _n_hw + 1) if r >= 3 else range(1, 2)
             for _c in _cols:
                 fig.update_xaxes(
-                    showgrid=True, gridcolor=sens_cfg.gridline_color,
-                    gridwidth=sens_cfg.gridline_width, row=r, col=_c,
+                    showgrid=True,
+                    gridcolor=sens_cfg.gridline_color,
+                    gridwidth=sens_cfg.gridline_width,
+                    row=r,
+                    col=_c,
                 )
                 fig.update_yaxes(
-                    showgrid=True, gridcolor=sens_cfg.gridline_color,
-                    gridwidth=sens_cfg.gridline_width, row=r, col=_c,
+                    showgrid=True,
+                    gridcolor=sens_cfg.gridline_color,
+                    gridwidth=sens_cfg.gridline_width,
+                    row=r,
+                    col=_c,
                 )
 
     # ---- Emit -----------------------------------------------------------
@@ -1425,12 +1565,17 @@ def _build_sensitivity_benchmarking_figure(
         "displayModeBar": True,
         "displaylogo": False,
         "modeBarButtonsToRemove": [
-            "lasso2d", "select2d", "autoScale2d",
-            "hoverCompareCartesian", "hoverClosestCartesian",
+            "lasso2d",
+            "select2d",
+            "autoScale2d",
+            "hoverCompareCartesian",
+            "hoverClosestCartesian",
             "toggleSpikelines",
         ],
         "toImageButtonOptions": {
-            "format": "svg", "filename": "sensitivity_benchmarking", "scale": 2,
+            "format": "svg",
+            "filename": "sensitivity_benchmarking",
+            "scale": 2,
         },
     }
     return fig, plotly_config
@@ -1480,24 +1625,33 @@ def _render_plotly_branch(
         model_arm=model_arm,
     )
     html_text = pio.to_html(
-        fig, include_plotlyjs=plotly_js_mode,
-        full_html=True, config=plotly_config,
+        fig,
+        include_plotlyjs=plotly_js_mode,
+        full_html=True,
+        config=plotly_config,
     )
 
     try:
         fig.write_image(
             output_path.with_suffix(".svg"),
-            engine="kaleido", width=1400, height=700, scale=1,
+            engine="kaleido",
+            width=1400,
+            height=700,
+            scale=1,
         )
     except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
         import logging
+
         logging.getLogger(__name__).warning(
             "Kaleido SVG export skipped for %s: %s",
-            output_path.with_suffix(".svg"), exc,
+            output_path.with_suffix(".svg"),
+            exc,
         )
 
     return emit_plot_with_sources(
-        html_text, output_path, source_paths,
+        html_text,
+        output_path,
+        source_paths,
         analysis_dir=analysis_dir,
         output_format="html",
         manifest_data={
@@ -1571,20 +1725,24 @@ def _plotly_metric_panel(
             )
             per_x_min = _by_cfg.groupby("indep_value", as_index=True)[y_col].min().sort_index()
             with prov.artist(
-                axes_id=panel_id, kind="line",
+                axes_id=panel_id,
+                kind="line",
                 note=f"multi-point line {gv} (panel {panel_id})",
             ) as a:
                 a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
                 fig.add_trace(
                     go.Scatter(
-                        x=per_x_min.index, y=per_x_min.values,
+                        x=per_x_min.index,
+                        y=per_x_min.values,
                         mode="lines",
-                        line=dict(color=color, dash=arm_dash,
-                                  width=sens_cfg.line_width),
-                        legendgroup=str(gv), name=legend_name,
-                        showlegend=False, hoverinfo="skip",
+                        line=dict(color=color, dash=arm_dash, width=sens_cfg.line_width),
+                        legendgroup=str(gv),
+                        name=legend_name,
+                        showlegend=False,
+                        hoverinfo="skip",
                     ),
-                    row=row, col=1,
+                    row=row,
+                    col=1,
                 )
         # Build hybrid n_mpi_procs annotations as marker text (matches matplotlib reference).
         marker_mode = "markers+text" if is_hybrid_group and "n_mpi_procs" in sub.columns else "markers"
@@ -1609,14 +1767,17 @@ def _plotly_metric_panel(
             # today; the rename is here so that adding one later cannot re-form the
             # collision silently.
             for j, _cfg_col in enumerate(available_cfg_cols):
-                label = {"n_mpi_procs": "MPI ranks",
-                         "n_omp_threads": "OMP threads",
-                         "n_gpus": "GPUs",
-                         "n_nodes": "Nodes"}.get(_cfg_col, _cfg_col)
+                label = {
+                    "n_mpi_procs": "MPI ranks",
+                    "n_omp_threads": "OMP threads",
+                    "n_gpus": "GPUs",
+                    "n_nodes": "Nodes",
+                }.get(_cfg_col, _cfg_col)
                 hover_lines.append(f"{label}: %{{customdata[{j}]}}")
         hovertemplate_str = "<br>".join(hover_lines) + "<extra></extra>"
         with prov.artist(
-            axes_id=panel_id, kind="scatter",
+            axes_id=panel_id,
+            kind="scatter",
             note=f"markers {gv} (panel {panel_id})",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
@@ -1627,22 +1788,22 @@ def _plotly_metric_panel(
             # "white" keeps the plot background visible through the marker.
             _fill = color
             if "n_replicates" in sub.columns:
-                _fill = [
-                    "rgba(0,0,0,0)" if int(r) > 1 else color
-                    for r in sub["n_replicates"].fillna(1)
-                ]
+                _fill = ["rgba(0,0,0,0)" if int(r) > 1 else color for r in sub["n_replicates"].fillna(1)]
             scatter_kwargs = dict(
-                x=sub["indep_value"], y=sub[y_col],
+                x=sub["indep_value"],
+                y=sub[y_col],
                 mode=marker_mode,
                 text=marker_text,
                 textposition="top right",
                 textfont=dict(size=9, color=color),
                 marker=dict(
                     symbol=marker_symbol,
-                    size=max(int(sens_cfg.point_size ** 0.5), 6),
-                    color=_fill, line=dict(color=color, width=1.4),
+                    size=max(int(sens_cfg.point_size**0.5), 6),
+                    color=_fill,
+                    line=dict(color=color, width=1.4),
                 ),
-                legendgroup=str(gv), name=legend_name,
+                legendgroup=str(gv),
+                name=legend_name,
                 showlegend=show_in_legend,
                 hovertemplate=hovertemplate_str,
             )
@@ -1650,7 +1811,8 @@ def _plotly_metric_panel(
                 scatter_kwargs["customdata"] = customdata
             fig.add_trace(
                 go.Scatter(**scatter_kwargs),
-                row=row, col=1,
+                row=row,
+                col=1,
             )
 
 
@@ -1702,9 +1864,7 @@ def _plotly_metric_panel_precomputed(
     if available_cfg_cols and "sa_id" in df_for_groups.columns:
         # Deduplicate to one row per sa_id (config doesn't vary within an sa_id).
         sa_cfg_lookup = (
-            df_for_groups.drop_duplicates(subset=["sa_id"])
-            .set_index("sa_id")[available_cfg_cols]
-            .fillna(0).astype(int)
+            df_for_groups.drop_duplicates(subset=["sa_id"]).set_index("sa_id")[available_cfg_cols].fillna(0).astype(int)
         )
     else:
         sa_cfg_lookup = None
@@ -1715,11 +1875,7 @@ def _plotly_metric_panel_precomputed(
     # in because `df_for_groups` IS the same frame render() computed it on, so a new
     # parameter would thread a value already in scope.
     if "n_replicates" in df_for_groups.columns and "sa_id" in df_for_groups.columns:
-        n_rep_by_sa = (
-            df_for_groups.drop_duplicates(subset=["sa_id"])
-            .set_index("sa_id")["n_replicates"]
-            .astype(int)
-        )
+        n_rep_by_sa = df_for_groups.drop_duplicates(subset=["sa_id"]).set_index("sa_id")["n_replicates"].astype(int)
     else:
         n_rep_by_sa = None
 
@@ -1777,9 +1933,7 @@ def _plotly_metric_panel_precomputed(
         # rationale). The ideal-reference line below is NOT a data connector and was
         # never arm-encoded.
         arm_dash = "solid"
-        legend_name = f"{gv}{gpu_legend_suffix}" if is_gpu_group else (
-            f"{gv}*" if is_hybrid_group else str(gv)
-        )
+        legend_name = f"{gv}{gpu_legend_suffix}" if is_gpu_group else (f"{gv}*" if is_hybrid_group else str(gv))
         # Build hover customdata + hybrid annotation text from sa_id provenance.
         marker_customdata = _build_customdata(marker_sa)
         marker_text = None
@@ -1788,19 +1942,19 @@ def _plotly_metric_panel_precomputed(
             mpi_col_idx = available_cfg_cols.index("n_mpi_procs")
             marker_text = [str(int(row[mpi_col_idx])) for row in marker_customdata]
             marker_mode = "markers+text"
-        hover_lines = [f"<b>{legend_name}</b>",
-                       "x: %{x}",
-                       "y: %{y:.3f}"]
+        hover_lines = [f"<b>{legend_name}</b>", "x: %{x}", "y: %{y:.3f}"]
         if marker_customdata is not None and available_cfg_cols:
             # `_cfg_col`, NOT `col`: this function now takes a `col` PARAMETER
             # (the subplot column), and a loop variable of that name rebinds it
             # to the last config field for every statement below. The free-name
             # check cannot see this -- the name is bound, just to the wrong thing.
             for j, _cfg_col in enumerate(available_cfg_cols):
-                label = {"n_mpi_procs": "MPI ranks",
-                         "n_omp_threads": "OMP threads",
-                         "n_gpus": "GPUs",
-                         "n_nodes": "Nodes"}.get(_cfg_col, _cfg_col)
+                label = {
+                    "n_mpi_procs": "MPI ranks",
+                    "n_omp_threads": "OMP threads",
+                    "n_gpus": "GPUs",
+                    "n_nodes": "Nodes",
+                }.get(_cfg_col, _cfg_col)
                 hover_lines.append(f"{label}: %{{customdata[{j}]}}")
         hovertemplate_str = "<br>".join(hover_lines) + "<extra></extra>"
         # Line trace through per-N min — dashed, no markers, no hover (line is connective only).
@@ -1808,14 +1962,19 @@ def _plotly_metric_panel_precomputed(
             line_trace = None  # serial / single-point groups skip the line, render markers only
         else:
             line_trace = dict(
-                x=line_xs, y=line_ys, mode="lines",
+                x=line_xs,
+                y=line_ys,
+                mode="lines",
                 line=dict(color=color, dash=arm_dash, width=sens_cfg.line_width),
-                legendgroup=str(gv), name=legend_name,
-                showlegend=False, hoverinfo="skip",
+                legendgroup=str(gv),
+                name=legend_name,
+                showlegend=False,
+                hoverinfo="skip",
             )
         if line_trace is not None:
             with prov.artist(
-                axes_id=panel_id, kind="line",
+                axes_id=panel_id,
+                kind="line",
                 note=f"metric min-line {gv} (panel {panel_id})",
             ) as a:
                 a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
@@ -1828,17 +1987,19 @@ def _plotly_metric_panel_precomputed(
         _marker_fill = color
         if n_rep_by_sa is not None and marker_sa is not None:
             _reps = n_rep_by_sa.reindex(marker_sa)
-            _marker_fill = [
-                "rgba(0,0,0,0)" if (r == r and int(r) > 1) else color for r in _reps
-            ]
+            _marker_fill = ["rgba(0,0,0,0)" if (r == r and int(r) > 1) else color for r in _reps]
         marker_kwargs = dict(
-            x=marker_xs, y=marker_ys, mode=marker_mode,
+            x=marker_xs,
+            y=marker_ys,
+            mode=marker_mode,
             marker=dict(
                 symbol=marker_symbol,
-                size=max(int(sens_cfg.point_size ** 0.5), 6),
-                color=_marker_fill, line=dict(color=color, width=1.4),
+                size=max(int(sens_cfg.point_size**0.5), 6),
+                color=_marker_fill,
+                line=dict(color=color, width=1.4),
             ),
-            legendgroup=str(gv), name=legend_name,
+            legendgroup=str(gv),
+            name=legend_name,
             showlegend=show_in_legend,
             hovertemplate=hovertemplate_str,
         )
@@ -1849,7 +2010,8 @@ def _plotly_metric_panel_precomputed(
             marker_kwargs["textposition"] = "top right"
             marker_kwargs["textfont"] = dict(size=9, color=color)
         with prov.artist(
-            axes_id=panel_id, kind="scatter",
+            axes_id=panel_id,
+            kind="scatter",
             note=f"metric markers {gv} (panel {panel_id})",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
@@ -1866,18 +2028,21 @@ def _plotly_metric_panel_precomputed(
         ideal_y = []
     if ideal_x:
         with prov.artist(
-            axes_id=panel_id, kind="line",
+            axes_id=panel_id,
+            kind="line",
             note=f"ideal-reference line ({ideal_kind})",
         ):
             fig.add_trace(
                 go.Scatter(
-                    x=ideal_x, y=ideal_y, mode="lines",
-                    line=dict(color=sens_cfg.ideal_line_color,
-                              width=sens_cfg.ideal_line_width),
+                    x=ideal_x,
+                    y=ideal_y,
+                    mode="lines",
+                    line=dict(color=sens_cfg.ideal_line_color, width=sens_cfg.ideal_line_width),
                     name=ideal_label,
                     legendgroup="ideal",
                     showlegend=ideal_show_in_legend,
                     hoverinfo="skip",
                 ),
-                row=row, col=col,
+                row=row,
+                col=col,
             )

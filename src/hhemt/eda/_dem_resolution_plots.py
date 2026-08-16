@@ -666,11 +666,11 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
     # `dom1[1] + 0.078 + inter_gap`, and only 0.042 reproduces the flat `+0.12` used here.
     _budget = PanelBudget(
         map_h=_PANEL_H_PX,
-        gap_within=34,   # within-panel gap (diff -> pct): room for the pct-row subplot title
-        gap_top=48,      # above a panel's first map: subplot title + dashed-outline top (item E)
-        gap_footer=82,   # below a panel's last map: x-ticks + "x (m)" title + outline bottom (item C)
-        gap_inter=22,    # between-panel gap (each panel's outline carries its own padding)
-        gap_table=0,     # no summary table in this figure -- see note above
+        gap_within=34,  # within-panel gap (diff -> pct): room for the pct-row subplot title
+        gap_top=48,  # above a panel's first map: subplot title + dashed-outline top (item E)
+        gap_footer=82,  # below a panel's last map: x-ticks + "x (m)" title + outline bottom (item C)
+        gap_inter=22,  # between-panel gap (each panel's outline carries its own padding)
+        gap_table=0,  # no summary table in this figure -- see note above
     )
     _layout = panel_geometry(
         [list(range(a, b + 1)) for a, b in panel_spans],

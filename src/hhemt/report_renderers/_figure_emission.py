@@ -149,9 +149,7 @@ def per_sim_bottom_margin_px(
     live figure was very nearly right -- and would have drifted arbitrarily on the next
     height change, which is the point.
     """
-    b = (PER_SIM_CBAR_PAPER_Y * (fig_h_px - top_px) + PER_SIM_CBAR_FURNITURE_PX) / (
-        1.0 + PER_SIM_CBAR_PAPER_Y
-    )
+    b = (PER_SIM_CBAR_PAPER_Y * (fig_h_px - top_px) + PER_SIM_CBAR_FURNITURE_PX) / (1.0 + PER_SIM_CBAR_PAPER_Y)
     return int(round(b))
 
 
@@ -208,10 +206,7 @@ def apply_per_sim_map_axes(
             col=col,
         )
 
-    return {
-        col: align_x(domains, ref=f"map{col}", edge="center")
-        for col in map_cols
-    }
+    return {col: align_x(domains, ref=f"map{col}", edge="center") for col in map_cols}
 
 
 def per_sim_map_ticks(bounds: tuple[float, float, float, float]) -> tuple[list[float], list[float]]:
