@@ -1479,7 +1479,10 @@ def _build_sensitivity_benchmarking_figure(
 ):
     """Plotly MV port (pre-/design-figure): static 4-panel benchmarking figure.
     Wall-clock | Compute-cost | Strong-scaling speedup | Parallel efficiency,
-    stacked rows=4, cols=1 with shared x-axis. One trace per group_by_var value
+    stacked rows=4 with cols=_n_hw (one column per hardware family on the two scaling
+    panels) and TWO explicitly-linked x-axis groups rather than one shared axis: rows
+    1+2 keyed on ``independent_var``, rows 3+4 on ``n_devices``. One trace per
+    group_by_var value
     per panel, sharing the Okabe-Ito palette (sens_cfg.palette) as Plotly's
     colorway. Informationally congruent with the matplotlib branch — no hover
     refinement, no line-toggle UX, no per-panel zoom/pan customization.
