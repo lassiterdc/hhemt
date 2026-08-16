@@ -64,6 +64,9 @@ class PanelLayout:
     table_domain: dict[str, list[float]]    # {"x": [...], "y": [...]}
     side_table_x: list[float]
     panel_spans: list[tuple[int, int]] = field(default_factory=list)
+    #: panel index -> [y_bot, y_top] of a band reserved ABOVE that panel by
+    #: ``group_starts``. Empty unless the caller asked for one.
+    group_domains: dict[int, list[float]] = field(default_factory=dict)
 
     def f(self, px: float) -> float:
         """px -> paper-height fraction."""
@@ -84,6 +87,7 @@ def panel_geometry(
     map_start: float = 0.30,
     side_table_x: tuple[float, float] = (0.035, 0.215),
     inter_gap: float = 0.025,
+    group_starts: dict[int, int] | None = None,
 ) -> PanelLayout:
     """Resolve a panel plan into every paper coordinate the figure needs.
 
@@ -95,7 +99,17 @@ def panel_geometry(
     domain is assigned explicitly rather than delegated.
     """
     b = budget or PanelBudget()
-    plot_h = table_px + b.gap_table + b.gap_inter * (len(panel_rows) - 1)
+    # `group_starts` maps a PANEL INDEX to px reserved ABOVE that panel, for a full-width
+    # element the panel budget otherwise has no room for -- a per-model summary table in
+    # cross-experiment. It is additive and defaults to empty, so the two pre-existing
+    # callers produce byte-identical geometry; that inertness is PROVEN by the probe in
+    # R8.6 rather than asserted, at TOL=0.0 on row_ydom / map_domains / plot_h.
+    #
+    # A band belongs to the panel it precedes rather than being a row of its own because
+    # the caller places its content by explicit domain (as `side_table_domain` already
+    # does), so it needs a y-range, not a subplot.
+    _gs = dict(group_starts or {})
+    plot_h = table_px + b.gap_table + b.gap_inter * (len(panel_rows) - 1) + sum(_gs.values())
     for prows in panel_rows:
         plot_h += b.gap_top + len(prows) * b.map_h + (len(prows) - 1) * b.gap_within + b.gap_footer
 
@@ -111,7 +125,12 @@ def panel_geometry(
     row_ydom: dict[int, list[float]] = {}
     table_top, table_bot = 1.0, 1.0 - _f(table_px)
     cur = table_bot - _f(b.gap_table)
+    group_domains: dict[int, list[float]] = {}
     for pi, prows in enumerate(panel_rows):
+        if pi in _gs:
+            _band_top = cur
+            cur -= _f(_gs[pi])
+            group_domains[pi] = [cur, _band_top]
         cur -= _f(b.gap_top)
         for ri, r in enumerate(prows):
             row_ydom[r] = [cur - _f(b.map_h), cur]
@@ -154,6 +173,7 @@ def panel_geometry(
         table_domain={"x": [0.03, 0.97], "y": [table_bot, table_top]},
         side_table_x=list(side_table_x),
         panel_spans=[(rows[0], rows[-1]) for rows in panel_rows],
+        group_domains=group_domains,
     )
 
 
