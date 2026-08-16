@@ -282,7 +282,10 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             "run on each hardware family."
         )
 
-    # ---- differing pairs present: per MODEL -> per HARDWARE FAMILY -> per identity group.
+    # ---- differing pairs present: per MODEL -> per BYTE-IDENTITY CLASS. The hardware-family
+    # level this comment used to name was removed when panels became identity classes: a class
+    # may span CPU and GPU where their outputs agree, and split where they do not, so family is
+    # a DESCRIPTION of a class rather than a level above it.
     #
     #      HARDWARE is the OUTER axis and identity is the INNER one, and that order is
     #      load-bearing. A byte-identity group is NOT hardware-homogeneous -- on a
