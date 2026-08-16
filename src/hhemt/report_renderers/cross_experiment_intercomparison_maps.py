@@ -500,6 +500,18 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 return s["wlevel"]
         return None
 
+    def _lbl_of(grp, sa) -> str:
+        """A member's config label, from the group's parallel members/labels lists.
+
+        The absent rows are built from sa_ids rather than from `side_table_columns`' output,
+        so they need this to render a label. Positional over two parallel lists -- no set or
+        dict traversal -- so it satisfies the deterministic-labels ruling by construction.
+        """
+        for _s, _l in zip(grp["members"], grp["labels"], strict=False):
+            if _s == sa:
+                return _l
+        return sa
+
     def _class_descriptor(ctx_, grp) -> str:
         """Name an identity class by what it holds, not by how it was formed.
 
@@ -622,16 +634,67 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             # both built from `clean_subs` -- whose n_resumes is 0 for every config by
             # construction, because a clean run never resumed. Reading the reachable copy
             # would render a column of zeros. `resume_subs` is already carried on ctx.
+            # BOTH ARMS, one row each: the panel aggregates the clean run AND its resumed
+            # counterpart for every config in the class, so a table listing only one of them
+            # under-reports what the panel displays. Row count doubles, which is the
+            # observable the user named -- but the ASSERTION below is the requirement, since
+            # a doubled count is equally satisfied by listing one config twice and dropping
+            # another.
             g_ = ctx["grp"]
-            _cfg_col, _nr_col = side_table_columns(
-                labels=g_["labels"],
-                members=g_["members"],
-                attrs_by_sa={_sa: ctx["fam_subs"].get(_sa, {}).get("attrs", {}) for _sa in g_["members"]},
-                value_by_sa={
-                    _sa: int(ctx["resume_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in g_["members"]
-                },
-                order_key=lambda a: _device_count_key({"attrs": a}),
+            _clean_members = [s for s in g_["members"] if s in ctx["fam_subs"]]
+            _resume_members = [s for s in g_["members"] if s in ctx["resume_subs"]]
+            _attrs = {_sa: ctx["fam_subs"].get(_sa, {}).get("attrs", {}) for _sa in g_["members"]}
+
+            def _ordk(a):
+                return _device_count_key({"attrs": a})
+
+            _clean_cfg, _clean_nr = side_table_columns(
+                labels=g_["labels"], members=_clean_members, attrs_by_sa=_attrs,
+                value_by_sa={_sa: int(ctx["fam_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in _clean_members},
+                order_key=_ordk,
             )
+            _res_cfg, _res_nr = side_table_columns(
+                labels=g_["labels"], members=_resume_members, attrs_by_sa=_attrs,
+                value_by_sa={_sa: int(ctx["resume_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in _resume_members},
+                order_key=_ordk,
+            )
+            # MEMBERSHIP MADE VISIBLE, not a count check and not a hard failure. The table
+            # must enumerate exactly the runs the panel's byte-identity claim covers, and a
+            # member present on one arm only must SAY so rather than be dropped -- dropping
+            # it would let the table imply a comparison the figure did not make, which is the
+            # defect this guards. Rendering it as an explicit absence achieves that without
+            # destroying the figure, and matches the standing ruling that a check which
+            # cannot apply renders N/A rather than failing.
+            #
+            # BOTH directions are handled. A clean run with no resumed counterpart is the
+            # expected asymmetry (`_resume_da` returns None and the panel already draws a
+            # "no resumed run" placeholder), but a resumed run with no clean counterpart is
+            # equally undifferenceable and would otherwise vanish from the table entirely.
+            #
+            # Amendment 2: the absent rows are SORTED on the same key as the present rows.
+            # They inherit `g_["members"]` order otherwise, which would leave one column
+            # ordered two ways -- present rows by (device_count, label), absent rows by
+            # storage traversal.
+            _clean_only = sorted(
+                (s for s in _clean_members if s not in ctx["resume_subs"]),
+                key=lambda s: (_ordk(_attrs.get(s, {})), _lbl_of(g_, s)),
+            )
+            _resume_only = sorted(
+                (s for s in _resume_members if s not in ctx["fam_subs"]),
+                key=lambda s: (_ordk(_attrs.get(s, {})), _lbl_of(g_, s)),
+            )
+            _absent_cfg, _absent_role, _absent_nr = [], [], []
+            for _sa in _clean_only:
+                _absent_cfg.append(_lbl_of(g_, _sa))
+                _absent_role.append("compared (absent)")
+                _absent_nr.append("—")
+            for _sa in _resume_only:
+                _absent_cfg.append(_lbl_of(g_, _sa))
+                _absent_role.append("reference (absent)")
+                _absent_nr.append("—")
+            _role_col = ["reference"] * len(_clean_cfg) + ["compared"] * len(_res_cfg) + _absent_role
+            _cfg_col = _clean_cfg + _res_cfg + _absent_cfg
+            _nr_col = _clean_nr + _res_nr + _absent_nr
             fig.add_trace(
                 go.Table(
                     header=dict(
@@ -639,13 +702,24 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                         # resume runs of every config it lists, so a bare "n_resumes" would be
                         # ambiguous about which arm it counts -- and the two differ by
                         # construction (clean is always 0).
-                        values=["byte-identical configs", "n_resumes (resume arm)"],
+                        # `role` names each row explicitly rather than leaving the reader to
+                        # infer it from n_resumes. The user distinguished the two classes by
+                        # VALUE (0 vs 3), which works only while the resumed count is
+                        # non-zero -- two rows reading `Serial 1r x 1t | 0` would otherwise be
+                        # indistinguishable duplicates. The arm qualifier moves out of the
+                        # n_resumes header because both arms now appear in the same column.
+                        values=["byte-identical configs", "role", "n_resumes"],
                         align="left",
                         fill_color="#eef2f7",
                         font=dict(size=9),
                         height=20,
                     ),
-                    cells=dict(values=[_cfg_col, _nr_col], align="left", font=dict(size=9), height=18),
+                    cells=dict(
+                        values=[_cfg_col, _role_col, _nr_col],
+                        align="left",
+                        font=dict(size=9),
+                        height=18,
+                    ),
                     domain=side_table_domain(_layout, _span[0], _span[-1]),
                 ),
             )
