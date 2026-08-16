@@ -451,9 +451,11 @@ def build_cross_experiment_diff_figure(combined_root: Path):
 
     # FQ7 applies here too: no coupled SWMM tier -> a ONE-column grid, no placeholder.
     _ncols = 2 if has_coupled_arm else 1
-    n_rows = 1 + len(row_plan)
-    # Rows are now uniform: one summary-table row, then only map rows.
-    specs = [[{"type": "table", "colspan": 2}, None] if has_coupled_arm else [{"type": "table"}]]
+    # EVERY row is a map row. The figure-wide summary table is gone from this path; each
+    # model gets its own Panel-keyed table in a band reserved above its first panel, placed
+    # by explicit domain rather than occupying a subplot row.
+    n_rows = len(row_plan)
+    specs = []
     for _entry in row_plan:
         specs.append([{"type": "xy"}, {"type": "xy"}] if has_coupled_arm else [{"type": "xy"}])
 
@@ -461,24 +463,9 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     # below, once the data aspect is known. See the geometry block after `_grid`.
     fig = make_subplots(rows=n_rows, cols=_ncols, specs=specs)
 
-    fig.add_trace(
-        go.Table(
-            header=dict(
-                values=["Model", "compared pairs", "clean-vs-resume verdict", "max |resume - clean|"],
-                align="left",
-                fill_color="#eef2f7",
-                font=dict(size=11),
-            ),
-            cells=dict(
-                values=list(zip(*verdict_rows, strict=False)) if verdict_rows else [[]],
-                align="left",
-                font=dict(size=11),
-                height=22,
-            ),
-        ),
-        row=1,
-        col=1,
-    )
+    # The figure-wide verdict table is drawn only on the DEGENERATE path (no panels), where
+    # it is the whole figure. Here each model carries its own Panel-keyed table instead.
+    # `verdict_rows` is still built above and still consumed by that path.
 
     _mask_cache: dict[tuple[str, int], tuple] = {}
 
@@ -540,20 +527,30 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     #      Unlike the `_config_diff` and `_dem_resolution_plots` migrations, this one is NOT
     #      geometry-preserving: dropping the famtable rows and adopting the shared budget
     #      moves the figure deliberately. ----
+    # Row 1 is no longer the summary table -- each model now carries its own table in a
+    # reserved band -- so map rows start at 1 rather than 2. Three other sites read this
+    # offset and ALL of them move together; renumbering a subset binds domains to rows that
+    # exist and hold different content, which renders wrong rather than raising.
+    #
+    # `_panel_model` is appended in the `else` branch ONLY, the branch that starts a new
+    # panel, so it stays index-aligned with `_panel_rows` by construction rather than by a
+    # parallel counter that could drift.
     _panel_rows: list[list[int]] = []
+    _panel_model: list[str] = []
     for i, entry in enumerate(row_plan):
-        r = 2 + i
+        r = 1 + i
         if _panel_rows and entry["ctx"] is row_plan[i - 1]["ctx"]:
             _panel_rows[-1].append(r)
         else:
             _panel_rows.append([r])
+            _panel_model.append(str(entry["ctx"].get("model", "")))
 
     _xd0, _yd0, _, _ = _grid(row_plan[0]["ctx"])
     _map_aspect = ((max(_xd0) - min(_xd0)) or 1.0) / ((max(_yd0) - min(_yd0)) or 1.0)
 
     _layout = panel_geometry(
         _panel_rows,
-        table_px=_TABLE_PX,
+        table_px=0,
         map_aspect=_map_aspect,
         fig_width=_FIG_W,
         n_map_cols=_ncols,
@@ -563,7 +560,9 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         for _c in range(1, _ncols + 1):
             next(fig.select_xaxes(row=_r, col=_c)).domain = _layout.map_domains[_c]
             next(fig.select_yaxes(row=_r, col=_c)).domain = _yd
-    fig.data[0].domain = dict(x=_layout.table_domain["x"], y=_layout.table_domain["y"])
+    # `fig.data[0].domain` removed with the table trace: trace 0 is now the first panel's
+    # Heatmap, which has no `domain`, so the line raised ValueError on first render. It is
+    # the one site in this renumbering that fails loudly rather than silently.
 
     # Colorbar paper-x DERIVED from each map column's own domain, replacing the
     # hand-placed 0.44 / 0.98 literals. Those two were also inconsistent with each
@@ -606,7 +605,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     _panel_ix = [0]
     annotations = []
     for i, entry in enumerate(row_plan):
-        row = 2 + i
+        row = 1 + i  # see _panel_rows: row 1 is a map row now, not the summary table
         ctx, kind = entry["ctx"], entry["kind"]
         model, evt = ctx["model"], ctx["evt"]
         base_s = ctx["fam_subs"][ctx["base_sa"]]
@@ -922,7 +921,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         )
 
     for ei, _entry in enumerate(row_plan):
-        row = 2 + ei
+        row = 1 + ei  # see _panel_rows
         for col in range(1, _ncols + 1):
             fig.update_xaxes(
                 row=row,
