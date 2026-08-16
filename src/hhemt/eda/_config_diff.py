@@ -1307,7 +1307,18 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         panel = chr(ord("B") + gi)
         # Left-margin rotated label; group title from the SAME _configs(g) as the table
         # (all hardware variants, never a single a6000 rep), so panel + table stay aligned.
-        _panel_label(f"<b>Panel {panel}</b>", diff_row, pct_row)
+        # Title restored from `_configs(g)`, the source the comment above already names.
+        # Panel A carries a hardcoded "— Serial CPU reference" at its call site while every
+        # other panel got a bare label, so the figure was internally inconsistent: the
+        # documented behaviour was never implemented here.
+        #
+        # DETERMINISTIC BY CONSTRUCTION, per the user's ruling. `_configs` returns
+        # `sorted(by_label, key=(device_count, label))` -- a TOTAL order whose tiebreak is
+        # the label itself, so `[0]` is the smallest-device member and never depends on set
+        # or dict iteration order. That is the same ordering the side table and the panel
+        # letters use, which is why the rotated label and the first table row agree rather
+        # than happening to coincide.
+        _panel_label(f"<b>Panel {panel}</b> — {_configs(g)[0]} group", diff_row, pct_row)
         _panel_config_table(g, diff_row, pct_row)
 
     # Bottom map row of EACH panel (Panel A = serial_row; each diff panel = its pct row) —

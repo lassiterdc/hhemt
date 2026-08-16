@@ -351,6 +351,33 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 model_groups = _group_by_identity(clean_subs, crates / clean_eid)
             except Exception:
                 model_groups = _fallback_groups(clean_subs)
+            # DECLARED panel order. `_group_by_identity` returns its groups in the order it
+            # happened to iterate `subs.items()`, i.e. the zarr store's group-traversal
+            # order -- reproducible for a fixed store, but not derived from any stated rule,
+            # so a store rewritten by different tooling would permute the panels and silently
+            # move the "Panel A" label onto a different identity class.
+            #
+            # Sorted smallest-device-first with the representative label as tiebreak, which
+            # is a TOTAL order and mirrors how `_config_diff` orders its own panels
+            # ([serial_grp] + sorted non-serial). Both figures now derive their letters from
+            # a rule rather than from storage layout.
+            # `clean_subs` is bound per-event inside the enclosing loop, so it is captured as
+            # a DEFAULT ARGUMENT rather than closed over. A closure would resolve it at call
+            # time -- late binding -- and `sorted()` calls the key eagerly, so today it would
+            # happen to be correct and would break silently the moment the sort is deferred
+            # or the loop advances first. Explicit capture is also what ruff's B023 asks for.
+            def _group_order_key(gg, _cs=clean_subs):
+                _dev = (
+                    _device_count_key({"attrs": _cs[s].get("attrs", {})})
+                    for s in gg["members"]
+                    if s in _cs
+                )
+                return (
+                    min(_dev, default=()),
+                    sorted(gg["labels"])[0] if gg["labels"] else "",
+                )
+
+            model_groups = sorted(model_groups, key=_group_order_key)
             for _gi, _grp in enumerate(model_groups):
                 fam_subs = {k: clean_subs[k] for k in _grp["members"] if k in clean_subs}
                 if not fam_subs:
