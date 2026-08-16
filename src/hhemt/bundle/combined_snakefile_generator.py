@@ -225,7 +225,26 @@ def _compose_model_pair_page(
         f"<title>{_html.escape(base_eid)} — {_html.escape(humanize_plot_id(plot_id, sa_labels))}</title>"
         f"<style>{root_css_vars}\n{_MODEL_STACK_CSS}</style></head>"
         '<body class="model-pair-page">'
-        f'<h2 class="model-pair-heading">{_html.escape(base_eid)} — {_html.escape(humanize_plot_id(plot_id, sa_labels))}</h2>'
+        # Iter-10 K: the `<h2 class="model-pair-heading">` that stood here carried the SAME
+        # `{base_eid} — {humanize_plot_id(...)}` string as the <title> above, and the report
+        # chrome ALREADY renders the result's own name (report_plot_ids._DISPLAY_LABELS) and
+        # its experiment category directly above the iframe this page is embedded in. So the
+        # reader saw `synth_cc_clean — Run metadata` twice in a row, which is exactly the
+        # duplication the user reported: 'there are redundant headers. ## synth_cc_clean —
+        # Run metadata appears twice in a row, and then TRITON-SWMM appears twice as well'.
+        #
+        # Measured on the delivered combined report: `grep -o 'Run metadata' | wc -l` -> 4,
+        # two per experiment across synth_cc_clean and synth_cc_resume.
+        #
+        # The <title> is RETAINED and is not the duplicate: it names the browser tab and is
+        # the only heading a reader gets when the composed page is opened standalone, where
+        # no report chrome supplies the name. Dropping the visible <h2> costs nothing in the
+        # embedded case (the chrome states it) and leaves the standalone case titled.
+        #
+        # This is the same defect class as the 'exact code that produced this' SHA caption
+        # repaired in 7eeecca and the page-title question settled in f1ccc9f: a string that
+        # is correct at its own emission site and redundant-or-false once the surrounding
+        # context also supplies it. Worth checking other renderers for the same shape.
         f'<div class="model-stack" data-plot="{_html.escape(plot_id, quote=True)}" '
         f'data-config="{_html.escape(base_eid, quote=True)}">{body}</div>'
         "</body></html>"
