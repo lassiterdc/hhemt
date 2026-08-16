@@ -730,16 +730,20 @@ def _build_data_availability_html(report_path: Path) -> str:
     return "\n".join(parts)
 
 
+#: The page's sections, in render order. Module-level so the jump-nav and the test's
+#: anchor coverage read ONE declaration -- a literal in each drifted silently when the
+#: Data Availability section landed and only the nav learned about it.
+_SECTION_TITLES = ("Provenance", "Data Availability", "Reproduction Guide", "SLURM Efficiency")
+
+
 def _jump_nav() -> str:
-    links = " &middot; ".join(
-        f'<a href="#{_anchor(t)}">{_esc(t)}</a>'
-        for t in ("Provenance", "Data Availability", "Reproduction Guide", "SLURM Efficiency")
-    )
+    links = " &middot; ".join(f'<a href="#{_anchor(t)}">{_esc(t)}</a>' for t in _SECTION_TITLES)
     return f'<nav class="jump-nav">{links}</nav>'
 
 
 def _wrap_html_doc(analysis_id: str, inline_css: str, *sections: str) -> str:
-    """<!DOCTYPE> + inline <style> + <h2> title + 3-anchor jump-nav + the section fragments.
+    """<!DOCTYPE> + inline <style> + <h2> title + jump-nav (one anchor per
+    `_SECTION_TITLES` entry) + the section fragments.
 
     Each renderer .html is shown in an iframe by the Snakemake report engine, so
     inline CSS is mandatory (no shared stylesheet reaches the iframe) and the

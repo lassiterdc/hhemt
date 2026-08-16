@@ -1053,6 +1053,49 @@ class TRITONSWMM_analysis:
             persist_validation_report(self)
         except Exception as _e:  # pragma: no cover - defensive, mirrors consolidate_workflow
             print(f"[eda] validation_report.json re-persist failed (non-fatal): {_e}", flush=True)
+        # The re-persist above rewrote the read-model that the Errors-and-Warnings figure
+        # transcribes, AFTER the report DAG has exited -- eda() is a non-Snakemake
+        # in-process facade by accepted stipulation, so no rule is left to notice. That
+        # leaves plots/errors_and_warnings/validation_report.html strictly OLDER than
+        # validation_report.json, which bundle/_emit.py::_assert_report_not_older_than_read_model
+        # refuses by design (fae1492). Re-render the ONE figure here so the facade leaves a
+        # self-consistent tree, which is what fae1492's subject line ("re-render after eda()")
+        # already promised and what its body did not deliver.
+        #
+        # render_report() is NOT the remedy and must not be substituted: it invokes
+        # `snakemake --report`, a post-execution render that re-executes no rule
+        # (analysis.py's render_report docstring, and its own comment "nothing between this
+        # line and the render can change them"). Measured 2026-08-16 on a clean fixture root:
+        # inserting render_report() between eda() and bundle_report_data() left the delta at
+        # 112s and the guard still fired.
+        #
+        # Gated on the figure ALREADY EXISTING, deliberately. The guard treats an absent
+        # figure as a skip, so rendering into absence closes no gap; and eda() is not a
+        # report-producing facade, so creating a report figure the DAG never emitted would
+        # put an undeclared artifact under plots/. No mtime comparison is needed: the
+        # re-persist immediately precedes, so the read-model is newer by construction and a
+        # freshness test here would have an unreachable false arm.
+        try:
+            from hhemt.report_plot_ids import output_ext_for
+            from hhemt.report_renderers import errors_and_warnings as _ew_renderer
+            from hhemt.report_renderers._reporting_sets import _TMPL_ERRORS_AND_WARNINGS
+
+            _cfg_report = self.cfg_analysis.report
+            _backend = _cfg_report.interactive.static_backend
+            # Path from the ONE declaration that owns this figure's stem. NOTE for a future
+            # maintainer reaching for report_plot_ids.plot_output_template instead: it mints
+            # the stem `errors_and_warnings`, NOT `validation_report`, and the string
+            # "validation_report" appears ZERO times in report_plot_ids.py -- this figure
+            # predates the ADR-2 grammar and its stem is declared in the ReportingSet
+            # registry template. report_plot_ids still owns the EXTENSION, via output_ext_for.
+            _ew_rel = _TMPL_ERRORS_AND_WARNINGS.output_path_template.replace(
+                "__OUTPUT_EXT__", output_ext_for(_backend, _TMPL_ERRORS_AND_WARNINGS.renderer_module)
+            )
+            _ew_path = root / _ew_rel
+            if _ew_path.exists():
+                _ew_renderer.render(self, _cfg_report, _ew_path)
+        except Exception as _e:  # pragma: no cover - defensive, mirrors the persist above
+            print(f"[eda] errors-and-warnings re-render failed (non-fatal): {_e}", flush=True)
         return EdaReportResult(
             report_path=report_path,
             notebook_path=notebook_path,
