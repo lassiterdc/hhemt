@@ -384,7 +384,8 @@ class TRITONSWMM_system:
         configured = self.cfg_system.crs.horizontal_epsg
         if epsg is not None and configured != epsg:
             raise ConfigurationError(
-                f"DEM CRS (EPSG:{epsg}) does not match configured cfg_system.crs.horizontal_epsg (EPSG:{configured})."
+                f"DEM CRS (EPSG:{epsg}) does not match configured "
+                f"cfg_system.crs.horizontal_epsg (EPSG:{configured})."
             )
         if epsg is None:
             raise ConfigurationError(
@@ -677,7 +678,7 @@ class TRITONSWMM_system:
                 else:
                     raise ConfigurationError(
                         field="gpu_compilation_backend",
-                        message=f"Invalid value '{self.gpu_compilation_backend}'.\n  Must be 'HIP' or 'CUDA'.",
+                        message=f"Invalid value '{self.gpu_compilation_backend}'.\n" "  Must be 'HIP' or 'CUDA'.",
                         config_path=self.system_config_yaml,
                     )
 
@@ -700,11 +701,6 @@ class TRITONSWMM_system:
         """Download TRITON-SWMM source code from git repository."""
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
 
-        clone_cmd = f"git clone {self.cfg_system.TRITONSWMM_git_URL}"
-        branch_checkout_cmd = ""
-        if self.cfg_system.TRITONSWMM_branch_key:
-            branch_checkout_cmd = f" && git checkout {self.cfg_system.TRITONSWMM_branch_key}"
-
         if verbose:
             print(
                 f"[Download] Cloning TRITON-SWMM to {TRITONSWMM_software_directory}",
@@ -714,28 +710,104 @@ class TRITONSWMM_system:
         # Create parent directory
         TRITONSWMM_software_directory.parent.mkdir(parents=True, exist_ok=True)
 
-        # Remove existing directory
+        # DIAGNOSABILITY CONTRACT. This provisioning is a multi-step sequence (remove, clone,
+        # checkout, submodule init) that was previously one `shell=True` `&&` chain under
+        # `check=True` with no `capture_output`. Every step exits 128 on failure, so all of
+        # them collapsed into one opaque `CalledProcessError: non-zero exit status 128` with
+        # no stderr retained. That is not a hygiene complaint: it caused a documented
+        # misdiagnosis (a populated `triton/` with its own `.git` was read as "clone blocked
+        # by an existing destination", when the removal above provably runs and the same
+        # evidence is equally consistent with a clone that SUCCEEDED and a later step
+        # failing), and it left a real intermittent failure permanently undiagnosable.
+        # Each step now runs on its own, names itself, and surfaces what the tool said.
+        #
+        # `cwd=` replaces `cd &&`, which removes the shell entirely: no quoting exposure on
+        # a path, and no dependence on `&&` short-circuit semantics for correctness.
+        _download_log = TRITONSWMM_software_directory.parent / "_download_triton.log"
+
+        def _run_step(label: str, argv: list[str], cwd: Path) -> None:
+            """Run one provisioning step, or raise naming the step and its stderr.
+
+            The log lands in the PARENT of the software directory, deliberately: the
+            removal step deletes the software directory itself, so a log written inside it
+            would be destroyed by the very step whose failure it exists to explain.
+            """
+            proc = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True)
+            _entry = (
+                f"[{label}] cwd={cwd}\n"
+                f"[{label}] argv={argv}\n"
+                f"[{label}] returncode={proc.returncode}\n"
+                f"[{label}] stdout:\n{proc.stdout}\n"
+                f"[{label}] stderr:\n{proc.stderr}\n"
+            )
+            try:
+                with open(_download_log, "a") as _fh:
+                    _fh.write(_entry)
+            except OSError:
+                pass  # never let logging mask the underlying failure
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode, argv, output=proc.stdout, stderr=proc.stderr)
+
+        # STEP 1 -- remove. Verified by POST-CONDITION, not by the call returning. fast_rmtree
+        # sends its own stderr to DEVNULL and falls back to shutil.rmtree, so a partial
+        # removal can return without raising. The build dirs live INSIDE this directory
+        # (`triton/build_tritonswmm_cpu`), so a survivor here means the removal did not
+        # complete -- and the next step's `git clone` would then fail with a bare 128 that
+        # says nothing about why.
         if TRITONSWMM_software_directory.exists():
             # EXEMPT-DU: system-dir
             ut.fast_rmtree(TRITONSWMM_software_directory)
+        if TRITONSWMM_software_directory.exists():
+            _survivors = sorted(p.name for p in TRITONSWMM_software_directory.iterdir())[:10]
+            raise ConfigurationError(
+                field="TRITONSWMM_software_directory",
+                message=(
+                    f"Failed to remove {TRITONSWMM_software_directory} before re-cloning: the "
+                    f"directory still exists after fast_rmtree. Surviving entries (first 10): "
+                    f"{_survivors}. A clone into a non-empty destination fails with git's "
+                    "already-exists fatal (exit 128), which is indistinguishable from a "
+                    "network or checkout failure once the steps are chained -- hence this "
+                    "explicit post-condition. Check for a held file handle, a read-only "
+                    "child, or a concurrent process using this tree."
+                ),
+                config_path=self.system_config_yaml,
+            )
 
-        # Clone and checkout. The clone TARGET is named EXPLICITLY from the configured
-        # directory, and the `cd` uses that same name. Neither may be inferred from the repo
-        # URL: `git clone <url>` derives the directory from the repo NAME, so the previous
-        # hardcoded `cd triton` only worked while TRITONSWMM_software_directory happened to
-        # end in `triton`. Point the config at any other basename -- a per-pin cache dir such
-        # as `triton_5d2ad1e8adf9` -- and the clone landed in `triton/` while the configured
-        # directory was never created. Worse, ORNL upstream and the user's fork are BOTH named
-        # `triton.git`, so two different remotes collided on one path; and since
-        # `_verify_tritonswmm_pin` compares the COMMIT and never the REMOTE, a clone from the
-        # wrong remote whose HEAD matched the pin would verify clean.
-        subprocess.run(
-            f'cd "{TRITONSWMM_software_directory.parent}" && '
-            f'{clone_cmd} "{TRITONSWMM_software_directory.name}" && '
-            f'cd "{TRITONSWMM_software_directory.name}"{branch_checkout_cmd} && '
-            f"git submodule update --init --recursive",
-            shell=True,
-            check=True,
+        # STEP 2 -- clone. The clone TARGET is named EXPLICITLY from the configured
+        # directory. It may not be inferred from the repo URL: `git clone <url>` derives the
+        # directory from the repo NAME, so a previous hardcoded `triton` only worked while
+        # TRITONSWMM_software_directory happened to end in `triton`. Point the config at any
+        # other basename -- a per-pin cache dir such as `triton_5d2ad1e8adf9` -- and the
+        # clone landed in `triton/` while the configured directory was never created. Worse,
+        # ORNL upstream and the user's fork are BOTH named `triton.git`, so two different
+        # remotes collided on one path; and since `_verify_tritonswmm_pin` compares the
+        # COMMIT and never the REMOTE, a clone from the wrong remote whose HEAD matched the
+        # pin would verify clean.
+        _run_step(
+            "clone",
+            ["git", "clone", str(self.cfg_system.TRITONSWMM_git_URL), TRITONSWMM_software_directory.name],
+            cwd=TRITONSWMM_software_directory.parent,
+        )
+
+        # STEP 3 -- checkout the pin, when one is configured.
+        if self.cfg_system.TRITONSWMM_branch_key:
+            _run_step(
+                "checkout",
+                ["git", "checkout", str(self.cfg_system.TRITONSWMM_branch_key)],
+                cwd=TRITONSWMM_software_directory,
+            )
+
+        # STEP 4 -- submodules. This step reaches a DIFFERENT HOST from the clone:
+        # `.gitmodules` points external/kokkos and external/yaml-cpp at github.com while the
+        # clone targets code.ornl.gov, so an `ls-remote` against the TRITON remote says
+        # nothing about whether this step can succeed. It is also the heaviest operation in
+        # the sequence (a recursive Kokkos clone), which makes it the most exposed to a
+        # transient network failure -- and, before this split, the failure least
+        # distinguishable from the others.
+        _run_step(
+            "submodule",
+            ["git", "submodule", "update", "--init", "--recursive"],
+            cwd=TRITONSWMM_software_directory,
         )
 
     def _verify_tritonswmm_pin(self, verbose: bool = True):

@@ -175,8 +175,19 @@ def test_s10_headers_name_the_product_not_the_word_toolkit():
         }
     ]
     html = _provenance_table_html(rows)
-    assert "<th>hhemt sha</th>" in html and "<th>hhemt build</th>" in html
-    assert "Toolkit sha" not in html and "Toolkit version" not in html
+    # Assert the INTENT, not two exact literals. The rule S10 encodes is that provenance
+    # headers name the PRODUCT (hhemt) and never the word Toolkit. Pinning the exact
+    # strings `<th>hhemt sha</th>` / `<th>hhemt build</th>` pinned one PROPOSED wording,
+    # so the renderer refining them to `hhemt bundle sha` and `hhemt build (data-producing)`
+    # -- strictly more specific, and satisfying the rule -- reddened this test while the
+    # relabel it guards had in fact landed. An assertion must test the invariant rather
+    # than one position consistent with it.
+    headers = re.findall(r"<th>([^<]*)</th>", html)
+    sha_hdrs = [h for h in headers if "sha" in h.lower() and "solver" not in h.lower()]
+    build_hdrs = [h for h in headers if "build" in h.lower() or "version" in h.lower()]
+    assert sha_hdrs and all("hhemt" in h for h in sha_hdrs), sha_hdrs
+    assert build_hdrs and all("hhemt" in h for h in build_hdrs), build_hdrs
+    assert not any("toolkit" in h.lower() for h in headers), headers
 
 
 # ---- S11 plots-stage capture at the sidecar choke point ------------------- #
