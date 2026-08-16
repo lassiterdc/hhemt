@@ -60,6 +60,23 @@ def test_both_model_arms_are_reported(tmp_path):
     assert models == {"TRITON", "TRITON-SWMM"}
 
 
+# NO COVERAGE GAP NOTE, deliberately left in the test module rather than only in a
+# scratch: every test in this file exercises the VERDICT-TABLE path (all-identical or
+# mixed-identical pairs), and NONE reaches the panel-rendering path. Measured 2026-08-16
+# on the two-model differing fixture: 1 trace (the verdict table) and 1 annotation.
+#
+# So the per-model band geometry -- `group_starts`/`group_domains`, the model-header
+# annotation, and the per-model summary table -- has NO render-test coverage here. That
+# is the structural reason four separate Iteration-10 geometry defects (the `fam`
+# NameError, R7.4's orphaned readers, bands-reserved-with-no-table, and the empty-join
+# blank columns) each passed `ast.parse` AND ruff AND this suite while rendering
+# something wrong: the greens are honest about syntax and silent about what is DRAWN.
+#
+# Closing it needs a fixture that reaches the panel branch, which takes more than
+# `combined_intercomparison.json` alone. Recorded here so the next author finds it at the
+# point of use rather than inferring coverage from a green run.
+
+
 def test_compared_variable_is_named_as_a_peak_not_a_final_timestep(tmp_path):
     root = _write(tmp_path, [_pair("TRITON", True)], _EXPERIMENTS)
     fig = build_cross_experiment_diff_figure(root)

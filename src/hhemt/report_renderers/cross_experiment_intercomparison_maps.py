@@ -679,7 +679,20 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     values=_summary_cols, align="left", fill_color="#eef2f7", font=dict(size=10), height=22
                 ),
                 cells=dict(values=_cells, align="left", font=dict(size=10), height=20),
-                domain=dict(x=_layout.table_domain["x"], y=[max(0.0, _dom[0]), min(1.0, _dom[1])]),
+                # Iter-10 C: the table occupies the band's LOWER region, leaving one header-gap
+                # of clearance at the top for the model header that now sits there. It
+                # previously spanned the FULL band, which is what put it above the header. The
+                # band's own height already includes `_MODEL_HEADER_GAP_PX` (see `_band_px`),
+                # so reclaiming that strip for the header costs the table nothing it was
+                # entitled to -- the gap was reserved for the header all along and the table
+                # was simply drawing over it.
+                domain=dict(
+                    x=_layout.table_domain["x"],
+                    y=[
+                        max(0.0, _dom[0]),
+                        min(1.0, max(_dom[0], _dom[1] - _layout.f(_MODEL_HEADER_GAP_PX))),
+                    ],
+                ),
             ),
         )
 
@@ -850,14 +863,28 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             # family half is now wrong by construction, because a panel is an identity class
             # that may span CPU and GPU.
             if model != _last_model_header[0]:
+                # Iter-10 C: the header sits at the TOP of the model's reserved band, not one
+                # header-gap above the PANEL. The old expression put it at the band's BOTTOM,
+                # so the summary table -- which filled the whole band -- rendered ABOVE it and
+                # the section read table -> header -> panels. The user's target, read off the
+                # config-diff family they named as the good example, is header -> table ->
+                # panels. `group_starts` already reserves the band and `group_domains` already
+                # reports it, so only two y-placements move within an already-reserved region:
+                # `_band_px` is unchanged, no panel moves, and no domain is recomputed.
+                _hdr_dom = _layout.group_domains.get(_model_first_panel[model])
+                _hdr_y = _hdr_dom[1] if _hdr_dom else _p_top + _layout.f(_MODEL_HEADER_GAP_PX)
                 annotations.append(
                     dict(
                         x=0.0,
-                        y=_p_top + _layout.f(_MODEL_HEADER_GAP_PX),
+                        y=_hdr_y,
                         xref="paper",
                         yref="paper",
                         xanchor="left",
-                        yanchor="bottom",
+                        # TOP-anchored against the band's top edge. The old BOTTOM anchor was
+                        # correct for a baseline one gap above the panels and is wrong here:
+                        # bottom-anchoring at the band top would push the text out of the band
+                        # entirely, into the figure margin above it.
+                        yanchor="top",
                         showarrow=False,
                         align="left",
                         font=dict(size=13, color="#111"),
