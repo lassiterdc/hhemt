@@ -100,17 +100,36 @@ class TRITONSWMM_analysis_post_processing:
     # the per-scenario stores directly; that is a BUNDLE-FIDELITY limitation, not evidence
     # the data is unnecessary.
     #
-    # What the consumer actually needs is a REDUCTION -- max over (y, x) per timestep, 144
-    # float32/scenario -- not the field (6.6 MB/scenario). That is a ~11,500x amplification
-    # between what is stored and what is used, and it is why consolidating the FIELD is
-    # still the wrong answer even though a consumer exists. The reduction is also
-    # grid-INDEPENDENT (it collapses y and x, so a Norfolk scenario costs the same 144
-    # values as a synth one) whereas the field scales with ncells -- the exact property
-    # that makes the field untenable does not apply to the reduction. If a
-    # bundle-reproducible over-time figure is wanted, consolidate the REDUCTION: see
-    # _streaming_argmax_with_companions, whose per-chunk loop already holds each
-    # (chunk_timesteps, ny, nx) block in memory, so a per-timestep spatial max is a
-    # same-loop addition with ZERO additional I/O. Note the existing tritonswmm/triton
+    # What the consumer actually needs is a REDUCTION -- max over (y, x) per timestep --
+    # not the field (6.6 MB/scenario). On the synth model that is 144 float32/scenario, a
+    # ~11,500x amplification between what is stored and what is used, and it is why
+    # consolidating the FIELD is still the wrong answer even though a consumer exists.
+    #
+    # CORRECTION (2026-08-16): an earlier version of this comment said the reduction costs
+    # "the same 144 values" on a Norfolk scenario as on a synth one. That conflates
+    # grid-independence with CONSTANCY and only the first is true. The reduction collapses
+    # y and x, so it does not scale with ncells; but its LENGTH is len(ds[tstep_dimname]),
+    # i.e. event duration / reporting interval. A Norfolk observed event at 2-minute
+    # reporting over 72 h is ~2,160 values, and the 3,798-member synthetic ensemble has
+    # HETEROGENEOUS event durations.
+    #
+    # That has a consequence for WHERE the reduction may land, and it is the reason it is
+    # not landed here yet: it MUST NOT become a variable in the per-model SUMMARY Dataset.
+    # process_simulation.summarize_triton_simulation_results builds ds_summary on
+    # cell_dims = ("y", "x") and _retrieve_combined_output concatenates those summaries
+    # along event_iloc; a timestep_min-dimensioned variable makes that concat RAGGED across
+    # events, which either NaN-pads to the duration union (silently enormous on a
+    # 3,798-event ensemble) or fails on a coordinate mismatch. It would also change the
+    # schema of an artifact inside _SUMMARY_STEMS_BY_MODEL -- the required preserve set that
+    # Gotchas 34/36/37 all key on. The correct shape is a SEPARATE small per-scenario
+    # artifact with its own tree node and its own toggle, plus a CONSOLIDATION_VERSION bump
+    # per the fingerprint maintenance contract below.
+    #
+    # The zero-I/O claim itself is VERIFIED and stands: _streaming_argmax_with_companions
+    # materializes each (chunk_timesteps, ny, nx) block as a concrete numpy array
+    # (`primary_chunk = ...values`), and three of its four call sites already pass
+    # primary_var="wlevel_m", so np.nanmax(primary_chunk, axis=(1, 2)) is a same-loop
+    # addition against an array already in memory. Note the existing tritonswmm/triton
     # summary node is the ORTHOGONAL reduction (max over TIME per cell, dims (y, x)); the
     # two are not derivable from each other.
     _TIMESERIES_MODE_CONFIG = {

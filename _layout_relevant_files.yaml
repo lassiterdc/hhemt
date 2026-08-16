@@ -53,6 +53,11 @@ non_breaking_allowlist:
       No on-disk artifact, filename, zarr group, log field, or _version.json changes.
   - path: src/hhemt/log.py
     justification: >-
+      timeseries-du reclaim -- ADDITIVE Optional[LogField[bool]] raw_SWMM_binaries_reclaimed on
+      TRITONSWMM_model_log, defaulted None so every pre-existing log_{model}.json deserialises
+      unchanged and consumers coalesce None -> not reclaimed. Same change class as this file's
+      already-allowlisted additive n_resumes and resume_reporting_tsteps fields. No on-disk
+      layout change, no LAYOUT_VERSION bump, no V-module, no golden fixtures. AND:
       model-defect-registry commit 2 — retires the two DERIVED per-defect LogFields
       (triton_has_coupled_resume_fix, triton_has_swmm_depth_scatter_fix). triton_head_sha is
       RETAINED; only the two booleans go. Same change class as this file's existing allowlisted
@@ -129,6 +134,9 @@ non_breaking_allowlist:
       allowlist row the fnmatch glob bug had hidden.
   - path: src/hhemt/config/analysis.py
     justification: >-
+      timeseries-du reclaim -- ADDITIVE reclaim_after_processing field (ReclaimValue) with a
+      strict-safe "none" default; pure config schema via the config/**/*.py glob, no on-disk
+      analysis-tree change, non-breaking, no LAYOUT_VERSION bump. AND:
       Four collapsed non-breaking changes (former duplicate entries). containerization
       ADR-1 — additive execution_environment selector. AND resume-retry-resilience P1 —
       retire hpc_restart_times for hpc_restart_times_simulate/_other. AND the additive

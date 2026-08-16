@@ -118,12 +118,13 @@ def main():
         default=5,
         help="Compression level for output files (0-9)",
     )
-    parser.add_argument(
-        "--clear-full-timeseries",
-        action="store_true",
-        default=False,
-        help="Clear full timeseries files after creating summaries (to save disk space)",
-    )
+    # NOTE: the former `--clear-full-timeseries` boolean is RETIRED, not moved. Its
+    # consumption is superseded by `analysis_config.reclaim_after_processing`, which the
+    # reclaim call below reads from the PERSISTED config. Keeping a boolean CLI flag
+    # beside a config field would put two switches on one axis, which is the overlap the
+    # reclaim design deliberately avoids. No Snakefile emitter ever passed the flag
+    # (grep-verified across workflow.py, the reprocess/bundle/combined generators), so
+    # removing it breaks no caller.
     parser.add_argument(
         "--flag-output",
         type=Path,
@@ -356,16 +357,6 @@ def main():
         logger.info(f"[MEMORY] Peak: {peak_memory:.1f} MB (delta: +{peak_memory - initial_memory:.1f} MB)")
         logger.info("[MEMORY PROFILING] Complete - data available in logfile for analysis")
 
-        # Optionally clear full timeseries files to save disk space
-        if args.clear_full_timeseries:
-            logger.info(f"Clearing full timeseries for scenario {args.event_iloc}")
-            proc._clear_full_timeseries_outputs(
-                which=args.which,  # type: ignore
-                verbose=True,
-            )
-            scenario.log.refresh()
-            logger.info(f"Full timeseries cleared for scenario {args.event_iloc}")
-
         # (R6 positive completion marker) Gate the d_process flag write on THIS
         # model's summary files actually existing on disk. The d_process flag is
         # per-(model_type, sa_id, event_id) — each runner processes one
@@ -407,6 +398,43 @@ def main():
                 f"summary outputs are absent on disk: {_missing_summaries}"
             )
             return 1
+
+        # (reclaim gate, part 3 of 3) Existence is NOT sufficient for a zarr: a store is a
+        # DIRECTORY, so Path.exists() is True for an empty one and a mid-stream-crashed
+        # write .exists() as complete -- the same hazard
+        # processing_analysis.consolidate_to_datatree records at its D5 comment. A size
+        # check does not close it either (a directory has no meaningful size), so verify
+        # OPENABILITY. The summary tier is ~1.4 MB across all four artifacts, so this read
+        # is cheap. Only after all three gates pass -- log field True (above), path present
+        # (above), store openable (here) -- may anything be reclaimed.
+        _unopenable = []
+        for _attr in _SUMMARY_ATTRS_BY_MODEL.get(args.model_type, ()):
+            _summary_path = getattr(scenario.scen_paths, _attr, None)
+            if _summary_path is None:
+                continue
+            try:
+                proc._open(_summary_path).load()
+            except Exception as _exc:  # noqa: BLE001 -- any failure disqualifies
+                _unopenable.append(f"{_summary_path}: {type(_exc).__name__}: {_exc}")
+        if _unopenable:
+            logger.error(
+                f"Refusing to write the d_process completion flag for model "
+                f"'{args.model_type}' scenario {args.event_iloc}: summary outputs "
+                f"are present but not openable: {_unopenable}"
+            )
+            return 1
+
+        # Reclaim redundant per-scenario artifacts now that the summaries are PROVABLY
+        # intact. Deliberately placed BEFORE _emit_runner_flag: if the reclaim raises, this
+        # runner returns non-zero, no completion flag is written, and the scenario re-runs
+        # from raws that are still on disk. Placing it AFTER the flag would invert that --
+        # a half-reclaimed tree carrying a "done" flag and no record of what was removed.
+        proc.reclaim_after_processing(
+            model_type=args.model_type,  # type: ignore
+            which=args.which,  # type: ignore
+            verbose=True,
+        )
+        model_log.write()
 
         _emit_runner_flag(args)
         return 0

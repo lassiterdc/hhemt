@@ -51,6 +51,25 @@ _CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset(
     {"H", "QX", "QY", "MH", "bin", "cfg", "performance"}
 )
 
+# FILE-suffix allowlist for the post-processing reclaim INSIDE `out_tritonswmm/swmm/`.
+# Same shape rationale as _CLEAR_RAW_DELETE_SUBDIRS above and for the same reason: an
+# ALLOWLIST means a future coupled-SWMM artifact family added under `swmm/` is preserved
+# by default (disk-pressure failure) rather than silently deleted (data-loss failure).
+#
+# `.rpt` is NOT here and MUST NEVER BE. `out_tritonswmm/swmm/hydraulics.rpt` is a LIVE
+# COMPLETION PREDICATE, not an output: run_simulation._coupled_swmm_report_finalized
+# returns False when it is absent, and model_run_completed("tritonswmm") calls that gate
+# even on the log-True branch. Deleting the .rpt therefore converts every COMPLETED
+# coupled sim into a permanently-incomplete one -- _all_sims_run goes False,
+# check_scenarios_run reports the whole ensemble as failed, and
+# process_timeseries_runner.py:219 refuses to reprocess the scenario. It is also the
+# reprocess rebuild source (_export_SWMM_outputs reads it).
+#
+# `*_exchange_replay.bin` is likewise absent by construction (it is `.bin`, not `.out`);
+# its reclaim is owned by _reclaim_exchange_replay_sidefiles under the
+# multi_allocation_in_progress guard. Do not fold the two.
+_RECLAIM_COUPLED_SWMM_SUFFIXES: frozenset[str] = frozenset({".out"})
+
 
 class TRITONSWMM_sim_post_processing:
     def __init__(self, run: TRITONSWMM_run, model_log: TRITONSWMM_model_log | None = None) -> None:
@@ -1444,19 +1463,31 @@ class TRITONSWMM_sim_post_processing:
             summary_path = self.scen_paths.output_tritonswmm_triton_summary
             path_name = "output_tritonswmm_triton_summary"
 
-        # Validate that input timeseries exists
-        if timeseries_path is None or not timeseries_path.exists():
-            raise FileNotFoundError(
-                f"Cannot create {model_type} TRITON summary: input timeseries not found at {timeseries_path}. "
-                f"Ensure timeseries processing completed successfully for {model_type} model."
-            )
-
         fname_out = self._validate_path(summary_path, path_name)
 
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             return
+
+        # Validate that input timeseries exists.
+        #
+        # ORDER IS LOAD-BEARING: this check MUST sit BELOW the _already_written
+        # early-return, not above it. The timeseries is a precondition of BUILDING the
+        # summary, not of calling this function. With the check above the early-return,
+        # any re-invocation for a scenario whose timeseries was reclaimed after
+        # processing succeeded raises here even though the summary is present, correct
+        # and recorded -- turning a routine Snakemake re-fire (INPUT/CODE trigger,
+        # reprocess(start_with="process"), a --rerun-triggers mtime fire) into a hard
+        # workflow failure whose message asserts the run is broken when it is not.
+        # write_timeseries_outputs does not recreate the timeseries on a re-fire (its own
+        # _already_written gate reads the LOG, Gotcha 28), so the re-fire path always
+        # arrives here with the timeseries absent.
+        if timeseries_path is None or not timeseries_path.exists():
+            raise FileNotFoundError(
+                f"Cannot create {model_type} TRITON summary: input timeseries not found at {timeseries_path}. "
+                f"Ensure timeseries processing completed successfully for {model_type} model."
+            )
 
         start_time = time.time()
 
@@ -1521,18 +1552,6 @@ class TRITONSWMM_sim_post_processing:
             node_path_name = "output_tritonswmm_node_summary"
             link_path_name = "output_tritonswmm_link_summary"
 
-        # Validate that input timeseries exist
-        if node_timeseries_path is None or not node_timeseries_path.exists():
-            raise FileNotFoundError(
-                f"Cannot create {model_type} SWMM node summary: input timeseries not found at {node_timeseries_path}. "
-                f"Ensure timeseries processing completed successfully for {model_type} model."
-            )
-        if link_timeseries_path is None or not link_timeseries_path.exists():
-            raise FileNotFoundError(
-                f"Cannot create {model_type} SWMM link summary: input timeseries not found at {link_timeseries_path}. "
-                f"Ensure timeseries processing completed successfully for {model_type} model."
-            )
-
         f_out_nodes = self._validate_path(node_summary_path, node_path_name)
         f_out_links = self._validate_path(link_summary_path, link_path_name)
 
@@ -1543,6 +1562,22 @@ class TRITONSWMM_sim_post_processing:
             if verbose:
                 print(f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting.")
             return
+
+        # Validate that input timeseries exist.
+        # Order is load-bearing -- see the matching comment in _export_TRITON_summary.
+        # Both checks (node and link) MUST sit below the already-written early-return, or
+        # a re-fire on a post-processing-reclaimed scenario raises on an input the
+        # function no longer needs.
+        if node_timeseries_path is None or not node_timeseries_path.exists():
+            raise FileNotFoundError(
+                f"Cannot create {model_type} SWMM node summary: input timeseries not found at {node_timeseries_path}. "
+                f"Ensure timeseries processing completed successfully for {model_type} model."
+            )
+        if link_timeseries_path is None or not link_timeseries_path.exists():
+            raise FileNotFoundError(
+                f"Cannot create {model_type} SWMM link summary: input timeseries not found at {link_timeseries_path}. "
+                f"Ensure timeseries processing completed successfully for {model_type} model."
+            )
 
         # Load full timeseries from the appropriate files
         ds_nodes_full = self._open(node_timeseries_path)
@@ -1580,70 +1615,192 @@ class TRITONSWMM_sim_post_processing:
 
         return
 
-    def _clear_full_timeseries_outputs(
-        self,
-        which: Literal["TRITON", "SWMM", "both"] = "both",
-        verbose: bool = False,
-    ):
-        """
-        Clear full timeseries files after summaries have been successfully created.
+    # Paired complement of summary_paths._SUMMARY_STEMS_BY_MODEL. ScenarioPaths declares
+    # eight *_summary attrs and exactly eight matching *_timeseries / *_time_series
+    # siblings (paths.py:127-146) -- one per (model, artifact family) -- so the reclaim
+    # drop set is DERIVED from that pairing rather than hand-listed. A ninth summary
+    # family added later without a pairing entry fails the disjointness guard in
+    # tests/test_synth_reclaim_after_processing.py rather than silently escaping it.
+    _TIMESERIES_ATTRS_BY_MODEL: dict[str, tuple[str, ...]] = {
+        "tritonswmm": (
+            "output_tritonswmm_triton_timeseries",
+            "output_tritonswmm_node_time_series",
+            "output_tritonswmm_link_time_series",
+            "output_tritonswmm_performance_timeseries",
+        ),
+        "triton": (
+            "output_triton_only_timeseries",
+            "output_triton_only_performance_timeseries",
+        ),
+        "swmm": (
+            "output_swmm_only_node_time_series",
+            "output_swmm_only_link_time_series",
+        ),
+    }
 
-        Parameters
-        ----------
-        which : Literal["TRITON", "SWMM", "both"]
-            Which full timeseries to clear
-        verbose : bool
-            If True, print progress messages
+    @staticmethod
+    def _attr_is_swmm_side(attr: str) -> bool:
+        """True for the SWMM node/link artifacts; False for TRITON gridded + performance."""
+        return ("_node_" in attr) or ("_link_" in attr)
+
+    @staticmethod
+    def _reclaim_classes(policy) -> tuple[str, ...]:
+        """Normalize a ReclaimValue to the tuple of artifact classes it elects."""
+        if policy is None or policy == "none":
+            return ()
+        if policy == "all":
+            return ("timeseries", "raw_swmm_binaries")
+        return tuple(policy)
+
+    @staticmethod
+    def _reclaim_attrs(
+        model_type: Literal["tritonswmm", "triton", "swmm"],
+        *,
+        policy,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+    ) -> tuple[str, ...]:
+        """ScenarioPaths attr names the reclaim would remove for this model + policy.
+
+        NAME-level and STATIC on purpose. The falsifying disjointness guard in
+        tests/test_synth_reclaim_after_processing.py asserts a property of the NAME SETS
+        -- that the drop set never intersects summary_paths._SUMMARY_STEMS_BY_MODEL's
+        pairing -- and must run without a fixture, because a guard that needs a compiled
+        synth model is a guard that gets skipped. Resolving these names to concrete Paths
+        needs self.scen_paths and is _reclaim_paths' job.
+        """
+        cls = TRITONSWMM_sim_post_processing
+        if "timeseries" not in cls._reclaim_classes(policy):
+            return ()
+        attrs = cls._TIMESERIES_ATTRS_BY_MODEL.get(model_type, ())
+        if which == "TRITON":
+            attrs = tuple(a for a in attrs if not cls._attr_is_swmm_side(a))
+        elif which == "SWMM":
+            attrs = tuple(a for a in attrs if cls._attr_is_swmm_side(a))
+        return attrs
+
+    def _reclaim_paths(
+        self,
+        model_type: Literal["tritonswmm", "triton", "swmm"],
+        *,
+        policy,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+    ) -> list[tuple[str, Path]]:
+        """Resolve the drop set to ``(artifact_class, path)`` pairs for this scenario.
+
+        The class travels WITH the path rather than being re-derived from the filename at
+        deletion time, so the per-class log record cannot drift from what was actually
+        removed. Classes: ``timeseries_triton``, ``timeseries_swmm``, ``raw_swmm_binaries``.
+        """
+        out: list[tuple[str, Path]] = []
+        for attr in self._reclaim_attrs(model_type, policy=policy, which=which):
+            p = getattr(self.scen_paths, attr, None)
+            if p is None:
+                continue
+            klass = "timeseries_swmm" if self._attr_is_swmm_side(attr) else "timeseries_triton"
+            out.append((klass, Path(p)))
+        if model_type == "tritonswmm" and "raw_swmm_binaries" in self._reclaim_classes(policy):
+            out_dir = self.scen_paths.out_tritonswmm
+            if out_dir is not None and out_dir.exists():
+                for p in sorted(out_dir.glob("**/swmm/*")):
+                    if p.is_file() and p.suffix in _RECLAIM_COUPLED_SWMM_SUFFIXES:
+                        out.append(("raw_swmm_binaries", p))
+        return out
+
+    def _remove_reclaimed(self, path: Path, analysis_dir, verbose: bool) -> None:
+        """Delete one reclaimed artifact, re-stamping the DU sentinels either way.
+
+        Both patterns are preserved verbatim from the function this one replaces, because
+        scripts/check_du_sentinel_sites.py enforces them statically: PATTERN A for a
+        directory (fast_rmtree re-stamps in line), PATTERN B for a file (unlink then
+        restamp_parent_sentinels).
         """
         from hhemt.du_sentinels import restamp_parent_sentinels
 
-        if (which == "both") or (which == "TRITON"):
-            if self.log.TRITON_summary_written and self.log.TRITON_summary_written.get():
-                triton_ts_path = self.scen_paths.output_tritonswmm_triton_timeseries
-                if triton_ts_path is not None and triton_ts_path.exists():
-                    if verbose:
-                        print(f"Clearing TRITON full timeseries for scenario {self._scenario.event_iloc}")
-                    if triton_ts_path.is_dir():
-                        fast_rmtree(triton_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
-                    else:
-                        triton_ts_path.unlink()
-                        restamp_parent_sentinels(triton_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
-                    if self.log.full_TRITON_timeseries_cleared:
-                        self.log.full_TRITON_timeseries_cleared.set(True)
-            elif verbose:
-                print("TRITON summary not created yet, not clearing full timeseries")
+        if verbose:
+            print(f"[reclaim] removing {path}", flush=True)
+        if path.is_dir():
+            fast_rmtree(path, analysis_dir=analysis_dir)  # PATTERN A
+        else:
+            path.unlink()
+            restamp_parent_sentinels(path, analysis_dir=analysis_dir)  # PATTERN B
 
-        if (which == "both") or (which == "SWMM"):
-            node_summary_ok = self.log.SWMM_node_summary_written and self.log.SWMM_node_summary_written.get()
-            link_summary_ok = self.log.SWMM_link_summary_written and self.log.SWMM_link_summary_written.get()
-            if node_summary_ok and link_summary_ok:
-                # Clear node timeseries
-                node_ts_path = self.scen_paths.output_tritonswmm_node_time_series
-                if node_ts_path is not None and node_ts_path.exists():
-                    if verbose:
-                        print(f"Clearing SWMM node full timeseries for scenario {self._scenario.event_iloc}")
-                    if node_ts_path.is_dir():
-                        fast_rmtree(node_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
-                    else:
-                        node_ts_path.unlink()
-                        restamp_parent_sentinels(node_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
+    def reclaim_after_processing(
+        self,
+        *,
+        model_type: Literal["tritonswmm", "triton", "swmm"],
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        verbose: bool = False,
+    ) -> None:
+        """Reclaim redundant per-scenario artifacts once the summaries are PROVABLY intact.
 
-                # Clear link timeseries
-                link_ts_path = self.scen_paths.output_tritonswmm_link_time_series
-                if link_ts_path is not None and link_ts_path.exists():
-                    if verbose:
-                        print(f"Clearing SWMM link full timeseries for scenario {self._scenario.event_iloc}")
-                    if link_ts_path.is_dir():
-                        fast_rmtree(link_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
-                    else:
-                        link_ts_path.unlink()
-                        restamp_parent_sentinels(link_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
+        Repair-and-rename of the former ``_clear_full_timeseries_outputs``, which was
+        emitted by no Snakefile and therefore unreachable in production. Four defects are
+        fixed here and each is load-bearing:
 
-                if self.log.full_SWMM_timeseries_cleared:
-                    self.log.full_SWMM_timeseries_cleared.set(True)
-            elif verbose:
-                print("SWMM summaries not created yet, not clearing full timeseries")
+        1. WHERE IT FIRES. The old call sat at process_timeseries_runner.py:360, BEFORE the
+           R6 positive-completion marker at :382-409, so it cleared on the strength of the
+           log alone -- the log-true/disk-absent divergence class Gotchas 28/34/40 document.
+           This function is invoked AFTER that gate and after an openability check, so all
+           three legs of the proof (log field True, path present, store openable) have
+           already passed when it runs.
+        2. WHAT IT GATES ON. The old body re-read ``self.log.*_summary_written``; this one
+           does not re-derive the proof at all -- the caller owns it, and a second, weaker
+           copy of a gate is how the two drift apart.
+        3. COVERAGE. The old body touched only the three ``output_tritonswmm_*`` paths, so a
+           triton-only or swmm-only analysis reclaimed nothing while printing a message
+           about a TRITON summary it does not have. The pairing table above covers all
+           three model types.
+        4. THE PERFORMANCE TIMESERIES. Absent from the old body; present in the pairing.
 
+        The policy is read from ``cfg_analysis.reclaim_after_processing``, which the process
+        runner loads from the PERSISTED config (Gotcha 73: this is a subprocess, so a
+        driver-side in-memory mutation never reaches here). It NEVER re-derives intent from
+        ``clear_raw``; the two are orthogonal axes.
+        """
+        policy = getattr(self._analysis.cfg_analysis, "reclaim_after_processing", "none")
+        classes = self._reclaim_classes(policy)
+        if not classes:
+            return
+
+        analysis_dir = self._analysis.analysis_paths.analysis_dir
+
+        # The raw_swmm_binaries class no-ops when clear_raw == "none", and the decline is
+        # LOGGED rather than silent. Its only reader, eda.raw_resume_identity.compare_swmm_raw,
+        # needs out_tritonswmm/swmm/hydraulics.out ALONGSIDE the raw H/QX/QY/MH set that
+        # clear_raw governs; on a preserve-raws run those .out files are still live evidence.
+        # A policy that silently declines is indistinguishable from one that ran, which is the
+        # whole failure this feature's disclosure half exists to prevent.
+        if "raw_swmm_binaries" in classes and self._resolve_clear_raw(None) == "none":
+            print(
+                f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: "
+                "'raw_swmm_binaries' is elected but clear_raw == 'none' -- declining that "
+                "class. eda.raw_resume_identity.compare_swmm_raw reads "
+                "out_tritonswmm/swmm/*.out together with the raw H/QX/QY/MH set that "
+                "clear_raw preserves, so those files are still live evidence on this run.",
+                flush=True,
+            )
+            classes = tuple(c for c in classes if c != "raw_swmm_binaries")
+            if not classes:
+                return
+
+        effective_policy = list(classes)
+        removed: set[str] = set()
+        for klass, path in self._reclaim_paths(model_type, policy=effective_policy, which=which):
+            if not path.exists():
+                continue
+            self._remove_reclaimed(path, analysis_dir, verbose)
+            removed.add(klass)
+
+        # Per-scenario disclosure ground truth, written by the ACTOR. analysis_validation's
+        # CheckResult docstring (:58-63) forbids deriving a provenance claim from
+        # cfg_analysis; the symmetric error here would be labelling a scenario "reclaimed"
+        # from the config value rather than from what this call actually removed.
+        if "timeseries_triton" in removed and getattr(self.log, "full_TRITON_timeseries_cleared", None):
+            self.log.full_TRITON_timeseries_cleared.set(True)
+        if "timeseries_swmm" in removed and getattr(self.log, "full_SWMM_timeseries_cleared", None):
+            self.log.full_SWMM_timeseries_cleared.set(True)
+        if "raw_swmm_binaries" in removed and getattr(self.log, "raw_SWMM_binaries_reclaimed", None):
+            self.log.raw_SWMM_binaries_reclaimed.set(True)
         return
 
     @property

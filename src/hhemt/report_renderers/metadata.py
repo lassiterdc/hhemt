@@ -666,9 +666,74 @@ def _resolve_latest_efficiency_csv(eff_dir: Path) -> Path | None:
 # --- page shell --------------------------------------------------------------
 
 
+_VALIDATION_REPORT_FILENAME = "validation_report.json"
+_DATA_AVAILABILITY_CHECK = "Data availability"
+
+
+def _build_data_availability_html(report_path: Path) -> str:
+    """Project the persisted `Data availability` CheckResult onto the Metadata page.
+
+    Reads the SAME `{analysis_dir}/validation_report.json` the Errors-and-Warnings
+    renderer reads -- no second read-model. ADR-14 D1 rejected emitting a parallel
+    `metadata_report.json` on the grounds that a second projection of the same record is a
+    FAIR drift anti-pattern, and that reasoning applies unchanged here.
+
+    Every dynamic value is `_esc`-escaped: the detail rows carry scenario ids and
+    filesystem paths, which legitimately contain characters that would otherwise close a
+    tag.
+    """
+    if not report_path.exists():
+        return _absent_banner(
+            "Data Availability",
+            "Data-availability record not available -- validation_report.json was not "
+            "found. It is written at consolidation; re-run consolidation to populate.",
+        )
+    try:
+        payload = json.loads(report_path.read_text())
+    except (OSError, ValueError):
+        return _absent_banner(
+            "Data Availability",
+            "Data-availability record could not be read -- validation_report.json is "
+            "present but did not parse.",
+        )
+    check = next(
+        (c for c in payload.get("checks", []) if c.get("name") == _DATA_AVAILABILITY_CHECK),
+        None,
+    )
+    if check is None:
+        return _absent_banner(
+            "Data Availability",
+            "This analysis was consolidated by a toolkit build that predates the "
+            "post-processing reclaim, so no data-availability record exists. Every "
+            "per-scenario artifact the run produced is still on disk.",
+        )
+    rows = [
+        ("Status", _esc("reclaim recorded and consistent" if check.get("passed") else "INCONSISTENT")),
+        ("Record", _esc(str(check.get("summary", "")))),
+    ]
+    parts = [_heading("Data Availability"), _kv_table(rows)]
+    parts.append(
+        _banner(
+            "Reclaimed artifact classes were removed deliberately, after this toolkit "
+            "verified the corresponding summary outputs were present and openable on "
+            "disk. An absent timeseries or raw output is a disclosed reclaim, not a "
+            "failed run -- but reprocessing those scenarios is not possible without "
+            "re-running the simulations."
+        )
+    )
+    detail_rows = [
+        [_esc(str(d.get("sa_id", ""))), _esc(str(d.get("scenario", ""))), _esc(str(d.get("detail", "")))]
+        for d in check.get("details", [])
+    ]
+    if detail_rows:
+        parts.append(_grid_table(["Sub-analysis", "Scenario", "Detail"], detail_rows))
+    return "\n".join(parts)
+
+
 def _jump_nav() -> str:
     links = " &middot; ".join(
-        f'<a href="#{_anchor(t)}">{_esc(t)}</a>' for t in ("Provenance", "Reproduction Guide", "SLURM Efficiency")
+        f'<a href="#{_anchor(t)}">{_esc(t)}</a>'
+        for t in ("Provenance", "Data Availability", "Reproduction Guide", "SLURM Efficiency")
     )
     return f'<nav class="jump-nav">{links}</nav>'
 
@@ -744,7 +809,22 @@ def render(
                 "consolidation; re-run consolidation to populate.",
             )
 
-    # (2) Reproduction guide -- pure config-schema introspection, no file read.
+    # (2) Data availability -- reads the SAME persisted validation_report.json the
+    # Errors-and-Warnings renderer reads (ADR-14 D1: no second read-model). Declared
+    # unconditionally per ADR-6 D3, so the info-icon names the source even when absent.
+    validation_report_path = analysis_dir / _VALIDATION_REPORT_FILENAME
+    source_paths.append(validation_report_path)
+    with prov.artist(
+        axes_id="html_section",
+        kind="table",
+        note="data-availability record (post-processing reclaim disclosure)",
+    ) as artist:
+        artist.add_channel(
+            "availability", ProvenanceRef(source_path=_VALIDATION_REPORT_FILENAME)
+        )
+        data_availability_html = _build_data_availability_html(validation_report_path)
+
+    # (3) Reproduction guide -- pure config-schema introspection, no file read.
     reprex_html = _build_reprex_guide_html()
 
     # (3) SLURM efficiency -- glob + descend (os.scandir/os.stat; audit-invisible)
@@ -781,6 +861,7 @@ def render(
         analysis_id,
         _resolve_inline_css(report_cfg),
         provenance_html,
+        data_availability_html,
         reprex_html,
         slurm_html,
     )
@@ -793,6 +874,7 @@ def render(
         manifest_data={
             "renderer": "metadata",
             "sidecar_present": sidecar_path.exists(),
+            "validation_report_present": validation_report_path.exists(),
             "slurm_csv_present": latest is not None,
         },
         provenance=prov,

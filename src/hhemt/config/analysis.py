@@ -14,6 +14,12 @@ from hhemt.config.eda import eda_config
 from hhemt.config.report import report_config as _report_config_model
 
 ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "swmm"]]
+ReclaimValue = Literal["all", "none"] | list[Literal["timeseries", "raw_swmm_binaries"]]
+# Deliberately NOT a widening of ClearRawValue: that alias is ALSO ForceRerunSpec.subject's
+# type (see the comment directly below), so adding an artifact-class member to it would make
+# that member a legal force-rerun subject, where it means nothing. Different axis --
+# ClearRawValue enumerates MODEL TYPES over raw sim outputs; ReclaimValue enumerates
+# ARTIFACT CLASSES over post-processing redundancy -- so a different alias.
 # Legacy shape, RETAINED as the accepted input form and as `ForceRerunSpec.subject`'s type.
 # Every existing config value stays valid and keeps its exact present meaning; the
 # `mode="before"` coercion below maps it to `stage="simulate"`, which is what force_rerun
@@ -655,6 +661,33 @@ class analysis_config(cfgBaseModel):
     )
 
     # CLEANUP / FORCE-RERUN POLICY (cleanup-rerun-delete-redesign Phase 1)
+    #
+    # TWO KNOBS, TWO AXES -- do not conflate them. `clear_raw` is per-MODEL-TYPE over RAW
+    # SIMULATION outputs and fires inside write_timeseries_outputs.
+    # `reclaim_after_processing` is per-ARTIFACT-CLASS over POST-PROCESSING REDUNDANCY and
+    # fires in the process runner only after the summaries are provably intact.
+    reclaim_after_processing: ReclaimValue = Field(
+        "none",
+        description=(
+            "Post-processing reclaim policy. Fires ONLY after the per-model summary "
+            "outputs are verified present AND openable on disk. \"none\" reclaims "
+            "nothing. \"all\" reclaims every artifact class. A list selects classes: "
+            "\"timeseries\" drops the per-scenario *_tseries zarr/nc set (the paired "
+            "complement of summary_paths._SUMMARY_STEMS_BY_MODEL -- no renderer and no "
+            "default consolidation path reads them); \"raw_swmm_binaries\" drops "
+            "out_tritonswmm/swmm/*.out (hydraulics.out plus the per-node *.out set), and "
+            "NEVER *.rpt, which is a live completion predicate via "
+            "run_simulation._coupled_swmm_report_finalized. \"raw_swmm_binaries\" "
+            "no-ops (with a logged reason) when clear_raw == \"none\", because its only "
+            "consumer, eda.raw_resume_identity.compare_swmm_raw, also needs the raw "
+            "H/QX/QY/MH set that clear_raw governs. Every reclaim is recorded per "
+            "scenario in the per-model log and surfaced by "
+            "analysis_validation.check_data_availability. Defaults to \"none\" -- "
+            "existing yamls load cleanly with the strict-safe (reclaim-nothing) default. "
+            "Reclaiming makes REPROCESSING those scenarios impossible without re-running "
+            "the simulations."
+        ),
+    )
     clear_raw: ClearRawValue = Field(
         "none",
         description=(
@@ -717,6 +750,25 @@ class analysis_config(cfgBaseModel):
                     raise ValueError(
                         f"clear_raw list cannot contain sentinel value {item!r}; "
                         f"use the sentinel as a bare string (clear_raw: {item})"
+                    )
+        return v
+
+    @field_validator("reclaim_after_processing", mode="after")
+    @classmethod
+    def _validate_reclaim_after_processing(cls, v):
+        """Mirror of _validate_clear_raw's three reject arms, on the artifact-class axis."""
+        if isinstance(v, list):
+            if not v:
+                raise ValueError(
+                    "reclaim_after_processing list form cannot be empty; use 'none' to reclaim nothing"
+                )
+            if len(v) != len(set(v)):
+                raise ValueError(f"reclaim_after_processing list contains duplicates: {v}")
+            for item in v:
+                if item in ("all", "none"):
+                    raise ValueError(
+                        f"reclaim_after_processing list cannot contain sentinel value {item!r}; "
+                        f"use the sentinel as a bare string (reclaim_after_processing: {item})"
                     )
         return v
 

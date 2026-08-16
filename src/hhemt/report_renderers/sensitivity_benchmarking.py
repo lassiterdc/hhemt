@@ -1,8 +1,11 @@
 """Sensitivity benchmarking renderer.
 
-Dual-panel figure (left: Wall-clock hours, right: Compute-hours = wallclock × n_devices)
-with a shared x-axis given by ``independent_var`` (typical: ``n_devices``). One
-line+marker series per ``group_by_var`` value (typical: ``run_mode``).
+Four stacked panels: Wall-clock | Compute-cost (= wallclock × n_devices) | Strong-scaling
+speedup | Strong-scaling efficiency. TWO x-axis groups, not one shared axis: the top pair
+is keyed on ``independent_var`` (typical: ``n_devices``) and the bottom pair on
+``n_devices`` always, each labelled from its own group so a label cannot describe a
+column its panel did not plot (see ``resolve_axis_groups``). One line+marker series per
+``group_by_var`` value (typical: ``run_mode``).
 
 Special line-drawing rules per the user-locked Phase 6 iter-2 spec:
 
@@ -102,9 +105,13 @@ class FacetConfig:
     that compare benchmark metrics across an additional categorical axis — typically
     DEM resolution (e.g., 1m vs 3.5m vs 10m) or GPU hardware (a6000 vs a100 vs h100).
 
-    When ``facet=None`` (current default) the renderer emits the canonical
-    ``rows=4, cols=1, shared_xaxes=True`` layout. When ``facet`` is provided, the
-    renderer arranges the 4 metric panels per facet value across the grid shape
+    When ``facet=None`` (current default) the renderer emits a ``rows=4,
+    cols=_n_hw`` layout with ``shared_xaxes=False`` and TWO explicitly-linked x-axis
+    groups: panels 1+2 (wall-clock, compute-cost) share an axis keyed on the
+    configured ``independent_var``, and panels 3+4 (speedup, efficiency) share a
+    separate axis keyed on ``n_devices``. See ``_apply_plotly_axis_groups``. When
+    ``facet`` is provided, the renderer arranges the 4 metric panels per facet value
+    across the grid shape
     declared by ``cols`` × ``rows`` (rows is implicit: ``len(facet_values) // cols``,
     rounded up — and the panel-row count multiplies by 4).
 
@@ -117,6 +124,122 @@ class FacetConfig:
     facet_values: list[Any] = field(default_factory=list)
     cols: int = 2
     label_format: str = "{facet_var}={facet_value}"
+
+
+#: The column the SCALING panels (speedup, efficiency) are keyed on. It is a DERIVED
+#: column (`_ensure_n_devices_column`) and is named in
+#: `config/report.py::validate_sensitivity_independent_vars`'s `derived_columns`
+#: carve-out. It is deliberately NOT the configured independent_var: strong-scaling
+#: speedup S(N) and efficiency E_s(N) are defined against device count and nothing else.
+_SCALING_AXIS_VAR = "n_devices"
+
+#: The DataFrame column holding the configured independent_var's values. Assigned
+#: exactly once, at `df["indep_value"] = df["sa_id"].map(df_setup[independent_var])`.
+#: Single-writer by construction, which is why it is a constant here rather than a
+#: threaded parameter -- see the AxisGroup docstring.
+_INDEP_AXIS_COL = "indep_value"
+
+
+@dataclass(frozen=True)
+class AxisGroup:
+    """One shared-x group: the column plotted, the variable it came from, its label.
+
+    THE INVARIANT THIS TYPE EXISTS TO ENFORCE: `label` is DERIVED from `source_var`
+    inside `for_var`, never supplied alongside it. A caller therefore cannot build a
+    group whose label describes a different quantity than the group plots. That
+    divergence is exactly the shipped defect this replaced: one label was derived from
+    `independent_var` and applied, under `sharex=True`, to the whole four-panel figure
+    -- including the two panels keyed on `n_devices`. With independent_var =
+    'analysis.n_mpi_procs' on the live CPU matrix, sa_16 (mpi=8, omp=8) rendered at
+    x=8 in the top pair and x=64 in the bottom pair of one vertically-aligned figure,
+    under a single label naming MPI ranks.
+
+    The defect was INVISIBLE whenever independent_var == 'n_devices', because both
+    halves then plot the same quantity. Any test that asserts a label STRING inherits
+    that blind spot; see tests/test_sensitivity_benchmarking_math.py, which pins
+    DISJOINT top/bottom value ranges so the coincidence cannot mask a regression.
+
+    `source_var` is NOT redundant with `x_col`. The top group's DataFrame column is
+    literally 'indep_value' while its label must be looked up under the configured
+    `independent_var`; a two-field group would look up 'indep_value', miss, and fall
+    through to the raw string on every render.
+
+    Construct via `for_var`. The positional constructor still admits a hand-written
+    label; `test_axis_group_label_is_always_derived_from_its_own_variable` is what
+    holds the factory as the only used path.
+    """
+
+    x_col: str
+    source_var: str
+    label: str
+
+    @classmethod
+    def for_var(cls, x_col: str, source_var: str, labels) -> AxisGroup:
+        """Build a group whose label is looked up under `source_var`, never passed in."""
+        return cls(x_col=x_col, source_var=source_var, label=labels.get(source_var, source_var))
+
+
+def resolve_axis_groups(independent_var: str, sens_cfg) -> tuple[AxisGroup, AxisGroup]:
+    """Resolve the (top, bottom) shared-x groups for one benchmarking figure.
+
+    THE single resolution. Both backends call this and hand the SAME two objects to
+    their draw calls and their label calls, so a panel's label and the quantity it
+    plots come out of one place.
+
+    top    -> wall-clock + compute-cost, keyed on the configured independent_var.
+    bottom -> speedup + efficiency, keyed on n_devices (see _SCALING_AXIS_VAR).
+
+    When independent_var == 'n_devices' the two groups carry the same column and the
+    same label, which is correct: that is the one configuration in which all four
+    panels legitimately READ as one axis. They remain two structurally independent
+    linked groups even then -- the wiring never collapses to a single shared axis --
+    so the top pair's range is always its own.
+    """
+    labels = sens_cfg.independent_var_labels
+    top = AxisGroup.for_var(_INDEP_AXIS_COL, independent_var, labels)
+    bottom = AxisGroup.for_var(_SCALING_AXIS_VAR, _SCALING_AXIS_VAR, labels)
+    return top, bottom
+
+
+def _apply_matplotlib_axis_groups(ax_wall, ax_cost, ax_speedup, ax_eff, *, top, bottom) -> None:
+    """Wire the four matplotlib panels into TWO independent shared-x groups and label
+    each group's boundary axis from that group's own AxisGroup.
+
+    Sharing is post-construction (`plt.subplots(..., sharex=False)` above) because
+    `sharex=True` is all-four-or-nothing. `Axes.sharex()` does NOT call `label_outer`,
+    so the non-boundary rows' tick labels are suppressed explicitly here -- omitting
+    that produces a visibly duplicated tick band, not a silent wrong answer.
+    """
+    ax_wall.sharex(ax_cost)
+    ax_speedup.sharex(ax_eff)
+    ax_wall.tick_params(labelbottom=False)
+    ax_speedup.tick_params(labelbottom=False)
+    ax_wall.set_xlabel("")
+    ax_speedup.set_xlabel("")
+    ax_cost.set_xlabel(top.label)
+    ax_eff.set_xlabel(bottom.label)
+
+
+def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom) -> None:
+    """Plotly counterpart of `_apply_matplotlib_axis_groups`.
+
+    Axis refs are DERIVED from the figure (`xaxis.plotly_name`), never hardcoded: the
+    colspan on rows 1-2 makes the layout axis numbering skip, so row 4's refs are
+    x4 / (x5,x6) / (x6,x7,x8) at n_hw = 1 / 2 / 3 respectively.
+    """
+
+    def _xref(row: int, col: int) -> str:
+        return fig.get_subplot(row, col).xaxis.plotly_name.replace("axis", "")
+
+    fig.update_xaxes(matches=_xref(2, 1), showticklabels=False, title_text="", row=1, col=1)
+    fig.update_xaxes(title_text=top.label, row=2, col=1)
+    # Reachability: `n_hw = max(len(_hw_cols), 1)` at the call site, so n_hw >= 1 for
+    # EVERY input class (including an empty group_value column) and this loop body
+    # executes at least once on every plotly render. There is no reachable input for
+    # which the bottom pair goes unlinked or unlabelled.
+    for _ci in range(1, n_hw + 1):
+        fig.update_xaxes(matches=_xref(4, _ci), showticklabels=False, title_text="", row=3, col=_ci)
+        fig.update_xaxes(title_text=bottom.label, row=4, col=_ci)
 
 
 # Module-level styling constants moved to `report_cfg.sensitivity` per the
@@ -135,7 +258,7 @@ def render(
     static_cfg: StaticPlotBaseConfig | None = None,
     **kwargs,
 ) -> Path:
-    """Render the dual-panel benchmarking figure for one independent variable.
+    """Render the four-panel benchmarking figure for one independent variable.
 
     When ``static_cfg`` is provided (publication static-plots path, ADR-8) the
     matplotlib branch is FORCED (publication is matplotlib-only per ADR-3) and the
@@ -470,7 +593,14 @@ def render(
         if static_cfg is not None
         else tuple(sens_cfg.figsize_inches)
     )
-    fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(4, 1, figsize=_figsize, sharex=True)
+    # TWO shared-x GROUPS, not one. Panels 1+2 plot `indep_value` (the configured
+    # independent_var); panels 3+4 plot `n_devices`. `sharex=True` at construction
+    # forced all four onto ONE range, so with independent_var != n_devices the same
+    # sub-analysis rendered at two different x positions in one vertically-aligned
+    # figure (sa_16 at x=8 in the top pair, x=64 in the bottom). The groups are wired
+    # post-construction by _apply_matplotlib_axis_groups below, from the SAME two
+    # AxisGroup objects that supply the labels.
+    fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(4, 1, figsize=_figsize, sharex=False)
     _draw_panel(
         ax_wall,
         df,
@@ -495,17 +625,21 @@ def render(
         ax_wall.set_yscale("log")
         ax_cost.set_yscale("log")
 
+    # ONE resolution for BOTH the columns below and the labels applied at the bottom
+    # of this block. `bottom.x_col` replaces four bare "n_devices" literals so the
+    # column the scaling panels are keyed on and the label under them cannot drift.
+    _axis_top, _axis_bottom = resolve_axis_groups(independent_var, sens_cfg)
     speedup_per_group = _compute_speedup_per_group(
         df,
         t_col="wallclock_s",
-        indep_col="n_devices",
+        indep_col=_axis_bottom.x_col,
         group_col="group_value",
         baseline_mode="global",
     )
     strong_eff_per_group = _compute_efficiency_per_group(
         df,
         t_col="wallclock_s",
-        indep_col="n_devices",
+        indep_col=_axis_bottom.x_col,
         group_col="group_value",
         mode="strong",
         baseline_mode="global",
@@ -514,7 +648,7 @@ def render(
         ax_speedup,
         speedup_per_group,
         df=df,
-        x_max=df["n_devices"].max(),
+        x_max=df[_axis_bottom.x_col].max(),
         ideal_kind="linear",
         ideal_label="Ideal speedup (S=N)",
         sens_cfg=sens_cfg,
@@ -525,7 +659,7 @@ def render(
         ax_eff,
         strong_eff_per_group,
         df=df,
-        x_max=df["n_devices"].max(),
+        x_max=df[_axis_bottom.x_col].max(),
         ideal_kind="constant",
         ideal_value=1.0,
         ideal_label="Ideal efficiency (=1.0)",
@@ -534,8 +668,9 @@ def render(
         static_cfg=static_cfg,
     )
 
-    xlabel_text = sens_cfg.independent_var_labels.get(independent_var, independent_var)
-    ax_eff.set_xlabel(xlabel_text)  # bottom panel only under sharex=True
+    _apply_matplotlib_axis_groups(
+        ax_wall, ax_cost, ax_speedup, ax_eff, top=_axis_top, bottom=_axis_bottom
+    )
     ax_wall.set_ylabel(f"Wall-clock time ({wall_unit})")
     ax_cost.set_ylabel(f"Compute cost ({cost_unit} × devices)")
     ax_speedup.set_ylabel("Strong-Scaling Speedup\n" + r"$S(N) = t(1)\,/\,t(N)$")
@@ -1047,7 +1182,7 @@ def _draw_panel(
     prov: ProvenanceLog,
     static_cfg=None,
 ) -> None:
-    """Draw one panel of the dual-panel benchmarking figure."""
+    """Draw one of the four panels of the benchmarking figure."""
     groups = sorted(df["group_value"].dropna().unique(), key=str)
     # Dual-source publication style: static_cfg overrides palette + cpu/gpu markers.
     palette = static_cfg.series_palette if static_cfg is not None else sens_cfg.palette
@@ -1350,7 +1485,10 @@ def _build_sensitivity_benchmarking_figure(
 ):
     """Plotly MV port (pre-/design-figure): static 4-panel benchmarking figure.
     Wall-clock | Compute-cost | Strong-scaling speedup | Parallel efficiency,
-    stacked rows=4, cols=1 with shared x-axis. One trace per group_by_var value
+    stacked rows=4 with cols=_n_hw (one column per hardware family on the two scaling
+    panels) and TWO explicitly-linked x-axis groups rather than one shared axis: rows
+    1+2 keyed on ``independent_var``, rows 3+4 on ``n_devices``. One trace per
+    group_by_var value
     per panel, sharing the Okabe-Ito palette (sens_cfg.palette) as Plotly's
     colorway. Informationally congruent with the matplotlib branch — no hover
     refinement, no line-toggle UX, no per-panel zoom/pan customization.
@@ -1371,11 +1509,21 @@ def _build_sensitivity_benchmarking_figure(
     # 0.2/cols; a third of that keeps the per-column y-axis titles clear of the
     # neighbouring panel at the column counts this campaign produces.
     _h_space = min(0.09, 0.20 / _n_hw)
+    # shared_xaxes=False is DELIBERATE and the axis linking is done explicitly by
+    # _apply_plotly_axis_groups below. Two reasons, both measured at HEAD 73696af:
+    # (1) rows 1+2 plot `indep_value` while rows 3+4 plot `n_devices`, so one shared
+    #     range is wrong whenever independent_var != n_devices;
+    # (2) `shared_xaxes=True` behaves DIFFERENTLY by _n_hw under this colspan spec --
+    #     at _n_hw == 1 rows 1-3 all get matches=<row4> and showticklabels=False, while
+    #     at _n_hw >= 2 rows 1-2 get matches=None and visible ticks. Explicit per-group
+    #     linking makes the layout identical at every _n_hw.
+    # vertical_spacing rises 0.06 -> 0.09 because row 2 now carries its own tick band
+    # AND an x-axis title immediately above row 3's hardware subplot titles.
     fig = make_subplots(
         rows=4,
         cols=_n_hw,
-        shared_xaxes=True,
-        vertical_spacing=0.06,
+        shared_xaxes=False,
+        vertical_spacing=0.09,
         horizontal_spacing=_h_space,
         specs=[
             [{"colspan": _n_hw}] + [None] * (_n_hw - 1),
@@ -1412,6 +1560,12 @@ def _build_sensitivity_benchmarking_figure(
         height=1000,
     )
 
+    # ONE resolution for this whole figure. Hoisted above both consumers -- the
+    # `_x_max_c` read in the per-family loop below and the label/linking call further
+    # down -- so the column the scaling panels are keyed on and the label under them
+    # are literally the same object rather than two agreeing lookups.
+    _axis_top, _axis_bottom = resolve_axis_groups(independent_var, sens_cfg)
+
     # ---- Panels 1 + 2: wallclock + compute-cost -------------------------
     for row, y_col, panel_id in (
         (1, "wallclock_disp", "ax_wall_plotly"),
@@ -1445,7 +1599,10 @@ def _build_sensitivity_benchmarking_figure(
         _ef_c = {k: v for k, v in strong_eff_per_group.items() if _hardware_family(str(k)) == _fam}
         _sp_all_c = {k: v for k, v in (speedup_all_rows or {}).items() if _hardware_family(str(k)) == _fam} or None
         _ef_all_c = {k: v for k, v in (efficiency_all_rows or {}).items() if _hardware_family(str(k)) == _fam} or None
-        _x_max_c = float(_df_c["n_devices"].max())
+        # Same column the scaling panels are keyed on, read from the resolved group
+        # rather than re-typed, so the ideal-reference line's extent cannot outlive a
+        # change to _SCALING_AXIS_VAR.
+        _x_max_c = float(_df_c[_axis_bottom.x_col].max())
         _plotly_metric_panel_precomputed(
             fig,
             _sp_c,
@@ -1508,13 +1665,13 @@ def _build_sensitivity_benchmarking_figure(
             # feedback); the legend entry stays visible at the clipped y-range,
             # the line itself extends off the panel.
 
-    # ---- Axis labels + tickers ------------------------------------------
-    xlabel_text = sens_cfg.independent_var_labels.get(independent_var, independent_var)
-    fig.update_xaxes(title_text="", row=1, col=1)
-    fig.update_xaxes(title_text="", row=2, col=1)
-    for _ci in range(1, _n_hw + 1):
-        fig.update_xaxes(title_text="", row=3, col=_ci)
-        fig.update_xaxes(title_text=xlabel_text, row=4, col=_ci)
+    # ---- Axis groups (linking + tick visibility + labels) + tickers ------
+    # ONE resolution, TWO groups. The retired form derived a single label from
+    # independent_var and applied it to row 4 -- the row keyed on n_devices -- while
+    # `shared_xaxes=True` made that row's axis the whole figure's axis at _n_hw == 1.
+    # The two groups are the SAME objects the `_x_max_c` read above consumed (hoisted
+    # to the top of this function), not a second resolution that merely agrees.
+    _apply_plotly_axis_groups(fig, n_hw=_n_hw, top=_axis_top, bottom=_axis_bottom)
     fig.update_yaxes(title_text=f"Wall-clock ({wall_unit})", row=1, col=1)
     fig.update_yaxes(title_text=f"Compute cost ({cost_unit} × devices)", row=2, col=1)
     # OE-1: the numerator is the FAMILY baseline (CPU -> serial CPU; each GPU hardware ->

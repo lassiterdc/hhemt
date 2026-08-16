@@ -492,7 +492,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     - Common fields (all): simulation_completed, sim_run_time_minutes, processing_log
     - Performance fields (triton, tritonswmm): performance_timeseries_written, performance_summary_written
     - TRITON fields (triton, tritonswmm): TRITON_timeseries_written, TRITON_summary_written, raw_TRITON_outputs_cleared, full_TRITON_timeseries_cleared
-    - SWMM fields (swmm, tritonswmm): SWMM_node/link_timeseries_written, SWMM_node/link_summary_written, raw_SWMM_outputs_cleared, full_SWMM_timeseries_cleared
+    - SWMM fields (swmm, tritonswmm): SWMM_node/link_timeseries_written, SWMM_node/link_summary_written, raw_SWMM_outputs_cleared, full_SWMM_timeseries_cleared, raw_SWMM_binaries_reclaimed
     """
 
     event_iloc: int = 0
@@ -533,6 +533,13 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     SWMM_link_summary_written: Optional[LogField[bool]] = None
     raw_SWMM_outputs_cleared: Optional[LogField[bool]] = None
     full_SWMM_timeseries_cleared: Optional[LogField[bool]] = None
+    # Post-processing reclaim (analysis_config.reclaim_after_processing) of
+    # out_tritonswmm/swmm/*.out -- the coupled-SWMM binary outputs, NEVER the .rpt, which
+    # is a live completion predicate. Distinct from raw_SWMM_outputs_cleared, which records
+    # the clear_raw pass over the RAW SIM tree; these are two axes and two records.
+    # Additive + defaulted None, so every pre-existing log_{model}.json deserialises
+    # unchanged and consumers coalesce None -> not reclaimed.
+    raw_SWMM_binaries_reclaimed: Optional[LogField[bool]] = None
 
     # Validators for LogField types
     _validate_bool_fields = field_validator(
@@ -549,6 +556,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "SWMM_link_summary_written",
         "raw_SWMM_outputs_cleared",
         "full_SWMM_timeseries_cleared",
+        "raw_SWMM_binaries_reclaimed",
         mode="before",
     )(_create_logfield_validator(bool))
 
@@ -584,6 +592,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "SWMM_link_summary_written",
         "raw_SWMM_outputs_cleared",
         "full_SWMM_timeseries_cleared",
+        "raw_SWMM_binaries_reclaimed",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 

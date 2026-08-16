@@ -393,6 +393,7 @@ def assert_model_simulation_run(
 def assert_model_outputs_processed(
     analysis: TRITONSWMM_analysis,
     model_type: str,
+    check_timeseries: bool = True,
 ):
     """
     Assert that outputs were processed for a specific model type by checking actual output files.
@@ -470,6 +471,19 @@ def assert_model_outputs_processed(
                 ("SWMM-only link timeseries", paths.output_swmm_only_link_time_series),
                 ("SWMM-only node summary", paths.output_swmm_only_node_summary),
                 ("SWMM-only link summary", paths.output_swmm_only_link_summary),
+            ]
+
+        # Post-processing reclaim (analysis_config.reclaim_after_processing) removes the
+        # per-scenario *_tseries artifacts after the summaries are proven intact, so "what
+        # a processed scenario looks like" is config-dependent from that feature forward.
+        # Callers that enabled the reclaim pass check_timeseries=False. The default True
+        # reproduces the pre-feature assertion byte-for-byte, so every existing call site
+        # (test_synth_01/02/04) is unchanged. This EXTENDS the switch the sibling
+        # assert_model_outputs_exist already carries rather than introducing a second,
+        # parallel one on the same axis.
+        if not check_timeseries:
+            required_paths = [
+                (desc, path) for (desc, path) in required_paths if "timeseries" not in desc.lower()
             ]
 
         # Check each required path exists

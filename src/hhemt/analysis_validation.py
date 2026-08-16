@@ -1665,6 +1665,119 @@ def check_eda_calc_ran(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
+_RECLAIM_LOG_FIELDS: dict[str, str] = {
+    "full_TRITON_timeseries_cleared": "TRITON timeseries",
+    "full_SWMM_timeseries_cleared": "SWMM node/link timeseries",
+    "raw_SWMM_binaries_reclaimed": "coupled raw SWMM .out binaries",
+}
+
+
+def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Aggregate: which per-scenario artifact classes were DELIBERATELY reclaimed.
+
+    A deliberate reclaim is a fact about data availability, not an error -- so this check
+    passes with a descriptive summary in the normal case and fails only in the one state
+    that is genuinely wrong: a scenario whose log records a reclaim while its per-model
+    summary set is ABSENT. That is the state in which the reclaim stopped being a reclaim
+    and became damage.
+
+    Three properties are load-bearing and none is stylistic.
+
+    1. PATH-ONLY. The per-model log is read straight off disk at
+       ``sims/{event_id}/log_{model}.json``; ``TRITONSWMM_scenario`` is never instantiated,
+       because its constructor mkdir's ``processed/``/``swmm/``/``out_swmm/`` as a side
+       effect (the discipline ``summary_paths.py`` codifies). It matters more here than
+       there: this runs over 11,394 model-sims on the synthetic ensemble.
+
+    2. IT READS THE LOG, NEVER THE CONFIG. ``CheckResult``'s own docstring forbids deriving
+       ``instrument`` from ``cfg_analysis.clear_raw`` because "that records configured
+       intent". The symmetric error here would be labelling a scenario reclaimed from
+       ``cfg_analysis.reclaim_after_processing`` -- a scenario that failed before the
+       reclaim fired, or one processed by a pre-feature toolkit, would be mislabelled.
+
+    3. DISCLOSED DENOMINATOR. Every ``check_*`` derives ``passed`` from ``len(details) == 0``,
+       which cannot distinguish "examined N, found nothing" from "examined 0". The summary
+       names the examined and indeterminate counts so a vacuous pass is legible in the
+       artifact itself.
+    """
+    import json
+
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.summary_paths import scenario_summaries_present
+
+    details: list[dict] = []
+    examined = 0
+    indeterminate = 0
+    reclaimed_counts: dict[str, int] = {label: 0 for label in _RECLAIM_LOG_FIELDS.values()}
+
+    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+        try:
+            enabled = sub._get_enabled_model_types()
+            sim_dir = Path(sub.analysis_paths.simulation_directory)
+        except Exception:  # noqa: BLE001 -- a sub we cannot address is indeterminate, not failed
+            continue
+        for event_iloc in sub.df_sims.index:
+            ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
+            event_id = compute_event_id_slug(ev)
+            for model in enabled:
+                examined += 1
+                logf = sim_dir / event_id / f"log_{model}.json"
+                if not logf.exists():
+                    indeterminate += 1
+                    continue
+                try:
+                    payload = json.loads(logf.read_text())
+                except (OSError, ValueError):
+                    indeterminate += 1
+                    continue
+                classes = [
+                    label
+                    for field, label in _RECLAIM_LOG_FIELDS.items()
+                    if payload.get(field) is True
+                ]
+                if not classes:
+                    continue
+                for label in classes:
+                    reclaimed_counts[label] += 1
+                if not scenario_summaries_present(sub, event_id, [model]):
+                    row = {
+                        "scenario": event_id,
+                        "scenario_dir": str(sim_dir / event_id),
+                        "detail": (
+                            f"{model}: reclaim recorded ({', '.join(classes)}) but the "
+                            "per-model summary set is ABSENT -- the reclaim is damage, not "
+                            "a disclosed reclaim"
+                        ),
+                    }
+                    if sa_id is not None:
+                        row["sa_id"] = f"sa_{sa_id}"
+                    details.append(row)
+
+    passed = not details
+    reclaimed_bits = [f"{label}: {n}" for label, n in reclaimed_counts.items() if n]
+    if not reclaimed_bits:
+        headline = "No per-scenario artifacts were reclaimed"
+    else:
+        headline = "Reclaimed after processing -- " + "; ".join(reclaimed_bits)
+    summary = (
+        f"{headline}. Examined {examined} (model, scenario) pair(s); "
+        f"{indeterminate} indeterminate (no readable model log)."
+    )
+    if not passed:
+        summary = (
+            f"{len(details)} of {examined} (model, scenario) pair(s) record a reclaim with "
+            f"their summaries absent. {summary}"
+        )
+    return CheckResult(
+        name="Data availability",
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+        instrument="summary_tier",
+    )
+
+
 def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
@@ -1688,6 +1801,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_known_resume_defects(analysis),  # registry-verdict counterpart (build-level, no log evidence)
             check_resume_schedule_honored(analysis),  # Phase 5: replay_t / n_resumes vs configured schedule
             check_eda_calc_ran(analysis),  # F4: enumerated EDA figures vs present eda/*.verdict.json
+            check_data_availability(analysis),  # reclaim disclosure: which artifact classes were reclaimed
         ]
         + _read_persisted_eda_verdicts(analysis)
     )
