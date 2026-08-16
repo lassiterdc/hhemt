@@ -189,8 +189,11 @@ def resolve_axis_groups(independent_var: str, sens_cfg) -> tuple[AxisGroup, Axis
     top    -> wall-clock + compute-cost, keyed on the configured independent_var.
     bottom -> speedup + efficiency, keyed on n_devices (see _SCALING_AXIS_VAR).
 
-    When independent_var == 'n_devices' the two groups are equal, which is correct:
-    that is the one configuration in which all four panels legitimately share an axis.
+    When independent_var == 'n_devices' the two groups carry the same column and the
+    same label, which is correct: that is the one configuration in which all four
+    panels legitimately READ as one axis. They remain two structurally independent
+    linked groups even then -- the wiring never collapses to a single shared axis --
+    so the top pair's range is always its own.
     """
     labels = sens_cfg.independent_var_labels
     top = AxisGroup.for_var(_INDEP_AXIS_COL, independent_var, labels)
@@ -255,7 +258,7 @@ def render(
     static_cfg: StaticPlotBaseConfig | None = None,
     **kwargs,
 ) -> Path:
-    """Render the dual-panel benchmarking figure for one independent variable.
+    """Render the four-panel benchmarking figure for one independent variable.
 
     When ``static_cfg`` is provided (publication static-plots path, ADR-8) the
     matplotlib branch is FORCED (publication is matplotlib-only per ADR-3) and the
@@ -1179,7 +1182,7 @@ def _draw_panel(
     prov: ProvenanceLog,
     static_cfg=None,
 ) -> None:
-    """Draw one panel of the dual-panel benchmarking figure."""
+    """Draw one of the four panels of the benchmarking figure."""
     groups = sorted(df["group_value"].dropna().unique(), key=str)
     # Dual-source publication style: static_cfg overrides palette + cpu/gpu markers.
     palette = static_cfg.series_palette if static_cfg is not None else sens_cfg.palette
