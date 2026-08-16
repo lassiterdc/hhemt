@@ -886,8 +886,13 @@ def _build_conduit_flow_figure(
                     mode="lines",
                     line=dict(color=map_cfg.watershed_overlay_color, width=map_cfg.watershed_overlay_width),
                     hoverinfo="skip",
-                    showlegend=False,
-                    name="watershed",
+                    # Iter-9 A1: surfaced as a legend entry, named identically to the
+                    # peak-flood and config-diff swatches. This site is inside a per-COLUMN
+                    # loop, so showlegend is bound to the first column rather than written
+                    # True — a literal True here would emit one entry per map column.
+                    showlegend=(col_idx == 1),
+                    legendgroup="watershed_extent",
+                    name="watershed extent (bbox)",
                 ),
                 row=1,
                 col=col_idx,

@@ -1323,8 +1323,15 @@ def _build_peak_flood_depth_figure(
                 mode="lines",
                 line=dict(color=map_cfg.watershed_overlay_color, width=map_cfg.watershed_overlay_width),
                 hoverinfo="skip",
-                showlegend=False,
-                name="watershed",
+                # Iter-9 A1: the overlay was drawn but suppressed from the legend, so the
+                # boundary read as an unexplained line. It is now a legend entry, named to
+                # match `eda/_config_diff.py`'s swatch verbatim so one geometry has one name
+                # across figure families. The trace is emitted once per PANEL (depth here,
+                # WSE below); `legendgroup` + showlegend-on-the-first is what keeps that from
+                # rendering as two identical entries.
+                showlegend=True,
+                legendgroup="watershed_extent",
+                name="watershed extent (bbox)",
             ),
             row=1,
             col=1,
@@ -1343,8 +1350,12 @@ def _build_peak_flood_depth_figure(
                 mode="lines",
                 line=dict(color=map_cfg.watershed_overlay_color, width=map_cfg.watershed_overlay_width),
                 hoverinfo="skip",
+                # Iter-9 A1: same legendgroup as the depth panel's trace, showlegend=False so
+                # the shared entry appears exactly ONCE. Toggling it hides both panels'
+                # boundaries together, which is the correct coupling — it is one geometry.
                 showlegend=False,
-                name="watershed",
+                legendgroup="watershed_extent",
+                name="watershed extent (bbox)",
             ),
             row=1,
             col=2,
