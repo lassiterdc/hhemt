@@ -711,6 +711,57 @@ def _provenance_process(runs: list[dict]) -> str:
     return "<h4>5. Process</h4>\n" + summary + _grid_table(["Run", "Instrument(s)", "Inputs", "Result(s)"], rows)
 
 
+def _path_tree_html(paths: list[str]) -> str:
+    """Render `paths` as a folder tree, the way a directory listing is normally shown.
+
+    Iter-10 H. The user: 'the presentation of sub datasets is unreadable; it's just a
+    massive list of filepaths which is impossible to read in this block of text; i think a
+    branch structure like people use to display folder structure could be good for this.'
+
+    Measured on the delivered bundle: 29 paths in ONE table cell, space-separated, over two
+    distinct prefixes (`sensitivity_datatree.zarr/` and `subanalyses/`).
+
+    Single-child chains are COLLAPSED onto one line (`sa_gpu_0_r1/analysis_datatree.zarr`
+    rather than a directory line plus an indented leaf). Without that, 28 identically
+    shaped sub-analyses render as 56 lines whose every other line is the same filename —
+    which trades one unreadable shape for another rather than fixing the readability the
+    user asked about.
+    """
+    tree: dict = {}
+    for p in paths:
+        segs = [s for s in p.split("/") if s]
+        if not segs:
+            continue
+        node = tree
+        for s in segs:
+            node = node.setdefault(s, {})
+
+    def _collapse(name: str, node: dict) -> tuple[str, dict]:
+        # Fold a chain of single children into one label; stop at a branch or a leaf.
+        while len(node) == 1:
+            (child,) = node
+            if not node[child]:
+                name, node = f"{name}/{child}", {}
+                break
+            name, node = f"{name}/{child}", node[child]
+        return name, node
+
+    lines: list[str] = []
+
+    def _walk(node: dict, prefix: str) -> None:
+        items = sorted(node.items())
+        for i, (name, child) in enumerate(items):
+            last = i == len(items) - 1
+            label, child = _collapse(name, child)
+            lines.append(f"{prefix}{'└── ' if last else '├── '}{_esc(label)}")
+            if child:
+                _walk(child, prefix + ("    " if last else "│   "))
+
+    _walk(tree, "")
+    _style = "margin:0;font-size:11px;line-height:1.45"
+    return f"<pre class='hhemt-path-tree' style='{_style}'>" + "\n".join(lines) + "</pre>"
+
+
 def _provenance_outputs(graph: list[dict], root: dict) -> str:
     dataset = _find_consolidated_dataset(graph)
     parts: list[str] = ["<h4>6. Outputs &amp; CF data dictionary</h4>"]
@@ -728,7 +779,8 @@ def _provenance_outputs(graph: list[dict], root: dict) -> str:
         rows.append(("Conforms to", _code(conforms)))
     sub_parts = _ref_ids(_prop(root, "hasPart"))
     if sub_parts:
-        rows.append(("Sub-datasets (hasPart)", " ".join(_code(p) for p in sub_parts)))
+        # Iter-10 H: a folder tree, not a space-joined run of <code> spans.
+        rows.append((f"Sub-datasets (hasPart) — {len(sub_parts)}", _path_tree_html(list(sub_parts))))
     parts.append(_kv_table(rows))
 
     # Descriptor columns come from MODULE introspection (cf_conventions._QUANTITY_PROVENANCE),

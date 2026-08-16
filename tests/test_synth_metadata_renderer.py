@@ -680,3 +680,42 @@ def test_job_purpose_and_hardware_are_joined_in_from_toolkit_records():
         assert expected in html, expected
     # JobName is `python` for every row, which is precisely why it is not a column.
     assert "What the job did" in html
+
+
+def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
+    """Iter-10 H: 'the presentation of sub datasets is unreadable; it's just a massive list
+    of filepaths ... i think a branch structure like people use to display folder structure
+    could be good for this.'
+
+    Shape measured on the delivered bundle: 29 paths in ONE cell, space-separated, over two
+    top-level prefixes. This asserts the tree markup AND that no path is lost -- a renderer
+    that dropped entries would otherwise look tidier and score better.
+    """
+    paths = [
+        "sensitivity_datatree.zarr/",
+        "subanalyses/sa_gpu_0_r1/analysis_datatree.zarr",
+        "subanalyses/sa_gpu_0_r2/analysis_datatree.zarr",
+        "subanalyses/sa_serial_6_r1/analysis_datatree.zarr",
+    ]
+    html = metadata._path_tree_html(paths)
+
+    assert html.startswith("<pre"), "the tree must be preformatted or the glyphs collapse"
+    assert "├── " in html or "└── " in html, "no branch glyphs -- this is still a flat list"
+
+    body = html.split(">", 1)[1]
+    lines = [ln for ln in body.replace("</pre>", "").split("\n") if ln.strip()]
+
+    # Every leaf survives the transformation.
+    for leaf in ("sa_gpu_0_r1", "sa_gpu_0_r2", "sa_serial_6_r1", "sensitivity_datatree.zarr"):
+        assert any(leaf in ln for ln in lines), leaf
+
+    # Single-child chains COLLAPSE: each sub-analysis is one line carrying both its own
+    # directory and its single child, never a directory line plus an indented leaf. Without
+    # this the real 28-sub-analysis population renders 56 lines, half of them the same
+    # filename, which is the unreadability the item is about reached from the other side.
+    collapsed = [ln for ln in lines if "sa_gpu_0_r1/analysis_datatree.zarr" in ln]
+    assert len(collapsed) == 1, f"single-child chain not collapsed: {lines}"
+
+    # `subanalyses` is a real branch (3 children), so it must NOT be collapsed into its
+    # children -- proving the collapse stops at a branch rather than flattening everything.
+    assert any(ln.strip().endswith("subanalyses") for ln in lines), lines
