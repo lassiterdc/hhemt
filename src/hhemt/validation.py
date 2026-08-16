@@ -1599,20 +1599,44 @@ def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "Validation
         for _a, _p in (cspec.sif_paths_by_arch or {}).items()
     ]
     for _field, _p in _declared:
-        if _p and not _Path(_p).is_file():
-            result.add_error(
-                field=_field,
-                message=(
-                    f"container mode declares a SIF at '{_p}' but no file exists "
-                    "there. The simulation would fail inside a SLURM allocation with "
-                    "an opaque `apptainer exec` error."
-                ),
-                fix_hint=(
-                    "Build the SIF (`hhemt build-sif --def <your.def> --sif-out <path>`) "
-                    "or correct the path. On the from_doi path this is repointed "
-                    "automatically at ingest."
-                ),
-            )
+        if not _p:
+            continue
+        _pp = _Path(_p)
+        # A container target is EITHER a SIF file OR an apptainer SANDBOX DIRECTORY. `apptainer
+        # exec` accepts both, so a file-only test rejects a working container. This is not a
+        # hypothetical: on a cluster with no /etc/subuid mapping and ptrace restricted
+        # (yama.ptrace_scope=3), apptainer falls back to proot for root emulation and CANNOT
+        # produce a SIF at all -- both %post execution and squashfs packing fail -- while
+        # `apptainer build --sandbox` from a docker-archive succeeds. There, the sandbox is the
+        # only buildable form.
+        #
+        # The sandbox arm is discriminated by the `.singularity.d/` marker directory apptainer
+        # writes at every sandbox root, NOT by mere directory existence. That keeps this a real
+        # existence proof: an arbitrary directory (a typo'd path that happens to exist, a
+        # half-extracted tree) still fails, which is the defect-10 intent this check was added for.
+        if _pp.is_file():
+            continue
+        if _pp.is_dir() and (_pp / ".singularity.d").is_dir():
+            continue
+        _kind = (
+            "a directory exists there but carries no .singularity.d/ marker, so it is not an "
+            "apptainer sandbox"
+            if _pp.is_dir()
+            else "no SIF file or sandbox directory exists there"
+        )
+        result.add_error(
+            field=_field,
+            message=(
+                f"container mode declares a container at '{_p}' but {_kind}. The "
+                "simulation would fail inside a SLURM allocation with an opaque "
+                "`apptainer exec` error."
+            ),
+            fix_hint=(
+                "Build the SIF (`hhemt build-sif --def <your.def> --sif-out <path>`), or "
+                "point at an `apptainer build --sandbox` directory, or correct the path. "
+                "On the from_doi path this is repointed automatically at ingest."
+            ),
+        )
 
 
 # ============================================================================
