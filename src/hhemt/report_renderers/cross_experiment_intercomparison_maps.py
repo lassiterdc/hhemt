@@ -1140,11 +1140,45 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     # content width is READ from the figure rather than re-derived at the call site.
     fig.update_layout(width=_FIG_W, margin=dict(t=_T_MARGIN, l=30, r=30))
     b_px = add_figure_caption(fig, _caption, content_w_px=content_width_px(fig), plot_h_px=plot_h)
+    # Iter-10 C: PAGE TITLE naming the experiments actually compared, then the descriptive
+    # master line beneath it. The config-diff family carries a `{analysis_id} - Config-diff
+    # maps` page title, and this figure carried none.
+    #
+    # It does NOT mirror that form, and the difference is load-bearing rather than
+    # cosmetic. That title is emitted by
+    # `bundle/combined_snakefile_generator._harvest_per_experiment_rule_specs`, which
+    # composes ONE page per (base-experiment, plot_id) -- so a single `{analysis_id}` is
+    # true there by construction. The cross-experiment renderers are FIXED and span every
+    # combined experiment, so borrowing that form would assert ONE experiment for a figure
+    # comparing several: a string correct at its own emission site and false in this one.
+    # User ruling 2026-08-16 chose the span-naming form over a scope-generic constant.
+    #
+    # The base ids are derived HERE rather than imported from `bundle`: the equivalent
+    # helper lives in `combined_snakefile_generator`, and a renderer -> bundle import would
+    # add a layering edge in the direction the user already ruled against when the same
+    # question arose for `_config_identity` (lift to a shared module; do not couple bundle
+    # and renderer). Two tokens, longer first, mirroring that module's documented rule.
+    _bases: list[str] = []
+    for _ex in experiments:
+        _eid = str(_ex.get("experiment", ""))
+        for _tok in ("_tritonswmm", "_triton"):
+            if _eid.endswith(_tok):
+                _eid = _eid[: -len(_tok)]
+                break
+        if _eid and _eid not in _bases:
+            _bases.append(_eid)
+    _span = " vs ".join(_bases)
+    _page_title = (
+        f"{_span} — Clean vs resume spatial diff maps" if _span else "Clean vs resume spatial diff maps"
+    )
     fig.update_layout(
         height=plot_h + _T_MARGIN + b_px,
         width=_FIG_W,
         margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
-        title="Clean vs resume, spatial: resumed alternates vs the clean reference within each byte-identity class",
+        title=(
+            f"{_page_title}<br><sup>resumed alternates vs the clean reference within "
+            "each byte-identity class</sup>"
+        ),
         annotations=list(fig.layout.annotations) + annotations,
         showlegend=False,
         plot_bgcolor="white",
