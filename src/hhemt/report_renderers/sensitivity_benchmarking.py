@@ -1,8 +1,11 @@
 """Sensitivity benchmarking renderer.
 
-Dual-panel figure (left: Wall-clock hours, right: Compute-hours = wallclock × n_devices)
-with a shared x-axis given by ``independent_var`` (typical: ``n_devices``). One
-line+marker series per ``group_by_var`` value (typical: ``run_mode``).
+Four stacked panels: Wall-clock | Compute-cost (= wallclock × n_devices) | Strong-scaling
+speedup | Strong-scaling efficiency. TWO x-axis groups, not one shared axis: the top pair
+is keyed on ``independent_var`` (typical: ``n_devices``) and the bottom pair on
+``n_devices`` always, each labelled from its own group so a label cannot describe a
+column its panel did not plot (see ``resolve_axis_groups``). One line+marker series per
+``group_by_var`` value (typical: ``run_mode``).
 
 Special line-drawing rules per the user-locked Phase 6 iter-2 spec:
 
