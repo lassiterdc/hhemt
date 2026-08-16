@@ -243,6 +243,68 @@ def side_table_columns(
     return ordered, values
 
 
+def watershed_swatch(
+    layout: PanelLayout,
+    first_row: int,
+    last_row: int,
+    *,
+    label: str = "watershed extent (bbox)",
+    font_px: int = 10,
+) -> tuple[dict, dict]:
+    """The watershed legend key: an unfilled rect plus its label, CENTERED under the table.
+
+    Fills a promise this module's own docstring has been making since the extraction --
+    "``panel_outline_shape`` and ``watershed_swatch`` are separate here" -- while only the
+    first of the two existed.
+
+    Centering is under ``side_table_x``, the side table's REAL domain. The pre-extraction
+    call site centered nothing: it asked ``align_x`` for the LEFT edge of a box it named
+    "table" but which was actually ``[0.006, dom1[0]]``, the panel-outline-to-first-map
+    span. That returns 0.006 -- identically the panel outline's own ``x0`` -- so the swatch
+    was drawn ON the outline. The reported overlap is that coincidence, not a nudge error.
+
+    The composite (rect + gap + label) is centered as a UNIT, which needs the label's
+    width; ``align_x(edge="center")`` returns a bare midpoint and would centre only the
+    rect's left corner. The width is an ESTIMATE from ``figure_caption.text_width_px``.
+
+    Returns ``(rect_shape, label_annotation)``. NO watershed precondition -- the caller
+    decides whether a watershed exists, so that a bundle without one cannot take the panel
+    outline down with it, which is the coupling the module note describes.
+    """
+    from hhemt.figure_caption import text_width_px
+
+    half_w = 14.0 / layout.fig_width
+    half_h = layout.f(8)
+    gap = 0.006
+    unit_w = 2 * half_w + gap + text_width_px(label, font_px=font_px) / layout.fig_width
+    centre = (layout.side_table_x[0] + layout.side_table_x[1]) / 2.0
+    x_left = centre - unit_w / 2.0
+    y = layout.ydom(last_row)[0] - layout.f(AXIS_BAND_PX)
+    rect = dict(
+        type="rect",
+        xref="paper",
+        yref="paper",
+        x0=x_left,
+        x1=x_left + 2 * half_w,
+        y0=y - half_h,
+        y1=y + half_h,
+        line=dict(color="#111", width=1.2),
+        fillcolor="rgba(0,0,0,0)",
+    )
+    text = dict(
+        x=x_left + 2 * half_w + gap,
+        y=y,
+        xref="paper",
+        yref="paper",
+        xanchor="left",
+        yanchor="middle",
+        showarrow=False,
+        font=dict(size=font_px, color="#111"),
+        text=label,
+    )
+    return rect, text
+
+
 def outline_content_w_px(layout: PanelLayout) -> float:
     """Caption wrap width: the DRAWN panel-outline extent, in px.
 

@@ -35,8 +35,7 @@ from plotly.subplots import make_subplots
 
 from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption
-from hhemt.figure_layout import align_x
-from hhemt.figure_panels import AXIS_BAND_PX, panel_geometry, side_table_columns
+from hhemt.figure_panels import AXIS_BAND_PX, panel_geometry, side_table_columns, watershed_swatch
 
 #: Diverging colorscale for signed diffs (iter-2 user feedback): RED = NEGATIVE
 #: (lower than serial), white = 0, BLUE = POSITIVE. Plotly "RdBu" maps low->red,
@@ -1423,15 +1422,18 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # reference box, so the same call reads identically on pure-TRITON (1 map column)
     # and coupled (2 map columns) -- the has_flow branch moved INTO the domain lookup,
     # which is where the arm difference actually lives.
-    ws_x_left = align_x(
-        {"table": [0.006, dom1[0]], "maps": [dom1[0], (dom2[1] if has_flow else dom1[1])]},
-        ref="table",
-        edge="left",
-    )
-    # px-based swatch dims so they're consistent regardless of the figure height and fit in
-    # the G_FOOTER budget: 28 px wide × 16 px tall (WIDER than tall; ~1.3× the 10-pt text).
-    _SW_HALF_W = 14 / fig_width  # paper-x
-    _SW_HALF_H = _f(8)  # paper-y
+    # The swatch's x now comes from `figure_panels.watershed_swatch`, which centres the
+    # rect+label composite under the side table. The `align_x` call that stood here asked
+    # for the LEFT edge of a box named "table" that was really [0.006, dom1[0]] -- the
+    # outline-to-first-map span -- and returned 0.006, identically the panel outline's own
+    # x0, so the swatch was drawn ON the boundary. That is the reported overlap, and it is
+    # arithmetic rather than an eyeballing error.
+    #
+    # `_SW_HALF_H` is RETAINED although the swatch no longer uses it: the dashed panel
+    # outline below derives its bottom edge from `sw_y - _SW_HALF_H - _f(12)`. Deleting it
+    # as "dead" would break the outline -- the same removed-binding-with-surviving-readers
+    # trap this respec exists to fix, one block further down.
+    _SW_HALF_H = _f(8)  # paper-y; read by the panel outline below
     # The "watershed" swatch is drawn ONLY when a watershed boundary is actually drawn.
     # watershed_gis_polygon is an EXCLUDABLE bundle input, so a bundle legitimately ships
     # without it; when it does, `rings` is empty, `_apply_mask` is the identity, and the depth
@@ -1448,33 +1450,13 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         # fraction-vs-pixel drift hhemt.figure_caption documents. Reuse the one band
         # constant so the swatch and the caption clear the same axis furniture.
         sw_y = y_bot - _f(_AXIS_BAND_PX)
-        # watershed legend swatch = small UNFILLED rectangle, wider than tall (item)
-        shapes.append(
-            dict(
-                type="rect",
-                xref="paper",
-                yref="paper",
-                x0=ws_x_left,
-                x1=ws_x_left + 2 * _SW_HALF_W,
-                y0=sw_y - _SW_HALF_H,
-                y1=sw_y + _SW_HALF_H,
-                line=dict(color="#111", width=1.2),
-                fillcolor="rgba(0,0,0,0)",
-            )
-        )
-        annotations.append(
-            dict(
-                x=ws_x_left + 2 * _SW_HALF_W + 0.006,  # AFTER the box's right edge (item: text was overlapping the box)
-                y=sw_y,
-                xref="paper",
-                yref="paper",
-                xanchor="left",
-                yanchor="middle",
-                showarrow=False,
-                font=dict(size=10, color="#111"),
-                text="watershed extent (bbox)",
-            )
-        )
+        # watershed legend swatch = small UNFILLED rectangle, wider than tall (item),
+        # centred under the side table by the shared helper. APPENDED to this module's
+        # `shapes`/`annotations` lists rather than added via `fig.add_shape`, so it lands in
+        # the same layer pass as the outline it sits inside.
+        _ws_rect, _ws_text = watershed_swatch(_layout, first_row, last_row)
+        shapes.append(_ws_rect)
+        annotations.append(_ws_text)
         # dashed panel outline: left of the table -> right of the colorbar labels; bottom
         # a FIXED px gap below the swatch (so the swatch↔outline gap is identical across all
         # panels, WITH space — not the adjacent look A/B had).

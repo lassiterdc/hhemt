@@ -154,6 +154,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         panel_outline_shape,
         side_table_columns,
         side_table_domain,
+        watershed_swatch,
     )
 
     read_model = combined_root / "combined_intercomparison.json"
@@ -174,7 +175,21 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         eid = str(ex.get("experiment", ""))
         roles.setdefault(_model_of_experiment(eid), {})[str(ex.get("role", ""))] = eid
 
-    models = sorted({str(p.get("model", "")) for p in all_pairs} | set(roles) - {""})
+    # DISPLAY ORDER, declared rather than inherited from string comparison. `sorted()` put
+    # TRITON before TRITON-SWMM because "TRITON" < "TRITON-SWMM", which is an accident of
+    # alphabet, not a decision. The user asked for the coupled arm first, to match how the
+    # config-diff figures are presented.
+    #
+    # This does NOT share an ordering source with `_config_diff`: that figure renders ONE
+    # arm and orders nothing, so there is no source to share. Naming the order here makes it
+    # reviewable in one place; a model absent from the list falls to the end, alphabetically,
+    # so a new arm appears rather than disappearing.
+    _MODEL_DISPLAY_ORDER = ("TRITON-SWMM", "TRITON")
+    _seen_models = {str(p.get("model", "")) for p in all_pairs} | set(roles) - {""}
+    models = sorted(
+        _seen_models,
+        key=lambda m: (_MODEL_DISPLAY_ORDER.index(m) if m in _MODEL_DISPLAY_ORDER else len(_MODEL_DISPLAY_ORDER), m),
+    )
     by_model = {m: [p for p in all_pairs if str(p.get("model", "")) == m] for m in models}
     differing_by_model = {m: [p for p in ps if not p.get("identical", True)] for m, ps in by_model.items()}
 
@@ -635,6 +650,15 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             )
             _panel_ix[0] += 1
             fig.add_shape(panel_outline_shape(_layout, _span[0], _span[-1]))
+            # The watershed ring is drawn on every map here (`_watershed_boundary_traces`)
+            # but has never carried a legend key, so the reader saw an unexplained outline.
+            # Gated on the polygon actually existing, so the key cannot label a ring that
+            # was not drawn. The outline above is deliberately NOT inside this guard --
+            # that coupling is the defect figure_panels' module note describes.
+            if wpoly:
+                _ws_rect, _ws_text = watershed_swatch(_layout, _span[0], _span[-1])
+                fig.add_shape(_ws_rect)
+                annotations.append(_ws_text)
 
         if kind == "ref":
             zref = _apply_mask(np.asarray(base_da.values), wmask)

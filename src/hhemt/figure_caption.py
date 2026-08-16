@@ -117,6 +117,26 @@ _TAG_RE = re.compile(r"<[^>]*>")
 _ENTITY_RE = re.compile(r"&[A-Za-z]+;|&#\d+;")
 
 
+def text_width_px(text: str, *, font_px: int) -> float:
+    """Estimated rendered width of ``text`` in px.
+
+    Lives HERE, not in ``figure_layout``, because the estimate has to agree with
+    ``_GLYPH_ADVANCE`` -- the constant ``wrap_caption`` already wraps against. A second
+    glyph constant in a second module is how two estimates drift into disagreeing about
+    the same string.
+
+    ``figure_layout``'s docstring refuses this deliberately and names the release
+    condition: "Add that only when a second call site needs it." The condition is now met
+    -- ``_config_diff`` and ``cross_experiment_intercomparison_maps`` need the same
+    watershed swatch centered under the same table -- and this is the narrow form that
+    satisfies it: markup-aware length times the shared advance, no new constant.
+
+    It is an ESTIMATE. Plotly exposes no rendered text extent to Python, so a centered
+    element is centered to within the advance's error, not exactly.
+    """
+    return visible_len(text) * font_px * _GLYPH_ADVANCE
+
+
 def visible_len(token: str) -> int:
     """Rendered glyph count of ``token``: tags contribute 0, entities contribute 1."""
     return len(_TAG_RE.sub("", _ENTITY_RE.sub("·", token)))
