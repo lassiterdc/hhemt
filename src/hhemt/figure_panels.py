@@ -205,6 +205,44 @@ def side_table_domain(layout: PanelLayout, first_row: int, last_row: int) -> dic
     )
 
 
+def side_table_columns(
+    *,
+    labels: list[str],
+    members: list[str],
+    attrs_by_sa: dict[str, dict],
+    value_by_sa: dict[str, int],
+    order_key,
+) -> tuple[list[str], list[str]]:
+    """The two columns of a per-panel side table: distinct config labels, and their values.
+
+    Extracted because BOTH stacked-panel figures build these columns and the build is not
+    trivial -- dedupe by label, order by device count, and COLLAPSE the per-member values
+    for a label into one cell. `_config_diff._panel_config_table` had it inline, and the
+    cross-experiment restructure was about to open-code it a second time, which is the
+    duplication the standing directive forbids. The CSV read behind `value_by_sa` is NOT
+    moved here: it is already shared via `_load_subs`, and relocating working shared I/O
+    would be churn.
+
+    `value_by_sa` is keyed by sa_id rather than by label deliberately. A label can map to
+    several sa_ids (replicates, and the same config in two experiments), and those may
+    carry DIFFERENT values -- which is the signal, not noise: byte-identical configs whose
+    resume counts differ are the evidence that resuming does not perturb the bytes. Distinct
+    values for one label render joined ("0, 1") rather than silently reduced to one.
+
+    The caller chooses which experiment's values to pass. Cross-experiment passes the RESUME
+    arm's, because its clean arm is 0 by construction and the panel aggregates both.
+    """
+    attrs_by_label: dict[str, dict] = {}
+    vals_by_label: dict[str, set[int]] = {}
+    for sa, lbl in zip(members, labels, strict=False):
+        attrs_by_label.setdefault(lbl, attrs_by_sa.get(sa, {}))
+        if sa in value_by_sa:
+            vals_by_label.setdefault(lbl, set()).add(int(value_by_sa[sa]))
+    ordered = sorted(attrs_by_label, key=lambda lbl: (order_key(attrs_by_label[lbl]), lbl))
+    values = [", ".join(str(v) for v in sorted(vals_by_label.get(lbl, set()))) for lbl in ordered]
+    return ordered, values
+
+
 def outline_content_w_px(layout: PanelLayout) -> float:
     """Caption wrap width: the DRAWN panel-outline extent, in px.
 

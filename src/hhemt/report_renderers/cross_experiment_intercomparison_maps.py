@@ -149,7 +149,12 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _watershed_polygon,
     )
     from hhemt.figure_caption import add_figure_caption, content_width_px
-    from hhemt.figure_panels import panel_geometry, panel_outline_shape
+    from hhemt.figure_panels import (
+        panel_geometry,
+        panel_outline_shape,
+        side_table_columns,
+        side_table_domain,
+    )
 
     read_model = combined_root / "combined_intercomparison.json"
     payload = _json.loads(read_model.read_text()) if read_model.exists() else {"experiments": [], "pairs": []}
@@ -201,6 +206,13 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     _TABLE_PX = int((len(verdict_rows) + 2) * 26 + 20)
     _FIG_W = 1000
     _T_MARGIN = 70
+    #: Vertical clearance between a panel's top edge and the model subheader above it.
+    #: Was an inline `_layout.f(10)`. Measured on the delivered figure the header and its
+    #: subtitle sat 0.00343 paper apart, which at the figure's plot_h (~2915 px) is 10 px --
+    #: less than the 13 px header's own ~17 px line box, so the two strings overlapped
+    #: rather than merely crowding. Derived from the font size so a font change moves it.
+    _MODEL_HEADER_FONT_PX = 13
+    _MODEL_HEADER_GAP_PX = int(round(_MODEL_HEADER_FONT_PX * 1.35)) + 6
 
     caption_text = (
         "Compared quantity: "
@@ -267,6 +279,28 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 _sub_cache[key] = {}
         return _sub_cache[key]
 
+    def _fallback_groups(subs_: dict) -> list[dict]:
+        """Singleton groups for a bundle with no persisted identity artifact.
+
+        Carries `labels` and `n_resumes` even though the pre-restructure fallback did not.
+        `figure_panels.side_table_domain` already documents this gap -- "one consumer's
+        fallback path fabricates group dicts carrying neither" -- and this renderer is that
+        consumer. Once the side table reads those two keys (R6.3) their absence stops being
+        a cosmetic difference and becomes a KeyError on legacy bundles.
+        """
+        return [
+            {
+                "members": [k],
+                "attrs": v.get("attrs", {}),
+                "labels": [v.get("label", k)],
+                "run_modes": [v.get("run_mode")],
+                "n_resumes": [int(v.get("n_resumes", 0))],
+                "wlevel_da": v["wlevel"],
+                "flow_da": v.get("flow"),
+            }
+            for k, v in subs_.items()
+        ]
+
     def _sub_family(s: dict) -> str:
         """This ONE sub's hardware family, via the shared rule (cpu | a6000 | a100-80 | ...)."""
         return _hw_family_key({"run_modes": [s.get("run_mode")], "attrs": s.get("attrs", {})})
@@ -289,40 +323,44 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             resume_subs = _subs_for(resume_eid, evt)
             if not clean_subs or not resume_subs:
                 continue
-            fams: dict[str, dict] = {}
-            for sa_id, s in clean_subs.items():
-                fams.setdefault(_sub_family(s), {})[sa_id] = s
-            for fam in sorted(fams):
-                fam_subs = fams[fam]
+            # ONE PANEL PER BYTE-IDENTITY EQUIVALENCE CLASS (user ruling). The partition is
+            # taken over the model's WHOLE sub set, never per hardware family. The previous
+            # code split by family FIRST and its comment named the consequence it was built
+            # to avoid -- "on a pure-TRITON master every config is byte-identical, so
+            # _group_by_identity returns ONE group spanning serial, OpenMP, MPI, hybrid AND
+            # GPU" -- which is precisely the figure the user asked for: one TRITON panel
+            # covering CPU and GPU together, and two TRITON-SWMM panels because that arm's
+            # CPU and GPU classes genuinely differ (measured: 1.19209e-07, one float32 ULP).
+            # Panel count therefore follows the DATA. No hardware token participates.
+            try:
+                model_groups = _group_by_identity(clean_subs, crates / clean_eid)
+            except Exception:
+                model_groups = _fallback_groups(clean_subs)
+            for _gi, _grp in enumerate(model_groups):
+                fam_subs = {k: clean_subs[k] for k in _grp["members"] if k in clean_subs}
                 if not fam_subs:
                     continue
                 # The family's baseline is its MINIMUM-device clean run: serial-CPU for the
                 # cpu family, the 1-GPU run for each GPU hardware token.
                 base_sa = min(fam_subs, key=lambda k: _sub_devkey(fam_subs[k]))
+                # Within a class the sub-partition is the identity of its own members, so
+                # this is a no-op grouping that preserves the existing `groups` contract for
+                # the diff/pct rows below.
                 try:
                     fam_groups = _group_by_identity(fam_subs, crates / clean_eid)
                 except Exception:
-                    fam_groups = [
-                        {
-                            "members": [k],
-                            "attrs": v.get("attrs", {}),
-                            "run_modes": [v.get("run_mode")],
-                            "wlevel_da": v["wlevel"],
-                            "flow_da": v.get("flow"),
-                        }
-                        for k, v in fam_subs.items()
-                    ]
+                    fam_groups = _fallback_groups(fam_subs)
                 if not fam_groups:
                     continue
                 ctx = dict(
                     model=model,
                     evt=evt,
-                    fam=fam,
                     base_sa=base_sa,
                     fam_subs=fam_subs,
                     clean_eid=clean_eid,
                     resume_subs=resume_subs,
                     groups=fam_groups,
+                    grp=_grp,
                 )
                 # No `famtable` row. The family's config listing used to occupy a 110 px
                 # FULL-WIDTH table row above each family's maps; it is now a SIDE table
@@ -492,11 +530,14 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     wsym = _symmetric_diff_range(_dw, floor=1e-12) if _dw else _CONFIG_DIFF_DEPTH_BAND_M
     psym = _symmetric_diff_range(_pw, floor=1e-12) if _pw else 0.1
 
+    # Single-element lists so the closures below can mutate them without `nonlocal`.
+    _last_model_header = [None]
+    _panel_ix = [0]
     annotations = []
     for i, entry in enumerate(row_plan):
         row = 2 + i
         ctx, kind = entry["ctx"], entry["kind"]
-        model, fam, evt = ctx["model"], ctx["fam"], ctx["evt"]
+        model, evt = ctx["model"], ctx["evt"]
         base_s = ctx["fam_subs"][ctx["base_sa"]]
         base_da = base_s["wlevel"]
         base_label = _derive_config_label(base_s.get("attrs", {}))
@@ -509,24 +550,44 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             # occupy its own full-width row above the maps.
             _span = next(p for p in _panel_rows if row in p)
             _p_top, _p_bot = _layout.ydom(_span[0])[1], _layout.ydom(_span[-1])[0]
-            rows_ = [
-                [_glabel(g), f"group {gi + 1}", f"{len(g['members'])} config(s)"] for gi, g in enumerate(ctx["groups"])
-            ]
+            # ONE ROW PER CONFIG, mirroring `_config_diff._panel_config_table` (which is the
+            # figure the user named as the target). The previous table listed one row per
+            # GROUP with a synthetic "group 1" label and a "6 config(s)" count, so the six
+            # configs the panel aggregates were never named and their resume counts never
+            # shown -- the reported defect. `labels` and `n_resumes` are parallel per-member
+            # lists already carried on the group, sourced from the bundle's
+            # scenario_status.csv, so this needs no new data path.
+            #
+            # n_resumes is read from the RESUME arm, never the clean one: `_load_subs` stamps
+            # the count from ITS OWN bundle's scenario_status.csv, and `fam_subs`/`groups` are
+            # both built from `clean_subs` -- whose n_resumes is 0 for every config by
+            # construction, because a clean run never resumed. Reading the reachable copy
+            # would render a column of zeros. `resume_subs` is already carried on ctx.
+            g_ = ctx["grp"]
+            _cfg_col, _nr_col = side_table_columns(
+                labels=g_["labels"],
+                members=g_["members"],
+                attrs_by_sa={_sa: ctx["fam_subs"].get(_sa, {}).get("attrs", {}) for _sa in g_["members"]},
+                value_by_sa={
+                    _sa: int(ctx["resume_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in g_["members"]
+                },
+                order_key=lambda a: _device_count_key({"attrs": a}),
+            )
             fig.add_trace(
                 go.Table(
                     header=dict(
-                        values=["representative config", "identity group", "members"],
+                        # The arm is NAMED in the header. This panel aggregates the clean and
+                        # resume runs of every config it lists, so a bare "n_resumes" would be
+                        # ambiguous about which arm it counts -- and the two differ by
+                        # construction (clean is always 0).
+                        values=["byte-identical configs", "n_resumes (resume arm)"],
                         align="left",
-                        fill_color="#f3f6fa",
-                        font=dict(size=10),
-                    ),
-                    cells=dict(
-                        values=list(zip(*rows_, strict=False)) if rows_ else [[]],
-                        align="left",
-                        font=dict(size=10),
+                        fill_color="#eef2f7",
+                        font=dict(size=9),
                         height=20,
                     ),
-                    domain=dict(x=_layout.side_table_x, y=[max(0.0, _p_bot), min(1.0, _p_top)]),
+                    cells=dict(values=[_cfg_col, _nr_col], align="left", font=dict(size=9), height=18),
+                    domain=side_table_domain(_layout, _span[0], _span[-1]),
                 ),
             )
             # PANEL title: family identity ONLY, lifted into the panel's gap-top band. It
@@ -536,20 +597,43 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             # annotations resolved to the SAME (x, y, xanchor, yanchor). Two strings, one
             # anchor, overprinted. Dividing the content fixes the duplication; the offset
             # keeps them off one line even when a panel's first row moves.
+            # MODEL SUBHEADER, emitted once per model rather than once per panel. The panel
+            # identity moved to a rotated left-margin label below, matching
+            # `_config_diff._panel_label`. The old single annotation carried both -- model
+            # arm AND hardware family -- which is why it read as one long string; and the
+            # family half is now wrong by construction, because a panel is an identity class
+            # that may span CPU and GPU.
+            if model != _last_model_header[0]:
+                annotations.append(
+                    dict(
+                        x=0.0,
+                        y=_p_top + _layout.f(_MODEL_HEADER_GAP_PX),
+                        xref="paper",
+                        yref="paper",
+                        xanchor="left",
+                        yanchor="bottom",
+                        showarrow=False,
+                        align="left",
+                        font=dict(size=13, color="#111"),
+                        text=f"<b>{model}</b>",
+                    )
+                )
+                _last_model_header[0] = model
             annotations.append(
                 dict(
-                    x=0.0,
-                    y=_p_top + _layout.f(10),
+                    x=0.016,
+                    y=(_p_top + _p_bot) / 2.0,
                     xref="paper",
                     yref="paper",
-                    xanchor="left",
-                    yanchor="bottom",
+                    xanchor="center",
+                    yanchor="middle",
+                    textangle=-90,
                     showarrow=False,
-                    align="left",
-                    font=dict(size=12, color="#111"),
-                    text=f"<b>{model} - {_family_title(fam)}</b>",
+                    font=dict(size=13, color="#111"),
+                    text=f"<b>Panel {chr(ord('A') + _panel_ix[0])}</b>",
                 )
             )
+            _panel_ix[0] += 1
             fig.add_shape(panel_outline_shape(_layout, _span[0], _span[-1]))
 
         if kind == "ref":
@@ -647,7 +731,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             for _tr in _watershed_boundary_traces(wpoly):
                 fig.add_trace(_tr, row=row, col=1)
             txt = (
-                f"{g_label} (resumed alternate) - {base_label} (clean reference), same " f"hardware family, event {evt}"
+                f"{g_label} (resumed alternate) - {base_label} (clean reference), "
+                f"same byte-identity class, event {evt}"
             )
         else:
             z = _apply_mask(_signed_pct(d, np.asarray(base_da.values)), wmask)
@@ -669,7 +754,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 row=row,
                 col=1,
             )
-            txt = f"{g_label}: percent difference vs the clean reference on the same hardware family"
+            txt = f"{g_label}: percent difference vs the clean reference within the same byte-identity class"
         annotations.append(
             dict(
                 x=0.0,
@@ -709,10 +794,13 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             )
 
     _caption = (
-        caption_text + " Panels are grouped by HARDWARE FAMILY; within each family the clean reference is the "
-        "clean, uninterrupted run on that same hardware (serial CPU for the CPU family, the "
-        "1-GPU run for each GPU hardware), and no comparison is drawn across families. "
-        "Byte-identical configs within a family share one panel. Diff panels share one "
+        caption_text + " ONE PANEL PER BYTE-IDENTITY EQUIVALENCE CLASS, derived from the data rather "
+        "than from a hardware taxonomy: every config whose outputs are byte-identical shares a "
+        "panel, so a class may span CPU and GPU where those agree and split where they do not. "
+        "Each panel's side table names every config in its class with that config's resume-arm "
+        "resume count, so byte-identity across differing resume counts is visible rather than "
+        "asserted. Panels are grouped under their model arm. The reference within a class is its "
+        "minimum-device clean, uninterrupted run. Diff panels share one "
         f"symmetric range (+/-{wsym:.4g} m, +/-{psym:.4g} %), quantised to a shared ladder so "
         "co-located model arms coincide whenever their percentiles share a bin."
     )
@@ -724,7 +812,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         height=plot_h + _T_MARGIN + b_px,
         width=_FIG_W,
         margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
-        title="Clean vs resume, spatial: resumed alternates vs the clean reference on the same hardware family",
+        title="Clean vs resume, spatial: resumed alternates vs the clean reference within each byte-identity class",
         annotations=list(fig.layout.annotations) + annotations,
         showlegend=False,
         plot_bgcolor="white",

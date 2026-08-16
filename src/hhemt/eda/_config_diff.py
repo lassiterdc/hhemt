@@ -36,7 +36,7 @@ from plotly.subplots import make_subplots
 from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption
 from hhemt.figure_layout import align_x
-from hhemt.figure_panels import AXIS_BAND_PX, panel_geometry
+from hhemt.figure_panels import AXIS_BAND_PX, panel_geometry, side_table_columns
 
 #: Diverging colorscale for signed diffs (iter-2 user feedback): RED = NEGATIVE
 #: (lower than serial), white = 0, BLUE = POSITIVE. Plotly "RdBu" maps low->red,
@@ -1142,10 +1142,19 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         # b5: parallel n_resumes column so the reader can test whether byte-identical
         # grouping tracks resume count (a byte-identical group with MIXED n_resumes is
         # positive evidence that hotstart resume does not perturb the result bytes).
-        _nr_by_label: dict[str, set[int]] = {}
-        for _lbl, _nr in zip(g["labels"], g["n_resumes"], strict=False):
-            _nr_by_label.setdefault(_lbl, set()).add(int(_nr))
-        _nr_col = [", ".join(str(v) for v in sorted(_nr_by_label.get(lbl, set()))) for lbl in _configs(g)]
+        # Shared with cross_experiment_intercomparison_maps via figure_panels. This block
+        # WAS the only implementation; the cross-experiment restructure needed the same
+        # three steps (dedupe by label, order by device count, join the per-member values),
+        # so it moved rather than being copied.
+        _cfg_col, _nr_col = side_table_columns(
+            labels=g["labels"],
+            members=g["members"],
+            attrs_by_sa={sa: subs[sa]["attrs"] for sa in g["members"] if sa in subs},
+            value_by_sa={
+                sa: int(nr) for sa, nr in zip(g["members"], g["n_resumes"], strict=False)
+            },
+            order_key=_device_count,
+        )
         fig.add_trace(
             go.Table(
                 header=dict(
