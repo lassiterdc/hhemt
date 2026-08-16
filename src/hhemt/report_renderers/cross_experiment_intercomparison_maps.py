@@ -148,6 +148,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _watershed_mask,
         _watershed_polygon,
     )
+    from hhemt.eda.cross_sim_identity import config_identity_from_node_attrs
     from hhemt.figure_caption import add_figure_caption, content_width_px
     from hhemt.figure_panels import (
         panel_geometry,
@@ -205,6 +206,21 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         else:
             verdict = f"{len(diffs)} of {len(ps)} compared pairs differ"
         verdict_rows.append([m or "(unattributed)", len(ps), verdict, f"{max(mads):.4g}" if mads else "—"])
+
+    # PANEL-KEYED SUMMARY, one table per model, mirroring the config-diff figure's shape
+    # while substituting the comparison AXIS: that figure compares each group against the
+    # minimum-device SERIAL run within one arm, this one compares CLEAN against RESUME for
+    # the same config. Copying its "(vs serial)" headers verbatim would label these numbers
+    # with a comparison this figure does not perform.
+    #
+    # The column list is DERIVED from `has_coupled_arm`, never hardcoded: the flow column
+    # is meaningful only on the coupled arm, and a fixed five-column header over a
+    # pure-TRITON figure is a header-over-cells mismatch -- the defect that made the first
+    # attempt at this table undeployable.
+    _summary_cols = (
+        ["Panel", "# configs in group", "byte-identical clean vs resume?", "max abs depth diff (m)"]
+        + (["max abs flow diff (cms)"] if has_coupled_arm else [])
+    )
 
     # A pair that differs ONLY in max_flow_cms still earns a panel: group by (model, config,
     # event) so the depth raster and the conduit diff share one row rather than each spawning
@@ -548,12 +564,26 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     _xd0, _yd0, _, _ = _grid(row_plan[0]["ctx"])
     _map_aspect = ((max(_xd0) - min(_xd0)) or 1.0) / ((max(_yd0) - min(_yd0)) or 1.0)
 
+    # `table_px=0`: the figure-wide table row is gone from this path, replaced by one
+    # Panel-keyed table per model placed in a reserved band above that model's first panel.
+    # Each band is sized from its own row count, so a model with two identity classes gets a
+    # taller band than one with a single class.
+    _model_first_panel: dict[str, int] = {}
+    for _pi, _prows in enumerate(_panel_rows):
+        _m = _panel_model[_pi]
+        if _m not in _model_first_panel:
+            _model_first_panel[_m] = _pi
+    _band_px = {
+        _pi: int((sum(1 for x in _panel_model if x == _m) + 2) * 26 + 20) + _MODEL_HEADER_GAP_PX
+        for _m, _pi in _model_first_panel.items()
+    }
     _layout = panel_geometry(
         _panel_rows,
         table_px=0,
         map_aspect=_map_aspect,
         fig_width=_FIG_W,
         n_map_cols=_ncols,
+        group_starts=_band_px,
     )
     plot_h = _layout.plot_h
     for _r, _yd in _layout.row_ydom.items():
@@ -569,6 +599,71 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     # other -- 10 px inside col 1's right edge but 20 px inside col 2's -- so the two
     # colorbars sat at different insets from panels of identical width. One pad, read
     # off the domains, makes them agree and survives a column-layout change.
+    # PER-MODEL SUMMARY TABLE, emitted into the band `group_starts` reserved above each
+    # model's first panel. Placed by explicit domain with no row/col -- the same actuator
+    # the per-panel side table already uses, which is required here because R9.4 removed
+    # table cells from `specs` entirely and there is no subplot slot to put this in.
+    #
+    # Pairs are attributed to a panel through the CONFIG IDENTITY, not the sa_id:
+    # `_combine` keys its pair records with `config_identity_from_node_attrs`, which
+    # deliberately excludes replicate suffixes so a clean and a resume sub of one config
+    # collide. `grp["members"]` are sa_ids. Joining those two directly yields an EMPTY
+    # intersection and a table of blank magnitude columns that raises nothing.
+    _pairs_by_cfg: dict[str, list[dict]] = {}
+    for _p in all_pairs:
+        _pairs_by_cfg.setdefault(str(_p.get("config", "")), []).append(_p)
+
+    def _panel_summary_row(_letter: str, _grp, _ctx) -> list:
+        """One summary row for one identity-class panel, on the CLEAN-vs-RESUME axis."""
+        _ids = {
+            config_identity_from_node_attrs(_ctx["fam_subs"][s].get("attrs", {}))
+            for s in _grp["members"]
+            if s in _ctx["fam_subs"]
+        }
+        _ps = [q for cid in sorted(_ids) for q in _pairs_by_cfg.get(cid, [])]
+        _n_cfg = len({lbl for lbl in _grp["labels"]})
+        _depth = [
+            q["max_abs_diff"] for q in _ps
+            if q.get("variable") == "max_wlevel_m" and q.get("max_abs_diff") is not None
+        ]
+        _flow = [
+            q["max_abs_diff"] for q in _ps
+            if q.get("variable") == "max_flow_cms" and q.get("max_abs_diff") is not None
+        ]
+        _verdict = (
+            "no comparable pair" if not _ps
+            else ("identical" if all(q.get("identical", True) for q in _ps)
+                  else f"{sum(1 for q in _ps if not q.get('identical', True))} of {len(_ps)} differ")
+        )
+        _row = [f"Panel {_letter}", _n_cfg, _verdict, f"{max(_depth):.4g}" if _depth else "—"]
+        # The flow column exists only when the coupled arm does, so the row width tracks
+        # `_summary_cols` rather than being fixed at five.
+        if has_coupled_arm:
+            _row.append(f"{max(_flow):.4g}" if _flow else "—")
+        return _row
+
+    _rows_by_model: dict[str, list[list]] = {}
+    for _pi, _prows in enumerate(_panel_rows):
+        _m = _panel_model[_pi]
+        _ctx_pi = row_plan[_prows[0] - 1]["ctx"]
+        _letter = chr(ord("A") + len(_rows_by_model.get(_m, [])))
+        _rows_by_model.setdefault(_m, []).append(_panel_summary_row(_letter, _ctx_pi["grp"], _ctx_pi))
+
+    for _m, _pi in _model_first_panel.items():
+        _dom = _layout.group_domains.get(_pi)
+        if _dom is None:
+            continue
+        _cells = list(zip(*_rows_by_model[_m], strict=False)) if _rows_by_model.get(_m) else [[]]
+        fig.add_trace(
+            go.Table(
+                header=dict(
+                    values=_summary_cols, align="left", fill_color="#eef2f7", font=dict(size=10), height=22
+                ),
+                cells=dict(values=_cells, align="left", font=dict(size=10), height=20),
+                domain=dict(x=_layout.table_domain["x"], y=[max(0.0, _dom[0]), min(1.0, _dom[1])]),
+            ),
+        )
+
     _cbar_x = _layout.colorbar_x
 
     def _cbar_y(r: int) -> float:
@@ -750,6 +845,18 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                         text=f"<b>{model}</b>",
                     )
                 )
+                # Per-MODEL panel letters. `_panel_ix` was a single figure-wide counter, so
+                # the second model's first panel read "Panel C" while the user asked for each
+                # model section to start at A -- "the TRITON section will have a table and
+                # then a panel A". Each config-diff figure is one arm and starts at A; a model
+                # section here mirrors one of those figures, so it starts at A too.
+                #
+                # The reset lives HERE, not beside the increment. This branch is the only
+                # place that observes the model CHANGE, and it overwrites `_last_model_header`
+                # on the same iteration -- so a comparison made later reads the already-
+                # updated value and never fires. The summary table reads these same letters,
+                # so a stale reset would put two different names on one panel.
+                _panel_ix[0] = 0
                 _last_model_header[0] = model
             annotations.append(
                 dict(

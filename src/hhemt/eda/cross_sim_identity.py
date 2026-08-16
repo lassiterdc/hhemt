@@ -97,6 +97,48 @@ def _enabled_modes(analysis: TRITONSWMM_analysis) -> list[str]:
     return modes
 
 
+def config_identity_from_node_attrs(attrs: dict) -> str:
+    """Serializable compute-config identity read from a consolidated-tree ``/sa_{id}`` node's
+    attrs. Mirrors ``eda.compute_sensitivity._config_identity`` fields (run_mode, n_mpi, n_omp,
+    n_gpus, n_nodes, partition) so a clean sub and a resume sub of the SAME compute-config
+    produce the SAME key. Replicate suffixes are NOT part of the identity (replicates share a
+    config).
+
+    LIFTED here from ``bundle._combine`` so the WRITER of the pair records and the RENDERER
+    that joins against them share one definition. A second implementation that drifted from
+    this one would produce an EMPTY join and a summary table of blank magnitude columns,
+    raising nothing. Public (no leading underscore) because it now has consumers in two
+    other packages.
+
+    NEVER JOIN THIS KEY AGAINST ``sa_id``. Replicate suffixes are deliberately excluded, so
+    this key COLLIDES a clean sub and a resume sub of the same compute config BY DESIGN --
+    that collision is the point, since it is what pairs them. ``sa_id`` does the opposite and
+    keeps them distinct. Joining a collection keyed on this against a collection of sa_ids
+    yields an empty intersection, silently.
+
+    NOT interchangeable with ``eda.compute_sensitivity._config_identity``. That sibling
+    covers the SAME field set but takes a sub object and returns a tuple, where this takes a
+    node-attrs dict and returns a string. Unifying them is tracked separately.
+    """
+
+    def _i(key: str) -> int:
+        try:
+            return int(float(attrs.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    return "|".join(
+        [
+            f"run_mode={attrs.get('run_mode', '')}",
+            f"n_mpi={_i('n_mpi_procs')}",
+            f"n_omp={_i('n_omp_threads')}",
+            f"n_gpus={_i('n_gpus')}",
+            f"n_nodes={_i('n_nodes')}",
+            f"partition={attrs.get('hpc.partition', '') or ''}",
+        ]
+    )
+
+
 def compare_variable_exact(da_ref: xr.DataArray, da_cmp: xr.DataArray) -> dict:
     """Exact cross-sim equality + max-abs-diff for one summary variable.
 

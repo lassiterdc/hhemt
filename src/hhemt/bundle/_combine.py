@@ -368,29 +368,11 @@ def _bundle_role_from_status(root: Path) -> str:
     return "resume" if max_r > 0 else "clean"
 
 
-def _config_identity_from_node_attrs(attrs: dict) -> str:
-    """Serializable compute-config identity read from a consolidated-tree ``/sa_{id}`` node's
-    attrs. Mirrors ``eda.compute_sensitivity._config_identity`` fields (run_mode, n_mpi, n_omp,
-    n_gpus, n_nodes, partition) so a clean sub and a resume sub of the SAME compute-config
-    produce the SAME key. Replicate suffixes are NOT part of the identity (replicates share a
-    config)."""
-
-    def _i(key: str) -> int:
-        try:
-            return int(float(attrs.get(key, 0) or 0))
-        except (TypeError, ValueError):
-            return 0
-
-    return "|".join(
-        [
-            f"run_mode={attrs.get('run_mode', '')}",
-            f"n_mpi={_i('n_mpi_procs')}",
-            f"n_omp={_i('n_omp_threads')}",
-            f"n_gpus={_i('n_gpus')}",
-            f"n_nodes={_i('n_nodes')}",
-            f"partition={attrs.get('hpc.partition', '') or ''}",
-        ]
-    )
+# `_config_identity_from_node_attrs` was LIFTED to `eda.cross_sim_identity` so the WRITER of
+# the pair records here and the RENDERER that joins against them share ONE definition. A
+# second implementation drifting from this one would produce an empty join and a summary
+# table of blank magnitude columns, raising nothing. Imported function-locally at its call
+# site below.
 
 
 def _load_intercomparison_subs(root: Path) -> dict:
@@ -420,6 +402,8 @@ def _load_intercomparison_subs(root: Path) -> dict:
     """
     import xarray as xr
 
+    from hhemt.eda.cross_sim_identity import config_identity_from_node_attrs
+
     store = root / "sensitivity_datatree.zarr"
     out: dict = {}
     collapsed: dict = {}
@@ -429,7 +413,7 @@ def _load_intercomparison_subs(root: Path) -> dict:
     for g in sorted(dt.groups):
         if g.count("/") != 1 or not g.startswith("/sa_"):
             continue
-        cfg_key = _config_identity_from_node_attrs(dict(dt[g].attrs))
+        cfg_key = config_identity_from_node_attrs(dict(dt[g].attrs))
         if cfg_key in out:
             # First (sorted) representative per config wins. RECORD the discard — a
             # replicate dropped without a trace is how the resume-arm spread went
