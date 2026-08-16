@@ -68,6 +68,15 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "Every scenario ran on the MPI ranks, OMP threads, GPUs, GPU backend and "
         "build type its configuration requested.",
     ),
+    "Data availability": (
+        "Data availability",
+        "Which per-scenario artifact classes were deliberately reclaimed after "
+        "processing succeeded, and which remain on disk. A reclaimed class is "
+        "recorded per scenario by the process runner itself, so an absent artifact "
+        "here is a disclosed reclaim rather than a failed run. Reclaiming the raw "
+        "simulation outputs makes reprocessing that scenario impossible without "
+        "re-running the simulation.",
+    ),
 }
 
 

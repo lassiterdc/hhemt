@@ -292,6 +292,8 @@ class TRITONSWMM_scenario:
                 log.raw_SWMM_outputs_cleared = LogField()
             if log.full_SWMM_timeseries_cleared is None:
                 log.full_SWMM_timeseries_cleared = LogField()
+            if log.raw_SWMM_binaries_reclaimed is None:
+                log.raw_SWMM_binaries_reclaimed = LogField()
 
         # Re-bind parent log reference after assigning optional LogField members
         # (needed so LogField.set() can call parent .write()).
