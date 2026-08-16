@@ -36,6 +36,7 @@ from hhemt.report_renderers.sensitivity_benchmarking import (
     _compute_efficiency_per_group,
     _compute_speedup_per_group,
     _find_perf_node,
+    resolve_axis_groups,
 )
 
 
@@ -618,3 +619,227 @@ def test_collect_rows_reads_simulation_from_datatree_like_every_other_column(tmp
     )
     rows, _ = _collect_rows(analysis, "performance.Simulation")
     assert rows[0]["value"] == pytest.approx(150.0)
+
+
+# ── Axis-group resolution: a label can never describe a column it did not plot ──
+#
+# THE BLIND SPOT THESE TESTS EXIST TO CLOSE. The shipped defect was a single label,
+# derived from `independent_var`, applied under `sharex=True` / `shared_xaxes=True` to
+# a four-panel figure whose bottom two panels are keyed on `n_devices`. It was
+# INVISIBLE whenever independent_var == 'n_devices', because both halves then plot the
+# same quantity. Any assertion on a label STRING inherits that blind spot. Every test
+# below that asserts alignment therefore pins DISJOINT top/bottom value sets, so the
+# coincidence cannot mask a regression.
+
+
+def _axis_fixture_cfg(independent_var):
+    from hhemt.config.report import SensitivityReportConfig
+
+    return SensitivityReportConfig(independent_vars=[independent_var])
+
+
+def _disjoint_axis_df():
+    """indep_value ∈ {1, 2}; n_devices ∈ {16, 64}. The sets share no member, so a
+    panel's x values identify WHICH column it plotted with no ambiguity."""
+    return pd.DataFrame(
+        [
+            dict(sa_id="a", group_value="cpu", indep_value=1, n_devices=16,
+                 wallclock_s=100.0, wallclock_disp=100.0, compute_disp=1600.0,
+                 n_mpi_procs=1, config_id="a", n_replicates=1),
+            dict(sa_id="b", group_value="cpu", indep_value=2, n_devices=64,
+                 wallclock_s=50.0, wallclock_disp=50.0, compute_disp=3200.0,
+                 n_mpi_procs=2, config_id="b", n_replicates=1),
+        ]
+    )
+
+
+def test_axis_group_label_is_always_derived_from_its_own_variable():
+    """The factory is the only sanctioned constructor and it derives the label from
+    `source_var`. This is what makes drift unrepresentable rather than unlikely."""
+    from hhemt.report_renderers.sensitivity_benchmarking import AxisGroup
+
+    labels = {"n_devices": "Number of Devices (CPUs or GPUs)", "foo": "Foo Label"}
+    for x_col, source_var, expected in [
+        ("n_devices", "n_devices", "Number of Devices (CPUs or GPUs)"),
+        ("indep_value", "foo", "Foo Label"),
+        ("indep_value", "analysis.n_mpi_procs", "analysis.n_mpi_procs"),  # fallback
+    ]:
+        g = AxisGroup.for_var(x_col, source_var, labels)
+        assert g.x_col == x_col
+        assert g.source_var == source_var
+        assert g.label == expected
+        assert g.label == labels.get(source_var, source_var)
+
+
+def test_axis_groups_diverge_when_independent_var_is_not_n_devices():
+    """The condition under which the defect was visible. `source_var` differs, so the
+    two groups' labels differ, so the two panel pairs cannot share one label."""
+    top, bottom = resolve_axis_groups(
+        "analysis.n_mpi_procs", _axis_fixture_cfg("analysis.n_mpi_procs")
+    )
+    assert top.x_col == "indep_value"
+    assert top.source_var == "analysis.n_mpi_procs"
+    assert bottom.x_col == "n_devices"
+    assert bottom.source_var == "n_devices"
+    assert top.label != bottom.label
+
+
+def test_axis_groups_collapse_when_independent_var_is_n_devices():
+    """The condition under which the defect was INVISIBLE, pinned explicitly so a
+    future reader cannot mistake the coincidence for the contract."""
+    top, bottom = resolve_axis_groups("n_devices", _axis_fixture_cfg("n_devices"))
+    assert top.source_var == bottom.source_var == "n_devices"
+    assert top.label == bottom.label
+
+
+@pytest.mark.parametrize(
+    "independent_var, top_values",
+    [("analysis.n_mpi_procs", {1, 2}), ("n_devices", {1, 2})],
+)
+def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(
+    independent_var, top_values
+):
+    """THE FALSIFYING TEST.
+
+    Fails whenever a panel's visible x-axis title is not the label of the variable
+    whose values that panel plotted. It reads the EMITTED figure -- trace x values and
+    per-subplot axis titles -- not a constant, so it cannot be satisfied by a label
+    string that happens to match. On pre-fix code it fails on the first parametrization:
+    rows 1-2 plot {1, 2} while row 4 plots {16, 64} and carries the title
+    'analysis.n_mpi_procs', and rows 1-3 are additionally matched to row 4's axis.
+    """
+    from hhemt.report_renderers._provenance import ProvenanceLog
+    from hhemt.report_renderers.sensitivity_benchmarking import (
+        _build_sensitivity_benchmarking_figure,
+    )
+
+    cfg = _axis_fixture_cfg(independent_var)
+    df = _disjoint_axis_df()
+    top, bottom = resolve_axis_groups(independent_var, cfg)
+    fig, _ = _build_sensitivity_benchmarking_figure(
+        df,
+        {"cpu": [(16, 1.0, "a"), (64, 2.0, "b")]},
+        {"cpu": [(16, 1.0, "a"), (64, 0.25, "b")]},
+        wall_unit="s",
+        cost_unit="s",
+        independent_var=independent_var,
+        group_by_var="run_mode",
+        sens_cfg=cfg,
+        output_path=None,
+        source_paths=[],
+        analysis_dir=None,
+        plotly_js_mode="cdn",
+        prov=ProvenanceLog(),
+    )
+
+    def _ref(row, col=1):
+        return fig.get_subplot(row, col).xaxis.plotly_name.replace("axis", "")
+
+    def _x_values_on(ref):
+        out = set()
+        for tr in fig.data:
+            if getattr(tr, "x", None) is None:
+                continue
+            if (tr.xaxis or "x") == ref:
+                out.update(float(v) for v in tr.x)
+        return out
+
+    def _visible_title(row, col=1):
+        """The title a reader sees for this panel's GROUP: follow `matches` to the
+        group leader, because a matched axis renders no title of its own."""
+        ax = fig.get_subplot(row, col).xaxis
+        if ax.matches:
+            for r in (1, 2, 3, 4):
+                for c in range(1, 4):
+                    try:
+                        cand = fig.get_subplot(r, c)
+                    except Exception:
+                        continue
+                    if cand is None:
+                        continue
+                    if cand.xaxis.plotly_name.replace("axis", "") == ax.matches:
+                        return cand.xaxis.title.text
+        return ax.title.text
+
+    # --- TOP GROUP: rows 1+2 plot the configured independent_var, and are labelled by it.
+    for row in (1, 2):
+        plotted = _x_values_on(_ref(row))
+        assert plotted, f"row {row} plotted nothing"
+        assert plotted <= {float(v) for v in top_values}, (
+            f"row {row} plotted {plotted}, which is not the independent_var value set "
+            f"{top_values} -- the top pair is keyed on the wrong column"
+        )
+        assert _visible_title(row) == top.label
+
+    # --- BOTTOM GROUP: rows 3+4 plot n_devices, and are labelled by n_devices.
+    for row in (3, 4):
+        plotted = _x_values_on(_ref(row))
+        assert plotted, f"row {row} plotted nothing"
+        assert plotted <= {16.0, 64.0}, (
+            f"row {row} plotted {plotted}, which is not the n_devices value set "
+            "{16.0, 64.0} -- the scaling pair is keyed on the wrong column"
+        )
+        assert _visible_title(row) == bottom.label
+
+    # --- The two groups must be INDEPENDENT: no top-row axis may match a bottom-row axis.
+    bottom_refs = {_ref(3), _ref(4)}
+    for row in (1, 2):
+        assert (fig.get_subplot(row, 1).xaxis.matches or _ref(row)) not in bottom_refs, (
+            f"row {row} is linked to a scaling-panel axis; the top pair would be forced "
+            "onto the n_devices range"
+        )
+
+
+def test_matplotlib_panels_form_two_independent_shared_groups_with_their_own_labels():
+    """matplotlib counterpart: two share-groups, boundary-row labels only, and no
+    cross-group link. `Axes.sharex()` does not hide tick labels, so the suppression on
+    rows 1 and 3 is asserted here rather than assumed."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from hhemt.report_renderers.sensitivity_benchmarking import (
+        _apply_matplotlib_axis_groups,
+    )
+
+    cfg = _axis_fixture_cfg("analysis.n_mpi_procs")
+    top, bottom = resolve_axis_groups("analysis.n_mpi_procs", cfg)
+    fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(4, 1, sharex=False)
+    try:
+        _apply_matplotlib_axis_groups(
+            ax_wall, ax_cost, ax_speedup, ax_eff, top=top, bottom=bottom
+        )
+        shared = ax_wall.get_shared_x_axes()
+        assert shared.joined(ax_wall, ax_cost)
+        assert ax_speedup.get_shared_x_axes().joined(ax_speedup, ax_eff)
+        assert not shared.joined(ax_wall, ax_eff)
+        assert ax_cost.get_xlabel() == top.label
+        assert ax_eff.get_xlabel() == bottom.label
+        assert ax_wall.get_xlabel() == ""
+        assert ax_speedup.get_xlabel() == ""
+    finally:
+        plt.close(fig)
+
+
+def test_axis_split_does_not_change_the_scaling_computation():
+    """FQ4 regression pin: `bottom.x_col` is the same column the retired bare literal
+    named, so speedup/efficiency values are byte-identical across the change."""
+    cfg = _axis_fixture_cfg("analysis.n_mpi_procs")
+    _, bottom = resolve_axis_groups("analysis.n_mpi_procs", cfg)
+    assert bottom.x_col == "n_devices"
+    df = pd.DataFrame(
+        [
+            dict(sa_id="a", group_value="cpu", n_devices=1, wallclock_s=100.0),
+            dict(sa_id="b", group_value="cpu", n_devices=4, wallclock_s=25.0),
+        ]
+    )
+    via_group = _compute_speedup_per_group(
+        df, t_col="wallclock_s", indep_col=bottom.x_col,
+        group_col="group_value", baseline_mode="global",
+    )
+    via_literal = _compute_speedup_per_group(
+        df, t_col="wallclock_s", indep_col="n_devices",
+        group_col="group_value", baseline_mode="global",
+    )
+    assert via_group == via_literal
