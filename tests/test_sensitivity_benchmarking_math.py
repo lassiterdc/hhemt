@@ -736,9 +736,22 @@ def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(
         return fig.get_subplot(row, col).xaxis.plotly_name.replace("axis", "")
 
     def _x_values_on(ref):
+        """x values of the DATA traces on `ref`.
+
+        The ideal-reference line is EXCLUDED. It is a synthetic S=N / E=1.0 reference
+        the renderer draws from x=1 to x=x_max regardless of where the data starts, so
+        it carries an x=1 that belongs to no column and would defeat the containment
+        test. `legendgroup="ideal"` is the discriminator because production sets it at
+        exactly one site (sensitivity_benchmarking.py, the sole ideal-trace emission);
+        every other legendgroup is a group_value.
+
+        Widening the expected set to admit 1.0 instead was REJECTED: 1.0 is a legitimate
+        value of both candidate columns, so admitting it would let a top-keyed trace pass
+        the bottom-pair assertion and would trade away the falsifying property.
+        """
         out = set()
         for tr in fig.data:
-            if getattr(tr, "x", None) is None:
+            if getattr(tr, "x", None) is None or tr.legendgroup == "ideal":
                 continue
             if (tr.xaxis or "x") == ref:
                 out.update(float(v) for v in tr.x)

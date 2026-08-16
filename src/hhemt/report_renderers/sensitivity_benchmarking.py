@@ -102,9 +102,13 @@ class FacetConfig:
     that compare benchmark metrics across an additional categorical axis — typically
     DEM resolution (e.g., 1m vs 3.5m vs 10m) or GPU hardware (a6000 vs a100 vs h100).
 
-    When ``facet=None`` (current default) the renderer emits the canonical
-    ``rows=4, cols=1, shared_xaxes=True`` layout. When ``facet`` is provided, the
-    renderer arranges the 4 metric panels per facet value across the grid shape
+    When ``facet=None`` (current default) the renderer emits a ``rows=4,
+    cols=_n_hw`` layout with ``shared_xaxes=False`` and TWO explicitly-linked x-axis
+    groups: panels 1+2 (wall-clock, compute-cost) share an axis keyed on the
+    configured ``independent_var``, and panels 3+4 (speedup, efficiency) share a
+    separate axis keyed on ``n_devices``. See ``_apply_plotly_axis_groups``. When
+    ``facet`` is provided, the renderer arranges the 4 metric panels per facet value
+    across the grid shape
     declared by ``cols`` × ``rows`` (rows is implicit: ``len(facet_values) // cols``,
     rounded up — and the panel-row count multiplies by 4).
 
