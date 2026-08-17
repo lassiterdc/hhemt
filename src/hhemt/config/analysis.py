@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from hhemt.config.base import cfgBaseModel
+from hhemt.config.base import cfgBaseModel, field_meta, when
 from hhemt.config.eda import eda_config
 
 # One-way import: config/analysis.py imports report_config; config/report.py
@@ -224,7 +224,23 @@ class analysis_config(cfgBaseModel):
         ),
     )
     # COMPUTE CONFIG
-    run_mode: Literal["serial", "openmp", "mpi", "hybrid", "gpu"] = Field(..., description="Compute configuration")
+    run_mode: Literal["serial", "openmp", "mpi", "hybrid", "gpu"] = Field(
+        ...,
+        description=(
+            "Per-simulation compute configuration. Selects which parallelism the "
+            "solver uses, and therefore which of n_mpi_procs / n_omp_threads / "
+            "n_gpus must be set."
+        ),
+        json_schema_extra=field_meta(
+            options={
+                "serial": "One process, one thread, no GPU. n_mpi_procs and n_omp_threads must be 1 or unset.",
+                "openmp": "Shared-memory threading on one node. n_omp_threads must be > 1; no MPI, no GPU.",
+                "mpi": "Distributed MPI ranks, one thread each. n_mpi_procs must be > 1 and >= n_nodes; no GPU.",
+                "hybrid": "MPI ranks each running OpenMP threads. Both n_mpi_procs and n_omp_threads must be > 1; no GPU.",
+                "gpu": "GPU-accelerated solve. n_gpus must be >= 1; MPI and OpenMP are optional alongside it.",
+            }
+        ),
+    )
     n_mpi_procs: int | None = Field(1, description="Number of MPI ranks per simulation.")
     n_omp_threads: int | None = Field(
         1,
@@ -240,7 +256,17 @@ class analysis_config(cfgBaseModel):
     # MULTI-SIMULATION EXECUTION METHOD
     multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] = Field(
         "local",
-        description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (tmux session running Snakemake on login node - recommended for HPC), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
+        # The per-option glossary moved OUT of this prose string and INTO the
+        # `options` declaration below, which the report renders deterministically
+        # and which `__pydantic_init_subclass__` holds in parity with the Literal.
+        description="How the simulation ensemble is dispatched across scenarios.",
+        json_schema_extra=field_meta(
+            options={
+                "local": "ThreadPoolExecutor in-process on the local machine. No SLURM.",
+                "batch_job": "tmux session running Snakemake on the login node, submitting one SLURM job per scenario. Recommended for HPC.",
+                "1_job_many_srun_tasks": "A single SLURM job that runs the scenarios as concurrent srun tasks inside one allocation.",
+            }
+        ),
     )
     hpc_total_nodes: int | None = Field(
         None,
@@ -248,7 +274,22 @@ class analysis_config(cfgBaseModel):
     )
     hpc_total_job_duration_min: int | None = Field(
         None,
-        description="This is the job duration when multi_sim_run_method = 1_job_many_srun_tasks",
+        # Description CORRECTED: the previous text named `1_job_many_srun_tasks`
+        # while the validator required this field under `batch_job`. The two
+        # disagreed, and the report printed the description. Applicability and
+        # requiredness are now DECLARED below and enforced from that declaration,
+        # so the two cannot diverge again.
+        description=(
+            "Total wall-clock duration, in minutes, requested for the SLURM job "
+            "that runs the simulation ensemble. Also used as the sim job's "
+            "plausible-lifetime bound by the wait-on-sentinel poll cap and the "
+            "stale-token fail-safe; when unset those fall back to "
+            "hpc_max_wait_for_inflight_min."
+        ),
+        json_schema_extra=field_meta(
+            applies_when=[when("multi_sim_run_method", "batch_job", "1_job_many_srun_tasks")],
+            required_when=[when("multi_sim_run_method", "batch_job")],
+        ),
     )
     # Phase-4 (4d, hpc-system-profile-config): hpc_gpus_per_node + hpc_cpus_per_node
     # RETIRED off analysis_config. Per-node GPU/CPU topology now lives per-partition
@@ -954,10 +995,18 @@ class analysis_config(cfgBaseModel):
             # Snakefile-generation time. The hpc_max_simultaneous_sims requirement
             # (batch_job) moved to hpc_system_config.max_concurrent_jobs validation.
 
-        if multi_sim_method == "batch_job" and (hpc_total_job_duration_min is None or hpc_total_job_duration_min < 1):
-            raise ValueError(
-                "hpc_total_job_duration_min is required and must be > 0 for multi_sim_run_method=batch_job"
-            )
+        # PRESENCE is enforced by the declaration on the field itself
+        # (json_schema_extra=field_meta(required_when=[when("multi_sim_run_method",
+        # "batch_job")]), consumed by cfgBaseModel._enforce_required_when). Do NOT
+        # re-check `is None` here: a second enforcement site is exactly what let the
+        # rendered "Required" cell drift from what was enforced. Only the VALUE
+        # bound, which the declaration grammar does not express, remains here.
+        if (
+            multi_sim_method == "batch_job"
+            and hpc_total_job_duration_min is not None
+            and hpc_total_job_duration_min < 1
+        ):
+            raise ValueError("hpc_total_job_duration_min must be > 0 for multi_sim_run_method=batch_job")
 
         if multi_sim_method == "batch_job":
             if hpc_time_min_per_sim is None:

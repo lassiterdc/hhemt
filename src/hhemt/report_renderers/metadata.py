@@ -977,7 +977,7 @@ def _config_field_rows() -> tuple[dict[str, list[list[str]]], list[str]]:
         placeholder = _BUCKET_PLACEHOLDER.get(bucket, f"{{your-{field_name}}}")
         return [
             _code(label),
-            _esc(field_info.description or "—"),
+            _description_cell(field_info),
             _requiredness_cell(field_info),
             _code(placeholder),
         ]
@@ -1016,15 +1016,42 @@ def _is_toolkit_owned(field_info: Any) -> bool:
     return isinstance(extra, dict) and bool(extra.get("toolkit_owned_output"))
 
 
-def _requiredness_cell(field_info: Any) -> str:
-    """Derive Required / Optional (+default) from the Pydantic FieldInfo. Never hand-written.
+def _description_cell(field_info: Any) -> str:
+    """Description prose, plus the applicability note and option glossary when DECLARED.
 
-    `is_required()` and `default` are the schema's own answer, so this column cannot
-    drift from the model the way a maintained prose note would. The toolkit-owned
-    branch is checked FIRST because such a field is nominally Optional-with-None but
-    is not something a reproducer supplies at all, and reporting it as a plain
-    "Optional" would leave the reader to guess who fills it in.
+    GRACEFUL DEGRADATION IS STRUCTURAL. For a field with no declaration this returns
+    exactly `_esc(field_info.description or "—")` -- byte-identical to the pre-
+    declaration renderer -- because both appends are guarded on the presence of a
+    reserved key. 104 of the 107 rendered fields take that path today.
     """
+    from hhemt.config.base import declared, render_clauses
+
+    parts = [_esc(field_info.description or "—")]
+    applies = declared(field_info, "applies_when")
+    if applies:
+        parts.append(f"<div class='instruction'>Applies when {_esc(render_clauses(applies))}.</div>")
+    options = declared(field_info, "options")
+    if options:
+        items = "".join(f"<dt>{_code(k)}</dt><dd>{_esc(v)}</dd>" for k, v in options.items())
+        parts.append(f"<dl class='options'>{items}</dl>")
+    return "".join(parts)
+
+
+def _requiredness_cell(field_info: Any) -> str:
+    """Derive Required / Conditional / Optional (+default) from the Pydantic FieldInfo.
+
+    Never hand-written. `is_required()` and `default` are the schema's own answer, and
+    the CONDITIONAL branch reads the same `required_when` declaration that
+    `cfgBaseModel._enforce_required_when` enforces -- there is no second source, so this
+    cell cannot state a requirement the validator does not impose, or omit one it does.
+
+    Branch order is load-bearing. Toolkit-owned is checked FIRST because such a field is
+    nominally Optional-with-None but is not something a reproducer supplies at all.
+    Unconditional `is_required()` is checked BEFORE the conditional branch so a field
+    that is always required never renders as merely conditional.
+    """
+    from hhemt.config.base import declared, render_clauses
+
     if _is_toolkit_owned(field_info):
         return "Not supplied by you — created by the clone/build gate at run/setup"
     try:
@@ -1033,6 +1060,9 @@ def _requiredness_cell(field_info: Any) -> str:
         return "—"
     if required:
         return "<strong>Required</strong>"
+    clauses = declared(field_info, "required_when")
+    if clauses:
+        return f"<strong>Conditional</strong> — required when {_esc(render_clauses(clauses))}"
     default = getattr(field_info, "default", None)
     if getattr(default, "__class__", type(None)).__name__ == "PydanticUndefined":
         return "Optional"
@@ -1129,9 +1159,12 @@ def _build_reprex_guide_html(values_by_field: dict[str, str] | None = None) -> s
     parts: list[str] = [_heading("Reproduction Guide")]
     parts.append(
         "<p class='note'>Every configuration field below is grouped by what a reproducer must "
-        "do with it. <strong>Description</strong>, <strong>Required</strong> and the default "
-        "shown beside <em>Optional</em> are read directly off the configuration schema, not "
-        "maintained separately. Values are shown only for the bundled HPC and experiment "
+        "do with it. <strong>Description</strong>, <strong>Required</strong>, the permissible "
+        "options listed beneath a description, and the default shown beside <em>Optional</em> "
+        "are read directly off the configuration schema, not maintained separately. A "
+        "<strong>Conditional</strong> requirement names the setting that triggers it, and is "
+        "read from the same declaration the configuration validator enforces. Values are shown "
+        "only for the bundled HPC and experiment "
         "settings — which the bundle already carries in <code>cfg_system.yaml</code> / "
         "<code>cfg_analysis.yaml</code>. The <em>Supply</em> block is placeholders only: this "
         "page never carries the producing user's own account, paths, or host details, so it is "

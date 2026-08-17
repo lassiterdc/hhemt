@@ -1,9 +1,101 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic_core import PydanticUndefined
+from typing import get_args
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 import pandas as pd
 from tabulate import tabulate
 from hhemt.plot_utils import print_json_file_tree
+
+
+# --- Declarative field metadata: ONE declaration, TWO consumers --------------
+#
+# A field's conditional applicability, its conditional requiredness, and its
+# closed-set option glossary are declared HERE -- on the field, inside
+# `Field(json_schema_extra=...)`. Two consumers read the SAME declaration:
+#
+#   (1) `cfgBaseModel._enforce_required_when` below  -- validation
+#   (2) `hhemt.report_renderers.metadata`            -- the Reproduction Guide
+#
+# There is no second, hand-written enforcement site, so the rendered "Required"
+# cell CANNOT disagree with what is enforced -- which is the defect this
+# replaces: `hpc_total_job_duration_min`'s description named
+# `1_job_many_srun_tasks` while its validator required it under `batch_job`.
+#
+# Precedent: `json_schema_extra={"toolkit_owned_output": True}` is already read
+# by three consumers (validation.py, `_check_paths_exist` below, and
+# metadata._is_toolkit_owned). This extends that idiom rather than opening a
+# second metadata channel.
+#
+# PINNED-VERSION CONSTRAINT: pydantic is pinned to 2.7.* (pyproject.toml). The
+# additive merge of STACKED `json_schema_extra` payloads landed in 2.9, so a
+# field must carry exactly ONE `json_schema_extra=`; build the whole payload
+# with `field_meta()`.
+
+
+def when(field: str, *values: Any) -> Dict[str, Any]:
+    """One trigger clause: `field` holds one of `values`.
+
+    A LIST, not a scalar equality, because five of the conditional fields in
+    this codebase are required when a toggle is FALSE -- `when("toggle_x", False)`
+    must be expressible in the same grammar as `when("mode", "batch_job")`.
+    """
+    return {"field": field, "in": list(values)}
+
+
+def field_meta(
+    *,
+    applies_when: Optional[List[Dict[str, Any]]] = None,
+    required_when: Optional[List[Dict[str, Any]]] = None,
+    options: Optional[Dict[str, str]] = None,
+    **passthrough: Any,
+) -> Dict[str, Any]:
+    """Build a field's whole `json_schema_extra` payload.
+
+    `applies_when` and `required_when` are DELIBERATELY separate keys, not one
+    conflated flag: `hpc_total_job_duration_min` is applicable under BOTH HPC
+    execution methods and required under only one of them, and a single key
+    cannot say that without lying about one of the two.
+
+    `passthrough` carries any pre-existing key (today: `toolkit_owned_output`)
+    so one payload can hold both without stacking.
+    """
+    extra: Dict[str, Any] = dict(passthrough)
+    if applies_when:
+        extra["applies_when"] = applies_when
+    if required_when:
+        extra["required_when"] = required_when
+    if options:
+        extra["options"] = options
+    return extra
+
+
+def declared(field_info: Any, key: str) -> Any:
+    """Read one declaration key off a FieldInfo. `None` when undeclared.
+
+    The presence test is what makes the whole mechanism degrade gracefully: a
+    field with no declaration yields `None` at every call site, so both
+    consumers take their pre-existing branch unchanged.
+    """
+    extra = getattr(field_info, "json_schema_extra", None)
+    return extra.get(key) if isinstance(extra, dict) else None
+
+
+def render_clauses(clauses: List[Dict[str, Any]]) -> str:
+    """Human-readable rendering of trigger clauses, for the report table.
+
+    `multi_sim_run_method is batch_job` / `run_mode is one of gpu, hybrid`.
+    """
+    parts: List[str] = []
+    for clause in clauses:
+        values = clause["in"]
+        joined = (
+            str(values[0])
+            if len(values) == 1
+            else "one of " + ", ".join(str(v) for v in values)
+        )
+        parts.append(f"{clause['field']} is {joined}")
+    return "; ".join(parts)
 
 
 class cfgBaseModel(BaseModel):
@@ -107,6 +199,85 @@ class cfgBaseModel(BaseModel):
                     errors.append(f"{var} path does not exist: {p}")
                     failing_vars.append(var)
         return failing_vars, errors
+
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+        """Fail at IMPORT time when an `options` glossary drifts from its Literal.
+
+        This is the structural anti-drift guarantee for closed-set fields. A test
+        can be skipped or forgotten; an import cannot. Adding a member to a
+        `Literal` without adding it to the glossary raises here, at class-definition
+        time, before any test runs.
+
+        Union annotations -- a Literal ORed with a list of that Literal, as on
+        `clear_raw` and `reclaim_after_processing` -- are REFUSED rather than
+        silently accepted: `get_args` on a union returns the union members, not
+        the string values, so the parity check could not actually check anything.
+        Fail closed and name the field.
+        """
+        super().__pydantic_init_subclass__(**kwargs)
+        for name, field_info in cls.model_fields.items():
+            options = declared(field_info, "options")
+            if options is None:
+                continue
+            legal = set(get_args(field_info.annotation))
+            if not legal or not all(isinstance(v, str) for v in legal):
+                raise TypeError(
+                    f"{cls.__name__}.{name}: options= is declared on a field whose "
+                    f"annotation is not a flat Literal of strings "
+                    f"({field_info.annotation!r}); the option/annotation parity check "
+                    f"cannot be performed, so the declaration is refused."
+                )
+            if set(options) != legal:
+                raise TypeError(
+                    f"{cls.__name__}.{name}: options keys {sorted(options)} != "
+                    f"Literal members {sorted(legal)}. The glossary has drifted from "
+                    f"the type; update whichever is stale."
+                )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _enforce_required_when(cls, values: Any) -> Any:
+        """Enforce every `required_when` declaration on this model. THE ONLY SITE.
+
+        Generic over all fields, so a new conditional requirement is landed by
+        annotating the field and nothing else. There is deliberately no
+        per-field hand-written counterpart to fall out of step with the
+        rendered table.
+
+        `mode="before"` sees RAW input, so a trigger field absent from `values`
+        must fall back to its DECLARED DEFAULT. A naive `values.get(trigger_name)`
+        returns None and silently exempts every YAML that omits the trigger --
+        and `multi_sim_run_method` defaults to "local", so omission is the
+        common case and the bug would be invisible.
+        """
+        if not isinstance(values, dict):
+            return values
+        errors: List[str] = []
+        for name, field_info in cls.model_fields.items():
+            clauses = declared(field_info, "required_when")
+            if not clauses:
+                continue
+            for clause in clauses:
+                trigger_name = clause["field"]
+                if trigger_name in values:
+                    trigger = values[trigger_name]
+                else:
+                    trigger_field = cls.model_fields.get(trigger_name)
+                    if trigger_field is None:
+                        raise TypeError(
+                            f"{cls.__name__}.{name}: required_when names an unknown "
+                            f"field {trigger_name!r}"
+                        )
+                    default = trigger_field.default
+                    trigger = None if default is PydanticUndefined else default
+                if trigger in clause["in"] and values.get(name) is None:
+                    errors.append(
+                        f"{name} is required when {render_clauses([clause])}"
+                    )
+        if errors:
+            raise ValueError("; ".join(errors))
+        return values
 
     @field_validator("*", mode="before")
     @classmethod

@@ -431,6 +431,95 @@ def test_every_config_field_appears_exactly_once():
     assert len(all_labels) == len(set(all_labels)), "a field was rendered twice"
 
 
+# --- Declarative field metadata: one declaration, two consumers --------------
+
+
+def test_conditional_requirement_is_enforced_and_rendered_from_one_declaration():
+    """The rendered cell and the validator read the SAME declaration.
+
+    This is the regression test for the defect that motivated the mechanism:
+    `hpc_total_job_duration_min`'s description named `1_job_many_srun_tasks`
+    while its validator required it under `batch_job`.
+    """
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.base import declared
+
+    field_info = analysis_config.model_fields["hpc_total_job_duration_min"]
+    clauses = declared(field_info, "required_when")
+    assert clauses == [{"field": "multi_sim_run_method", "in": ["batch_job"]}]
+
+    cell = metadata._requiredness_cell(field_info)
+    assert "Conditional" in cell
+    assert "multi_sim_run_method is batch_job" in cell
+
+    # The declaration is the ONLY enforcement site -- no imperative twin.
+    src = inspect.getsource(analysis_config)
+    assert "hpc_total_job_duration_min is None" not in src
+
+
+def test_undeclared_field_renders_byte_identically_to_the_prose_only_form():
+    """Graceful degradation is structural, not best-effort."""
+    from hhemt.config.analysis import analysis_config
+
+    field_info = analysis_config.model_fields["analysis_id"]
+    assert metadata._description_cell(field_info) == metadata._esc(field_info.description or "—")
+    assert "<dl" not in metadata._description_cell(field_info)
+
+
+def test_option_glossary_renders_every_literal_member():
+    """Options come from the declaration, and the declaration matches the type."""
+    from typing import get_args
+
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.base import declared
+
+    for name in ("run_mode", "multi_sim_run_method"):
+        field_info = analysis_config.model_fields[name]
+        options = declared(field_info, "options")
+        assert set(options) == set(get_args(field_info.annotation))
+        cell = metadata._description_cell(field_info)
+        for member in get_args(field_info.annotation):
+            assert member in cell
+
+
+def test_option_glossary_drift_is_refused_at_class_definition_time():
+    """Adding a Literal member without updating the glossary must not be possible."""
+    from typing import Literal
+
+    import pytest
+    from pydantic import Field
+
+    from hhemt.config.base import cfgBaseModel, field_meta
+
+    with pytest.raises(TypeError, match="options keys"):
+
+        class _Drifted(cfgBaseModel):
+            m: Literal["a", "b", "c"] = Field(
+                "a", json_schema_extra=field_meta(options={"a": "A", "b": "B"})
+            )
+
+
+def test_required_when_falls_back_to_the_triggers_declared_default():
+    """A YAML that omits the trigger must still be judged against its default."""
+    from typing import Literal, Optional
+
+    import pytest
+    from pydantic import Field
+
+    from hhemt.config.base import cfgBaseModel, field_meta, when
+
+    class _M(cfgBaseModel):
+        mode: Literal["local", "batch_job"] = "local"
+        dur: Optional[int] = Field(
+            None, json_schema_extra=field_meta(required_when=[when("mode", "batch_job")])
+        )
+
+    assert _M().dur is None  # trigger absent -> default "local" -> not required
+    assert _M(mode="batch_job", dur=90).dur == 90
+    with pytest.raises(ValueError, match="dur is required when mode is batch_job"):
+        _M(mode="batch_job")
+
+
 # --- R5: SLURM efficiency ----------------------------------------------------
 
 
