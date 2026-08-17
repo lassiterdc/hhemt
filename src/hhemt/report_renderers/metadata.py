@@ -119,7 +119,9 @@ _BUCKET_INSTRUCTION: dict[str, str] = {
     ),
     "hpc": (
         "These ride along in the bundle but are specific to the producing cluster. "
-        "Revise them for your target system. Bundle.reprex(reprex_config, "
+        "Revise them for your target system — EXCEPT any row marked as varied by the "
+        "sensitivity analysis, which is a measured axis of this experiment and must be "
+        "reproduced as swept, not revised. Bundle.reprex(reprex_config, "
         "target_hpc_profile) emits the concrete per-(sa_id, column) problem pairs and "
         "validated-vs-advisory amendments for your target."
     ),
@@ -152,6 +154,15 @@ h4 { margin-top: 18px; margin-bottom: 6px; }
    than force horizontal scroll inside the report engine's iframe. The mirrored
    errors_and_warnings CSS lacks this because its cell values are short. */
 td, td code { word-break: break-all; overflow-wrap: anywhere; }
+/* ...but `break-all` sets a cell's min-content width to ONE character, so under
+   auto table-layout the first column is treated as infinitely compressible and
+   collapses to a one-character-per-line ribbon once the table gains columns.
+   Harmless at 3 columns; the reproduction guide's 5-column form made it
+   unreadable. A min-width floor keeps the identifier column legible while
+   leaving `break-all` in force for the sha256 / URI columns that need it.
+   `_grid_table` emits no `div.table-scroll` wrapper, so widening the table
+   instead (by dropping `break-all`) is not an option here. */
+table td:first-child { min-width: 18ch; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 nav.jump-nav { margin: 8px 0 16px; font-size: 13px; }
 nav.jump-nav a { text-decoration: none; }
@@ -1009,8 +1020,13 @@ def _is_toolkit_owned(field_info: Any) -> bool:
 
     Not a judgement call: this is the SAME marker `validation.py` and `config/base.py`
     already honour to skip existence checks on a path the toolkit creates for itself.
-    Today it marks the two software-directory fields, which the clone/build gate
-    populates at run/setup -- so a reproducer does not supply them.
+    Today it marks the two software-directory fields. NOTE WHAT THE SENTINEL DOES AND
+    DOES NOT MEAN: it exempts the path from the load-time existence check because the
+    toolkit CREATES that directory. It is NOT a statement that the user does not supply
+    the path -- the user names the directory the clone/build gate builds into, and
+    `system.py` raises ConfigurationError when it is None. These fields are schema-
+    Optional only so a portability-scrubbed bundle's cfg_system.yaml loads for
+    bundle-local EDA; they are required for any real run.
     """
     extra = getattr(field_info, "json_schema_extra", None)
     return isinstance(extra, dict) and bool(extra.get("toolkit_owned_output"))
@@ -1053,7 +1069,7 @@ def _requiredness_cell(field_info: Any) -> str:
     from hhemt.config.base import declared, render_clauses
 
     if _is_toolkit_owned(field_info):
-        return "Not supplied by you — created by the clone/build gate at run/setup"
+        return "<strong>Required</strong> — you choose the location; the toolkit clones/builds into it"
     try:
         required = field_info.is_required()
     except Exception:  # noqa: BLE001 -- schema introspection must not break the render
@@ -1096,8 +1112,13 @@ def _config_field_values(analysis: TRITONSWMM_analysis) -> dict[str, str]:
     """
     analysis_dir = Path(analysis.analysis_paths.analysis_dir)
     out: dict[str, str] = {}
+    # `cfg_system` hangs off the SYSTEM, never off the analysis -- `analysis._system`
+    # is the accessor every other renderer uses (per_sim_peak_flood_depth.py:186,
+    # system_overview.py:111). Reading `analysis.cfg_system` directly always returned
+    # None, and the graceful-absent `continue` below turned that into 33 silently
+    # blank EXPERIMENT rows rather than an error.
     for config_label, cfg in (
-        ("system_config", getattr(analysis, "cfg_system", None)),
+        ("system_config", getattr(getattr(analysis, "_system", None), "cfg_system", None)),
         ("analysis_config", getattr(analysis, "cfg_analysis", None)),
     ):
         if cfg is None:
@@ -1138,7 +1159,78 @@ def _bucket_badge(bucket: str) -> str:
     return f'<span class="badge" style="background-color:{color}">{_esc(_BUCKET_VERB[bucket])}</span>'
 
 
-def _build_reprex_guide_html(values_by_field: dict[str, str] | None = None) -> str:
+#: How many distinct swept values a `Value used` cell shows before eliding. A
+#: continuous sweep over 40 rows must not render 40 values inside one table cell.
+_VARIED_VALUE_PREVIEW: int = 6
+
+
+def _sensitivity_varied_values(analysis: TRITONSWMM_analysis) -> dict[str, str]:
+    """`{"{config_label}.{field_name}": rendered cell}` for every SWEPT parameter.
+
+    DERIVED, never hand-listed. The sensitivity CSV's own column names ARE the
+    declaration of what varies, and `sensitivity_analysis` already owns that
+    grammar (`system.{field}` / `analysis.{field}` / `hpc.{alias}` / the deprecated
+    bare analysis-field name). Reading the frame's columns therefore yields exactly
+    this experiment's swept set, and adding a sweep axis to the CSV changes this map
+    with no renderer edit.
+
+    Why the cell is REPLACED and not annotated: for a varied parameter the master's
+    config value is one arm's setting. Rendering it as "Value used" presents one
+    sub-analysis's configuration as though it were the experiment's, which is
+    affirmatively misleading rather than merely incomplete. An appended "(varied)"
+    tag does not undo a number the reader has already read as the answer.
+
+    GRACEFUL-ABSENT, mirroring `_config_field_values`: a non-sensitivity analysis, a
+    scrubbed bundle whose sensitivity CSV is not on disk, or any frame-access failure
+    yields `{}` and the guide renders exactly as it did before.
+    """
+    sensitivity = getattr(analysis, "sensitivity", None)
+    if sensitivity is None:
+        return {}
+    try:
+        from hhemt.config.analysis import analysis_config
+        from hhemt.sensitivity_analysis import (
+            _is_analysis_overlay_column,
+            _is_hpc_overlay_column,
+            _is_system_overlay_column,
+            _resolve_hpc_alias_to_analysis_field,
+            _strip_analysis_prefix,
+            _strip_system_prefix,
+        )
+
+        columns = list(sensitivity._df_setup_full.columns)
+    except Exception:  # noqa: BLE001 -- a display column must never break the render
+        return {}
+
+    out: dict[str, str] = {}
+    for col in columns:
+        if col == "system_config_yaml":
+            continue
+        if _is_system_overlay_column(col):
+            label = f"system_config.{_strip_system_prefix(col)}"
+        elif _is_hpc_overlay_column(col):
+            label = f"analysis_config.{_resolve_hpc_alias_to_analysis_field(col)}"
+        elif _is_analysis_overlay_column(col):
+            label = f"analysis_config.{_strip_analysis_prefix(col)}"
+        elif col in analysis_config.model_fields:
+            label = f"analysis_config.{col}"  # deprecated bare-name form
+        else:
+            continue
+        try:
+            distinct = sorted({str(v) for v in sensitivity._df_setup_full[col].dropna().tolist()})
+        except Exception:  # noqa: BLE001
+            distinct = []
+        detail = ", ".join(_code(v) for v in distinct[:_VARIED_VALUE_PREVIEW])
+        if len(distinct) > _VARIED_VALUE_PREVIEW:
+            detail += f", … ({len(distinct)} values)"
+        out[label] = "<strong>Varied by the sensitivity analysis</strong>" + (f" — {detail}" if detail else "")
+    return out
+
+
+def _build_reprex_guide_html(
+    values_by_field: dict[str, str] | None = None,
+    varied_by_field: dict[str, str] | None = None,
+) -> str:
     """Static grouped table: every config field -> USER=Supply / HPC=Amend / EXPERIMENT=Keep.
 
     Grouped (not a flat sortable grid) because the primary task a reproducer
@@ -1150,9 +1242,10 @@ def _build_reprex_guide_html(values_by_field: dict[str, str] | None = None) -> s
     `Field(description=...)`, requiredness and default from `FieldInfo` -- so none of
     it is restated by hand and none of it can drift from the model.
 
-    ``values_by_field`` (from `_config_field_values`) is applied to the HPC and
-    EXPERIMENT buckets only. The USER bucket never receives it, so its cells stay
-    placeholder-only and the zero-user-info property of the shipped page is preserved.
+    ``values_by_field`` (from `_config_field_values`) and ``varied_by_field`` (from
+    `_sensitivity_varied_values`) are applied to the HPC and EXPERIMENT buckets only.
+    The USER bucket never receives either, so its cells stay placeholder-only and the
+    zero-user-info property of the shipped page is preserved.
     """
     rows_by_bucket, unclassified = _config_field_rows()
 
@@ -1163,7 +1256,9 @@ def _build_reprex_guide_html(values_by_field: dict[str, str] | None = None) -> s
         "options listed beneath a description, and the default shown beside <em>Optional</em> "
         "are read directly off the configuration schema, not maintained separately. A "
         "<strong>Conditional</strong> requirement names the setting that triggers it, and is "
-        "read from the same declaration the configuration validator enforces. Values are shown "
+        "read from the same declaration the configuration validator enforces. A field the "
+        "sensitivity analysis VARIED shows that instead of a value: it has no single value "
+        "used, and naming one arm's setting would misreport the experiment. Values are shown "
         "only for the bundled HPC and experiment "
         "settings — which the bundle already carries in <code>cfg_system.yaml</code> / "
         "<code>cfg_analysis.yaml</code>. The <em>Supply</em> block is placeholders only: this "
@@ -1188,14 +1283,28 @@ def _build_reprex_guide_html(values_by_field: dict[str, str] | None = None) -> s
             parts.append(_banner("No configuration fields fall in this bucket."))
             continue
         headers = ["Field", "Description", "Required", "Placeholder"]
-        if bucket in ("hpc", "experiment") and values_by_field:
+        _values = values_by_field or {}
+        _varied = varied_by_field or {}
+        if bucket in ("hpc", "experiment") and (_values or _varied):
             # Value disclosure is bucket-scoped. USER-bucket values are host-local and are
             # already nulled out of the bundle's cfg_*.yaml by _scrub_user_bucket_fields, so
             # rendering them here would disclose what the bundle deliberately withholds.
             # HPC/EXPERIMENT values ARE carried in the bundle already, so showing them
             # discloses nothing new.
+            #
+            # Precedence: a SWEPT parameter's cell is replaced outright, because the
+            # master's stored value is one arm's setting and rendering it here would
+            # present one sub-analysis's configuration as the experiment's. A field with
+            # neither a swept marker nor a producer value falls back to the bucket
+            # placeholder rather than a bare em-dash -- the reprex_config.target_*
+            # rows have no producer value BY DESIGN (they describe the reproducer's
+            # target system), and a dash there reads as "the value was empty".
             headers.insert(3, "Value used")
-            rows = [row[:3] + [values_by_field.get(_strip_code(row[0]), "—")] + row[3:] for row in rows]
+            _fallback = _code(_BUCKET_PLACEHOLDER.get(bucket, "—"))
+            rows = [
+                row[:3] + [_varied.get(_strip_code(row[0])) or _values.get(_strip_code(row[0]), _fallback)] + row[3:]
+                for row in rows
+            ]
         parts.append(_grid_table(headers, rows))
 
     return "\n".join(parts)
@@ -1720,7 +1829,10 @@ def render(
     # descriptions / requiredness / defaults, plus in-memory config values for the
     # HPC and EXPERIMENT buckets only. `_config_field_rows` still takes no analysis,
     # so its zero-user-info guarantee stays structural rather than disciplinary.
-    reprex_html = _build_reprex_guide_html(_config_field_values(analysis))
+    reprex_html = _build_reprex_guide_html(
+        _config_field_values(analysis),
+        _sensitivity_varied_values(analysis),
+    )
 
     # (4) SLURM efficiency -- glob + descend (os.scandir/os.stat; audit-invisible)
     # to EVERY inner efficiency_report_*.csv FILE, then declare them all. The plugin

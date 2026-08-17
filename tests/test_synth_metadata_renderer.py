@@ -413,6 +413,52 @@ def test_partition_selectors_are_amend_not_supply():
         assert f"reprex_config.{field}" not in user_labels
 
 
+def test_system_config_values_resolve_through_the_system_object(tmp_path):
+    """The system config hangs off `analysis._system`, never off the analysis.
+
+    PRE-FIX THIS FAILS with `assert None == '1.5'`. `_config_field_values` read
+    `getattr(analysis, "cfg_system", None)`, an attribute `TRITONSWMM_analysis` does
+    not define, so its graceful-absent `continue` dropped EVERY `system_config.*` key
+    and the EXPERIMENT table rendered 33 consecutive blank `Value used` cells.
+
+    Asserted against a two-attribute stand-in rather than a real `system_config`
+    BECAUSE the graceful-absent contract is what hid the bug: the function accepts any
+    object exposing `model_fields`, so a test that builds a real config would pass for
+    reasons unrelated to the traversal being tested.
+    """
+    from pydantic import BaseModel
+
+    class _StubSystemCfg(BaseModel):
+        target_dem_resolution: float = 1.5
+
+    analysis = types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(analysis_dir=tmp_path),
+        cfg_analysis=None,
+        _system=types.SimpleNamespace(cfg_system=_StubSystemCfg()),
+    )
+    values = metadata._config_field_values(analysis)
+    assert values.get("system_config.target_dem_resolution") == "1.5"
+
+
+def test_a_swept_parameter_renders_as_varied_not_as_one_arms_value():
+    """A sensitivity-varied field must not render one arm's setting as the value used.
+
+    PRE-FIX THIS FAILS with `AttributeError: module ... has no attribute
+    '_sensitivity_varied_values'`. The derivation is keyed off the sensitivity frame's
+    COLUMN NAMES, which are the toolkit's own declaration of what varies, so adding a
+    sweep axis changes the rendered set with no renderer edit -- the reason this is
+    asserted over a crafted frame rather than a literal field list.
+    """
+    import pandas as pd
+
+    frame = pd.DataFrame({"analysis.run_mode": ["serial", "mpi"]})
+    analysis = types.SimpleNamespace(sensitivity=types.SimpleNamespace(_df_setup_full=frame))
+    varied = metadata._sensitivity_varied_values(analysis)
+    cell = varied["analysis_config.run_mode"]
+    assert "Varied by the sensitivity analysis" in cell
+    assert "serial" in cell and "mpi" in cell
+
+
 def test_every_config_field_appears_exactly_once():
     """R4: the guide is exhaustive over both configs — nothing silently dropped."""
     from hhemt.config.analysis import analysis_config
