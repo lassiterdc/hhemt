@@ -3467,9 +3467,27 @@ class TRITONSWMM_analysis:
         # its OWN master-keyed sentinel — writing here too would double-write into
         # the same _status/_orchestrator/ dir for one logical driver, so guard on
         # NOT sensitivity (sensitivity runs leave _driver_id None here).
+        #
+        # A DRY RUN writes NO sentinel. It submits nothing, allocates nothing and
+        # produces no zarr, so it is not the "unarbitrated concurrent
+        # consolidate-zarr write" this record exists to advertise. Writing one
+        # was actively harmful: on batch_job / 1_job_many_srun_tasks the
+        # enrich below has no job_id and no session_name to merge, so the
+        # sentinel keeps null identity fields, and the tri-state gate reads that
+        # as UNKNOWN-held (workflow.py, the "written but not yet enriched" arm)
+        # until the mtime-age fail-safe at _max_plausible_job_lifetime_min
+        # (hpc_total_job_duration_min + 30) expires — blocking reprocess for the
+        # better part of a long-walltime arm on a rehearsal that never ran.
+        # Suppressed at the WRITE, not at the removal condition below: that
+        # condition is a LIVE-driver dichotomy (blocking-local removes /
+        # detached persists) whose premise a dry run never satisfies. Leaving
+        # _driver_id None is the same idiom the sensitivity guard above uses for
+        # "this frame owns no sentinel". Mirrors the pre-existing `if not
+        # dry_run` gates in submit_reprocess_workflow and
+        # submit_static_plots_workflow.
         _driver_id = None
         _eff_mode = self.cfg_analysis.multi_sim_run_method
-        if not self.cfg_analysis.toggle_sensitivity_analysis:
+        if not self.cfg_analysis.toggle_sensitivity_analysis and not dry_run:
             _driver_id = _osent.new_driver_id()
             _osent.write_orchestrator_sentinel(
                 self.analysis_paths.analysis_dir,
@@ -3780,6 +3798,21 @@ class TRITONSWMM_analysis:
                     config_path=str(self.analysis_config_yaml),
                 )
 
+        # Orchestrator-liveness CLAIM — hoisted ahead of every destructive step
+        # below. Until 2026-08-16 the gate lived inside
+        # submit_reprocess_workflow (workflow.py), i.e. AFTER
+        # _invalidate_downstream_flags had already unlinked
+        # analysis_report.{html,zip} and the report-feeding plots, so a REFUSED
+        # reprocess destroyed the artifact it was refusing to rebuild
+        # (measured on the UVA benchmarking_cpu_uva arm: report deleted, then
+        # rc=1). Gate and self-sentinel write are one step: hoisting the
+        # read-only gate alone would leave the refusal reachable after
+        # destruction whenever another driver appears in the (minutes-long)
+        # window before the builder's own claim. Returns None on dry_run, in
+        # which case the builder gates as before. Placed AFTER the sensitivity
+        # dispatch above so exactly one frame claims per invocation.
+        _reprocess_claim = self._workflow_builder._acquire_reprocess_driver_claim(dry_run=dry_run)
+
         # Reprocess overrides 1_job_many_srun_tasks → batch_job at submission
         # time. 1_job_many_srun_tasks reserves an exclusive multi-node SLURM
         # allocation that the downstream-only reprocess does not need, and the
@@ -3928,6 +3961,7 @@ class TRITONSWMM_analysis:
             start_with=start_with,
             execution_mode=execution_mode,
             multi_sim_run_method_override=effective_method,
+            claimed_driver_id=_reprocess_claim,
             dry_run=dry_run,
             verbose=verbose,
         )

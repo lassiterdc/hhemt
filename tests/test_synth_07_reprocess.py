@@ -237,6 +237,60 @@ def test_reprocess_refuses_fast_with_live_orchestrator(synthetic_multisim_comple
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_reprocess_refusal_does_not_destroy_the_report(synthetic_multisim_completed_isolated, monkeypatch):
+    """A REFUSED reprocess must not have destroyed the report it refused to rebuild.
+
+    The FACADE-level complement of test_reprocess_refuses_fast_with_live_orchestrator,
+    which asserts the same refusal one layer down at the builder. That scoping is not
+    incidental: until the claim was hoisted, `reprocess()` ran
+    `_invalidate_downstream_flags` -- which unlinks analysis_report.{html,zip} on every
+    arm -- BEFORE `submit_reprocess_workflow` reached the orchestrator-liveness gate, so
+    the gate could only refuse after the artifact was gone. Measured 2026-08-16 on the
+    UVA benchmarking_cpu_uva arm: report deleted, then rc=1, then zero analysis_report.*
+    anywhere under the scratch base.
+
+    This test therefore asserts an ORDERING, which is the one property a reachability
+    claim cannot certify. It FAILS against the pre-hoist code (the refusal arrives, the
+    report does not survive) and passes once the claim precedes the destruction.
+    """
+    a = synthetic_multisim_completed_isolated
+    analysis_dir = a.analysis_paths.analysis_dir
+
+    report_html = analysis_dir / "analysis_report.html"
+    report_html.write_text("<html><body>pre-existing report</body></html>")
+    plots_dir = analysis_dir / "plots"
+    plots_before = sorted(p.name for p in plots_dir.rglob("*") if p.is_file()) if plots_dir.exists() else []
+
+    osent.write_orchestrator_sentinel(
+        analysis_dir, driver_id="live-driver-ordering", workflow_submission_mode="local", pid=4242
+    )
+    monkeypatch.setattr("subprocess.run", _fake_ps_run({4242}))
+    try:
+        with pytest.raises(WorkflowError) as excinfo:
+            a.reprocess(start_with="render", execution_mode="local", verbose=False)
+        assert "liveness=ALIVE" in excinfo.value.stderr, (
+            "precondition: the refusal must come from the LIVE arm of the tri-state gate, "
+            "not from an UNKNOWN/held classification -- otherwise this test would pass for "
+            f"the wrong reason. Got: {excinfo.value.stderr!r}"
+        )
+        assert report_html.exists(), (
+            "A refusing gate destroyed the artifact it refused to rebuild. "
+            "analysis_report.html was present before reprocess() and is gone after a "
+            "refusal, which means destructive invalidation still precedes the "
+            "orchestrator-liveness claim in the reprocess facade."
+        )
+        plots_after = sorted(p.name for p in plots_dir.rglob("*") if p.is_file()) if plots_dir.exists() else []
+        assert plots_after == plots_before, (
+            "A refused reprocess must leave plots/ untouched. (The render arm never "
+            "deletes plots even on success -- it is the surgical report-shell-only path -- "
+            "so any change here means a non-render arm ran, or the refusal came too late.)"
+        )
+    finally:
+        osent.remove_orchestrator_sentinel(analysis_dir, "live-driver-ordering")
+        report_html.unlink(missing_ok=True)
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_reprocess_never_calls_input_even_with_stale_lock(synthetic_multisim_completed_isolated, monkeypatch):
     """(e) non-TTY no-hang: even with the non-interactive lock-clear env var
     UNSET and a stale ``.snakemake/locks/*.lock`` planted (the exact condition
@@ -271,6 +325,71 @@ def test_reprocess_never_calls_input_even_with_stale_lock(synthetic_multisim_com
         )
     finally:
         stale_lock.unlink(missing_ok=True)
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_dry_run_submit_workflow_leaves_no_orchestrator_sentinel(
+    synthetic_multisim_completed_isolated, monkeypatch
+):
+    """TWO-ARM DIFFERENTIAL: dry_run leaves NO orchestrator sentinel; a real
+    detached run leaves exactly one.
+
+    A dry run submits nothing, allocates nothing and writes no zarr, so it is not the
+    "unarbitrated concurrent consolidate-zarr write" the sentinel exists to advertise.
+    Writing one was actively harmful on a detached mode: the enrich has no job_id and no
+    session_name to merge, so the record keeps null identity fields, and the tri-state
+    gate reads that as UNKNOWN-held until the mtime-age fail-safe at
+    hpc_total_job_duration_min + 30 -- blocking reprocess for the better part of a
+    long-walltime arm on a rehearsal that never ran.
+
+    The SECOND arm is what makes the first meaningful. Suppressing the sentinel
+    unconditionally would also make arm 1 pass, while silently disarming the
+    concurrency gate for every real detached driver. Arm 1 FAILS pre-fix; arm 2 passes
+    both before and after, and is the guard against over-correcting.
+
+    The builder is stubbed: the property under test is the sentinel lifecycle inside
+    submit_workflow, so removing the Snakemake subprocess removes no code under test.
+    """
+    a = synthetic_multisim_completed_isolated
+    analysis_dir = a.analysis_paths.analysis_dir
+    orch_dir = osent.orchestrator_dir(analysis_dir)
+
+    # Detached mode is required: under "local" the finally-removal fires on BOTH arms,
+    # so the defect is invisible and arm 1 would pass pre-fix for the wrong reason.
+    monkeypatch.setattr(a.cfg_analysis, "multi_sim_run_method", "batch_job")
+    monkeypatch.setattr(
+        a._workflow_builder,
+        "submit_workflow",
+        lambda **kwargs: {"success": True, "mode": "tmux", "job_id": None, "session_name": None},
+    )
+
+    def _sentinel_names():
+        return sorted(p.name for p in orch_dir.glob("*.json")) if orch_dir.exists() else []
+
+    for stale in _sentinel_names():
+        (orch_dir / stale).unlink(missing_ok=True)
+
+    try:
+        # ARM 1 -- rehearsal. No driver exists, so no record of one may persist.
+        a.submit_workflow(dry_run=True, verbose=False)
+        assert _sentinel_names() == [], (
+            "A dry run left an orchestrator sentinel. On a detached mode nothing removes "
+            "it and its identity fields are null, so the tri-state gate holds it as "
+            "UNKNOWN for hpc_total_job_duration_min + 30 minutes -- a reprocess blocked "
+            f"by a driver that never existed. Found: {_sentinel_names()}"
+        )
+
+        # ARM 2 -- real detached run. The durable record MUST still be written, or the
+        # fix has disarmed the concurrency gate instead of correcting it.
+        a.submit_workflow(dry_run=False, verbose=False)
+        assert len(_sentinel_names()) == 1, (
+            "A real batch_job submit must leave exactly one durable orchestrator "
+            "sentinel for the gate's liveness probes to reclaim. Suppressing it would "
+            f"disarm the reprocess concurrency gate. Found: {_sentinel_names()}"
+        )
+    finally:
+        for name in _sentinel_names():
+            (orch_dir / name).unlink(missing_ok=True)
 
 
 def test_reprocess_dry_run_no_destructive_mutation(synthetic_multisim_completed_isolated):
