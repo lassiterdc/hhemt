@@ -42,6 +42,11 @@ from matplotlib.colors import Normalize
 from plotly.subplots import make_subplots
 
 from hhemt import units, utils
+from hhemt.figure_panels import (
+    WATERSHED_LEGEND_GROUP,
+    WATERSHED_LEGEND_LABEL,
+    watershed_legend_marker,
+)
 from hhemt.report_renderers._map_bounds import (
     compute_padded_square_bounds,
 )
@@ -1387,16 +1392,19 @@ def _build_peak_flood_depth_figure(
                 x=[None],
                 y=[None],
                 mode="markers",
-                marker=dict(
-                    symbol="square-open",
-                    size=12,
+                marker=watershed_legend_marker(
                     color=map_cfg.watershed_overlay_color,
-                    line=dict(width=map_cfg.watershed_overlay_width),
+                    line_width=map_cfg.watershed_overlay_width,
                 ),
                 hoverinfo="skip",
                 showlegend=True,
-                legendgroup="watershed_extent",
-                name="watershed extent (bbox)",
+                # Iteration-11 item 6: glyph, group and label now all read
+                # `hhemt.figure_panels`. Iteration 10's two measured constraints are
+                # preserved by construction -- this is still a markers-mode proxy, and it is
+                # still emitted OUTSIDE any per-column loop, because this edit changes only
+                # keyword VALUES and moves no `fig.add_trace` call.
+                legendgroup=WATERSHED_LEGEND_GROUP,
+                name=WATERSHED_LEGEND_LABEL,
             ),
             row=1,
             col=1,

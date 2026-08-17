@@ -20,6 +20,11 @@ import swmmio
 from plotly.subplots import make_subplots
 
 from hhemt import units
+from hhemt.figure_panels import (
+    WATERSHED_LEGEND_GROUP,
+    WATERSHED_LEGEND_LABEL,
+    watershed_legend_marker,
+)
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -919,16 +924,20 @@ def _build_conduit_flow_figure(
                 x=[None],
                 y=[None],
                 mode="markers",
-                marker=dict(
-                    symbol="square-open",
-                    size=12,
+                marker=watershed_legend_marker(
                     color=map_cfg.watershed_overlay_color,
-                    line=dict(width=map_cfg.watershed_overlay_width),
+                    line_width=map_cfg.watershed_overlay_width,
                 ),
                 hoverinfo="skip",
                 showlegend=True,
-                legendgroup="watershed_extent",
-                name="watershed extent (bbox)",
+                # Iteration-11 item 6: glyph, group and label now all read
+                # `hhemt.figure_panels`, so this key and the stacked-panel families'
+                # `watershed_swatch` cannot drift apart again. Only the LEGEND-VISIBLE site is
+                # routed through the constants; the `name=` on the `showlegend=False` boundary
+                # traces above is inert (they carry `hoverinfo="skip"` and emit no entry) and
+                # is deliberately left alone, so this file has exactly ONE behavioural site.
+                legendgroup=WATERSHED_LEGEND_GROUP,
+                name=WATERSHED_LEGEND_LABEL,
             ),
             row=1,
             col=1,

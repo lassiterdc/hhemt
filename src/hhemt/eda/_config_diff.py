@@ -78,6 +78,44 @@ _CONFIG_DIFF_PCT_BAND = 0.1
 #: disclosure is owed (plotly Heatmap has no set_over triangle to carry one).
 _DEPTH_CAP_STEP_M = 0.25
 
+
+def _abs_ref_range(actual) -> float:
+    """Half-range for a SEQUENTIAL reference colorbar: the actual magnitude, epsilon-guarded.
+
+    Iteration-11 item 4. Was a closure inside `build_config_diff_figure` (`_rng`) with a
+    single call site, so `cross_experiment_intercomparison_maps` could not reach it and
+    open-coded `(vmax if vmax > 0 else 1.0)` instead -- a 1.0 fallback where this returns
+    `_RANGE_EPS`, which is a visible difference on an all-zero flow field. Module scope so
+    both diff-map families read one rule.
+    """
+    a = float(actual)
+    return a if np.isfinite(a) and a > _RANGE_EPS else _RANGE_EPS
+
+
+def _quantised_depth_cap(masked) -> float | None:
+    """Reference-depth colorbar cap: the masked maximum ROUNDED UP to `_DEPTH_CAP_STEP_M`.
+
+    Iteration-11 item 4. Was an inline expression at this module's Panel-A call site, with
+    the non-positive guard living separately at the `zmax=` keyword. Both halves move here
+    so the caller writes `zmax=_quantised_depth_cap(z)` and cannot reproduce one without the
+    other -- `None` is returned for a non-positive or all-NaN field, which is the value
+    plotly reads as "no cap", exactly as the old guard did.
+
+    Rounding UP never clips, which matters because plotly's Heatmap has no `set_over`
+    triangle to disclose a clip with. Two panels whose masked peaks share a 0.25 m bin get
+    the SAME cap, which is what makes one hue mean one water level across panels and across
+    the two figure families rather than only within one render.
+    """
+    arr = np.asarray(masked, dtype=float)
+    raw = float(np.nanmax(arr)) if np.isfinite(arr).any() else None
+    cap = (
+        float(np.ceil(raw / _DEPTH_CAP_STEP_M) * _DEPTH_CAP_STEP_M)
+        if raw is not None and raw > 0
+        else raw
+    )
+    return cap if cap is not None and cap > 0 else None
+
+
 #: Per-map height (px). The panel budget that used to be derived from this here now lives in
 #: `figure_panels.PANEL_H_PX`, which carries the same value; this name survives for the
 #: EMPTY-STATE figure height below and because `_dem_resolution_plots` imports it.
@@ -870,12 +908,6 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             by_label.setdefault(lbl, subs[sa_id]["attrs"])
         return sorted(by_label, key=lambda lbl: (_device_count(by_label[lbl]), lbl))
 
-    def _rng(actual):
-        # Data-driven symmetric half-range (iter-3, no floor): the actual magnitude,
-        # epsilon-guarded so an all-zero diff does not collapse the diverging scale.
-        a = float(actual)
-        return a if np.isfinite(a) and a > _RANGE_EPS else _RANGE_EPS
-
     # ---- summary table (absolute diff, table-only) ----
     # Serial-containing group FIRST (item: first table row is always the serial group).
     # `# configs` counts DISTINCT compute configs (len of the deduped label set) so it
@@ -1169,7 +1201,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         )
 
     # ---- Panel A: serial-CPU reference (absolute magnitudes, report palettes) ----
-    fmax = _rng(np.nanmax(np.abs(base_f))) if has_flow else None
+    fmax = _abs_ref_range(np.nanmax(np.abs(base_f))) if has_flow else None
     # Serial depth reference: displayed water level AND the colorbar vmax are restricted to
     # the watershed mask (north of the sea wall) — the coastal storm-tide extreme south of
     # the wall is excluded, so the inland floodplain signal is visible (item: vmax based on
@@ -1183,12 +1215,11 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # triangle, so a clipped cap saturates silently). Rounding up to _DEPTH_CAP_STEP_M is
     # deterministic, never clips, and makes the two arms coincide whenever their masked peaks
     # share a bin.
-    _raw_vmax = float(np.nanmax(base_w_disp)) if np.isfinite(base_w_disp).any() else None
-    depth_vmax = (
-        float(np.ceil(_raw_vmax / _DEPTH_CAP_STEP_M) * _DEPTH_CAP_STEP_M)
-        if _raw_vmax is not None and _raw_vmax > 0
-        else _raw_vmax
-    )
+    # Iteration-11 item 4: the expression moved to `_quantised_depth_cap` at module scope so
+    # `cross_experiment_intercomparison_maps` reads the SAME rule rather than a third copy.
+    # Behaviour is unchanged: the helper folds in the non-positive guard that used to live at
+    # the `zmax=` keyword below, returning None where that guard produced None.
+    depth_vmax = _quantised_depth_cap(base_w_disp)
     fig.add_trace(
         _heatmap(
             base_w_disp,
@@ -1197,7 +1228,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             y=yd,
             colorscale=_REF_DEPTH,
             zmin=0,
-            zmax=depth_vmax if depth_vmax and depth_vmax > 0 else None,
+            zmax=depth_vmax,
             cbar_title="m",
             cbar_x=cb_x[1],
             cbar_y=_cb_y(serial_row),
@@ -1461,8 +1492,12 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         # fraction-vs-pixel drift hhemt.figure_caption documents. Reuse the one band
         # constant so the swatch and the caption clear the same axis furniture.
         sw_y = y_bot - _f(_AXIS_BAND_PX)
-        # watershed legend swatch = small UNFILLED rectangle, wider than tall (item),
-        # centred under the side table by the shared helper. APPENDED to this module's
+        # watershed legend swatch = small UNFILLED SQUARE, centred under the side table by
+        # the shared helper. The earlier user item recorded here -- "wider than tall" -- is
+        # SUPERSEDED by Iteration-11 item 6: the per-sim families key the same geometry
+        # through a plotly legend, whose marker vocabulary has no rectangle, so square is the
+        # only shape both mechanisms can draw. The side length is
+        # `figure_panels.WATERSHED_GLYPH_PX`. APPENDED to this module's
         # `shapes`/`annotations` lists rather than added via `fig.add_shape`, so it lands in
         # the same layer pass as the outline it sits inside.
         _ws_rect, _ws_text = watershed_swatch(_layout, first_row, last_row)

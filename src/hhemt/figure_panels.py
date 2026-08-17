@@ -37,6 +37,55 @@ PANEL_H_PX = 350
 #: in the other.
 AXIS_BAND_PX = 46
 
+#: The ONE name for the watershed-extent key, and the ONE glyph that carries it.
+#:
+#: Iteration-11 item 6. Two figure families key the same geometry two different ways, and
+#: the split is FORCED: the stacked-panel families (`eda._config_diff`,
+#: `report_renderers.cross_experiment_intercomparison_maps`) draw a paper-space rect via
+#: `watershed_swatch`, while the per-sim families (`per_sim_peak_flood_depth`,
+#: `per_sim_conduit_flow`) need a plotly LEGEND entry -- and a `mode="lines"` trace renders
+#: a LINE glyph there with no per-trace override, which is why Iteration 10 routed them
+#: onto a markers proxy. The MECHANISM cannot be unified. The SHAPE and the LABEL can, and
+#: they had drifted: a 28x16 px rect on one side, a 12x12 px `square-open` marker on the
+#: other, with the label spelled as a literal in five places.
+#:
+#: SQUARE is the reconciled shape, and it SUPERSEDES the earlier user item recorded at
+#: `_config_diff`'s swatch call site ("small UNFILLED rectangle, wider than tall"). That
+#: preference is not reachable on the legend side -- plotly's marker vocabulary has no
+#: rectangle -- so squaring the rect is the only direction in which the two can converge.
+WATERSHED_LEGEND_LABEL = "watershed extent (bbox)"
+
+#: plotly `legendgroup` coupling every watershed artist into ONE legend toggle. Named here
+#: rather than at each call site for the same reason as the label: two families spelling it
+#: apart is a silent split into two toggles, which is what Iteration 9 already fixed once.
+WATERSHED_LEGEND_GROUP = "watershed_extent"
+
+#: Edge length (px) of the watershed glyph in BOTH mechanisms: the plotly marker `size` for
+#: a legend proxy, and the FULL side of the paper-space rect. One number, so a change moves
+#: both keys together and neither can be retuned alone.
+WATERSHED_GLYPH_PX = 12
+
+
+def watershed_legend_marker(*, color: str, line_width: float) -> dict:
+    """The plotly ``marker`` dict for a watershed legend-key proxy trace.
+
+    Returned rather than drawn. The per-sim renderers must construct their traces inside a
+    ``with prov.artist(...)`` block -- the same constraint
+    ``_config_diff._watershed_boundary_traces`` documents for the boundary itself -- so this
+    hands back styling and leaves trace ownership with the caller.
+
+    Pair it with ``name=WATERSHED_LEGEND_LABEL`` and ``legendgroup=WATERSHED_LEGEND_GROUP``.
+    Those two are module constants rather than parameters here on purpose: a proxy carrying
+    a different name or a different group is not the same key, so there is nothing for a
+    caller to legitimately vary.
+    """
+    return dict(
+        symbol="square-open",
+        size=WATERSHED_GLYPH_PX,
+        color=color,
+        line=dict(width=line_width),
+    )
+
 
 @dataclass(frozen=True)
 class PanelBudget:
@@ -268,7 +317,7 @@ def watershed_swatch(
     first_row: int,
     last_row: int,
     *,
-    label: str = "watershed extent (bbox)",
+    label: str = WATERSHED_LEGEND_LABEL,
     font_px: int = 10,
 ) -> tuple[dict, dict]:
     """The watershed legend key: an unfilled rect plus its label, CENTERED under the table.
@@ -293,8 +342,13 @@ def watershed_swatch(
     """
     from hhemt.figure_caption import text_width_px
 
-    half_w = 14.0 / layout.fig_width
-    half_h = layout.f(8)
+    # Iteration-11 item 6: SQUARE, both halves from `WATERSHED_GLYPH_PX`. Was 28 px wide by
+    # 16 px tall -- a rectangle no plotly legend marker can match, which is exactly why this
+    # key and the per-sim families' key disagreed. `_config_diff`'s panel outline reads its
+    # own `_SW_HALF_H = _f(8)` and is unaffected: the swatch shrinking to f(6) only INCREASES
+    # the outline-to-swatch clearance, so the outline cannot be pulled onto the glyph.
+    half_w = (WATERSHED_GLYPH_PX / 2.0) / layout.fig_width
+    half_h = layout.f(WATERSHED_GLYPH_PX / 2.0)
     gap = 0.006
     unit_w = 2 * half_w + gap + text_width_px(label, font_px=font_px) / layout.fig_width
     centre = (layout.side_table_x[0] + layout.side_table_x[1]) / 2.0

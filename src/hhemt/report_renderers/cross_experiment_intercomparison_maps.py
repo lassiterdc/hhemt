@@ -129,9 +129,12 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     from hhemt.eda._config_diff import (
         _CONFIG_DIFF_DEPTH_BAND_M,
         _CONFIG_DIFF_FLOW_BAND_CMS,
+        _CONFIG_DIFF_PCT_BAND,
         _DIVERGING,
+        _RANGE_EPS,
         _REF_DEPTH,
         _REF_FLOW,
+        _abs_ref_range,
         _align_to,
         _apply_mask,
         _conduit_traces,
@@ -142,6 +145,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _hw_family_key,
         _load_conduit_geometry,
         _load_subs,
+        _quantised_depth_cap,
         _signed_pct,
         _symmetric_diff_range,
         _watershed_boundary_traces,
@@ -724,8 +728,14 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         d = _align_to(base_da, rda) - np.asarray(base_da.values)
         _dw.append(_apply_mask(d, wmask))
         _pw.append(_apply_mask(_signed_pct(d, np.asarray(base_da.values)), wmask))
-    wsym = _symmetric_diff_range(_dw, floor=1e-12) if _dw else _CONFIG_DIFF_DEPTH_BAND_M
-    psym = _symmetric_diff_range(_pw, floor=1e-12) if _pw else 0.1
+    # Iteration-11 item 4: `floor` and the percent BAND fallback both read `_config_diff`'s
+    # own names rather than re-spelling their values. `1e-12` IS `_RANGE_EPS` and `0.1` IS
+    # `_CONFIG_DIFF_PCT_BAND` today, so this is value-preserving by construction -- but a
+    # literal that happens to equal a shared constant is a copy, and the two drift the first
+    # time one side is retuned. The depth fallback already read `_CONFIG_DIFF_DEPTH_BAND_M`;
+    # the percent one was the odd case out.
+    wsym = _symmetric_diff_range(_dw, floor=_RANGE_EPS) if _dw else _CONFIG_DIFF_DEPTH_BAND_M
+    psym = _symmetric_diff_range(_pw, floor=_RANGE_EPS) if _pw else _CONFIG_DIFF_PCT_BAND
 
     # Single-element lists so the closures below can mutate them without `nonlocal`.
     _last_model_header = [None]
@@ -964,6 +974,16 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     x=xd,
                     y=yd,
                     colorscale=_REF_DEPTH,
+                    # Iteration-11 item 4: this colorbar was UNBOUNDED -- no `zmin`, no
+                    # `zmax` -- so plotly auto-scaled it per panel AND per render, and the
+                    # same YlGnBu hue denoted a different water level in every panel and in
+                    # the co-located config-diff figure, with no cue that it had moved.
+                    # `_quantised_depth_cap` IS the config-diff family's assignment, now at
+                    # module scope: a zero floor and a cap that is the watershed-masked
+                    # maximum rounded UP to `_DEPTH_CAP_STEP_M`. It never clips, and two
+                    # panels whose masked peaks share a bin get the same cap.
+                    zmin=0,
+                    zmax=_quantised_depth_cap(zref),
                     cbar_title="m",
                     cbar_x=_cbar_x[1],
                     cbar_y=_cbar_y(row),
@@ -984,7 +1004,12 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     dict(zip(links, np.asarray(bf.values), strict=False)),
                     colorscale=_REF_FLOW,
                     vmin=0,
-                    vmax=(vmax if vmax > 0 else 1.0),
+                    # Iteration-11 item 4: `_abs_ref_range` is the config-diff `_rng` guard,
+                    # promoted to module scope. The difference from the open-coded form it
+                    # replaces is the FALLBACK: `_RANGE_EPS` rather than 1.0, so an all-zero
+                    # flow field renders as a degenerate band instead of silently claiming a
+                    # 0-1 cms range that no data supports.
+                    vmax=_abs_ref_range(vmax),
                     cbar_title="cms",
                     cbar_x=_cbar_x[2],
                     cbar_y=_cbar_y(row),
@@ -992,33 +1017,40 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     diverging=False,
                 ):
                     fig.add_trace(tr, row=row, col=2)
-            # Iter-10 A: this subtitle overlapped the dashed panel outline on BOTH axes, and
-            # each overlap had its own cause. Horizontally it began at x=0.0 while the outline
-            # begins at x0=0.006, so it started OUTSIDE the box and crossed the left edge.
-            # Vertically it was anchored `bottom` at exactly `y_top` — the outline's own top
-            # edge — so the dash ran through the glyphs, which is the strikethrough the user
-            # photographed.
+                # Iteration-11 item 2: the watershed ring on the CONDUIT map. It was added at
+                # `col=1` on both the ref row and the diff row and NEVER at `col=2`, so the
+                # two maps in one panel row carried different spatial context. The config-diff
+                # family draws it on every map (`for c in (1, 2) if has_flow else (1,)`),
+                # which is the concordance this item asks for. Not a guard and not a data
+                # gap: `wpoly` is already in scope from `_grid(ctx)` and is the SAME polygon
+                # col 1 uses -- the call was simply absent.
+                #
+                # Emitted AFTER the conduit traces deliberately. Plotly paints SVG traces in
+                # insertion order, so a ring added first is overdrawn by the conduits it
+                # exists to frame. Item 3 supplies the other half of this fix: without an
+                # explicit range on the col-2 axis, adding the ring would RESIZE the conduit
+                # map to the watershed bbox rather than annotate it.
+                for _tr in _watershed_boundary_traces(wpoly):
+                    fig.add_trace(_tr, row=row, col=2)
+            # Iteration-11 item 1: the `Reference - {base_label}` subtitle is DELETED, not
+            # repositioned. Iteration 10 moved it inside the panel to stop it crossing the
+            # dashed outline; the Iteration-11 ruling SUPERSEDES that fix on FACTUAL grounds
+            # rather than positional ones -- a panel's reference is its identity class's
+            # MINIMUM-DEVICE clean run (`base_sa = min(fam_subs, key=_sub_devkey)`), which is
+            # serial CPU only for the cpu class and is a 1-GPU run for every GPU class. A
+            # fixed "Reference - ..." line therefore asserted a reference the panel does not
+            # use. The same falsehood is what item 3 strips from the map titles, so the two
+            # items must not disagree about it.
             #
-            # Moved INSIDE the panel rather than above it. Above is the tempting placement and
-            # it is the wrong one: the model subheader is emitted at `_p_top + MODEL_HEADER_GAP`
-            # and a ref row IS its panel's first row, so a subtitle lifted above the top edge
-            # collides with that header on the first panel of every model — trading an overlap
-            # with a line for an overlap with text. Inside, the band between the top edge and
-            # the table/map row is already empty, which is where this text was trying to sit.
-            annotations.append(
-                dict(
-                    x=0.012,
-                    y=y_top - _layout.f(3),
-                    xref="paper",
-                    yref="paper",
-                    xanchor="left",
-                    yanchor="top",
-                    showarrow=False,
-                    align="left",
-                    font=dict(size=11, color="#111"),
-                    text=(f"Reference - {base_label}: absolute peak water level, event {evt}"),
-                )
-            )
+            # The row's ROLE is now carried by the centred "Depth (m)" map title emitted in
+            # the axis block below, and the reference config itself is already named in the
+            # panel side table. `base_label`, `evt` and `y_top` all retain other readers
+            # (the diff-row descriptor at the bottom of this loop), so nothing is orphaned.
+            #
+            # NO vertical space is reclaimed and none is owed: Iteration 10 placed this text
+            # INSIDE the panel at `y_top - f(3)` rather than reserving a band for it, so what
+            # the deletion frees is the map's own top buffer strip -- exactly where item 3's
+            # title goes.
             continue
 
         g = entry["g"]
@@ -1089,8 +1121,19 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             txt = f"{g_label}: percent difference vs the clean reference within the same byte-identity class"
         annotations.append(
             dict(
-                x=0.0,
-                y=y_top,
+                # Iteration-11, item 3 companion. TWO coordinates move, each repairing a
+                # defect this campaign has already measured once:
+                #   x 0.0 -> 0.012. The dashed panel outline's x0 is 0.006, so a
+                #     left-anchored string at 0.0 begins OUTSIDE the box and crosses its
+                #     left edge. That is verbatim the Iteration-10 item-A finding for the
+                #     reference subtitle; this descriptor was never moved and is the
+                #     surviving instance of it. 0.012 is the clearance Iteration 10 chose.
+                #   y y_top -> y_top + f(4). Item 3's map title sits in the map's top buffer
+                #     band, whose top edge lands within ~1 px of `y_top` at the 350 px map
+                #     height and `_BUF` = 0.06. Lifting this line one small step turns a
+                #     coincidence into a stated gap.
+                x=0.012,
+                y=y_top + _layout.f(4),
                 xref="paper",
                 yref="paper",
                 xanchor="left",
@@ -1102,15 +1145,54 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             )
         )
 
+    # Iteration-11 item 3. Three changes, taken from the config-diff family because that is
+    # the reference implementation this item names, and each carrying its own reason:
+    #
+    #   (a) EXPLICIT BUFFERED RANGES on every map axis, from the DEM grid the panel is built
+    #       on. Both columns previously autoranged -- col 1 to the raster and col 2 to the
+    #       CONDUIT extent -- so the depth map and the conduit map in one row showed
+    #       different ground. Item 2 draws the watershed ring on col 2, and a ring added to
+    #       an autoranged axis RESIZES that map rather than annotating it. `_BUF` is
+    #       `_config_diff`'s own 0.06 and is applied as a fraction of each axis' OWN extent,
+    #       so the buffered aspect equals the data aspect: `panel_geometry(map_aspect=...)`
+    #       stays valid, the maps still render 1:1, and no paper domain is recomputed.
+    #
+    #   (b) x TICK LABELS AND THE "x (m)" TITLE ONLY ON EACH PANEL'S BOTTOM ROW. The axis
+    #       band below a map is `AXIS_BAND_PX` = 46 px; `PanelBudget.gap_within` is 24 px.
+    #       Ticks plus a title under EVERY row therefore over-subscribed the interior gap by
+    #       ~22 px BEFORE item 3 put anything else in it. `gap_footer` = 62 px is sized for
+    #       the one row per panel that keeps them, which is what `_config_diff` already does.
+    #
+    #   (c) A MAP TITLE per drawn map, centred over that map's x-domain and sitting in the
+    #       empty top-buffer band (a) creates -- the placement, offset, size and colour are
+    #       `_config_diff`'s (`data_top + _f(4)`, 11 px, `#444`). The strings are its strings
+    #       MINUS the "Serial" qualifier, which is false in this family for the same reason
+    #       item 1 deletes the subtitle: a panel's reference is its identity class's
+    #       minimum-device clean run, serial CPU only for the cpu class.
+    _BUF = 0.06
+    _top_buf_frac = _BUF / (1 + 2 * _BUF)
+    _bottom_rows = {p[-1] for p in _panel_rows}
+    _map_titles: dict[tuple[int, int], str] = {}
+    _ROW_KIND_TITLE = {"ref": "Depth (m)", "diff": "Depth diff (m)", "pct": "Depth % diff"}
     for ei, _entry in enumerate(row_plan):
         row = 1 + ei  # see _panel_rows
+        _ctx = _entry["ctx"]
+        _xd_a, _yd_a, _, _ = _grid(_ctx)
+        _x_ext = (max(_xd_a) - min(_xd_a)) or 1.0
+        _y_ext = (max(_yd_a) - min(_yd_a)) or 1.0
+        _xr = [min(_xd_a) - _BUF * _x_ext, max(_xd_a) + _BUF * _x_ext]
+        _yr = [min(_yd_a) - _BUF * _y_ext, max(_yd_a) + _BUF * _y_ext]
+        _is_bottom = row in _bottom_rows
         for col in range(1, _ncols + 1):
             fig.update_xaxes(
                 row=row,
                 col=col,
-                title_text="x (m)",
+                title_text="x (m)" if _is_bottom else "",
                 title_font=dict(size=10),
+                range=_xr,
+                constrain="domain",
                 tickfont=dict(size=9),
+                showticklabels=_is_bottom,
                 showgrid=False,
                 zeroline=False,
             )
@@ -1119,11 +1201,40 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 col=col,
                 title_text="y (m)" if col == 1 else "",
                 title_font=dict(size=10),
+                range=_yr,
+                constrain="domain",
                 tickfont=dict(size=9),
                 showgrid=False,
                 zeroline=False,
                 showticklabels=(col == 1),
             )
+        # A title is registered ONLY for a map that is actually drawn. Col 1 always is. Col 2
+        # is drawn on `ref` rows and only when that row's base sub carries flow -- the SAME
+        # predicate the conduit block above tests -- so a pure-TRITON panel or a flow-less
+        # base run cannot acquire a "Flow (cms)" title over an empty axis.
+        _map_titles[(row, 1)] = _ROW_KIND_TITLE[_entry["kind"]]
+        if (
+            _ncols >= 2
+            and _entry["kind"] == "ref"
+            and _ctx["fam_subs"][_ctx["base_sa"]].get("flow") is not None
+        ):
+            _map_titles[(row, 2)] = "Flow (cms)"
+    for (_tr_row, _tr_col), _title_text in _map_titles.items():
+        _xa0, _xa1 = _layout.map_domains[_tr_col]
+        _ya0, _ya1 = _layout.ydom(_tr_row)
+        annotations.append(
+            dict(
+                x=(_xa0 + _xa1) / 2.0,
+                y=(_ya1 - _top_buf_frac * (_ya1 - _ya0)) + _layout.f(4),
+                xref="paper",
+                yref="paper",
+                xanchor="center",
+                yanchor="bottom",
+                showarrow=False,
+                font=dict(size=11, color="#444"),
+                text=_title_text,
+            )
+        )
 
     _caption = (
         caption_text + " ONE PANEL PER BYTE-IDENTITY EQUIVALENCE CLASS, derived from the data rather "

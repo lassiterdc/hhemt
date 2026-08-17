@@ -34,3 +34,36 @@ def test_absent_polygon_yields_no_mask():
     assert _watershed_mask(None, [0.0, 1.0], [0.0, 1.0]) is None
     z = np.array([[1.0, 2.0]])
     assert np.array_equal(_apply_mask(z, None), z)
+
+
+def test_cap_guard_returns_none_on_a_field_with_no_positive_cell():
+    """Iteration-11 item 4, guard arms (ii) and (iii): a fully-masked or all-dry
+    field must yield NO cap rather than a zero cap, because plotly reads None as
+    'autoscale' and 0 as a real upper bound that would render the panel black."""
+    from hhemt.eda._config_diff import _quantised_depth_cap
+
+    assert _quantised_depth_cap(np.full((2, 2), np.nan)) is None
+    assert _quantised_depth_cap(np.zeros((2, 2))) is None
+    assert _quantised_depth_cap(np.array([[0.61, np.nan], [np.nan, 0.4]])) == _quantize(0.61)
+
+
+def test_reference_range_fallback_is_epsilon_not_one():
+    """Iteration-11 item 4, guard arm (iv). The open-coded form this replaces fell
+    back to 1.0, which asserts a 0-1 cms range no data supports."""
+    from hhemt.eda._config_diff import _RANGE_EPS, _abs_ref_range
+
+    assert _abs_ref_range(0.0) == _RANGE_EPS
+    assert _abs_ref_range(float("nan")) == _RANGE_EPS
+    assert _abs_ref_range(2.5) == 2.5
+
+
+def test_glyph_is_square_and_single_sourced():
+    """Iteration-11 item 6. Compares the legend-proxy marker to the paper-space
+    swatch and to the module constant -- never to a literal -- so a future retune
+    of WATERSHED_GLYPH_PX keeps this test passing while a second hardcoded copy
+    of the old 28x16 rect makes it fail."""
+    from hhemt.figure_panels import WATERSHED_GLYPH_PX, watershed_legend_marker
+
+    marker = watershed_legend_marker(color="#111", line_width=1.3)
+    assert marker["symbol"] == "square-open"
+    assert marker["size"] == WATERSHED_GLYPH_PX
