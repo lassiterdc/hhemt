@@ -447,6 +447,37 @@ def main():
             logger.warning(f"post-export validation_report.json re-persist failed (non-fatal): {e}")
 
         # Write workflow summary markdown
+        # Persist the jobid -> rule index into _status/, which is copytree'd into every
+        # render bundle. Harvested from the SLURM executor's own per-job log tree, which is
+        # the ONLY retroactive record of jobs whose flag sidecar a later submission
+        # overwrote (measured: 511 such allocations on the delivered experiment). Merged
+        # into any existing index rather than replacing it, because the plugin prunes its
+        # logs by age and a later harvest can legitimately see FEWER jobs than an earlier
+        # one -- a straight overwrite would discard history exactly as the sidecar does.
+        # Non-fatal, matching the two validation_report re-persists: a reporting nicety must
+        # never fail the status export.
+        try:
+            import json as _json_idx
+
+            from hhemt.status_flags import harvest_slurm_job_index
+
+            _idx_path = analysis.analysis_paths.analysis_dir / "_status" / "_job_index.json"
+            _merged: dict[str, str] = {}
+            if _idx_path.exists():
+                try:
+                    _prior = _json_idx.loads(_idx_path.read_text())
+                    if isinstance(_prior, dict):
+                        _merged.update({str(k): str(v) for k, v in _prior.items()})
+                except (OSError, ValueError):
+                    pass
+            _merged.update(harvest_slurm_job_index(analysis.analysis_paths.analysis_dir))
+            if _merged:
+                _idx_path.parent.mkdir(parents=True, exist_ok=True)
+                _idx_path.write_text(_json_idx.dumps(_merged, indent=2, sort_keys=True))
+                logger.info(f"Persisted SLURM job index for {len(_merged)} job(s)")
+        except Exception as e:
+            logger.warning(f"SLURM job-index harvest failed (non-fatal): {e}")
+
         logger.info("Writing workflow summary markdown...")
         if args.verbose:
             print("Writing workflow summary...", flush=True)

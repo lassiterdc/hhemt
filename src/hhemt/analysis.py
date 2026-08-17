@@ -5125,6 +5125,17 @@ class TRITONSWMM_analysis:
                 row["queue_seconds_total"] = _q_total
                 row["queue_seconds_coverage"] = _q_cov
                 row["queue_seconds_by_jobid"] = _json_q.dumps(_q_by_jobid) if _q_by_jobid else ""
+                # Resume labelling. The efficiency table has one row per SLURM job STEP and a
+                # resumed sim's attempts ARE those steps (measured: 28 sims x n_resumes 3 ->
+                # 18 allocations x 4 steps + 10 x 5 = the 122 sim rows), so the step id is the
+                # attempt discriminator and the allocation id is not. Emitted as a JSON map
+                # keyed `{jobid}.{step}` so the renderer joins it against the CSV's own
+                # `JobID` column with no ordering assumption. Empty dict -> "" so a pre-F11
+                # tree carries an absent value rather than a misleading `{}`.
+                from hhemt.run_simulation import read_attempt_index_by_jobstep
+
+                _attempts = read_attempt_index_by_jobstep(model_logfile_for(self, event_iloc, model_type))
+                row["attempt_by_jobstep"] = _json_q.dumps(_attempts) if _attempts else ""
                 row["scenario_directory"] = scenario_dir
                 row["disk_utilization_bytes"] = scenario_du
 

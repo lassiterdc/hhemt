@@ -232,6 +232,57 @@ def read_queue_ledger_seconds(model_logfile: Path) -> tuple[float | None, str, d
     return (sum(by_jobid.values()), f"{len(by_jobid)}/{len(seen)}", by_jobid)
 
 
+def read_attempt_index_by_jobstep(model_logfile: Path) -> dict[str, int]:
+    """`{f"{slurm_jobid}.{slurm_step_id}": attempt}` from the same append-only ledger.
+
+    The user's ask is a row per resume, numbered. That row ALREADY EXISTS in the SLURM
+    efficiency table and is already joined to its simulation -- measured on the delivered
+    generation, a resumed sim is ONE allocation carrying several srun STEPS (28 sims,
+    `n_resumes: 3`, 18 allocations with 4 steps and 10 with 5, totalling the 122 sim rows).
+    What is missing is only the label. So this returns a LABEL index, not new capture:
+    `run_simulation_runner` already appends `slurm_jobid` and `slurm_step_id` alongside
+    `attempt` on every attempt, and the efficiency CSV's `JobID` column is exactly
+    `{jobid}.{step}` -- so the two join directly, with no heuristic and no ordering
+    assumption.
+
+    Keyed on the FULL job-step id rather than on the allocation, because the allocation is
+    shared by every attempt of the sim; keying on it would label all four rows identically
+    and reintroduce the "a per-sim figure no attempt experienced" error the queue-time note
+    already warns about.
+
+    Coverage is strictly better than the queue ledger's: the `wall_s` row is appended on
+    every attempt regardless of `multi_sim_run_method`, whereas the `queue_s` row is
+    `batch_job`-only. A row whose `slurm_step_id` is null (a pre-capture tree, or a local
+    run) is SKIPPED rather than keyed on a bare allocation id -- an unlabelled row is
+    correct, a wrongly-labelled one is not.
+
+    Returns `{}` on any read or parse failure, so a damaged ledger degrades to today's
+    unlabelled rendering instead of to a partial index that would mislabel some rows.
+    """
+    import json as _json_a
+
+    p = model_logfile.parent / "_walltime" / f"{model_logfile.stem}.jsonl"
+    if not p.exists():
+        return {}
+    out: dict[str, int] = {}
+    try:
+        for line in p.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            rec = _json_a.loads(line)
+            if rec.get("attempt") is None:
+                continue
+            jid = str(rec.get("slurm_jobid") or "")
+            step = rec.get("slurm_step_id")
+            if not jid or step is None or str(step) == "":
+                continue
+            out[f"{jid}.{step}"] = int(rec["attempt"])
+    except (OSError, ValueError, TypeError):
+        return {}
+    return out
+
+
 class TRITONSWMM_run:
     def __init__(self, scenario: "TRITONSWMM_scenario") -> None:
         self._scenario = scenario

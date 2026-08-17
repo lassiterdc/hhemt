@@ -797,6 +797,118 @@ def test_unrecognised_csv_column_is_disclosed_not_silently_dropped():
     assert "Unrecognised column" not in metadata._build_slurm_efficiency_html([("r", plain)], {}, {}, lambda p: "")
 
 
+def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
+    """A `0.0` in a percentage column asserts a measurement; an absent one must not.
+
+    Measured on the delivered report: `CPU eff (%)` read exactly `0.0` on 664 of 664
+    rows, across jobs whose Elapsed ranged from 18s to 9m. A population that uniform
+    over inputs that heterogeneous is a computation that is not running, not a fleet
+    of genuinely idle CPUs. Upstream, `parse_sacct_data` maps `RequestedMem_MB` and
+    `RuleName` from the main job row down onto its steps and then discards the main
+    rows -- but it builds no such map for `TotalCPU`, so the efficiency ratio is
+    computed from a zero numerator wherever the cluster accounts CPU time on the
+    allocation row rather than the step.
+
+    Two arms in ONE render call, because the risk in suppressing a zero is
+    over-reach: a row that genuinely measured low CPU use must keep its number.
+    """
+    zero_row = "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0\n"
+    measured_row = "0,222.0,python,00:01:40,1,1,512K,,100.0,91.0,500.0,8000.0,222,91.0,6.4\n"
+    html = metadata._build_slurm_efficiency_html(
+        [("r", _EFF_HEADER + zero_row + measured_row)], {}, {}, lambda p: ""
+    )
+
+    # Arm 1 -- TotalCPU_sec is 0.0, so no CPU time was reported for the step. FAILS
+    # pre-fix: the grid builder's `or "—"` fallback cannot fire on the truthy "0.0".
+    assert "<td>0.0</td>" not in html
+
+    # Arm 2 -- a real measurement survives untouched. Guards against suppressing any
+    # cell that merely looks small.
+    assert "<td>91.0</td>" in html
+
+    # The suppression must be legible as not-measured, and the note must say so.
+    assert "—" in html
+    assert "not-measured" in html or "no CPU time" in html
+
+
+def test_resume_attempts_are_numbered_in_the_description_column():
+    """A resumed sim occupies several rows; each must say WHICH attempt it is.
+
+    Measured on the delivered generation: a resumed simulation is ONE allocation carrying
+    several srun steps (28 sims at n_resumes 3 -> 18 allocations x 4 steps + 10 x 5 = the
+    122 sim rows). Those rows were already joined to their simulation and already carried
+    identical purpose text, so filtering to one simulation returned an unordered set of
+    indistinguishable rows -- the exact complaint this closes.
+
+    Two arms in ONE render call: a step WITH a recorded attempt must be numbered, and a
+    step WITHOUT one must keep its bare purpose rather than be guessed at.
+    """
+    labelled = "0,777.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,777,0.0,69.0\n"
+    resumed = "0,777.2,python,00:00:26,1,1,700K,,26.0,0.0,690.0,1000.0,777,0.0,69.0\n"
+    unlabelled = "0,777.9,python,00:00:26,1,1,700K,,26.0,0.0,690.0,1000.0,777,0.0,69.0\n"
+    purpose_map = metadata._job_purpose_map(
+        [
+            {
+                "rule_name": "simulation_sa_mpi_11_r1_evt_event_index_0",
+                "slurm_job_id": "777",
+                "sa_id": "mpi_11_r1",
+                "event_id": "event_index.0",
+                "model_type": "tritonswmm",
+            }
+        ]
+    )
+    scenario_map = {
+        ("mpi_11_r1", "event_index.0", "tritonswmm"): {
+            "hpc.partition": "standard",
+            "attempt_by_jobstep": json.dumps({"777.0": 0, "777.2": 2}),
+        }
+    }
+    html_out = metadata._build_slurm_efficiency_html(
+        [("r", _EFF_HEADER + labelled + resumed + unlabelled)],
+        purpose_map,
+        scenario_map,
+        lambda p: "",
+    )
+
+    # Arm 1 -- attempts ARE numbered. Both FAIL pre-fix: no code path writes attempt text.
+    assert "simulate (initial run)" in html_out
+    assert "simulate (resume 2)" in html_out
+
+    # Arm 2 -- a step with no recorded attempt is not guessed at. Passes in both states;
+    # it is the guard against labelling by row order instead of by the ledger.
+    assert "simulate (resume 9)" not in html_out
+    assert "<td>simulate</td>" in html_out
+
+
+def test_slurm_job_index_harvest_reads_the_executor_log_tree(tmp_path):
+    """The jobid -> rule index comes from the plugin's own per-job log tree.
+
+    511 of the delivered report's 570 allocations have no `_status/*.flag.json` record,
+    because that sidecar is one slot per flag path and nine submissions overwrote it. The
+    executor's log tree is the only retroactive source, and reading it must open nothing:
+    the rule is the DIRECTORY and the job id is the FILENAME.
+    """
+    from hhemt.status_flags import harvest_slurm_job_index
+
+    logs = tmp_path / ".snakemake" / "slurm_logs"
+    (logs / "rule_simulation_sa_mpi_11_r1" / "mpi_11_r1_0").mkdir(parents=True)
+    (logs / "rule_simulation_sa_mpi_11_r1" / "mpi_11_r1_0" / "18396671.log").write_text("")
+    (logs / "rule_setup_target_0").mkdir(parents=True)
+    (logs / "rule_setup_target_0" / "18396501.log").write_text("")
+    # A non-jobid filename must not enter the index.
+    (logs / "rule_setup_target_0" / "notes.log").write_text("")
+
+    index = harvest_slurm_job_index(tmp_path)
+    assert index == {
+        "18396671": "simulation_sa_mpi_11_r1",
+        "18396501": "setup_target_0",
+    }
+
+    # Absent tree -- a local/native run or an off-cluster bundle -- degrades to empty,
+    # never to a partial index that would mislabel rows.
+    assert harvest_slurm_job_index(tmp_path / "nope") == {}
+
+
 def test_job_purpose_and_hardware_are_joined_in_from_toolkit_records():
     """The human-readable purpose is NOT read off the job — it is joined in.
 

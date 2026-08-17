@@ -1583,7 +1583,22 @@ _EFF_UNCAPTURED_NOTE = (
     "figure that no simulation actually experienced. A blank cell here means not "
     "measured; it never means the job did not wait. Where queue time IS captured, "
     "<em>Queue coverage</em> reads <code>k/n</code> over the simulation's allocations, so "
-    "a run that began before queue capture shipped shows a partial sum as partial.</p>"
+    "a run that began before queue capture shipped shows a partial sum as partial. "
+    "<em>CPU efficiency</em> is shown as not-measured wherever SLURM reported no CPU time "
+    "for the job step; a zero there would claim the job used no processor, which is not "
+    "what an absent measurement means.</p>"
+    "<p class='note'><strong>Why most rows carry no purpose, sub-analysis or compute "
+    "configuration.</strong> The toolkit columns in this table are joined in from "
+    "<code>_status/*.flag.json</code>, which records ONE SLURM job id per rule — the most "
+    "recent one. A simulation that resumed across several allocations, and any rule that "
+    "re-ran in a later submission, therefore matches on its LAST allocation only; every "
+    "earlier allocation appears here as a measured SLURM job with no toolkit label. On this "
+    "report that is the majority of rows. An em-dash in these columns means the row could "
+    "not be matched to a toolkit record — never that the job ran without a partition, "
+    "without MPI ranks, or outside a sub-analysis. Every one of those values existed; this "
+    "table cannot currently reach them. Recovering them needs no new simulation: SLURM "
+    "accounting still holds each job's partition and allocated resources, and the workflow "
+    "engine's own per-job log tree names the rule behind every job id.</p>"
 )
 
 
@@ -1647,6 +1662,25 @@ def _enrich_efficiency_rows(
         for key in ("sa_id", "event_id", "model_type"):
             enriched[key] = meta.get(key, "")
         scen = scenario_map.get((enriched["sa_id"], enriched["event_id"], enriched["model_type"]), {})
+        # Resume labelling. A resumed simulation occupies several rows here -- they are the
+        # srun STEPS of its one allocation -- and until now nothing on the page said which
+        # row was which attempt, so filtering to a simulation gave an unordered set of
+        # indistinguishable rows. The attempt integer is joined from the same already-read,
+        # already-declared scenario_status.csv (no new read surface), keyed on this row's own
+        # full `JobID`. Attempt 0 is the initial run and is labelled as such rather than as
+        # "resume 0", which would imply a resume that did not happen. A row with no recorded
+        # attempt keeps its bare purpose -- silence is correct where the record is absent.
+        _att_raw = scen.get("attempt_by_jobstep", "")
+        if _att_raw and enriched.get("purpose"):
+            try:
+                _att_map = json.loads(_att_raw)
+            except (ValueError, TypeError):
+                _att_map = {}
+            if isinstance(_att_map, dict):
+                _att = _att_map.get(job_id)
+                if _att is not None:
+                    _n = int(_att)
+                    enriched["purpose"] += " (initial run)" if _n == 0 else f" (resume {_n})"
         partition = scen.get("hpc.partition", "")
         enriched["partition"] = partition
         enriched["gpu_hardware"] = gpu_hardware_for_partition(partition) if partition else ""
@@ -1756,7 +1790,26 @@ def _build_slurm_efficiency_html(
     matched = sum(1 for r in rows if r.get("purpose"))
     undisplayed = _undisplayed_csv_columns(_header)
 
-    grid = [[_esc(row.get(key, "") or "—") for key, _label in columns] for row in rows]
+    # A rendered `0.0` in a PERCENTAGE column asserts a measured zero -- "this job used no
+    # CPU" -- which is false about jobs that demonstrably ran for minutes. Measured on the
+    # delivered generation: CPU eff read exactly 0.0 on 664/664 rows, because the executor
+    # plugin inherits RequestedMem_MB from the main job row down to its steps but does NOT
+    # inherit TotalCPU, then discards the main rows (efficiency_report.py: mem_map /
+    # job_steps / `df = job_steps.copy()`). So the ratio is computed from a zero numerator.
+    # Confirmed on-cluster: parent 18396501 reports TotalCPU=00:04.828 while step .0 reports
+    # 00:00:00. The parent row never reaches the CSV, so this is NOT repairable here -- the
+    # em-dash means NOT CAPTURED, and 0.0 would mean MEASURED ZERO. Blanking is deliberately
+    # narrow: only the derived-from-TotalCPU column, only when the source parsed to zero.
+    _zeroish = {"", "0", "0.0", "0.00", "0.0%"}
+
+    def _cell(row: dict[str, str], key: str) -> str:
+        value = row.get(key, "")
+        if key == "CPU Efficiency (%)" and str(value).strip() in _zeroish:
+            if str(row.get("TotalCPU_sec", "")).strip() in _zeroish:
+                return "—"
+        return _esc(value or "—")
+
+    grid = [[_cell(row, key) for key, _label in columns] for row in rows]
     summary = (
         f"<p class='note'>{_esc(len(rows))} job(s) across {_esc(len(csv_texts))} efficiency "
         f"report(s) — one report is written per workflow submission, and all of them are "
