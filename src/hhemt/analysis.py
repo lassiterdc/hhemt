@@ -5106,6 +5106,25 @@ class TRITONSWMM_analysis:
                 row["wall_clock_ledger_s"] = read_walltime_ledger_total_s(
                     model_logfile_for(self, event_iloc, model_type)
                 )
+                # O21: SLURM queue time from the SAME append-only ledger. Three columns,
+                # because one number cannot answer both questions the report asks. The
+                # efficiency table has one ROW PER SLURM JOB and a resumed sim occupies
+                # several, so the per-jobid map lets each row show ITS OWN wait while the
+                # total answers "how long did this sim wait, end to end". Coverage is
+                # carried because a bare total cannot distinguish "summed 5 of 5" from
+                # "summed 2 of 5" -- a tree that resumed across the O21 landing boundary
+                # is exactly that case, and it must read as partial rather than complete.
+                # None (not 0.0) under 1_job_many_srun_tasks and on pre-O21 trees.
+                import json as _json_q
+
+                from hhemt.run_simulation import read_queue_ledger_seconds
+
+                _q_total, _q_cov, _q_by_jobid = read_queue_ledger_seconds(
+                    model_logfile_for(self, event_iloc, model_type)
+                )
+                row["queue_seconds_total"] = _q_total
+                row["queue_seconds_coverage"] = _q_cov
+                row["queue_seconds_by_jobid"] = _json_q.dumps(_q_by_jobid) if _q_by_jobid else ""
                 row["scenario_directory"] = scenario_dir
                 row["disk_utilization_bytes"] = scenario_du
 

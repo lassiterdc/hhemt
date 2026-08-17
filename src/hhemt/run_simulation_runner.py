@@ -78,6 +78,54 @@ def _write_failed_marker(ctx: _MarkerCtx | None) -> None:
     os.replace(failed_tmp, failed_marker)
 
 
+def _record_queue_time(
+    *,
+    model_logfile: Path,
+    jobid: str,
+    run_method: str,
+    event_iloc: int,
+) -> str:
+    """Append this allocation's SLURM queue time to the append-only per-attempt ledger.
+
+    Returns a short outcome token -- one of `"recorded"`, `"not-applicable"`,
+    `"unavailable"`, `"write-failed"` -- so the caller can log it and a test can assert
+    WHICH arm ran without reading the filesystem twice. The return value is the seam that
+    makes every branch below observable; an inline version of this code has the same
+    behaviour and no way to check it.
+
+    Takes primitives rather than an `analysis` object deliberately: the caller has all four
+    in hand at the SLURM-guarded start block, and a helper that needs no TRITONSWMM_analysis
+    can be exercised with a tmp_path and two strings.
+
+    NEVER raises. A reporting nicety must not be able to fail a simulation, so the write
+    path is wrapped and a failure degrades to the same not-captured representation the
+    report already renders as an em-dash.
+    """
+    import json as _json_q
+
+    from hhemt.run_simulation import probe_slurm_planned_seconds
+
+    # batch_job ONLY. Under 1_job_many_srun_tasks the whole ensemble shares ONE allocation,
+    # so $SLURM_JOB_ID here is the ALLOCATION's id and its Planned would be stamped
+    # identically on every sim -- a per-sim figure no sim experienced. Absence is the
+    # correct representation; the renderer shows an em-dash, never a zero.
+    if run_method != "batch_job":
+        return "not-applicable"
+
+    queue_s = probe_slurm_planned_seconds(jobid)
+    if queue_s is None:
+        return "unavailable"
+
+    try:
+        ledger_dir = model_logfile.parent / "_walltime"
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        with open(ledger_dir / f"{model_logfile.stem}.jsonl", "a") as handle:
+            handle.write(_json_q.dumps({"slurm_jobid": jobid, "queue_s": float(queue_s)}) + "\n")
+    except OSError:
+        return "write-failed"
+    return "recorded"
+
+
 def _native_compile_error_or_skip_in_container(analysis, system, model_type: str) -> str | None:
     """Native mode: return an error message if the model's backend is not compiled,
     else None. Container mode: always None (no-op).
@@ -287,6 +335,23 @@ def main():
                 )
             )
             os.replace(_tmp, _sentinel)
+            # O21: per-allocation SLURM QUEUE time. Captured HERE, at process start, and
+            # NOT at sim-finalize like wall_s: a walltime-killed runner never reaches
+            # finalize, and a killed allocation's queue wait is exactly the one a modeler
+            # most wants counted. `Planned` is final the moment the worker runs (a job that
+            # has STARTED necessarily has a Start), so there is no accounting-lag window.
+            # All branching lives in _record_queue_time so it is unit-testable; the outcome
+            # token is logged rather than discarded so an operator can tell a
+            # not-applicable run from a probe failure without reading the ledger.
+            from hhemt.run_simulation import model_logfile_for
+
+            _q_outcome = _record_queue_time(
+                model_logfile=model_logfile_for(analysis, event_iloc, model_type),
+                jobid=_jobid,
+                run_method=analysis.cfg_analysis.multi_sim_run_method,
+                event_iloc=event_iloc,
+            )
+            logger.info(f"[{event_iloc}] SLURM queue-time capture: {_q_outcome}")
             # mechanism (b): the worker has started → the submitter-side _queued/
             # sentinel for this token is superseded by _submitted/. Unlink it so the
             # two artifact classes stay mutually exclusive. (A worker hard-killed

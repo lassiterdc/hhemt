@@ -121,6 +121,117 @@ def read_walltime_ledger_total_s(model_logfile: Path) -> float | None:
     return total
 
 
+def probe_slurm_planned_seconds(jobid: str) -> float | None:
+    """This allocation's SLURM queue ('Planned') time in seconds, or None if unobtainable.
+
+    Called ONCE per sim allocation, at worker start, when the job is RUNNING -- which is
+    what makes the value final (a job that has STARTED necessarily has a Start, so Planned
+    cannot still move) and what makes the scontrol fallback viable (slurmctld has not yet
+    aged the record out per MinJobAge).
+
+    Two paths, first success wins:
+      1. `sacct --format=Planned` -- the field directly, no arithmetic. Queries slurmdbd,
+         whose reachability FROM A COMPUTE NODE is site policy, not a SLURM guarantee.
+      2. `scontrol show job` SubmitTime/StartTime -- queries slurmctld, which every compute
+         node must reach for the job to be running at all. Both timestamps are local-time
+         `%Y-%m-%dT%H:%M:%S` with no offset, so subtracting them is offset-free PROVIDED
+         both are taken from the same command output, which they are.
+
+    Returns None -- never 0.0 -- on any failure. The distinction is load-bearing all the way
+    to the rendered table: 0.0 asserts the sim did not wait, None says it was not measured,
+    and the report renders them differently (metadata.py's em-dash vs a numeral).
+    """
+    import subprocess as _sp
+
+    def _hms_to_s(text: str) -> float | None:
+        # Planned renders as [DD-]HH:MM:SS.
+        text = text.strip()
+        if not text:
+            return None
+        days = 0
+        if "-" in text:
+            d, _, text = text.partition("-")
+            days = int(d)
+        parts = text.split(":")
+        if len(parts) != 3:
+            return None
+        h, m, s = (float(p) for p in parts)
+        return days * 86400.0 + h * 3600.0 + m * 60.0 + s
+
+    try:
+        out = _sp.run(
+            ["sacct", "-X", "-j", str(jobid), "--format=Planned", "-P", "-n"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if out.returncode == 0:
+            val = _hms_to_s(out.stdout.splitlines()[0] if out.stdout.splitlines() else "")
+            if val is not None:
+                return val
+    except (OSError, ValueError, _sp.SubprocessError):
+        pass
+
+    try:
+        out = _sp.run(
+            ["scontrol", "show", "job", str(jobid)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if out.returncode == 0:
+            import re as _re
+            from datetime import datetime as _dt
+
+            found = dict(_re.findall(r"(SubmitTime|StartTime)=(\S+)", out.stdout))
+            if "SubmitTime" in found and "StartTime" in found:
+                fmt = "%Y-%m-%dT%H:%M:%S"
+                delta = _dt.strptime(found["StartTime"], fmt) - _dt.strptime(found["SubmitTime"], fmt)
+                return max(0.0, delta.total_seconds())
+    except (OSError, ValueError, _sp.SubprocessError):
+        pass
+
+    return None
+
+
+def read_queue_ledger_seconds(model_logfile: Path) -> tuple[float | None, str, dict[str, float]]:
+    """Queue-time totals from the same append-only ledger `read_walltime_ledger_total_s` reads.
+
+    Returns `(total_seconds_or_None, coverage, by_jobid)`:
+      * total  -- the sum across every allocation that recorded a queue row, or None when
+                  NO row carries `queue_s` (a pre-O21 tree, or 1_job_many_srun_tasks, where
+                  the capture is deliberately absent). None is NOT zero; see the probe.
+      * coverage -- "k/n", k = allocations with a queue row, n = allocations seen (counted
+                  from `wall_s` rows plus queue rows, deduplicated on slurm_jobid). A tree
+                  that resumed across the O21 landing boundary reports e.g. "2/5", so a
+                  PARTIAL total is legible as partial rather than passing as complete. This
+                  is the disclosed-denominator discipline Gotcha 71(d) requires -- a bare
+                  total cannot distinguish "summed 5 of 5" from "summed 2 of 5".
+      * by_jobid -- per-allocation queue seconds, so the report can show each SLURM row its
+                  OWN wait rather than repeating the sim total across every row of a
+                  resumed sim (which would read as each allocation having waited the total).
+    """
+    import json as _json
+
+    p = model_logfile.parent / "_walltime" / f"{model_logfile.stem}.jsonl"
+    if not p.exists():
+        return (None, "0/0", {})
+    by_jobid: dict[str, float] = {}
+    seen: set[str] = set()
+    try:
+        for line in p.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            rec = _json.loads(line)
+            jid = str(rec.get("slurm_jobid") or "")
+            if jid:
+                seen.add(jid)
+            if rec.get("queue_s") is not None and jid:
+                by_jobid[jid] = float(rec["queue_s"])
+    except (OSError, ValueError):
+        return (None, "0/0", {})
+    if not by_jobid:
+        return (None, f"0/{len(seen)}", {})
+    return (sum(by_jobid.values()), f"{len(by_jobid)}/{len(seen)}", by_jobid)
+
+
 class TRITONSWMM_run:
     def __init__(self, scenario: "TRITONSWMM_scenario") -> None:
         self._scenario = scenario

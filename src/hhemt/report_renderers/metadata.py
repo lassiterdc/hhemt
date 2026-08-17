@@ -1201,6 +1201,14 @@ _EFF_ENRICHMENT_COLUMNS: tuple[tuple[str, str], ...] = (
     ("n_nodes_cfg", "Nodes (config)"),
     ("run_mode", "Run mode"),
     ("backend_used", "Backend"),
+    # O21. TWO queue columns, deliberately. The table has one row per SLURM job and a
+    # resumed sim occupies several rows, so a lone sim-total would repeat across them and
+    # read as each allocation having waited the total. The first column is that row's own
+    # wait; the second is the sim's end-to-end wait and is correctly identical across the
+    # sim's rows, which the label says out loud. Coverage discloses a partial sum.
+    ("queue_seconds_this_job", "Queue, this job (s)"),
+    ("queue_seconds_total", "Queue, sim total (s)"),
+    ("queue_seconds_coverage", "Queue coverage"),
 )
 
 #: Columns the user asked for that SLURM accounting does not capture. Rendered as an
@@ -1213,7 +1221,16 @@ _EFF_UNCAPTURED_NOTE = (
     "alongside the simulation, and existing runs cannot be back-filled without re-running "
     "them. <em>CPU model</em> is likewise not recorded by the toolkit today; it is "
     "recoverable on the cluster from <code>sacct -o NodeList</code> plus "
-    "<code>scontrol show node</code> while the accounting database still holds the job.</p>"
+    "<code>scontrol show node</code> while the accounting database still holds the job. "
+    "<em>Queue time</em> is captured only for runs submitted one job per simulation "
+    "(<code>multi_sim_run_method: batch_job</code>). Under "
+    "<code>1_job_many_srun_tasks</code> the whole ensemble shares a single allocation, so "
+    "there is no per-simulation queue to measure and the column is left blank rather than "
+    "filled with the allocation's own wait — a repeated number there would be a per-sim "
+    "figure that no simulation actually experienced. A blank cell here means not "
+    "measured; it never means the job did not wait. Where queue time IS captured, "
+    "<em>Queue coverage</em> reads <code>k/n</code> over the simulation's allocations, so "
+    "a run that began before queue capture shipped shows a partial sum as partial.</p>"
 )
 
 
@@ -1289,6 +1306,24 @@ def _enrich_efficiency_rows(
             ("backend_used", "backend_used"),
         ):
             enriched[dst] = scen.get(src, "")
+        # O21 queue time. Sourced from scenario_status.csv -- the SAME already-declared
+        # file this join already reads -- so no new render-time read surface is added and
+        # the off-cluster bundle re-render works unchanged (the CSV is bundle-carried by
+        # _copy_supporting_files; the _walltime ledgers are NOT, which is why they are not
+        # read here). An absent value stays "" and renders as an em-dash, never as 0 --
+        # a 0 in this column would assert the job did not wait.
+        _q_total_raw = scen.get("queue_seconds_total", "")
+        enriched["queue_seconds_total"] = _q_total_raw
+        enriched["queue_seconds_coverage"] = scen.get("queue_seconds_coverage", "")
+        enriched["queue_seconds_this_job"] = ""
+        _q_map_raw = scen.get("queue_seconds_by_jobid", "")
+        if _q_map_raw:
+            try:
+                _q_map = json.loads(_q_map_raw)
+            except (ValueError, TypeError):
+                _q_map = {}
+            if isinstance(_q_map, dict) and main_job_id in _q_map:
+                enriched["queue_seconds_this_job"] = _q_map[main_job_id]
         out.append(enriched)
 
     # Chronological by job id where it parses -- job ids increase monotonically on a
