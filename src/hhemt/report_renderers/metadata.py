@@ -179,6 +179,13 @@ table.sortable th.sorted-desc::after { content: " \\2193"; opacity: 1; }
 input.table-filter { width: 100%; box-sizing: border-box; margin: 4px 0 8px;
                      padding: 4px 6px; font-size: 12px; }
 div.table-scroll { overflow-x: auto; }
+/* Typeset units and symbolic operations (Iter-11, item 15). `line-height: 0` is not
+   cosmetic: without it every superscripted exponent inflates its table row's height, so
+   the data-dictionary rows stop aligning with the rest of the page. No math engine --
+   see `_expr_html` for why a bundled KaTeX/MathJax was rejected. */
+sub, sup { line-height: 0; font-size: 0.75em; }
+span.units { white-space: nowrap; }
+span.expr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 """
 
 # Inline vanilla-JS sort + filter shim. Deliberately NOT Tabulator: this page is read
@@ -722,6 +729,71 @@ def _provenance_process(runs: list[dict]) -> str:
     return "<h4>5. Process</h4>\n" + summary + _grid_table(["Run", "Instrument(s)", "Inputs", "Result(s)"], rows)
 
 
+# Iter-11, item 14. A run of TWO identical siblings collapses to a sentinel line plus a
+# shared subtree -- three lines where two stood, which is worse. Three is the smallest
+# run where the collapse pays for itself.
+_TREE_SENTINEL_MIN_SIBLINGS = 3
+
+
+def _common_prefix(names: list[str]) -> str:
+    """Longest shared leading substring across `names` (may be "")."""
+    if not names:
+        return ""
+    head = names[0]
+    for other in names[1:]:
+        i = 0
+        while i < len(head) and i < len(other) and head[i] == other[i]:
+            i += 1
+        head = head[:i]
+        if not head:
+            break
+    return head
+
+
+def _sentinel_label(names: list[str]) -> str:
+    """`{stem…} × N` -- the parameterised stand-in for a run of N identical siblings.
+
+    BOTH halves are DERIVED: the placeholder stem is the longest common prefix of the
+    run's actual names, and N is the run length. Nothing here is authored per experiment,
+    so the label cannot drift from the data.
+
+    The count sits OUTSIDE the braces on purpose (Iter-11, item 14a). `{subanalysis id
+    (28)}` nests a parenthesis inside a brace, which reads as though the count were part
+    of the parameter's NAME; a trailing multiplier reads as a quantity applied to the
+    placeholder, which is what it is. The user ruled for this form on 2026-08-17.
+    """
+    stem = _common_prefix(names)
+    return f"{{{stem}…}} × {len(names)}" if stem else f"{{…}} × {len(names)}"
+
+
+def _sibling_runs(node: dict) -> list[tuple[list[str], dict]]:
+    """Split `node`'s sorted children into CONTIGUOUS runs of identical subtrees.
+
+    Identity is DECIDED, never assumed. The writer builds every sub-analysis path from
+    one f-string (`sensitivity_analysis.py`, `_sub_relpaths`), so structural identity is
+    guaranteed at WRITE time -- but this function's input is a persisted crate that
+    outlives the writer, and the RO-Crate contract is that the on-disk JSON-LD IS the
+    object. So the subtrees are compared by canonical sorted-key serialization, and THAT
+    COMPARISON IS THE DIVERGENCE DETECTOR: a sub-analysis whose structure legitimately
+    differs breaks the run and renders under its own name. The collapse can never hide a
+    real structural difference.
+
+    Contiguous runs rather than global equivalence classes: global grouping would REORDER
+    the listing whenever two identical siblings straddle a third that differs, and a
+    reordered directory listing is a new readability problem in place of the old one.
+    """
+    runs: list[tuple[list[str], dict]] = []
+    last_sig: str | None = None
+    for name, child in sorted(node.items()):
+        sig = json.dumps(child, sort_keys=True)
+        if runs and sig == last_sig:
+            runs[-1][0].append(name)
+        else:
+            runs.append(([name], child))
+            last_sig = sig
+    return runs
+
+
 def _path_tree_html(paths: list[str]) -> str:
     """Render `paths` as a folder tree, the way a directory listing is normally shown.
 
@@ -758,19 +830,158 @@ def _path_tree_html(paths: list[str]) -> str:
         return name, node
 
     lines: list[str] = []
+    collapsed: list[tuple[str, list[str]]] = []  # (sentinel label, member names)
 
     def _walk(node: dict, prefix: str) -> None:
-        items = sorted(node.items())
-        for i, (name, child) in enumerate(items):
-            last = i == len(items) - 1
-            label, child = _collapse(name, child)
-            lines.append(f"{prefix}{'└── ' if last else '├── '}{_esc(label)}")
-            if child:
+        runs = _sibling_runs(node)
+        for i, (names, child) in enumerate(runs):
+            last = i == len(runs) - 1
+            # Collapse a run only when there is shared structure to show ONCE (`child`
+            # non-empty) and enough members to pay for the extra sentinel line. A run of
+            # leaves has no subtree, so collapsing it would replace N names with a
+            # sentinel and nothing beneath -- pure information loss.
+            if child and len(names) >= _TREE_SENTINEL_MIN_SIBLINGS:
+                label = _sentinel_label(names)
+                collapsed.append((label, names))
+                lines.append(f"{prefix}{'└── ' if last else '├── '}{_esc(label)}")
                 _walk(child, prefix + ("    " if last else "│   "))
+                continue
+            for j, name in enumerate(names):
+                sub_last = last and j == len(names) - 1
+                label, sub = _collapse(name, child)
+                lines.append(f"{prefix}{'└── ' if sub_last else '├── '}{_esc(label)}")
+                if sub:
+                    _walk(sub, prefix + ("    " if sub_last else "│   "))
 
     _walk(tree, "")
     _style = "margin:0;font-size:11px;line-height:1.45"
-    return f"<pre class='hhemt-path-tree' style='{_style}'>" + "\n".join(lines) + "</pre>"
+    tree_html = f"<pre class='hhemt-path-tree' style='{_style}'>" + "\n".join(lines) + "</pre>"
+    if not collapsed:
+        return tree_html
+    members = "; ".join(
+        f"<strong>{_esc(label)}</strong> = " + ", ".join(_code(n) for n in names)
+        for label, names in collapsed
+    )
+    total = sum(len(names) for _, names in collapsed)
+    return (
+        tree_html
+        + f"<details><summary class='note'>Collapsed runs — show the {_esc(total)} member name(s)"
+        "</summary><p class='note'>Membership is decided by comparing each sibling's subtree, "
+        "never inferred from its name. " + members + "</p></details>"
+    )
+
+
+_MINUS = "−"  # U+2212 MINUS SIGN -- a hyphen is not a minus in a typeset exponent.
+
+
+def _sup(text: str) -> str:
+    return f"<sup>{_esc(text).replace('-', _MINUS)}</sup>"
+
+
+def _unit_factor_html(tok: str) -> str:
+    """One whitespace-delimited UDUNITS factor -> HTML with a real superscript.
+
+    Two branches, both load-bearing against real entries in `_CF_VARIABLE_MAP`:
+
+    * The caret branch exists for `10^6 L` (`total_inflow_vol_10e6_ltr`). Without it, a
+      trailing-digit rule renders `1` raised to `0`.
+    * The alphabetic-base guard exists for `1`, CF's dimensionless unit. Without it, the
+      same rule produces an empty base carrying a superscript.
+    """
+    if "^" in tok:
+        base, _, exp = tok.partition("^")
+        return _esc(base) + _sup(exp) if base and exp else _esc(tok)
+    i = len(tok)
+    while i > 0 and tok[i - 1].isdigit():
+        i -= 1
+    if i > 1 and tok[i - 1] == "-":
+        i -= 1
+    base, exp = tok[:i], tok[i:]
+    if base and exp and base[-1].isalpha():
+        return _esc(base) + _sup(exp)
+    return _esc(tok)
+
+
+def _units_html(units: Any) -> str:
+    """Render a UDUNITS string with true superscripts WITHOUT altering it at rest.
+
+    `m s-1` renders as `m s` with a superscript minus-one; the CF `units` attribute on the
+    data and the crate's `unitText` stay BYTE-IDENTICAL UDUNITS, which is what a CF-aware
+    reader parses. This is a presentation transform in the renderer only -- it never calls
+    into `cf_conventions`, so the `cf conventions canonical source` stipulation (which
+    governs attribute APPLICATION, not rendering) is untouched.
+
+    Do NOT "simplify" this by adding a `display_units` key to `_CF_VARIABLE_MAP`:
+    `cf_conventions._set_attrs` stamps EVERY non-None key of an entry onto the DataArray,
+    so a presentation key added there is published as a non-CF attribute on the data.
+
+    The canonical string is preserved verbatim in `title` because superscripts and U+2212
+    are not copy-pasteable back into a UDUNITS parser -- the machine form has to remain
+    recoverable from the page.
+    """
+    text = str(units or "").strip()
+    if not text:
+        return "—"
+    body = " ".join(_unit_factor_html(t) for t in text.split())
+    return f'<span class="units" title="{_esc(text)}">{body}</span>'
+
+
+def _expr_html(expr: str) -> str:
+    """Render a compact symbolic expression with real sub/superscripts.
+
+    Grammar is deliberately two characters wide -- `_` for a subscript and `^` for a
+    superscript, each binding to the alphanumeric run that follows, or to a `{...}` group
+    -- so the STORED value stays a short ASCII-ish string a human can read and grep.
+    Operators are literal Unicode (√ Σ ∫ · Δ), not markup.
+
+    No math engine. This page carries none, and the module already refuses a CDN
+    dependency for its sort/filter shim on the grounds that the page is read detached from
+    a live network. A BUNDLED engine would clear that bar on self-containment but would
+    vendor a third-party asset with its own license and provenance onto a page whose whole
+    thesis is that it is self-describing, and would render math that is neither selectable
+    nor greppable in an archived copy. Eight of the eleven descriptors are prose with no
+    equation in them, so the engine would buy nothing for most rows.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(expr):
+        ch = expr[i]
+        if ch in "_^" and i + 1 < len(expr):
+            j = i + 1
+            if expr[j] == "{":
+                k = expr.find("}", j)
+                if k == -1:
+                    out.append(_esc(ch))
+                    i += 1
+                    continue
+                run, i = expr[j + 1 : k], k + 1
+            else:
+                j2 = j
+                while j2 < len(expr) and (expr[j2].isalnum() or expr[j2] == "-"):
+                    j2 += 1
+                run, i = expr[j:j2], j2
+            tag = "sub" if ch == "_" else "sup"
+            out.append(f"<{tag}>{_esc(run).replace('-', _MINUS)}</{tag}>")
+            continue
+        out.append(_esc(ch))
+        i += 1
+    return "".join(out)
+
+
+def _operation_html(descriptor: dict) -> str:
+    """Prose operation, with a typeset symbolic form appended when one is authored.
+
+    The prose stays PRIMARY and unchanged. Most descriptors are genuinely prose ("value
+    selected at the final reported timestep") with no equation to typeset, so a math-first
+    rendering would leave the majority of rows worse. `operation_expr` is optional by
+    design: an entry that has not authored one renders exactly what it renders today,
+    which is what makes this safe to land row by row.
+    """
+    prose = descriptor.get("operation") or "—"
+    expr = descriptor.get("operation_expr")
+    if not expr:
+        return _esc(prose)
+    return f'{_esc(prose)}<br><span class="expr">{_expr_html(str(expr))}</span>'
 
 
 def _provenance_outputs(graph: list[dict], root: dict) -> str:
@@ -813,11 +1024,11 @@ def _provenance_outputs(graph: list[dict], root: dict) -> str:
             [
                 _code(var_name),
                 _esc(_prop(pv, "description") or "—"),
-                _esc(_prop(pv, "unitText") or "—"),
+                _units_html(_prop(pv, "unitText")),
                 _code(_prop(pv, "propertyID")) if _prop(pv, "propertyID") else "—",
                 _esc(descriptor.get("spatial_representation") or "—"),
                 _esc(descriptor.get("source_variables") or "—"),
-                _esc(descriptor.get("operation") or "—"),
+                _operation_html(descriptor),
             ]
         )
     if var_rows:

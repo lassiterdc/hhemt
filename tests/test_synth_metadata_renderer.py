@@ -845,12 +845,20 @@ def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     Shape measured on the delivered bundle: 29 paths in ONE cell, space-separated, over two
     top-level prefixes. This asserts the tree markup AND that no path is lost -- a renderer
     that dropped entries would otherwise look tidier and score better.
+
+    TWO sub-analyses, not three, and that is deliberate. Iter-11 item 14 collapses a
+    contiguous run of `_TREE_SENTINEL_MIN_SIBLINGS` (3) or more structurally identical
+    siblings into one `{stem…} × N` sentinel, which is a DIFFERENT rendering from the
+    single-child-chain collapse this test guards. A three-sibling fixture straddles that
+    threshold and would assert the Iter-11 shape while claiming to test the Iter-10 one.
+    Two keeps this test in the uncollapsed regime where its subject actually exists; the
+    sentinel regime is guarded independently by tests/test_path_tree_collapse.py. Do NOT
+    "restore" a third sibling here -- it silently converts this into a different test.
     """
     paths = [
         "sensitivity_datatree.zarr/",
         "subanalyses/sa_gpu_0_r1/analysis_datatree.zarr",
         "subanalyses/sa_gpu_0_r2/analysis_datatree.zarr",
-        "subanalyses/sa_serial_6_r1/analysis_datatree.zarr",
     ]
     html = metadata._path_tree_html(paths)
 
@@ -861,7 +869,7 @@ def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     lines = [ln for ln in body.replace("</pre>", "").split("\n") if ln.strip()]
 
     # Every leaf survives the transformation.
-    for leaf in ("sa_gpu_0_r1", "sa_gpu_0_r2", "sa_serial_6_r1", "sensitivity_datatree.zarr"):
+    for leaf in ("sa_gpu_0_r1", "sa_gpu_0_r2", "sensitivity_datatree.zarr"):
         assert any(leaf in ln for ln in lines), leaf
 
     # Single-child chains COLLAPSE: each sub-analysis is one line carrying both its own
@@ -871,6 +879,6 @@ def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     collapsed = [ln for ln in lines if "sa_gpu_0_r1/analysis_datatree.zarr" in ln]
     assert len(collapsed) == 1, f"single-child chain not collapsed: {lines}"
 
-    # `subanalyses` is a real branch (3 children), so it must NOT be collapsed into its
+    # `subanalyses` is a real branch (2 children), so it must NOT be collapsed into its
     # children -- proving the collapse stops at a branch rather than flattening everything.
     assert any(ln.strip().endswith("subanalyses") for ln in lines), lines

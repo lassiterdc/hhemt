@@ -161,12 +161,14 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
         "spatial_representation": "grid cell",
         "source_variables": "wlevel_m",
         "operation": "maximum over all reported timesteps",
+        "operation_expr": "max_t h",
         "reduced_coordinate": "timestep_min",
     },
     "max_velocity_mps": {
         "spatial_representation": "grid cell",
         "source_variables": "velocity_x_mps, velocity_y_mps",
         "operation": "maximum over time of sqrt(vx^2 + vy^2)",
+        "operation_expr": "max_t √(v_x^2 + v_y^2)",
         "reduced_coordinate": "timestep_min",
     },
     "velocity_x_mps": {
@@ -191,6 +193,7 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
         "spatial_representation": "grid cell",
         "source_variables": "velocity_x_mps, velocity_y_mps",
         "operation": "timestep_min at the argmax of sqrt(vx^2 + vy^2)",
+        "operation_expr": "argmax_t √(v_x^2 + v_y^2)",
         "reduced_coordinate": "timestep_min",
     },
     "wlevel_m_last_tstep": {
@@ -201,36 +204,42 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
         # says "timestep_min: point", which describes a variable that KEEPS the
         # time dimension with no method applied -- a different thing.
         "operation": "value selected at the final reported timestep",
+        "operation_expr": "h(t_max)",
         "reduced_coordinate": "timestep_min (selected, not reduced)",
     },
     "final_surface_flood_volume_m3": {
         "spatial_representation": "whole domain (scalar)",
         "source_variables": "wlevel_m_last_tstep",
         "operation": "sum over all grid cells of depth * |dx| * |dy|",
+        "operation_expr": "Σ_{x,y} h · |Δx| · |Δy|",
         "reduced_coordinate": "x, y",
     },
     "total_inflow_vol_10e6_ltr": {
         "spatial_representation": "point (node)",
         "source_variables": "SWMM node inflow timeseries",
         "operation": "time integral of inflow over the simulation period",
+        "operation_expr": "∫ Q_in dt",
         "reduced_coordinate": "reporting time (not retained in the summary)",
     },
     "max_flow_cms": {
         "spatial_representation": "line (conduit)",
         "source_variables": "SWMM link flow timeseries",
         "operation": "maximum over the simulation period",
+        "operation_expr": "max_t Q",
         "reduced_coordinate": "reporting time (not retained in the summary)",
     },
     "max_over_full_flow": {
         "spatial_representation": "line (conduit)",
         "source_variables": "SWMM link flow timeseries, full-flow capacity",
         "operation": "maximum over time of flow / full-flow capacity",
+        "operation_expr": "max_t (Q / Q_full)",
         "reduced_coordinate": "reporting time (not retained in the summary)",
     },
     "max_over_full_depth": {
         "spatial_representation": "line (conduit)",
         "source_variables": "SWMM link depth timeseries, full depth",
         "operation": "maximum over time of depth / full depth",
+        "operation_expr": "max_t (d / d_full)",
         "reduced_coordinate": "reporting time (not retained in the summary)",
     },
 }
