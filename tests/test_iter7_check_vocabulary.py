@@ -45,6 +45,26 @@ def _declared_check_table_names() -> set[str]:
     return names
 
 
+def _all_check_levels() -> dict[str, str]:
+    """{literal check name -> level} across EVERY level, not only the table levels.
+
+    Used only to DIAGNOSE a failing equality above. Deliberately not asserted on:
+    `src/hhemt/eda/` mints eight further checks with `name=name` (a variable), so any
+    exact-cover over all levels would silently under-cover and pass vacuously -- the
+    failure mode the first assertion in the test below exists to prevent.
+    """
+    src = Path(av.__file__)
+    out: dict[str, str] = {}
+    for node in ast.walk(ast.parse(src.read_text())):
+        if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "CheckResult"):
+            continue
+        kw = {k.arg: k.value for k in node.keywords}
+        lvl, nm = kw.get("level"), kw.get("name")
+        if isinstance(lvl, ast.Constant) and isinstance(nm, ast.Constant):
+            out[nm.value] = lvl.value
+    return out
+
+
 def test_vocabulary_covers_exactly_the_check_table_checks():
     declared = _declared_check_table_names()
     assert declared, (
@@ -52,10 +72,23 @@ def test_vocabulary_covers_exactly_the_check_table_checks():
         "The scan itself has broken -- an empty set would make every assertion below "
         "pass vacuously, which is the failure mode this guard exists to avoid."
     )
+    # The equality is the contract. The two branches below only DIAGNOSE a failure of
+    # it -- a key that names a real check at an out-of-scope level is a different
+    # mistake from a key that names nothing, and the undifferentiated message
+    # ("absent from producer") reads as the second when it is usually the first.
+    # That misreading is what shipped `Data availability` into this map.
+    extra = set(_CHECK_VOCABULARY) - declared
+    out_of_scope = {k: lvl for k, lvl in _all_check_levels().items() if k in extra}
     assert declared == set(_CHECK_VOCABULARY), (
         f"_CHECK_VOCABULARY and the producer's Check-table checks disagree.\n"
         f"  in producer, missing from vocabulary: {sorted(declared - set(_CHECK_VOCABULARY))}\n"
-        f"  in vocabulary, absent from producer:  {sorted(set(_CHECK_VOCABULARY) - declared)}"
+        f"  in vocabulary, naming a check at an OUT-OF-SCOPE level: "
+        f"{sorted(f'{k} (level={lvl})' for k, lvl in out_of_scope.items())}\n"
+        f"    -> this map is scoped to {sorted(_CHECK_TABLE_LEVELS)} BY RULING "
+        f"(errors_and_warnings.py:46-48). Remove the key; the Stage table renders "
+        f"c.name raw and needs no entry.\n"
+        f"  in vocabulary, naming NO check at all: {sorted(extra - set(out_of_scope))}\n"
+        f"    -> a renamed or deleted check left a stale entry."
     )
 
 

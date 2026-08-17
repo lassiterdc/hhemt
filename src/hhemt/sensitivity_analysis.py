@@ -469,14 +469,24 @@ class TRITONSWMM_sensitivity_analysis:
         # _driver_id None there and delegates here). Blocking-local drivers
         # remove on return; detached drivers leave a durable sentinel reclaimed
         # by the gate's liveness probes.
+        #
+        # A DRY RUN writes NO sentinel — exact mirror of the non-sensitivity
+        # twin in analysis.py::submit_workflow. A rehearsal submits nothing and
+        # writes no zarr, and on a detached mode its sentinel would keep null
+        # identity fields (the enrich below has no job_id / session_name to
+        # merge), which the tri-state gate holds as UNKNOWN until the
+        # mtime-age fail-safe expires. Suppressed at the WRITE, not at the
+        # removal condition: that condition is a LIVE-driver dichotomy whose
+        # premise a dry run never satisfies.
         _master_dir = self.master_analysis.analysis_paths.analysis_dir
         _eff_mode = self.master_analysis.cfg_analysis.multi_sim_run_method
-        _driver_id = _osent.new_driver_id()
-        _osent.write_orchestrator_sentinel(
-            _master_dir,
-            driver_id=_driver_id,
-            workflow_submission_mode=_eff_mode,
-        )
+        _driver_id = None if dry_run else _osent.new_driver_id()
+        if _driver_id is not None:
+            _osent.write_orchestrator_sentinel(
+                _master_dir,
+                driver_id=_driver_id,
+                workflow_submission_mode=_eff_mode,
+            )
         try:
             result = self._workflow_builder.submit_workflow(
                 mode=mode,
@@ -500,10 +510,10 @@ class TRITONSWMM_sensitivity_analysis:
                 snakemake_diagnostics=snakemake_diagnostics,
             )
         finally:
-            if _eff_mode == "local":
+            if _driver_id is not None and _eff_mode == "local":
                 _osent.remove_orchestrator_sentinel(_master_dir, _driver_id)
 
-        if _eff_mode != "local" and isinstance(result, dict):
+        if _driver_id is not None and _eff_mode != "local" and isinstance(result, dict):
             _osent.enrich_orchestrator_sentinel(
                 _master_dir,
                 driver_id=_driver_id,
@@ -619,6 +629,21 @@ class TRITONSWMM_sensitivity_analysis:
         # Skipped on dry_run — it deletes flags and clears per-scenario
         # processing-log records, both filesystem mutations the dry-run
         # no-destructive-mutation contract forbids.
+        # Orchestrator-liveness CLAIM — hoisted ahead of every destructive step
+        # below (this _apply_force_rerun, the inline flag/report/zarr
+        # invalidation, the scoped reprocess-delete workflow, and the per-sub
+        # processed-output deletion). Mirrors the non-sensitivity twin in
+        # analysis.py::reprocess: until 2026-08-16 the gate lived inside
+        # submit_reprocess_workflow, so a REFUSED reprocess had already
+        # destroyed the report it was refusing to rebuild. The claim is keyed
+        # on the MASTER analysis_dir and taken on the BASE builder, which is
+        # where _orchestrator_liveness_gate lives (workflow.py:9799 reaches it
+        # the same way). Returns None on dry_run.
+        _reprocess_claim = self._workflow_builder._base_builder._acquire_reprocess_driver_claim(
+            self.master_analysis.analysis_paths.analysis_dir,
+            dry_run=dry_run,
+        )
+
         if not dry_run:
             self.master_analysis._apply_force_rerun(override_force_rerun)
 
@@ -874,6 +899,7 @@ class TRITONSWMM_sensitivity_analysis:
             execution_mode=execution_mode,
             which=which,
             compression_level=compression_level,
+            claimed_driver_id=_reprocess_claim,
             dry_run=dry_run,
             verbose=verbose,
             report_formats=report_formats,

@@ -31,7 +31,10 @@ from hhemt.report_renderers import metadata
 _SENTINEL_HOST = "SECRET-PRODUCER-HOST"
 _SENTINEL_TIME = "2026-01-01T03:04:05"
 
-_ANCHORS = ("provenance", "reproduction-guide", "slurm-efficiency")
+# Derived from the producer, not restated. The literal form went stale the moment the
+# Data Availability section landed: nothing failed, the section simply lost its
+# heading/jump-nav coverage in every test that iterates this tuple.
+_ANCHORS = tuple(metadata._anchor(t) for t in metadata._SECTION_TITLES)
 
 # The REAL header snakemake-executor-plugin-slurm writes (efficiency_report.py:
 # parse_sacct_data -> df.to_csv, which emits the unnamed index column first). Tests
@@ -171,24 +174,24 @@ def test_page_title_and_jump_nav(tmp_path):
 # --- R3: provenance source + volatile-field exclusion -------------------------
 
 
-def test_provenance_declares_only_sidecar(tmp_path):
-    """R3: with no SLURM CSV, the declared set is exactly the two persisted read-models.
+def test_provenance_declares_the_sidecar_and_nothing_undeclared(tmp_path):
+    """R3: the PROVENANCE sub-section's declared source is the RO-Crate sidecar.
 
-    Was `== ["ro-crate-metadata.json"]`. Two additions since, both ADR-6 D3 declared-
-    when-absent: `validation_report.json` (the Data Availability section, which reads
-    the SAME record the Errors-and-Warnings renderer reads rather than emitting a
-    second projection of it), and — when they exist — the `_status/*.flag.json`
-    sidecars plus the consolidated tree that back the provenance chain and run
-    timeline. This fixture writes neither, so the set stays at two.
-
-    Asserted as an exact set, not a containment: the point of this test is that the
-    page declares everything it opens and nothing it does not.
+    R3 is scoped to that sub-section, not to the page -- both in the plan
+    (reproducibility-system_metadata-report-section.md:65, "The provenance sub-section
+    reads ONLY ...") and in the durable stipulation ("its single PROVENANCE
+    source_paths entry"). The page legitimately grew a fourth sub-section that reads
+    validation_report.json, which Gotcha 53's IO audit REQUIRES it to declare. So the
+    checkable claim is membership plus a closed set, never a snapshot of the list:
+    the closed set is derived from the renderer's own filename constants, so adding a
+    reader means adding a constant at the producer, in view of a reviewer.
     """
     _, manifest, _ = _render(tmp_path, doc=_full_crate())
-    assert manifest["source_paths_relative"] == [
-        "ro-crate-metadata.json",
-        "validation_report.json",
-    ]
+    declared = manifest["source_paths_relative"]
+    assert metadata._SIDECAR_FILENAME in declared
+    allowed = {metadata._SIDECAR_FILENAME, metadata._VALIDATION_REPORT_FILENAME}
+    assert set(declared) <= allowed, f"undeclared-source drift: {sorted(set(declared) - allowed)}"
+    assert len(declared) == len(set(declared)), f"duplicate declarations: {declared}"
     assert manifest["plot_id"] == "metadata"
 
 
@@ -500,12 +503,10 @@ def test_absent_sidecar_degrades_gracefully(tmp_path):
     assert 'id="provenance"' in html
     assert "banner info" in html
     assert "ro-crate-metadata.json" in html
-    # ADR-6 D3: both expected sources are declared even when absent, so the info-icon
-    # names what the page WOULD have read rather than going silent.
-    assert manifest["source_paths_relative"] == [
-        "ro-crate-metadata.json",
-        "validation_report.json",
-    ]
+    # ADR-6 D3: the expected source is declared even when ABSENT. Membership, not the
+    # whole list -- the list also carries validation_report.json, which is likewise
+    # declared-when-absent and is out of R7's scope here.
+    assert metadata._SIDECAR_FILENAME in manifest["source_paths_relative"]
 
 
 def test_native_run_crate_has_no_sif_entity(tmp_path):

@@ -6033,6 +6033,7 @@ exit $snakemake_status
         start_with: Literal["process", "consolidate", "render"],
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
         multi_sim_run_method_override: str | None = None,
+        claimed_driver_id: str | None = None,
         dry_run: bool = False,
         verbose: bool = True,
     ) -> dict:
@@ -6169,13 +6170,24 @@ exit $snakemake_status
         # exists. Default-safe when no _orchestrator/ sentinel is present (R6),
         # and coexists with queued/running _submitted/ sim WORKERS (R2). Skipped
         # for dry runs (planning only — nothing is submitted, no zarr is written).
+        # When the FACADE already claimed (claimed_driver_id, via
+        # _acquire_reprocess_driver_claim) the gate ran BEFORE the facade's
+        # destructive invalidation and the self-sentinel is already on disk;
+        # re-gating here would find our OWN sentinel and self-deadlock, so the
+        # claim is ADOPTED rather than re-taken.
         import os
 
         from hhemt import orchestrator_sentinels as _osent
 
-        driver_id = _osent.new_driver_id()
-        remove_self_sentinel = False
-        if not dry_run:
+        driver_id = claimed_driver_id if claimed_driver_id is not None else _osent.new_driver_id()
+        remove_self_sentinel = claimed_driver_id is not None and not dry_run
+        if claimed_driver_id is not None:
+            # Ownership transfers here. The facade's same-process re-entry
+            # release must no longer fire for this id, or a second reprocess in
+            # one interpreter would delete a DETACHED driver's still-meaningful
+            # sentinel — the one the gate reclaims via `ps -p` after exit.
+            self._reprocess_claim_driver_id = None
+        if not dry_run and claimed_driver_id is None:
             gate_err = self._orchestrator_liveness_gate(
                 analysis_dir=self.analysis_paths.analysis_dir,
                 exclude_driver_id=driver_id,
@@ -6725,6 +6737,76 @@ exit $snakemake_status
                 continue
             return False
         return None
+
+    def _acquire_reprocess_driver_claim(
+        self,
+        analysis_dir: Path | None = None,
+        *,
+        dry_run: bool,
+    ) -> str | None:
+        """Gate, then CLAIM, before a reprocess facade destroys anything.
+
+        The reprocess facades (``TRITONSWMM_analysis.reprocess`` /
+        ``TRITONSWMM_sensitivity_analysis.reprocess``) delete the rendered
+        report, the report-feeding plot artifacts, ``_status`` flags, and — on
+        ``regenerate_existing`` — the consolidated zarrs, BEFORE they reach
+        ``submit_reprocess_workflow``, where the orchestrator-liveness gate
+        used to live. A gate that can REFUSE therefore ruled only AFTER the
+        artifacts it exists to protect were already gone. Measured 2026-08-16
+        on the UVA ``benchmarking_cpu_uva`` arm: ``hhemt reprocess --start-with
+        render`` wrote ``Snakefile.reprocess``, deleted ``analysis_report.zip``,
+        and only then hit the gate and returned rc=1, leaving zero
+        ``analysis_report.*`` anywhere under the scratch base.
+
+        Gate and claim are ONE step, not two. Hoisting only the read-only gate
+        would leave the refusal reachable after destruction whenever a second
+        driver appears between the hoisted check and the builder's own claim at
+        ``submit_reprocess_workflow`` — a window that spans the whole
+        destructive body, including a SLURM ``submit_reprocess_delete_workflow``
+        round-trip. Writing the self-sentinel HERE closes it: from this call
+        until the builder releases it, no other reprocess passes its own gate.
+
+        Returns the claimed ``driver_id``, or ``None`` when ``dry_run`` — a dry
+        run submits nothing and writes no zarr, and the existing ``if not
+        dry_run`` gates in ``submit_reprocess_workflow`` and
+        ``submit_static_plots_workflow`` already place dry runs outside this
+        concurrency protocol.
+
+        Raises ``WorkflowError`` when a live-or-indeterminate driver exists.
+        """
+        import os
+
+        from hhemt import orchestrator_sentinels as _osent
+
+        if dry_run:
+            return None
+        base = analysis_dir if analysis_dir is not None else self.analysis_paths.analysis_dir
+        # Same-process re-entry. A prior reprocess in THIS interpreter that
+        # raised before submit_reprocess_workflow adopted its claim leaves a
+        # sentinel whose pid is still alive (ours), which the gate classifies
+        # ALIVE and refuses on. Release our own stale claim first: it is
+        # provably not another driver, because we recorded it ourselves. The
+        # attribute is cleared on adoption, so this NEVER fires for a detached
+        # reprocess whose sentinel the builder deliberately left behind.
+        prior = getattr(self, "_reprocess_claim_driver_id", None)
+        if prior is not None:
+            _osent.remove_orchestrator_sentinel(base, prior)
+            self._reprocess_claim_driver_id = None
+        driver_id = _osent.new_driver_id()
+        gate_err = self._orchestrator_liveness_gate(analysis_dir=base, exclude_driver_id=driver_id)
+        if gate_err is not None:
+            raise gate_err
+        # Same shape the builder writes today: mode="local"/pid=os.getpid().
+        # reprocess never allocates its own tmux/sbatch driver, so it never
+        # produces a tmux/sbatch self-sentinel.
+        _osent.write_orchestrator_sentinel(
+            base,
+            driver_id=driver_id,
+            workflow_submission_mode="local",
+            pid=os.getpid(),
+        )
+        self._reprocess_claim_driver_id = driver_id
+        return driver_id
 
     def _orchestrator_liveness_gate(
         self,
@@ -9658,6 +9740,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
         which: Literal["TRITON", "SWMM", "both"] = "both",
         compression_level: int = 5,
+        claimed_driver_id: str | None = None,
         dry_run: bool = False,
         verbose: bool = True,
         report_formats: list[str] | None = None,
@@ -9788,14 +9871,23 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # analysis exists. Default-safe when no _orchestrator/ sentinel is
         # present (R6), and coexists with queued/running _submitted/ sim
         # WORKERS (R2). Skipped for dry runs (planning only — nothing is
-        # submitted, no zarr is written).
+        # submitted, no zarr is written). When the FACADE already claimed
+        # (claimed_driver_id, via _base_builder._acquire_reprocess_driver_claim)
+        # the gate ran BEFORE the facade's destructive invalidation and the
+        # self-sentinel is already on disk; re-gating here would find our OWN
+        # sentinel and self-deadlock, so the claim is ADOPTED, not re-taken.
         import os
 
         from hhemt import orchestrator_sentinels as _osent
 
-        driver_id = _osent.new_driver_id()
-        remove_self_sentinel = False
-        if not dry_run:
+        driver_id = claimed_driver_id if claimed_driver_id is not None else _osent.new_driver_id()
+        remove_self_sentinel = claimed_driver_id is not None and not dry_run
+        if claimed_driver_id is not None:
+            # Ownership transfers here — see the twin comment in
+            # SnakemakeWorkflowBuilder.submit_reprocess_workflow. The claim was
+            # recorded on the BASE builder, so it is cleared there.
+            self._base_builder._reprocess_claim_driver_id = None
+        if not dry_run and claimed_driver_id is None:
             gate_err = self._base_builder._orchestrator_liveness_gate(
                 analysis_dir=analysis_dir,
                 exclude_driver_id=driver_id,

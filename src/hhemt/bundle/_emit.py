@@ -205,10 +205,14 @@ def _assert_report_not_older_than_read_model(analysis_dir: Path) -> None:
         raise StaleReadModelError(
             f"{_EW_FIGURE_REL} is OLDER than {_VALIDATION_READ_MODEL_REL} by "
             f"{rm_m - fig_m:.0f}s -- the figure transcribes a superseded read-model and "
-            "would ship one generation behind. Re-run analysis.render_report() (report "
-            "phase only: the rule declares validation_report.json as an input at "
-            "workflow.py:3268 and the toolkit runs --rerun-triggers mtime, so only this "
-            "figure rebuilds), then re-emit the bundle."
+            "would ship one generation behind. REMEDY: the FIGURE must be rebuilt (its "
+            "plot_errors_and_warnings rule re-executed, or the renderer re-invoked "
+            "directly as analysis.eda() now does at its tail), then re-emit the bundle. "
+            "analysis.render_report() does NOT do this and must not be reached for: it "
+            "invokes `snakemake --report`, a post-execution render that re-executes no "
+            "rule, so it leaves the figure's mtime untouched and this guard fires again "
+            "(measured 2026-08-16 on a clean fixture root -- delta unchanged at 112s). "
+            "No other single-call remedy is named here because none has been confirmed."
         )
 
 
