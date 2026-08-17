@@ -393,10 +393,16 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         "caption": "report/captions/_harvested.rst",
                         "category": category,  # the figure's ORIGINAL category (NO base-experiment category)
                         "subcategory": base,  # clean/resume grouped as a subcategory within the category
+                        # NO "figure" facet here. On a harvested page the report result's own
+                        # NAME is already humanize_plot_id(plot_id), so a facet carrying the
+                        # same string restates the name rather than filtering by anything, and
+                        # renders the label twice. The per-master rules can carry a "figure"
+                        # facet because their names and facets are independently authored;
+                        # this path derives both from one function. `experiment` and `models`
+                        # are the facets that actually partition the harvested set.
                         "labels": _json.dumps(
                             {
                                 "experiment": base,
-                                "figure": humanize_plot_id(plot_id, _sa_labels),
                                 "models": "tritonswmm+triton" if tri_html is not None else (_model_of(primary_eid) or "tritonswmm"),
                             }
                         ),

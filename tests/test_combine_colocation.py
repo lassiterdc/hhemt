@@ -122,6 +122,32 @@ def test_harvest_stacks_both_models_one_spec_per_plot(tmp_path) -> None:
     assert labels["models"] == "tritonswmm+triton"
 
 
+def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> None:
+    """A harvested page's labels must not repeat the string Snakemake already shows as its name.
+
+    The result's NAME on these pages is `humanize_plot_id(plot_id)`. A `figure` facet built from
+    the same call therefore filters nothing and renders the label a second time, which is the
+    duplicate-heading defect the user reported. Asserted as the INVARIANT — no facet value equals
+    the humanized plot id — rather than as `"figure" not in labels`, so the test still fails if a
+    future facet is added under a different key carrying the same string.
+    """
+    bundle_root = tmp_path / "combined"
+    _write_child(bundle_root, "expA_tritonswmm", "metadata", _TS_HTML)
+    _write_child(bundle_root, "expA_triton", "metadata", _TRI_HTML)
+    specs = _harvest_per_experiment_rule_specs(bundle_root)
+    paired = [s for s in specs if "metadata" in s.rule_name]
+    assert paired, "no harvested metadata spec — the probe is measuring nothing"
+    for spec in paired:
+        labels = json.loads(spec.report_kwargs["labels"])
+        assert labels, "labels dict is empty — the probe is measuring nothing"
+        name_shown = humanize_plot_id("metadata")
+        restating = [k for k, v in labels.items() if v == name_shown]
+        assert not restating, f"facet(s) {restating} restate the result name {name_shown!r}"
+        # the facets that actually partition the harvested set are still present
+        assert labels["models"] == "tritonswmm+triton"
+        assert labels["experiment"] == _base_experiment("expA_tritonswmm")
+
+
 def test_harvest_no_base_experiment_category(tmp_path) -> None:
     bundle_root = tmp_path / "combined"
     _write_child(bundle_root, "expA_tritonswmm", "maps_fig", _TS_HTML)
