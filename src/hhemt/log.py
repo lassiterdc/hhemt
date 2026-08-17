@@ -492,7 +492,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     - Common fields (all): simulation_completed, sim_run_time_minutes, processing_log
     - Performance fields (triton, tritonswmm): performance_timeseries_written, performance_summary_written
     - TRITON fields (triton, tritonswmm): TRITON_timeseries_written, TRITON_summary_written, raw_TRITON_outputs_cleared, full_TRITON_timeseries_cleared
-    - SWMM fields (swmm, tritonswmm): SWMM_node/link_timeseries_written, SWMM_node/link_summary_written, raw_SWMM_outputs_cleared, full_SWMM_timeseries_cleared, raw_SWMM_binaries_reclaimed
+    - SWMM fields (swmm, tritonswmm): SWMM_node/link_timeseries_written, SWMM_node/link_summary_written, raw_SWMM_outputs_cleared, full_SWMM_timeseries_cleared, raw_SWMM_binaries_reclaimed, coupled_rpt_truncated, hydro_out_reclaimed
     """
 
     event_iloc: int = 0
@@ -540,6 +540,15 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # Additive + defaulted None, so every pre-existing log_{model}.json deserialises
     # unchanged and consumers coalesce None -> not reclaimed.
     raw_SWMM_binaries_reclaimed: Optional[LogField[bool]] = None
+    # Post-processing TRUNCATION of out_tritonswmm/swmm/hydraulics.rpt to its header,
+    # continuity/summary tables and trailer. TRUNCATION, never deletion -- the file remains
+    # the coupled-run completion signal (Gotcha 70).
+    coupled_rpt_truncated: Optional[LogField[bool]] = None
+    # Post-processing reclaim of swmm/hydro.out, the SWMM hydrology output that
+    # write_hydrograph_files reads. Distinct from raw_SWMM_outputs_cleared (the clear_raw
+    # pass over the RAW SIM tree) and from raw_SWMM_binaries_reclaimed (out_tritonswmm/swmm
+    # binaries): three axes, three records.
+    hydro_out_reclaimed: Optional[LogField[bool]] = None
 
     # Validators for LogField types
     _validate_bool_fields = field_validator(
@@ -557,6 +566,8 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "raw_SWMM_outputs_cleared",
         "full_SWMM_timeseries_cleared",
         "raw_SWMM_binaries_reclaimed",
+        "coupled_rpt_truncated",
+        "hydro_out_reclaimed",
         mode="before",
     )(_create_logfield_validator(bool))
 
@@ -593,6 +604,8 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "raw_SWMM_outputs_cleared",
         "full_SWMM_timeseries_cleared",
         "raw_SWMM_binaries_reclaimed",
+        "coupled_rpt_truncated",
+        "hydro_out_reclaimed",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 

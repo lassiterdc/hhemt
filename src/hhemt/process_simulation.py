@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import json
@@ -69,6 +70,36 @@ _CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset(
 # its reclaim is owned by _reclaim_exchange_replay_sidefiles under the
 # multi_allocation_in_progress guard. Do not fold the two.
 _RECLAIM_COUPLED_SWMM_SUFFIXES: frozenset[str] = frozenset({".out"})
+
+# Content-addressed truncation boundary for out_tritonswmm/**/swmm/hydraulics.rpt.
+#
+# MEASURED, on two independently produced real coupled rpts (2026-08-17): every line
+# swmm_output_parser needs -- Element Count, Flow Units, Flow Routing Continuity,
+# Continuity Error (%), Flooding Loss, and the three summary tables -- precedes the FIRST
+# `Node Time Series Results` line, and the ONLY needed marker after it is the trailer.
+# Reference model: body starts at line 8,947 of 50,013 (82.1% is body). Synth model: line
+# 267 of 28,537 (99.0% is body).
+#
+# The boundary is a SENTINEL, never a line/byte count, and that is load-bearing. The head
+# scales with node/link COUNT, not with simulation length: 8,946 lines (~544 KB) on the
+# reference model versus 266 (~17 KB) on the synth, a 34x spread. A fixed-size head would
+# cut a summary table mid-table on a large model, and the parser would then read a PARTIAL
+# table rather than fail -- an absent row is indistinguishable from a node that never
+# flooded. Using the same sentinel _scan_metadata_and_summaries uses to find the body start
+# (swmm_output_parser.py:463) is what keeps head and parser from disagreeing.
+_RPT_BODY_START_SENTINEL = "Node Time Series Results"
+_RPT_TRAILER_SENTINEL = "Analysis ended on"
+# The marker MUST NOT contain any parser sentinel, or truncation stops being idempotent (a
+# second pass would find a body start that is not one) and _scan_metadata_and_summaries
+# would classify the marker as a section. Guarded by
+# test_truncation_marker_contains_no_parser_sentinel.
+_RPT_TRUNCATION_MARKER = (
+    "  ===  hhemt: {n_dropped} lines of per-timestep results were reclaimed by "
+    "reclaim_after_processing. The report header, continuity tables and summary tables "
+    "above, and the trailer below, are unmodified. This file is TRUNCATED, not deleted: it "
+    "remains the coupled-run completion signal. Rebuilding the coupled SWMM summaries from "
+    "raw is no longer possible; re-simulate instead.  ===\n"
+)
 
 
 class TRITONSWMM_sim_post_processing:
@@ -1649,7 +1680,7 @@ class TRITONSWMM_sim_post_processing:
         if policy is None or policy == "none":
             return ()
         if policy == "all":
-            return ("timeseries", "raw_swmm_binaries")
+            return ("timeseries", "raw_swmm_binaries", "coupled_rpt", "hydro_out")
         return tuple(policy)
 
     @staticmethod
@@ -1724,6 +1755,59 @@ class TRITONSWMM_sim_post_processing:
             path.unlink()
             restamp_parent_sentinels(path, analysis_dir=analysis_dir)  # PATTERN B
 
+    def _truncate_coupled_rpt(self, rpt_path: Path, analysis_dir, verbose: bool) -> bool:
+        """Truncate a finalized coupled rpt to header+summaries+trailer. Returns True iff written.
+
+        STREAMING by construction: the Norfolk rpt is ~318 MB / ~5M lines, so this reads
+        line-by-line and never `read_text()`s the file. Peak memory is the HEAD, which is
+        bounded by node/link count (measured ~544 KB on the reference model).
+
+        Two refusals, both fail-closed, and neither is theoretical:
+        - no trailer  -> the rpt is NOT finalized, so `rpt_is_complete` is already False and
+          truncating would destroy the evidence of an incomplete run.
+        - no body start -> either already truncated (the idempotent no-op) or a structure
+          this was never measured against; in both cases doing nothing is correct.
+        """
+        from hhemt.du_sentinels import restamp_parent_sentinels
+
+        head: list[str] = []
+        trailer: str | None = None
+        n_dropped = 0
+        body_started = False
+        with open(rpt_path, "r", errors="replace") as fh:
+            for line in fh:
+                if not body_started:
+                    if _RPT_BODY_START_SENTINEL in line:
+                        body_started = True
+                    else:
+                        head.append(line)
+                        continue
+                n_dropped += 1
+                if _RPT_TRAILER_SENTINEL in line:
+                    trailer = line
+        if not body_started:
+            if verbose:
+                print(f"[reclaim] {rpt_path}: no time-series body found -- already truncated, skipping.", flush=True)
+            return False
+        if trailer is None:
+            print(
+                f"[reclaim] REFUSING to truncate {rpt_path}: no {_RPT_TRAILER_SENTINEL!r} line. "
+                "The coupled SWMM report is not finalized, so this run is not complete and the "
+                "untruncated file is the evidence of that.",
+                flush=True,
+            )
+            return False
+        tmp = rpt_path.with_suffix(rpt_path.suffix + ".hhemt-tmp")
+        with open(tmp, "w") as out:
+            out.writelines(head)
+            out.write(_RPT_TRUNCATION_MARKER.format(n_dropped=n_dropped))
+            out.write(trailer)
+        os.replace(tmp, rpt_path)
+        restamp_parent_sentinels(rpt_path, analysis_dir=analysis_dir)  # PATTERN B
+        if verbose:
+            print(f"[reclaim] truncated {rpt_path}: dropped {n_dropped} time-series line(s).", flush=True)
+        return True
+
     def reclaim_after_processing(
         self,
         *,
@@ -1783,6 +1867,32 @@ class TRITONSWMM_sim_post_processing:
             if not classes:
                 return
 
+        # coupled_rpt is TRUNCATION, not deletion, so it does not join the _reclaim_paths
+        # drop set -- that set is deleted wholesale and the rpt must survive as the
+        # completion signal (Gotcha 70). It is also tritonswmm-only: no other model writes
+        # out_tritonswmm/swmm/hydraulics.rpt.
+        truncated_rpt = False
+        if "coupled_rpt" in classes and model_type == "tritonswmm":
+            rpt = self.scen_paths.swmm_hydraulics_rpt
+            if rpt is not None and rpt.exists():
+                truncated_rpt = self._truncate_coupled_rpt(rpt, analysis_dir, verbose)
+
+        # hydro.out is the SWMM hydrology output that write_hydrograph_files reads to build
+        # TRITON's inflow hydrographs. It is safe to reclaim ONLY because spec E gave that
+        # function an already-written gate: without the gate, every subsequent re-prep would
+        # re-open this file and fail. Do NOT enable this class in a tree whose
+        # swmm_runoff_modeling.py predates that gate.
+        #
+        # It is model-INDEPENDENT (a scenario-prep artifact, not a per-model output), so it
+        # is reclaimed on the tritonswmm pass only, to avoid three enabled models racing to
+        # unlink the same file.
+        reclaimed_hydro_out = False
+        if "hydro_out" in classes and model_type == "tritonswmm":
+            _hydro_out = Path(str(self.scen_paths.swmm_hydro_inp).replace(".inp", ".out"))
+            if _hydro_out.exists():
+                self._remove_reclaimed(_hydro_out, analysis_dir, verbose)
+                reclaimed_hydro_out = True
+
         effective_policy = list(classes)
         removed: set[str] = set()
         for klass, path in self._reclaim_paths(model_type, policy=effective_policy, which=which):
@@ -1801,6 +1911,10 @@ class TRITONSWMM_sim_post_processing:
             self.log.full_SWMM_timeseries_cleared.set(True)
         if "raw_swmm_binaries" in removed and getattr(self.log, "raw_SWMM_binaries_reclaimed", None):
             self.log.raw_SWMM_binaries_reclaimed.set(True)
+        if truncated_rpt and getattr(self.log, "coupled_rpt_truncated", None):
+            self.log.coupled_rpt_truncated.set(True)
+        if reclaimed_hydro_out and getattr(self.log, "hydro_out_reclaimed", None):
+            self.log.hydro_out_reclaimed.set(True)
         return
 
     @property

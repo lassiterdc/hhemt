@@ -14,7 +14,9 @@ from hhemt.config.eda import eda_config
 from hhemt.config.report import report_config as _report_config_model
 
 ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "swmm"]]
-ReclaimValue = Literal["all", "none"] | list[Literal["timeseries", "raw_swmm_binaries"]]
+ReclaimValue = Literal[
+    "all", "none"
+] | list[Literal["timeseries", "raw_swmm_binaries", "coupled_rpt", "hydro_out"]]
 # Deliberately NOT a widening of ClearRawValue: that alias is ALSO ForceRerunSpec.subject's
 # type (see the comment directly below), so adding an artifact-class member to it would make
 # that member a legal force-rerun subject, where it means nothing. Different axis --
@@ -678,6 +680,13 @@ class analysis_config(cfgBaseModel):
             "out_tritonswmm/swmm/*.out (hydraulics.out plus the per-node *.out set), and "
             "NEVER *.rpt, which is a live completion predicate via "
             "run_simulation._coupled_swmm_report_finalized. \"raw_swmm_binaries\" "
+            "TRUNCATES out_tritonswmm/swmm/hydraulics.rpt in place to its header, "
+            "continuity and summary tables plus its trailer -- truncation, NEVER deletion, "
+            "because that file is a live completion predicate via "
+            "run_simulation._coupled_swmm_report_finalized. \"hydro_out\" drops the SWMM "
+            "hydrology output swmm/hydro.out, which write_hydrograph_files reads; that is "
+            "safe only because write_hydrograph_files carries an already-written gate. "
+            "\"raw_swmm_binaries\" "
             "no-ops (with a logged reason) when clear_raw == \"none\", because its only "
             "consumer, eda.raw_resume_identity.compare_swmm_raw, also needs the raw "
             "H/QX/QY/MH set that clear_raw governs. Every reclaim is recorded per "

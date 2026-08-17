@@ -15,6 +15,8 @@ from pyswmm import Simulation, Output
 from swmm.toolkit.shared_enum import NodeAttribute
 from typing import TYPE_CHECKING
 
+from hhemt.exceptions import ProcessingError
+
 if TYPE_CHECKING:
     from .scenario import TRITONSWMM_scenario
 
@@ -260,6 +262,9 @@ class SWMMRunoffModeler:
         import rioxarray as rxr
         from .scenario import return_df_of_nodes_grouped_by_DEM_gridcell
 
+        if hydrograph_outputs_gate(self.scenario) == "skipped":
+            return
+
         dem_processed = self.system.sys_paths.dem_processed
 
         sim_id_str = self.scenario.sim_id_str
@@ -357,3 +362,58 @@ class SWMMRunoffModeler:
                 print(df_hyg_loc.head())
                 sys.exit()
         return
+
+
+
+def hydrograph_outputs_gate(scenario) -> str:
+    """Three-state already-written gate for the TRITON inflow hydrographs.
+
+    Returns ``"skipped"`` when the hydrographs are logged AND present on disk (the fast
+    path the hydro.out reclaim needs), or ``"fell_through"`` when the caller must build
+    them. Raises ``ProcessingError`` when they are absent AND their rebuild source is
+    absent too -- the one state in which scenario preparation cannot proceed at all.
+
+    Module-level rather than inline in ``write_hydrograph_files`` so the three branches are
+    testable without a prepared scenario; a gate reachable only through a function that
+    needs a full fixture is a gate whose branches get asserted by proxy.
+    """
+    # WHY THIS GATE EXISTS. write_hydrograph_files is called UNCONDITIONALLY by
+    # prepare_scenario (scenario.py:846), while its producer one line above --
+    # run_swmm_hydro_model -- SKIPS the simulation when hydro_swmm_sim_completed is True.
+    # So before this gate, every re-entry into prepare_scenario re-opened hydro.out, and
+    # reclaiming hydro.out armed a latent failure on every subsequent re-prep.
+    #
+    # TWO LAYERS, NOT ONE, and the reason is specific to the reclaim this enables -- do not
+    # simplify this to the log check alone. The log fields say the hydrographs WERE
+    # written; they cannot say the files are still there. Before the hydro.out reclaim a
+    # log-true/disk-absent divergence was recoverable, because hydro.out was on disk to
+    # regenerate from. After it, a log-only gate that skipped on a missing strmflow/ would
+    # hand TRITON a sim with no inflow inputs and nothing on disk to rebuild them -- silent
+    # and permanent.
+    _hyg_logged = bool(
+        scenario.log.hyg_timeseries_created.get()
+        and scenario.log.hyg_locs_created.get()
+    )
+    _hyg_present = (
+        scenario.scen_paths.hyg_timeseries.exists()
+        and scenario.scen_paths.hyg_locs.exists()
+    )
+    if _hyg_logged and _hyg_present:
+        return "skipped"
+    if not _hyg_present:
+        _hydro_out = Path(str(scenario.scen_paths.swmm_hydro_inp).replace(".inp", ".out"))
+        if not _hydro_out.exists():
+            raise ProcessingError(
+                operation="write_hydrograph_files",
+                filepath=str(scenario.scen_paths.hyg_timeseries),
+                reason=(
+                    "the TRITON inflow hydrographs are absent AND the SWMM hydrology "
+                    f"output they are built from ({_hydro_out}) is also absent, so there "
+                    "is no rebuild source. This scenario cannot be prepared without "
+                    "re-running the hydrology simulation: clear hydro_swmm_sim_completed "
+                    "on this scenario's log (or re-prepare the scenario from scratch) and "
+                    "re-run. If reclaim_after_processing named 'hydro_out', that reclaim "
+                    "is why this file is gone; it is a disclosed reclaim, not a failed run."
+                ),
+            )
+    return "fell_through"
