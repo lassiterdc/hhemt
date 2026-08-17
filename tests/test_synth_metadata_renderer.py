@@ -403,6 +403,25 @@ def test_supply_block_names_the_fields_a_reproducer_actually_supplies():
     assert "system_config.SWMM_software_directory" in user_labels
 
 
+def test_toolkit_owned_fields_are_reported_as_supplied_and_required():
+    """`toolkit_owned_output` exempts an existence check; it is NOT a supply signal.
+
+    The two software-directory fields sit in the Supply bucket, and the renderer used to
+    tell the reader they were "Not supplied by you" — a contradiction inside one table,
+    and false: the user names the directory the clone/build gate builds into, and
+    `system.py` raises ConfigurationError when it is None. Asserted on BOTH halves so a
+    future edit can restore neither the non-supply claim nor a plain "Optional", which
+    would quietly invite omission and a run-time failure.
+    """
+    from hhemt.config.system import system_config
+
+    for name in ("TRITONSWMM_software_directory", "SWMM_software_directory"):
+        cell = metadata._requiredness_cell(system_config.model_fields[name])
+        assert "Required" in cell, cell
+        assert "Not supplied by you" not in cell, cell
+        assert not cell.startswith("Optional"), cell
+
+
 def test_partition_selectors_are_amend_not_supply():
     """reprex_config's two target_* selectors are HPC-revisable, not host-local."""
     rows_by_bucket, _ = metadata._config_field_rows()
