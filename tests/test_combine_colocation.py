@@ -119,7 +119,13 @@ def test_harvest_stacks_both_models_one_spec_per_plot(tmp_path) -> None:
     assert spec.report_kwargs["category"] != _base_experiment("synth_cc_clean_tritonswmm")
     assert spec.report_kwargs["subcategory"] == "synth_cc_clean"
     labels = json.loads(spec.report_kwargs["labels"])
-    assert labels["models"] == "tritonswmm+triton"
+    # Iter-11 items 5+9: `models` retired as a facet. It is a pure function of `base`, which
+    # IS the subcategory asserted on the line above, so it could never partition the figures
+    # beneath that subcategory. Asserted as the invariant -- no facet may restate the
+    # subcategory -- rather than as `"models" not in labels`, so a future facet re-introducing
+    # the same value under a different key still fails.
+    assert labels, "labels dict is empty — the probe is measuring nothing"
+    assert spec.report_kwargs["subcategory"] not in labels.values()
 
 
 def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> None:
@@ -143,9 +149,16 @@ def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> No
         name_shown = humanize_plot_id("metadata")
         restating = [k for k, v in labels.items() if v == name_shown]
         assert not restating, f"facet(s) {restating} restate the result name {name_shown!r}"
-        # the facets that actually partition the harvested set are still present
-        assert labels["models"] == "tritonswmm+triton"
-        assert labels["experiment"] == _base_experiment("expA_tritonswmm")
+        # Iter-11 items 5+9. The two facets this line used to pin -- `models` and
+        # `experiment` -- were measured DEGENERATE at the per-experiment level: `experiment`
+        # restates the subcategory and `models` is a function of it, so the facet table
+        # rendered one row instead of a figure list. What replaces them is asserted as the
+        # invariant rather than as a key list, so a differently-keyed correct implementation
+        # still passes: no facet may equal the subcategory, and the key set must be the same
+        # on every harvested spec (Snakemake performs no key-consistency check of its own,
+        # so a heterogeneous set reaches the bundled React app unvalidated).
+        assert spec.report_kwargs["subcategory"] not in labels.values()
+        assert set(labels) == set(json.loads(paired[0].report_kwargs["labels"]))
 
 
 def test_harvest_no_base_experiment_category(tmp_path) -> None:
@@ -167,7 +180,10 @@ def test_harvest_coupled_only_single_section(tmp_path) -> None:
     page = (bundle_root / paired[0].output_path_template).read_text(encoding="utf-8")
     assert '<div class="model-section" data-model="tritonswmm"' in page
     assert '<div class="model-section" data-model="triton"' not in page
-    assert json.loads(paired[0].report_kwargs["labels"])["models"] == "tritonswmm"
+    # Iter-11 items 5+9: `models` retired (see VMS-C2). A coupled-only base is exactly the
+    # case where that facet held ONE value, which is what disqualified it. The single-section
+    # property this test exists to pin is asserted on the two lines above, unchanged.
+    assert json.loads(paired[0].report_kwargs["labels"]) != {}
 
 
 # --- combined sidebar category-order vocabulary (F2 placeholder suppression) ---------------

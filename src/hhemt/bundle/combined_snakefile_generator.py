@@ -398,20 +398,66 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         # same string restates the name rather than filtering by anything, and
                         # renders the label twice. The per-master rules can carry a "figure"
                         # facet because their names and facets are independently authored;
-                        # this path derives both from one function. `experiment` and `models`
-                        # are the facets that actually partition the harvested set.
-                        "labels": _json.dumps(
-                            {
-                                "experiment": base,
-                                "models": "tritonswmm+triton" if tri_html is not None else (_model_of(primary_eid) or "tritonswmm"),
-                            }
-                        ),
+                        # this path derives both from one function.
+                        #
+                        # Iter-11 items 5 and 9 (ONE defect, two symptoms). The former
+                        # `experiment` / `models` pair was DEGENERATE at this level and that is
+                        # what dead-ended the navigation: Snakemake builds a facet table whose
+                        # COLUMNS are the label keys, `experiment` restated the `subcategory`
+                        # the reader had just clicked, and `models` is a pure function of
+                        # `base` (by_base keys the arm map BY base above), so neither could
+                        # partition. A facet that cannot partition renders ONE row where a
+                        # figure list belongs -- which is why Key Results dead-ended before the
+                        # benchmarking figures and Per Simulation Results inserted a redundant
+                        # experiment level. The replacement facets are read off the plot id,
+                        # which the ADR-2 grammar already encodes: per-sim figures vary in
+                        # sa_id and event_id, benchmarking figures vary in the descriptor.
+                        # The key set is FIXED (never conditional) because Snakemake does not
+                        # validate key consistency across results.
+                        "labels": _json.dumps(_plot_id_facets(plot_id)),
                     },
                     resources_yaml="mem_mb=1000, time_min=5",
                     log_path_template=f"_logs/plots/{rn}.log",
                 )
             )
     return tuple(specs)
+
+
+def _plot_id_facets(plot_id: str) -> dict[str, str]:
+    """Split an ADR-2 plot id into the facets that PARTITION a harvested figure set.
+
+    Grammar (`report_plot_ids.py`): ``{renderer_kind}[__{descriptor}][__sa.{sa_id}]
+    [__evt.{event_id}]``, "__" between segments and "." within one. This reads the two
+    prefixed segments and treats any remaining segment as the descriptor.
+
+    Why the parse lives HERE and not in `report_plot_ids.py`, which owns the grammar:
+    that module is `layout_relevant` and its `non_breaking_allowlist` entry is scoped by
+    `layout_signature` -- a content hash of the file as it stands. ANY edit to it, additive
+    or not, changes the hash and re-fires CI Check B, which then demands a LAYOUT_VERSION
+    bump plus a migration plus two golden fixtures for a change that alters no on-disk
+    figure filename. `canonical_plot_id` remains the sole MINTER; this is a read-only
+    consumer, and a grammar change would surface here as blank facets rather than silently.
+
+    Returns a FIXED key set. Snakemake performs no key-consistency check on `labels`
+    (`report/html_reporter/data/results.py` passes `res.labels` straight to the React app),
+    so a heterogeneous key set across results is unvalidated territory; a fixed set with
+    empty-string absences is the shape the delivered report already demonstrates.
+    """
+    stem = plot_id
+    for _ext in (".html", ".png", ".svg"):
+        if stem.endswith(_ext):
+            stem = stem[: -len(_ext)]
+            break
+    segments = stem.split("__")[1:]
+    facets = {"sub-analysis": "", "event": "", "variant": ""}
+    for seg in segments:
+        if seg.startswith("sa."):
+            facets["sub-analysis"] = seg[3:]
+        elif seg.startswith("evt."):
+            facets["event"] = seg[4:]
+        else:
+            facets["variant"] = seg.replace(".", " ")
+    return facets
 
 
 def _distinct_child_categories(bundle_root: Path) -> list[str]:

@@ -160,8 +160,10 @@ td, td code { word-break: break-all; overflow-wrap: anywhere; }
    Harmless at 3 columns; the reproduction guide's 5-column form made it
    unreadable. A min-width floor keeps the identifier column legible while
    leaving `break-all` in force for the sha256 / URI columns that need it.
-   `_grid_table` emits no `div.table-scroll` wrapper, so widening the table
-   instead (by dropping `break-all`) is not an option here. */
+   The floor is STILL the fix after Iter-11 item 24 gave every table a
+   `div.table-scroll` wrapper: the wrapper lets an over-wide table scroll instead
+   of overflowing the iframe, but it does nothing about a column that COLLAPSES,
+   which is what `break-all` causes and what this rule prevents. */
 table td:first-child { min-width: 18ch; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 nav.jump-nav { margin: 8px 0 16px; font-size: 13px; }
@@ -170,15 +172,36 @@ p.instruction { font-weight: 600; margin: 4px 0 8px; }
 p.note { font-size: 12px; color: #555; margin: 4px 0 10px; }
 span.badge { display: inline-block; padding: 1px 7px; border-radius: 8px;
              color: white; font-size: 11px; font-weight: 700; }
-/* Sortable/filterable table affordances. Layout-only -- no brand hex literal
-   (brand_theme stipulation); the sort indicator is a glyph, not a color. */
-table.sortable th { cursor: pointer; user-select: none; white-space: nowrap; }
-table.sortable th::after { content: " \\2195"; opacity: 0.35; font-size: 10px; }
-table.sortable th.sorted-asc::after { content: " \\2191"; opacity: 1; }
-table.sortable th.sorted-desc::after { content: " \\2193"; opacity: 1; }
-input.table-filter { width: 100%; box-sizing: border-box; margin: 4px 0 8px;
-                     padding: 4px 6px; font-size: 12px; }
-div.table-scroll { overflow-x: auto; }
+/* Sortable / per-column-filter table affordances. Layout-only -- no brand hex literal
+   (brand_theme stipulation); the sort indicator is a glyph, not a color, and NOTHING
+   here restates the `th` background/color, which stays sourced from
+   render_inline_css() (white on dark blue). The sort target is the label SPAN, not the
+   whole `th`: the header cell now also contains that column's filter input, and binding
+   sort to the cell would sort the table on every click into the input. */
+table.sortable th { user-select: none; white-space: nowrap; }
+table.sortable span.th-label { cursor: pointer; display: block; }
+table.sortable span.th-label::after { content: " \\2195"; opacity: 0.35; font-size: 10px; }
+table.sortable th.sorted-asc span.th-label::after { content: " \\2191"; opacity: 1; }
+table.sortable th.sorted-desc span.th-label::after { content: " \\2193"; opacity: 1; }
+input.col-filter { width: 100%; box-sizing: border-box; margin-top: 3px;
+                   padding: 2px 4px; font-size: 11px; font-weight: 400; }
+/* Iter-11 item 24. EVERY table on this page is wrapped in div.table-scroll, so every
+   table is height-bounded and scrolls in BOTH axes rather than pushing the page down.
+   max-height engages only when the content exceeds it, so a two-row identity table
+   renders exactly as it did. The sticky header keeps the column names -- and, on the
+   interactive tables, their filter inputs -- on screen while the body scrolls. */
+div.table-scroll { overflow: auto; max-height: 70vh; }
+div.table-scroll thead th { position: sticky; top: 0; z-index: 2; }
+/* Iter-11 item 11. Column-selector panel at the LEFT of the table, not above it, so it
+   does not consume vertical space the table needs. Emitted only where the call site
+   asks for one -- the reproduction-guide tables explicitly do not (item 16). */
+div.table-tools { display: flex; gap: 10px; align-items: flex-start; }
+div.table-tools > div.table-scroll { flex: 1 1 auto; min-width: 0; }
+aside.col-panel { flex: 0 0 190px; max-height: 70vh; overflow-y: auto;
+                  border: 1px solid #DADADA; padding: 6px; font-size: 11px; }
+aside.col-panel strong { display: block; margin-bottom: 4px; }
+aside.col-panel label { display: block; padding: 1px 0; cursor: pointer;
+                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Typeset units and symbolic operations (Iter-11, item 15). `line-height: 0` is not
    cosmetic: without it every superscripted exponent inflates its table row's height, so
    the data-dictionary rows stop aligning with the rest of the page. No math engine --
@@ -209,34 +232,94 @@ _SORT_FILTER_JS = """
     }
     return a.toLowerCase().localeCompare(b.toLowerCase());
   }
+  // Multi-key sort. The key LIST comes from the table's own data-default-sort attribute
+  // or from a single clicked column; no table's order is named in this shim.
+  function sortBy(table, body, keys, desc) {
+    var rows = Array.prototype.slice.call(body.rows);
+    rows.sort(function (r1, r2) {
+      for (var k = 0; k < keys.length; k++) {
+        var d = cmp(cellText(r1, keys[k]), cellText(r2, keys[k]));
+        if (d !== 0) { return desc ? -d : d; }
+      }
+      return 0;
+    });
+    rows.forEach(function (r) { body.appendChild(r); });
+  }
+  // Iter-11 item 11: PER-COLUMN filters, ANDed. The retired single filter bar tested the
+  // whole row's text, so it could not express a conjunction ("this partition AND that
+  // model") and it matched text in columns the reader had not asked about -- at 23
+  // columns that hid rows for reasons invisible on the page.
+  function applyFilters(table, body) {
+    var inputs = table.querySelectorAll("input.col-filter");
+    Array.prototype.slice.call(body.rows).forEach(function (r) {
+      var show = true;
+      Array.prototype.forEach.call(inputs, function (inp) {
+        if (!show) { return; }
+        var needle = inp.value.toLowerCase();
+        if (!needle) { return; }
+        var i = parseInt(inp.getAttribute("data-col"), 10);
+        if (cellText(r, i).toLowerCase().indexOf(needle) === -1) { show = false; }
+      });
+      r.style.display = show ? "" : "none";
+    });
+  }
+  function setColumnVisible(table, idx, visible) {
+    var v = visible ? "" : "none";
+    Array.prototype.forEach.call(table.querySelectorAll("tr"), function (r) {
+      var c = r.cells[idx];
+      if (c) { c.style.display = v; }
+    });
+  }
   document.querySelectorAll("table.sortable").forEach(function (table) {
     var body = table.tBodies[0];
     if (!body) { return; }
-    table.querySelectorAll("thead th").forEach(function (th, idx) {
-      th.addEventListener("click", function () {
-        var desc = th.classList.contains("sorted-asc");
-        table.querySelectorAll("thead th").forEach(function (o) {
-          o.classList.remove("sorted-asc", "sorted-desc");
+    var heads = table.querySelectorAll("thead th");
+    heads.forEach(function (th, idx) {
+      var label = th.querySelector("span.th-label");
+      if (label) {
+        label.addEventListener("click", function () {
+          var desc = th.classList.contains("sorted-asc");
+          heads.forEach(function (o) { o.classList.remove("sorted-asc", "sorted-desc"); });
+          th.classList.add(desc ? "sorted-desc" : "sorted-asc");
+          sortBy(table, body, [idx], desc);
         });
-        th.classList.add(desc ? "sorted-desc" : "sorted-asc");
-        var rows = Array.prototype.slice.call(body.rows);
-        rows.sort(function (r1, r2) {
-          var d = cmp(cellText(r1, idx), cellText(r2, idx));
-          return desc ? -d : d;
-        });
-        rows.forEach(function (r) { body.appendChild(r); });
-      });
+      }
+      var inp = th.querySelector("input.col-filter");
+      if (inp) {
+        // Typing in a header input must not also sort the column it sits in.
+        inp.addEventListener("click", function (e) { e.stopPropagation(); });
+        inp.addEventListener("input", function () { applyFilters(table, body); });
+      }
     });
-  });
-  document.querySelectorAll("input.table-filter").forEach(function (input) {
-    input.addEventListener("input", function () {
-      var needle = input.value.toLowerCase();
-      var table = document.getElementById(input.getAttribute("data-table"));
-      if (!table || !table.tBodies[0]) { return; }
-      Array.prototype.slice.call(table.tBodies[0].rows).forEach(function (r) {
-        r.style.display = r.innerText.toLowerCase().indexOf(needle) === -1 ? "none" : "";
+    // Iter-11 item 16: default sort, applied once on load. A comma-separated column-index
+    // list, so a table can declare a stable secondary key; read off the DOM rather than
+    // hard-coded here, which is what keeps this shim table-agnostic.
+    var ds = (table.getAttribute("data-default-sort") || "").trim();
+    if (ds) {
+      var keys = ds.split(",").map(function (s) { return parseInt(s, 10); })
+                   .filter(function (n) { return !isNaN(n); });
+      if (keys.length) {
+        if (heads[keys[0]]) { heads[keys[0]].classList.add("sorted-asc"); }
+        sortBy(table, body, keys, false);
+      }
+    }
+    // Iter-11 item 11: left column-selector panel, present ONLY when the emitting call
+    // site asked for one. The reproduction-guide tables deliberately have none (item 16).
+    var panel = document.querySelector("aside.col-panel[data-table='" + table.id + "']");
+    if (panel) {
+      heads.forEach(function (th, idx) {
+        var lbl = th.querySelector("span.th-label");
+        var row = document.createElement("label");
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.addEventListener("change", function () { setColumnVisible(table, idx, cb.checked); });
+        row.appendChild(cb);
+        row.appendChild(document.createTextNode(" " + (lbl ? lbl.textContent : "")));
+        row.title = lbl ? lbl.textContent : "";
+        panel.appendChild(row);
       });
-    });
+    }
   });
 })();
 """
@@ -305,45 +388,100 @@ def _absent_banner(section_title: str, message: str) -> str:
 
 
 def _kv_table(rows: list[tuple[str, str]]) -> str:
-    """Static 2-column Field/Value table. Values are PRE-ESCAPED HTML fragments."""
+    """Static 2-column Field/Value table. Values are PRE-ESCAPED HTML fragments.
+
+    Iter-11 item 24: wrapped in `div.table-scroll`, so this table is height-bounded and
+    scrolls in both axes like every other table on the page. `max-height` engages only
+    when the content exceeds it, so a short identity table renders as it did -- the one
+    that actually needed this is the Outputs table, whose hasPart cell carries a
+    29-path `<pre>` folder tree.
+    """
     if not rows:
         return ""
     body = "\n    ".join(f"<tr><td>{_esc(k)}</td><td>{v}</td></tr>" for k, v in rows)
     return (
-        "<table>\n"
+        '<div class="table-scroll">\n<table>\n'
         "  <thead><tr><th>Field</th><th>Value</th></tr></thead>\n"
-        "  <tbody>\n    " + body + "\n  </tbody>\n</table>"
+        "  <tbody>\n    " + body + "\n  </tbody>\n</table>\n</div>"
     )
 
 
 def _grid_table(headers: list[str], rows: list[list[str]]) -> str:
-    """Static n-column table. Row cells are PRE-ESCAPED HTML fragments."""
-    if not rows:
-        return ""
-    head = "".join(f"<th>{_esc(h)}</th>" for h in headers)
-    body = "\n    ".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
-    return f"<table>\n  <thead><tr>{head}</tr></thead>\n  <tbody>\n    " + body + "\n  </tbody>\n</table>"
+    """Static n-column table. Row cells are PRE-ESCAPED HTML fragments.
 
-
-def _sortable_grid_table(headers: list[str], rows: list[list[str]], *, table_id: str, filter_label: str) -> str:
-    """`_grid_table` plus a click-to-sort header and a free-text filter box.
-
-    Static HTML + the inline `_SORT_FILTER_JS` shim only -- no CDN, no Tabulator
-    (see `_SORT_FILTER_JS` for why). Degrades to a plain readable table when
-    JavaScript is unavailable, which is the state the page must survive in an
-    archived/emailed copy. Row cells are PRE-ESCAPED HTML fragments.
+    Iter-11 item 24: wrapped in `div.table-scroll` -- height-bounded, scrolling in both
+    axes, sticky header. The 7-column CF data dictionary and the Inputs digest table are
+    the two that reach the bound today.
     """
     if not rows:
         return ""
     head = "".join(f"<th>{_esc(h)}</th>" for h in headers)
     body = "\n    ".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
     return (
-        f'<input class="table-filter" type="text" data-table="{_esc(table_id)}" '
-        f'placeholder="{_esc(filter_label)}">\n'
-        '<div class="table-scroll">\n'
-        f'<table class="sortable" id="{_esc(table_id)}">\n'
+        '<div class="table-scroll">\n<table>\n'
         f"  <thead><tr>{head}</tr></thead>\n"
         "  <tbody>\n    " + body + "\n  </tbody>\n</table>\n</div>"
+    )
+
+
+def _sortable_grid_table(
+    headers: list[str],
+    rows: list[list[str]],
+    *,
+    table_id: str,
+    column_panel: bool = False,
+    default_sort: tuple[int, ...] = (),
+) -> str:
+    """`_grid_table` plus click-to-sort headers, PER-COLUMN filters, and an optional
+    left column-selector panel.
+
+    Iter-11 item 11. The single whole-row filter box is GONE, and `filter_label` with it
+    -- a clean cut, since nothing outside this module referenced either. That box tested
+    the row's whole text, so it could not express a conjunction and it matched in columns
+    the reader had not asked about; at 23 columns it hid rows for reasons the page did not
+    show. Each column now carries its own input, inside its own `th`, ANDed across columns.
+
+    Iter-11 item 16. `column_panel` is opt-IN. Two of three call-site families want a
+    panel; the reproduction-guide tables explicitly do not, and an opt-OUT default would
+    put a suppression flag on the tables that asked for less. `default_sort` is a column-
+    index tuple rendered into `data-default-sort` and applied once on load by the shim, so
+    no table's order is hard-coded in the JS.
+
+    Iter-11 item 24. The table is wrapped in `div.table-scroll`: height-bounded, scrolling
+    in both axes, with a sticky header so the column names and their filters stay on
+    screen. The header's white-on-dark-blue colouring is UNTOUCHED -- it comes from
+    `render_inline_css()` per the brand_theme stipulation, and nothing here restates it.
+
+    Static HTML + the inline `_SORT_FILTER_JS` shim only -- no CDN, no Tabulator (see
+    `_SORT_FILTER_JS` for why). Degrades to a plain readable table when JavaScript is
+    unavailable, which is the state the page must survive in an archived/emailed copy.
+    Row cells are PRE-ESCAPED HTML fragments.
+    """
+    if not rows:
+        return ""
+    head = "".join(
+        f'<th><span class="th-label">{_esc(h)}</span>'
+        f'<input class="col-filter" type="text" data-col="{i}" placeholder="filter" '
+        f'aria-label="Filter by {_esc(h)}"></th>'
+        for i, h in enumerate(headers)
+    )
+    body = "\n    ".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
+    sort_attr = (
+        f' data-default-sort="{",".join(str(i) for i in default_sort)}"' if default_sort else ""
+    )
+    scroll = (
+        '<div class="table-scroll">\n'
+        f'<table class="sortable" id="{_esc(table_id)}"{sort_attr}>\n'
+        f"  <thead><tr>{head}</tr></thead>\n"
+        "  <tbody>\n    " + body + "\n  </tbody>\n</table>\n</div>"
+    )
+    if not column_panel:
+        return scroll
+    return (
+        '<div class="table-tools">\n'
+        f'<aside class="col-panel" data-table="{_esc(table_id)}" role="region" '
+        'aria-label="Column visibility"><strong>Columns</strong></aside>\n'
+        f"{scroll}\n</div>"
     )
 
 
@@ -1140,13 +1278,15 @@ def _provenance_timeline(payloads: list[dict]) -> str:
         f"<p class='note'><strong>Run timeline.</strong> {_esc(len(rows))} completed workflow "
         "step(s), recorded one file at a time as each finished. This is the whole experiment "
         "from setup through consolidation, not the most recent run — regenerating this report "
-        "cannot shorten it. Click a column heading to sort; type to filter.</p>"
+        "cannot shorten it. Click a column heading to sort; type in a column's own box to "
+        "filter on that column (criteria across columns are combined); use the panel at left "
+        "to hide columns.</p>"
     )
     table = _sortable_grid_table(
         ["Completed at", "What it did", "Rule", "Sub-analysis", "Event", "Model", "SLURM job"],
         rows,
         table_id="run-timeline",
-        filter_label="Filter steps — try a purpose, sub-analysis, or model",
+        column_panel=True,
     )
     return "<h4>5b. Run timeline</h4>\n" + note + table
 
@@ -1347,9 +1487,17 @@ def _config_field_values(analysis: TRITONSWMM_analysis) -> dict[str, str]:
 
 
 def _render_config_value(value: Any, analysis_dir: Path) -> str:
-    """Render one config value for display: paths analysis-dir-relative, others repr-ish."""
+    """Render one config value for display: paths analysis-dir-relative, others repr-ish.
+
+    Iter-11 item 20. An absent value renders `None`, in code voice, NOT italic `null`.
+    `null` is the YAML/JSON spelling of the serialised file; the reader of this table is
+    holding a Python config object whose value IS `None`, and the Required column
+    immediately to the left already says so -- `_requiredness_cell` renders
+    `Optional (default: {repr(default)})`, and `repr(None)` is `None`. Two spellings of
+    one absence, two cells apart in one row, is the inconsistency the item names.
+    """
     if value is None:
-        return "<em>null</em>"
+        return _code("None")
     if isinstance(value, Path):
         try:
             return _code(os.path.relpath(value, analysis_dir))
@@ -1516,7 +1664,23 @@ def _build_reprex_guide_html(
                 row[:3] + [_varied.get(_strip_code(row[0])) or _values.get(_strip_code(row[0]), _fallback)] + row[3:]
                 for row in rows
             ]
-        parts.append(_grid_table(headers, rows))
+        # Iter-11 item 16: sortable AND filterable, with NO column-toggle box. The bucket
+        # grouping IS the reading order here -- a reproducer works the Supply block top to
+        # bottom -- so a column-selector would offer a way to hide the very columns the
+        # block exists to deliver; `column_panel` therefore stays at its opt-OUT default.
+        # `default_sort=(0, 2)` is Field then Required. The Required index is 2 in BOTH
+        # header forms: the value column is inserted at index 3 above, never before it.
+        # Field is unique within a bucket, so the Required key is a tie-break that does not
+        # fire today; it is declared so a future duplicate-label row still orders stably.
+        parts.append(
+            _sortable_grid_table(
+                headers,
+                rows,
+                table_id=f"reprex-{bucket}",
+                column_panel=False,
+                default_sort=(0, 2),
+            )
+        )
 
     return "\n".join(parts)
 
@@ -1819,13 +1983,14 @@ def _build_slurm_efficiency_html(
         f"toolkit-recorded purpose; the rest are jobs the toolkit did not flag (SLURM reports "
         f"every job step's command name as <code>python</code>, which is why the purpose is "
         f"joined in from the toolkit's own records rather than read off the job). Click a "
-        f"column heading to sort; type to filter.</p>"
+        f"column heading to sort; type in a column's own box to filter on that column "
+        f"(criteria across columns are combined); use the panel at left to hide columns.</p>"
     )
     table = _sortable_grid_table(
         [label for _key, label in columns],
         grid,
         table_id="slurm-efficiency",
-        filter_label="Filter jobs — try a purpose, sub-analysis, partition, or job id",
+        column_panel=True,
     )
     parts = [heading, summary, table]
     if undisplayed:

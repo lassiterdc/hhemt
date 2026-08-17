@@ -70,6 +70,28 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
 }
 
+#: What the `Details` column may carry, recorded in code (Iter-11 item 8). Every check
+#: table on this page -- system-level, aggregate, and the resource status table -- renders
+#: its last column under this header, and this constant is the single statement of what is
+#: admissible there. It is a CONTRACT, not documentation of current behaviour: a future
+#: renderer edit that puts something else in the column is violating this line.
+#:
+#: Admissible, in this order:
+#:   1. `CheckResult.summary` -- the per-RUN result sentence. ALWAYS present.
+#:   2. On a qualified pass, the precision qualifier from `_status_of` in a
+#:      `<span class="floor-note">` -- the detection floor this run's verdict was
+#:      computed at. Per-RUN, because the instrument is a property of the run.
+#:   3. On a failure, the per-issue `details[].detail` lines as a bulleted list.
+#:
+#: INADMISSIBLE, and this is the distinction the column exists to preserve: anything that
+#: is a per-CHECK fact rather than a per-RUN fact. What a check LOOKS FOR belongs in the
+#: `Check` column, sourced from `_CHECK_VOCABULARY`. A `Details` cell that describes the
+#: check rather than this run's outcome re-creates the `Summary`-vs-`Check` redundancy
+#: that item 8 retired.
+_DETAILS_COLUMN_CONTRACT = (
+    "summary; optional precision qualifier; per-issue detail lines on failure"
+)
+
 
 def _vocab(c: CheckResult) -> tuple[str, str]:
     """(display_name, description) for one check, degrading to the raw name.
@@ -84,9 +106,10 @@ def _vocab(c: CheckResult) -> tuple[str, str]:
 
 
 def _render_overall_banner(report: ValidationReport) -> str:
-    n_total = len(report.checks)
+    # Iter-11 item 7: `n_total` and `n_na` retired with the precision tally that read them.
+    # The not-applicable count is now stated once, by the single omission caption `render()`
+    # emits, so recomputing it here would be the redundancy item 7 removed.
     applicable = [c for c in report.checks if getattr(c, "applicable", True)]
-    n_na = n_total - len(applicable)
     n_passed = sum(1 for c in applicable if c.passed)
     n_qualified = sum(
         1
@@ -94,16 +117,23 @@ def _render_overall_banner(report: ValidationReport) -> str:
         if c.passed and getattr(c, "instrument", None) not in (None, "raw_rasters")
     )
     if report.overall_passed:
-        # Do NOT pool qualified with unqualified passes: a pass computed from the
-        # derived summary tier cannot see below its detection floor, so folding it
-        # into "all checks passed" restates the defect this banner exists to expose.
-        bits = [f"{n_passed - n_qualified} verified at full precision"]
-        if n_qualified:
-            bits.append(f"{n_qualified} verified only to the derived-summary floor")
-        if n_na:
-            bits.append(f"{n_na} not applicable")
-        cls = "pass" if not (n_qualified or n_na) else "info"
-        return f'<div class="banner {cls}">✓ {n_total} checks: ' + "; ".join(bits) + ".</div>"
+        # Iter-11 item 7: the PROMINENT precision tally is retired. It spent the banner --
+        # the one line every reader reads -- on a three-way split of a distinction that is
+        # already disclosed exactly where it bears, inline beside the row it qualifies
+        # (_status_of returns the qualifier; both Check tables render it). A tally repeated
+        # at the top is the redundancy, not the disclosure, and nothing here relaxes the
+        # ruling that a derived-tier pass must be marked: it still is, per row.
+        #
+        # The `info` class survives when any pass is qualified, so the banner still stops
+        # reading as an unqualified all-clear -- that is the substance the tally carried,
+        # and it is kept while the enumeration is dropped. The not-applicable COUNT moves
+        # to the single omission caption `render()` emits once (item 7's "one economical
+        # omission caption"), so it is stated in exactly one place on the page.
+        cls = "pass" if not n_qualified else "info"
+        return (
+            f'<div class="banner {cls}">✓ {n_passed} of {len(applicable)} applicable '
+            "checks passed.</div>"
+        )
     n_failed = len(applicable) - n_passed
     return (
         f'<div class="banner fail">✗ {n_failed} of {len(applicable)} applicable '
@@ -170,24 +200,38 @@ def _partition_applicable(checks: list[CheckResult]) -> tuple[list[CheckResult],
 
 
 def _omitted_note(n_omitted: int) -> str:
-    """The disclosure line paired with every filtered table. Empty when nothing was cut."""
+    """The page's SINGLE omission disclosure. Empty when nothing was cut.
+
+    Iter-11 item 7: one economical caption, no examples, no redundancy. This was
+    previously appended by each filtered table, so a report that omitted checks at two
+    levels said the same thing twice, at length, with a worked example. `render()` now
+    calls it exactly once over the whole check set.
+
+    What it must NOT lose, and does not: Iter-10 E introduced this disclosure precisely
+    so a reader can tell "this check passed" from "this check never ran", and [Q130]
+    rules that an examined-zero check renders N/A rather than a PASS carrying its
+    denominator. The COUNT is the disclosure and the count survives; only the prose
+    around it is economised.
+    """
     if n_omitted <= 0:
         return ""
     plural = "s" if n_omitted != 1 else ""
     return (
-        f'\n<p class="floor-note">{n_omitted} check{plural} not applicable to this analysis '
-        f"{'were' if n_omitted != 1 else 'was'} omitted — these are checks whose subject this "
-        f"run cannot produce (for example, resume-schedule checks on a clean arm). They are "
-        f"omitted rather than shown as passing.</p>"
+        f'\n<p class="floor-note">{n_omitted} check{plural} not applicable to this '
+        f"analysis {'were' if n_omitted != 1 else 'was'} omitted rather than shown as "
+        f"passing.</p>"
     )
 
 
 def _render_system_level_table(checks: list[CheckResult]) -> str:
     if not checks:
         return ""
-    checks, n_omitted = _partition_applicable(checks)
+    checks, _n_omitted = _partition_applicable(checks)
     if not checks:
-        return _omitted_note(n_omitted).lstrip("\n")
+        # Iter-11 item 7: no per-table caption. `render()` emits ONE omission caption
+        # over the whole check set, so a table that filtered every row simply renders
+        # nothing rather than repeating the page-level disclosure.
+        return ""
     rows = []
     for c in checks:
         status_cls, status_glyph, qualifier = _status_of(c)
@@ -214,28 +258,40 @@ def _render_system_level_table(checks: list[CheckResult]) -> str:
         "<h3>System-Level Checks</h3>\n"
         "<table>\n"
         "  <thead><tr><th>Name</th><th>Check</th><th>Status</th><th>Details</th></tr></thead>\n"
-        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>" + _omitted_note(n_omitted)
+        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>"
     )
 
 
 def _render_aggregate_table(checks: list[CheckResult]) -> str:
     if not checks:
         return ""
-    checks, n_omitted = _partition_applicable(checks)
+    checks, _n_omitted = _partition_applicable(checks)
     if not checks:
-        return _omitted_note(n_omitted).lstrip("\n")
+        # Iter-11 item 7: no per-table caption; render() emits one for the whole page.
+        return ""
     rows = []
     for c in checks:
         status_cls, status_glyph, qualifier = _status_of(c)
-        _summary = c.summary
+        _details = c.summary
         if qualifier:
-            _summary += f'<br><span class="floor-note">{qualifier}</span>'
-        rows.append(f'<tr><td>{c.name}</td><td class="{status_cls}">{status_glyph}</td><td>{_summary}</td></tr>')
+            _details += f'<br><span class="floor-note">{qualifier}</span>'
+        rows.append(f'<tr><td>{c.name}</td><td class="{status_cls}">{status_glyph}</td><td>{_details}</td></tr>')
+    # Iter-11 item 8. `Summary` is retired: it named the SAME datum (`c.summary`, plus the
+    # same optional precision qualifier) that the two `Check` tables render under `Details`,
+    # so one delivered report used two header words for one column's content -- which is the
+    # redundancy the item names. `Stage` becomes `Name` for the same reason: the first column
+    # of every check table on this page now says `Name`.
+    #
+    # NO `Check` column here, and that is deliberate rather than an omission. _CHECK_VOCABULARY
+    # is scoped BY RULING to the two `Check`-level tables; this table renders `c.name` raw and
+    # has no description to put in such a column, so adding one would render a blank column on
+    # every row -- trading a naming inconsistency for a new degenerate column. Eleven further
+    # live names route here, five of them minted in src/hhemt/eda/.
     return (
         "<h3>Aggregate Per-Scenario Checks</h3>\n"
         "<table>\n"
-        "  <thead><tr><th>Stage</th><th>Status</th><th>Summary</th></tr></thead>\n"
-        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>" + _omitted_note(n_omitted)
+        "  <thead><tr><th>Name</th><th>Status</th><th>Details</th></tr></thead>\n"
+        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>"
     )
 
 
@@ -378,8 +434,14 @@ def render(
     # applies no check -- it re-presents the detail rows of checks already listed above --
     # so putting it between the aggregate and resource tables separated two check tables
     # with a non-check table. Check-bearing sections are now contiguous.
+    # Iter-11 item 7: ONE omission caption for the whole page, computed over the whole
+    # check set rather than per table. It sits directly under the banner -- which no longer
+    # carries the not-applicable count -- so the page states the omission exactly once and
+    # in the place a reader looking at the headline figure will see it.
+    _n_omitted = sum(1 for c in report.checks if not getattr(c, "applicable", True))
     body_parts = [
         _render_overall_banner(report),
+        _omitted_note(_n_omitted).lstrip("\n"),
         _render_system_level_table(by_level.get("system", [])),
         _render_aggregate_table(by_level.get("aggregate", [])),
         _render_resource_mismatches_table(by_level.get("resource", [])),
