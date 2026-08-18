@@ -21,11 +21,14 @@ category, with three sub-sections:
       former latest-by-mtime selection showed only the most recent
       invocation's jobs -- on a re-render, the render jobs and nothing else.
 
-All-static inline-CSS HTML (data-viz research): this page is itself a
-portability/provenance artifact -- it is read detached from a live network
-(inside a render bundle, archived at a DOI, emailed to a reviewer) -- so a
-CDN-Tabulator dependency would contradict its own thesis, and inline-Tabulator
-bundling is unimplemented (Gotcha 51). Mirrors errors_and_warnings.py.
+Mostly-static inline-CSS HTML, with ONE deliberate exception ([Q148]). The
+provenance, data-availability and SLURM sections are self-contained and render
+with no network. The three Reproduction Guide tables load Tabulator from a CDN
+(~420 KB at view time) so their columns are user-resizable -- a trade made
+explicitly, accepting that THOSE tables do not render in an archived, emailed,
+or bundle-local copy while the rest of the page still does. Inline-Tabulator
+bundling would remove the dependency but is unimplemented and silently falls
+back to CDN (Gotcha 51). Mirrors errors_and_warnings.py elsewhere.
 
 Renderer-IO audit (Gotcha 53): the ONLY files opened during render() are the
 declared sources -- the RO-Crate sidecar and (when present) the one globbed
@@ -41,9 +44,11 @@ import io
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.config.report import report_config
 
@@ -56,6 +61,15 @@ if TYPE_CHECKING:
 # leak into the bundle-shippable render. `metadata._VOLATILE_GRAPH_KEYS` is
 # empty, so the sidecar DOES carry these volatile keys; the projection simply
 # never reaches for them, and `_prop` raises if a maintainer tries.
+from hhemt.report_renderers._tabulator_defaults import (
+    TableFragment,
+    build_columns_spec,
+    build_options_dict,
+    build_table_fragment,
+    tabulator_head_assets,
+    tabulator_shared_js,
+)
+
 _VOLATILE_EXCLUDED_KEYS: frozenset[str] = frozenset({"startTime", "endTime", "agent"})
 
 _SIDECAR_FILENAME = "ro-crate-metadata.json"
@@ -1383,6 +1397,75 @@ def _is_toolkit_owned(field_info: Any) -> bool:
     return isinstance(extra, dict) and bool(extra.get("toolkit_owned_output"))
 
 
+def _options_tooltip(field_info: Any) -> str:
+    """`key — definition` lines for a field's option glossary, or "" when undeclared.
+
+    The SAME `declared(field_info, "options")` read `_description_cell` uses; the
+    glossary is declared once on the field and rendered from that one declaration in
+    both places. Plain text, newline-separated: Tabulator's tooltip renders a text
+    node, and the cell keeps only the affordance count.
+    """
+    from hhemt.config.base import declared
+
+    options = declared(field_info, "options")
+    if not options:
+        return ""
+    return "\n".join(f"{k} — {v}" for k, v in options.items())
+
+
+def _config_field_tooltips() -> dict[str, str]:
+    """`{"{config_label}.{field_name}": option-glossary tooltip}` for every field.
+
+    A SEPARATE walk from `_config_field_rows`, deliberately, for the same reason
+    `_config_field_values` is separate: `_config_field_rows` returns row CELLS and its
+    arity is depended on by six tests, so the tooltip payload rides beside it rather
+    than widening it. Both walk `model_fields` + `declared(...)`, which IS the single
+    declaration -- reading one source twice is not a second source.
+
+    Takes NO analysis argument, preserving `_config_field_rows`'s zero-user-info
+    property: a glossary is schema, never a producer value.
+    """
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.reprex_config import reprex_config
+    from hhemt.config.system import system_config
+
+    out: dict[str, str] = {}
+    for label, model in (
+        ("reprex_config", reprex_config),
+        ("system_config", system_config),
+        ("analysis_config", analysis_config),
+    ):
+        for name, fi in model.model_fields.items():
+            tip = _options_tooltip(fi)
+            if tip:
+                out[f"{label}.{name}"] = tip
+    return out
+
+
+def _df_for(
+    headers: list[str], rows: list[list[str]], tips: dict[str, list[str]]
+) -> pd.DataFrame:
+    """Reshape `_sortable_grid_table`'s (headers, rows) into Tabulator's row-dict model.
+
+    Cells are PRE-ESCAPED HTML fragments (badges, `<code>`, `<strong>`), so every
+    column is rendered with `formatter: "html"` at the call site.
+
+    `tips` maps a header to a per-row list of tooltip strings. Each becomes a
+    `"{header}__tip"` COMPANION column in the returned frame. The companion is
+    deliberately excluded from the columns SPEC by the caller (which builds the spec
+    from `df[headers]`): Tabulator renders only declared columns while
+    `row.getData()` carries every key, so the tip is reachable without occupying a
+    column, a width, or a sidebar toggle.
+    """
+    import pandas as pd
+
+    data: dict[str, list[str]] = {h: [r[i] for r in rows] for i, h in enumerate(headers)}
+    for header, column in tips.items():
+        if header in data:
+            data[f"{header}__tip"] = column
+    return pd.DataFrame(data)
+
+
 def _description_cell(field_info: Any) -> str:
     """Description prose, plus the applicability note and option glossary when DECLARED.
 
@@ -1399,8 +1482,15 @@ def _description_cell(field_info: Any) -> str:
         parts.append(f"<div class='instruction'>Applies when {_esc(render_clauses(applies))}.</div>")
     options = declared(field_info, "options")
     if options:
-        items = "".join(f"<dt>{_code(k)}</dt><dd>{_esc(v)}</dd>" for k, v in options.items())
-        parts.append(f"<dl class='options'>{items}</dl>")
+        # Iter-12 item 18. The glossary moves OUT of the cell and into the column's
+        # Tabulator tooltip ([Q148]), UNIFORMLY -- there is deliberately no length
+        # threshold. A threshold would put one field's definitions in a tooltip and
+        # another's inline, so a reader could not learn one rule for where definitions
+        # live, and two presentations of one concept is what the single-source mandate
+        # forbids. If a glossary reads badly in a tooltip it is too long, and the fix is
+        # to shorten it at its single declared source. The cell keeps only the
+        # affordance; `_options_tooltip` supplies the text from the SAME declaration.
+        parts.append(f" ({len(options)} options)")
     return "".join(parts)
 
 
@@ -1596,17 +1686,36 @@ def _sensitivity_varied_values(analysis: TRITONSWMM_analysis) -> dict[str, str]:
         if len(distinct) == 1:
             out[label] = _code(distinct[0])
             continue
-        detail = ", ".join(_code(v) for v in distinct[:_VARIED_VALUE_PREVIEW])
+        # Iter-12 item 17. The marker and its value list are returned SEPARATELY: the
+        # marker is the cell, the list is the tooltip payload. Listing values inline
+        # competed with the marker and blew out the column on a continuous sweep -- the
+        # marker answers "what value was used", the value set is the follow-up question.
+        # Splitting them here is also what lets the tooltip ENGINE change without
+        # touching this function again.
+        shown = ", ".join(str(v) for v in distinct[:_VARIED_VALUE_PREVIEW])
         if len(distinct) > _VARIED_VALUE_PREVIEW:
-            detail += f", … ({len(distinct)} values)"
-        out[label] = "<strong>Varied by the sensitivity analysis</strong>" + (f" — {detail}" if detail else "")
+            shown += f", … ({len(distinct)} values)"
+        out[label] = ("<strong>Varied by the sensitivity analysis</strong>", shown)
     return out
+
+
+class ReprexGuide(NamedTuple):
+    """The guide's markup plus the Tabulator fragments its three tables need.
+
+    Two-part return because the tables are Tabulator fragments now ([Q148]): the
+    markup carries only mount points, and the caller emits the fragments' styles and
+    scripts at DOCUMENT level so the ~40 KB shared filter blob lands once for three
+    tables rather than three times.
+    """
+
+    html: str
+    fragments: list[tuple[str, TableFragment]]
 
 
 def _build_reprex_guide_html(
     values_by_field: dict[str, str] | None = None,
     varied_by_field: dict[str, str] | None = None,
-) -> str:
+) -> ReprexGuide:
     """Static grouped table: every config field -> USER=Supply / HPC=Amend / EXPERIMENT=Keep.
 
     Grouped (not a flat sortable grid) because the primary task a reproducer
@@ -1624,6 +1733,11 @@ def _build_reprex_guide_html(
     zero-user-info property of the shipped page is preserved.
     """
     rows_by_bucket, unclassified = _config_field_rows()
+    _field_tooltips = _config_field_tooltips()
+    # (bucket, fragment) pairs, NOT a bare list: a bucket with no rows `continue`s
+    # without appending a fragment, so zipping a bare list against _BUCKET_ORDER would
+    # pair the wrong bucket's mount with the wrong table the moment any bucket is empty.
+    fragments: list[tuple[str, TableFragment]] = []
 
     parts: list[str] = [_heading("Reproduction Guide")]
     parts.append(
@@ -1672,6 +1786,7 @@ def _build_reprex_guide_html(
         # is the cell that survives.
         _values = values_by_field or {}
         _varied = varied_by_field or {}
+        value_tips: list[str] = []
         # DEVIATION FROM THE APPROVED item-20 SPEC, surfaced at apply time. The spec
         # dropped `Placeholder` from `hpc`/`experiment` unconditionally. That is correct
         # only when the `Value used` column REPLACES it -- and `Value used` is added just
@@ -1702,30 +1817,73 @@ def _build_reprex_guide_html(
             # target system), and a dash there reads as "the value was empty".
             headers.append("Value used")
             _fallback = _code(_BUCKET_PLACEHOLDER.get(bucket, "—"))
-            rows = [
-                row[:3] + [_varied.get(_strip_code(row[0])) or _values.get(_strip_code(row[0]), _fallback)]
-                for row in rows
-            ]
-        # Iter-11 item 16: sortable AND filterable, with NO column-toggle box. The bucket
-        # grouping IS the reading order here -- a reproducer works the Supply block top to
-        # bottom -- so a column-selector would offer a way to hide the very columns the
-        # block exists to deliver; `column_panel` therefore stays at its opt-OUT default.
-        # `default_sort=(0, 2)` is Field then Required. The Required index is 2 in ALL
-        # THREE header forms: `Placeholder` is appended only for `user`, and the value
-        # column is APPENDED for the other two -- neither is ever inserted before index 2.
-        # Field is unique within a bucket, so the Required key is a tie-break that does not
-        # fire today; it is declared so a future duplicate-label row still orders stably.
-        parts.append(
-            _sortable_grid_table(
-                headers,
-                rows,
-                table_id=f"reprex-{bucket}",
-                column_panel=False,
-                default_sort=(0, 2),
-            )
+            _new_rows = []
+            for row in rows:
+                _label = _strip_code(row[0])
+                _v = _varied.get(_label)
+                if _v is None:
+                    # Not a swept parameter: the producer value, else the bucket
+                    # placeholder. No tooltip.
+                    _cell, _tip = _values.get(_label, _fallback), ""
+                else:
+                    # `_sensitivity_varied_values` returns (marker, value-list) so the
+                    # marker can be the cell and the list can be the hover.
+                    _cell, _tip = _v
+                _new_rows.append(row[:3] + [_cell])
+                value_tips.append(_tip)
+            rows = _new_rows
+        # [Q148]: these three tables render through Tabulator so their columns are
+        # user-resizable, accepting the CDN dependency at view time. Scoped to THIS call
+        # family -- the provenance, data-availability and SLURM sections keep the
+        # self-contained `_sortable_grid_table` path, so only this section goes blank
+        # without a network.
+        #
+        # `resizableColumns: True` is an EXPLICIT per-call override of the shared
+        # default, which is False (`build_options_dict`, iter 9.1). WITHOUT it, adoption
+        # buys the network dependency and NOT the resizing the ruling asked for. The
+        # iter-9.1 rationale is keyed on 39 columns at `fitDataStretch`, where the 3px
+        # resize handle sits adjacent to the next column's left edge; these tables carry
+        # 3-4 columns, so the handles are far apart. Do NOT promote this to the shared
+        # default -- that regresses the 39-column scenario_status appendix.
+        #
+        # `column_panel=False` preserves Iter-11 item 16: these tables get no
+        # column-selector, because one would offer a way to hide the very columns the
+        # block exists to deliver.
+        tip_columns: dict[str, list[str]] = {}
+        _desc_tips = [_field_tooltips.get(_strip_code(r[0]), "") for r in rows]
+        if any(_desc_tips):
+            tip_columns["Description"] = _desc_tips
+        if "Value used" in headers:
+            _vi = headers.index("Value used")
+            tip_columns["Value used"] = [value_tips[i] for i in range(len(rows))]
+        df_full = _df_for(headers, rows, tip_columns)
+        columns_spec = build_columns_spec(
+            df_full[headers], visible_columns_default=None, header_filter=True
         )
+        for col_spec in columns_spec:
+            # Cells are pre-escaped HTML fragments, not plain text.
+            col_spec["formatter"] = "html"
+            if col_spec["title"] in tip_columns:
+                col_spec["tooltip"] = "__TRF_TOOLTIP__"
+        fragments.append(
+            (bucket, build_table_fragment(
+                container_id=f"reprex-{bucket}",
+                options=build_options_dict(
+                    df_full,
+                    columns_spec=columns_spec,
+                    table_height="70vh",  # preserves the Iter-11 item-24 height bound
+                    pagination_size=0,
+                    persistence_id=f"reprex-{bucket}",
+                    extra_options={"resizableColumns": True},
+                ),
+                js_mode="cdn",  # inline bundling is unimplemented (Gotcha 51)
+                renderer_name="metadata",
+                column_panel=False,
+            ))
+        )
+        parts.append(f'<div id="reprex-{bucket}-mount"></div>')
 
-    return "\n".join(parts)
+    return ReprexGuide("\n".join(parts), fragments)
 
 
 # --- (3) SLURM efficiency ----------------------------------------------------
@@ -2192,7 +2350,27 @@ def _jump_nav() -> str:
     return f'<nav class="jump-nav">{links}</nav>'
 
 
-def _wrap_html_doc(analysis_id: str, inline_css: str, *sections: str) -> str:
+#: Moves each fragment's markup from its <template> into the mount point the guide
+#: emitted. Runs BEFORE the shared filter blob and the per-table scripts, so the
+#: container div each `new Tabulator("#reprex-{bucket}")` targets is already in the DOM.
+_TRF_MOUNT_JS = """
+(function () {
+  var tpls = document.querySelectorAll("template[data-trf-mount]");
+  for (var i = 0; i < tpls.length; i++) {
+    var t = tpls[i];
+    var host = document.getElementById(t.getAttribute("data-trf-mount") + "-mount");
+    if (host) { host.appendChild(t.content.cloneNode(true)); }
+  }
+})();
+"""
+
+
+def _wrap_html_doc(
+    analysis_id: str,
+    inline_css: str,
+    *sections: str,
+    fragments: list[TableFragment] | None = None,
+) -> str:
     """<!DOCTYPE> + inline <style> + <h2> title + jump-nav (one anchor per
     `_SECTION_TITLES` entry) + the section fragments.
 
@@ -2201,13 +2379,43 @@ def _wrap_html_doc(analysis_id: str, inline_css: str, *sections: str) -> str:
     in-page anchors scroll the iframe rather than the parent document.
     """
     body = "\n".join(s for s in sections if s)
+    frags = fragments or []
+    # [Q148] document-level Tabulator wiring. The CDN assets and the ~40 KB shared
+    # filter blob are emitted ONCE for all three reproduction-guide tables -- which is
+    # the entire reason `build_html_document` was split into head-assets + fragment.
+    # Calling it once per table would have produced three <!DOCTYPE html> roots and
+    # three copies of the blob inside one page.
+    #
+    # Each fragment's markup is relocated into its mount point at load time rather than
+    # being interpolated into `body`: the fragments are built inside
+    # `_build_reprex_guide_html`, which returns markup and mount points together, and a
+    # mount keeps the table's DOM adjacent to its own <script> without threading the
+    # fragment list through every section builder.
+    tabulator_head = tabulator_head_assets() if frags else ""
+    frag_styles = "".join(f.styles for _, f in frags)
+    frag_mounts = "".join(
+        f'<template data-trf-mount="reprex-{bucket}">{f.markup}</template>'
+        for bucket, f in frags
+    )
+    frag_scripts = (
+        "<script>"
+        + _TRF_MOUNT_JS
+        + tabulator_shared_js()
+        + "".join(f.script for _, f in frags)
+        + "</script>"
+        if frags
+        else ""
+    )
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
-        f"<style>{inline_css}{_SUPPLEMENTAL_CSS}</style></head><body>"
+        f"{tabulator_head}"
+        f"<style>{inline_css}{_SUPPLEMENTAL_CSS}{frag_styles}</style></head><body>"
         f"<h2>Metadata — {_esc(analysis_id)}</h2>"
         f"{_jump_nav()}"
         f"{body}"
+        f"{frag_mounts}"
         f"<script>{_SORT_FILTER_JS}</script>"
+        f"{frag_scripts}"
         "</body></html>"
     )
 
@@ -2301,7 +2509,7 @@ def render(
     # descriptions / requiredness / defaults, plus in-memory config values for the
     # HPC and EXPERIMENT buckets only. `_config_field_rows` still takes no analysis,
     # so its zero-user-info guarantee stays structural rather than disciplinary.
-    reprex_html = _build_reprex_guide_html(
+    reprex_guide = _build_reprex_guide_html(
         _config_field_values(analysis),
         _sensitivity_varied_values(analysis),
     )
@@ -2373,8 +2581,9 @@ def render(
         _resolve_inline_css(report_cfg),
         provenance_html,
         data_availability_html,
-        reprex_html,
+        reprex_guide.html,
         slurm_html,
+        fragments=reprex_guide.fragments,
     )
     return emit_plot_with_sources(
         html,

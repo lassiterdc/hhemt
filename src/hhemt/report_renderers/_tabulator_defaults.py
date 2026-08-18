@@ -31,7 +31,7 @@ import json
 import re
 import warnings
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, NamedTuple
 
 import pandas as pd
 
@@ -975,18 +975,55 @@ def build_options_dict(
     return options
 
 
-def build_html_document(
+class TableFragment(NamedTuple):
+    """The three emittable pieces of ONE Tabulator table.
+
+    Split out of ``build_html_document`` so a MULTI-table page can emit the
+    shared assets once and the per-table pieces N times. ``styles`` and
+    ``script`` are bodies, NOT wrapped in ``<style>`` / ``<script>`` tags: the
+    caller owns the wrapping, because a multi-table page concatenates several
+    ``script`` bodies after ONE ``tabulator_shared_js()`` emission rather than
+    opening a script tag per table.
+    """
+
+    styles: str
+    markup: str
+    script: str
+
+
+def tabulator_head_assets() -> str:
+    """CDN ``<link>`` + ``<script>`` tags. Emit ONCE per document."""
+    return (
+        f'<link rel="stylesheet" href="{_TABULATOR_CSS_CDN}">\n'
+        f'<script src="{_TABULATOR_JS_CDN}"></script>'
+    )
+
+
+def tabulator_shared_js() -> str:
+    """The ~40 KB filter-builder blob defining ``window.TritonReportFilter``.
+
+    Emit ONCE per document, BEFORE any table script that references it. This
+    is the whole reason the head/fragment split exists: a three-table page that
+    called ``build_html_document`` three times would carry three copies of this
+    blob and three ``<!DOCTYPE html>`` roots.
+    """
+    return _FILTER_BUILDER_JS
+
+
+def build_table_fragment(
     *,
-    title: str,
     container_id: str,
-    body_heading_html: str,
     options: dict,
     js_mode: str = "cdn",
     renderer_name: str = "<unknown>",
     column_groups: list[tuple[str, list[str], str | None]] | None = None,
     column_panel: bool = True,
-) -> str:
-    """Build a self-contained Tabulator HTML document.
+) -> TableFragment:
+    """Build the styles / markup / script pieces for ONE Tabulator table.
+
+    `title` and `body_heading_html` are DOCUMENT-level and deliberately absent:
+    a fragment does not own the page's <title> or its heading. `build_html_document`
+    keeps both and supplies them around the fragment.
 
     The options dict is JSON-serialized with sentinel-string substitution:
     ``__TRF_FILTER_TRIGGER__<dtype>__<field>__`` -> JS expression invoking
@@ -1053,11 +1090,6 @@ def build_html_document(
         '"__TRF_TOOLTIP__"', "TritonReportFilter.companionTooltip",
     )
 
-    head_assets = (
-        f'<link rel="stylesheet" href="{_TABULATOR_CSS_CDN}">\n'
-        f'<script src="{_TABULATOR_JS_CDN}"></script>'
-    )
-
     sidebar_id = f"{container_id}-sidebar"
     layout_id = f"{container_id}-layout"
 
@@ -1074,319 +1106,357 @@ def build_html_document(
         groups_payload = []
     column_groups_json = json.dumps(groups_payload)
 
+    return TableFragment(
+        styles=(
+            "body { margin: 0; padding: 12px; "
+            'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", '
+            "Roboto, sans-serif; }\n"
+            "h2 { margin-top: 0; }\n"
+            # Two-column layout: column-visibility sidebar on left + table on right.
+            # The wrapper uses flex with min-width:0 on the table column so the
+            # table can shrink + scroll horizontally without overflowing the body.
+            f"#{layout_id} {{ display: flex; gap: 12px; align-items: flex-start; }}\n"
+            f"#{sidebar_id} {{ flex: 0 0 220px; max-height: 75vh; "
+            "overflow-y: auto; border: 1px solid #DADADA; padding: 8px; "
+            "font-size: 12px; background: #FAFAFA; }\n"
+            f"#{sidebar_id} h3 {{ margin: 0 0 6px 0; font-size: 13px; "
+            "color: #232D4B; }\n"
+            f"#{sidebar_id} h4 {{ margin: 10px 0 4px 0; font-size: 12px; "
+            "color: #232D4B; border-bottom: 1px solid #DADADA; "
+            "padding-bottom: 2px; }\n"
+            f"#{sidebar_id} label {{ display: block; padding: 2px 0; "
+            "cursor: pointer; user-select: none; }\n"
+            f"#{sidebar_id} input[type=checkbox] {{ margin-right: 6px; }}\n"
+            f"#{sidebar_id} .trf-toggle-all, "
+            f"#{sidebar_id} .trf-copy-table {{ font-size: 11px; padding: 2px 6px; "
+            "margin-bottom: 6px; margin-right: 4px; cursor: pointer; }\n"
+            # iter 8 — per-group toggle buttons (.trf-group-toggle) are
+            # styled smaller and lighter than the global .trf-toggle-all
+            # buttons to keep visual emphasis on the global controls. They
+            # share the cursor: pointer + border: 1px solid #BBB hairline.
+            f"#{sidebar_id} .trf-group-toggle {{ font-size: 10px; padding: 1px 4px; "
+            "margin-right: 3px; cursor: pointer; border: 1px solid #BBB; "
+            "background: #fff; color: #232D4B; }\n"
+            f"#{sidebar_id} .trf-group-toggle:hover {{ background: #E8F0F8; }}\n"
+            f"#{sidebar_id} .trf-copy-table {{ background: #E8F0F8; "
+            "border: 1px solid #888; }\n"
+            # iter 9.2 — Reset all button (clears localStorage persistence
+            # keys + reloads). Styled with a muted warning color (amber-tinted
+            # background + darker border) to signal a state-clearing action
+            # without being alarming. Same size as .trf-copy-table for visual
+            # parity with the other sidebar-header global buttons.
+            f"#{sidebar_id} .trf-reset-all {{ font-size: 11px; padding: 2px 6px; "
+            "margin-bottom: 6px; margin-right: 4px; cursor: pointer; "
+            "background: #FFF3E0; border: 1px solid #B26A00; color: #5D2E00; }\n"
+            f"#{sidebar_id} .trf-reset-all:hover {{ background: #FFE0B2; }}\n"
+            f"#{sidebar_id} .trf-copy-status {{ font-size: 11px; color: #2E7D32; "
+            "min-height: 14px; margin-bottom: 4px; }\n"
+            f"#{sidebar_id} .trf-group-footnote {{ font-size: 10px; "
+            "color: #666; font-style: italic; margin: 2px 0 6px 0; "
+            "line-height: 1.3; }\n"
+            f"#{container_id} {{ flex: 1 1 auto; min-width: 0; }}\n"
+            # Filter-popover clipping fix: Tabulator's column-header cells
+            # default to overflow:hidden, which clips the absolute-positioned
+            # .trf-filter-popover below the header. Setting overflow:visible
+            # on the header containers and giving the column header a higher
+            # stacking context lets the popover escape (per iter 1v2 user
+            # feedback at scratch L4001-4002 + annotated screenshot).
+            ".tabulator-header, .tabulator-headers, .tabulator-col, "
+            ".tabulator-col-content { overflow: visible !important; }\n"
+            ".tabulator-col.tabulator-col-active { z-index: 100; }\n"
+            ".trf-filter-popover { z-index: 2000 !important; }\n"
+            ".trf-filter-popover button { padding: 2px 8px; cursor: pointer; }\n"
+            ".trf-criteria-row select, .trf-criteria-row input { padding: 2px 4px; }\n"
+        ),
+        markup=(
+            f'<div id="{layout_id}">\n'
+            + (
+                ""
+                if not column_panel
+                else
+            f'  <aside id="{sidebar_id}" role="region" aria-label="Column visibility">\n'
+            "    <h3>Columns</h3>\n"
+            '    <button type="button" class="trf-toggle-all" data-action="show-all">Show all</button>\n'
+            '    <button type="button" class="trf-toggle-all" data-action="hide-all">Hide all</button>\n'
+            '    <button type="button" class="trf-copy-table" '
+            'title="Copy filtered rows × visible columns to clipboard (tab-separated). '
+            'Paste into a spreadsheet to keep cell boundaries.">Copy table</button>\n'
+            '    <button type="button" class="trf-reset-all" '
+            'title="Clear all persisted table state (sort / filter / headerFilter / group / page / '
+            'cached column widths) from localStorage and reload the page. '
+            'Use this if the table behaves oddly after a config change.">Reset all</button>\n'
+            '    <div class="trf-copy-status" aria-live="polite" role="status"></div>\n'
+            '    <div class="trf-column-list"></div>\n'
+            "  </aside>\n"
+            )
+            + f'  <div id="{container_id}"></div>\n'
+            "</div>\n"
+        ),
+        script=(
+            f"const tableOptions = {options_json};\n"
+            f'const __trfTable = new Tabulator("#{container_id}", tableOptions);\n'
+            "// Column-visibility sidebar — populated after tableBuilt so\n"
+            "// column instances are addressable. Each row is a checkbox bound\n"
+            "// to column.show()/column.hide(). Tabulator's persistence:columns\n"
+            "// option (set in build_options_dict) round-trips the visible state\n"
+            "// to localStorage, so the sidebar checkboxes re-hydrate on reload.\n"
+            f"const __trfColumnGroups = {column_groups_json};\n"
+            '__trfTable.on("tableBuilt", function() {\n'
+            f'  const sidebar = document.getElementById("{sidebar_id}");\n'
+            # column_panel=False emits no <aside>, so every statement below this point
+            # would null-deref. The whole tableBuilt handler is sidebar machinery
+            # (column list, group toggles, Copy table, Reset all), so an early return
+            # skips exactly the features the suppressed panel owned and nothing else.
+            '  if (!sidebar) { return; }\n'
+            '  const list = sidebar.querySelector(".trf-column-list");\n'
+            "\n"
+            "  function makeCheckboxRow(col) {\n"
+            '    const label = document.createElement("label");\n'
+            '    const cb = document.createElement("input");\n'
+            '    cb.type = "checkbox";\n'
+            "    cb.checked = col.isVisible();\n"
+            "    cb.dataset.field = col.getField();\n"
+            '    cb.addEventListener("change", function() {\n'
+            "      if (cb.checked) { col.show(); } else { col.hide(); }\n"
+            "    });\n"
+            "    label.appendChild(cb);\n"
+            "    label.appendChild(document.createTextNode(col.getField()));\n"
+            "    return label;\n"
+            "  }\n"
+            "\n"
+            "  function refresh() {\n"
+            '    list.textContent = "";\n'
+            "    // Build a field -> column index for fast lookup.\n"
+            "    const colByField = {};\n"
+            "    __trfTable.getColumns().forEach(function(c) {\n"
+            "      const f = c.getField();\n"
+            "      if (f) { colByField[f] = c; }\n"
+            "    });\n"
+            "    const usedFields = new Set();\n"
+            "    // Render each declared group, then a catchall 'Other' for any\n"
+            "    // fields not present in any group.\n"
+            "    __trfColumnGroups.forEach(function(group) {\n"
+            '      const groupHeader = document.createElement("h4");\n'
+            "      groupHeader.textContent = group.label;\n"
+            "      list.appendChild(groupHeader);\n"
+            "      // iter 8 — per-group Show all / Hide all buttons. Placed\n"
+            "      // BETWEEN the group header (<h4>) and the optional footnote\n"
+            "      // (<div class='trf-group-footnote'>) per user spec at iter-7\n"
+            "      // feedback. Each button iterates only the columns declared\n"
+            "      // for THIS group (group.columns) and calls show()/hide() on\n"
+            "      // each, then refresh()es the sidebar so checkbox states\n"
+            "      // re-hydrate. Distinct from the sidebar-header Show all /\n"
+            "      // Hide all buttons (which toggle ALL columns globally) by\n"
+            "      // CSS class .trf-group-toggle vs .trf-toggle-all.\n"
+            '      const groupBtnRow = document.createElement("div");\n'
+            '      groupBtnRow.className = "trf-group-toggle-row";\n'
+            '      groupBtnRow.style.marginBottom = "3px";\n'
+            '      const groupShowBtn = document.createElement("button");\n'
+            '      groupShowBtn.type = "button";\n'
+            '      groupShowBtn.className = "trf-group-toggle";\n'
+            '      groupShowBtn.dataset.action = "show-all";\n'
+            '      groupShowBtn.textContent = "Show all";\n'
+            '      const groupHideBtn = document.createElement("button");\n'
+            '      groupHideBtn.type = "button";\n'
+            '      groupHideBtn.className = "trf-group-toggle";\n'
+            '      groupHideBtn.dataset.action = "hide-all";\n'
+            '      groupHideBtn.textContent = "Hide all";\n'
+            "      // Closure-capture group.columns into the click handler — the\n"
+            "      // forEach var rebinds across iterations so we must capture\n"
+            "      // group.columns by value at handler-attach time.\n"
+            "      (function(groupColumns) {\n"
+            '        groupShowBtn.addEventListener("click", function() {\n'
+            "          groupColumns.forEach(function(field) {\n"
+            "            if (colByField[field]) { colByField[field].show(); }\n"
+            "          });\n"
+            "          refresh();\n"
+            "        });\n"
+            '        groupHideBtn.addEventListener("click", function() {\n'
+            "          groupColumns.forEach(function(field) {\n"
+            "            if (colByField[field]) { colByField[field].hide(); }\n"
+            "          });\n"
+            "          refresh();\n"
+            "        });\n"
+            "      })(group.columns);\n"
+            "      groupBtnRow.appendChild(groupShowBtn);\n"
+            "      groupBtnRow.appendChild(groupHideBtn);\n"
+            "      list.appendChild(groupBtnRow);\n"
+            "      if (group.footnote) {\n"
+            '        const fn = document.createElement("div");\n'
+            '        fn.className = "trf-group-footnote";\n'
+            "        fn.textContent = group.footnote;\n"
+            "        list.appendChild(fn);\n"
+            "      }\n"
+            "      group.columns.forEach(function(field) {\n"
+            "        if (colByField[field]) {\n"
+            "          list.appendChild(makeCheckboxRow(colByField[field]));\n"
+            "          usedFields.add(field);\n"
+            "        }\n"
+            "      });\n"
+            "    });\n"
+            "    const otherCols = __trfTable.getColumns().filter(function(c) {\n"
+            "      const f = c.getField();\n"
+            "      return f && !usedFields.has(f);\n"
+            "    });\n"
+            "    if (otherCols.length > 0) {\n"
+            '      const otherHeader = document.createElement("h4");\n'
+            '      otherHeader.textContent = __trfColumnGroups.length > 0 ? "Other" : "All columns";\n'
+            "      list.appendChild(otherHeader);\n"
+            "      otherCols.forEach(function(col) {\n"
+            "        list.appendChild(makeCheckboxRow(col));\n"
+            "      });\n"
+            "    }\n"
+            "  }\n"
+            "  refresh();\n"
+            '  sidebar.querySelectorAll(".trf-toggle-all").forEach(function(btn) {\n'
+            '    btn.addEventListener("click", function() {\n'
+            '      const show = btn.dataset.action === "show-all";\n'
+            "      __trfTable.getColumns().forEach(function(col) {\n"
+            "        if (!col.getField()) { return; }\n"
+            "        if (show) { col.show(); } else { col.hide(); }\n"
+            "      });\n"
+            "      refresh();\n"
+            "    });\n"
+            "  });\n"
+            "  // iter 5b — Copy-table button. Builds TSV manually from the\n"
+            "  // table's active (filtered) row set + currently-visible columns,\n"
+            "  // then writes to clipboard via the navigator.clipboard API.\n"
+            "  // Avoids __trfTable.setClipboardCopyConfig (does NOT exist in\n"
+            "  // Tabulator v6.4 — the option is construction-time only; calling\n"
+            "  // the non-existent setter at runtime threw the 'is not a function'\n"
+            "  // error the user surfaced in screenshot at scratch L4255).\n"
+            "  // Headers ARE included in the whole-table copy per user spec at\n"
+            "  // scratch L4260; drag-select / Ctrl+C-row copies handled by\n"
+            "  // Tabulator's native clipboard module without headers (config in\n"
+            "  // build_options_dict).\n"
+            '  const copyBtn = sidebar.querySelector(".trf-copy-table");\n'
+            '  const copyStatus = sidebar.querySelector(".trf-copy-status");\n'
+            "  if (copyBtn) {\n"
+            '    copyBtn.addEventListener("click", async function() {\n'
+            "      try {\n"
+            "        const visibleCols = __trfTable.getColumns().filter(function(c) {\n"
+            "          return c.getField() && c.isVisible();\n"
+            "        });\n"
+            "        const fields = visibleCols.map(function(c) { return c.getField(); });\n"
+            "        const headerRow = fields.join('\\t');\n"
+            '        const rows = __trfTable.getData("active");\n'
+            "        const dataRows = rows.map(function(row) {\n"
+            "          return fields.map(function(f) {\n"
+            '            const v = row[f];\n'
+            '            return (v === null || v === undefined) ? "" : String(v);\n'
+            "          }).join('\\t');\n"
+            "        });\n"
+            '        const tsv = [headerRow].concat(dataRows).join("\\n");\n'
+            "        if (navigator.clipboard && navigator.clipboard.writeText) {\n"
+            "          await navigator.clipboard.writeText(tsv);\n"
+            "        } else {\n"
+            "          // Fallback for older browsers / non-secure contexts.\n"
+            '          const ta = document.createElement("textarea");\n'
+            "          ta.value = tsv;\n"
+            '          ta.style.position = "fixed";\n'
+            '          ta.style.left = "-9999px";\n'
+            "          document.body.appendChild(ta);\n"
+            "          ta.select();\n"
+            '          document.execCommand("copy");\n'
+            "          document.body.removeChild(ta);\n"
+            "        }\n"
+            '        copyStatus.textContent = '
+            '"Copied " + dataRows.length + " rows × " + fields.length + " cols to clipboard.";\n'
+            "        setTimeout(function() {\n"
+            '          copyStatus.textContent = "";\n'
+            "        }, 3000);\n"
+            "      } catch (e) {\n"
+            '        copyStatus.textContent = "Copy failed: " + (e.message || e);\n'
+            "      }\n"
+            "    });\n"
+            "  }\n"
+            "  // iter 9.2 — Reset all button handler. Clears every\n"
+            "  // localStorage key matching the `tabulator-{persistenceID}-`\n"
+            "  // prefix (Persistence.js:94 + defaults/readers.js:4 establish\n"
+            "  // this key format), then reloads the page so Tabulator\n"
+            "  // re-instantiates without any persisted state. This is the\n"
+            "  // user-facing escape hatch for stale-localStorage bugs (e.g.,\n"
+            "  // the iter-9 alignment toggle persisting after a config\n"
+            "  // change that should have disabled column persistence). When\n"
+            "  // persistenceID is empty (no persistence configured), the\n"
+            "  // button is hidden because the clear has no target.\n"
+            '  const resetBtn = sidebar.querySelector(".trf-reset-all");\n'
+            '  const __trfPersistenceID = (tableOptions && tableOptions.persistenceID) || "";\n'
+            "  if (resetBtn) {\n"
+            "    if (!__trfPersistenceID) {\n"
+            '      resetBtn.style.display = "none";\n'
+            "    } else {\n"
+            '      resetBtn.addEventListener("click", function() {\n'
+            '        const prefix = "tabulator-" + __trfPersistenceID + "-";\n'
+            "        const keysToRemove = [];\n"
+            "        for (let i = 0; i < localStorage.length; i++) {\n"
+            "          const k = localStorage.key(i);\n"
+            "          if (k && k.indexOf(prefix) === 0) { keysToRemove.push(k); }\n"
+            "        }\n"
+            "        keysToRemove.forEach(function(k) { localStorage.removeItem(k); });\n"
+            "        if (window.console && window.console.log) {\n"
+            "          window.console.log('trf reset: removed ' + keysToRemove.length + "
+            "' localStorage keys with prefix ' + prefix);\n"
+            "        }\n"
+            "        location.reload();\n"
+            "      });\n"
+            "    }\n"
+            "  }\n"
+            "  // Keep sidebar in sync when columns are toggled from elsewhere\n"
+            "  // (e.g., persistence-restore on load).\n"
+            '  __trfTable.on("columnVisibilityChanged", refresh);\n'
+            "});\n"
+        ),
+    )
+
+
+def build_html_document(
+    *,
+    title: str,
+    container_id: str,
+    body_heading_html: str,
+    options: dict,
+    js_mode: str = "cdn",
+    renderer_name: str = "<unknown>",
+    column_groups: list[tuple[str, list[str], str | None]] | None = None,
+    column_panel: bool = True,
+) -> str:
+    """Build a self-contained single-table Tabulator HTML document.
+
+    RECOMPOSED from ``tabulator_head_assets()`` + ``tabulator_shared_js()`` +
+    ``build_table_fragment()``. Output is byte-identical to the pre-split form;
+    every existing caller is unaffected. See those three for the details this
+    docstring used to carry.
+    """
+    frag = build_table_fragment(
+        container_id=container_id,
+        options=options,
+        js_mode=js_mode,
+        renderer_name=renderer_name,
+        column_groups=column_groups,
+        column_panel=column_panel,
+    )
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
         f"<title>{title}</title>\n"
-        f"{head_assets}\n"
+        f"{tabulator_head_assets()}\n"
         "<style>\n"
-        "body { margin: 0; padding: 12px; "
-        'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", '
-        "Roboto, sans-serif; }\n"
-        "h2 { margin-top: 0; }\n"
-        # Two-column layout: column-visibility sidebar on left + table on right.
-        # The wrapper uses flex with min-width:0 on the table column so the
-        # table can shrink + scroll horizontally without overflowing the body.
-        f"#{layout_id} {{ display: flex; gap: 12px; align-items: flex-start; }}\n"
-        f"#{sidebar_id} {{ flex: 0 0 220px; max-height: 75vh; "
-        "overflow-y: auto; border: 1px solid #DADADA; padding: 8px; "
-        "font-size: 12px; background: #FAFAFA; }\n"
-        f"#{sidebar_id} h3 {{ margin: 0 0 6px 0; font-size: 13px; "
-        "color: #232D4B; }\n"
-        f"#{sidebar_id} h4 {{ margin: 10px 0 4px 0; font-size: 12px; "
-        "color: #232D4B; border-bottom: 1px solid #DADADA; "
-        "padding-bottom: 2px; }\n"
-        f"#{sidebar_id} label {{ display: block; padding: 2px 0; "
-        "cursor: pointer; user-select: none; }\n"
-        f"#{sidebar_id} input[type=checkbox] {{ margin-right: 6px; }}\n"
-        f"#{sidebar_id} .trf-toggle-all, "
-        f"#{sidebar_id} .trf-copy-table {{ font-size: 11px; padding: 2px 6px; "
-        "margin-bottom: 6px; margin-right: 4px; cursor: pointer; }\n"
-        # iter 8 — per-group toggle buttons (.trf-group-toggle) are
-        # styled smaller and lighter than the global .trf-toggle-all
-        # buttons to keep visual emphasis on the global controls. They
-        # share the cursor: pointer + border: 1px solid #BBB hairline.
-        f"#{sidebar_id} .trf-group-toggle {{ font-size: 10px; padding: 1px 4px; "
-        "margin-right: 3px; cursor: pointer; border: 1px solid #BBB; "
-        "background: #fff; color: #232D4B; }\n"
-        f"#{sidebar_id} .trf-group-toggle:hover {{ background: #E8F0F8; }}\n"
-        f"#{sidebar_id} .trf-copy-table {{ background: #E8F0F8; "
-        "border: 1px solid #888; }\n"
-        # iter 9.2 — Reset all button (clears localStorage persistence
-        # keys + reloads). Styled with a muted warning color (amber-tinted
-        # background + darker border) to signal a state-clearing action
-        # without being alarming. Same size as .trf-copy-table for visual
-        # parity with the other sidebar-header global buttons.
-        f"#{sidebar_id} .trf-reset-all {{ font-size: 11px; padding: 2px 6px; "
-        "margin-bottom: 6px; margin-right: 4px; cursor: pointer; "
-        "background: #FFF3E0; border: 1px solid #B26A00; color: #5D2E00; }\n"
-        f"#{sidebar_id} .trf-reset-all:hover {{ background: #FFE0B2; }}\n"
-        f"#{sidebar_id} .trf-copy-status {{ font-size: 11px; color: #2E7D32; "
-        "min-height: 14px; margin-bottom: 4px; }\n"
-        f"#{sidebar_id} .trf-group-footnote {{ font-size: 10px; "
-        "color: #666; font-style: italic; margin: 2px 0 6px 0; "
-        "line-height: 1.3; }\n"
-        f"#{container_id} {{ flex: 1 1 auto; min-width: 0; }}\n"
-        # Filter-popover clipping fix: Tabulator's column-header cells
-        # default to overflow:hidden, which clips the absolute-positioned
-        # .trf-filter-popover below the header. Setting overflow:visible
-        # on the header containers and giving the column header a higher
-        # stacking context lets the popover escape (per iter 1v2 user
-        # feedback at scratch L4001-4002 + annotated screenshot).
-        ".tabulator-header, .tabulator-headers, .tabulator-col, "
-        ".tabulator-col-content { overflow: visible !important; }\n"
-        ".tabulator-col.tabulator-col-active { z-index: 100; }\n"
-        ".trf-filter-popover { z-index: 2000 !important; }\n"
-        ".trf-filter-popover button { padding: 2px 8px; cursor: pointer; }\n"
-        ".trf-criteria-row select, .trf-criteria-row input { padding: 2px 4px; }\n"
+        f"{frag.styles}"
         "</style>\n"
         "</head>\n"
         "<body>\n"
         f"{body_heading_html}"
-        f'<div id="{layout_id}">\n'
-        + (
-            ""
-            if not column_panel
-            else
-        f'  <aside id="{sidebar_id}" role="region" aria-label="Column visibility">\n'
-        "    <h3>Columns</h3>\n"
-        '    <button type="button" class="trf-toggle-all" data-action="show-all">Show all</button>\n'
-        '    <button type="button" class="trf-toggle-all" data-action="hide-all">Hide all</button>\n'
-        '    <button type="button" class="trf-copy-table" '
-        'title="Copy filtered rows × visible columns to clipboard (tab-separated). '
-        'Paste into a spreadsheet to keep cell boundaries.">Copy table</button>\n'
-        '    <button type="button" class="trf-reset-all" '
-        'title="Clear all persisted table state (sort / filter / headerFilter / group / page / '
-        'cached column widths) from localStorage and reload the page. '
-        'Use this if the table behaves oddly after a config change.">Reset all</button>\n'
-        '    <div class="trf-copy-status" aria-live="polite" role="status"></div>\n'
-        '    <div class="trf-column-list"></div>\n'
-        "  </aside>\n"
-        )
-        + f'  <div id="{container_id}"></div>\n'
-        "</div>\n"
+        f"{frag.markup}"
         "<script>\n"
-        f"{_FILTER_BUILDER_JS}\n"
-        f"const tableOptions = {options_json};\n"
-        f'const __trfTable = new Tabulator("#{container_id}", tableOptions);\n'
-        "// Column-visibility sidebar — populated after tableBuilt so\n"
-        "// column instances are addressable. Each row is a checkbox bound\n"
-        "// to column.show()/column.hide(). Tabulator's persistence:columns\n"
-        "// option (set in build_options_dict) round-trips the visible state\n"
-        "// to localStorage, so the sidebar checkboxes re-hydrate on reload.\n"
-        f"const __trfColumnGroups = {column_groups_json};\n"
-        '__trfTable.on("tableBuilt", function() {\n'
-        f'  const sidebar = document.getElementById("{sidebar_id}");\n'
-        # column_panel=False emits no <aside>, so every statement below this point
-        # would null-deref. The whole tableBuilt handler is sidebar machinery
-        # (column list, group toggles, Copy table, Reset all), so an early return
-        # skips exactly the features the suppressed panel owned and nothing else.
-        '  if (!sidebar) { return; }\n'
-        '  const list = sidebar.querySelector(".trf-column-list");\n'
-        "\n"
-        "  function makeCheckboxRow(col) {\n"
-        '    const label = document.createElement("label");\n'
-        '    const cb = document.createElement("input");\n'
-        '    cb.type = "checkbox";\n'
-        "    cb.checked = col.isVisible();\n"
-        "    cb.dataset.field = col.getField();\n"
-        '    cb.addEventListener("change", function() {\n'
-        "      if (cb.checked) { col.show(); } else { col.hide(); }\n"
-        "    });\n"
-        "    label.appendChild(cb);\n"
-        "    label.appendChild(document.createTextNode(col.getField()));\n"
-        "    return label;\n"
-        "  }\n"
-        "\n"
-        "  function refresh() {\n"
-        '    list.textContent = "";\n'
-        "    // Build a field -> column index for fast lookup.\n"
-        "    const colByField = {};\n"
-        "    __trfTable.getColumns().forEach(function(c) {\n"
-        "      const f = c.getField();\n"
-        "      if (f) { colByField[f] = c; }\n"
-        "    });\n"
-        "    const usedFields = new Set();\n"
-        "    // Render each declared group, then a catchall 'Other' for any\n"
-        "    // fields not present in any group.\n"
-        "    __trfColumnGroups.forEach(function(group) {\n"
-        '      const groupHeader = document.createElement("h4");\n'
-        "      groupHeader.textContent = group.label;\n"
-        "      list.appendChild(groupHeader);\n"
-        "      // iter 8 — per-group Show all / Hide all buttons. Placed\n"
-        "      // BETWEEN the group header (<h4>) and the optional footnote\n"
-        "      // (<div class='trf-group-footnote'>) per user spec at iter-7\n"
-        "      // feedback. Each button iterates only the columns declared\n"
-        "      // for THIS group (group.columns) and calls show()/hide() on\n"
-        "      // each, then refresh()es the sidebar so checkbox states\n"
-        "      // re-hydrate. Distinct from the sidebar-header Show all /\n"
-        "      // Hide all buttons (which toggle ALL columns globally) by\n"
-        "      // CSS class .trf-group-toggle vs .trf-toggle-all.\n"
-        '      const groupBtnRow = document.createElement("div");\n'
-        '      groupBtnRow.className = "trf-group-toggle-row";\n'
-        '      groupBtnRow.style.marginBottom = "3px";\n'
-        '      const groupShowBtn = document.createElement("button");\n'
-        '      groupShowBtn.type = "button";\n'
-        '      groupShowBtn.className = "trf-group-toggle";\n'
-        '      groupShowBtn.dataset.action = "show-all";\n'
-        '      groupShowBtn.textContent = "Show all";\n'
-        '      const groupHideBtn = document.createElement("button");\n'
-        '      groupHideBtn.type = "button";\n'
-        '      groupHideBtn.className = "trf-group-toggle";\n'
-        '      groupHideBtn.dataset.action = "hide-all";\n'
-        '      groupHideBtn.textContent = "Hide all";\n'
-        "      // Closure-capture group.columns into the click handler — the\n"
-        "      // forEach var rebinds across iterations so we must capture\n"
-        "      // group.columns by value at handler-attach time.\n"
-        "      (function(groupColumns) {\n"
-        '        groupShowBtn.addEventListener("click", function() {\n'
-        "          groupColumns.forEach(function(field) {\n"
-        "            if (colByField[field]) { colByField[field].show(); }\n"
-        "          });\n"
-        "          refresh();\n"
-        "        });\n"
-        '        groupHideBtn.addEventListener("click", function() {\n'
-        "          groupColumns.forEach(function(field) {\n"
-        "            if (colByField[field]) { colByField[field].hide(); }\n"
-        "          });\n"
-        "          refresh();\n"
-        "        });\n"
-        "      })(group.columns);\n"
-        "      groupBtnRow.appendChild(groupShowBtn);\n"
-        "      groupBtnRow.appendChild(groupHideBtn);\n"
-        "      list.appendChild(groupBtnRow);\n"
-        "      if (group.footnote) {\n"
-        '        const fn = document.createElement("div");\n'
-        '        fn.className = "trf-group-footnote";\n'
-        "        fn.textContent = group.footnote;\n"
-        "        list.appendChild(fn);\n"
-        "      }\n"
-        "      group.columns.forEach(function(field) {\n"
-        "        if (colByField[field]) {\n"
-        "          list.appendChild(makeCheckboxRow(colByField[field]));\n"
-        "          usedFields.add(field);\n"
-        "        }\n"
-        "      });\n"
-        "    });\n"
-        "    const otherCols = __trfTable.getColumns().filter(function(c) {\n"
-        "      const f = c.getField();\n"
-        "      return f && !usedFields.has(f);\n"
-        "    });\n"
-        "    if (otherCols.length > 0) {\n"
-        '      const otherHeader = document.createElement("h4");\n'
-        '      otherHeader.textContent = __trfColumnGroups.length > 0 ? "Other" : "All columns";\n'
-        "      list.appendChild(otherHeader);\n"
-        "      otherCols.forEach(function(col) {\n"
-        "        list.appendChild(makeCheckboxRow(col));\n"
-        "      });\n"
-        "    }\n"
-        "  }\n"
-        "  refresh();\n"
-        '  sidebar.querySelectorAll(".trf-toggle-all").forEach(function(btn) {\n'
-        '    btn.addEventListener("click", function() {\n'
-        '      const show = btn.dataset.action === "show-all";\n'
-        "      __trfTable.getColumns().forEach(function(col) {\n"
-        "        if (!col.getField()) { return; }\n"
-        "        if (show) { col.show(); } else { col.hide(); }\n"
-        "      });\n"
-        "      refresh();\n"
-        "    });\n"
-        "  });\n"
-        "  // iter 5b — Copy-table button. Builds TSV manually from the\n"
-        "  // table's active (filtered) row set + currently-visible columns,\n"
-        "  // then writes to clipboard via the navigator.clipboard API.\n"
-        "  // Avoids __trfTable.setClipboardCopyConfig (does NOT exist in\n"
-        "  // Tabulator v6.4 — the option is construction-time only; calling\n"
-        "  // the non-existent setter at runtime threw the 'is not a function'\n"
-        "  // error the user surfaced in screenshot at scratch L4255).\n"
-        "  // Headers ARE included in the whole-table copy per user spec at\n"
-        "  // scratch L4260; drag-select / Ctrl+C-row copies handled by\n"
-        "  // Tabulator's native clipboard module without headers (config in\n"
-        "  // build_options_dict).\n"
-        '  const copyBtn = sidebar.querySelector(".trf-copy-table");\n'
-        '  const copyStatus = sidebar.querySelector(".trf-copy-status");\n'
-        "  if (copyBtn) {\n"
-        '    copyBtn.addEventListener("click", async function() {\n'
-        "      try {\n"
-        "        const visibleCols = __trfTable.getColumns().filter(function(c) {\n"
-        "          return c.getField() && c.isVisible();\n"
-        "        });\n"
-        "        const fields = visibleCols.map(function(c) { return c.getField(); });\n"
-        "        const headerRow = fields.join('\\t');\n"
-        '        const rows = __trfTable.getData("active");\n'
-        "        const dataRows = rows.map(function(row) {\n"
-        "          return fields.map(function(f) {\n"
-        '            const v = row[f];\n'
-        '            return (v === null || v === undefined) ? "" : String(v);\n'
-        "          }).join('\\t');\n"
-        "        });\n"
-        '        const tsv = [headerRow].concat(dataRows).join("\\n");\n'
-        "        if (navigator.clipboard && navigator.clipboard.writeText) {\n"
-        "          await navigator.clipboard.writeText(tsv);\n"
-        "        } else {\n"
-        "          // Fallback for older browsers / non-secure contexts.\n"
-        '          const ta = document.createElement("textarea");\n'
-        "          ta.value = tsv;\n"
-        '          ta.style.position = "fixed";\n'
-        '          ta.style.left = "-9999px";\n'
-        "          document.body.appendChild(ta);\n"
-        "          ta.select();\n"
-        '          document.execCommand("copy");\n'
-        "          document.body.removeChild(ta);\n"
-        "        }\n"
-        '        copyStatus.textContent = '
-        '"Copied " + dataRows.length + " rows × " + fields.length + " cols to clipboard.";\n'
-        "        setTimeout(function() {\n"
-        '          copyStatus.textContent = "";\n'
-        "        }, 3000);\n"
-        "      } catch (e) {\n"
-        '        copyStatus.textContent = "Copy failed: " + (e.message || e);\n'
-        "      }\n"
-        "    });\n"
-        "  }\n"
-        "  // iter 9.2 — Reset all button handler. Clears every\n"
-        "  // localStorage key matching the `tabulator-{persistenceID}-`\n"
-        "  // prefix (Persistence.js:94 + defaults/readers.js:4 establish\n"
-        "  // this key format), then reloads the page so Tabulator\n"
-        "  // re-instantiates without any persisted state. This is the\n"
-        "  // user-facing escape hatch for stale-localStorage bugs (e.g.,\n"
-        "  // the iter-9 alignment toggle persisting after a config\n"
-        "  // change that should have disabled column persistence). When\n"
-        "  // persistenceID is empty (no persistence configured), the\n"
-        "  // button is hidden because the clear has no target.\n"
-        '  const resetBtn = sidebar.querySelector(".trf-reset-all");\n'
-        '  const __trfPersistenceID = (tableOptions && tableOptions.persistenceID) || "";\n'
-        "  if (resetBtn) {\n"
-        "    if (!__trfPersistenceID) {\n"
-        '      resetBtn.style.display = "none";\n'
-        "    } else {\n"
-        '      resetBtn.addEventListener("click", function() {\n'
-        '        const prefix = "tabulator-" + __trfPersistenceID + "-";\n'
-        "        const keysToRemove = [];\n"
-        "        for (let i = 0; i < localStorage.length; i++) {\n"
-        "          const k = localStorage.key(i);\n"
-        "          if (k && k.indexOf(prefix) === 0) { keysToRemove.push(k); }\n"
-        "        }\n"
-        "        keysToRemove.forEach(function(k) { localStorage.removeItem(k); });\n"
-        "        if (window.console && window.console.log) {\n"
-        "          window.console.log('trf reset: removed ' + keysToRemove.length + "
-        "' localStorage keys with prefix ' + prefix);\n"
-        "        }\n"
-        "        location.reload();\n"
-        "      });\n"
-        "    }\n"
-        "  }\n"
-        "  // Keep sidebar in sync when columns are toggled from elsewhere\n"
-        "  // (e.g., persistence-restore on load).\n"
-        '  __trfTable.on("columnVisibilityChanged", refresh);\n'
-        "});\n"
+        f"{tabulator_shared_js()}\n"
+        f"{frag.script}"
         "</script>\n"
         "</body>\n"
         "</html>\n"
     )
-
 
 def _json_default(obj: Any) -> Any:
     """JSON serialization fallback for non-native types (numpy scalars, etc.)."""

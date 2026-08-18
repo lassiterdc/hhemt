@@ -318,6 +318,24 @@ def test_config_field_rows_still_takes_no_analysis_argument():
     assert list(inspect.signature(metadata._config_field_rows).parameters) == []
 
 
+def _guide_text(guide) -> str:
+    """Every byte the guide contributes to the rendered page.
+
+    [Q148] moved the three tables to Tabulator, so cell CONTENT now lives in each
+    fragment's `script` (a JSON options blob) rather than in the markup string. A leak
+    scan over `guide.html` alone would be blind exactly where the values moved to --
+    and, because `guide` is a NamedTuple, `"needle" in guide` silently evaluates
+    element-identity and returns False, so such a test would PASS while checking
+    nothing. Concatenate all four surfaces.
+    """
+    return "\n".join(
+        [guide.html]
+        + [f.styles for _, f in guide.fragments]
+        + [f.markup for _, f in guide.fragments]
+        + [f.script for _, f in guide.fragments]
+    )
+
+
 def test_reprex_guide_never_renders_a_user_bucket_value():
     """R4 (behavioural): no USER-bucket value reaches the page, for EVERY such field.
 
@@ -336,7 +354,7 @@ def test_reprex_guide_never_renders_a_user_bucket_value():
     assert user_labels, "derived USER bucket is empty — the enumeration is broken, not clean"
 
     poisoned = {label: f"SENTINEL-LEAK-{i}" for i, label in enumerate(user_labels)}
-    html = metadata._build_reprex_guide_html(poisoned)
+    html = _guide_text(metadata._build_reprex_guide_html(poisoned))
     leaked = [label for i, label in enumerate(user_labels) if f"SENTINEL-LEAK-{i}" in html]
     assert not leaked, f"USER-bucket values reached the rendered page: {leaked}"
 
@@ -364,11 +382,25 @@ def test_reprex_guide_groups_every_field_into_three_buckets(tmp_path):
 
 
 def test_reprex_guide_renders_placeholders_not_values(tmp_path):
-    """R4: value cells are placeholders / schema descriptions only."""
+    """R4: value cells are placeholders / schema descriptions only.
+
+    Post-[Q148] the three tables are Tabulator fragments, so these strings are carried
+    in the options JSON inside the page's <script>, not as literal table markup. The
+    page-level assertion is unchanged in INTENT -- the placeholder text must reach the
+    reader -- but `{` and `}` survive `json.dumps` unescaped, so the same substrings
+    still assert correctly against the whole document.
+    """
     html, _, _ = _render(tmp_path, doc=_full_crate())
     assert "{amend for your target system}" in html
-    assert "{inherit — carried by the bundle}" in html
     assert "{your-default_account}" in html
+    # The EXPERIMENT placeholder contains an em-dash, and post-[Q148] these cells ride
+    # in the fragment's options JSON. `json.dumps` defaults to ensure_ascii=True, so the
+    # em-dash is emitted as the escape `\u2014` -- which renders as an em-dash in the
+    # browser but is NOT the literal character in the file. Asserting the literal form
+    # here would fail on a page that displays correctly, so the two ASCII halves are
+    # asserted instead and the escape is asserted explicitly.
+    assert "{inherit " in html and " carried by the bundle}" in html
+    assert "\\u2014" in html, "em-dash should be JSON-escaped, not dropped"
 
 
 def test_reprex_guide_covers_a_field_from_each_bucket():
@@ -473,9 +505,13 @@ def test_a_swept_parameter_renders_as_varied_not_as_one_arms_value():
     frame = pd.DataFrame({"analysis.run_mode": ["serial", "mpi"]})
     analysis = types.SimpleNamespace(sensitivity=types.SimpleNamespace(_df_setup_full=frame))
     varied = metadata._sensitivity_varied_values(analysis)
-    cell = varied["analysis_config.run_mode"]
-    assert "Varied by the sensitivity analysis" in cell
-    assert "serial" in cell and "mpi" in cell
+    # [Q148]/item 17: a swept parameter returns (marker, value-list) so the marker can
+    # be the cell and the values can be the hover. Both halves are asserted -- moving
+    # the values off the cell must not lose them.
+    marker, tooltip = varied["analysis_config.run_mode"]
+    assert "Varied by the sensitivity analysis" in marker
+    assert "serial" not in marker and "mpi" not in marker, "values must leave the cell"
+    assert "serial" in tooltip and "mpi" in tooltip, "values must survive in the hover"
 
 
 def test_every_config_field_appears_exactly_once():
@@ -542,9 +578,15 @@ def test_option_glossary_renders_every_literal_member():
         field_info = analysis_config.model_fields[name]
         options = declared(field_info, "options")
         assert set(options) == set(get_args(field_info.annotation))
+        # Item 18: the glossary moved from the cell to the column tooltip. The cell
+        # keeps the affordance count; the tooltip carries every member AND its
+        # definition. Both are asserted from the ONE `options` declaration.
         cell = metadata._description_cell(field_info)
+        assert f"({len(options)} options)" in cell
+        tooltip = metadata._options_tooltip(field_info)
         for member in get_args(field_info.annotation):
-            assert member in cell
+            assert member in tooltip, f"{name}: {member} lost from the hover"
+            assert options[member] in tooltip, f"{name}: {member}'s definition lost"
 
 
 def test_option_glossary_drift_is_refused_at_class_definition_time():
