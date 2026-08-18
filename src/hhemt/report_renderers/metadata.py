@@ -1915,6 +1915,17 @@ _EFF_PASSTHROUGH_COLUMNS: tuple[tuple[str, str], ...] = (
 #: supplies the first four; `scenario_status.csv` (keyed on sa_id/event_id/model_type)
 #: supplies the hardware and concurrency block.
 _EFF_ENRICHMENT_COLUMNS: tuple[tuple[str, str], ...] = (
+    # Item 25. `Record` sits FIRST, ahead of the columns it explains, so a reader meets the
+    # REASON before the em-dashes rather than after them. It distinguishes "no surviving
+    # toolkit record for this job" from "this field is genuinely empty" -- two states that
+    # otherwise render identically and cannot be told apart per-cell.
+    #
+    # SCOPE, stated so a later reader does not mistake this for more than it is: this makes
+    # the fill LEGIBLE. It does NOT raise it, and it deliberately does not restrict the row
+    # set. Whether this table should keep its cumulative history or show only the current
+    # generation is an open question that no measurement settles -- it trades completeness
+    # of LABELLING against completeness of RECORD -- and it is not settled here.
+    ("record", "Record"),
     ("purpose", "What the job did"),
     ("sa_id", "Sub-analysis"),
     ("event_id", "Event"),
@@ -1969,9 +1980,17 @@ _EFF_UNCAPTURED_NOTE = (
     "report that is the majority of rows. An em-dash in these columns means the row could "
     "not be matched to a toolkit record — never that the job ran without a partition, "
     "without MPI ranks, or outside a sub-analysis. Every one of those values existed; this "
-    "table cannot currently reach them. Recovering them needs no new simulation: SLURM "
-    "accounting still holds each job's partition and allocated resources, and the workflow "
-    "engine's own per-job log tree names the rule behind every job id.</p>"
+    "table cannot currently reach them, and the <em>Record</em> column says which rows those "
+    "are. This is a MEASURED CEILING rather than a capture failure: the join already matches "
+    "87 of the 88 job ids the sidecars still retain, or 99% of its available keys. The "
+    "shortfall is structural -- this table is a cumulative HISTORY across every workflow "
+    "submission, while <code>_status/*.flag.json</code> is a last-wins SNAPSHOT, so most rows "
+    "predate the records that survive. An earlier version of this note promised the values "
+    "were recoverable from SLURM accounting or from the engine's log tree; both were measured "
+    "and neither holds -- <code>sacct</code> Comment is empty on this cluster, AdminComment "
+    "carries node telemetry rather than rule identity, and the log tree retains 5 of 771 job "
+    "ids. Re-running does not recover them either: a fresh run overwrites the same per-rule "
+    "slots.</p>"
 )
 
 
@@ -2027,6 +2046,11 @@ def _enrich_efficiency_rows(
         main_job_id = (record.get("MainJobID") or job_id.split(".")[0]).strip()
         enriched: dict[str, str] = dict(record)
         meta = purpose_map.get(main_job_id, {})
+        # Item 25. Derived purely from the join above -- no new source, no new read, and
+        # grain-independent (the key is main_job_id either way). `bool(meta)` rather than
+        # `bool(purpose)`: a purpose recovered from the plugin's RuleName column is not a
+        # surviving toolkit record, and on this cluster RuleName is absent anyway.
+        enriched["record"] = "this run" if meta else "historical"
         # A rule name the plugin recovered from SLURM --comment beats nothing, but the
         # toolkit's own sidecar beats both. `RuleName` is present only on clusters that
         # store job comments; on UVA Rivanna it is absent, which is why JobName reads
