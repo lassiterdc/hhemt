@@ -1429,7 +1429,17 @@ def _requiredness_cell(field_info: Any) -> str:
         return "<strong>Required</strong>"
     clauses = declared(field_info, "required_when")
     if clauses:
-        return f"<strong>Conditional</strong> — required when {_esc(render_clauses(clauses))}"
+        cell = f"<strong>Conditional</strong> — required when {_esc(render_clauses(clauses))}"
+        # [Q151]: a conditionally-required field can ALSO carry a meaningful default --
+        # the trigger says when it must be supplied, the default says what applies when
+        # it is not. Today none of the 15 declared fields is both (all default to None),
+        # so this branch is inert; it exists so the first one that IS does not silently
+        # lose its default. `None` is deliberately NOT shown -- it is an absence, and
+        # `_render_config_value` already rules that one absence gets one spelling per row.
+        _default = getattr(field_info, "default", None)
+        if _default is not None and type(_default).__name__ != "PydanticUndefined":
+            cell += f" (default: {_esc(repr(_default))})"
+        return cell
     default = getattr(field_info, "default", None)
     if getattr(default, "__class__", type(None)).__name__ == "PydanticUndefined":
         return "Optional"
@@ -1579,6 +1589,13 @@ def _sensitivity_varied_values(analysis: TRITONSWMM_analysis) -> dict[str, str]:
             distinct = sorted({str(v) for v in sensitivity._df_setup_full[col].dropna().tolist()})
         except Exception:  # noqa: BLE001
             distinct = []
+        # Iter-12 item 21: a column that takes exactly ONE value across every row is not
+        # a varied parameter -- it is a constant that happens to be spelled in the sweep
+        # table. Rendering the varied marker there withholds a value the reader can and
+        # should be given, and misdescribes the experiment's axes.
+        if len(distinct) == 1:
+            out[label] = _code(distinct[0])
+            continue
         detail = ", ".join(_code(v) for v in distinct[:_VARIED_VALUE_PREVIEW])
         if len(distinct) > _VARIED_VALUE_PREVIEW:
             detail += f", … ({len(distinct)} values)"
@@ -1623,7 +1640,10 @@ def _build_reprex_guide_html(
         "<code>cfg_analysis.yaml</code>. The <em>Supply</em> block is placeholders only: this "
         "page never carries the producing user's own account, paths, or host details, so it is "
         "safe to ship inside a bundle. File paths are shown relative to the analysis "
-        "directory.</p>"
+        "directory. The <code>report</code> block may be supplied as a standalone YAML file "
+        "instead of inline, by passing <code>report_config=&lt;path&gt;</code> to "
+        "<code>analysis.run()</code>; an explicit path takes precedence over the inline "
+        "block, and the inline block is used when no path is given.</p>"
     )
 
     if unclassified:
@@ -1641,10 +1661,32 @@ def _build_reprex_guide_html(
         if not rows:
             parts.append(_banner("No configuration fields fall in this bucket."))
             continue
-        headers = ["Field", "Description", "Required", "Placeholder"]
+        # Iter-12 item 20. `Placeholder` survives in the SUPPLY bucket only. There it is
+        # the block's one per-row instruction and the block has no `Value used` column to
+        # carry one (zero-user-info: `_config_field_rows` takes no analysis argument by
+        # design). In `hpc` and `experiment` it carried a single bucket-CONSTANT across 27
+        # and 74 rows -- a string already printed once in _BUCKET_HEADING and again in
+        # _BUCKET_INSTRUCTION directly above the table -- and on any row with no producer
+        # value the `Value used` fallback rendered that SAME constant a second time, two
+        # cells apart. `_BUCKET_PLACEHOLDER` is RETAINED: it is still that fallback, which
+        # is the cell that survives.
         _values = values_by_field or {}
         _varied = varied_by_field or {}
-        if bucket in ("hpc", "experiment") and (_values or _varied):
+        # DEVIATION FROM THE APPROVED item-20 SPEC, surfaced at apply time. The spec
+        # dropped `Placeholder` from `hpc`/`experiment` unconditionally. That is correct
+        # only when the `Value used` column REPLACES it -- and `Value used` is added just
+        # below ONLY when producer values exist. On the no-values path (a scrubbed bundle,
+        # or any render without an analysis) those two blocks would then carry NO per-row
+        # instruction at all, and `_BUCKET_PLACEHOLDER`'s text would never appear. The
+        # item-20 rationale was DUPLICATION, so the column is dropped exactly where a
+        # duplicate exists and kept where none does.
+        _has_value_col = bucket in ("hpc", "experiment") and bool(_values or _varied)
+        headers = ["Field", "Description", "Required"]
+        if _has_value_col:
+            rows = [row[:3] for row in rows]
+        else:
+            headers.append("Placeholder")
+        if _has_value_col:
             # Value disclosure is bucket-scoped. USER-bucket values are host-local and are
             # already nulled out of the bundle's cfg_*.yaml by _scrub_user_bucket_fields, so
             # rendering them here would disclose what the bundle deliberately withholds.
@@ -1658,18 +1700,19 @@ def _build_reprex_guide_html(
             # placeholder rather than a bare em-dash -- the reprex_config.target_*
             # rows have no producer value BY DESIGN (they describe the reproducer's
             # target system), and a dash there reads as "the value was empty".
-            headers.insert(3, "Value used")
+            headers.append("Value used")
             _fallback = _code(_BUCKET_PLACEHOLDER.get(bucket, "—"))
             rows = [
-                row[:3] + [_varied.get(_strip_code(row[0])) or _values.get(_strip_code(row[0]), _fallback)] + row[3:]
+                row[:3] + [_varied.get(_strip_code(row[0])) or _values.get(_strip_code(row[0]), _fallback)]
                 for row in rows
             ]
         # Iter-11 item 16: sortable AND filterable, with NO column-toggle box. The bucket
         # grouping IS the reading order here -- a reproducer works the Supply block top to
         # bottom -- so a column-selector would offer a way to hide the very columns the
         # block exists to deliver; `column_panel` therefore stays at its opt-OUT default.
-        # `default_sort=(0, 2)` is Field then Required. The Required index is 2 in BOTH
-        # header forms: the value column is inserted at index 3 above, never before it.
+        # `default_sort=(0, 2)` is Field then Required. The Required index is 2 in ALL
+        # THREE header forms: `Placeholder` is appended only for `user`, and the value
+        # column is APPENDED for the other two -- neither is ever inserted before index 2.
         # Field is unique within a bucket, so the Required key is a tie-break that does not
         # fire today; it is declared so a future duplicate-label row still orders stably.
         parts.append(

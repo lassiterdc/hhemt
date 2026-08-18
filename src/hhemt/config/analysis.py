@@ -210,6 +210,12 @@ class analysis_config(cfgBaseModel):
     rainfall_units: Literal["mm", "mm/hr"] = Field(
         ...,
         description="Rainfall units in weather_timeseries mm or mm/hr.",
+        json_schema_extra=field_meta(
+            options={
+                "mm": "Depth accumulated over each timestep (an incremental depth).",
+                "mm/hr": "Instantaneous intensity at each timestep (a rate).",
+            }
+        ),
     )
     # DATASET PUBLISHING
     dataset_license: Literal["CC0-1.0", "CC-BY-NC-4.0"] = Field(
@@ -221,6 +227,19 @@ class analysis_config(cfgBaseModel):
             "'SPDX'). CC0-1.0 default is the open, regret-safe choice across immutable DOIs. "
             "CC-BY-NC-4.0 is the research/education-leaning slot; note CC 'NonCommercial' is "
             "broader than 'education only' and does not turn on user type."
+        ),
+        json_schema_extra=field_meta(
+            options={
+                "CC0-1.0": (
+                    "Public-domain dedication. No attribution required; the "
+                    "regret-safe choice across immutable DOIs."
+                ),
+                "CC-BY-NC-4.0": (
+                    "Attribution required, commercial use prohibited. "
+                    "'NonCommercial' is broader than 'education only' and does "
+                    "not turn on who the user is."
+                ),
+            }
         ),
     )
     # COMPUTE CONFIG
@@ -485,10 +504,12 @@ class analysis_config(cfgBaseModel):
     storm_tide_boundary_line_gis: Path | None = Field(
         None,
         description="Path to a line gis file spanning the extent of the dem boundary where the variable storm tide boundary condition should be applied.",
+        json_schema_extra=field_meta(required_when=[when("toggle_storm_tide_boundary", True)]),
     )
     storm_tide_units: str | None = Field(
         None,
         description="Storm tide units, e.g., ft, m. Must align with units used DEM.",
+        json_schema_extra=field_meta(required_when=[when("toggle_storm_tide_boundary", True)]),
     )
     weather_event_summary_csv: Path | None = Field(
         None,
@@ -497,10 +518,12 @@ class analysis_config(cfgBaseModel):
     weather_time_series_storm_tide_datavar: str | None = Field(
         None,
         description="Data variables in weather_timeseries corresponding to storm tide.",
+        json_schema_extra=field_meta(required_when=[when("toggle_storm_tide_boundary", True)]),
     )
     sensitivity_analysis: Path | None = Field(
         None,
         description="sensitivity analysisal design csv file.",
+        json_schema_extra=field_meta(required_when=[when("toggle_sensitivity_analysis", True)]),
     )
     weather_events_to_simulate: Path = Field(
         ...,
@@ -515,6 +538,12 @@ class analysis_config(cfgBaseModel):
     target_processed_output_type: Literal["zarr", "nc"] = Field(
         "zarr",
         description="TRITON processed output type, zarr or nc.",
+        json_schema_extra=field_meta(
+            options={
+                "zarr": "Chunked Zarr store. Default and preferred -- supports lazy and partial reads.",
+                "nc": "One NetCDF file per scenario. Use when a downstream consumer requires NetCDF.",
+            }
+        ),
     )
     toggle_consolidate_timeseries: bool = Field(
         default=False,
@@ -587,6 +616,12 @@ class analysis_config(cfgBaseModel):
     TRITON_raw_output_type: Literal["bin", "asc"] = Field(
         "bin",
         description="TRITON raw output type, asc or bin.",
+        json_schema_extra=field_meta(
+            options={
+                "bin": "Raw binary rasters. Default -- smaller and faster to write and parse.",
+                "asc": "ASCII grid rasters. Human-readable, substantially larger and slower.",
+            }
+        ),
     )
     manhole_diameter: float = Field(
         ...,
@@ -700,6 +735,15 @@ class analysis_config(cfgBaseModel):
             "default-valued field so pre-container configs load as native. The "
             "native|container SELECTOR is experiment-scoped (C-HPC-FIELD-PLACEMENT); "
             "the cluster-coupled 'how to exec' lives on ContainerSpec."
+        ),
+        json_schema_extra=field_meta(
+            options={
+                "native": "Compile, simulate and process on the host. Today's behavior, byte-identical.",
+                "container": (
+                    "Wrap the sim executable and the process_{model} runners in "
+                    "`apptainer exec {sif}`, per hpc_system_config.container."
+                ),
+            }
         ),
     )
 
@@ -848,25 +892,10 @@ class analysis_config(cfgBaseModel):
     def validate_toggle_dependencies(cls, values):
         errors = []
 
-        _, additional_errors = cls.validate_from_toggle(
-            values,
-            toggle_varname="toggle_sensitivity_analysis",
-            lst_rqrd_if_true=["sensitivity_analysis"],
-            lst_rqrd_if_false=[],
-        )
-        errors.extend(additional_errors)
-
-        _, additional_errors = cls.validate_from_toggle(
-            values,
-            toggle_varname="toggle_storm_tide_boundary",
-            lst_rqrd_if_true=[
-                "storm_tide_boundary_line_gis",
-                "weather_time_series_storm_tide_datavar",
-                "storm_tide_units",
-            ],
-            lst_rqrd_if_false=[],
-        )
-        errors.extend(additional_errors)
+        # Conditional requiredness for these four fields is DECLARED on the fields via
+        # `field_meta(required_when=...)` and enforced by
+        # `cfgBaseModel._enforce_required_when`. See the sibling note in config/system.py
+        # for why the hand-written second enforcement site was removed.
 
         if errors:
             raise ValueError("; ".join(errors))

@@ -2,7 +2,7 @@ import warnings
 from pydantic import Field, model_validator
 from typing import Optional
 from pathlib import Path
-from hhemt.config.base import cfgBaseModel
+from hhemt.config.base import cfgBaseModel, field_meta, when
 
 
 class CRSConfig(cfgBaseModel):
@@ -96,6 +96,7 @@ class system_config(cfgBaseModel):
     landuse_lookup_file: Optional[Path] = Field(
         None,
         description="CSV file containing lookup table relating landuse categories to manning's roughness coefficients",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
     SWMM_hydraulics: Path = Field(
         ...,
@@ -104,14 +105,17 @@ class system_config(cfgBaseModel):
     SWMM_hydrology: Optional[Path] = Field(
         None,
         description="Hydrology-only SWMM model (.inp) template with fillable fields based on input weather data. This will be run prior to TRITON-SWMM to generate runoff time series in grid cells that overlap with subcatchment outlet nodes.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
     )
     SWMM_full: Optional[Path] = Field(
         None,
         description="Full SWMM model (.inp) template with fillable fields based on input weather data. Scenarios based on this can be run in addition to TRITON-SWMM to compare SWMM hydraulics results.",
+        json_schema_extra=field_meta(required_when=[when("toggle_swmm_model", True)]),
     )
     landuse_raster: Optional[Path] = Field(
         None,
         description="Landuse raster used for creating manning's roughness input.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
     SWMM_software_directory: Optional[Path] = Field(
         None,
@@ -156,6 +160,7 @@ class system_config(cfgBaseModel):
     subcatchment_raingage_mapping: Optional[Path] = Field(
         None,
         description="Lookup table relating spatially indexed rainfall time series to SWMM subcatchment IDs.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
     )
     triton_swmm_configuration_template: Path = Field(
         ...,
@@ -165,14 +170,17 @@ class system_config(cfgBaseModel):
     landuse_description_colname: Optional[str] = Field(
         None,
         description="column name in the landuse_lookup_file corresponding to landuse description.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
     landuse_lookup_class_id_colname: Optional[str] = Field(
         None,
         description="column name in the landuse_lookup_file corresponding to landuse classification.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
     landuse_lookup_mannings_colname: Optional[str] = Field(
         None,
         description="column name in the landuse_lookup_file corresponding to manning's coefficient.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
     landuse_plot_color_colname: Optional[str] = Field(
         None,
@@ -181,6 +189,7 @@ class system_config(cfgBaseModel):
     subcatchment_raingage_mapping_gage_id_colname: Optional[str] = Field(
         None,
         description="Column name in subcatchment_raingage_mapping_gage corresponding to the rain gage ids.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
     )
     # CONSTANTS
     dem_outside_watershed_height: Optional[float] = Field(
@@ -220,6 +229,7 @@ class system_config(cfgBaseModel):
     constant_mannings: Optional[float] = Field(
         None,
         description="Constant manning's coefficient to use. Only applies if toggle_use_constant_mannings is set to True.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", True)]),
     )
     processed_xllcorner: Optional[float] = Field(
         None,
@@ -291,39 +301,15 @@ class system_config(cfgBaseModel):
                     )
         errors = []
 
-        _, additional_errors = cls.validate_from_toggle(
-            values,
-            toggle_varname="toggle_use_constant_mannings",
-            lst_rqrd_if_true=["constant_mannings"],
-            lst_rqrd_if_false=[
-                "landuse_lookup_file",
-                "landuse_raster",
-                "landuse_description_colname",
-                "landuse_lookup_class_id_colname",
-                "landuse_lookup_mannings_colname",
-            ],
-        )
-        errors.extend(additional_errors)
-
-        _, additional_errors = cls.validate_from_toggle(
-            values,
-            toggle_varname="toggle_use_swmm_for_hydrology",
-            lst_rqrd_if_true=[
-                "SWMM_hydrology",
-                "subcatchment_raingage_mapping",
-                "subcatchment_raingage_mapping_gage_id_colname",
-            ],
-            lst_rqrd_if_false=[],
-        )
-        errors.extend(additional_errors)
-
-        _, additional_errors = cls.validate_from_toggle(
-            values,
-            toggle_varname="toggle_swmm_model",
-            lst_rqrd_if_true=["SWMM_full"],
-            lst_rqrd_if_false=[],
-        )
-        errors.extend(additional_errors)
+        # Conditional requiredness for these ten fields is DECLARED on the fields
+        # themselves via `field_meta(required_when=...)` and enforced generically by
+        # `cfgBaseModel._enforce_required_when`. The hand-written `validate_from_toggle`
+        # calls that used to live here were a SECOND enforcement site the Reproduction
+        # Guide's Required cell could not see, so all ten rendered as "Optional" while
+        # the config refused to load without them. Do not reintroduce them; see the
+        # stipulation "config field descriptions options and conditional requiredness
+        # are declared once on the field". Path existence is unaffected -- the base
+        # `_check_paths_exist` field validator already covers every Path field.
 
         processed_xllcorner = values.get("processed_xllcorner")
         processed_yllcorner = values.get("processed_yllcorner")

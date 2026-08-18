@@ -994,3 +994,55 @@ def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     # `subanalyses` is a real branch (2 children), so it must NOT be collapsed into its
     # children -- proving the collapse stops at a branch rather than flattening everything.
     assert any(ln.strip().endswith("subanalyses") for ln in lines), lines
+
+
+def test_no_hand_written_conditional_requirement_survives():
+    """`validate_from_toggle` is the second enforcement site `field_meta` replaced.
+
+    The Reproduction Guide's Required cell is derived from `is_required()` +
+    `required_when`; a requirement enforced anywhere else renders as `Optional`
+    and lies to a reproducer. Ban the legacy helper outright rather than
+    enumerate its call sites, which is how 14 of them accumulated.
+    """
+    import inspect
+
+    from hhemt.config import analysis as _a
+    from hhemt.config import system as _s
+
+    for mod in (_a, _s):
+        src = inspect.getsource(mod)
+        assert "cls.validate_from_toggle(" not in src, (
+            f"{mod.__name__} still enforces a conditional requirement outside "
+            "`required_when`; the rendered Required cell cannot see it."
+        )
+
+
+def test_every_closed_set_field_declares_its_option_glossary():
+    """A `Literal[str]` field with no `options=` restates its own vocabulary in prose.
+
+    `__pydantic_init_subclass__` already forbids a glossary that DRIFTS from its
+    Literal. This is the other half: it forbids a closed-set field with no
+    glossary at all, which is where a prose re-enumeration goes.
+    """
+    from typing import get_args
+
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.base import declared
+    from hhemt.config.reprex_config import reprex_config
+    from hhemt.config.system import system_config
+
+    missing = []
+    for label, model in (
+        ("system_config", system_config),
+        ("analysis_config", analysis_config),
+        ("reprex_config", reprex_config),
+    ):
+        for name, fi in model.model_fields.items():
+            members = set(get_args(fi.annotation))
+            if members and all(isinstance(v, str) for v in members):
+                if declared(fi, "options") is None:
+                    missing.append(f"{label}.{name}")
+    assert not missing, (
+        "closed-set fields rendered in the Reproduction Guide with no option "
+        f"glossary: {sorted(missing)}"
+    )
