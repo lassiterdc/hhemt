@@ -42,7 +42,7 @@ def test_five_site_lockstep_multisim(synth_multi_sim_analysis):
 
     # Positive control: per_sim present when nothing is disabled.
     baseline = builder.generate_snakefile_content(**gen_kwargs)
-    assert "rule plot_per_sim_peak_flood_depth" in baseline
+    assert "rule plot_per_sim_event_page" in baseline
     assert "plots/per_sim/" in baseline
 
     # Disable per_sim and regenerate.
@@ -50,8 +50,8 @@ def test_five_site_lockstep_multisim(synth_multi_sim_analysis):
     disabled = builder.generate_snakefile_content(**gen_kwargs)
 
     # Emission: no per_sim plot rules.
-    assert "rule plot_per_sim_peak_flood_depth" not in disabled
-    assert "rule plot_per_sim_conduit_flow" not in disabled
+    assert "rule plot_per_sim_event_page" not in disabled
+    assert 'expand("plots/per_sim/' not in disabled
     # Enumeration: no per_sim path anywhere (rule all, render_report, outputs).
     assert "plots/per_sim/" not in disabled
     # Lockstep control: other renderers survive; render_report still emitted.

@@ -104,6 +104,14 @@ def render_scrollable_report(
     # Do NOT inject the second return value into <head>: it is the mode string,
     # not bundle HTML (master FQ1 VMS: _figure_divs -> tuple[list[str], str]).
     fig_divs, _js_mode_used = _figure_divs(figures, plotly_js_mode=plotly_js_mode)
+    # Pair each rendered div with its FigureSpec.title so the template can emit a
+    # section header above the figure. Before this change `FigureSpec.title` was
+    # declared (:39) and read NOWHERE: `_figure_divs` returns only strings and the
+    # template looped `figure_divs` directly, so the field had no reader anywhere
+    # in the tree. The per-figure header is the mechanism a model-sectioned
+    # per-scenario page depends on. `strict=True` fails loudly rather than
+    # silently truncating if the two lists ever diverge.
+    figure_blocks = [{"title": spec.title, "div": div} for spec, div in zip(figures, fig_divs, strict=True)]
     env = jinja2.Environment(
         loader=jinja2.PackageLoader("hhemt", "report_templates"),
         autoescape=jinja2.select_autoescape(["html"]),
@@ -112,7 +120,7 @@ def render_scrollable_report(
     return template.render(
         title=title,
         brand=brand or {},
-        figure_divs=fig_divs,
+        figure_blocks=figure_blocks,
         tables=tables,
         tabulator_js_mode=tabulator_js_mode,
     )

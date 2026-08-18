@@ -2305,7 +2305,7 @@ class TRITONSWMM_analysis:
         )
         from .exceptions import ConfigurationError
         from .orchestration import WorkflowResult, translate_mode, translate_phases
-        from .report_renderers._reporting_sets import get_reporting_set
+        from .report_renderers._reporting_sets import get_reporting_set, renderer_active
 
         # _test/ deletion offer (R9): if a leftover smoke-test subtree from a
         # prior analysis.test() exists, offer to delete it before the real run.
@@ -2368,6 +2368,38 @@ class TRITONSWMM_analysis:
         self._active_reporting_set_name = _resolved_set_name
         self._active_reporting_set = get_reporting_set(_resolved_set_name)
         self._cfg_report = cfg_report
+        # The composite per-scenario page is plotly-only by construction: it
+        # composes the `go.Figure` builder seams, which exist only on each
+        # per-sim renderer's plotly branch, and render_scrollable_report is
+        # pio.to_html end to end. Reject at run() entry rather than falling back
+        # to the legacy two-figure layout -- a silent fallback would leave the
+        # operator believing they had the page they configured. Sited here,
+        # beside validate_active_reporting_set, for the same reason that
+        # validator lives at run() entry rather than in a Pydantic field
+        # validator: a field-time reach into the registry creates a
+        # config.report -> report_renderers._reporting_sets -> config.report
+        # import cycle. Publication static plots are unaffected -- static_cfg
+        # FORCES the matplotlib branch (ADR-3) and routes through
+        # static_snakefile_generator with report_kwargs=None, a path this guard
+        # does not reach.
+        if (
+            getattr(getattr(cfg_report, "interactive", None), "static_backend", "plotly") == "matplotlib"
+            and any(sel.builder_key == "per_sim" for sel in self._active_reporting_set.renderer_selection)
+            and renderer_active("per_sim", getattr(cfg_report, "disabled_renderers", None))
+        ):
+            raise ConfigurationError(
+                field="report.interactive.static_backend",
+                message=(
+                    "static_backend='matplotlib' is not supported with the composite "
+                    "per-scenario results page (reporting_set="
+                    f"{_resolved_set_name!r}). The page composes interactive Plotly "
+                    "figures and has no matplotlib branch. Set "
+                    "report.interactive.static_backend='plotly', or disable the page "
+                    "with report.disabled_renderers: ['per_sim'] to keep a "
+                    "matplotlib report without per-simulation results."
+                ),
+                config_path=None,
+            )
 
         # ADR-17: non-blocking invalidating-fix registry emission at run()-entry.
         # Prints a console warning for any registered calculation-invalidating fix

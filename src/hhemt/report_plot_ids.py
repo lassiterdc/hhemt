@@ -37,6 +37,11 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     "system_overview": {"matplotlib": ".png", "plotly": ".html"},
     "per_sim_peak_flood_depth": {"matplotlib": ".png", "plotly": ".html"},
     "per_sim_conduit_flow": {"matplotlib": ".png", "plotly": ".html"},
+    # The composite per-scenario page (Piece 2). Emits interactive Plotly HTML
+    # unconditionally: it composes the plotly builder seams and is rejected at
+    # analysis.run() entry under static_backend="matplotlib", so a ".png" entry
+    # here would name a file the renderer can never produce.
+    "per_sim_event_page": {"matplotlib": ".html", "plotly": ".html"},
     "per_sim_per_sa_peak_flood_depth": {"matplotlib": ".png", "plotly": ".html"},
     "per_sim_per_sa_conduit_flow": {"matplotlib": ".png", "plotly": ".html"},
     "sensitivity_benchmarking": {"matplotlib": ".png", "plotly": ".html"},
@@ -126,6 +131,7 @@ _RENDERER_KIND_LABELS: dict[str, str] = {
     "system_overview": "System overview",
     "peak_flood_depth": "Peak flood depth",
     "conduit_flow": "Conduit flow",
+    "event_page": "Simulation results",
     "config_diff_maps": "Config-diff maps",
     "b4b_clean_identity": "Cross-hardware raw byte identity over time",
     "eda_cross_sim_identity": "Cross-simulation byte identity",

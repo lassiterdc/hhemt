@@ -50,6 +50,7 @@ from hhemt.figure_panels import (
 from hhemt.report_renderers._map_bounds import (
     compute_padded_square_bounds,
 )
+from hhemt.report_renderers._model_arms import groups_for
 from hhemt.report_renderers.system_overview import _resolve_inp_sources
 
 
@@ -94,7 +95,7 @@ if TYPE_CHECKING:
     from hhemt.config.static_plots import StaticPlotBaseConfig
 
 
-def _shared_depth_max(analysis, target_crs, map_cfg=None):
+def _shared_depth_max(analysis, target_crs, map_cfg=None, model_types=None):
     """Return the global vmax for the peak-flood-depth colorbar across every
     event_iloc (iter-19 user request — depth colorbar must be the same range
     on every per-event figure). vmin is hard-pinned at the user-locked 0.01
@@ -113,11 +114,20 @@ def _shared_depth_max(analysis, target_crs, map_cfg=None):
         tree = analysis.process.open_datatree()
     except (ValueError, FileNotFoundError):
         return None
-    group = "/tritonswmm/triton" if "tritonswmm" in enabled else "/triton_only/triton"
-    if group not in tree.groups:
+    # Cross-ARM union (not just cross-event). Before the arm expansion this
+    # resolved ONE group by coupled-wins, which was correct only because one arm
+    # was ever rendered. With every applicable arm on one scrolling page, a
+    # single-group range would be BORROWED by the other arm's figure -- a scale
+    # that looks authoritative and is not. Iterating (group, event) pairs keeps
+    # the loop body at its original indentation, so the accumulation logic below
+    # is untouched.
+    groups = [g for g in groups_for("peak_flood_depth", model_types or enabled) if g in tree.groups]
+    if not groups:
         return None
-    ds_all = tree[group].to_dataset()
-    for _ev in analysis.df_sims.index:
+    _ds_by_group = {g: tree[g].to_dataset() for g in groups}
+    _pairs = [(_g, _e) for _g in groups for _e in analysis.df_sims.index]
+    for _group, _ev in _pairs:
+        ds_all = _ds_by_group[_group]
         try:
             da_ev = ds_all["max_wlevel_m"].sel(event_iloc=int(_ev))
             if da_ev.rio.crs is not None and da_ev.rio.crs != target_crs:
@@ -156,7 +166,7 @@ def _shared_depth_max(analysis, target_crs, map_cfg=None):
     return g_max
 
 
-def _shared_wse_range(analysis, target_crs, dem_da, map_cfg=None):
+def _shared_wse_range(analysis, target_crs, dem_da, map_cfg=None, model_types=None):
     """Return (vmin, vmax) for the WSE colorbar, computed once across every
     event_iloc so all per-event figures share a colorbar (iter-15 user
     request). Walks every event's TRITON summary, masks depth >
@@ -200,12 +210,18 @@ def _shared_wse_range(analysis, target_crs, dem_da, map_cfg=None):
         tree = analysis.process.open_datatree()
     except (ValueError, FileNotFoundError):
         return None
-    group = "/tritonswmm/triton" if "tritonswmm" in enabled else "/triton_only/triton"
-    if group not in tree.groups:
+    # Cross-ARM union -- see the companion comment in _shared_depth_max. The WSE
+    # range matters more than depth here, not less: WSE is an absolute elevation,
+    # so two arms drawn on different WSE scales invite a reader to compare
+    # water-surface elevations that are not on the same axis at all.
+    groups = [g for g in groups_for("peak_flood_depth", model_types or enabled) if g in tree.groups]
+    if not groups:
         return None
-    ds_all = tree[group].to_dataset()
+    _ds_by_group = {g: tree[g].to_dataset() for g in groups}
     all_wet_values: list[np.ndarray] = []
-    for _ev in analysis.df_sims.index:
+    _pairs = [(_g, _e) for _g in groups for _e in analysis.df_sims.index]
+    for _group, _ev in _pairs:
+        ds_all = _ds_by_group[_group]
         try:
             da_ev = ds_all["max_wlevel_m"].sel(event_iloc=int(_ev))
             if da_ev.rio.crs is not None and da_ev.rio.crs != target_crs:
@@ -244,6 +260,7 @@ def render(
     output_path: Path,
     *,
     event_iloc: int | None = None,
+    model_type: str | None = None,
     static_cfg: StaticPlotBaseConfig | None = None,
     **kwargs,
 ) -> Path:
@@ -272,18 +289,20 @@ def render(
     from hhemt.report_renderers.per_sim_conduit_flow import (
         _emit_model_type_skip_placeholder,
     )
+    from hhemt.report_renderers._model_arms import resolve_arm_group
     from hhemt.report_renderers.system_overview import _apply_rcparams
 
     _apply_rcparams(report_cfg)
     cfg = report_cfg.per_sim.peak_flood_depth
     prov = ProvenanceLog()
 
+    # Model-type dispatch via the single-source arm matrix (_model_arms) --
+    # see the companion comment in per_sim_conduit_flow.render(). The retired
+    # chain's `elif` was unreachable under a coupled arm, so a three-model
+    # analysis silently dropped the standalone-TRITON depth field.
     enabled = analysis._get_enabled_model_types()
-    if "tritonswmm" in enabled:
-        triton_group = "/tritonswmm/triton"
-    elif "triton" in enabled:
-        triton_group = "/triton_only/triton"
-    else:
+    triton_group = resolve_arm_group("peak_flood_depth", enabled, model_type=model_type)
+    if triton_group is None:
         return _emit_model_type_skip_placeholder(
             output_path,
             "peak_flood_depth not applicable for swmm-only analyses",

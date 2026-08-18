@@ -996,8 +996,13 @@ class TRITONSWMM_system:
         )
 
     def _emit_module_load_lines(self, modules: str) -> list:
-        """Emit the HPC module-load block shared by the coupled (_compile_backend)
-        and TRITON-only (_compile_triton_only_backend) compile-script emitters.
+        """Emit the HPC module-load block shared by ALL THREE compile-script
+        emitters: coupled (_compile_backend), TRITON-only
+        (_compile_triton_only_backend), and standalone SWMM (_compile_SWMM_locked).
+        SWMM was omitted until 2026-08-17 and that omission read as the design; every
+        emitter that spawns a compiler under a loaded module toolchain needs this
+        block, because cmake honors conda's exported CC and the module's GCC_ROOT
+        breaks that compiler's own backend lookup.
 
         Responsibilities: (1) neutralize the miniforge Lmod unload hook so
         `module purge` does not abort under `set -e`; (2) purge + load the module
@@ -1925,6 +1930,34 @@ class TRITONSWMM_system:
             bash_script_lines.append("")
 
         # Build SWMM
+        # Load HPC modules FIRST -- parity with _compile_backend_locked and
+        # _compile_triton_only_backend_locked, which have always emitted this block.
+        # Two responsibilities of the helper are load-bearing on THIS rung:
+        #   (1) the CC/CXX pin. `conda activate hhemt` exports
+        #       CC=x86_64-conda-linux-gnu-cc, and cmake HONORS $CC -- it never
+        #       searches PATH. When an EasyBuild gcc module is also loaded (which is
+        #       exactly when additional_modules is non-empty), that module exports
+        #       GCC_ROOT, which relocates the conda gcc driver's program search root
+        #       into the module tree, so the driver looks for its own cc1 under
+        #       .../gcc/14.2.0/libexec/gcc/x86_64-conda-linux-gnu/<ver>/ and dies with
+        #       "cannot execute 'cc1': posix_spawnp: No such file or directory".
+        #       Measured on Rivanna 2026-08-17 (srun 18632246): without this block the
+        #       cmake configure fails; with it, cmake selects the module gcc 14.2.0 and
+        #       the build produces libswmm5.so + runswmm. A -DCMAKE_C_COMPILER pin to
+        #       /usr/bin/cc was measured and does NOT work -- the inherited CPATH and
+        #       conda's -isystem CFLAGS leave the system gcc unable to find stddef.h.
+        #   (2) the pre-purge CONDA_LIB capture, which is the ONLY producer of the
+        #       ${CONDA_LIB} that _emit_libstdcpp_ld_preamble_lines() consumes below.
+        #       Standalone SWMM is pure C and does not itself need the libstdc++ ABI
+        #       fix (a no-preamble arm builds identically); the preamble is retained
+        #       for uniformity with the sibling emitters, and this call is what makes
+        #       its anchor well-formed instead of dangling.
+        # The `if self.additional_modules:` guard is causally exact, not conventional:
+        # the hazard exists only when a gcc module is loaded, and this field is what
+        # loads it -- so a no-modules host (local dev, synth tier) emits a
+        # byte-identical script to before this change.
+        if self.additional_modules:
+            bash_script_lines.extend(self._emit_module_load_lines(self.additional_modules))
         bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
         bash_script_lines.extend(
             [
