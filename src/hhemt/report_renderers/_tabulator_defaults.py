@@ -765,10 +765,26 @@ _FILTER_BUILDER_JS = r"""
     };
   }
 
+  // Tabulator column `tooltip` callback. Reads the tooltip TEXT from a companion
+  // field on the same row -- `<field>__tip` -- rather than from a per-column closure,
+  // so ONE substitution sentinel serves every column and the tooltip payload travels
+  // with the row data. The companion field is deliberately absent from the columns
+  // spec: Tabulator renders only declared columns but `row.getData()` carries every
+  // key, so the tip is reachable without occupying a column or a sidebar toggle.
+  // Returning false suppresses the tooltip entirely (Tabulator treats an empty
+  // string as a tooltip to render, which would flash an empty box).
+  function companionTooltip(e, cell) {
+    var field = cell.getColumn().getField();
+    var data = cell.getRow().getData();
+    var tip = data ? data[field + "__tip"] : null;
+    return (tip === undefined || tip === null || tip === "") ? false : tip;
+  }
+
   global.TritonReportFilter = {
     makeFilterTrigger: makeFilterTrigger,
     matchCriteriaList: matchCriteriaList,
     isEmptyFilter: isEmptyFilter,
+    companionTooltip: companionTooltip,
   };
 })(window);
 """
@@ -968,6 +984,7 @@ def build_html_document(
     js_mode: str = "cdn",
     renderer_name: str = "<unknown>",
     column_groups: list[tuple[str, list[str], str | None]] | None = None,
+    column_panel: bool = True,
 ) -> str:
     """Build a self-contained Tabulator HTML document.
 
@@ -975,7 +992,9 @@ def build_html_document(
     ``__TRF_FILTER_TRIGGER__<dtype>__<field>__`` -> JS expression invoking
     ``TritonReportFilter.makeFilterTrigger("<dtype>", "<field>", "<field>")``;
     ``__TRF_MATCHER__`` -> ``TritonReportFilter.matchCriteriaList``;
-    ``__TRF_EMPTY_CHECK__`` -> ``TritonReportFilter.isEmptyFilter``. This
+    ``__TRF_EMPTY_CHECK__`` -> ``TritonReportFilter.isEmptyFilter``;
+    ``__TRF_TOOLTIP__`` -> ``TritonReportFilter.companionTooltip`` (a column
+    ``tooltip`` callback that reads a per-row ``<field>__tip`` companion key). This
     pattern is borrowed from Plotly's similar trick of carrying JS
     callables through JSON via string-replace.
 
@@ -984,6 +1003,16 @@ def build_html_document(
     Columns not in any group fall under an auto-generated "Other"
     catchall group. When ``column_groups`` is None, the sidebar renders
     a flat checkbox list with no subheaders.
+
+    ``column_panel=False`` suppresses the column-visibility sidebar entirely
+    (the ``<aside>`` is not emitted and the ``tableBuilt`` handler early-returns).
+    Default True, so every pre-existing caller is byte-identical. The
+    reproduction-guide tables pass False: Iter-11 item 16 decided those tables get
+    NO column-selector, because a selector there offers a way to hide the very
+    columns the block exists to deliver. Suppressing the aside also removes the
+    "Copy table" and "Reset all" buttons, which live inside it -- those tables
+    never had them (they rendered via `_sortable_grid_table`), so this preserves
+    the status quo rather than removing a feature.
 
     ``js_mode="inline"`` is not yet implemented; emits a one-time warning
     and falls back to CDN. Tracked at /design-figure Phase C follow-up.
@@ -1016,6 +1045,12 @@ def build_html_document(
     )
     options_json = options_json.replace(
         '"__TRF_EMPTY_CHECK__"', "TritonReportFilter.isEmptyFilter",
+    )
+    # Companion-field tooltip. Carries no payload in the sentinel -- the callback
+    # derives its companion field from the cell's own column at call time -- so this
+    # is a plain string replace rather than a regex like the filter-trigger arm.
+    options_json = options_json.replace(
+        '"__TRF_TOOLTIP__"', "TritonReportFilter.companionTooltip",
     )
 
     head_assets = (
@@ -1111,6 +1146,10 @@ def build_html_document(
         "<body>\n"
         f"{body_heading_html}"
         f'<div id="{layout_id}">\n'
+        + (
+            ""
+            if not column_panel
+            else
         f'  <aside id="{sidebar_id}" role="region" aria-label="Column visibility">\n'
         "    <h3>Columns</h3>\n"
         '    <button type="button" class="trf-toggle-all" data-action="show-all">Show all</button>\n'
@@ -1125,7 +1164,8 @@ def build_html_document(
         '    <div class="trf-copy-status" aria-live="polite" role="status"></div>\n'
         '    <div class="trf-column-list"></div>\n'
         "  </aside>\n"
-        f'  <div id="{container_id}"></div>\n'
+        )
+        + f'  <div id="{container_id}"></div>\n'
         "</div>\n"
         "<script>\n"
         f"{_FILTER_BUILDER_JS}\n"
@@ -1139,6 +1179,11 @@ def build_html_document(
         f"const __trfColumnGroups = {column_groups_json};\n"
         '__trfTable.on("tableBuilt", function() {\n'
         f'  const sidebar = document.getElementById("{sidebar_id}");\n'
+        # column_panel=False emits no <aside>, so every statement below this point
+        # would null-deref. The whole tableBuilt handler is sidebar machinery
+        # (column list, group toggles, Copy table, Reset all), so an early return
+        # skips exactly the features the suppressed panel owned and nothing else.
+        '  if (!sidebar) { return; }\n'
         '  const list = sidebar.querySelector(".trf-column-list");\n'
         "\n"
         "  function makeCheckboxRow(col) {\n"
