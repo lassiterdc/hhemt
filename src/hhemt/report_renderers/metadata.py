@@ -1,7 +1,10 @@
 """Metadata report renderer (ADR-14 / C10).
 
-Renders ONE self-contained static HTML page under the "Metadata" ReportingSet
-category, with three sub-sections:
+Renders ONE mostly-static HTML page under the "Metadata" ReportingSet category,
+with three sub-sections. It is NOT fully self-contained: per [Q148] the Reproduction
+Guide tables load Tabulator from a CDN. That trade is recorded in full below; it is
+stated here too so the first sentence does not have to be walked back by the reader
+who only gets that far ([Q149]).
 
   (1) Provenance summary  -- projected from the persisted RO-Crate sidecar
       {analysis_dir}/ro-crate-metadata.json (the read-model persisted at
@@ -225,11 +228,15 @@ span.units { white-space: nowrap; }
 span.expr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 """
 
-# Inline vanilla-JS sort + filter shim. Deliberately NOT Tabulator: this page is read
-# detached from a live network (inside a render bundle, archived at a DOI, emailed to a
-# reviewer), so a CDN dependency would contradict the page's own thesis, and
-# inline-Tabulator bundling is unimplemented (Gotcha 51). ~40 lines keeps the page
-# self-contained and does not pre-empt the reporting-system_inline-tabulator plan.
+# Inline vanilla-JS sort + filter shim, used by the Run-timeline and SLURM-efficiency
+# tables. Still NOT Tabulator -- but [Q148] retired the reason this comment used to give,
+# and the correction belongs here rather than behind a later one ([Q149]). The page is NO
+# LONGER network-free: the three Reproduction Guide tables adopted CDN Tabulator, so
+# "a CDN dependency would contradict the page's own thesis" is FALSE as of that adoption.
+# What survives is narrower and still true: these two tables keep the ~40-line shim so
+# they render in an archived, emailed, or bundle-local copy where the CDN is unreachable
+# -- the guide tables, by that same trade, do not. Inline-Tabulator bundling would remove
+# the split but is unimplemented and silently falls back to CDN (Gotcha 51).
 #
 # Numeric-aware compare: cells that parse as floats sort numerically, everything else
 # case-insensitively as text. Empty and em-dash cells sort last in both directions so a
@@ -1086,9 +1093,10 @@ def _expr_html(expr: str) -> str:
     -- so the STORED value stays a short ASCII-ish string a human can read and grep.
     Operators are literal Unicode (√ Σ ∫ · Δ), not markup.
 
-    No math engine. This page carries none, and the module already refuses a CDN
-    dependency for its sort/filter shim on the grounds that the page is read detached from
-    a live network. A BUNDLED engine would clear that bar on self-containment but would
+    No math engine. This page carries none. ([Q148]/[Q149]: this passage used to argue
+    from "the module already refuses a CDN dependency", which stopped being true when the
+    Reproduction Guide tables adopted CDN Tabulator. Corrected in place; the argument
+    below never depended on it.) A BUNDLED engine would clear the self-containment bar but would
     vendor a third-party asset with its own license and provenance onto a page whose whole
     thesis is that it is self-describing, and would render math that is neither selectable
     nor greppable in an archived copy. Eight of the eleven descriptors are prose with no

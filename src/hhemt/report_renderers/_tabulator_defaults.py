@@ -1010,6 +1010,109 @@ def tabulator_shared_js() -> str:
     return _FILTER_BUILDER_JS
 
 
+def _controls_js(root: str) -> str:
+    """The Copy-table + Reset-all handlers, scoped to `root` ([Q152]).
+
+    Extracted so the two controls can bind WITHOUT the column-visibility aside.
+    They were previously written inline inside the sidebar-gated `tableBuilt`
+    block, so `column_panel=False` (the Iter-11 item-16 reproduction-guide tables)
+    lost them as an IMPLEMENTATION COUPLING rather than by design -- the early
+    return at `if (!sidebar)` skipped the controls along with the column list.
+
+    `root` is the DOM node the buttons are queried from: "sidebar" on the
+    column_panel=True path (byte-identical to the pre-extraction emission, which is
+    what preserves scenario_status_appendix) and "document" on the toolbar path.
+    Substitution is by sentinel replace, never str.format -- the body is JavaScript
+    and is full of braces that .format would have to escape.
+    """
+    return (
+    "  // iter 5b — Copy-table button. Builds TSV manually from the\n"
+    "  // table's active (filtered) row set + currently-visible columns,\n"
+    "  // then writes to clipboard via the navigator.clipboard API.\n"
+    "  // Avoids __trfTable.setClipboardCopyConfig (does NOT exist in\n"
+    "  // Tabulator v6.4 — the option is construction-time only; calling\n"
+    "  // the non-existent setter at runtime threw the 'is not a function'\n"
+    "  // error the user surfaced in screenshot at scratch L4255).\n"
+    "  // Headers ARE included in the whole-table copy per user spec at\n"
+    "  // scratch L4260; drag-select / Ctrl+C-row copies handled by\n"
+    "  // Tabulator's native clipboard module without headers (config in\n"
+    "  // build_options_dict).\n"
+    '  const copyBtn = __TRF_ROOT__.querySelector(".trf-copy-table");\n'
+    '  const copyStatus = __TRF_ROOT__.querySelector(".trf-copy-status");\n'
+    "  if (copyBtn) {\n"
+    '    copyBtn.addEventListener("click", async function() {\n'
+    "      try {\n"
+    "        const visibleCols = __trfTable.getColumns().filter(function(c) {\n"
+    "          return c.getField() && c.isVisible();\n"
+    "        });\n"
+    "        const fields = visibleCols.map(function(c) { return c.getField(); });\n"
+    "        const headerRow = fields.join('\\t');\n"
+    '        const rows = __trfTable.getData("active");\n'
+    "        const dataRows = rows.map(function(row) {\n"
+    "          return fields.map(function(f) {\n"
+    '            const v = row[f];\n'
+    '            return (v === null || v === undefined) ? "" : String(v);\n'
+    "          }).join('\\t');\n"
+    "        });\n"
+    '        const tsv = [headerRow].concat(dataRows).join("\\n");\n'
+    "        if (navigator.clipboard && navigator.clipboard.writeText) {\n"
+    "          await navigator.clipboard.writeText(tsv);\n"
+    "        } else {\n"
+    "          // Fallback for older browsers / non-secure contexts.\n"
+    '          const ta = document.createElement("textarea");\n'
+    "          ta.value = tsv;\n"
+    '          ta.style.position = "fixed";\n'
+    '          ta.style.left = "-9999px";\n'
+    "          document.body.appendChild(ta);\n"
+    "          ta.select();\n"
+    '          document.execCommand("copy");\n'
+    "          document.body.removeChild(ta);\n"
+    "        }\n"
+    '        copyStatus.textContent = '
+    '"Copied " + dataRows.length + " rows × " + fields.length + " cols to clipboard.";\n'
+    "        setTimeout(function() {\n"
+    '          copyStatus.textContent = "";\n'
+    "        }, 3000);\n"
+    "      } catch (e) {\n"
+    '        copyStatus.textContent = "Copy failed: " + (e.message || e);\n'
+    "      }\n"
+    "    });\n"
+    "  }\n"
+    "  // iter 9.2 — Reset all button handler. Clears every\n"
+    "  // localStorage key matching the `tabulator-{persistenceID}-`\n"
+    "  // prefix (Persistence.js:94 + defaults/readers.js:4 establish\n"
+    "  // this key format), then reloads the page so Tabulator\n"
+    "  // re-instantiates without any persisted state. This is the\n"
+    "  // user-facing escape hatch for stale-localStorage bugs (e.g.,\n"
+    "  // the iter-9 alignment toggle persisting after a config\n"
+    "  // change that should have disabled column persistence). When\n"
+    "  // persistenceID is empty (no persistence configured), the\n"
+    "  // button is hidden because the clear has no target.\n"
+    '  const resetBtn = __TRF_ROOT__.querySelector(".trf-reset-all");\n'
+    '  const __trfPersistenceID = (tableOptions && tableOptions.persistenceID) || "";\n'
+    "  if (resetBtn) {\n"
+    "    if (!__trfPersistenceID) {\n"
+    '      resetBtn.style.display = "none";\n'
+    "    } else {\n"
+    '      resetBtn.addEventListener("click", function() {\n'
+    '        const prefix = "tabulator-" + __trfPersistenceID + "-";\n'
+    "        const keysToRemove = [];\n"
+    "        for (let i = 0; i < localStorage.length; i++) {\n"
+    "          const k = localStorage.key(i);\n"
+    "          if (k && k.indexOf(prefix) === 0) { keysToRemove.push(k); }\n"
+    "        }\n"
+    "        keysToRemove.forEach(function(k) { localStorage.removeItem(k); });\n"
+    "        if (window.console && window.console.log) {\n"
+    "          window.console.log('trf reset: removed ' + keysToRemove.length + "
+    "' localStorage keys with prefix ' + prefix);\n"
+    "        }\n"
+    "        location.reload();\n"
+    "      });\n"
+    "    }\n"
+    "  }\n"
+    ).replace("__TRF_ROOT__", root)
+
+
 def build_table_fragment(
     *,
     container_id: str,
@@ -1167,9 +1270,44 @@ def build_table_fragment(
             ".trf-filter-popover { z-index: 2000 !important; }\n"
             ".trf-filter-popover button { padding: 2px 8px; cursor: pointer; }\n"
             ".trf-criteria-row select, .trf-criteria-row input { padding: 2px 4px; }\n"
+            # [Q152] Toolbar for the Copy-table / Reset-all controls when there is no
+            # aside to host them. Conditional so the column_panel=True consumer
+            # (scenario_status_appendix) gains no style bytes. The colours are the same
+            # literals the sidebar buttons already use above -- no new palette.
+            + (
+                ""
+                if column_panel
+                else (
+                    "div.trf-table-toolbar { margin: 0 0 6px 0; display: flex; "
+                    "align-items: center; gap: 6px; }\n"
+                    "div.trf-table-toolbar .trf-copy-table { font-size: 11px; "
+                    "padding: 2px 6px; cursor: pointer; background: #E8F0F8; "
+                    "border: 1px solid #888; }\n"
+                    "div.trf-table-toolbar .trf-reset-all { font-size: 11px; "
+                    "padding: 2px 6px; cursor: pointer; background: #FFF3E0; "
+                    "border: 1px solid #B26A00; color: #5D2E00; }\n"
+                    "div.trf-table-toolbar .trf-copy-status { font-size: 11px; "
+                    "color: #2E7D32; min-height: 14px; }\n"
+                )
+            )
         ),
         markup=(
-            f'<div id="{layout_id}">\n'
+            (
+                ""
+                if column_panel
+                else (
+                    '<div class="trf-table-toolbar" role="group" aria-label="Table actions">\n'
+                    '  <button type="button" class="trf-copy-table" '
+                    'title="Copy filtered rows × visible columns to the clipboard as '
+                    'tab-separated text. Paste directly into Excel or Sheets.">Copy table</button>\n'
+                    '  <button type="button" class="trf-reset-all" '
+                    'title="Clear all persisted table state (sort / filter / headerFilter / '
+                    'group / page) from localStorage and reload the page.">Reset all</button>\n'
+                    '  <div class="trf-copy-status" aria-live="polite" role="status"></div>\n'
+                    "</div>\n"
+                )
+            )
+            + f'<div id="{layout_id}">\n'
             + (
                 ""
                 if not column_panel
@@ -1318,94 +1456,27 @@ def build_table_fragment(
             "      refresh();\n"
             "    });\n"
             "  });\n"
-            "  // iter 5b — Copy-table button. Builds TSV manually from the\n"
-            "  // table's active (filtered) row set + currently-visible columns,\n"
-            "  // then writes to clipboard via the navigator.clipboard API.\n"
-            "  // Avoids __trfTable.setClipboardCopyConfig (does NOT exist in\n"
-            "  // Tabulator v6.4 — the option is construction-time only; calling\n"
-            "  // the non-existent setter at runtime threw the 'is not a function'\n"
-            "  // error the user surfaced in screenshot at scratch L4255).\n"
-            "  // Headers ARE included in the whole-table copy per user spec at\n"
-            "  // scratch L4260; drag-select / Ctrl+C-row copies handled by\n"
-            "  // Tabulator's native clipboard module without headers (config in\n"
-            "  // build_options_dict).\n"
-            '  const copyBtn = sidebar.querySelector(".trf-copy-table");\n'
-            '  const copyStatus = sidebar.querySelector(".trf-copy-status");\n'
-            "  if (copyBtn) {\n"
-            '    copyBtn.addEventListener("click", async function() {\n'
-            "      try {\n"
-            "        const visibleCols = __trfTable.getColumns().filter(function(c) {\n"
-            "          return c.getField() && c.isVisible();\n"
-            "        });\n"
-            "        const fields = visibleCols.map(function(c) { return c.getField(); });\n"
-            "        const headerRow = fields.join('\\t');\n"
-            '        const rows = __trfTable.getData("active");\n'
-            "        const dataRows = rows.map(function(row) {\n"
-            "          return fields.map(function(f) {\n"
-            '            const v = row[f];\n'
-            '            return (v === null || v === undefined) ? "" : String(v);\n'
-            "          }).join('\\t');\n"
-            "        });\n"
-            '        const tsv = [headerRow].concat(dataRows).join("\\n");\n'
-            "        if (navigator.clipboard && navigator.clipboard.writeText) {\n"
-            "          await navigator.clipboard.writeText(tsv);\n"
-            "        } else {\n"
-            "          // Fallback for older browsers / non-secure contexts.\n"
-            '          const ta = document.createElement("textarea");\n'
-            "          ta.value = tsv;\n"
-            '          ta.style.position = "fixed";\n'
-            '          ta.style.left = "-9999px";\n'
-            "          document.body.appendChild(ta);\n"
-            "          ta.select();\n"
-            '          document.execCommand("copy");\n'
-            "          document.body.removeChild(ta);\n"
-            "        }\n"
-            '        copyStatus.textContent = '
-            '"Copied " + dataRows.length + " rows × " + fields.length + " cols to clipboard.";\n'
-            "        setTimeout(function() {\n"
-            '          copyStatus.textContent = "";\n'
-            "        }, 3000);\n"
-            "      } catch (e) {\n"
-            '        copyStatus.textContent = "Copy failed: " + (e.message || e);\n'
-            "      }\n"
-            "    });\n"
-            "  }\n"
-            "  // iter 9.2 — Reset all button handler. Clears every\n"
-            "  // localStorage key matching the `tabulator-{persistenceID}-`\n"
-            "  // prefix (Persistence.js:94 + defaults/readers.js:4 establish\n"
-            "  // this key format), then reloads the page so Tabulator\n"
-            "  // re-instantiates without any persisted state. This is the\n"
-            "  // user-facing escape hatch for stale-localStorage bugs (e.g.,\n"
-            "  // the iter-9 alignment toggle persisting after a config\n"
-            "  // change that should have disabled column persistence). When\n"
-            "  // persistenceID is empty (no persistence configured), the\n"
-            "  // button is hidden because the clear has no target.\n"
-            '  const resetBtn = sidebar.querySelector(".trf-reset-all");\n'
-            '  const __trfPersistenceID = (tableOptions && tableOptions.persistenceID) || "";\n'
-            "  if (resetBtn) {\n"
-            "    if (!__trfPersistenceID) {\n"
-            '      resetBtn.style.display = "none";\n'
-            "    } else {\n"
-            '      resetBtn.addEventListener("click", function() {\n'
-            '        const prefix = "tabulator-" + __trfPersistenceID + "-";\n'
-            "        const keysToRemove = [];\n"
-            "        for (let i = 0; i < localStorage.length; i++) {\n"
-            "          const k = localStorage.key(i);\n"
-            "          if (k && k.indexOf(prefix) === 0) { keysToRemove.push(k); }\n"
-            "        }\n"
-            "        keysToRemove.forEach(function(k) { localStorage.removeItem(k); });\n"
-            "        if (window.console && window.console.log) {\n"
-            "          window.console.log('trf reset: removed ' + keysToRemove.length + "
-            "' localStorage keys with prefix ' + prefix);\n"
-            "        }\n"
-            "        location.reload();\n"
-            "      });\n"
-            "    }\n"
-            "  }\n"
-            "  // Keep sidebar in sync when columns are toggled from elsewhere\n"
+            # [Q152] Only the aside path binds sidebar-scoped controls. With no aside
+            # the enclosing tableBuilt handler early-returns above, so emitting them
+            # here would ship ~80 lines of unreachable JS into every guide table.
+            + ("" if not column_panel else _controls_js("sidebar"))
+            + "  // Keep sidebar in sync when columns are toggled from elsewhere\n"
             "  // (e.g., persistence-restore on load).\n"
             '  __trfTable.on("columnVisibilityChanged", refresh);\n'
             "});\n"
+            # [Q152] No aside means the sidebar-gated tableBuilt handler early-returns,
+            # so the two controls get their own binding against the toolbar above. Same
+            # handlers, document-scoped; the emission is conditional so the
+            # column_panel=True path is byte-unchanged.
+            + (
+                ""
+                if column_panel
+                else (
+                    '__trfTable.on("tableBuilt", function() {\n'
+                    + _controls_js("document")
+                    + "});\n"
+                )
+            )
         ),
     )
 
