@@ -33,6 +33,7 @@ def render(
     output_path: Path,
     *,
     event_iloc: int,
+    model_type: str | None = None,
     static_cfg: StaticPlotBaseConfig | None = None,
     **kwargs,
 ) -> Path:
@@ -51,6 +52,7 @@ def render(
         emit_plot_with_sources,
         per_sim_map_ticks,
     )
+    from hhemt.report_renderers._model_arms import resolve_arm_group
     from hhemt.report_renderers._provenance import ProvenanceLog
     from hhemt.report_renderers.system_overview import _apply_rcparams
 
@@ -65,6 +67,24 @@ def render(
     )
     # Publication path (ADR-3): static_cfg FORCES the matplotlib branch regardless
     # of report_cfg.interactive.static_backend (static plots are matplotlib-only).
+    # Model-type dispatch via the single-source arm matrix (_model_arms), which
+    # replaces a coupled-wins if/elif chain. The chain's `elif` was unreachable
+    # whenever the coupled arm was enabled, so a three-model analysis rendered
+    # the coupled arm and silently dropped the standalone-SWMM conduits.
+    # model_type=None reproduces the retired behaviour exactly (first arm in
+    # MODEL_ORDER, which is "tritonswmm"); the composite page passes an explicit
+    # arm so every applicable arm is rendered. Resolved ABOVE the use_plotly
+    # dispatch so `link_group` is in scope for the plotly branch (S6 ordering
+    # requirement); the lookup is pure.
+    enabled = analysis._get_enabled_model_types()
+    link_group = resolve_arm_group("conduit_flow", enabled, model_type=model_type)
+    if link_group is None:
+        return _emit_model_type_skip_placeholder(
+            output_path,
+            "conduit_flow not applicable for triton-only analyses",
+            report_cfg.figure_defaults.savefig_dpi,
+        )
+
     use_plotly = False if static_cfg is not None else (static_backend == "plotly")
     if use_plotly:
         return _render_plotly_branch(
@@ -72,6 +92,7 @@ def render(
             report_cfg,
             output_path,
             event_iloc=event_iloc,
+            link_group=link_group,
             prov=prov,
         )
 
@@ -87,19 +108,6 @@ def render(
         plt.rcParams["font.size"] = static_cfg.font_sizes[FontTarget.axis_label]
 
     proc = analysis._retrieve_sim_run_processing_object(event_iloc)
-
-    # Model-type dispatch (Gotcha 5 from the master plan).
-    enabled = analysis._get_enabled_model_types()
-    if "tritonswmm" in enabled:
-        link_group = "/tritonswmm/swmm_link"
-    elif "swmm" in enabled:
-        link_group = "/swmm_only/swmm_link"
-    else:
-        return _emit_model_type_skip_placeholder(
-            output_path,
-            "conduit_flow not applicable for triton-only analyses",
-            report_cfg.figure_defaults.savefig_dpi,
-        )
 
     # Read from the consolidated analysis DataTree. The link group carries
     # `max_over_full_flow`, `max_flow_cms`, and `link_id` for every event_iloc.
@@ -246,7 +254,7 @@ def render(
             float(static_cfg.peak_flow_vmax) if static_cfg.peak_flow_vmax is not None else float(peak_flow.max() or 1.0)
         )
     else:
-        peak_flow_vmax = _resolve_peak_flow_vmax(peak_flow, cfg)
+        peak_flow_vmax = _shared_peak_flow_vmax(analysis, cfg) or _resolve_peak_flow_vmax(peak_flow, cfg)
     panels = [
         (
             ax1,
@@ -431,6 +439,59 @@ def render(
     )
 
 
+def _shared_peak_flow_vmax(analysis, cfg, model_types=None) -> float | None:
+    """Cross-ARM and cross-EVENT vmax for the peak-flow colourbar.
+
+    The sibling depth/WSE resolvers in per_sim_peak_flood_depth have been
+    cross-EVENT since iter-15/iter-19; peak flow never had one, so its colourbar
+    was per-figure. That was survivable while one conduit figure existed per
+    event and invisible while only one arm was rendered. It is neither once the
+    composite page places the TRITON-SWMM and standalone-SWMM conduit panels
+    adjacent in one scroll.
+
+    Returns None when no arm exposes a usable summary, so the caller falls back
+    to the per-figure `_resolve_peak_flow_vmax` and behaviour degrades to the
+    historical form rather than to an exception. An explicit `cfg.vmax` still
+    wins at the call site -- this resolver is consulted only when it is unset.
+    """
+    from hhemt.report_renderers._model_arms import groups_for
+
+    if cfg.vmax is not None:
+        return float(cfg.vmax)
+    enabled = analysis._get_enabled_model_types()
+    try:
+        tree = analysis.process.open_datatree()
+    except (ValueError, FileNotFoundError):
+        return None
+    groups = [g for g in groups_for("conduit_flow", model_types or enabled) if g in tree.groups]
+    if not groups:
+        return None
+    collected: list[np.ndarray] = []
+    for _group in groups:
+        ds_links = tree[_group].to_dataset()
+        if "max_flow_cms" not in ds_links:
+            continue
+        for _ev in analysis.df_sims.index:
+            try:
+                vals = ds_links["max_flow_cms"].sel(event_iloc=int(_ev)).values
+            except KeyError:
+                continue
+            if hasattr(vals, "compute"):
+                vals = vals.compute()
+            finite = vals[np.isfinite(vals)]
+            if finite.size > 0:
+                collected.append(finite)
+    if not collected:
+        return None
+    combined = np.concatenate(collected)
+    if cfg.vmax_quantile is not None:
+        q = float(np.nanquantile(combined, cfg.vmax_quantile))
+        if np.isfinite(q) and q > 0.0:
+            return q
+    m = float(np.nanmax(combined))
+    return m if np.isfinite(m) and m > 0.0 else None
+
+
 def _resolve_peak_flow_vmax(peak_flow: np.ndarray, cfg) -> float:
     """Resolve the colorbar upper bound for the peak-flow panel.
 
@@ -509,6 +570,7 @@ def _build_conduit_flow_figure(
     output_path: Path,
     *,
     event_iloc: int,
+    link_group: str,
     prov,
 ):
     """Figure-construction half of `_render_plotly_branch`, extracted verbatim so a
@@ -551,18 +613,11 @@ def _build_conduit_flow_figure(
 
     proc = analysis._retrieve_sim_run_processing_object(event_iloc)
 
-    # ---- Model-type dispatch (mirror of matplotlib branch) --------------
-    enabled = analysis._get_enabled_model_types()
-    if "tritonswmm" in enabled:
-        link_group = "/tritonswmm/swmm_link"
-    elif "swmm" in enabled:
-        link_group = "/swmm_only/swmm_link"
-    else:
-        return _emit_model_type_skip_placeholder(
-            output_path,
-            "conduit_flow not applicable for triton-only analyses",
-            report_cfg.figure_defaults.savefig_dpi,
-        )
+    # Model-type dispatch removed: `link_group` is now a REQUIRED keyword
+    # parameter, mirroring `_build_peak_flood_depth_figure`'s long-standing
+    # `triton_group`. The caller resolves the arm from the _model_arms matrix,
+    # which is what lets the composite page call this seam once per applicable
+    # arm instead of once per event.
 
     # ---- Data prep ------------------------------------------------------
     link_summary_path = analysis.analysis_paths.analysis_datatree_zarr
@@ -736,7 +791,7 @@ def _build_conduit_flow_figure(
             "var_attrs": peak_flow_attrs,
             "label": units.flow_axis_label(),
             "vmin": float(cfg.vmin) if cfg.vmin is not None else 0.0,
-            "vmax": _resolve_peak_flow_vmax(peak_flow, cfg),
+            "vmax": _shared_peak_flow_vmax(analysis, cfg) or _resolve_peak_flow_vmax(peak_flow, cfg),
             "cmap_name": PEAK_FLOW_CMAP,
             "colorbar_x": _cb_x[2],
         },
@@ -1051,6 +1106,7 @@ def _render_plotly_branch(
     output_path: Path,
     *,
     event_iloc: int,
+    link_group: str,
     prov,
 ) -> Path:
     """Plotly MV port (pre-/design-figure): static 3-panel figure with utilization
@@ -1070,6 +1126,7 @@ def _render_plotly_branch(
         report_cfg,
         output_path,
         event_iloc=event_iloc,
+        link_group=link_group,
         prov=prov,
     )
     if isinstance(_built, Path):

@@ -2631,16 +2631,11 @@ rule consolidate_scenario:
         # rule OUTPUTS, so a future stem-grammar change in report_plot_ids cannot
         # desync inputs from outputs (-> MissingInputException / Gotcha 37/39).
         # {event_id} stays a literal Snakemake wildcard for the emitted expand().
-        _pfd_per_sim = _plot_output_template(
-            renderer_kind="peak_flood_depth",
+        _ep_per_sim = _plot_output_template(
+            renderer_kind="event_page",
             subdir="plots/per_sim/{event_id}",
             event_id="{event_id}",
-        ).replace("__OUTPUT_EXT__", _ext["per_sim_peak_flood_depth"])
-        _cf_per_sim = _plot_output_template(
-            renderer_kind="conduit_flow",
-            subdir="plots/per_sim/{event_id}",
-            event_id="{event_id}",
-        ).replace("__OUTPUT_EXT__", _ext["per_sim_conduit_flow"])
+        ).replace("__OUTPUT_EXT__", _ext["per_sim_event_page"])
 
         _formats = report_formats if report_formats is not None else ["zip"]
         render_targets_in_rule_all = "".join(f',\n        "analysis_report.{fmt}"' for fmt in _formats)
@@ -2657,8 +2652,13 @@ rule consolidate_scenario:
         if renderer_active("system_overview", _disabled):
             _plot_items.append(f'"plots/system_overview{_ext["system_overview"]}"')
         if renderer_active("per_sim", _disabled):
-            _plot_items.append(f'expand("{_pfd_per_sim}", event_id=SIM_IDS)')
-            _plot_items.append(f'expand("{_cf_per_sim}", event_id=SIM_IDS)')
+            # ONE composite page per event replaces the two per-figure entries.
+            # This list feeds BOTH `rule all` and `render_report` (the
+            # _render_report_input_block below reuses it), so the two surfaces
+            # cannot drift out of lockstep -- which is what would otherwise
+            # produce the Gotcha 37/39 "marked for report but does not exist"
+            # WorkflowError.
+            _plot_items.append(f'expand("{_ep_per_sim}", event_id=SIM_IDS)')
         if renderer_active("per_analysis_summary", _disabled):
             _plot_items.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
         if renderer_active("scenario_status_appendix", _disabled):
@@ -3369,40 +3369,32 @@ rule export_scenario_status:
         rainfall_datavar = self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
         storm_tide_datavar = self.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
 
-        helpers = f"""
-def _per_sim_flood_depth_sources(wildcards):
+        helpers = f'''
+def _per_sim_event_page_sources(wildcards):
     from hhemt.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
     )
-    return collect_per_sim_source_paths(
-        "peak_flood_depth",
-        wildcards.event_id,
-        rainfall_datavar={rainfall_datavar!r},
-        storm_tide_datavar={storm_tide_datavar!r},
-        dem_rel_path={dem_rel!r},
-        watershed_rel_path={watershed_rel!r},
-    )
+    out = []
+    for _kind in ("peak_flood_depth", "conduit_flow"):
+        for _src in collect_per_sim_source_paths(
+            _kind,
+            wildcards.event_id,
+            rainfall_datavar={rainfall_datavar!r},
+            storm_tide_datavar={storm_tide_datavar!r},
+            dem_rel_path={dem_rel!r},
+            watershed_rel_path={watershed_rel!r},
+        ):
+            if _src not in out:
+                out.append(_src)
+    return out
+'''
 
-def _per_sim_conduit_flow_sources(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_per_sim_source_paths,
-    )
-    return collect_per_sim_source_paths(
-        "conduit_flow",
-        wildcards.event_id,
-        rainfall_datavar={rainfall_datavar!r},
-        storm_tide_datavar={storm_tide_datavar!r},
-        dem_rel_path={dem_rel!r},
-        watershed_rel_path={watershed_rel!r},
-    )
-"""
-
-        flood_spec = RuleSpec(
-            rule_name="plot_per_sim_peak_flood_depth",
-            renderer_module="per_sim_peak_flood_depth",
+        page_spec = RuleSpec(
+            rule_name="plot_per_sim_event_page",
+            renderer_module="per_sim_event_page",
             input_flags=("_status/e_consolidate_complete.flag",),
             output_path_template=_plot_output_template(
-                renderer_kind="peak_flood_depth",
+                renderer_kind="event_page",
                 subdir="plots/per_sim/{event_id}",
                 event_id="{event_id}",
             ),
@@ -3411,37 +3403,15 @@ def _per_sim_conduit_flow_sources(wildcards):
             extra_cli_flags=("--event-iloc {params.event_iloc}",),
             extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID[w.event_id]"),),
             report_kwargs={
-                "caption": "report/captions/per_sim_peak_flood_depth.rst",
+                "caption": "report/captions/per_sim_event_page.rst",
                 "category": "Per Simulation Results",
-                "labels": '{"figure": "Peak flood depth", "event_id": "{event_id}"}',
+                "labels": '{"figure": "Simulation results", "event_id": "{event_id}"}',
             },
-            resources_yaml="mem_mb=4000, time_min=15",
-            log_path_template="logs/plots/per_sim_peak_flood_depth_{event_id}.log",
-            source_paths_fn_name="_per_sim_flood_depth_sources",
+            resources_yaml="mem_mb=8000, time_min=30",
+            log_path_template="logs/plots/per_sim_event_page_{event_id}.log",
+            source_paths_fn_name="_per_sim_event_page_sources",
         )
-        conduit_spec = RuleSpec(
-            rule_name="plot_per_sim_conduit_flow",
-            renderer_module="per_sim_conduit_flow",
-            input_flags=("_status/e_consolidate_complete.flag",),
-            output_path_template=_plot_output_template(
-                renderer_kind="conduit_flow",
-                subdir="plots/per_sim/{event_id}",
-                event_id="{event_id}",
-            ),
-            source_paths=(),
-            wildcards=("event_id",),
-            extra_cli_flags=("--event-iloc {params.event_iloc}",),
-            extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID[w.event_id]"),),
-            report_kwargs={
-                "caption": "report/captions/per_sim_conduit_flow.rst",
-                "category": "Per Simulation Results",
-                "labels": '{"figure": "Conduit flow", "event_id": "{event_id}"}',
-            },
-            resources_yaml="mem_mb=4000, time_min=15",
-            log_path_template="logs/plots/per_sim_conduit_flow_{event_id}.log",
-            source_paths_fn_name="_per_sim_conduit_flow_sources",
-        )
-        return helpers + _emit_plot_rule(flood_spec, ctx) + _emit_plot_rule(conduit_spec, ctx)
+        return helpers + _emit_plot_rule(page_spec, ctx)
 
     def generate_snakemake_config(self, mode: Literal["local", "slurm", "single_job"]) -> dict:
         """

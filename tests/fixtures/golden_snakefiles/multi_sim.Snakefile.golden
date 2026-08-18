@@ -30,8 +30,7 @@ rule all:
         "scenario_status.csv",
         "workflow_summary.md",
         "plots/system_overview.html",
-        expand("plots/per_sim/{event_id}/peak_flood_depth__evt.{event_id}.html", event_id=SIM_IDS),
-        expand("plots/per_sim/{event_id}/conduit_flow__evt.{event_id}.html", event_id=SIM_IDS),
+        expand("plots/per_sim/{event_id}/event_page__evt.{event_id}.html", event_id=SIM_IDS),
         "plots/per_analysis/summary_table.html",
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
@@ -382,84 +381,46 @@ rule plot_system_overview:
             > {log} 2>&1
         """
 
-def _per_sim_flood_depth_sources(wildcards):
+def _per_sim_event_page_sources(wildcards):
     from hhemt.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
     )
-    return collect_per_sim_source_paths(
-        "peak_flood_depth",
-        wildcards.event_id,
-        rainfall_datavar='mm_per_hr',
-        storm_tide_datavar='waterlevel_m',
-        dem_rel_path='../elevation_3.50m.dem',
-        watershed_rel_path='{HOME_REL}/.local/share/hhemt/examples/norfolk_coastal_flooding/data/contents/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp',
-    )
+    out = []
+    for _kind in ("peak_flood_depth", "conduit_flow"):
+        for _src in collect_per_sim_source_paths(
+            _kind,
+            wildcards.event_id,
+            rainfall_datavar='mm_per_hr',
+            storm_tide_datavar='waterlevel_m',
+            dem_rel_path='../elevation_3.50m.dem',
+            watershed_rel_path='{HOME_REL}/.local/share/hhemt/examples/norfolk_coastal_flooding/data/contents/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp',
+        ):
+            if _src not in out:
+                out.append(_src)
+    return out
 
-def _per_sim_conduit_flow_sources(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_per_sim_source_paths,
-    )
-    return collect_per_sim_source_paths(
-        "conduit_flow",
-        wildcards.event_id,
-        rainfall_datavar='mm_per_hr',
-        storm_tide_datavar='waterlevel_m',
-        dem_rel_path='../elevation_3.50m.dem',
-        watershed_rel_path='{HOME_REL}/.local/share/hhemt/examples/norfolk_coastal_flooding/data/contents/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp',
-    )
-
-rule plot_per_sim_peak_flood_depth:
+rule plot_per_sim_event_page:
     input:
         consolidated = "_status/e_consolidate_complete.flag",
     output:
         report(
-            "plots/per_sim/{event_id}/peak_flood_depth__evt.{event_id}.html",
-            caption="report/captions/per_sim_peak_flood_depth.rst",
+            "plots/per_sim/{event_id}/event_page__evt.{event_id}.html",
+            caption="report/captions/per_sim_event_page.rst",
             category="Per Simulation Results",
-            labels={"figure": "Peak flood depth", "event_id": "{event_id}"},
+            labels={"figure": "Simulation results", "event_id": "{event_id}"},
         )
     wildcard_constraints:
         event_id="[A-Za-z0-9_.]+",
     params:
-        source_paths = _per_sim_flood_depth_sources,
-        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_flood_depth_sources(w)),
+        source_paths = _per_sim_event_page_sources,
+        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_event_page_sources(w)),
         event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
-    log: "logs/plots/per_sim_peak_flood_depth_{event_id}.log"
+    log: "logs/plots/per_sim_event_page_{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
-    resources: mem_mb=4000, time_min=15
+    resources: mem_mb=8000, time_min=30
     shell:
         """
-        {PYTHON} -m hhemt.report_renderers._cli per_sim_peak_flood_depth \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
-            --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
-            --event-iloc {params.event_iloc} \
-            --output {output} \
-            > {log} 2>&1
-        """
-
-rule plot_per_sim_conduit_flow:
-    input:
-        consolidated = "_status/e_consolidate_complete.flag",
-    output:
-        report(
-            "plots/per_sim/{event_id}/conduit_flow__evt.{event_id}.html",
-            caption="report/captions/per_sim_conduit_flow.rst",
-            category="Per Simulation Results",
-            labels={"figure": "Conduit flow", "event_id": "{event_id}"},
-        )
-    wildcard_constraints:
-        event_id="[A-Za-z0-9_.]+",
-    params:
-        source_paths = _per_sim_conduit_flow_sources,
-        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_conduit_flow_sources(w)),
-        event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
-    log: "logs/plots/per_sim_conduit_flow_{event_id}.log"
-    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
-    resources: mem_mb=4000, time_min=15
-    shell:
-        """
-        {PYTHON} -m hhemt.report_renderers._cli per_sim_conduit_flow \
+        {PYTHON} -m hhemt.report_renderers._cli per_sim_event_page \
             --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
             --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
@@ -652,8 +613,7 @@ rule export_scenario_status:
 rule render_report:
     input:
         "plots/system_overview.html",
-        expand("plots/per_sim/{event_id}/peak_flood_depth__evt.{event_id}.html", event_id=SIM_IDS),
-        expand("plots/per_sim/{event_id}/conduit_flow__evt.{event_id}.html", event_id=SIM_IDS),
+        expand("plots/per_sim/{event_id}/event_page__evt.{event_id}.html", event_id=SIM_IDS),
         "plots/per_analysis/summary_table.html",
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
