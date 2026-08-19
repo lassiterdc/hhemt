@@ -177,9 +177,21 @@ def test_renders_aggregate_table_has_three_failed_rows():
     report = _synthetic_report()
     html = _render_aggregate_table(report.by_level["aggregate"])
     assert "Aggregate Per-Scenario Checks" in html
-    assert "Scenarios setup" in html
-    assert "Scenarios ran" in html
-    assert "Timeseries processed" in html
+    # [Q154]/VMS-C: the aggregate table now renders the DISPLAY name from
+    # _CHECK_VOCABULARY, not the raw `CheckResult.name`. BOTH halves are pinned
+    # deliberately: the raw name remains the machine key the cross-experiment matrix
+    # joins children on (cross_experiment_errors_and_warnings.py:256), so a test that
+    # tracked only the rename would stop pinning the split it exists to protect.
+    assert [c.name for c in report.by_level["aggregate"]] == [
+        "Scenarios setup",
+        "Scenarios ran",
+        "Timeseries processed",
+    ]
+    assert "Scenario setup" in html
+    assert "Scenario runs" in html
+    assert "Timeseries processing" in html
+    # The description column is populated -- invisible to a name-only assertion.
+    assert "Every scenario the analysis defines was created on disk" in html
     assert html.count('class="fail"') == 3
 
 

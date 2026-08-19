@@ -7,7 +7,8 @@ per the user's requested grouping:
 
 1. Overall pass/fail banner.
 2. System-Level Checks (compilation, summaries, CSV integrity).
-3. Aggregate Per-Scenario Checks (N of M setup / ran / processed).
+3. Aggregate Per-Scenario Checks (N of M setup / ran / processed). Carries the same
+   Name / Check / Status / Details columns as the other two check tables ([Q154]).
 4. Resource-Utilization Mismatches (status table always; per-scenario mismatch table
    only when a mismatch exists -- no "all clear" banner, it duplicates the status row).
 5. Granular Per-Scenario Failures (table when failures exist; the whole section is
@@ -68,7 +69,90 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "Every scenario ran on the MPI ranks, OMP threads, GPUs, GPU backend and "
         "build type its configuration requested.",
     ),
+    # --- aggregate-level checks ([Q154]: this table now carries the same columns as
+    # the other two, so it needs the same descriptions). Authored in ONE pass with the
+    # four above, from each check's own predicate, to the convention stated at the top
+    # of this block -- [Q155] requires the VALUES be derived alike, and a single
+    # authoring event is what makes that true rather than asserted.
+    "Scenarios setup": (
+        "Scenario setup",
+        "Every scenario the analysis defines was created on disk with its inputs written.",
+    ),
+    "Scenarios ran": (
+        "Scenario runs",
+        "Every scenario's simulation reached completion for each enabled model.",
+    ),
+    "Timeseries processed": (
+        "Timeseries processing",
+        "Every scenario has processed timeseries output written for each enabled model.",
+    ),
+    "Data availability": (
+        "Data availability",
+        "Every per-scenario artifact class the report reads is present, or its absence is "
+        "a deliberate reclamation rather than a loss.",
+    ),
+    "invalidating-fix registry": (
+        "Invalidating-fix registry",
+        "No calculation-invalidating fix in the registry applies to the toolkit build "
+        "that produced this analysis.",
+    ),
+    "resume validity": (
+        "Resume validity",
+        "Every resumed coupled sim ran at a solver build with no known resume defect, and "
+        "its exchange history replayed rather than silently re-initializing.",
+    ),
+    "Known resume defects": (
+        "Known resume defects",
+        "The producing solver build carries no defect from the resume-defect registry that "
+        "applies to this run's model selection.",
+    ),
+    "Resume schedule honored": (
+        "Resume schedule",
+        "Every resumed sim's realized resume count and boundary match the schedule its "
+        "configuration requested.",
+    ),
+    "EDA calc ran": (
+        "EDA calculation",
+        "Every EDA figure enumerated as a report target has a corresponding verdict "
+        "artifact, so the calculation actually ran rather than degrading to a placeholder.",
+    ),
+    "Cross-sim byte-identity": (
+        "Cross-sim byte-identity",
+        "Sub-analyses differing only in compute configuration produce bit-identical tracked "
+        "variables within each hardware family.",
+    ),
+    "Raw byte-for-byte identity": (
+        "Raw byte-for-byte identity",
+        "Each configuration's raw per-timestep rasters are byte-identical to its "
+        "within-family reference across every raw output type.",
+    ),
+    "Rank sensitivity": (
+        "Rank sensitivity",
+        "Running at N MPI ranks reproduces the single-rank result within the same compute "
+        "family, byte-identically or within a disclosed magnitude.",
+    ),
+    "Resume sensitivity": (
+        "Resume sensitivity",
+        "A resumed run reproduces its clean counterpart at the same compute configuration, "
+        "byte-identically or within a disclosed magnitude.",
+    ),
+    "Cross-hardware magnitude": (
+        "Cross-hardware magnitude",
+        "The characterized divergence between one GPU and one serial CPU rank stays within "
+        "its disclosed magnitude band.",
+    ),
 }
+
+#: The one cell an unregistered check name renders. NOT prose invented for a predicate
+#: this module cannot read -- [Q154] forbids force-populating word salad, and a name that
+#: reaches here came from a persisted `validation_report.json` whose producer we may not
+#: have. One fixed string is the honest, deterministic, non-overlapping answer, and it is
+#: uniform across every such name, which is what [Q155] asks of the derivation.
+#:
+#: On any tree the vocabulary guard passes this is UNREACHABLE for a toolkit-minted name:
+#: tests/test_iter7_check_vocabulary.py fails when a renderable check has no entry. It is
+#: reachable only from a bundle produced by a toolkit whose vocabulary is ahead of this one.
+_UNDESCRIBED = "No description registered for this check."
 
 #: What the `Details` column may carry, recorded in code (Iter-11 item 8). Every check
 #: table on this page -- system-level, aggregate, and the resource status table -- renders
@@ -102,7 +186,7 @@ def _vocab(c: CheckResult) -> tuple[str, str]:
     correct-if-plain row, matching the graceful-absent posture the rest of this
     module and `load_validation_report` already take.
     """
-    return _CHECK_VOCABULARY.get(c.name, (c.name, ""))
+    return _CHECK_VOCABULARY.get(c.name, (c.name, _UNDESCRIBED))
 
 
 def _render_overall_banner(report: ValidationReport) -> str:
@@ -272,25 +356,39 @@ def _render_aggregate_table(checks: list[CheckResult]) -> str:
     rows = []
     for c in checks:
         status_cls, status_glyph, qualifier = _status_of(c)
+        # [Q154]: same columns as the other two check tables, populated from the same
+        # registry through the same accessor. The display name also replaces the raw
+        # `c.name` here, which is what makes the three tables name one check one way.
+        display_name, description = _vocab(c)
         _details = c.summary
         if qualifier:
             _details += f'<br><span class="floor-note">{qualifier}</span>'
-        rows.append(f'<tr><td>{c.name}</td><td class="{status_cls}">{status_glyph}</td><td>{_details}</td></tr>')
+        rows.append(
+            f"<tr><td>{display_name}</td><td>{description}</td>"
+            f'<td class="{status_cls}">{status_glyph}</td><td>{_details}</td></tr>'
+        )
     # Iter-11 item 8. `Summary` is retired: it named the SAME datum (`c.summary`, plus the
     # same optional precision qualifier) that the two `Check` tables render under `Details`,
     # so one delivered report used two header words for one column's content -- which is the
     # redundancy the item names. `Stage` becomes `Name` for the same reason: the first column
     # of every check table on this page now says `Name`.
     #
-    # NO `Check` column here, and that is deliberate rather than an omission. _CHECK_VOCABULARY
-    # is scoped BY RULING to the two `Check`-level tables; this table renders `c.name` raw and
-    # has no description to put in such a column, so adding one would render a blank column on
-    # every row -- trading a naming inconsistency for a new degenerate column. Eleven further
-    # live names route here, five of them minted in src/hhemt/eda/.
+    # SUPERSEDED by [Q154], and corrected here rather than left contradicting shipped
+    # behaviour. This comment previously said a `Check` column was deliberately absent
+    # because the vocabulary was scoped by ruling to the two `Check`-level tables and
+    # this table had no descriptions to put in one. Both halves are now false: [Q154]
+    # rules that all check tables carry the same columns, and _CHECK_VOCABULARY was
+    # widened in the same change to cover every renderable check, so the column it
+    # feared would be degenerate is fully populated.
+    #
+    # Its underlying objection was sound and is answered rather than overridden: a blank
+    # column WOULD be worse than a naming inconsistency. The answer is the vocabulary
+    # guard, which fails CI when a renderable check has no entry, so the blank-column
+    # state cannot ship.
     return (
         "<h3>Aggregate Per-Scenario Checks</h3>\n"
         '<div class="table-scroll">\n<table>\n'
-        "  <thead><tr><th>Name</th><th>Status</th><th>Details</th></tr></thead>\n"
+        "  <thead><tr><th>Name</th><th>Check</th><th>Status</th><th>Details</th></tr></thead>\n"
         "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>\n</div>"
     )
 

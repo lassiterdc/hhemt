@@ -23,26 +23,79 @@ from pathlib import Path
 import hhemt.analysis_validation as av
 from hhemt.report_renderers.errors_and_warnings import _CHECK_VOCABULARY
 
-#: `by_level` routes these two levels to the two tables headed `<th>Check</th>`;
-#: `aggregate` routes to the `Stage` table, which is OUT of scope by user ruling.
-_CHECK_TABLE_LEVELS = {"system", "resource"}
+#: Every level `by_level` routes to a table that now carries a `Check` column -- which,
+#: after [Q154], is all three. `provenance_completeness` is excluded WITHOUT being listed:
+#: its CheckResult call passes no `level=` at all, so it cannot be routed to any table and
+#: cannot render. The moment that defect is repaired it gains a level and this guard starts
+#: demanding an entry for it, which is the behaviour we want from an exclusion.
+_CHECK_TABLE_LEVELS = {"system", "resource", "aggregate"}
+
+#: Every module that mints a CheckResult. eda/ is included because its verdicts are
+#: persisted as eda/*.verdict.json and read back by `_read_persisted_eda_verdicts`, so they
+#: reach the same tables as the analysis_validation ones.
+_MINTING_MODULES = ("analysis_validation.py", "eda/compute_sensitivity.py",
+                    "eda/cross_sim_identity.py", "eda/raw_resume_identity.py")
+
+
+def _string_bindings(scope_node) -> dict[str, str]:
+    """Simple `x = "literal"` bindings visible inside one scope."""
+    out: dict[str, str] = {}
+    for node in ast.walk(scope_node):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                for t in targets:
+                    if isinstance(t, ast.Name):
+                        out[t.id] = node.value.value
+    return out
 
 
 def _declared_check_table_names() -> set[str]:
-    src = Path(av.__file__)
+    """Every renderable check name minted anywhere under src/hhemt/.
+
+    PER-FUNCTION binding resolution, and that is not incidental. Five names are bound to a
+    local before use (`_name = "Known resume defects"`, `name = "EDA calc ran"`, and three in
+    compute_sensitivity.py), so a literal-only scan misses them. Worse, those three siblings
+    bind DIFFERENT strings to the SAME identifier `name`, so a module-scope map with
+    first-wins keeps one and silently drops two -- a census that under-reports without
+    erroring, which is the failure mode this guard exists to prevent.
+    """
+    import hhemt
+
+    src_root = Path(hhemt.__file__).parent
     names: set[str] = set()
-    for node in ast.walk(ast.parse(src.read_text())):
-        if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "CheckResult"):
-            continue
-        kw = {k.arg: k.value for k in node.keywords}
-        lvl, nm = kw.get("level"), kw.get("name")
-        if (
-            isinstance(lvl, ast.Constant)
-            and lvl.value in _CHECK_TABLE_LEVELS
-            and isinstance(nm, ast.Constant)
-        ):
-            names.add(nm.value)
+    for rel in _MINTING_MODULES:
+        tree = ast.parse((src_root / rel).read_text())
+        module_bindings = _string_bindings_module_level(tree)
+        scopes = [(tree, module_bindings)]
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scopes.append((node, {**module_bindings, **_string_bindings(node)}))
+        for scope_node, bindings in scopes:
+            for node in ast.walk(scope_node):
+                if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "CheckResult"):
+                    continue
+                kw = {k.arg: k.value for k in node.keywords}
+                lvl, nm = kw.get("level"), kw.get("name")
+                if not (isinstance(lvl, ast.Constant) and lvl.value in _CHECK_TABLE_LEVELS):
+                    continue
+                if isinstance(nm, ast.Constant):
+                    names.add(nm.value)
+                elif isinstance(nm, ast.Name) and nm.id in bindings:
+                    names.add(bindings[nm.id])
     return names
+
+
+def _string_bindings_module_level(tree) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for n in tree.body:
+        if isinstance(n, (ast.Assign, ast.AnnAssign)):
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            if isinstance(n.value, ast.Constant) and isinstance(n.value.value, str):
+                for t in targets:
+                    if isinstance(t, ast.Name):
+                        out[t.id] = n.value.value
+    return out
 
 
 def _all_check_levels() -> dict[str, str]:

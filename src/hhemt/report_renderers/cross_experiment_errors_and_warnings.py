@@ -297,8 +297,8 @@ def _render_rollup_html(
         # match each child's check across bundles. Mapping the label without touching the
         # key is what makes this safe: a producer-side rename would split this matrix into
         # two rows with `-` cells whenever bundles from either side of it are combined.
-        # Names only, no descriptions -- a matrix row has no room for one, and the other
-        # thirteen names fall through _vocab_name's identity default unchanged.
+        # Names only, no descriptions -- a matrix row has no room for one. Measured on the
+        # delivered 16-label matrix: 10 change, 6 render unchanged (display == raw), 0 fall through.
         rows.append(f"<tr><td>{_html.escape(_vocab_name(name))}</td>{''.join(cells)}</tr>")
 
     for _d in derived or ():
