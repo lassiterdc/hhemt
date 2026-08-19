@@ -200,16 +200,46 @@ def generate_reprocess_snakefile(
     # ADR-2 (OE-1 anti-drift): the reprocess rule_all / render_report per-sim
     # input stems derive from the same single-source helper as the rule OUTPUTS,
     # so a future stem-grammar change cannot desync inputs from outputs.
-    _pfd_per_sim = _plot_output_template(
-        renderer_kind="peak_flood_depth",
+    #
+    # ONE composite page per event (renderer_kind "event_page") replaces the two
+    # per-figure entries. `_build_plot_rule_block_per_sim` -- the SHARED producer
+    # this generator calls below -- emits exactly that one rule, so naming the
+    # retired peak_flood_depth / conduit_flow stems here demanded files no rule
+    # produced and failed DAG build with MissingInputException. The composite is
+    # NON-SENSITIVITY-ONLY: the per-sa rules still emit two separate figures.
+    _ep_per_sim = _plot_output_template(
+        renderer_kind="event_page",
         subdir="plots/per_sim/{event_id}",
         event_id="{event_id}",
-    ).replace("__OUTPUT_EXT__", _ext["per_sim_peak_flood_depth"])
-    _cf_per_sim = _plot_output_template(
-        renderer_kind="conduit_flow",
-        subdir="plots/per_sim/{event_id}",
-        event_id="{event_id}",
-    ).replace("__OUTPUT_EXT__", _ext["per_sim_conduit_flow"])
+    ).replace("__OUTPUT_EXT__", _ext["per_sim_event_page"])
+
+    # Per-plot disable parity with the production generator (workflow.py's
+    # `_plot_items`). Built ONCE, in the standard set's renderer order, filtered by
+    # report_config.disabled_renderers -- then interpolated into BOTH `rule all`
+    # and `render_report` so enumeration and emission cannot drift. This generator
+    # has now failed that way three times (Gotcha 37 subs/events, Gotcha 39
+    # Snakefile selection, and the stem mismatch above); building the list once is
+    # what makes a fourth structurally impossible.
+    from hhemt.report_renderers._reporting_sets import renderer_active
+
+    _disabled = builder._resolve_disabled_renderers(builder.analysis)
+    _plot_items: list[str] = []
+    if renderer_active("system_overview", _disabled):
+        _plot_items.append(f'"plots/system_overview{_ext["system_overview"]}"')
+    if renderer_active("per_sim", _disabled):
+        _plot_items.append(f'expand("{_ep_per_sim}", event_id=SIM_IDS)')
+    if renderer_active("per_analysis_summary", _disabled):
+        _plot_items.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
+    if renderer_active("scenario_status_appendix", _disabled):
+        _plot_items.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
+    if renderer_active("errors_and_warnings", _disabled):
+        _plot_items.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+    if renderer_active("disk_utilization", _disabled):
+        _plot_items.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
+    if renderer_active("metadata", _disabled):
+        _plot_items.append(f'"plots/metadata{_ext["metadata"]}"')
+    _rule_all_plot_block = ",\n        ".join(_plot_items)
+    _render_report_input_block = ",\n        ".join([*_plot_items, '"scenario_status.csv"'])
 
     # Determine which `which` value to pass to consolidate's shell based on
     # which models are enabled (mirror generate_snakefile_content's logic).
@@ -262,12 +292,7 @@ rule all:
         "_status/e_consolidate_complete.flag",
         "scenario_status.csv",
         "workflow_summary.md",
-        "plots/system_overview{_ext["system_overview"]}",
-        expand("{_pfd_per_sim}", event_id=SIM_IDS),
-        expand("{_cf_per_sim}", event_id=SIM_IDS),
-        "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
-        "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
-        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"{render_targets_in_rule_all},
+        {_rule_all_plot_block}{render_targets_in_rule_all},
 
 onerror:
     # Reprocess does not re-fire the sim driver, so the only failure modes are
@@ -328,13 +353,27 @@ onerror:
             allow_incomplete=True,
         )
 
-    # ---- Plot rules (always emitted; their mtime trigger handles re-firing) ----
-    snakefile_content += builder._build_plot_rule_block_system_overview()
-    snakefile_content += builder._build_plot_rule_block_per_sim()
-    snakefile_content += builder._build_plot_rule_block_per_analysis_summary()
-    snakefile_content += builder._build_plot_rule_block_scenario_status_appendix()
-    snakefile_content += builder._build_plot_rule_block_errors_and_warnings()
-    snakefile_content += builder._build_plot_rule_block_disk_utilization()
+    # ---- Plot rules (mtime trigger handles re-firing) ----
+    # Emission is gated by the SAME `renderer_active` predicate that gated the
+    # enumeration above: a site that filters one without the other yields
+    # MissingInputException (_reporting_sets.renderer_active docstring). `metadata`
+    # is emitted here for the first time -- it was absent from this generator
+    # entirely, so a reprocess-rendered report carried no Metadata sidebar page and
+    # therefore no SLURM-efficiency / queue-time table.
+    if renderer_active("system_overview", _disabled):
+        snakefile_content += builder._build_plot_rule_block_system_overview()
+    if renderer_active("per_sim", _disabled):
+        snakefile_content += builder._build_plot_rule_block_per_sim()
+    if renderer_active("per_analysis_summary", _disabled):
+        snakefile_content += builder._build_plot_rule_block_per_analysis_summary()
+    if renderer_active("scenario_status_appendix", _disabled):
+        snakefile_content += builder._build_plot_rule_block_scenario_status_appendix()
+    if renderer_active("errors_and_warnings", _disabled):
+        snakefile_content += builder._build_plot_rule_block_errors_and_warnings()
+    if renderer_active("disk_utilization", _disabled):
+        snakefile_content += builder._build_plot_rule_block_disk_utilization()
+    if renderer_active("metadata", _disabled):
+        snakefile_content += builder._build_plot_rule_block_metadata()
 
     # ---- Export scenario status (always emitted) ----
     snakefile_content += builder._build_export_scenario_status_rule(
@@ -353,14 +392,7 @@ onerror:
     snakefile_content += f'''
 rule render_report:
     input:
-        "plots/system_overview{_ext["system_overview"]}",
-        expand("{_pfd_per_sim}", event_id=SIM_IDS),
-        expand("{_cf_per_sim}", event_id=SIM_IDS),
-        "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
-        "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
-        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
-        "plots/disk_utilization{_ext["disk_utilization"]}",
-        "scenario_status.csv",
+        {_render_report_input_block},
     output:
         "analysis_report.{{format}}"
     wildcard_constraints:
