@@ -394,6 +394,45 @@ class TRITONSWMM_scenario:
         secs = seconds % 60
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
+    def _n_hydrograph_sources(self) -> int:
+        """Count of TRITON inflow sources, 0 when SWMM hydrology is disabled.
+
+        `strmflow/loc.txt` is written by `write_hydrograph_files`, which the S12
+        gate correctly skips when `toggle_use_swmm_for_hydrology` is False -- so
+        both cfg generators' `pd.read_csv(hyg_locs)` died on a file that is
+        absent by design. Zero is not a fallback value here: with hydrology off
+        there are no inflow hydrographs at all, so it is the count.
+
+        Paired with `_swmm_inp_for_sim_duration`; between them they cover all
+        four unconditional hydrology-derived reads on the prepare path.
+        """
+        if not self._system.cfg_system.toggle_use_swmm_for_hydrology:
+            return 0
+        return len(pd.read_csv(self.scen_paths.hyg_locs))
+
+    def _swmm_inp_for_sim_duration(self) -> Path:
+        """The `.inp` to read `[OPTIONS]` START/END from when computing SIM_DUR_S.
+
+        `hydro.inp` is written ONLY inside the `toggle_use_swmm_for_hydrology`
+        block (scenario.py:833-837), but both TRITON cfg generators read it
+        unconditionally -- so a hydrology-off scenario died at `swmmio.Model`
+        with a bare FileNotFoundError, one line after the S12 gate correctly
+        skipped the hydrograph build.
+
+        The fallback is the SAME NUMBER, not a substitute for it. Every
+        per-scenario `.inp` is filled by `swmm_utils.create_swmm_inp_from_template`,
+        which sets START_DATE/START_TIME/END_DATE/END_TIME once (swmm_utils.py:105-110)
+        from one `first_tstep`/`last_tstep` pair, so `hydraulics.inp` -- written
+        unconditionally -- carries an identical simulation window by construction.
+
+        ONE expression with two consumers, deliberately: a second inline
+        conditional in `_generate_TRITON_cfg` is the second declaration that
+        drifts, which is the defect `model_logfile_for` exists to prevent.
+        """
+        if self._system.cfg_system.toggle_use_swmm_for_hydrology:
+            return Path(self.scen_paths.swmm_hydro_inp)
+        return Path(self.scen_paths.swmm_hydraulics_inp)
+
     def _generate_TRITON_SWMM_cfg(self):
         use_constant_mannings = self._system.cfg_system.toggle_use_constant_mannings
         dem_processed = self._system.sys_paths.dem_processed
@@ -418,7 +457,7 @@ class TRITONSWMM_scenario:
             const_man_toggle = "#"
             man_file_toggle = ""
 
-        swmmmodel = swmmio.Model(str(self.scen_paths.swmm_hydro_inp))
+        swmmmodel = swmmio.Model(str(self._swmm_inp_for_sim_duration()))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             sim_options = swmmmodel.inp.options
@@ -433,8 +472,7 @@ class TRITONSWMM_scenario:
         df_extbc_loc = pd.read_csv(self.scen_paths.extbc_loc)
         num_ext_bc = len(df_extbc_loc)
 
-        df_src_loc = pd.read_csv(self.scen_paths.hyg_locs)
-        num_srcs = len(df_src_loc)
+        num_srcs = self._n_hydrograph_sources()
 
         sim_id_str = self.sim_id_str
 
@@ -511,7 +549,7 @@ class TRITONSWMM_scenario:
             man_file_toggle = ""
 
         # Get simulation duration from SWMM model (same as TRITON-SWMM)
-        swmmmodel = swmmio.Model(str(self.scen_paths.swmm_hydro_inp))
+        swmmmodel = swmmio.Model(str(self._swmm_inp_for_sim_duration()))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             sim_options = swmmmodel.inp.options
@@ -526,8 +564,7 @@ class TRITONSWMM_scenario:
         df_extbc_loc = pd.read_csv(self.scen_paths.extbc_loc)
         num_ext_bc = len(df_extbc_loc)
 
-        df_src_loc = pd.read_csv(self.scen_paths.hyg_locs)
-        num_srcs = len(df_src_loc)
+        num_srcs = self._n_hydrograph_sources()
 
         sim_id_str = self.sim_id_str
 
@@ -847,7 +884,17 @@ class TRITONSWMM_scenario:
 
         # Create TRITON inputs
         self._input_generator.create_external_boundary_condition_files()
-        self._runoff_modeler.write_hydrograph_files()
+        # GATED, and the gate is not defensive polish. write_hydrograph_files derives
+        # the TRITON inflow hydrographs from swmm/hydro.out, whose producer
+        # (run_swmm_hydro_model, above) is itself gated on this toggle. Calling it
+        # unconditionally means that with toggle_use_swmm_for_hydrology=False -- a
+        # SUPPORTED config, warned-about-but-permitted at validation.py:317-323 --
+        # hydrograph_outputs_gate finds the hydrographs absent AND their rebuild source
+        # absent and raises ProcessingError, so scenario preparation cannot complete.
+        # The gate cannot succeed under any configuration in which it was reached, so
+        # this is a restriction to the reachable domain, not a behavior change.
+        if self._system.cfg_system.toggle_use_swmm_for_hydrology:
+            self._runoff_modeler.write_hydrograph_files()
         self._input_generator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
             verbose=False
         )

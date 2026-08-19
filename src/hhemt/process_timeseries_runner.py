@@ -119,7 +119,7 @@ def main():
         help="Compression level for output files (0-9)",
     )
     # NOTE: the former `--clear-full-timeseries` boolean is RETIRED, not moved. Its
-    # consumption is superseded by `analysis_config.reclaim_after_processing`, which the
+    # consumption is superseded by `analysis_config.remove_after_processing`, which the
     # reclaim call below reads from the PERSISTED config. Keeping a boolean CLI flag
     # beside a config field would put two switches on one axis, which is the overlap the
     # reclaim design deliberately avoids. No Snakefile emitter ever passed the flag
@@ -429,7 +429,7 @@ def main():
         # runner returns non-zero, no completion flag is written, and the scenario re-runs
         # from raws that are still on disk. Placing it AFTER the flag would invert that --
         # a half-reclaimed tree carrying a "done" flag and no record of what was removed.
-        proc.reclaim_after_processing(
+        proc.remove_after_processing(
             model_type=args.model_type,  # type: ignore
             which=args.which,  # type: ignore
             verbose=True,

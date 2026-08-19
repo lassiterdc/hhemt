@@ -134,7 +134,18 @@ non_breaking_allowlist:
       allowlist row the fnmatch glob bug had hidden.
   - path: src/hhemt/config/analysis.py
     justification: >-
-      timeseries-du reclaim -- ADDITIVE reclaim_after_processing field (ReclaimValue) with a
+      timeseries-du reclaim -- ADDITIVE remove_after_processing field (RemoveValue) with a
+      strict-safe "none" default, RENAMED from reclaim_after_processing/ReclaimValue by user
+      directive in the same commit. The rename is a BREAKING input-config-schema change under
+      extra="forbid" and is nonetheless recorded here rather than as a LAYOUT_VERSION bump:
+      LAYOUT_VERSION governs the on-disk ANALYSIS TREE, and a V{NNNN} migration receives a
+      MigrationContext scoped to analysis_dir, so it cannot reach a user-authored input YAML.
+      The derived in-tree copies (_generated/target_{N}.yaml, subanalyses/sa_*/sa_*.yaml, the
+      platformdirs cache analysis_config.yaml) are re-materialized from the parent config on
+      every load and self-heal. The schema the rename DOES break is the render bundle, which
+      carries cfg_analysis.yaml and loads it back through the model -- so BUNDLE_SCHEMA_VERSION
+      is bumped 3 -> 4 instead. The on-disk log keys (*_reclaimed) are deliberately NOT renamed;
+      renaming those WOULD owe a migration.
       strict-safe "none" default; pure config schema via the config/**/*.py glob, no on-disk
       analysis-tree change, non-breaking, no LAYOUT_VERSION bump. AND:
       Four collapsed non-breaking changes (former duplicate entries). containerization

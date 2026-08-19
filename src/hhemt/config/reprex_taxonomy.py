@@ -130,7 +130,7 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     # a retention policy defines WHAT THE EXPERIMENT KEEPS, so a reproducer must inherit it
     # unchanged rather than re-choose it for their own disk budget -- re-choosing changes
     # which artifacts the reproduction can be checked against.
-    "reclaim_after_processing": "experiment",
+    "remove_after_processing": "experiment",
     "report": "experiment",
     "storm_tide_units": "experiment",
     "subcatchment_raingage_mapping_gage_id_colname": "experiment",

@@ -473,7 +473,7 @@ def assert_model_outputs_processed(
                 ("SWMM-only link summary", paths.output_swmm_only_link_summary),
             ]
 
-        # Post-processing reclaim (analysis_config.reclaim_after_processing) removes the
+        # Post-processing reclaim (analysis_config.remove_after_processing) removes the
         # per-scenario *_tseries artifacts after the summaries are proven intact, so "what
         # a processed scenario looks like" is config-dependent from that feature forward.
         # Callers that enabled the reclaim pass check_timeseries=False. The default True

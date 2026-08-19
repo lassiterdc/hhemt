@@ -248,6 +248,77 @@ class SWMMRunoffModeler:
                 print("Hydrology-only SWMM model already executed. Not re-running.")
         return
 
+    def _write_node_inflow_capture(self, d_node_capture, d_node_gridcell, times_hr, flow_units) -> None:
+        """Persist the PER-NODE inflow series that tseries.hyg destroys.
+
+        WHY PER-NODE. `tseries.hyg` writes one column per DEM GRIDCELL -- the member
+        nodes are summed away one line before the write -- so the file cannot answer
+        "total runoff volume per node location", which is the quantity that was asked
+        for. Capturing pre-sum also makes the float32 storage EXACTLY lossless: every
+        value is an unmodified SWMM REAL4 (`#define REAL4 float`, solver/output.c:50),
+        whereas the post-sum column is a float64 sum of float32s and float32 storage of
+        THAT rounds it.
+
+        Writes nothing when no node carried positive inflow -- legal for a scenario
+        whose gridcells are all dry, and the reason this is a guard rather than an
+        unconditional write.
+        """
+        import numpy as np
+        import xarray as xr
+
+        from hhemt.du_sentinels import restamp_parent_sentinels
+
+        if not d_node_capture or times_hr is None:
+            return
+        out_path = Path(self.scenario.scen_paths.sim_folder) / "processed" / "hydrology_inflow_summary.zarr"
+        node_ids = sorted(d_node_capture)
+        inflow = np.asarray(
+            [np.asarray(d_node_capture[n], dtype=_HYDROGRAPH_CAPTURE_DTYPE) for n in node_ids],
+            dtype=_HYDROGRAPH_CAPTURE_DTYPE,
+        )
+        t_hr = np.asarray(times_hr, dtype="float64")
+        # Volume integrates cms over HOURS, so the 3600 is a unit conversion, not a
+        # fudge. float64 here deliberately: the reduction accumulates over ~2,000
+        # timesteps and is not itself a stored SWMM value.
+        # `np.trapezoid` is the NumPy>=2.0 spelling and `np.trapz` the <2.0 one;
+        # this env pins numpy 1.26.4, where `trapezoid` does not exist, and the
+        # project supports py3.11-3.12 across both numpy majors. Resolve by
+        # attribute rather than by version test so neither spelling is a hard
+        # floor -- `trapz` is deprecated in 2.x but still present, and
+        # `trapezoid` is absent in 1.x, so first-available is the only form
+        # correct on both.
+        _trapz = getattr(np, "trapezoid", None) or np.trapz
+        volume_m3 = _trapz(inflow.astype("float64"), x=t_hr, axis=1) * 3600.0
+        ds = xr.Dataset(
+            data_vars={
+                "inflow_cms": (("node_id", "time_hr"), inflow),
+                "total_inflow_volume_m3": (("node_id",), volume_m3),
+            },
+            coords={
+                "node_id": np.asarray(node_ids, dtype=str),
+                "time_hr": t_hr.astype("float32"),
+                "dem_x_coord": (("node_id",), np.asarray([d_node_gridcell[n][0] for n in node_ids])),
+                "dem_y_coord": (("node_id",), np.asarray([d_node_gridcell[n][1] for n in node_ids])),
+            },
+            attrs={
+                "flow_units": str(flow_units),
+                "system_total_inflow_volume_m3": float(volume_m3.sum()),
+                "n_gridcells": int(len({tuple(v) for v in d_node_gridcell.values()})),
+                "notes": (
+                    "Per-NODE TOTAL_INFLOW captured pre-gridcell-sum from swmm/hydro.out. "
+                    "float32 is exactly lossless w.r.t. SWMM's REAL4 binary. Supports "
+                    "CONTENT-identical regeneration of strmflow/tseries.hyg (values "
+                    "byte-recoverable; gridcell grouping re-derivable from the DEM and "
+                    "hydro.inp) -- NOT byte-identical TEXT regeneration, which has not "
+                    "been round-tripped."
+                ),
+            },
+        )
+        ds = ds.assign_coords(event_iloc=self.scenario.event_iloc).expand_dims("event_iloc")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        ds.to_zarr(out_path, mode="w")
+        restamp_parent_sentinels(out_path, analysis_dir=self.scenario._analysis.analysis_paths.analysis_dir)  # PATTERN B
+
     def write_hydrograph_files(self) -> None:
         """
         Extract runoff hydrographs from SWMM output and format for TRITON-SWMM.
@@ -275,6 +346,12 @@ class SWMMRunoffModeler:
         )
 
         d_time_series = dict()
+        # Bound HERE, not described in prose beside the spec that loads them. Round 6
+        # halted on exactly this: S5's change block referenced both names without
+        # binding either, and because the block is an indented fragment that ast.parse
+        # rejects, the free-name gate skipped it silently for five rounds.
+        d_node_capture: dict = {}
+        d_node_gridcell: dict = {}
         lst_nodes_with_inflow = []
         with Output(hydro_outfile) as out:
             flow_units = out.units["flow"]  # type: ignore
@@ -302,6 +379,17 @@ class SWMMRunoffModeler:
                         if d_inflow.sum() > 0:  # type: ignore
                             lst_nodes_with_inflow.append(key)
                             d_flows[key] = d_inflow.values
+                            # PER-NODE capture, taken here rather than downstream, and the
+                            # position is load-bearing. One line below, the member nodes of
+                            # a gridcell are SUMMED (df_flows.sum(axis=1)) and the per-node
+                            # identity is gone -- tseries.hyg is per-GRIDCELL, so its 821
+                            # columns are centroids, not nodes, and it cannot answer "total
+                            # runoff volume per node location". These values are unmodified
+                            # SWMM REAL4 (`#define REAL4 float`, solver/output.c:50), so
+                            # storing them float32 is EXACTLY lossless; the post-sum column
+                            # is a float64 sum of float32s and is not.
+                            d_node_capture[key] = d_inflow.values
+                            d_node_gridcell[key] = coords
                 # combine time series into a dataframe
                 if len(d_flows) > 0:
                     df_flows = pd.DataFrame(d_flows)
@@ -329,6 +417,12 @@ class SWMMRunoffModeler:
                     y = col[1]
                     f.write("{},{}\n".format(x, y))
             self.scenario.log.hyg_locs_created.set(True)
+            self._write_node_inflow_capture(
+                d_node_capture,
+                d_node_gridcell,
+                d_time_series.get("time_hr"),
+                flow_units,
+            )
             # verifying that all nodes are within the DEM
             xllcorner = rds_dem.x.values.min()  # type: ignore
             yllcorner = rds_dem.y.values.min()  # type: ignore
@@ -363,6 +457,30 @@ class SWMMRunoffModeler:
                 sys.exit()
         return
 
+
+
+#: Storage dtype for the per-node inflow capture. float32 is EXACTLY LOSSLESS here
+#: and float64 is pure padding, which is a measurement rather than a preference:
+#: SWMM's binary output writer declares `#define REAL4 float` (solver/output.c:50)
+#: and stores node results through `REAL4* NodeResults` (:86), writing
+#: sizeof(REAL4) records (:167). pyswmm's Output.node_series -- the sole source of
+#: every value captured -- therefore yields values carrying 24 mantissa bits,
+#: widened to Python float on the way out. float64 would record 29 guaranteed-zero
+#: bits per value, costing ~1 MB/scenario (~3.8 GB over a 3,798-scenario ensemble)
+#: for no information.
+#:
+#: SCOPE OF THE REVERSIBILITY CLAIM, precisely. The capture supports
+#: CONTENT-identical regeneration of strmflow/tseries.hyg (values byte-recoverable,
+#: gridcell grouping re-derivable from the DEM + hydro.inp, both persistent). It does
+#: NOT establish BYTE-identical TEXT regeneration: pandas writes repr(float(x)) with
+#: float_format=None, which is deterministic but whose round-trip has not been run.
+#: Do not upgrade the claim without running it.
+#:
+#: The dtype is exact only for the PER-NODE series. The per-GRIDCELL column in
+#: tseries.hyg is df_flows.sum(axis=1) -- a float64 sum of float32s -- and float32
+#: storage of THAT quantity rounds it (<= 1 ulp). Capturing pre-sum is what makes
+#: the lossless claim true.
+_HYDROGRAPH_CAPTURE_DTYPE = "float32"
 
 
 def hydrograph_outputs_gate(scenario) -> str:
@@ -412,7 +530,7 @@ def hydrograph_outputs_gate(scenario) -> str:
                     "is no rebuild source. This scenario cannot be prepared without "
                     "re-running the hydrology simulation: clear hydro_swmm_sim_completed "
                     "on this scenario's log (or re-prepare the scenario from scratch) and "
-                    "re-run. If reclaim_after_processing named 'hydro_out', that reclaim "
+                    "re-run. If remove_after_processing named 'hydro_out', that reclaim "
                     "is why this file is gone; it is a disclosed reclaim, not a failed run."
                 ),
             )

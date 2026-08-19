@@ -1,4 +1,4 @@
-"""Synth-tier coverage for ``analysis_config.reclaim_after_processing``.
+"""Synth-tier coverage for ``analysis_config.remove_after_processing``.
 
 HPC-free developer-CI tier.
 
@@ -116,12 +116,12 @@ def test_default_config_reclaims_nothing():
     """Asserted on the CONFIG, never by flipping the knob in memory.
 
     Gotcha 73: the process runner is a SUBPROCESS that loads its config from disk, so a
-    test that sets ``analysis.cfg_analysis.reclaim_after_processing`` on a built analysis
+    test that sets ``analysis.cfg_analysis.remove_after_processing`` on a built analysis
     and then runs the workflow silently tests nothing. Every behavioral test in this module
     must inject the knob at case-construction time via
     ``retrieve_synth_TRITON_SWMM_test_case(..., additional_analysis_configs={...})``.
     """
-    assert analysis_config.model_fields["reclaim_after_processing"].default == "none"
+    assert analysis_config.model_fields["remove_after_processing"].default == "none"
 
 
 @pytest.mark.parametrize(
@@ -133,7 +133,7 @@ def test_reclaim_policy_validator_rejects(bad):
     from pydantic import ValidationError
 
     with pytest.raises((ValidationError, ValueError)):
-        analysis_config._validate_reclaim_after_processing(bad)
+        analysis_config._validate_remove_after_processing(bad)
 
 
 def test_reclaim_classes_normalization():
@@ -148,6 +148,9 @@ def test_reclaim_classes_normalization():
         "raw_swmm_binaries",
         "coupled_rpt",
         "hydro_out",
+        "prep_inputs",
+        "hydrographs",
+        "standalone_rpt",
     }
     assert _Proc._reclaim_classes(["timeseries"]) == ("timeseries",)
 
@@ -190,9 +193,17 @@ def test_data_availability_check_is_registered_and_graceful_absent():
         "raw_SWMM_binaries_reclaimed",
         "coupled_rpt_truncated",
         "hydro_out_reclaimed",
+        # The three regeneration-cost classes. The pin stays EXACT rather than
+        # widening to a subset check: it exists so a disclosure field cannot land
+        # unnoticed, it did that job when coupled_rpt_truncated and
+        # hydro_out_reclaimed arrived, and it did it again here -- this update is
+        # owed BECAUSE the pin failed on the applied tree rather than in spite of it.
+        "prep_inputs_reclaimed",
+        "hydrographs_reclaimed",
+        "standalone_rpt_reclaimed",
     }
     # Assert on the CODE, not the source text: the docstring legitimately names
-    # `reclaim_after_processing` in order to say the check must not read it, so a raw
+    # `remove_after_processing` in order to say the check must not read it, so a raw
     # substring scan over the source would fail on the very comment that documents the
     # property. Parse the function and inspect only its executable body.
     import ast
@@ -206,7 +217,7 @@ def test_data_availability_check_is_registered_and_graceful_absent():
     } | {
         n.value for stmt in body for n in ast.walk(stmt) if isinstance(n, ast.Constant) and isinstance(n.value, str)
     }
-    assert "reclaim_after_processing" not in names, (
+    assert "remove_after_processing" not in names, (
         "check_data_availability must read the per-scenario LOG, never cfg_analysis -- "
         "config records intent, and a scenario that failed before the reclaim fired would "
         "be mislabelled reclaimed"
@@ -306,6 +317,35 @@ def test_first_ever_prep_is_unaffected(tmp_path):
     """Regression guard: an unprepared scenario must reach the real body unchanged."""
     scen = _FakeScenario(tmp_path, logged=False, hyg_present=False, hydro_out_present=True)
     assert _run_gate(scen) == "fell_through"
+
+
+def test_rename_accepts_the_new_key_and_rejects_the_old_one():
+    """Both arms flip on the rename; a test asserting only one would pass pre-rename.
+
+    The reject arm matters more than the accept arm. Toolkit convention forbids a
+    deprecation alias ("update all usage sites immediately, delete the old code
+    completely"), so an old config must FAIL LOUDLY at load rather than be silently
+    ignored -- and under extra="forbid" it does, which is the property this pins.
+    """
+    import pytest as _pytest
+    from pydantic import ValidationError
+
+    from hhemt.config.analysis import analysis_config
+
+    assert "remove_after_processing" in analysis_config.model_fields
+    assert "reclaim_after_processing" not in analysis_config.model_fields
+    # Payload built from the model's OWN optional defaults rather than a
+    # hand-listed fixture, so this block binds every name it loads and cannot
+    # drift as required fields change. Required fields stay absent, so the raise
+    # is guaranteed -- which is exactly why `match=` is load-bearing: it pins the
+    # failure to the RETIRED KEY rather than to the missing required fields.
+    _payload = {
+        name: f.default
+        for name, f in analysis_config.model_fields.items()
+        if not f.is_required()
+    }
+    with _pytest.raises(ValidationError, match="reclaim_after_processing"):
+        analysis_config.model_validate({**_payload, "reclaim_after_processing": "all"})
 
 
 def test_hydro_out_is_tritonswmm_only_and_absent_from_the_default_policy():

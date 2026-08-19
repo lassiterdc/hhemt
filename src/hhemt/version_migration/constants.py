@@ -20,7 +20,14 @@ MINIMUM_SUPPORTED_VERSION: int = 0
 #: v3: round-trippable Workflow-Run-Crate (mainEntity) + reprex carriage.
 #: The consume-side guard in bundle/__init__.py rejects both >3 and <3, so this
 #: 2->3 bump hard-breaks pre-existing v2 bundles (re-emit from source).
-BUNDLE_SCHEMA_VERSION: int = 3
+#: v4: analysis_config field rename reclaim_after_processing -> remove_after_processing.
+#: A bundle carries cfg_analysis.yaml (bundle/_emit.py) and loads it back through
+#: analysis_config (bundle/__init__.py), and the model is extra="forbid" -- so a v3
+#: bundle emitted before the rename fails Pydantic validation on a post-rename toolkit.
+#: The bump does not CREATE that break; it makes it legible, because the exact-match
+#: consume-side guard then raises BundleSchemaError (CLI exit 6, naming the version
+#: mismatch) instead of an opaque extra_forbidden traceback from deep in config load.
+BUNDLE_SCHEMA_VERSION: int = 4
 
 #: Default _version.json filename (used by both analysis and system stamps).
 VERSION_FILE_NAME: str = "_version.json"

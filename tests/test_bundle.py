@@ -771,10 +771,10 @@ def test_read_static_backend_raises_when_report_absent_via_from_directory(tmp_pa
 
 def test_bundle_v1_rejected_by_post_f2_toolkit(tmp_path):
     """R15: a bundle stamped `bundle_schema_version=1` (pre-F2) fails the
-    schema-version gate in `Bundle.from_directory` under post-F2 toolkit
-    (`BUNDLE_SCHEMA_VERSION=2`). The error message names the version mismatch."""
+    schema-version gate in `Bundle.from_directory` under any later toolkit.
+    The error message names both versions and the remedy."""
     import pytest
-    from hhemt.bundle import Bundle, BundleSchemaError
+    from hhemt.bundle import BUNDLE_SCHEMA_VERSION, Bundle, BundleSchemaError
 
     _write_minimal_cfg_analysis(tmp_path / "cfg_analysis.yaml")
     (tmp_path / "bundle_manifest.json").write_text(
@@ -782,8 +782,16 @@ def test_bundle_v1_rejected_by_post_f2_toolkit(tmp_path):
     )
     with pytest.raises(BundleSchemaError) as excinfo:
         Bundle.from_directory(tmp_path)
-    assert "Pre-F2" in str(excinfo.value)
-    assert "Re-emit" in str(excinfo.value)
+    # Pin the INVARIANT, not a generation. The retired assertion looked for
+    # "Pre-F2" -- a phrase naming ONE transition -- so it broke the moment the
+    # message stopped being about v1->v2, which is the same re-staling shape
+    # test_bundle_schema_version_matches_the_fixtures was renamed to escape.
+    # What must always hold: the error names BOTH versions so a reader can see
+    # the mismatch, and states the remedy that applies to every bump.
+    msg = str(excinfo.value)
+    assert "bundle_schema_version=1" in msg
+    assert f"BUNDLE_SCHEMA_VERSION={BUNDLE_SCHEMA_VERSION}" in msg
+    assert "Re-emit" in msg
 
 
 def test_copy_supporting_files_carries_rocrate_sidecar(tmp_path: Path) -> None:
