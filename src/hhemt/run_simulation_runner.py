@@ -126,6 +126,98 @@ def _record_queue_time(
     return "recorded"
 
 
+#: SLURM step names that are never the solver. `.batch` and `.extern` are SLURM's own
+#: bookkeeping steps; `python` is this runner itself, launched by the jobstep plugin's srun
+#: (the `.0` whose id this whole mechanism exists to stop recording). Anything else under
+#: our allocation is the binary we launched.
+_NON_SOLVER_STEP_NAMES = frozenset({"batch", "extern", "python"})
+
+
+def _parse_step_ids(text: str) -> list[str]:
+    """Solver step SUFFIXES from `sacct -n -P -o JobID,JobName` output.
+
+    Rows are `{jobid}.{step}|{name}`. The allocation row (no `.`) and every
+    `_NON_SOLVER_STEP_NAMES` row are dropped; what remains is the launched binary.
+    """
+    found: list[str] = []
+    for line in (text or "").splitlines():
+        parts = line.strip().split("|")
+        if len(parts) < 2 or "." not in parts[0]:
+            continue
+        suffix = parts[0].rsplit(".", 1)[1].strip()
+        name = parts[1].strip().lower()
+        if suffix.isdigit() and name and name not in _NON_SOLVER_STEP_NAMES:
+            found.append(suffix)
+    return found
+
+
+def _read_launched_step_id(analysis, model_type: str) -> str | None:
+    """The SLURM step id of the srun THIS runner launched, or None.
+
+    The runner's own ``SLURM_STEP_ID`` is the jobstep plugin's srun -- always ``.0`` -- so
+    recording it collapses every attempt of a resumed sim onto one ledger key. The solver
+    runs as a CHILD srun with its own id, and SLURM's own record is the only authority for
+    it: the child cannot report it (``srun`` execs the binary directly, with no shell in
+    the step to write from) and the parent cannot read the child's environment.
+
+    Queried, never inferred, and NEVER fatal -- this is diagnostic metadata, so every
+    failure path returns None and the caller falls back to today's value. A None is
+    strictly better than a wrong id: ``read_attempt_index_by_jobstep`` SKIPS a null-step
+    row, whereas a wrong id silently mislabels an attempt.
+
+    Three refusals, each measured rather than defensive:
+
+    1. No ``$SLURM_JOB_ID`` -- local and serial runs have no step to name, so the whole
+       path no-ops and those runs stay byte-identical to before this existed.
+    2. ``multi_sim_run_method == "1_job_many_srun_tasks"`` -- N concurrent sims SHARE one
+       allocation there, so a solver-named step under this ``$SLURM_JOB_ID`` may belong to
+       a different event entirely. This is the same srun-step aliasing that makes
+       ``workflow.py``'s ``_aliased_jids`` guard refuse to classify a shared jobid, and it
+       is refused here for the same reason.
+    3. Anything other than exactly ONE solver step -- zero means the query missed, and two
+       or more means the allocation cannot attribute a step to this attempt. Under
+       ``batch_job`` each attempt is its own sbatch job with one solver step, so a
+       multi-match is a signal that the assumption no longer holds; picking the highest id
+       would be plausible rather than defensible, and a wrong pick is the one outcome worse
+       than no pick.
+
+    SOURCE: ``sacct`` only, deliberately. A ``scontrol show step`` probe first would avoid
+    slurmdbd lag, but its output format is not the pipe-delimited ``JobID|JobName`` this
+    parses and no live cluster was reachable to confirm the real field names -- shipping a
+    parser for an unverified format would violate the same never-propose-an-unconfirmed-HPC-
+    change norm that ruled out wrapping the srun payload. The lag is instead absorbed by a
+    bounded retry, and adding the ``scontrol`` tier is a one-probe follow-up.
+    """
+    try:
+        import subprocess as _sp
+        import time as _t
+
+        job_id = os.environ.get("SLURM_JOB_ID")
+        if not job_id:
+            return None
+        if getattr(analysis.cfg_analysis, "multi_sim_run_method", None) == "1_job_many_srun_tasks":
+            return None
+
+        argv = ["sacct", "-j", job_id, "-n", "-P", "-o", "JobID,JobName"]
+        for attempt in range(3):
+            # Exit status read from the actuator, never through a pipe: a piped status is
+            # the pipe's, so a failed query would read as success and a missing id as real.
+            proc = _sp.run(argv, capture_output=True, text=True, timeout=30)
+            if proc.returncode == 0:
+                steps = _parse_step_ids(proc.stdout)
+                if len(steps) == 1:
+                    return steps[0]
+                if len(steps) > 1:
+                    logger.debug(f"{len(steps)} solver steps under job {job_id}; refusing to guess")
+                    return None
+            # Zero rows is the slurmdbd-lag signature -- the step ended microseconds ago.
+            if attempt < 2:
+                _t.sleep(2)
+        return None
+    except Exception:  # noqa: BLE001 -- diagnostic metadata must never fail a finished sim
+        return None
+
+
 def _native_compile_error_or_skip_in_container(analysis, system, model_type: str) -> str | None:
     """Native mode: return an error message if the model's backend is not compiled,
     else None. Container mode: always None (no-op).
@@ -581,7 +673,27 @@ def main():
                             "wall_s": float(elapsed),
                             "completed": bool(run.model_run_completed(model_type)),
                             "slurm_jobid": os.environ.get("SLURM_JOB_ID"),
-                            "slurm_step_id": os.environ.get("SLURM_STEP_ID"),
+                            # The step id of the srun this runner LAUNCHED, not the one
+                            # this runner IS. SLURM_STEP_ID here is the jobstep plugin's
+                            # own srun -- always `.0` -- so every attempt of a resumed sim
+                            # wrote the same key `{jobid}.0` and read_attempt_index_by_
+                            # jobstep's last-wins dict kept only the highest attempt.
+                            # Measured on 18396677: `.0` is the python wrapper and `.1`-`.4`
+                            # are the four triton.exe solver steps, but the wrapper carried
+                            # the `(resume 3)` label while the real steps carried none.
+                            # Under job grain this also collapses the Attempts column, which
+                            # counts KEYS in this map (metadata.py) and therefore reads
+                            # 1 for every resumed sim. The child srun writes its own
+                            # SLURM's own record, queried after the step ended -- see
+                            # _read_launched_step_id. The env var here is the RUNNER's own
+                            # step (the jobstep plugin's `.0`), so recording it collapses
+                            # every attempt of a resumed sim onto one ledger key and
+                            # under-reports the Attempts column to 1. The query refuses
+                            # rather than guesses; None falls back to today's value, which
+                            # read_attempt_index_by_jobstep already SKIPS rather than
+                            # mislabels.
+                            "slurm_step_id": _read_launched_step_id(analysis, model_type)
+                            or os.environ.get("SLURM_STEP_ID"),
                             # The reporting step THIS attempt resumed from (0 = fresh).
                             # Additive: makes this append-only, kill-survivable record
                             # carry both the boundary index and the duration, so the
