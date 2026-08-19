@@ -37,6 +37,10 @@ from pathlib import Path
 
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
+from hhemt.report_renderers._table_presentation import (
+    plotly_columnwidth,
+    plotly_table_header,
+)
 
 _TRUNCATION_CAVEAT = (
     "Absolute magnitudes inherit the variable-dt SWMM final-period truncation "
@@ -455,10 +459,18 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         fig = go.Figure(
             go.Table(
                 header=dict(
-                    values=["Model", "compared pairs", "clean-vs-resume verdict", "max |resume - clean|"],
-                    align="left",
+                    # iter 12 items {1}/{2} — `_table_presentation` policy. This table
+                    # declared no `columnwidth`, so plotly divided its domain EQUALLY and
+                    # the 21-character verdict header clipped beside the 5-character
+                    # "Model". The weight vector is the fix; centring is item {2}.
+                    **plotly_table_header(
+                        ["Model", "compared pairs", "clean-vs-resume verdict", "max |resume - clean|"],
+                    ),
                     fill_color="#eef2f7",
                     font=dict(size=11),
+                ),
+                columnwidth=plotly_columnwidth(
+                    ["Model", "compared pairs", "clean-vs-resume verdict", "max |resume - clean|"],
                 ),
                 cells=dict(
                     values=list(zip(*verdict_rows, strict=False)) if verdict_rows else [[]],
@@ -680,8 +692,16 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         fig.add_trace(
             go.Table(
                 header=dict(
-                    values=_summary_cols, align="left", fill_color="#eef2f7", font=dict(size=10), height=22
+                    # iter 12 items {1}/{2} — `_table_presentation` policy. `_summary_cols`
+                    # is derived at runtime (4 or 5 entries, see its definition), and the
+                    # helpers take the same list, so the weights track the column count
+                    # without a second length literal.
+                    **plotly_table_header(_summary_cols),
+                    fill_color="#eef2f7",
+                    font=dict(size=10),
+                    height=22,
                 ),
+                columnwidth=plotly_columnwidth(_summary_cols),
                 cells=dict(values=_cells, align="left", font=dict(size=10), height=20),
                 # Iter-10 C: the table occupies the band's LOWER region, leaving one header-gap
                 # of clearance at the top for the model header that now sits there. It
@@ -844,11 +864,21 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                         # non-zero -- two rows reading `Serial 1r x 1t | 0` would otherwise be
                         # indistinguishable duplicates. The arm qualifier moves out of the
                         # n_resumes header because both arms now appear in the same column.
-                        values=["byte-identical configs", "role", "n_resumes"],
-                        align="left",
+                        # iter 12 items {1}/{2}/{3}: header spelling, alignment and
+                        # relative width all come from `_table_presentation`, which is
+                        # the one declaration shared with the tabulator and static-HTML
+                        # table families. `n_resumes` previously overflowed the cell
+                        # because it is a single unbreakable token; `humanize_header`
+                        # inserts the break opportunity.
+                        **plotly_table_header(
+                            ["byte-identical configs", "role", "n_resumes"],
+                        ),
                         fill_color="#eef2f7",
                         font=dict(size=9),
                         height=20,
+                    ),
+                    columnwidth=plotly_columnwidth(
+                        ["byte-identical configs", "role", "n_resumes"],
                     ),
                     cells=dict(
                         values=[_cfg_col, _role_col, _nr_col],

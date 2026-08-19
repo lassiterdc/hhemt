@@ -35,6 +35,22 @@ from typing import Any, NamedTuple
 
 import pandas as pd
 
+# iter 12 items {1}/{2}/{3}. The per-column width rule is DEFINED in
+# `_table_presentation` and only aliased here. The same rule has to reach the plotly
+# `go.Table` families and the static `<table>` families, and neither can import THIS
+# module (it emits a CDN-linked `<!DOCTYPE html>` document), so the policy lives one
+# level up and every engine consumes it. The alias keeps this module's call sites
+# unchanged while making `_table_presentation` the single declaration.
+from hhemt.report_renderers._table_presentation import (
+    HEADER_ALIGN,
+    humanize_header,
+)
+from hhemt.report_renderers._table_presentation import (
+    header_width_px as _estimate_column_width_px,
+)
+
+__all__ = ["HEADER_ALIGN", "humanize_header"]
+
 _TABULATOR_VERSION = "6.4.0"
 _TABULATOR_JS_CDN = (
     f"https://cdn.jsdelivr.net/npm/tabulator-tables@{_TABULATOR_VERSION}"
@@ -50,23 +66,12 @@ _PERSISTENCE_ID_CHARSET_RE = re.compile(r"[^A-Za-z0-9_.\-]")
 # Per-column fixed-width bounds (px). Explicit widths make every column
 # `widthFixed` so fitDataStretch's layout pass skips reinitializeWidth
 # (fitDataStretch.js:9) — the structural fix for the headerSort+remeasure
-# alignment toggle. The +56 reserves room for the .tabulator-sortable
+# alignment toggle. The +CHROME reserve covers the .tabulator-sortable
 # sort-arrow padding (padding-right: 25px) plus the titleFormatter's
 # filter-trigger ▾ button and status badge.
-_COL_WIDTH_MIN_PX = 90
-_COL_WIDTH_MAX_PX = 320
-_COL_WIDTH_PX_PER_CHAR = 9
-_COL_WIDTH_CHROME_PX = 56
-
-
-def _estimate_column_width_px(title: str) -> int:
-    """Estimate a fixed pixel width for a column from its header title.
-
-    Header-title-length driven (the filter UI + horizontal scroll cover
-    over-long body values). Clamped to [_COL_WIDTH_MIN_PX, _COL_WIDTH_MAX_PX].
-    """
-    raw = _COL_WIDTH_PX_PER_CHAR * len(str(title)) + _COL_WIDTH_CHROME_PX
-    return max(_COL_WIDTH_MIN_PX, min(_COL_WIDTH_MAX_PX, raw))
+#
+# The constants and `_estimate_column_width_px` now live in `_table_presentation`
+# (imported at the top of this module); see the note there for why the policy moved.
 
 
 # -----------------------------------------------------------------------------

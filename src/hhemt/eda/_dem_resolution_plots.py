@@ -47,6 +47,7 @@ from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import (
     emit_plot_with_sources,  # noqa: F401  # reserved for the /design-figure-authored bodies
 )
+from hhemt.report_renderers._table_presentation import plotly_table_header
 
 if TYPE_CHECKING:
     from hhemt.config.analysis import analysis_config
@@ -450,15 +451,20 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
         )
     fig.add_trace(
         go.Table(
+            # iter 12 item {2} — header spelling + centring from `_table_presentation`.
+            # The equal `columnwidth` below is NOT re-derived: it is a deliberate
+            # full-domain-spanning choice recorded at its own comment, and header-length
+            # weights would silently retune a table the user already specified.
             header=dict(
-                values=[
-                    "DEM resolution (m)",
-                    f"Wall clock ({_u_label})",
-                    "Wall-clock % difference vs finest",
-                    f"Compute cost (device-{_u_label})",
-                    "Compute-cost % difference vs finest",
-                ],
-                align="left",
+                **plotly_table_header(
+                    [
+                        "DEM resolution (m)",
+                        f"Wall clock ({_u_label})",
+                        "Wall-clock % difference vs finest",
+                        f"Compute cost (device-{_u_label})",
+                        "Compute-cost % difference vs finest",
+                    ]
+                ),
                 fill_color="#eef2f7",
                 font=dict(size=11),
             ),
@@ -1265,17 +1271,19 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
 
     fig.add_trace(
         go.Table(
+            # iter 12 item {2} — see the sibling table above; equal `columnwidth` kept.
             header=dict(
-                values=["DEM resolution (m)"]
-                + [
-                    h
-                    for t in _EXTENT_BAND_M
-                    for h in (
-                        f"Flooded area with ≥ {t * 100:g} cm depth ({area_unit})",
-                        f"Flooded-area change vs finest (≥ {t * 100:g} cm)",
-                    )
-                ],
-                align="left",
+                **plotly_table_header(
+                    ["DEM resolution (m)"]
+                    + [
+                        h
+                        for t in _EXTENT_BAND_M
+                        for h in (
+                            f"Flooded area with ≥ {t * 100:g} cm depth ({area_unit})",
+                            f"Flooded-area change vs finest (≥ {t * 100:g} cm)",
+                        )
+                    ]
+                ),
                 fill_color="#eef2f7",
                 font=dict(size=11),
             ),
@@ -1463,7 +1471,10 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
     fig = go.Figure(
         data=[
             go.Table(
-                header=dict(values=headers, align="left", fill_color="#eef2f7", font=dict(size=11)),
+                # iter 12 item {2} — see the sibling tables above; equal `columnwidth` kept.
+                header=dict(
+                    **plotly_table_header(headers), fill_color="#eef2f7", font=dict(size=11)
+                ),
                 columnwidth=[1] * len(headers),  # distribute across the full domain
                 cells=dict(
                     values=list(zip(*rows, strict=False)) if rows else [[]], align="left", font=dict(size=11), height=30

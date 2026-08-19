@@ -209,8 +209,22 @@ input.col-filter { width: 100%; box-sizing: border-box; margin-top: 3px;
    max-height engages only when the content exceeds it, so a two-row identity table
    renders exactly as it did. The sticky header keeps the column names -- and, on the
    interactive tables, their filter inputs -- on screen while the body scrolls. */
-div.table-scroll { overflow: auto; max-height: 70vh; }
+div.table-scroll { overflow: auto; max-height: min(70vh, 640px);
+                   overscroll-behavior: contain; }
 div.table-scroll thead th { position: sticky; top: 0; z-index: 2; }
+/* Iter-12 item {32}. Two changes, two distinct causes.
+   (a) `overscroll-behavior: contain` stops scroll CHAINING. Without it, a wheel event
+       that reaches this container's top or bottom is handed to the ancestor scroller,
+       then to the iframe document, then to the shell's `overflow-auto` content wrapper
+       -- four nested scrollers reacting to one gesture, which is what reads as extra
+       scrollbars appearing as the reader scrolls around.
+   (b) `min(70vh, 640px)` removes the RESIZE. `vh` inside an iframe resolves against the
+       IFRAME's height, and the report stylesheet lets that height float
+       (`.result iframe { height: auto }`, report.css.j2). So a scroll that reflowed the
+       shell changed the iframe height, which re-resolved `70vh`, which resized this box
+       -- the "scrolling at the extremes made the table taller or shorter" report. The
+       fixed ceiling means a re-resolved `vh` cannot move the box past it. */
+aside.col-panel { overscroll-behavior: contain; }
 /* Iter-11 item 11. Column-selector panel at the LEFT of the table, not above it, so it
    does not consume vertical space the table needs. Emitted only where the call site
    asks for one -- the reproduction-guide tables explicitly do not (item 16). */
@@ -2760,8 +2774,41 @@ def _build_data_availability_html(report_path: Path) -> str:
 _SECTION_TITLES = ("Provenance", "Data Availability", "Reproduction Guide", "SLURM Efficiency")
 
 
+#: Iter-12 item {23}. The jump-nav links carry `data-jump` as well as `href`, and the
+#: shim below cancels the fragment navigation and scrolls directly.
+#:
+#: This page renders inside an iframe (see `_wrap_html_doc`). A fragment href cannot be
+#: resolved in place against that iframe's base document, so the click is handled as a
+#: NAVIGATION rather than an in-page scroll -- which is what re-enters the report shell's
+#: render path and, per the user's iteration-11 report, appends a heading per click with
+#: increasing indentation instead of scrolling. `preventDefault()` means the fragment is
+#: never resolved and the navigation never happens.
+#:
+#: `scrollIntoView({block: "start"})` is also the better scroll on its own terms: the
+#: section headings sit above `div.table-scroll` containers with sticky `thead`, and a
+#: native fragment jump does not account for a nested scroll container.
+#:
+#: The `href` is RETAINED so the nav degrades to today's behaviour with JavaScript
+#: unavailable -- the state an archived / emailed copy of this page must survive in.
+_JUMP_NAV_JS = """
+(function () {
+  document.querySelectorAll("nav.jump-nav a[data-jump]").forEach(function (a) {
+    a.addEventListener("click", function (ev) {
+      var target = document.getElementById(a.getAttribute("data-jump"));
+      if (!target) { return; }
+      ev.preventDefault();
+      target.scrollIntoView({ block: "start" });
+    });
+  });
+})();
+"""
+
+
 def _jump_nav() -> str:
-    links = " &middot; ".join(f'<a href="#{_anchor(t)}">{_esc(t)}</a>' for t in _SECTION_TITLES)
+    links = " &middot; ".join(
+        f'<a href="#{_anchor(t)}" data-jump="{_anchor(t)}">{_esc(t)}</a>'
+        for t in _SECTION_TITLES
+    )
     return f'<nav class="jump-nav">{links}</nav>'
 
 
@@ -2829,7 +2876,7 @@ def _wrap_html_doc(
         f"{_jump_nav()}"
         f"{body}"
         f"{frag_mounts}"
-        f"<script>{_SORT_FILTER_JS}</script>"
+        f"<script>{_SORT_FILTER_JS}{_JUMP_NAV_JS}</script>"
         f"{frag_scripts}"
         "</body></html>"
     )

@@ -36,6 +36,10 @@ from plotly.subplots import make_subplots
 from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption
 from hhemt.figure_panels import AXIS_BAND_PX, panel_geometry, side_table_columns, watershed_swatch
+from hhemt.report_renderers._table_presentation import (
+    plotly_columnwidth,
+    plotly_table_header,
+)
 
 #: Diverging colorscale for signed diffs (iter-2 user feedback): RED = NEGATIVE
 #: (lower than serial), white = 0, BLUE = POSITIVE. Plotly "RdBu" maps low->red,
@@ -983,8 +987,13 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     fig.add_trace(
         go.Table(
             columnwidth=([1.0, 1.2, 1.2, 1.4, 1.4] if has_flow else [1.0, 1.2, 1.2, 1.4]),
+            # iter 12 items {2}/{3} — header SPELLING and ALIGNMENT come from
+            # `_table_presentation`; `humanize_header` is what makes `max_flow_cms` and
+            # `max_wlevel_m` wrappable. The hand-tuned `columnwidth` above is LEFT ALONE
+            # deliberately: it is already proportioned, so re-deriving it from header
+            # length would be a behaviour change on a working table rather than a fix.
             header=dict(
-                values=(
+                **plotly_table_header(
                     [
                         "Panel",
                         "# configs in group",
@@ -1000,7 +1009,6 @@ def build_config_diff_figure(root: Path) -> go.Figure:
                         "max_wlevel_m abs diff (vs serial)",
                     ]
                 ),
-                align="left",
                 fill_color="#eef2f7",
                 font=dict(size=11),
             ),
@@ -1189,12 +1197,16 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         fig.add_trace(
             go.Table(
                 header=dict(
-                    values=["byte-identical configs", "n_resumes"],
-                    align="left",
+                    # iter 12 items {1}/{2}/{3} — see `_table_presentation`. This is the
+                    # two-column sibling of the three-column side table in
+                    # `cross_experiment_intercomparison_maps`; both go through the same
+                    # policy so the two figure families cannot drift apart again.
+                    **plotly_table_header(["byte-identical configs", "n_resumes"]),
                     fill_color="#eef2f7",
                     font=dict(size=9),
                     height=20,
                 ),
+                columnwidth=plotly_columnwidth(["byte-identical configs", "n_resumes"]),
                 cells=dict(values=[_configs(g), _nr_col], align="left", font=dict(size=9), height=18),
                 domain=dict(x=tbl_x, y=[max(0.0, y_bot), min(1.0, y_top)]),
             )
