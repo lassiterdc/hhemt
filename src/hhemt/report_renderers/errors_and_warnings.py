@@ -256,9 +256,9 @@ def _render_system_level_table(checks: list[CheckResult]) -> str:
         )
     return (
         "<h3>System-Level Checks</h3>\n"
-        "<table>\n"
+        '<div class="table-scroll">\n<table>\n'
         "  <thead><tr><th>Name</th><th>Check</th><th>Status</th><th>Details</th></tr></thead>\n"
-        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>"
+        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>\n</div>"
     )
 
 
@@ -289,9 +289,9 @@ def _render_aggregate_table(checks: list[CheckResult]) -> str:
     # live names route here, five of them minted in src/hhemt/eda/.
     return (
         "<h3>Aggregate Per-Scenario Checks</h3>\n"
-        "<table>\n"
+        '<div class="table-scroll">\n<table>\n'
         "  <thead><tr><th>Name</th><th>Status</th><th>Details</th></tr></thead>\n"
-        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>"
+        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>\n</div>"
     )
 
 
@@ -314,9 +314,9 @@ def _render_granular_failures_table(granular: list[dict]) -> str:
         rows.append(f"<tr><td>{scenario_label}</td><td>{stage}</td><td>{detail}</td></tr>")
     return (
         "<h3>Granular Per-Scenario Failures</h3>\n"
-        "<table>\n"
+        '<div class="table-scroll">\n<table>\n'
         "  <thead><tr><th>Scenario</th><th>Stage</th><th>Detail</th></tr></thead>\n"
-        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>"
+        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>\n</div>"
     )
 
 
@@ -350,9 +350,9 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
         for c in checks
     )
     status_table = (
-        "<table>\n"
+        '<div class="table-scroll">\n<table>\n'
         "  <thead><tr><th>Name</th><th>Check</th><th>Status</th><th>Details</th></tr></thead>\n"
-        "  <tbody>\n    " + status_rows + "\n  </tbody>\n</table>"
+        "  <tbody>\n    " + status_rows + "\n  </tbody>\n</table>\n</div>"
     )
     if not all_issues:
         # I7-3: the "No resource mismatches" banner is deleted as redundant with the
@@ -375,11 +375,9 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
     # early-return above would leave the check invisible on precisely the runs the
     # section exists to serve, with no artifact revealing it.
     return (
-        "<h3>Resource-Utilization Mismatches</h3>\n"
-        + status_table
-        + "\n<table>\n"
+        "<h3>Resource-Utilization Mismatches</h3>\n" + status_table + '\n<div class="table-scroll">\n<table>\n'
         "  <thead><tr><th>Scenario</th><th>Resource</th><th>Expected</th><th>Actual</th></tr></thead>\n"
-        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>"
+        "  <tbody>\n    " + "\n    ".join(rows) + "\n  </tbody>\n</table>\n</div>"
     )
 
 

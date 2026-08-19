@@ -765,6 +765,16 @@ th, td {{ padding: {cell_padding_v_px}px {cell_padding_h_px}px; border: 1px soli
 th {{ background-color: {primary_color}; color: {th_text_color}; font-weight: {th_font_weight}; }}
 tr:nth-child(even) td {{ background-color: {row_alt_bg_color}; }}
 tr:hover td {{ background-color: {row_hover_bg_color}; }}
+/* Item {{32}}: the table-in-page scroll fix, defined ONCE here so every renderer that emits
+   an HTML table inherits it rather than restating it. A table wrapped in div.table-scroll is
+   height-bounded and scrolls WITHIN the page instead of extending it, and its header row stays
+   put while the body moves -- which is what makes a long table readable without the nested
+   page-scroll jank. `metadata.py` proved this rule on its own page; this is the same rule
+   promoted to the shared surface, NOT a second copy of it. Adding these declarations to a
+   renderer's own stylesheet is therefore prohibited: item {{19}} bars restating one definition
+   in two places, and a divergent copy is exactly how the two pages start scrolling differently. */
+div.table-scroll {{ overflow: auto; max-height: 70vh; }}
+div.table-scroll thead th {{ position: sticky; top: 0; z-index: 2; }}
 """
 
 
