@@ -23,17 +23,29 @@ from hhemt.slurm_job_recovery import (
     write_recovery_csv,
 )
 
-# One real allocation, verbatim in sacct's `-P` pipe-parsable shape. Job 18396137 measured
-# on-cluster: a five-step resumed sim whose TotalCPU lives ONLY on `.batch` and whose job
-# Elapsed (00:02:00) is neither the max (00:01:51) nor the sum (00:01:14) of its steps.
+# One real allocation in sacct's `-P` pipe-parsable shape, job 18396137, re-measured
+# on-cluster 2026-08-19 when `_SACCT_FIELDS` widened to 16 fields. TotalCPU lives ONLY on
+# `.batch`; job Elapsed (00:02:00) is neither the max (00:01:51) nor the sum (00:02:26) of
+# the steps the plugin KEEPS (`.0`, `.1`, `.4`) -- the qualifier matters, because `.batch`
+# itself runs the full 00:02:00 and the plugin is what drops it.
+#
+# NOT verbatim, and the earlier claim that it was is corrected here rather than annotated
+# around. Two deliberate departures: the real job has steps `.2` and `.3` that are omitted
+# to keep this fixture small, and the `.extern` row is SYNTHESISED -- `sacct` returns no
+# extern step for this job (verified on a minimal `-o JobID,JobName,State` query, where no
+# field selection could hide one), so that line was invented when the fixture was authored.
+# It is retained deliberately: it is the ONLY row here that drives `_step_kind`'s
+# non-numeric, non-`batch` suffix branch through `recover_rows`, and because its removal
+# turns no test red, nothing else would report its loss. Its values mirror a real step row's
+# shape. Every other field on every other line is this job's own measured value.
 _SACCT_OUT = "\n".join(
     [
-        "18396137|e3da81a4|00:02:00|00:03.744||1|1|4000M|COMPLETED",
-        "18396137.batch|batch|00:02:00|00:03.744|327556K|1|1||COMPLETED",
-        "18396137.extern|extern|00:02:00|00:00:00|1024K|1|1||COMPLETED",
-        "18396137.0|python|00:01:51|00:00:00|491288K|1|1||COMPLETED",
-        "18396137.1|triton.exe|00:00:15|00:00:00|49524K|1|1||CANCELLED",
-        "18396137.4|triton.exe|00:00:20|00:00:00|50860K|1|1||COMPLETED",
+        "18396137|e3da81a4-f297-4525-b241-00806b447136|00:02:00|00:03.744||1|1||8000M|gpu-a100-80|00:30:00|00:00:32|billing=516,cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25||COMPLETED",
+        "18396137.batch|batch|00:02:00|00:03.744|327556K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:03,energy=0,fs/disk=81960071,gres/gpumem=0,gres/gpuutil=0,mem=327556K,pages=0,vmem=322932K|COMPLETED",
+        "18396137.extern|extern|00:02:00|00:00:00|1024K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:00,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=1024K,pages=0,vmem=1024K|COMPLETED",
+        "18396137.0|python|00:01:51|00:00:00|491288K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:17,energy=0,fs/disk=398636714,gres/gpumem=0,gres/gpuutil=0,mem=491288K,pages=0,vmem=466660K|COMPLETED",
+        "18396137.1|triton.exe|00:00:15|00:00:00|49524K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:13,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=49524K,pages=0,vmem=15728K|CANCELLED by 554635",  # noqa: E501 -- real sacct State; the only fixture row with whitespace past col 120
+        "18396137.4|triton.exe|00:00:20|00:00:00|50860K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:18,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=50860K,pages=0,vmem=14724K|COMPLETED",
     ]
 )
 

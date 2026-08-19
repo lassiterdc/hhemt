@@ -48,7 +48,40 @@ _EFF_INNER_GLOB = "efficiency_report_*.csv"
 #: sacct fields recovered. `JobID` first because it carries the step suffix that decides
 #: which class a row belongs to; `State` last because Stage B's per-attempt disclosure needs
 #: it (the CANCELLED/COMPLETED breakdown of a resumed sim's solver steps).
-_SACCT_FIELDS = ("JobID", "JobName", "Elapsed", "TotalCPU", "MaxRSS", "NNodes", "NCPUS", "ReqMem", "State")
+#:
+#: `TotalCPU` is retained for continuity but MUST NOT be the source of a CPU-efficiency
+#: figure: measured on Rivanna, it reads `00:00:00` for any work performed in an `srun`
+#: step, so on every simulation job it carries the batch-step wrapper's CPU only. The true
+#: per-step CPU time is `TRESUsageInTot`'s `cpu=` key, which is why that field is recovered
+#: alongside it. `TRESUsageInTot` is also the only place `gres/gpuutil` and `gres/gpumem`
+#: appear; it is populated on STEP rows and empty on the job row, and its values are SUMS
+#: over the step's tasks (`TRESUsageInMax` is the per-task max), so a per-GPU reading is
+#: `Tot / NTasks` — never `Tot / AllocTRES gres/gpu`, which under the whole-node
+#: `--exclusive` path counts GPUs the step never bound.
+#:
+#: `Partition`, `AllocTRES`, `Planned`, `Timelimit` and `NodeList` are job-row fields
+#: populated on 100% of rows. They matter because the toolkit-side join is a last-wins
+#: snapshot that leaves most historical rows unlabelled; SLURM's own record recovers the
+#: partition (the experiment's hardware axis), the granted GPU/CPU/memory, and the queue
+#: wait for those rows. `NTasks` is required to normalize the gres keys above.
+_SACCT_FIELDS = (
+    "JobID",
+    "JobName",
+    "Elapsed",
+    "TotalCPU",
+    "MaxRSS",
+    "NNodes",
+    "NCPUS",
+    "NTasks",
+    "ReqMem",
+    "Partition",
+    "Timelimit",
+    "Planned",
+    "AllocTRES",
+    "NodeList",
+    "TRESUsageInTot",
+    "State",
+)
 
 #: Header of the emitted CSV. `StepKind` is DERIVED here rather than left to the reader:
 #: the job/batch distinction is the whole point of the file, and re-deriving it downstream
