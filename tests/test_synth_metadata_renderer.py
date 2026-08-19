@@ -404,6 +404,48 @@ def test_reprex_guide_renders_placeholders_not_values(tmp_path):
     assert "\\u2014" in html, "em-dash should be JSON-escaped, not dropped"
 
 
+def test_reprex_guide_rows_default_to_required_first_then_alphabetical(tmp_path, monkeypatch):
+    """{16}: the guide's rows reach the table already ordered.
+
+    Asserts on the ROW LIST handed to `_df_for`, never on rendered order. The fix is
+    DATA-side by design -- Tabulator's `initialSort` sorts the RENDERED `Required` cell
+    as TEXT, so ascending puts `<strong>Required</strong>` LAST and descending works only
+    by the accident that `R` > `O` > `C`. Asserting rendered order would therefore pass
+    for the wrong reason and would couple this test to the table engine `[Q148]` re-opened.
+
+    BOTH clauses are required and neither is sufficient: (a) alone passes on a
+    required-first list that is internally unsorted, and (b) alone passes on a fully
+    alphabetical list that ignores requiredness entirely.
+    """
+    captured: list[list[list[str]]] = []
+    real = metadata._df_for
+
+    def _spy(headers, rows, tips):
+        captured.append([list(r) for r in rows])
+        return real(headers, rows, tips)
+
+    monkeypatch.setattr(metadata, "_df_for", _spy)
+    _render(tmp_path, doc=_full_crate())
+
+    # Denominators asserted before any verdict: a zero/one-row population would make
+    # the ordering claims vacuously true and indistinguishable from a passing sort.
+    assert captured, "denominator: _df_for was never called -- this probe measured nothing"
+    rows = captured[0]
+    assert len(rows) > 1, f"denominator: {len(rows)} row(s); ordering is unfalsifiable"
+
+    REQUIRED = "<strong>Required</strong>"
+    tiers = [0 if r[2].startswith(REQUIRED) else 1 for r in rows]
+    assert tiers == sorted(tiers), f"clause (a): required rows must come first; tiers={tiers}"
+
+    for tier in (0, 1):
+        names = [
+            metadata._strip_code(r[0]).lower()
+            for r, t in zip(rows, tiers, strict=True)
+            if t == tier
+        ]
+        assert names == sorted(names), f"clause (b): tier {tier} not alphabetical: {names}"
+
+
 def test_reprex_guide_covers_a_field_from_each_bucket():
     """R4: the taxonomy actually classifies representative fields into all three buckets."""
     rows_by_bucket, unclassified = metadata._config_field_rows()

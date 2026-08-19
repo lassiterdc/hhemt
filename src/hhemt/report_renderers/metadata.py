@@ -1934,6 +1934,27 @@ def _build_reprex_guide_html(
                 _new_rows.append(row[:3] + [_cell])
                 value_tips.append(_tip)
             rows = _new_rows
+        # {16}: default the guide's row order -- required fields first, then
+        # alphabetical within each tier. DATA-side deliberately: Tabulator's
+        # `initialSort` sorts the RENDERED `Required` cell as TEXT, where ascending
+        # puts `<strong>Required</strong>` LAST and descending happens to work only
+        # by the accident that `R` > `O` > `C` -- so it would invert the moment a
+        # fourth requiredness label is added. Sorting the data states the intent
+        # directly. Placed at 8-space indent so it covers BOTH the value-column and
+        # placeholder-column branches, in each of which `row[0]` is the `_code`-wrapped
+        # field label and `row[2]` is the `_requiredness_cell` output. Both Required
+        # forms (`_requiredness_cell` early-returns at two sites) begin with the same
+        # `<strong>Required</strong>` literal, so the prefix test catches each.
+        # SCOPE GUARD: this is a per-call-site sort and must NOT migrate into
+        # `build_options_dict` / `_tabulator_defaults`, which are shared with the
+        # 39-column `scenario_status_appendix`.
+        rows = sorted(
+            rows,
+            key=lambda _r: (
+                0 if _r[2].startswith("<strong>Required</strong>") else 1,
+                _strip_code(_r[0]).lower(),
+            ),
+        )
         # [Q148]: these three tables render through Tabulator so their columns are
         # user-resizable, accepting the CDN dependency at view time. Scoped to THIS call
         # family -- the provenance, data-availability and SLURM sections keep the
