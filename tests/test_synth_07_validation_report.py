@@ -191,7 +191,7 @@ def test_renders_aggregate_table_has_three_failed_rows():
     assert "Scenario runs" in html
     assert "Timeseries processing" in html
     # The description column is populated -- invisible to a name-only assertion.
-    assert "Every scenario the analysis defines was created on disk" in html
+    assert "Every scenario the analysis defines exists on disk" in html
     assert html.count('class="fail"') == 3
 
 

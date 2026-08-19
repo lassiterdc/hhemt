@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     "System setup": (
         "System setup",
-        "Every enabled model compiled (native mode), and the processed DEM and "
+        "Every enabled model is compiled (native mode), and the processed DEM and "
         "Manning roughness rasters exist with matching, correctly-shaped geometry.",
     ),
     "Analysis summaries created": (
@@ -66,7 +66,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "Resource usage matches config": (
         "Resource usage",
-        "Every scenario ran on the MPI ranks, OMP threads, GPUs, GPU backend and "
+        "Every scenario runs on the MPI ranks, OMP threads, GPUs, GPU backend and "
         "build type its configuration requested.",
     ),
     # --- aggregate-level checks ([Q154]: this table now carries the same columns as
@@ -76,15 +76,15 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     # authoring event is what makes that true rather than asserted.
     "Scenarios setup": (
         "Scenario setup",
-        "Every scenario the analysis defines was created on disk with its inputs written.",
+        "Every scenario the analysis defines exists on disk with its inputs written.",
     ),
     "Scenarios ran": (
         "Scenario runs",
-        "Every scenario's simulation reached completion for each enabled model.",
+        "Every scenario's simulation runs to completion for each enabled model.",
     ),
     "Timeseries processed": (
         "Timeseries processing",
-        "Every scenario has processed timeseries output written for each enabled model.",
+        "Every scenario carries processed timeseries output for each enabled model.",
     ),
     "Data availability": (
         "Data availability",
@@ -98,8 +98,8 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "resume validity": (
         "Resume validity",
-        "Every resumed coupled sim ran at a solver build with no known resume defect, and "
-        "its exchange history replayed rather than silently re-initializing.",
+        "Every resumed coupled sim runs at a solver build with no known resume defect, and "
+        "its exchange history replays rather than silently re-initializing.",
     ),
     "Known resume defects": (
         "Known resume defects",
@@ -114,7 +114,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     "EDA calc ran": (
         "EDA calculation",
         "Every EDA figure enumerated as a report target has a corresponding verdict "
-        "artifact, so the calculation actually ran rather than degrading to a placeholder.",
+        "artifact, so the calculation actually runs rather than degrading to a placeholder.",
     ),
     "Cross-sim byte-identity": (
         "Cross-sim byte-identity",
