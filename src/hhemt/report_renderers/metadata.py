@@ -46,6 +46,7 @@ import html as _html
 import io
 import json
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,6 +109,15 @@ _RULE_PREFIX_TO_PURPOSE: tuple[tuple[str, str], ...] = (
     ("delete", "delete / cleanup"),
     ("reprocess", "reprocess"),
 )
+
+#: Recover sa_id / event_id from a rule NAME, for jobs that survive only in the executor's
+#: log tree (Tier 2 of `_job_purpose_map`) and therefore carry no sidecar record. Lossless
+#: because `workflow.py` mints per-sub-analysis rule names as `{phase}_sa_{sa_id}_evt_{id}`.
+#: The sa_id alternation tolerates the evt-less forms (`consolidate_sa_{sa_id}`), and the
+#: capture is non-greedy so an sa_id containing underscores (`gpu_0_r1`) stops at `_evt_`
+#: rather than swallowing it.
+_RULE_SA_ID_RE = re.compile(r"_sa_(.+?)(?:_evt_|$)")
+_RULE_EVENT_ID_RE = re.compile(r"_evt_(.+)$")
 
 _ROOT_ID = "./"
 _APP_ID = "#hhemt-app"
@@ -819,13 +829,38 @@ def _purpose_for_rule(rule_name: str) -> str:
     return rule_name
 
 
-def _job_purpose_map(payloads: list[dict]) -> dict[str, dict[str, str]]:
+def _job_purpose_map(
+    payloads: list[dict],
+    job_index: dict[str, str] | None = None,
+) -> dict[str, dict[str, str]]:
     """`{slurm_job_id: {purpose, rule_name, sa_id, event_id, model_type, written_at}}`.
 
-    `status_flags.write_status_flag` records `slurm_job_id` from the ``SLURM_JOB_ID``
-    environment variable, which is the PARENT job id -- exactly the efficiency CSV's
-    `MainJobID` column, so the join is direct. Locally-executed rules carry a null
-    job id and are skipped rather than keyed on the empty string.
+    TWO sources in stated precedence, because neither alone covers the table.
+
+    Tier 1 -- `status_flags.write_status_flag` records `slurm_job_id` from the
+    ``SLURM_JOB_ID`` environment variable, which is the PARENT job id, exactly the
+    efficiency CSV's `MainJobID`, so the join is direct. It is the RICHER source (it
+    alone carries sa_id/event_id/model_type as RECORDED values rather than parsed
+    ones) and therefore wins any collision. But it is keyed on the flag PATH and
+    rewritten every run, so it retains only the LAST job per rule: measured 60 distinct
+    ids for 116 rule instances against 570 allocations.
+
+    Tier 2 -- `_status/_job_index.json`, harvested by
+    `status_flags.harvest_slurm_job_index` from the executor's own per-job log tree:
+    `{jobid: rule_name}` for every job ever submitted, including the ones whose sidecar
+    a later submission overwrote. It carries no sa_id/event_id directly; those are
+    parsed back out of the rule name, which is lossless because `workflow.py` mints
+    rule names as `{phase}_sa_{sa_id}_evt_{event_id}`.
+
+    Tier 2 does NOT raise the join's match rate -- that is already 99% of the keys the
+    sidecars retain. It raises the KEY CEILING, by keeping log files the executor would
+    otherwise delete. It is therefore INERT until the generated profile sets
+    `slurm-keep-successful-logs`, and even then it only covers runs submitted AFTER
+    that lands; an absent or empty index means "not retained", never "did not run", and
+    degrades to exactly the Tier-1 result.
+
+    Locally-executed rules carry a null job id and are skipped rather than keyed on the
+    empty string.
     """
     out: dict[str, dict[str, str]] = {}
     for payload in payloads:
@@ -840,6 +875,26 @@ def _job_purpose_map(payloads: list[dict]) -> dict[str, dict[str, str]]:
             "event_id": str(payload.get("event_id") or ""),
             "model_type": str(payload.get("model_type") or ""),
             "written_at": str(payload.get("written_at") or ""),
+        }
+    # Tier 2. `not in out` is what preserves Tier-1 precedence: a job the sidecar still
+    # retains keeps its RECORDED sa_id/event_id/model_type rather than the parsed ones.
+    for job_id, rule_name in (job_index or {}).items():
+        job_id = str(job_id)
+        if not job_id or job_id in out:
+            continue
+        rule_name = str(rule_name or "")
+        sa_match = _RULE_SA_ID_RE.search(rule_name)
+        evt_match = _RULE_EVENT_ID_RE.search(rule_name)
+        out[job_id] = {
+            "purpose": _purpose_for_rule(rule_name),
+            "rule_name": rule_name,
+            "sa_id": sa_match.group(1) if sa_match else "",
+            "event_id": evt_match.group(1) if evt_match else "",
+            # Not parseable from a rule name: the model type is a per-scenario property,
+            # not a naming component. Left empty rather than guessed -- an em-dash here
+            # means "not recovered", which is true, whereas a guess would be false.
+            "model_type": "",
+            "written_at": "",
         }
     return out
 
@@ -2160,11 +2215,8 @@ def _reduction_caption() -> str:
 #: explicit disclosure rather than omitted: an absent measurement that is silently left
 #: out reads as "not applicable", and an empty column reads as zero. Neither is true.
 _EFF_UNCAPTURED_NOTE = (
-    "<p class='note'><strong>Not shown, and why.</strong> <em>GPU utilisation</em> is absent "
-    "from SLURM accounting entirely — <code>AllocTRES</code> records how many GPUs were "
-    "allocated, never how hard they worked — so reporting it needs a sampler running "
-    "alongside the simulation, and existing runs cannot be back-filled without re-running "
-    "them. <em>CPU model</em> is likewise not recorded by the toolkit today; it is "
+    "<p class='note'><strong>Not shown, and why.</strong> "
+    "<em>CPU model</em> is not recorded by the toolkit today; it is "
     "recoverable on the cluster from <code>sacct -o NodeList</code> plus "
     "<code>scontrol show node</code> while the accounting database still holds the job. "
     "<em>Queue time</em> is captured only for runs submitted one job per simulation "
@@ -3030,9 +3082,26 @@ def render(
                 )
             if scenario_status_path is not None:
                 artist.add_channel("scenario_status", ProvenanceRef(source_path=_SCENARIO_STATUS_FILENAME))
+            # Tier 2 of the purpose join. Declared INSIDE this branch, matching the
+            # `_recovery_path` contract directly above: the absent-SLURM path reads
+            # nothing here and must declare nothing. Declared even when absent (ADR-6
+            # D3) so the info-icon names the source, and because the renderer-IO audit
+            # requires declared >= actual reads. Graceful-absent: an unreadable or
+            # missing index yields {} and the join degrades to exactly Tier 1.
+            _job_index_path = analysis_dir / "_status" / "_job_index.json"
+            source_paths.append(_job_index_path)
+            artist.add_channel("job_index", ProvenanceRef(source_path="_status/_job_index.json"))
+            _job_index: dict[str, str] = {}
+            if _job_index_path.exists():
+                try:
+                    _loaded = json.loads(_job_index_path.read_text())
+                    if isinstance(_loaded, dict):
+                        _job_index = {str(k): str(v) for k, v in _loaded.items()}
+                except (OSError, ValueError):
+                    _job_index = {}
             slurm_html = _build_slurm_efficiency_html(
                 [(str(p.relative_to(analysis_dir)), p.read_text()) for p in eff_csvs],
-                _job_purpose_map(status_payloads),
+                _job_purpose_map(status_payloads, _job_index),
                 scenario_map,
                 _gpu_hardware_for_partition,
                 recovery=_recovery_map,

@@ -3487,6 +3487,20 @@ def _per_sim_event_page_sources(wildcards):
                     "latency-wait": 60,
                     "max-jobs-per-second": 5,
                     "max-status-checks-per-second": 10,
+                    # Retain the executor's per-job log tree. The SLURM executor plugin
+                    # writes `{logdir}/rule_{rule}/{wildcards}/{jobid}.log` at submit --
+                    # the only complete jobid -> rule + wildcards record the toolkit has,
+                    # and the one `status_flags.harvest_slurm_job_index` already reads.
+                    # But `keep_successful_logs` defaults False and the plugin unlinks
+                    # each log on COMPLETED, so the harvest saw only FAILED jobs:
+                    # measured 5 of 771 allocations, which is the whole of the labelling
+                    # ceiling the report discloses. These two keys are the enabling
+                    # change -- an empty text file per job, in exchange for a complete
+                    # and durable identity map. `delete-logfiles-older-than` defaults to
+                    # 10 DAYS, which would silently re-lose coverage part-way through a
+                    # long benchmarking campaign; 0 disables that sweep.
+                    "slurm-keep-successful-logs": True,
+                    "slurm-delete-logfiles-older-than": 0,
                     # Auto-retry jobs that SLURM marks FAILED (e.g. transient
                     # `srun` step glitches: "Unable to confirm allocation ...
                     # Invalid job id"). NOTE: this does NOT rescue a job that
