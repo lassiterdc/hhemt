@@ -1294,7 +1294,8 @@ def _enrich_efficiency_rows(
         for key in ("sa_id", "event_id", "model_type"):
             enriched[key] = meta.get(key, "")
         scen = scenario_map.get((enriched["sa_id"], enriched["event_id"], enriched["model_type"]), {})
-        partition = scen.get("hpc.partition", "")
+        enriched["_scen_joined"] = "1" if scen else ""
+        partition = _first_nonempty(scen, _PARTITION_COLUMN_SPELLINGS)
         enriched["partition"] = partition
         enriched["gpu_hardware"] = gpu_hardware_for_partition(partition) if partition else ""
         for src, dst in (
@@ -1401,6 +1402,8 @@ def _build_slurm_efficiency_html(
     rows = _enrich_efficiency_rows(merged, purpose_map, scenario_map, gpu_hardware_for_partition)
     columns = list(_EFF_PASSTHROUGH_COLUMNS) + list(_EFF_ENRICHMENT_COLUMNS)
     matched = sum(1 for r in rows if r.get("purpose"))
+    joinable_rows = sum(1 for r in rows if r.get("model_type"))
+    scen_joined = sum(1 for r in rows if r.get("_scen_joined"))
     undisplayed = _undisplayed_csv_columns(_header)
 
     grid = [[_esc(row.get(key, "") or "—") for key, _label in columns] for row in rows]
@@ -1415,6 +1418,22 @@ def _build_slurm_efficiency_html(
         f"joined in from the toolkit's own records rather than read off the job). Click a "
         f"column heading to sort; type to filter.</p>"
     )
+    summary += (
+        f"<p class='note'>Scenario-record join: {_esc(scen_joined)} of {_esc(joinable_rows)} "
+        f"simulation row(s) matched a <code>scenario_status.csv</code> record. Every column "
+        f"from <code>Partition</code> rightward is sourced from that record, so a zero here "
+        f"means the whole block is blank for a JOIN failure rather than for missing data. "
+        f"<code>Partition</code> and <code>Nodes (config)</code> fall back to this analysis's "
+        f"own configuration when the record predates the per-row partition column.</p>"
+    )
+    if joinable_rows and not scen_joined:
+        summary += _banner(
+            "No simulation row matched a scenario_status.csv record, so every "
+            "scenario-sourced column below is blank because the join failed — not "
+            "because the values were not captured. This is a key-vocabulary mismatch "
+            "between the CSV and the _status/*.flag.json sidecars; the sidecar records "
+            "the scenario slug as its event id."
+        )
     table = _sortable_grid_table(
         [label for _key, label in columns],
         grid,
@@ -1479,10 +1498,21 @@ def _read_scenario_status(analysis_dir: Path) -> tuple[dict[tuple[str, str, str]
     carried in every bundle by `_copy_supporting_files`, so declaring it adds a
     manifest row and no payload bytes.
 
-    The key is built to match the `_status/*.flag.json` payload's own vocabulary:
-    the sidecar records ``event_id`` as the scenario slug (``event_index.0``) while
-    this CSV records ``event_iloc`` as the integer index, so BOTH spellings are
-    registered and the join succeeds whichever the sidecar carried.
+    THREE event spellings are registered per row, because the CSV and the
+    `_status/*.flag.json` sidecar do not share one vocabulary:
+
+    * the integer ``event_iloc`` this CSV records;
+    * ``event_index.{iloc}``, which is the scenario slug ONLY when the analysis has a
+      single weather indexer literally named ``event_index`` whose value equals the
+      iloc -- true of the synthetic fixture and of no real analysis;
+    * the basename of ``scenario_directory``, which IS the slug the sidecar carries.
+      That equality is by CONSTRUCTION, not convention: `scenario.py` assigns
+      ``self.event_id = self.sim_id_str`` and ``sim_folder = .../ self.sim_id_str``
+      from one variable in adjacent lines, and `analysis.py` writes that path here.
+
+    This is a key SET, not a guarantee. A sidecar vocabulary outside the set produces
+    a MISS, and the miss is disclosed as the scenario-join rate in the rendered
+    efficiency table rather than left to read as absent data.
     """
     path = analysis_dir / _SCENARIO_STATUS_FILENAME
     if not path.is_file():
@@ -1496,9 +1526,62 @@ def _read_scenario_status(analysis_dir: Path) -> tuple[dict[tuple[str, str, str]
         sa_id = (record.get("sa_id") or "").strip()
         model_type = (record.get("model_type") or "").strip()
         iloc = (record.get("event_iloc") or "").strip()
-        for event_key in {iloc, f"event_index.{iloc}"}:
-            out[(sa_id, event_key, model_type)] = record
+        slug = os.path.basename((record.get("scenario_directory") or "").rstrip("/\\"))
+        for event_key in {iloc, f"event_index.{iloc}", slug}:
+            if event_key:
+                out[(sa_id, event_key, model_type)] = record
     return (out, path)
+
+
+#: Column spellings the partition has been written under. `hpc.partition` is the
+#: canonical sensitivity-overlay column; `analysis.hpc_ensemble_partition` is the
+#: accepted legacy overlay spelling; `hpc_ensemble_partition` is the resolved
+#: analysis-config field name, which is what older sensitivity exports carry and
+#: what `_apply_config_fallbacks` writes for a non-sensitivity analysis.
+_PARTITION_COLUMN_SPELLINGS: tuple[str, ...] = (
+    "hpc.partition",
+    "analysis.hpc_ensemble_partition",
+    "hpc_ensemble_partition",
+)
+
+
+def _first_nonempty(row: dict[str, str], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = (row.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _apply_config_fallbacks(scenario_map, analysis) -> None:
+    """Fill partition / node count from IN-MEMORY config where the CSV carries neither.
+
+    `hpc.partition` is a sensitivity CSV overlay column, so a non-sensitivity export
+    has no partition column at all and `n_nodes` is written only under
+    `analysis.in_slurm`. Without this, `Partition`, `GPU hardware` and
+    `Nodes (config)` stay blank even on a perfect join, which is indistinguishable
+    on the page from data that was never captured.
+
+    In-memory config only -- no file is opened, so this adds no render-time read
+    surface (Gotcha 53), exactly like `_gpu_hardware_for_partition`. The CSV always
+    wins where it carries a value, so a sensitivity master's per-row partitions are
+    never overwritten by the master default. Each row dict is shared across the
+    several keys that address it, so it is mutated at most once.
+    """
+    cfg = getattr(analysis, "cfg_analysis", None)
+    if cfg is None:
+        return
+    partition = str(getattr(cfg, "hpc_ensemble_partition", "") or "")
+    n_nodes = str(getattr(cfg, "n_nodes", "") or "")
+    seen: set[int] = set()
+    for row in scenario_map.values():
+        if id(row) in seen:
+            continue
+        seen.add(id(row))
+        if partition and not _first_nonempty(row, _PARTITION_COLUMN_SPELLINGS):
+            row["hpc_ensemble_partition"] = partition
+        if n_nodes and not (row.get("n_nodes") or "").strip():
+            row["n_nodes"] = n_nodes
 
 
 # --- page shell --------------------------------------------------------------
@@ -1703,6 +1786,7 @@ def render(
     eff_dir = analysis_dir.joinpath(*_SLURM_EFF_RELDIR)
     eff_csvs = _resolve_all_efficiency_csvs(eff_dir)
     scenario_map, scenario_status_path = _read_scenario_status(analysis_dir)
+    _apply_config_fallbacks(scenario_map, analysis)
     if scenario_status_path is not None:
         source_paths.append(scenario_status_path)
 
