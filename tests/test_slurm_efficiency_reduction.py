@@ -25,10 +25,15 @@ from hhemt.report_renderers.metadata import (
 # Real job 18396137: five steps, TotalCPU nonzero on `.batch` only, peak memory on the
 # `python` wrapper rather than the solver, job Elapsed neither max nor sum of steps.
 _REAL_STEPS = {
+    # TRESUsageInTot values are the REAL captured ones for this job (see
+    # tests/test_slurm_job_recovery.py): TotalCPU reads zero on every srun step while the
+    # recorded usage shows the CPU that was actually consumed.
     "18396137.0": {"JobID": "18396137.0", "MainJobID": "18396137", "Elapsed": "00:01:51",
-                   "TotalCPU": "00:00:00", "MaxRSS": "491288K", "RequestedMem_MB": "4000"},
+                   "TotalCPU": "00:00:00", "MaxRSS": "491288K", "RequestedMem_MB": "4000",
+                   "TRESUsageInTot": "cpu=00:00:17,energy=0,mem=491288K"},
     "18396137.1": {"JobID": "18396137.1", "MainJobID": "18396137", "Elapsed": "00:00:15",
-                   "TotalCPU": "00:00:00", "MaxRSS": "49524K", "State": "CANCELLED"},
+                   "TotalCPU": "00:00:00", "MaxRSS": "49524K", "State": "CANCELLED",
+                   "TRESUsageInTot": "cpu=00:00:13,energy=0,mem=49524K"},
     "18396137.4": {"JobID": "18396137.4", "MainJobID": "18396137", "Elapsed": "00:00:20",
                    "TotalCPU": "00:00:00", "MaxRSS": "50860K", "State": "COMPLETED"},
 }
@@ -51,27 +56,36 @@ def test_cpu_is_summed_and_the_fixture_actually_discriminates_a_sum():
     job here would pass for all four, which is the non-discriminating shape this guards.
     """
     steps = [
-        {"JobID": "9.batch", "TotalCPU": "00:00:01"},
-        {"JobID": "9.0", "TotalCPU": "00:00:02"},
-        {"JobID": "9.1", "TotalCPU": "00:00:04"},
+        {"JobID": "9.batch", "TotalCPU": "00:00:01", "TRESUsageInTot": "cpu=00:00:01,mem=1K"},
+        {"JobID": "9.0", "TotalCPU": "00:00:02", "TRESUsageInTot": "cpu=00:00:02,mem=1K"},
+        {"JobID": "9.1", "TotalCPU": "00:00:04", "TRESUsageInTot": "cpu=00:00:04,mem=1K"},
     ]
     value, provenance = _reduce_cpu_sum(steps, {})
     assert float(value) == 7.0
     for wrong in (4.0, 1.0, 7.0 / 3):
         assert float(value) != wrong
-    assert "summed over 3 step(s)" in provenance
+    assert "summed over 3 of 3 step(s)" in provenance
     assert "batch" in provenance, "the batch step must be visible as a contributor"
 
 
 def test_cpu_reduction_recovers_the_column_that_reads_zero_today():
-    """INVARIANT: with `.batch` folded in, CPU is nonzero for a job whose steps all read zero.
+    """INVARIANT: CPU is nonzero for a job whose every step reports `TotalCPU=00:00:00`.
 
-    This is the defect closure: every surviving step reports `00:00:00`, so any reduction over
-    steps ALONE yields 0 no matter how correct. A DIFFERENT correct implementation PASSES iff
-    it includes `.batch`; excluding it FAILS, which is the plugin's own behaviour.
+    AMENDED. This test previously asserted `3.744` and called that "the defect closure" --
+    but 3.744 s is the BATCH WRAPPER's own CPU, and folding it in replaced an obvious zero
+    with a plausible-looking 3% on a job whose steps actually consumed 30 s (~27%). The
+    test passed and certified a false number, which is worse than a red test.
+
+    `slurm_job_recovery.py` states the contract directly: `TotalCPU` "MUST NOT be the
+    source of a CPU-efficiency figure". The numerator is each step's recorded usage
+    (`TRESUsageInTot`'s `cpu=`), which is why that field is recovered.
+
+    A DIFFERENT correct implementation PASSES iff it reads recorded usage; reading
+    `TotalCPU` FAILS, whichever steps it includes.
     """
     rows = _aggregate_jobs(_REAL_STEPS, _REAL_RECOVERY)
-    assert float(rows[0]["cpu_seconds"]) == 3.744
+    assert float(rows[0]["cpu_seconds"]) == 30.0
+    assert float(rows[0]["cpu_seconds"]) != 3.744, "batch-wrapper CPU is not the job's CPU"
     assert all(_slurm_seconds(s["TotalCPU"]) == 0 for s in _REAL_STEPS.values())
 
 

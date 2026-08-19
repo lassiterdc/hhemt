@@ -961,11 +961,16 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
     recovery = {
         "111": {
             "job": {"JobID": "111", "Elapsed": "00:00:23", "NNodes": "1", "NCPUS": "1"},
-            "batch": {"JobID": "111.batch", "TotalCPU": "00:00:00", "MaxRSS": "700K"},
+            # No recorded CPU usage at all -> not measured -> em-dash.
+            "batch": {"JobID": "111.batch", "TotalCPU": "00:00:00", "MaxRSS": "700K",
+                      "TRESUsageInTot": ""},
         },
         "222": {
             "job": {"JobID": "222", "Elapsed": "00:01:40", "NNodes": "1", "NCPUS": "1"},
-            "batch": {"JobID": "222.batch", "TotalCPU": "00:01:31", "MaxRSS": "512K"},
+            # A genuine measurement -> the number must survive. The numerator moved off
+            # `TotalCPU`, which reads zero for srun-step work, onto the recorded usage.
+            "batch": {"JobID": "222.batch", "TotalCPU": "00:01:31", "MaxRSS": "512K",
+                      "TRESUsageInTot": "cpu=00:01:31,energy=0,mem=512K"},
         },
     }
     html = metadata._build_slurm_efficiency_html(

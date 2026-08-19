@@ -2086,14 +2086,46 @@ def _attempt_label(n: int) -> str:
     return "initial run" if n == 0 else f"resume {n}"
 
 
+def _tres_cpu_seconds(tres: str) -> float | None:
+    """Seconds from the `cpu=` key of a `TRESUsageIn*` field, or None if it carries none.
+
+    The field is a flat comma-separated `key=value` list, e.g.
+    ``cpu=00:00:13,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=49524K``.
+    None (not 0.0) on an absent key, so a missing measurement stays distinguishable from a
+    measured zero -- the distinction the whole efficiency column turns on.
+    """
+    for item in (tres or "").split(","):
+        key, sep, value = item.strip().partition("=")
+        if sep and key.strip() == "cpu":
+            value = value.strip()
+            return _slurm_seconds(value) if value else None
+    return None
+
+
 def _reduce_cpu_sum(steps: list[dict], job_row: dict) -> tuple[str, str]:
-    """CPU seconds SUMMED over every step including `.batch` -- `seff`'s own reduction."""
-    per_step = [(_step_suffix(s.get("JobID", "")), _slurm_seconds(s.get("TotalCPU", ""))) for s in steps]
-    total = sum(v for _n, v in per_step)
-    nonzero = [n for n, v in per_step if v > 0]
-    if not nonzero:
+    """CPU seconds SUMMED over every step including `.batch` -- `seff`'s own reduction.
+
+    Sourced from `TRESUsageInTot`'s `cpu=` key, NOT from `TotalCPU`. That is the recovery
+    module's own stated contract (`slurm_job_recovery.py`): `TotalCPU` "MUST NOT be the
+    source of a CPU-efficiency figure" because it reads `00:00:00` for any work performed
+    in an `srun` step, so on a simulation job it carries the batch wrapper's CPU only.
+    Reading it here produced a FALSE SMALL number rather than an obviously-broken one --
+    on the captured job 18396137 it summed to 3.744 s against 120 s elapsed (~3%) while
+    the steps actually consumed 3 + 17 + 13 s (~27%). A visibly wrong 0.0 invites a second
+    look; a plausible 3% does not.
+
+    A step with no `cpu=` key contributes nothing and is NOT counted as a measured zero;
+    if no step carries one, the cell is blank rather than 0, so an unpopulated recovery CSV
+    renders an em-dash instead of asserting the job used no processor.
+    """
+    per_step = [(_step_suffix(s.get("JobID", "")), _tres_cpu_seconds(s.get("TRESUsageInTot", ""))) for s in steps]
+    measured = [(n, v) for n, v in per_step if v is not None]
+    if not measured:
         return ("", f"no step reported CPU time across {len(per_step)} step(s)")
-    return (f"{total:.3f}", f"summed over {len(per_step)} step(s); nonzero on {', '.join(nonzero)}")
+    total = sum(v for _n, v in measured)
+    nonzero = [n for n, v in measured if v > 0]
+    detail = f"summed over {len(measured)} of {len(per_step)} step(s)"
+    return (f"{total:.3f}", f"{detail}; nonzero on {', '.join(nonzero)}" if nonzero else f"{detail}; all zero")
 
 
 def _reduce_rss_max(steps: list[dict], job_row: dict) -> tuple[str, str]:
@@ -2136,9 +2168,12 @@ def _reduce_joined(field: str):
 _SUM_STEPS = _Reduction(
     tag="\u03a3 steps",
     rule=(
-        "Summed across every step of the job, including the batch step. This is `seff`'s own "
-        "reduction, read from its source; SLURM records CPU time on the batch step, so a "
-        "reduction that skipped it would report zero."
+        "Summed across every step of the job, including the batch step — `seff`'s own "
+        "reduction, read from its source. The per-step CPU time is taken from each step's "
+        "recorded resource usage rather than from its `TotalCPU` field, which reads zero "
+        "for work done inside an `srun` step and so would report only the batch wrapper's "
+        "own CPU. A step that recorded no CPU time is left out of the sum rather than "
+        "counted as zero, so a job with no usable measurement reads blank, not 0%."
     ),
     apply=_reduce_cpu_sum,
 )
@@ -2160,6 +2195,24 @@ _JOB_RECORD = _Reduction(
     ),
     apply=None,
 )
+#: `Attempts` is a join like the others, but it carries a SCOPE LIMIT the other joined
+#: columns do not, so it gets its own declaration rather than sharing `_TOOLKIT_JOIN`.
+#: Authored once here and rendered three ways -- header symbol, header/value tooltip, and
+#: the caption -- which is what keeps it from being restated in prose somewhere.
+_ATTEMPTS_JOIN = _Reduction(
+    tag="",
+    rule=(
+        "How many times this simulation ran, joined from hhemt's own per-attempt records. "
+        "The count is only recoverable when each attempt is its own SLURM job, which is how "
+        "`batch_job` submits them. Under `1_job_many_srun_tasks` every attempt is a step of "
+        "one shared allocation and a step cannot be attributed to a particular simulation, "
+        "so the count is not recovered there and reads 1 for a run that may have resumed "
+        "several times. A 1 in this column therefore means 'one attempt, or not recoverable' "
+        "-- check the run method before reading it as a resume-free run."
+    ),
+    apply=None,
+)
+
 _TOOLKIT_JOIN = _Reduction(
     tag="",
     rule="Joined from hhemt's own per-rule records for this job, not from SLURM accounting.",
@@ -2193,7 +2246,7 @@ _EFF_COLUMNS: tuple[_EffColumn, ...] = (
     _EffColumn("max_rss_mb", "Max RSS (MB)", _MAX_STEPS),
     _EffColumn("RequestedMem_MB", "Req mem (MB)", _JOB_RECORD),
     _EffColumn("mem_used_pct", "Mem used (%)", _MAX_STEPS),
-    _EffColumn("attempts", "Attempts", _TOOLKIT_JOIN),
+    _EffColumn("attempts", "Attempts", _ATTEMPTS_JOIN),
     _EffColumn("record", "Record", _TOOLKIT_JOIN),
     _EffColumn("purpose", "Job desc", _TOOLKIT_JOIN),
     _EffColumn("sa_id", "Sub-analysis", _TOOLKIT_JOIN),
@@ -2219,11 +2272,15 @@ _EFF_COLUMNS: tuple[_EffColumn, ...] = (
 def _reduction_caption() -> str:
     """The caption. Renders each DISTINCT `rule` exactly once, from the same declaration the
     headers and tooltips render -- so the page states each reduction in one place, not three."""
+    # Every DISTINCT reduction a displayed column uses, with no filter on how the value was
+    # obtained. The prior filter (`apply is not None or is _JOB_RECORD`) excluded the
+    # join-class reductions, so a caveat carried on one of them reached the reader only on
+    # hover -- which is how a scope limit becomes a true-looking number whose scope is not
+    # stated. A rule worth authoring is worth rendering.
     seen: list[_Reduction] = []
     for col in _EFF_COLUMNS:
-        if col.reduction.apply is not None or col.reduction is _JOB_RECORD:
-            if col.reduction not in seen:
-                seen.append(col.reduction)
+        if col.reduction not in seen:
+            seen.append(col.reduction)
     items = "".join(
         f"<dt><strong>{_esc(r.tag or 'joined')}</strong></dt><dd>{_esc(r.rule)}</dd>" for r in seen
     )
