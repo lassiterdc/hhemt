@@ -1642,8 +1642,17 @@ def _bucket_badge(bucket: str) -> str:
 _VARIED_VALUE_PREVIEW: int = 6
 
 
-def _sensitivity_varied_values(analysis: TRITONSWMM_analysis) -> dict[str, str]:
-    """`{"{config_label}.{field_name}": rendered cell}` for every SWEPT parameter.
+def _sensitivity_varied_values(analysis: TRITONSWMM_analysis) -> dict[str, tuple[str, str]]:
+    """`{"{config_label}.{field_name}": (cell, tooltip)}` for every parameter in the sweep table.
+
+    The value is ALWAYS a 2-tuple, for a varied parameter and a constant one alike.
+    A constant column has no hover payload, so its tooltip is the empty string -- the
+    same `(cell, "")` pair the consumer already builds for a non-swept field. The two
+    shapes this function used to return (a bare string here, a tuple there) crashed
+    `_build_reprex_guide_html`'s unconditional `_cell, _tip = _v` unpack on the first
+    real sweep table carrying a constant column, and the declared `dict[str, str]`
+    described the crashing branch while contradicting the working one -- which is why
+    neither a reader nor a type-checker caught it. Keep this return uniform.
 
     DERIVED, never hand-listed. The sensitivity CSV's own column names ARE the
     declaration of what varies, and `sensitivity_analysis` already owns that
@@ -1680,7 +1689,7 @@ def _sensitivity_varied_values(analysis: TRITONSWMM_analysis) -> dict[str, str]:
     except Exception:  # noqa: BLE001 -- a display column must never break the render
         return {}
 
-    out: dict[str, str] = {}
+    out: dict[str, tuple[str, str]] = {}
     for col in columns:
         if col == "system_config_yaml":
             continue
@@ -1703,7 +1712,10 @@ def _sensitivity_varied_values(analysis: TRITONSWMM_analysis) -> dict[str, str]:
         # table. Rendering the varied marker there withholds a value the reader can and
         # should be given, and misdescribes the experiment's axes.
         if len(distinct) == 1:
-            out[label] = _code(distinct[0])
+            # The 2-tuple is UNIFORM with the varied branch below: cell, then hover
+            # payload. A constant column has nothing to hover, so the tooltip is empty
+            # -- matching what the consumer already builds for a non-swept field.
+            out[label] = (_code(distinct[0]), "")
             continue
         # Iter-12 item 17. The marker and its value list are returned SEPARATELY: the
         # marker is the cell, the list is the tooltip payload. Listing values inline
@@ -1733,7 +1745,7 @@ class ReprexGuide(NamedTuple):
 
 def _build_reprex_guide_html(
     values_by_field: dict[str, str] | None = None,
-    varied_by_field: dict[str, str] | None = None,
+    varied_by_field: dict[str, tuple[str, str]] | None = None,
 ) -> ReprexGuide:
     """Static grouped table: every config field -> USER=Supply / HPC=Amend / EXPERIMENT=Keep.
 
@@ -1845,8 +1857,10 @@ def _build_reprex_guide_html(
                     # placeholder. No tooltip.
                     _cell, _tip = _values.get(_label, _fallback), ""
                 else:
-                    # `_sensitivity_varied_values` returns (marker, value-list) so the
-                    # marker can be the cell and the list can be the hover.
+                    # `_sensitivity_varied_values` returns a uniform (cell, tooltip)
+                    # 2-tuple for BOTH branches: a varied parameter's cell is the
+                    # marker and its tooltip is the value list; a constant one's cell
+                    # is the value and its tooltip is empty.
                     _cell, _tip = _v
                 _new_rows.append(row[:3] + [_cell])
                 value_tips.append(_tip)

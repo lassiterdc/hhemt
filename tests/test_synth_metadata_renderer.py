@@ -515,6 +515,53 @@ def test_a_swept_parameter_renders_as_varied_not_as_one_arms_value():
     assert "serial" in tooltip and "mpi" in tooltip, "values must survive in the hover"
 
 
+def test_a_constant_sweep_column_returns_the_same_shape_as_a_varied_one():
+    """A sweep column with ONE distinct value must not crash the reproduction guide.
+
+    PRE-FIX THIS FAILS with `ValueError: too many values to unpack (expected 2)` from
+    `_build_reprex_guide_html`'s `_cell, _tip = _v`. `_sensitivity_varied_values` wrote
+    a bare string for a constant column and a 2-tuple for a varied one into the SAME
+    map, and its declared `dict[str, str]` described the crashing branch while
+    contradicting the working one.
+
+    The constant column is the whole point of the fixture: every sweep column in the
+    existing tests VARIES, so `len(distinct) == 1` was unreachable and 47 green tests
+    in this file ran over a function that failed on every real cluster render.
+
+    Both halves are asserted deliberately. The shape assertion pins the invariant that
+    was never expressed anywhere; the end-to-end call is the exact production crash
+    path. `analysis_config.run_mode` resolves to the `hpc` bucket, which is one of the
+    two buckets that receive a `Value used` column, so the crashing row IS built and
+    the consumer assertion cannot pass vacuously.
+    """
+    import pandas as pd
+
+    def _varied_for(values: list[str]) -> dict[str, tuple[str, str]]:
+        frame = pd.DataFrame({"analysis.run_mode": values})
+        analysis = types.SimpleNamespace(sensitivity=types.SimpleNamespace(_df_setup_full=frame))
+        return metadata._sensitivity_varied_values(analysis)
+
+    constant = _varied_for(["serial", "serial"])
+    varied = _varied_for(["serial", "mpi"])
+
+    # 1. The return shape is UNIFORM across both branches -- this is the invariant.
+    for label, out in (("constant", constant), ("varied", varied)):
+        cell_tip = out["analysis_config.run_mode"]
+        assert isinstance(cell_tip, tuple) and len(cell_tip) == 2, (
+            f"{label} column returned {type(cell_tip).__name__}, not a (cell, tooltip) 2-tuple"
+        )
+
+    # A constant column is NOT a varied parameter: it shows its value, with no hover.
+    cell, tip = constant["analysis_config.run_mode"]
+    assert "serial" in cell, "a constant column must disclose its one value"
+    assert "Varied by the sensitivity analysis" not in cell
+    assert tip == "", "a constant column has no value list to hover"
+
+    # 2. The consumer survives the constant column end-to-end (the production path).
+    guide = metadata._build_reprex_guide_html({}, constant)
+    assert guide.html, "the reproduction guide must render with a constant sweep column"
+
+
 def test_every_config_field_appears_exactly_once():
     """R4: the guide is exhaustive over both configs — nothing silently dropped."""
     from hhemt.config.analysis import analysis_config
