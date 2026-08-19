@@ -1034,8 +1034,13 @@ def test_job_purpose_and_hardware_are_joined_in_from_toolkit_records():
     )
     for expected in ("simulate", "gpu_0_r1", "tritonswmm", "gpu-a6000", "a6000"):
         assert expected in html, expected
-    # JobName is `python` for every row, which is precisely why it is not a column.
-    assert "What the job did" in html
+    # JobName is `python` for every row, which is precisely why it is not a column; the
+    # joined purpose is. The HEADER was renamed to `Job desc` by user ruling {25} -- the
+    # invariant here is that the joined column exists and carries the joined value, not what
+    # it happens to be called, so the assertion follows the rename rather than pinning the
+    # old string.
+    assert "Job desc" in html
+    assert "What the job did" not in html, "the renamed header must not survive anywhere"
 
 
 def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():

@@ -2088,7 +2088,7 @@ _EFF_COLUMNS: tuple[_EffColumn, ...] = (
     _EffColumn("mem_used_pct", "Mem used (%)", _MAX_STEPS),
     _EffColumn("attempts", "Attempts", _TOOLKIT_JOIN),
     _EffColumn("record", "Record", _TOOLKIT_JOIN),
-    _EffColumn("purpose", "What the job did", _TOOLKIT_JOIN),
+    _EffColumn("purpose", "Job desc", _TOOLKIT_JOIN),
     _EffColumn("sa_id", "Sub-analysis", _TOOLKIT_JOIN),
     _EffColumn("event_id", "Event", _TOOLKIT_JOIN),
     _EffColumn("model_type", "Model", _TOOLKIT_JOIN),
@@ -2099,7 +2099,13 @@ _EFF_COLUMNS: tuple[_EffColumn, ...] = (
     _EffColumn("n_omp_threads", "OMP threads", _TOOLKIT_JOIN),
     _EffColumn("run_mode", "Run mode", _TOOLKIT_JOIN),
     _EffColumn("backend_used", "Backend", _TOOLKIT_JOIN),
-    _EffColumn("queue_seconds_total", "Queue, sim total (s)", _TOOLKIT_JOIN),
+    # [Q31]: "Queue, this job (s) and Queue, sim total (s) are too similar. Drop the latter."
+    # The state this arrived in was INVERTED -- `queue_seconds_this_job` was computed and
+    # populated but carried no column, while the sim-total column the user named for dropping
+    # was the one displayed. Keeping the per-job figure is also the truthful one at THIS grain:
+    # one row is one JOB, so the queue this job waited is a property of the row, while the
+    # simulation's accumulated total is a property of a set the row does not span.
+    _EffColumn("queue_seconds_this_job", "Queue, this job (s)", _TOOLKIT_JOIN),
 )
 
 
@@ -2139,9 +2145,9 @@ _EFF_UNCAPTURED_NOTE = (
     "there is no per-simulation queue to measure and the column is left blank rather than "
     "filled with the allocation's own wait — a repeated number there would be a per-sim "
     "figure that no simulation actually experienced. A blank cell here means not "
-    "measured; it never means the job did not wait. Where queue time IS captured, "
-    "<em>Queue coverage</em> reads <code>k/n</code> over the simulation's allocations, so "
-    "a run that began before queue capture shipped shows a partial sum as partial. "
+    "measured; it never means the job did not wait. The column reports the queue THIS JOB "
+    "waited, which is a property of the row; the simulation's accumulated queue across all "
+    "of its allocations is a property of a set one row does not span, and is not shown here. "
     "<em>CPU efficiency</em> is shown as not-measured wherever SLURM reported no CPU time "
     "for the job step; a zero there would claim the job used no processor, which is not "
     "what an absent measurement means.</p>"
