@@ -1795,7 +1795,10 @@ def _sensitivity_varied_values(analysis: TRITONSWMM_analysis) -> dict[str, tuple
         shown = ", ".join(str(v) for v in distinct[:_VARIED_VALUE_PREVIEW])
         if len(distinct) > _VARIED_VALUE_PREVIEW:
             shown += f", … ({len(distinct)} values)"
-        out[label] = ("<strong>Varied by the sensitivity analysis</strong>", shown)
+        out[label] = (
+            '<strong class="tip-affordance">Varied by the sensitivity analysis</strong>',
+            shown,
+        )
     return out
 
 
@@ -2955,6 +2958,26 @@ def _wrap_html_doc(
     )
 
 
+#: Iter-12 item 17. The affordance for a tooltip-bearing cell, emitted from the
+#: RESOLVER rather than from `_SUPPLEMENTAL_CSS`. That placement is the whole point:
+#: `_SUPPLEMENTAL_CSS` is a module-level static built at import time, so a rule living
+#: there cannot read a colour off the runtime `report_cfg` and would have to hardcode
+#: one or fall back to `currentColor` -- either of which re-introduces the second colour
+#: source the brand_theme stipulation exists to prevent, and the latter of which fails
+#: this rule's own paired test (which asserts the colour EQUALS what the resolved style
+#: yields, never a literal). `primary_color` is the theme-driven brand colour the h2/h3
+#: chrome already uses; the config comment beside it names which colours are NOT
+#: theme-driven and this is not among them.
+#:
+#: Scoped to `strong.tip-affordance`, which `_sensitivity_varied_values` emits ONLY on
+#: the varied branch. The single-distinct-value branch returns an EMPTY tooltip, so it
+#: deliberately carries no affordance -- styling it would advertise a hover that shows
+#: nothing.
+_TIP_AFFORDANCE_CSS = (
+    "strong.tip-affordance {{ cursor: help; border-bottom: 1px dotted {primary_color}; color: {primary_color}; }}\n"
+)
+
+
 def _resolve_inline_css(report_cfg: report_config) -> str:
     """Brand chrome from the brand_theme-driven errors_and_warnings style block.
 
@@ -2968,7 +2991,7 @@ def _resolve_inline_css(report_cfg: report_config) -> str:
         from hhemt.config.report import ErrorsAndWarningsConfig
 
         style = ErrorsAndWarningsConfig()
-    return style.render_inline_css()
+    return style.render_inline_css() + _TIP_AFFORDANCE_CSS.format(primary_color=style.primary_color)
 
 
 def render(

@@ -1229,3 +1229,50 @@ def test_every_closed_set_field_declares_its_option_glossary():
         "closed-set fields rendered in the Reproduction Guide with no option "
         f"glossary: {sorted(missing)}"
     )
+
+
+def test_varied_values_cell_carries_the_tooltip_affordance_as_one_rule():
+    """T-2 / Iter-12 item 17 — the tooltip-bearing cell advertises itself as hoverable.
+
+    Asserts the three declarations as a SET ON ONE SELECTOR rather than as three
+    independent substring hits: a rule carrying only `cursor: help` would satisfy
+    three separate `in` checks against the whole stylesheet while rendering no
+    affordance, which is the satisfying-position failure the spec names.
+
+    The colour is asserted EQUAL TO the resolved style's own value, never a literal.
+    A hardcoded hex here would re-introduce the second colour source the brand_theme
+    stipulation exists to prevent, and would red on any legitimate brand change.
+    """
+    from hhemt.config.report import report_config
+    from hhemt.report_renderers.metadata import _resolve_inline_css
+
+    cfg = report_config()
+    css = _resolve_inline_css(cfg)
+    expected_color = cfg.errors_and_warnings.primary_color
+
+    # Isolate the ONE rule, so the declarations are checked inside a single block.
+    match = re.search(r"strong\.tip-affordance\s*\{([^}]*)\}", css)
+    assert match is not None, f"no strong.tip-affordance rule in the emitted CSS:\n{css}"
+    block = match.group(1)
+
+    assert "cursor: help" in block, f"affordance rule lacks the help cursor: {block!r}"
+    assert re.search(r"border-bottom:\s*1px\s+dotted", block), f"affordance rule lacks the dotted underline: {block!r}"
+    assert re.search(rf"(?<!-)color:\s*{re.escape(expected_color)}", block), (
+        f"affordance colour is not the resolved brand colour {expected_color!r}: {block!r}"
+    )
+
+
+def test_varied_values_affordance_is_absent_from_the_single_value_branch():
+    """The single-distinct-value cell returns an EMPTY tooltip, so it carries no affordance.
+
+    Styling it would advertise a hover that shows nothing. This pins the asymmetry
+    rather than the presence, so a future refactor that marks every cell uniformly
+    fails here instead of shipping a dead hover.
+    """
+    from hhemt.report_renderers.metadata import _sensitivity_varied_values
+
+    src = inspect.getsource(_sensitivity_varied_values)
+    # The empty-tooltip branch and the affordance class must not co-occur on one line.
+    for line in src.splitlines():
+        if '""' in line and "tip-affordance" in line:
+            raise AssertionError(f"single-value branch carries the affordance: {line!r}")
