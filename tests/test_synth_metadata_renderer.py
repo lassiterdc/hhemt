@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 import types
 from pathlib import Path
 
@@ -633,8 +634,14 @@ def test_required_when_falls_back_to_the_triggers_declared_default():
 def test_slurm_section_renders_table_and_declares_the_csv_file(tmp_path):
     """R5: the globbed CSV is rendered AND declared as a source — the FILE, not the dir."""
     html, manifest, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=_EFF_HEADER + _EFF_ROW)
-    assert "18573918.0" in html
-    assert "69.41" in html
+    # The table's GRAIN moved from step to job ([Q145]/[Q153]), so the identity it renders
+    # is the allocation `18573918`, not the step `18573918.0`. Asserted as a whole cell
+    # rather than a substring: a bare `18573918` also matches the old step id, so it could
+    # not tell the two grains apart and would pass under either.
+    assert "<td>18573918</td>" in html
+    # Memory-used % is now a reduction over steps rather than the plugin's own column, and
+    # renders at one decimal (694.12 MB of 1000.0 MB requested).
+    assert "69.4" in html
     declared = manifest["source_paths_relative"]
     assert "ro-crate-metadata.json" in declared
     assert any(p.endswith(".csv") for p in declared), declared
@@ -673,8 +680,9 @@ def test_slurm_report_nested_inside_a_csv_named_directory(tmp_path):
     metadata.render(_fake_analysis(analysis_dir), report_config(), output_path)
 
     html = output_path.read_text()
-    assert "18573918.0" in html, "nested report was not found by the recursive glob"
-    assert "69.41" in html
+    # Job grain per [Q145]/[Q153]; whole-cell form so it cannot pass on the old step id.
+    assert "<td>18573918</td>" in html, "nested report was not found by the recursive glob"
+    assert "69.4" in html
 
     manifest = json.loads((analysis_dir / "plots" / "metadata.manifest.json").read_text())
     declared = manifest["source_paths_relative"]
@@ -757,7 +765,8 @@ def test_slurm_report_path_is_a_directory_not_a_file(tmp_path):
     `.csv`-named directory; the renderer must descend to the inner file and must
     NOT raise IsADirectoryError on read_text()."""
     html, manifest, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=_EFF_HEADER + _EFF_ROW)
-    assert "18573918.0" in html and "69.41" in html
+    # Job grain per [Q145]/[Q153]; whole-cell form so it cannot pass on the old step id.
+    assert "<td>18573918</td>" in html and "69.4" in html
     declared = manifest["source_paths_relative"]
     assert any(p.endswith("efficiency_report_deadbeef.csv") for p in declared), declared
 
@@ -856,17 +865,46 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
     """
     zero_row = "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0\n"
     measured_row = "0,222.0,python,00:01:40,1,1,512K,,100.0,91.0,500.0,8000.0,222,91.0,6.4\n"
+    # The SUBJECT moved: `CPU eff (%)` is now COMPUTED here rather than read from the
+    # plugin's own column, and its numerator `TotalCPU` lives only on the job and `.batch`
+    # rows the plugin discards -- which is the very mechanism this test's docstring
+    # describes. Stage A recovers them, so a measured arm requires that recovery.
+    recovery = {
+        "111": {
+            "job": {"JobID": "111", "Elapsed": "00:00:23", "NNodes": "1", "NCPUS": "1"},
+            "batch": {"JobID": "111.batch", "TotalCPU": "00:00:00", "MaxRSS": "700K"},
+        },
+        "222": {
+            "job": {"JobID": "222", "Elapsed": "00:01:40", "NNodes": "1", "NCPUS": "1"},
+            "batch": {"JobID": "222.batch", "TotalCPU": "00:01:31", "MaxRSS": "512K"},
+        },
+    }
     html = metadata._build_slurm_efficiency_html(
-        [("r", _EFF_HEADER + zero_row + measured_row)], {}, {}, lambda p: ""
+        [("r", _EFF_HEADER + zero_row + measured_row)], {}, {}, lambda p: "", recovery
     )
 
-    # Arm 1 -- TotalCPU_sec is 0.0, so no CPU time was reported for the step. FAILS
-    # pre-fix: the grid builder's `or "—"` fallback cannot fire on the truthy "0.0".
-    assert "<td>0.0</td>" not in html
+    def _eff_cell(job_id: str) -> str:
+        """That job's `CPU eff (%)` cell, located BY HEADER rather than by position.
 
-    # Arm 2 -- a real measurement survives untouched. Guards against suppressing any
-    # cell that merely looks small.
-    assert "<td>91.0</td>" in html
+        A positional index would silently follow the wrong column the next time the column
+        order changes, and pass while measuring something else.
+        """
+        headers = re.findall(r'<span class="th-label">(.*?)</span>', html)
+        idx = next(i for i, h in enumerate(headers) if h.startswith("CPU eff"))
+        row = next(r for r in re.findall(r"<tr>(.*?)</tr>", html, re.S) if f"<td>{job_id}</td>" in r)
+        return re.findall(r"<td>(.*?)</td>", row, re.S)[idx]
+
+    # Arm 1 -- no step reported CPU time, so the ratio has no numerator. The cell must read
+    # as not-measured; a `0.00` here would assert the job used no processor.
+    assert _eff_cell("111") == "—", _eff_cell("111")
+
+    # Arm 2 -- a real measurement survives untouched: 91 CPU-seconds over 1 CPU x 100s.
+    # Guards against suppressing any cell that merely looks small.
+    assert "91.00" in _eff_cell("222"), _eff_cell("222")
+
+    # The numerator stays legible even though the CPU-seconds COLUMN was dropped, so a
+    # reader can still check the ratio against `seff` without it.
+    assert "91.000 CPU-seconds" in _eff_cell("222")
 
     # The suppression must be legible as not-measured, and the note must say so.
     assert "—" in html
@@ -912,14 +950,23 @@ def test_resume_attempts_are_numbered_in_the_description_column():
         lambda p: "",
     )
 
-    # Arm 1 -- attempts ARE numbered. Both FAIL pre-fix: no code path writes attempt text.
-    assert "simulate (initial run)" in html_out
-    assert "simulate (resume 2)" in html_out
+    # The SUBJECT of both arms moved when the table went to job grain ([Q145]/[Q153]): the
+    # per-attempt breakdown is no longer one row per step carrying its own label, it is the
+    # `<details>` roster inside the single job row. The invariants are unchanged and are
+    # re-attached to that roster; neither was rewritten to match the code.
 
-    # Arm 2 -- a step with no recorded attempt is not guessed at. Passes in both states;
-    # it is the guard against labelling by row order instead of by the ledger.
-    assert "simulate (resume 9)" not in html_out
-    assert "<td>simulate</td>" in html_out
+    # Arm 1 -- attempts ARE named, from the ledger. The job's own purpose still carries the
+    # attempt its `.0` step recorded, and the roster names the resume.
+    assert "simulate (initial run)" in html_out
+    assert "resume 2" in html_out
+
+    # Arm 2 -- a step with no recorded attempt is not guessed at. This matters MORE after
+    # aggregation than before it: folding N steps into one row puts an ordered list in front
+    # of the renderer, so numbering from the step suffix becomes newly available and newly
+    # tempting. `777.9` is absent from `attempt_by_jobstep`, so it must be listed WITHOUT a
+    # number rather than labelled "resume 9" from its suffix.
+    assert "resume 9" not in html_out
+    assert "attempt not recorded" in html_out
 
 
 def test_slurm_job_index_harvest_reads_the_executor_log_tree(tmp_path):

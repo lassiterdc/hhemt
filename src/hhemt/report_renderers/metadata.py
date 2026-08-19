@@ -46,6 +46,8 @@ import html as _html
 import io
 import json
 import os
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -452,6 +454,7 @@ def _sortable_grid_table(
     table_id: str,
     column_panel: bool = False,
     default_sort: tuple[int, ...] = (),
+    header_tooltips: tuple[str, ...] = (),
 ) -> str:
     """`_grid_table` plus click-to-sort headers, PER-COLUMN filters, and an optional
     left column-selector panel.
@@ -480,10 +483,18 @@ def _sortable_grid_table(
     """
     if not rows:
         return ""
+    # [Q153] header tooltip. Header TEXT goes through `_esc`, so a per-column statement needs
+    # its own attribute rather than being smuggled into the label. One optional parameter,
+    # deliberately not widened into a mechanism: the value is supplied by the caller's column
+    # declaration, so this function states no rule of its own.
     head = "".join(
-        f'<th><span class="th-label">{_esc(h)}</span>'
-        f'<input class="col-filter" type="text" data-col="{i}" placeholder="filter" '
-        f'aria-label="Filter by {_esc(h)}"></th>'
+        '<th{tip}><span class="th-label">{label}</span>'
+        '<input class="col-filter" type="text" data-col="{i}" placeholder="filter" '
+        'aria-label="Filter by {label}"></th>'.format(
+            i=i,
+            label=_esc(h),
+            tip=f' title="{_esc(header_tooltips[i])}"' if i < len(header_tooltips) and header_tooltips[i] else "",
+        )
         for i, h in enumerate(headers)
     )
     body = "\n    ".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
@@ -1900,53 +1911,216 @@ def _build_reprex_guide_html(
 #: Columns carried through from the plugin's CSV, in display order. The plugin's unnamed
 #: index column and its intermediate unit-conversion columns are dropped -- they are
 #: restatements of neighbours (MaxRSS vs MaxRSS_MB) and add width without adding meaning.
-_EFF_PASSTHROUGH_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("JobID", "Job ID"),
-    ("Elapsed", "Elapsed"),
-    ("NNodes", "Nodes"),
-    ("NCPUS", "CPUs"),
-    ("CPU Efficiency (%)", "CPU eff (%)"),
-    ("MaxRSS_MB", "Max RSS (MB)"),
-    ("RequestedMem_MB", "Req mem (MB)"),
-    ("Memory Usage (%)", "Mem used (%)"),
+@dataclass(frozen=True)
+class _Reduction:
+    """ONE declaration of a reduction: its symbol, its sentence, and the code that DOES it.
+
+    [Q153]'s single-source condition is met structurally rather than by discipline. `rule` is
+    the ONLY place the reduction is stated in prose -- the header tooltip renders it and the
+    caption renders it, which is two renderings of one declaration rather than two statements.
+    `tag` is a symbol, not a restatement: it is meaningless without the tooltip that expands it,
+    so it cannot drift into a second definition. And `apply` is the reduction, so a right label
+    over a wrong sum is unreachable -- swapping the callable moves the number AND the sentence.
+    """
+
+    tag: str
+    rule: str
+    apply: Callable[[list[dict], dict], tuple[str, str]] | None
+
+
+def _slurm_seconds(text: str) -> float:
+    """Parse a SLURM duration (`[DD-]HH:MM:SS[.mmm]`, `MM:SS.mmm`) to seconds; 0.0 if unparsable."""
+    raw = (text or "").strip()
+    if not raw:
+        return 0.0
+    days = 0.0
+    if "-" in raw:
+        d, _, raw = raw.partition("-")
+        try:
+            days = float(d)
+        except ValueError:
+            return 0.0
+    parts = raw.split(":")
+    try:
+        nums = [float(p) for p in parts]
+    except ValueError:
+        return 0.0
+    while len(nums) < 3:
+        nums.insert(0, 0.0)
+    return days * 86400 + nums[0] * 3600 + nums[1] * 60 + nums[2]
+
+
+def _slurm_rss_mb(text: str) -> float | None:
+    """Parse a SLURM MaxRSS (`491288K`, `1.2G`, `900M`) to MB; None when absent/unparsable."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    unit, digits = raw[-1].upper(), raw[:-1]
+    scale = {"K": 1 / 1024, "M": 1.0, "G": 1024.0, "T": 1024.0 * 1024}.get(unit)
+    if scale is None:
+        digits, scale = raw, 1 / 1024  # bare number: sacct's default unit is K
+    try:
+        return float(digits) * scale
+    except ValueError:
+        return None
+
+
+def _step_suffix(job_id: str) -> str:
+    return job_id.split(".", 1)[1] if "." in job_id else "job"
+
+
+def _attempt_label(n: int) -> str:
+    """An attempt's reader-facing name — the SINGLE declaration of it ([Q153]).
+
+    The purpose column's suffix and the per-attempt roster are two RENDERINGS of this one
+    function, never two hand-authored statements of the same rule. Attempt 0 is the initial
+    run rather than "resume 0", which would imply a resume that did not happen.
+    """
+    return "initial run" if n == 0 else f"resume {n}"
+
+
+def _reduce_cpu_sum(steps: list[dict], job_row: dict) -> tuple[str, str]:
+    """CPU seconds SUMMED over every step including `.batch` -- `seff`'s own reduction."""
+    per_step = [(_step_suffix(s.get("JobID", "")), _slurm_seconds(s.get("TotalCPU", ""))) for s in steps]
+    total = sum(v for _n, v in per_step)
+    nonzero = [n for n, v in per_step if v > 0]
+    if not nonzero:
+        return ("", f"no step reported CPU time across {len(per_step)} step(s)")
+    return (f"{total:.3f}", f"summed over {len(per_step)} step(s); nonzero on {', '.join(nonzero)}")
+
+
+def _reduce_rss_max(steps: list[dict], job_row: dict) -> tuple[str, str]:
+    """Peak memory MAXED over steps -- `seff`'s reduction, and correct for request-sizing.
+
+    Named per cell because the peak step is NOT constant: on a resumed sim it is the `python`
+    wrapper, not the solver, and a reader comparing two rows needs to know that.
+    """
+    best: tuple[float, str] | None = None
+    for s in steps:
+        value = _slurm_rss_mb(s.get("MaxRSS", ""))
+        if value is not None and (best is None or value > best[0]):
+            best = (value, _step_suffix(s.get("JobID", "")))
+    if best is None:
+        return ("", f"no step reported memory across {len(steps)} step(s)")
+    return (f"{best[0]:.1f}", f"peak of {len(steps)} step(s), from step {best[1]}")
+
+
+def _reduce_job_field(field: str):
+    """Read `field` off the JOB row. Not a step reduction -- the value has no step to name."""
+
+    def _apply(steps: list[dict], job_row: dict) -> tuple[str, str]:
+        value = (job_row or {}).get(field, "")
+        if not value:
+            return ("", "the job's accounting record was not recovered for this job")
+        return (value, "read from the job's own accounting record")
+
+    return _apply
+
+
+def _reduce_joined(field: str):
+    """Carry a value joined from hhemt's own records; no SLURM reduction is involved."""
+
+    def _apply(steps: list[dict], job_row: dict) -> tuple[str, str]:
+        return ((job_row or {}).get(field, ""), "")
+
+    return _apply
+
+
+_SUM_STEPS = _Reduction(
+    tag="\u03a3 steps",
+    rule=(
+        "Summed across every step of the job, including the batch step. This is `seff`'s own "
+        "reduction, read from its source; SLURM records CPU time on the batch step, so a "
+        "reduction that skipped it would report zero."
+    ),
+    apply=_reduce_cpu_sum,
+)
+_MAX_STEPS = _Reduction(
+    tag="max step",
+    rule=(
+        "The largest value across the job's steps, which is `seff`'s reduction and the correct "
+        "one for sizing a request. Each cell names the step that produced it, because the peak "
+        "is often the runner's own wrapper rather than the solver."
+    ),
+    apply=_reduce_rss_max,
+)
+_JOB_RECORD = _Reduction(
+    tag="job record",
+    rule=(
+        "Read from the job's own accounting record rather than reduced from its steps -- `seff` "
+        "does the same, because a job's wall time is neither the sum nor the maximum of its "
+        "steps' wall times."
+    ),
+    apply=None,
+)
+_TOOLKIT_JOIN = _Reduction(
+    tag="",
+    rule="Joined from hhemt's own per-rule records for this job, not from SLURM accounting.",
+    apply=None,
 )
 
-#: Enrichment columns joined in from the toolkit's own records. `_status/*.flag.json`
-#: supplies the first four; `scenario_status.csv` (keyed on sa_id/event_id/model_type)
-#: supplies the hardware and concurrency block.
-_EFF_ENRICHMENT_COLUMNS: tuple[tuple[str, str], ...] = (
-    # Item 25. `Record` sits FIRST, ahead of the columns it explains, so a reader meets the
-    # REASON before the em-dashes rather than after them. It distinguishes "no surviving
-    # toolkit record for this job" from "this field is genuinely empty" -- two states that
-    # otherwise render identically and cannot be told apart per-cell.
-    #
-    # SCOPE, stated so a later reader does not mistake this for more than it is: this makes
-    # the fill LEGIBLE. It does NOT raise it, and it deliberately does not restrict the row
-    # set. Whether this table should keep its cumulative history or show only the current
-    # generation is an open question that no measurement settles -- it trades completeness
-    # of LABELLING against completeness of RECORD -- and it is not settled here.
-    ("record", "Record"),
-    ("purpose", "What the job did"),
-    ("sa_id", "Sub-analysis"),
-    ("event_id", "Event"),
-    ("model_type", "Model"),
-    ("partition", "Partition"),
-    ("gpu_hardware", "GPU hardware"),
-    ("n_gpus", "GPUs"),
-    ("n_mpi_procs", "MPI ranks"),
-    ("n_omp_threads", "OMP threads"),
-    ("n_nodes_cfg", "Nodes (config)"),
-    ("run_mode", "Run mode"),
-    ("backend_used", "Backend"),
-    # O21. TWO queue columns, deliberately. The table has one row per SLURM job and a
-    # resumed sim occupies several rows, so a lone sim-total would repeat across them and
-    # read as each allocation having waited the total. The first column is that row's own
-    # wait; the second is the sim's end-to-end wait and is correctly identical across the
-    # sim's rows, which the label says out loud. Coverage discloses a partial sum.
-    ("queue_seconds_this_job", "Queue, this job (s)"),
-    ("queue_seconds_total", "Queue, sim total (s)"),
-    ("queue_seconds_coverage", "Queue coverage"),
+
+@dataclass(frozen=True)
+class _EffColumn:
+    """One column: its data key, its reader-facing noun, and the reduction that produced it."""
+
+    key: str
+    label: str
+    reduction: _Reduction
+
+    @property
+    def header(self) -> str:
+        """Label plus the reduction's SYMBOL. The symbol's expansion lives only in `rule`."""
+        return f"{self.label} ({self.reduction.tag})" if self.reduction.tag else self.label
+
+
+#: The table's columns, in display order. [Q144]: `Req mem` sits ADJACENT to `Mem used`, and
+#: both are retained on TRUTHFULNESS rather than universality -- a column true on the rows
+#: where it applies is kept even where a whole job class leaves it empty.
+_EFF_COLUMNS: tuple[_EffColumn, ...] = (
+    _EffColumn("JobID", "Job ID", _JOB_RECORD),
+    _EffColumn("Elapsed", "Elapsed", _JOB_RECORD),
+    _EffColumn("NNodes", "Nodes", _JOB_RECORD),
+    _EffColumn("NCPUS", "CPUs", _JOB_RECORD),
+    _EffColumn("cpu_eff_pct", "CPU eff (%)", _SUM_STEPS),
+    _EffColumn("max_rss_mb", "Max RSS (MB)", _MAX_STEPS),
+    _EffColumn("RequestedMem_MB", "Req mem (MB)", _JOB_RECORD),
+    _EffColumn("mem_used_pct", "Mem used (%)", _MAX_STEPS),
+    _EffColumn("attempts", "Attempts", _TOOLKIT_JOIN),
+    _EffColumn("record", "Record", _TOOLKIT_JOIN),
+    _EffColumn("purpose", "What the job did", _TOOLKIT_JOIN),
+    _EffColumn("sa_id", "Sub-analysis", _TOOLKIT_JOIN),
+    _EffColumn("event_id", "Event", _TOOLKIT_JOIN),
+    _EffColumn("model_type", "Model", _TOOLKIT_JOIN),
+    _EffColumn("partition", "Partition", _TOOLKIT_JOIN),
+    _EffColumn("gpu_hardware", "GPU hardware", _TOOLKIT_JOIN),
+    _EffColumn("n_gpus", "GPUs", _TOOLKIT_JOIN),
+    _EffColumn("n_mpi_procs", "MPI ranks", _TOOLKIT_JOIN),
+    _EffColumn("n_omp_threads", "OMP threads", _TOOLKIT_JOIN),
+    _EffColumn("run_mode", "Run mode", _TOOLKIT_JOIN),
+    _EffColumn("backend_used", "Backend", _TOOLKIT_JOIN),
+    _EffColumn("queue_seconds_total", "Queue, sim total (s)", _TOOLKIT_JOIN),
 )
+
+
+def _reduction_caption() -> str:
+    """The caption. Renders each DISTINCT `rule` exactly once, from the same declaration the
+    headers and tooltips render -- so the page states each reduction in one place, not three."""
+    seen: list[_Reduction] = []
+    for col in _EFF_COLUMNS:
+        if col.reduction.apply is not None or col.reduction is _JOB_RECORD:
+            if col.reduction not in seen:
+                seen.append(col.reduction)
+    items = "".join(
+        f"<dt><strong>{_esc(r.tag or 'joined')}</strong></dt><dd>{_esc(r.rule)}</dd>" for r in seen
+    )
+    return (
+        "<p class='note'><strong>How each column was reduced.</strong> One row is one JOB; a "
+        "job's steps are aggregated. Every column header carries its reduction's symbol, and "
+        "hovering a header or a value repeats nothing -- both read this same declaration.</p>"
+        f"<dl class='options'>{items}</dl>"
+    )
+
 
 #: Columns the user asked for that SLURM accounting does not capture. Rendered as an
 #: explicit disclosure rather than omitted: an absent measurement that is silently left
@@ -2077,7 +2251,12 @@ def _enrich_efficiency_rows(
                 _att = _att_map.get(job_id)
                 if _att is not None:
                     _n = int(_att)
-                    enriched["purpose"] += " (initial run)" if _n == 0 else f" (resume {_n})"
+                    # Resolved ONCE, here, from the ledger. Carried on the row so the
+                    # per-attempt roster renders the same resolution rather than deriving
+                    # its own from the step suffix -- which would fabricate a number for
+                    # any step the ledger does not record.
+                    enriched["_attempt_n"] = _n
+                    enriched["purpose"] += f" ({_attempt_label(_n)})"
         partition = scen.get("hpc.partition", "")
         enriched["partition"] = partition
         enriched["gpu_hardware"] = gpu_hardware_for_partition(partition) if partition else ""
@@ -2134,13 +2313,185 @@ _EFF_KNOWN_UNDISPLAYED: frozenset[str] = frozenset(
         "Elapsed_sec",  # parsed restatement of Elapsed
         "TotalCPU_sec",  # parsed restatement of TotalCPU
         "MaxRSS",  # raw string form of MaxRSS_MB
+        "MaxRSS_MB",  # the plugin's PER-STEP parse; superseded by the max-over-steps reduction
         "ReqMem",  # raw string form of RequestedMem_MB
+        # The plugin's own precomputed percentages, both superseded by this table's reductions.
+        # `CPU Efficiency (%)` is the column measured at exactly 0.0 on 664 of 664 delivered
+        # rows: it divides by a numerator the plugin never carries, because `TotalCPU` lives on
+        # the allocation and batch rows it discards. Recomputing it is the point of Stage A.
+        "CPU Efficiency (%)",
+        "Memory Usage (%)",
         "MainJobID",  # the join key; the step id is shown as Job ID
         "RuleName",  # present only where SLURM stores job comments; superseded
         "Comment",
         "State",
     }
 )
+
+
+def _load_job_recovery(analysis_dir: Path) -> tuple[dict[str, dict[str, dict[str, str]]], Path | None]:
+    """Read `slurm_job_recovery`'s Stage-A artifact; return the map and the file actually read.
+
+    Graceful-absent by contract: an analysis whose back-fill has not run yields `({}, None)`
+    and the table renders with em-dashes in the job-record columns rather than failing. The
+    path is returned so `render()` can DECLARE it (ADR-6 Gate-A / Gotcha 53).
+    """
+    from hhemt.slurm_job_recovery import RECOVERY_FILENAME
+
+    path = analysis_dir / "logs" / "slurm_efficiency_report" / RECOVERY_FILENAME
+    if not path.is_file():
+        return ({}, None)
+    try:
+        text = path.read_text()
+    except OSError:
+        return ({}, None)
+    out: dict[str, dict[str, dict[str, str]]] = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        main = (row.get("MainJobID") or "").strip()
+        kind = (row.get("StepKind") or "").strip()
+        if main and kind:
+            out.setdefault(main, {})[kind] = row
+    return (out, path)
+
+
+def _aggregate_jobs(
+    merged: dict[str, dict[str, str]],
+    recovery: dict[str, dict[str, dict[str, str]]],
+) -> list[dict[str, Any]]:
+    """Collapse step rows to ONE row per job ([Q145]), applying each column's declared reducer.
+
+    `merged` is the plugin's step-grained population keyed on step `JobID`; `recovery` is the
+    Stage-A `slurm_job_recovery` output, `{main_job_id: {"job": row, "batch": row}}`, supplying
+    the two row classes the plugin's parsing drops. The `.batch` row is folded into the step
+    list because `seff` reduces over it and SLURM records CPU time nowhere else.
+
+    Each row carries `_provenance`, a per-column map of where its value came from. That is the
+    per-value half of [Q153]'s trackability, and it is PRODUCED BY the reducer rather than
+    written beside it, so it cannot describe a reduction that did not happen.
+    """
+    by_job: dict[str, list[dict[str, str]]] = {}
+    for record in merged.values():
+        main = (record.get("MainJobID") or record.get("JobID", "").split(".", 1)[0]).strip()
+        if main:
+            by_job.setdefault(main, []).append(record)
+
+    out: list[dict[str, Any]] = []
+    for main_job_id, steps in by_job.items():
+        recovered = recovery.get(main_job_id, {})
+        job_row = dict(recovered.get("job", {}))
+        batch_row = recovered.get("batch")
+        # seff reduces over the batch step; excluding it is what zeroes the CPU column.
+        all_steps = [*steps, batch_row] if batch_row else list(steps)
+
+        row: dict[str, Any] = {"JobID": main_job_id}
+        prov: dict[str, str] = {}
+        job_row.setdefault("JobID", main_job_id)
+        # RequestedMem_MB is inherited onto the steps by the plugin, so it survives there.
+        job_row.setdefault("RequestedMem_MB", steps[0].get("RequestedMem_MB", "") if steps else "")
+
+        cpu_value, cpu_prov = _reduce_cpu_sum(all_steps, job_row)
+        row["cpu_seconds"], prov["cpu_seconds"] = cpu_value, cpu_prov
+        rss_value, rss_prov = _reduce_rss_max(all_steps, job_row)
+        row["max_rss_mb"], prov["max_rss_mb"] = rss_value, rss_prov
+
+        for field in ("Elapsed", "NNodes", "NCPUS", "RequestedMem_MB"):
+            value, why = _reduce_job_field(field)(all_steps, job_row)
+            row[field], prov[field] = value, why
+
+        # CPU efficiency is `seff`'s own headline number, and [Q144] names it by name. It is
+        # DERIVED from values already reduced above -- the summed CPU-time numerator and the
+        # job record's own CPU count and wall time -- so it inherits their provenance instead
+        # of asserting a fourth reduction. The numerator stays visible in that provenance
+        # string, which is what lets the column be dropped without losing the CPU-seconds
+        # figure: the number a reader would check against `seff` is still on the page.
+        # An absent numerator yields an ABSENT cell, never 0.0 -- a zero here would assert the
+        # job used no processor, and [Q130] rules that an examined-zero and a not-measured
+        # must not render alike.
+        elapsed_seconds = _slurm_seconds(row.get("Elapsed", ""))
+        try:
+            n_cpus = float(row.get("NCPUS") or 0)
+        except (TypeError, ValueError):
+            n_cpus = 0.0
+        cpu_denominator = n_cpus * elapsed_seconds
+        if cpu_value and cpu_denominator:
+            row["cpu_eff_pct"] = f"{float(cpu_value) / cpu_denominator * 100:.2f}"
+            prov["cpu_eff_pct"] = (
+                f"{cpu_value} CPU-seconds ({cpu_prov}), against {n_cpus:g} CPU(s) x "
+                f"{elapsed_seconds:g}s elapsed read from the job's own accounting record"
+            )
+        else:
+            row["cpu_eff_pct"] = ""
+            prov["cpu_eff_pct"] = (
+                cpu_prov
+                if not cpu_value
+                else "the job's CPU count or elapsed time was not recovered, so the denominator is unknown"
+            )
+
+        # Memory-used % is derived from the two columns beside it, so it inherits their
+        # provenance rather than asserting one of its own ([Q144] keeps it on truthfulness).
+        try:
+            req = float(row.get("RequestedMem_MB") or 0)
+            row["mem_used_pct"] = f"{float(rss_value) / req * 100:.1f}" if (rss_value and req) else ""
+        except (TypeError, ValueError):
+            row["mem_used_pct"] = ""
+        prov["mem_used_pct"] = f"{rss_prov}, against the requested memory beside it" if rss_value else ""
+
+        # Per-attempt disclosure: the solver steps ARE the resume attempts, and their
+        # CANCELLED/COMPLETED breakdown is what [Q143] calls this campaign's subject.
+        def _is_attempt(step: dict[str, str]) -> bool:
+            # Solver steps only: `.0` is the runner's own python wrapper, not an attempt.
+            suffix = _step_suffix(step.get("JobID", ""))
+            return suffix.isdigit() and suffix != "0"
+
+        attempts = sorted(
+            (s for s in steps if _is_attempt(s)),
+            key=lambda s: int(_step_suffix(s.get("JobID", ""))),
+        )
+        row["_attempts"] = attempts
+        row["attempts"] = str(len(attempts)) if attempts else ""
+        row["_steps"] = all_steps
+        row["_provenance"] = prov
+        out.append(row)
+
+    out.sort(key=lambda r: int(r["JobID"]) if str(r["JobID"]).isdigit() else 0)
+    return out
+
+
+def _attempt_details_html(attempts: list[dict[str, str]], attempt_by_step: dict[str, int] | None = None) -> str:
+    """`<details>` roster of a job's resume attempts, in a pre-escaped cell.
+
+    Job grain folds N attempts into one row; without this the CANCELLED/COMPLETED breakdown
+    is lost, which is the cost [Q153] exists to avoid paying. Uses the shim's pre-escaped
+    cell-HTML property -- no cell formatter, no Tabulator, no new mechanism.
+
+    Each entry carries TWO identifiers and they come from different places, which is the whole
+    point. The STEP index is a fact about the artifact and is read off `JobID`. The ATTEMPT
+    number is a fact about the run's history and is read only from the LEDGER
+    (`attempt_by_jobstep`, resolved once during enrichment). Deriving the second from the first
+    fabricates a value for every step the ledger does not record -- which aggregation newly
+    makes possible, because folding N steps into one row puts an ordered list in front of the
+    renderer and invites numbering it. A step the ledger does not record keeps its true step
+    index and is explicitly unnumbered: it ran, and which attempt it was is not known here.
+    """
+    if not attempts:
+        return ""
+    by_step = attempt_by_step or {}
+    items = "".join(
+        "<li>step {step} ({n}): {state}, {el}, {rss}</li>".format(
+            step=_esc(_step_suffix(a.get("JobID", ""))),
+            n=_esc(
+                _attempt_label(by_step[a.get("JobID", "")]) if a.get("JobID", "") in by_step else "attempt not recorded"
+            ),
+            state=_esc(a.get("State", "") or "state not recorded"),
+            el=_esc(a.get("Elapsed", "") or "elapsed not recorded"),
+            rss=_esc(a.get("MaxRSS", "") or "memory not recorded"),
+        )
+        for a in attempts
+    )
+    return (
+        f"<details><summary>{len(attempts)}</summary>"
+        f"<ul style='margin:4px 0 0 14px;padding:0;font-size:11px'>{items}</ul></details>"
+    )
 
 
 def _undisplayed_csv_columns(header: list[str]) -> list[str]:
@@ -2153,7 +2504,7 @@ def _undisplayed_csv_columns(header: list[str]) -> list[str]:
     drop is deliberate and the surprise is disclosed -- the same shape as the
     not-captured note for GPU utilisation.
     """
-    displayed = {key for key, _label in _EFF_PASSTHROUGH_COLUMNS}
+    displayed = {col.key for col in _EFF_COLUMNS}
     return sorted(c for c in header if c not in displayed and c not in _EFF_KNOWN_UNDISPLAYED)
 
 
@@ -2172,8 +2523,10 @@ def _build_slurm_efficiency_html(
     purpose_map: dict[str, dict[str, str]],
     scenario_map: dict[tuple[str, str, str], dict[str, str]],
     gpu_hardware_for_partition,
+    recovery: dict[str, dict[str, dict[str, str]]] | None = None,
 ) -> str:
-    """Render the UNION of every efficiency report, enriched and sortable/filterable."""
+    """Render the UNION of every efficiency report at JOB grain ([Q145]), reduced per [Q153]."""
+    recovery = recovery or {}
     heading = _heading("SLURM Efficiency")
     if not csv_texts:
         return heading + "\n" + _banner("The SLURM resource-efficiency report is present but empty.")
@@ -2182,48 +2535,58 @@ def _build_slurm_efficiency_html(
     if not merged:
         return heading + "\n" + _banner("The SLURM resource-efficiency reports contain no job rows.")
 
-    rows = _enrich_efficiency_rows(merged, purpose_map, scenario_map, gpu_hardware_for_partition)
-    columns = list(_EFF_PASSTHROUGH_COLUMNS) + list(_EFF_ENRICHMENT_COLUMNS)
-    matched = sum(1 for r in rows if r.get("purpose"))
+    step_rows = _enrich_efficiency_rows(merged, purpose_map, scenario_map, gpu_hardware_for_partition)
+    # Carry the toolkit-joined fields onto the job they belong to before collapsing, so the
+    # join survives aggregation. Keyed on MainJobID, which the join already used.
+    joined: dict[str, dict[str, str]] = {}
+    for s in step_rows:
+        main = (s.get("MainJobID") or s.get("JobID", "").split(".", 1)[0]).strip()
+        if main and main not in joined:
+            joined[main] = s
+
+    rows = _aggregate_jobs(merged, recovery)
+    for row in rows:
+        src = joined.get(str(row["JobID"]), {})
+        for col in _EFF_COLUMNS:
+            if col.reduction is _TOOLKIT_JOIN and col.key not in ("attempts",):
+                row.setdefault(col.key, src.get(col.key, ""))
+
     undisplayed = _undisplayed_csv_columns(_header)
+    n_recovered = sum(1 for r in rows if r.get("Elapsed"))
+    # The ledger's attempt resolution, read ONCE during enrichment and carried here so the
+    # roster renders that resolution instead of re-deriving one from step suffixes.
+    attempt_by_step: dict[str, int] = {
+        s.get("JobID", ""): s["_attempt_n"] for s in step_rows if "_attempt_n" in s
+    }
 
-    # A rendered `0.0` in a PERCENTAGE column asserts a measured zero -- "this job used no
-    # CPU" -- which is false about jobs that demonstrably ran for minutes. Measured on the
-    # delivered generation: CPU eff read exactly 0.0 on 664/664 rows, because the executor
-    # plugin inherits RequestedMem_MB from the main job row down to its steps but does NOT
-    # inherit TotalCPU, then discards the main rows (efficiency_report.py: mem_map /
-    # job_steps / `df = job_steps.copy()`). So the ratio is computed from a zero numerator.
-    # Confirmed on-cluster: parent 18396501 reports TotalCPU=00:04.828 while step .0 reports
-    # 00:00:00. The parent row never reaches the CSV, so this is NOT repairable here -- the
-    # em-dash means NOT CAPTURED, and 0.0 would mean MEASURED ZERO. Blanking is deliberately
-    # narrow: only the derived-from-TotalCPU column, only when the source parsed to zero.
-    _zeroish = {"", "0", "0.0", "0.00", "0.0%"}
+    def _cell(row: dict[str, Any], col: _EffColumn) -> str:
+        """One cell, carrying its own provenance as a native `title` tooltip.
 
-    def _cell(row: dict[str, str], key: str) -> str:
-        value = row.get(key, "")
-        if key == "CPU Efficiency (%)" and str(value).strip() in _zeroish:
-            if str(row.get("TotalCPU_sec", "")).strip() in _zeroish:
-                return "—"
-        return _esc(value or "—")
+        The tooltip TEXT is produced by the reducer (`_provenance`), never authored here --
+        so a cell cannot claim a reduction the code did not perform.
+        """
+        if col.key == "attempts" and row.get("_attempts"):
+            return _attempt_details_html(row["_attempts"], attempt_by_step)
+        value = row.get(col.key, "")
+        if not value:
+            return "—"
+        why = (row.get("_provenance") or {}).get(col.key, "")
+        return f'<span title="{_esc(why)}">{_esc(value)}</span>' if why else _esc(value)
 
-    grid = [[_cell(row, key) for key, _label in columns] for row in rows]
+    grid = [[_cell(row, col) for col in _EFF_COLUMNS] for row in rows]
     summary = (
         f"<p class='note'>{_esc(len(rows))} job(s) across {_esc(len(csv_texts))} efficiency "
-        f"report(s) — one report is written per workflow submission, and all of them are "
-        f"combined here so the table covers the whole experiment rather than the most recent "
-        f"run. Rows are keyed on SLURM job ID, so re-running part of the experiment adds rows "
-        f"and never rewrites the ones that did not re-run. {_esc(matched)} row(s) carry a "
-        f"toolkit-recorded purpose; the rest are jobs the toolkit did not flag (SLURM reports "
-        f"every job step's command name as <code>python</code>, which is why the purpose is "
-        f"joined in from the toolkit's own records rather than read off the job). Click a "
-        f"column heading to sort; type in a column's own box to filter on that column "
-        f"(criteria across columns are combined); use the panel at left to hide columns.</p>"
-    )
+        f"report(s), one row per JOB with its steps aggregated. {_esc(n_recovered)} job(s) "
+        f"carry a recovered accounting record; a job without one shows an em-dash in the "
+        f"columns read from it. Click a column heading to sort; type in a column's own box to "
+        f"filter on that column; use the panel at left to hide columns.</p>"
+    ) + _reduction_caption()
     table = _sortable_grid_table(
-        [label for _key, label in columns],
+        [col.header for col in _EFF_COLUMNS],
         grid,
         table_id="slurm-efficiency",
         column_panel=True,
+        header_tooltips=tuple(col.reduction.rule for col in _EFF_COLUMNS),
     )
     parts = [heading, summary, table]
     if undisplayed:
@@ -2559,6 +2922,9 @@ def render(
     # declaration and needs no bundle-side change.
     eff_dir = analysis_dir.joinpath(*_SLURM_EFF_RELDIR)
     eff_csvs = _resolve_all_efficiency_csvs(eff_dir)
+    # Stage-A recovery of the job and `.batch` rows the plugin's parsing drops. Declared
+    # unconditionally per ADR-6 D3 so the info-icon names it even before the back-fill runs.
+    _recovery_map, _recovery_path = _load_job_recovery(analysis_dir)
     scenario_map, scenario_status_path = _read_scenario_status(analysis_dir)
     if scenario_status_path is not None:
         source_paths.append(scenario_status_path)
@@ -2580,6 +2946,11 @@ def render(
 
     if eff_csvs:
         source_paths.extend(eff_csvs)
+        # Stage-A recovery artifact, declared only in the branch that reads it: the
+        # absent-SLURM path declares no CSV at all, and an unconditional append here
+        # broke that contract (caught by test_absent_slurm_csv_degrades_gracefully).
+        if _recovery_path is not None:
+            source_paths.append(_recovery_path)
         with prov.artist(
             axes_id="html_section",
             kind="table",
@@ -2597,6 +2968,7 @@ def render(
                 _job_purpose_map(status_payloads),
                 scenario_map,
                 _gpu_hardware_for_partition,
+                recovery=_recovery_map,
             )
     else:
         slurm_html = _absent_banner(
