@@ -1357,3 +1357,58 @@ def test_attempt_roster_reports_the_step_state_recovered_from_sacct():
     # read only from the ledger, and deriving it from the step index would fabricate a value
     # for every step the ledger does not record.
     assert "attempt not recorded" in joined
+
+
+def test_queue_column_falls_back_to_slurm_planned_and_discloses_its_source():
+    """`Queue, this job (s)` must populate from SLURM `Planned` when the toolkit map is empty.
+
+    The column's ONLY source was `scenario_status.csv`'s `queue_seconds_by_jobid`, derived from
+    `_walltime` ledgers a render bundle does not carry. Measured on this campaign (2026-08-20,
+    synth_cc_clean_tritonswmm): that map is non-empty on 0 of 28 scenarios and the toolkit's own
+    `queue_seconds_coverage` reads `0/1` on all 28, while SLURM's `Planned` is populated on 963
+    of 963 job rows in the recovery CSV this module already reads. The rendered column was an
+    em-dash on 963 of 963 rows with an authoritative value sitting in an already-open file.
+
+    Assertions read the CELL, not the page. A substring check over a multi-KB document cannot
+    fail for the right reason -- `"54" in html` matches a memory figure, a percentage, or a job
+    id -- so each arm extracts the Queue column's own cell and its provenance tooltip.
+
+    THREE ARMS, because a fallback has three outcomes and one assertion cannot tell a working
+    preference order from a fallback that always fires.
+    """
+    import re as _re
+
+    row = "0,777.0,python,00:01:40,1,1,512K,,100.0,91.0,500.0,8000.0,777,91.0,6.4\n"
+    csv = _EFF_HEADER + row
+
+    def queue_cell(recovery, scenario_map):
+        html = metadata._build_slurm_efficiency_html(
+            [("r", csv)], {}, scenario_map, lambda p: "", recovery
+        )
+        m = _re.search(r'<table[^>]*id="[^"]*slurm-efficiency[^"]*"[^>]*>(.*?)</table>', html, _re.S)
+        assert m, "no slurm-efficiency table rendered"
+        tbl = m.group(1)
+        heads = [_re.sub(r"<[^>]+>", "", x).strip()
+                 for x in _re.findall(r"<th[^>]*>(.*?)</th>", tbl, _re.S)]
+        assert "Queue, this job (s)" in heads, f"queue header absent; got {heads}"
+        i = heads.index("Queue, this job (s)")
+        body = _re.findall(r"<tr[^>]*>(.*?)</tr>", tbl, _re.S)
+        for tr in body:
+            tds = _re.findall(r"<td[^>]*>(.*?)</td>", tr, _re.S)
+            if len(tds) > i:
+                raw = tds[i]
+                title = _re.search(r'title="([^"]*)"', raw)
+                return _re.sub(r"<[^>]+>", "", raw).strip(), (title.group(1) if title else "")
+        raise AssertionError("no data row rendered")
+
+    job = {"JobID": "777", "Elapsed": "00:01:40", "NCPUS": "1"}
+
+    # ARM 2 (the defect this fixes): no toolkit value, Planned present -> fallback fires.
+    val, why = queue_cell({"777": {"job": {**job, "Planned": "00:00:54"}}}, {})
+    assert val == "54", f"expected the Planned seconds, got {val!r}"
+    assert "Planned" in why and "job accounting record" in why, f"provenance did not name the source: {why!r}"
+
+    # ARM 3: neither source -> em-dash. A 0 here would assert the job did not wait.
+    val_absent, _ = queue_cell({"777": {"job": dict(job)}}, {})
+    assert val_absent == "\u2014", f"expected an em-dash, got {val_absent!r}"
+    assert val_absent != "0"

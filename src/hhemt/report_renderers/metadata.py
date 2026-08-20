@@ -2203,6 +2203,34 @@ _JOB_RECORD = _Reduction(
     ),
     apply=None,
 )
+#: `Queue, this job (s)` needs its OWN reduction rather than sharing `_TOOLKIT_JOIN`, because
+#: it has TWO sources and `_TOOLKIT_JOIN`'s rule -- "not from SLURM accounting" -- is false for
+#: the fallback. Sharing it would make the header tooltip lie on exactly the rows the fallback
+#: fills, and the header rule is one of `[Q153]`'s three trackability surfaces.
+#:
+#: The toolkit map stays PREFERRED because it is per-job and exact. The fallback exists because
+#: that map is routinely EMPTY: it is derived from `_walltime` ledgers that a render bundle does
+#: not carry, so an off-cluster re-render has no access to it. Measured on this campaign
+#: (2026-08-20, `synth_cc_clean_tritonswmm`): `queue_seconds_by_jobid` non-empty on **0 of 28**
+#: scenarios and the toolkit's own `queue_seconds_coverage` reading `0/1` on all 28, against
+#: SLURM's `Planned` populated on **963 of 963** job rows in the recovery CSV this module
+#: already reads. So the column rendered an em-dash on every row while an authoritative value
+#: sat in an already-open file. The fallback is ADDITIVE -- it never overwrites a toolkit value.
+_QUEUE_JOIN = _Reduction(
+    # EMPTY tag, matching the joined-column family. The tag slot renders as a header SUFFIX
+    # describing a REDUCTION over steps -- `(job record)`, `(Σ steps)`, `(max step)` -- and a
+    # queue wait is neither reduced nor summarised, it is looked up. A non-empty tag here
+    # rendered `Queue, this job (s) (queue)`, which restates the column name and claims a
+    # reduction that does not happen. The two-source disclosure belongs in `rule` (the header
+    # tooltip) and in the per-value provenance, not in the header text.
+    tag="",
+    rule=(
+        "How long this job waited before it started. Preferred source is hhemt's own per-job "
+        "queue map; where that is absent the value falls back to SLURM's `Planned` on the job "
+        "accounting record. Each cell's tooltip names which of the two produced that value."
+    ),
+    apply=None,
+)
 #: `Attempts` is a join like the others, but it carries a SCOPE LIMIT the other joined
 #: columns do not, so it gets its own declaration rather than sharing `_TOOLKIT_JOIN`.
 #: Authored once here and rendered three ways -- header symbol, header/value tooltip, and
@@ -2273,7 +2301,7 @@ _EFF_COLUMNS: tuple[_EffColumn, ...] = (
     # was the one displayed. Keeping the per-job figure is also the truthful one at THIS grain:
     # one row is one JOB, so the queue this job waited is a property of the row, while the
     # simulation's accumulated total is a property of a set the row does not span.
-    _EffColumn("queue_seconds_this_job", "Queue, this job (s)", _TOOLKIT_JOIN),
+    _EffColumn("queue_seconds_this_job", "Queue, this job (s)", _QUEUE_JOIN),
 )
 
 
@@ -2607,6 +2635,14 @@ def _aggregate_jobs(
             value, why = _reduce_job_field(field)(all_steps, job_row)
             row[field], prov[field] = value, why
 
+        # Queue-wait FALLBACK, staged here because `job_row` is in scope only inside this
+        # function; the caller applies it after the toolkit join so the toolkit value wins.
+        # Stored under a private key so it can never be mistaken for the column's own value
+        # by anything that iterates `_EFF_COLUMNS`.
+        _planned_raw = (job_row.get("Planned") or "").strip()
+        if _planned_raw and _planned_raw != "00:00:00":
+            row["_planned_seconds"] = f"{_slurm_seconds(_planned_raw):.0f}"
+
         # CPU efficiency is `seff`'s own headline number, and [Q144] names it by name. It is
         # DERIVED from values already reduced above -- the summed CPU-time numerator and the
         # job record's own CPU count and wall time -- so it inherits their provenance instead
@@ -2759,6 +2795,24 @@ def _build_slurm_efficiency_html(
         for col in _EFF_COLUMNS:
             if col.reduction is _TOOLKIT_JOIN and col.key not in ("attempts",):
                 row.setdefault(col.key, src.get(col.key, ""))
+        # `_QUEUE_JOIN` is deliberately NOT `_TOOLKIT_JOIN`, so the loop above skips it and it
+        # is resolved here against BOTH its sources. Toolkit map first -- it is per-job and
+        # exact -- then SLURM's `Planned`. Each arm writes its own provenance, so the cell
+        # tooltip names the source that actually produced the number rather than restating the
+        # header's general rule ([Q153] trackability; the same shape `_reduce_cpu_sum` uses).
+        _q_toolkit = (src.get("queue_seconds_this_job") or "").strip()
+        _q_prov = row.setdefault("_provenance", {})
+        if _q_toolkit:
+            row["queue_seconds_this_job"] = _q_toolkit
+            _q_prov["queue_seconds_this_job"] = "hhemt's own per-job queue record for this job id"
+        elif row.get("_planned_seconds"):
+            row["queue_seconds_this_job"] = row["_planned_seconds"]
+            _q_prov["queue_seconds_this_job"] = (
+                "SLURM `Planned` on the job accounting record — hhemt's own queue map had no "
+                "entry for this job (it derives from _walltime ledgers a bundle does not carry)"
+            )
+        else:
+            row.setdefault("queue_seconds_this_job", "")
 
     undisplayed = _undisplayed_csv_columns(_header)
     n_recovered = sum(1 for r in rows if r.get("Elapsed"))
