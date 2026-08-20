@@ -2769,7 +2769,11 @@ def _build_slurm_efficiency_html(
     table = _sortable_grid_table(
         [col.header for col in _EFF_COLUMNS],
         grid,
-        table_id="slurm-efficiency",
+        # DISTINCT from the section heading's own anchor. `_heading` derives the <h3> id from
+        # the title via `_anchor` ("SLURM Efficiency" -> "slurm-efficiency"), so a table id of
+        # the same string put the attribute on TWO elements -- invalid HTML, and the nav's
+        # data-jump="slurm-efficiency" then resolved to whichever the parser reached first.
+        table_id="slurm-efficiency-table",
         column_panel=True,
         header_tooltips=tuple(col.reduction.rule for col in _EFF_COLUMNS),
     )

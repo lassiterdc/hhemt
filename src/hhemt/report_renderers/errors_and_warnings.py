@@ -302,8 +302,7 @@ def _omitted_note(n_omitted: int) -> str:
     plural = "s" if n_omitted != 1 else ""
     return (
         f'\n<p class="floor-note">{n_omitted} check{plural} not applicable to this '
-        f"analysis {'were' if n_omitted != 1 else 'was'} omitted rather than shown as "
-        f"passing.</p>"
+        f"analysis {'were' if n_omitted != 1 else 'was'} omitted.</p>"
     )
 
 

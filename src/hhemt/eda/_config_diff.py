@@ -984,31 +984,36 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         horizontal_spacing=0.13,
     )
 
+    # ONE header list, consumed by BOTH the width policy and the header renderer. Writing it
+    # twice would restate one list in two places, which the single-source mandate bars and
+    # which is how the two silently drift apart.
+    _headers = (
+        [
+            "Panel",
+            "# configs in group",
+            "byte-identical to family ref (peak summary)?",
+            "max_flow_cms abs diff (vs serial)",
+            "max_wlevel_m abs diff (vs serial)",
+        ]
+        if has_flow
+        else [
+            "Panel",
+            "# configs in group",
+            "byte-identical to family ref (peak summary)?",
+            "max_wlevel_m abs diff (vs serial)",
+        ]
+    )
     fig.add_trace(
         go.Table(
-            columnwidth=([1.0, 1.2, 1.2, 1.4, 1.4] if has_flow else [1.0, 1.2, 1.2, 1.4]),
             # iter 12 items {2}/{3} — header SPELLING and ALIGNMENT come from
             # `_table_presentation`; `humanize_header` is what makes `max_flow_cms` and
-            # `max_wlevel_m` wrappable. The hand-tuned `columnwidth` above is LEFT ALONE
-            # deliberately: it is already proportioned, so re-deriving it from header
-            # length would be a behaviour change on a working table rather than a fix.
+            # `max_wlevel_m` wrappable. Item {1}: the WIDTHS now come from the same module.
+            # The prior hand-tuned vector was retained on the ground that it was "already
+            # proportioned"; measured, it gave the 44-character header weight 1.2 -- LESS
+            # than the 33-character headers at 1.4 -- which is the clipping the item reports.
+            columnwidth=plotly_columnwidth(_headers),
             header=dict(
-                **plotly_table_header(
-                    [
-                        "Panel",
-                        "# configs in group",
-                        "byte-identical to family ref (peak summary)?",
-                        "max_flow_cms abs diff (vs serial)",
-                        "max_wlevel_m abs diff (vs serial)",
-                    ]
-                    if has_flow
-                    else [
-                        "Panel",
-                        "# configs in group",
-                        "byte-identical to family ref (peak summary)?",
-                        "max_wlevel_m abs diff (vs serial)",
-                    ]
-                ),
+                **plotly_table_header(_headers),
                 fill_color="#eef2f7",
                 font=dict(size=11),
             ),
