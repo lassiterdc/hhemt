@@ -15,6 +15,7 @@ tests/test_synth_05_sensitivity_analysis_with_snakemake.py.
 
 from __future__ import annotations
 
+import copy
 import inspect
 import json
 import re
@@ -1290,3 +1291,69 @@ def test_varied_values_affordance_is_absent_from_the_single_value_branch():
     for line in src.splitlines():
         if '""' in line and "tip-affordance" in line:
             raise AssertionError(f"single-value branch carries the affordance: {line!r}")
+
+
+def test_attempt_roster_reports_the_step_state_recovered_from_sacct():
+    """An attempt's CANCELLED/COMPLETED outcome must reach the per-attempt roster.
+
+    `_build_efficiency_rows` states the stake in its own comment: "the solver steps ARE
+    the resume attempts, and their CANCELLED/COMPLETED breakdown is what [Q143] calls this
+    campaign's subject". Job grain folds N attempts into one row, so the roster is the only
+    place that breakdown survives -- and a roster rendering "state not recorded" for every
+    attempt is a disclosure that discloses nothing, which is the failure [Q153]'s
+    trackability condition exists to prevent.
+
+    The field cannot come from the plugin. Measured on this campaign's own efficiency CSVs
+    (14 files, 928 rows, all numeric steps): the emitted columns are JobID/JobName/Elapsed/
+    TotalCPU/NNodes/NCPUS/MaxRSS/ReqMem plus the parsed restatements, MainJobID and two
+    precomputed percentages. There is no `State` column at any step kind. It exists only in
+    `slurm_job_recovery._SACCT_FIELDS`, so it reaches the roster only by the join in
+    `_aggregate_jobs`.
+
+    TWO ARMS over the SAME code path, because an assertion that only checks the happy case
+    cannot tell a working join from a roster that happens to print something. Arm B narrows
+    `_RECOVERED_ONLY_STEP_FIELDS` to the pre-fix set and must reproduce the delivered
+    artifact's exact string; if both arms rendered alike the test would prove nothing.
+    """
+    real_state = "CANCELLED by 554635"
+    # A plugin step row in its measured shape: Elapsed and MaxRSS present, neither
+    # TRESUsageInTot nor State.
+    merged = {"999.1": {"JobID": "999.1", "MainJobID": "999", "Elapsed": "00:00:52", "MaxRSS": "30096K"}}
+    recovery = {
+        "999": {
+            "job": {"JobID": "999", "Elapsed": "00:01:00", "NCPUS": "1", "State": "COMPLETED"},
+            "batch": {"JobID": "999.batch", "TRESUsageInTot": "cpu=00:00:04", "State": "COMPLETED"},
+            "1": {"JobID": "999.1", "TRESUsageInTot": "cpu=00:08:07", "State": real_state},
+        }
+    }
+
+    def roster(fields):
+        # DEEP copy per arm, and the reason is a real property of the function rather than
+        # test hygiene: `_aggregate_jobs` writes the joined fields ONTO the caller's step
+        # dicts. A shallow `dict(merged)` shares those inner dicts, so arm A's join leaks
+        # into arm B and arm B renders the state it is supposed to lack -- which is exactly
+        # how this test failed on first run. Benign in production, where `merged` is built
+        # fresh per render, but fatal to any differential that reuses one input.
+        saved = metadata._RECOVERED_ONLY_STEP_FIELDS
+        metadata._RECOVERED_ONLY_STEP_FIELDS = fields
+        try:
+            rows = metadata._aggregate_jobs(copy.deepcopy(merged), copy.deepcopy(recovery))
+            row = next(r for r in rows if r["JobID"] == "999")
+            return metadata._attempt_details_html(row["_attempts"], {})
+        finally:
+            metadata._RECOVERED_ONLY_STEP_FIELDS = saved
+
+    joined = roster(("TRESUsageInTot", "State"))
+    assert real_state in joined
+    assert "state not recorded" not in joined
+
+    # Arm B: the pre-fix field set reproduces the defect exactly as the delivered report
+    # rendered it, which is what makes arm A's pass meaningful rather than incidental.
+    unjoined = roster(("TRESUsageInTot",))
+    assert "state not recorded" in unjoined
+    assert real_state not in unjoined
+
+    # The ATTEMPT NUMBER is deliberately absent from both arms and must stay that way: it is
+    # read only from the ledger, and deriving it from the step index would fabricate a value
+    # for every step the ledger does not record.
+    assert "attempt not recorded" in joined

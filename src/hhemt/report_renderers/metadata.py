@@ -2503,6 +2503,24 @@ _EFF_KNOWN_UNDISPLAYED: frozenset[str] = frozenset(
     }
 )
 
+#: Per-step fields that exist ONLY in the Stage-A recovery CSV, never in the Snakemake
+#: plugin's efficiency CSV, and are therefore joined onto the plugin's step rows in
+#: `_aggregate_jobs`. Declared once because two consumers depend on the same join and a
+#: second inline list would be a second place this knowledge lives.
+#:
+#: `TRESUsageInTot` feeds `_reduce_cpu_sum` -- a solver step reports `TotalCPU=00:00:00`
+#: while its `cpu=` key carries the real time (`slurm_job_recovery.py` states this at its
+#: field-set declaration), so the reduction is wrong without it.
+#:
+#: `State` feeds the per-attempt roster ONLY (`_attempt_details_html`) and is read by no
+#: reducer -- verified by census: `State` appears exactly twice in this module, here and at
+#: that one display site. It is what makes the CANCELLED/COMPLETED breakdown legible, which
+#: `_build_efficiency_rows` names as this campaign's subject: the solver steps ARE the resume
+#: attempts. Without the join the roster renders every attempt as "state not recorded", which
+#: is a disclosure that discloses nothing -- the failure `[Q153]`'s trackability condition
+#: exists to prevent.
+_RECOVERED_ONLY_STEP_FIELDS: tuple[str, ...] = ("TRESUsageInTot", "State")
+
 
 def _load_job_recovery(analysis_dir: Path) -> tuple[dict[str, dict[str, dict[str, str]]], Path | None]:
     """Read `slurm_job_recovery`'s Stage-A artifact; return the map and the file actually read.
@@ -2555,16 +2573,22 @@ def _aggregate_jobs(
         recovered = recovery.get(main_job_id, {})
         job_row = dict(recovered.get("job", {}))
         batch_row = recovered.get("batch")
-        # The plugin's step rows carry MaxRSS but never TRESUsageInTot, so a solver step's
-        # CPU time is absent from them. Where the recovery CSV holds the same step, its
-        # TRESUsageInTot is copied ONTO the plugin row rather than added as a second row:
-        # `all_steps` keeps its membership, so the max-shaped reducer is untouched and the
-        # sum-shaped one cannot count a step twice.
+        # The plugin's step rows carry MaxRSS but NEITHER of the fields in
+        # `_RECOVERED_ONLY_STEP_FIELDS`, so a solver step's CPU time and its terminal state
+        # are both absent from them. Measured on this campaign's own plugin output: the
+        # emitted columns are JobID/JobName/Elapsed/TotalCPU/NNodes/NCPUS/MaxRSS/ReqMem plus
+        # the parsed `_sec`/`_MB` restatements, `MainJobID` and two precomputed percentages
+        # -- no `TRESUsageInTot` and no `State` at any step kind. Where the recovery CSV holds
+        # the same step, those fields are copied ONTO the plugin row rather than added as a
+        # second row: `all_steps` keeps its membership, so the max-shaped reducer is untouched
+        # and the sum-shaped one cannot count a step twice.
         for _s in steps:
             _suffix = _s.get("JobID", "").split(".", 1)[1] if "." in _s.get("JobID", "") else ""
             _rec = recovered.get(_suffix)
-            if _rec and not _s.get("TRESUsageInTot"):
-                _s["TRESUsageInTot"] = _rec.get("TRESUsageInTot", "")
+            if _rec:
+                for _field in _RECOVERED_ONLY_STEP_FIELDS:
+                    if not _s.get(_field):
+                        _s[_field] = _rec.get(_field, "")
         # seff reduces over the batch step; excluding it is what zeroes the CPU column.
         all_steps = [*steps, batch_row] if batch_row else list(steps)
 
