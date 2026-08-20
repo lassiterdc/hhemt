@@ -98,13 +98,31 @@ def _step_kind(job_id: str) -> str | None:
 
     `18396137`       -> "job"    (the allocation; carries Elapsed)
     `18396137.batch` -> "batch"  (carries the only nonzero TotalCPU)
-    `18396137.0`     -> None     (a numeric step; the plugin already kept these)
+    `18396137.0`     -> "0"      (a numeric step; recovered for its TRESUsageInTot)
     `18396137.extern`-> None     (never carries anything the table reports)
+
+    NUMERIC STEPS ARE RECOVERED, and the module docstring's "rows the plugin dropped"
+    framing is corrected here rather than annotated around. The plugin KEEPS numeric step
+    rows, so re-reading them looks like duplication -- but it keeps them WITHOUT
+    `TRESUsageInTot`, and that field is the only place a solver step's CPU time exists
+    (`TotalCPU` reads `00:00:00` for anything run in an `srun` step). What this module
+    supplies is therefore whatever the plugin's CSV does not carry, whether that is a
+    missing ROW or a missing FIELD on a row it kept; the original wording named only the
+    first axis because only the first axis was in view. The recovered step rows are MERGED
+    onto the plugin's own step rows by JobID downstream, never appended -- appending would
+    put each solver step in the reduction twice and double a summed CPU figure.
+
+    The numeric suffix is returned AS the kind so `_load_job_recovery`'s
+    `{main_job_id: {kind: row}}` map absorbs several steps per job without collision: a
+    suffix can never equal "job" or "batch". `backfill`'s per-class counters compare
+    against those two literals and so keep their existing meaning.
     """
     if "." not in job_id:
         return "job"
     suffix = job_id.split(".", 1)[1]
-    return "batch" if suffix == "batch" else None
+    if suffix == "batch":
+        return "batch"
+    return suffix if suffix.isdigit() else None
 
 
 def main_job_ids_from_efficiency_csvs(analysis_dir: Path) -> list[str]:
@@ -139,7 +157,7 @@ def main_job_ids_from_efficiency_csvs(analysis_dir: Path) -> list[str]:
 
 
 def recover_rows(job_ids: list[str], *, timeout_s: float = 60.0) -> list[dict[str, str]]:
-    """Query sacct for `job_ids` and return only the job and `.batch` rows.
+    """Query sacct for `job_ids` and return the job, `.batch` and numeric-step rows.
 
     Returns [] on any failure -- missing sacct, timeout, non-zero exit. A partial recovery
     is returned as-is: sacct silently omits ids it no longer retains, and reporting the

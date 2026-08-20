@@ -953,6 +953,14 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
     over-reach: a row that genuinely measured low CPU use must keep its number.
     """
     zero_row = "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0\n"
+    # The measured arm's CPU is recorded on the STEP, not on `.batch`. That is the shape the
+    # cluster actually produces: a job either runs its payload in `.batch` and has NO numeric
+    # steps at all (measured on 18552587 / 18554168 / 18554677, each returning only a job row
+    # and `.batch`), or runs it in `srun` steps whose `TRESUsageInTot` carries the `cpu=` key.
+    # The combination this row used to assert -- a numeric step present, the CPU on `.batch`,
+    # and no step-level usage -- is the STALE-CAPTURE signature, and the reducer now declines
+    # to report it rather than summing the wrapper alone. Keeping the old shape here would
+    # have pinned the over-reach case to a state no job produces.
     measured_row = "0,222.0,python,00:01:40,1,1,512K,,100.0,91.0,500.0,8000.0,222,91.0,6.4\n"
     # The SUBJECT moved: `CPU eff (%)` is now COMPUTED here rather than read from the
     # plugin's own column, and its numerator `TotalCPU` lives only on the job and `.batch`
@@ -969,8 +977,9 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
             "job": {"JobID": "222", "Elapsed": "00:01:40", "NNodes": "1", "NCPUS": "1"},
             # A genuine measurement -> the number must survive. The numerator moved off
             # `TotalCPU`, which reads zero for srun-step work, onto the recorded usage.
-            "batch": {"JobID": "222.batch", "TotalCPU": "00:01:31", "MaxRSS": "512K",
-                      "TRESUsageInTot": "cpu=00:01:31,energy=0,mem=512K"},
+            "batch": {"JobID": "222.batch", "TotalCPU": "00:00:00", "MaxRSS": "512K",
+                      "TRESUsageInTot": "cpu=00:00:00,energy=0,mem=512K"},
+            "0": {"JobID": "222.0", "TRESUsageInTot": "cpu=00:01:31,energy=0,mem=512K"},
         },
     }
     html = metadata._build_slurm_efficiency_html(

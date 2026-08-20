@@ -69,21 +69,24 @@ def _write_eff_csv(analysis_dir: Path, main_job_ids: list[str]) -> None:
 # --------------------------------------------------------------------------- classification
 
 
-def test_step_kind_selects_only_the_two_dropped_classes():
-    """INVARIANT: exactly the job row and `.batch` are recovered; numeric steps and
-    `.extern` are not, because the plugin already keeps the former and the latter carries
-    nothing the table reports.
+def test_step_kind_admits_numeric_steps_and_still_rejects_extern():
+    """INVARIANT: the job row, `.batch` and every NUMERIC step are recovered; `.extern` is
+    not. Numeric steps are recovered for `TRESUsageInTot` alone -- the plugin keeps those
+    rows but not that field, and it is the only place a solver step's CPU time exists.
 
     A DIFFERENT correct implementation -- regex, rsplit, a suffix set -- scores PASS, since
     this asserts the classification and not how it is computed. What FAILS is a rule that
     keeps `.extern` (its 1024K would enter a memory reduction as a real step), or one that
-    treats any non-numeric suffix as batch, or one that drops the job row.
+    treats any non-numeric suffix as batch, or one that drops the job row, or one that
+    returns a CONSTANT for every numeric step -- which would collapse a job's several steps
+    onto one key in `_load_job_recovery`'s per-kind map and silently keep only the last.
     """
     assert _step_kind("18396137") == "job"
     assert _step_kind("18396137.batch") == "batch"
     assert _step_kind("18396137.extern") is None
-    assert _step_kind("18396137.0") is None
-    assert _step_kind("18396137.4") is None
+    assert _step_kind("18396137.0") == "0"
+    assert _step_kind("18396137.4") == "4"
+    assert _step_kind("18396137.0") != _step_kind("18396137.4")
 
 
 def test_recover_rows_keeps_the_two_classes_and_the_fields_that_motivated_them(monkeypatch):
@@ -97,7 +100,9 @@ def test_recover_rows_keeps_the_two_classes_and_the_fields_that_motivated_them(m
     _fake_sacct(monkeypatch, _SACCT_OUT)
     rows = recover_rows(["18396137"])
 
-    assert [r["StepKind"] for r in rows] == ["batch", "job"]  # deterministic order
+    # `.extern` is still filtered out; the numeric steps now come through, each under its
+    # own suffix, which is what carries TRESUsageInTot to the CPU reducer.
+    assert [r["StepKind"] for r in rows] == ["0", "1", "4", "batch", "job"]  # deterministic
     job = next(r for r in rows if r["StepKind"] == "job")
     batch = next(r for r in rows if r["StepKind"] == "batch")
 

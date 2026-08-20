@@ -2122,6 +2122,14 @@ def _reduce_cpu_sum(steps: list[dict], job_row: dict) -> tuple[str, str]:
     measured = [(n, v) for n, v in per_step if v is not None]
     if not measured:
         return ("", f"no step reported CPU time across {len(per_step)} step(s)")
+    # FAIL SAFE, not fail plausible. When `.batch` is the only step that reported CPU but
+    # the job HAS solver steps, the recovery CSV is stale or un-rerun and a sum over what
+    # is present measures the Python wrapper alone -- 1.6% against a true 78.8% on job
+    # 18396671. That number is worse than a blank, because a small plausible figure reads
+    # as a wasted allocation and gets believed, while an em-dash invites a second look.
+    # Blank it and say why, so the shortfall is legible rather than rendered.
+    if [n for n, _v in measured] == ["batch"] and any(n.isdigit() for n, _v in per_step):
+        return ("", f"only .batch reported CPU; {len(per_step) - 1} solver step(s) unmeasured")
     total = sum(v for _n, v in measured)
     nonzero = [n for n, v in measured if v > 0]
     detail = f"summed over {len(measured)} of {len(per_step)} step(s)"
@@ -2547,6 +2555,16 @@ def _aggregate_jobs(
         recovered = recovery.get(main_job_id, {})
         job_row = dict(recovered.get("job", {}))
         batch_row = recovered.get("batch")
+        # The plugin's step rows carry MaxRSS but never TRESUsageInTot, so a solver step's
+        # CPU time is absent from them. Where the recovery CSV holds the same step, its
+        # TRESUsageInTot is copied ONTO the plugin row rather than added as a second row:
+        # `all_steps` keeps its membership, so the max-shaped reducer is untouched and the
+        # sum-shaped one cannot count a step twice.
+        for _s in steps:
+            _suffix = _s.get("JobID", "").split(".", 1)[1] if "." in _s.get("JobID", "") else ""
+            _rec = recovered.get(_suffix)
+            if _rec and not _s.get("TRESUsageInTot"):
+                _s["TRESUsageInTot"] = _rec.get("TRESUsageInTot", "")
         # seff reduces over the batch step; excluding it is what zeroes the CPU column.
         all_steps = [*steps, batch_row] if batch_row else list(steps)
 
