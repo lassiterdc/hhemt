@@ -2828,8 +2828,20 @@ def _aggregate_jobs(
             from hhemt.run_simulation_runner import _NON_SOLVER_STEP_NAMES
 
             suffix = _step_suffix(step.get("JobID", ""))
+            if not suffix.isdigit():
+                return False
             name = (step.get("JobName", "") or "").strip().lower()
-            return suffix.isdigit() and bool(name) and name not in _NON_SOLVER_STEP_NAMES
+            # A NAMED step is classified by name -- that is what admits a solver sitting at
+            # `.0` and excludes a wrapper wherever it sits. An UNNAMED step cannot be
+            # classified that way at all, and reading "unknown" as "not the solver" silently
+            # DROPS it from the roster, which is the disclosure-that-discloses-nothing this
+            # roster exists to prevent. Absence is not a measurement, so fall back to the
+            # index rule -- the best available discriminator when no name is present.
+            # `_parse_step_ids` keeps the plain `name and ...` conjunct because it reads
+            # `sacct -o JobID,JobName`, where the field is present by construction.
+            if not name:
+                return suffix != "0"
+            return name not in _NON_SOLVER_STEP_NAMES
 
         attempts = sorted(
             (s for s in steps if _is_attempt(s)),

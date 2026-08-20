@@ -1027,9 +1027,16 @@ def test_resume_attempts_are_numbered_in_the_description_column():
     Two arms in ONE render call: a step WITH a recorded attempt must be numbered, and a
     step WITHOUT one must keep its bare purpose rather than be guessed at.
     """
+    # `JobName` was incidental filler when this fixture was written -- every step read
+    # `python` because the classifier ignored the field. It is now the step's IDENTITY, so
+    # the filler had become factually wrong about the domain: a solver step is `triton.exe`
+    # (see `_REAL_STEPS` in tests/test_slurm_efficiency_reduction.py, real captured rows),
+    # and `python` is the runner's own wrapper at `.0`. Only the names are corrected; both
+    # arms below and their assertions are untouched, because the SUBJECT here is attempt
+    # NUMBERING from the ledger, never step classification.
     labelled = "0,777.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,777,0.0,69.0\n"
-    resumed = "0,777.2,python,00:00:26,1,1,700K,,26.0,0.0,690.0,1000.0,777,0.0,69.0\n"
-    unlabelled = "0,777.9,python,00:00:26,1,1,700K,,26.0,0.0,690.0,1000.0,777,0.0,69.0\n"
+    resumed = "0,777.2,triton.exe,00:00:26,1,1,700K,,26.0,0.0,690.0,1000.0,777,0.0,69.0\n"
+    unlabelled = "0,777.9,triton.exe,00:00:26,1,1,700K,,26.0,0.0,690.0,1000.0,777,0.0,69.0\n"
     purpose_map = metadata._job_purpose_map(
         [
             {
