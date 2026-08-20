@@ -2639,8 +2639,15 @@ def _aggregate_jobs(
         # function; the caller applies it after the toolkit join so the toolkit value wins.
         # Stored under a private key so it can never be mistaken for the column's own value
         # by anything that iterates `_EFF_COLUMNS`.
+        # `00:00:00` is KEPT, and excluding it was a real defect measured on the artifact:
+        # exactly 1 of `synth_cc_clean_triton`'s 672 job rows carries it, and it rendered an
+        # em-dash where the truth is a queue wait under one second. SLURM reports an
+        # unavailable field as empty or `Unknown`, never as a zero DURATION, so `00:00:00`
+        # here is a MEASUREMENT rather than an absence -- and `[Q130]` is explicit that an
+        # examined-zero and a not-measured must not render alike. The sibling comment about
+        # never rendering 0 governs an ABSENT toolkit value, which is a different case.
         _planned_raw = (job_row.get("Planned") or "").strip()
-        if _planned_raw and _planned_raw != "00:00:00":
+        if _planned_raw:
             row["_planned_seconds"] = f"{_slurm_seconds(_planned_raw):.0f}"
 
         # CPU efficiency is `seff`'s own headline number, and [Q144] names it by name. It is

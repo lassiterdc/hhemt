@@ -1408,7 +1408,17 @@ def test_queue_column_falls_back_to_slurm_planned_and_discloses_its_source():
     assert val == "54", f"expected the Planned seconds, got {val!r}"
     assert "Planned" in why and "job accounting record" in why, f"provenance did not name the source: {why!r}"
 
-    # ARM 3: neither source -> em-dash. A 0 here would assert the job did not wait.
+    # ARM 3: neither source -> em-dash. An ABSENT value must not render as 0.
     val_absent, _ = queue_cell({"777": {"job": dict(job)}}, {})
     assert val_absent == "\u2014", f"expected an em-dash, got {val_absent!r}"
     assert val_absent != "0"
+
+    # ARM 4: Planned == 00:00:00 is a MEASURED sub-second wait, not an absence, and must
+    # render as 0 rather than an em-dash. Measured on the artifact: exactly 1 of
+    # synth_cc_clean_triton's 672 job rows carries it, and an earlier guard excluding
+    # "00:00:00" rendered it identically to a job with no record at all -- the examined-zero
+    # vs not-measured conflation [Q130] forbids. This arm is what separates them.
+    val_zero, why_zero = queue_cell({"777": {"job": {**job, "Planned": "00:00:00"}}}, {})
+    assert val_zero == "0", f"a measured zero must render as 0, got {val_zero!r}"
+    assert val_zero != "\u2014"
+    assert "Planned" in why_zero
