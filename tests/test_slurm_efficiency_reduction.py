@@ -28,13 +28,20 @@ _REAL_STEPS = {
     # TRESUsageInTot values are the REAL captured ones for this job (see
     # tests/test_slurm_job_recovery.py): TotalCPU reads zero on every srun step while the
     # recorded usage shows the CPU that was actually consumed.
+    # `JobName` is the step's IDENTITY and the reducer classifies on it, never on the step
+    # index. This job carries the MAJORITY shape -- `python` at `.0` -- which is 4,771 of
+    # the campaign's 5,198 jobs; the 319-job minority whose `.0` IS a solver step is a
+    # different fixture, because a majority-shape fixture cannot reach that branch.
     "18396137.0": {"JobID": "18396137.0", "MainJobID": "18396137", "Elapsed": "00:01:51",
+                   "JobName": "python",
                    "TotalCPU": "00:00:00", "MaxRSS": "491288K", "RequestedMem_MB": "4000",
                    "TRESUsageInTot": "cpu=00:00:17,energy=0,mem=491288K"},
     "18396137.1": {"JobID": "18396137.1", "MainJobID": "18396137", "Elapsed": "00:00:15",
+                   "JobName": "triton.exe",
                    "TotalCPU": "00:00:00", "MaxRSS": "49524K", "State": "CANCELLED",
                    "TRESUsageInTot": "cpu=00:00:13,energy=0,mem=49524K"},
     "18396137.4": {"JobID": "18396137.4", "MainJobID": "18396137", "Elapsed": "00:00:20",
+                   "JobName": "triton.exe",
                    "TotalCPU": "00:00:00", "MaxRSS": "50860K", "State": "COMPLETED"},
 }
 _REAL_RECOVERY = {
@@ -151,15 +158,25 @@ def test_per_attempt_disclosure_survives_job_grain():
 
 
 def test_wrapper_step_is_not_counted_as_a_resume_attempt():
-    """INVARIANT: `.0` is the runner's python wrapper, not an attempt.
+    """INVARIANT: a numeric step is an attempt iff its NAME is not a wrapper or bookkeeping
+    step. Step INDEX is not step IDENTITY.
 
-    A DIFFERENT correct implementation PASSES however it classifies, as long as `.0` is
-    excluded and numeric solver steps are included. Counting `.0` FAILS -- it would report
-    3 attempts for a job that made 2.
+    This fixture is the MAJORITY shape (`python` at `.0`, 4,771 of 5,198 campaign jobs), so
+    an index rule and a name rule agree on it and it cannot discriminate them on its own --
+    the minority shape whose `.0` IS a solver step lives in its own test.
+
+    What this test still pins is that a wrapper is excluded BY NAME: `python` at `.0` is not
+    an attempt, and the two `triton.exe` steps are. A DIFFERENT correct implementation PASSES
+    however it spells the name set. Counting the wrapper FAILS -- it would report 3 attempts
+    for a job that made 2.
+
+    The previous assertion `all(... rsplit(".", 1)[1] != "0" ...)` was DELETED rather than
+    repaired: it asserted the refuted premise directly and universally, and no fixture makes
+    it true in general, because on 319 of 5,198 campaign jobs a `.0` step IS the solver.
     """
     rows = _aggregate_jobs(_REAL_STEPS, _REAL_RECOVERY)
     assert rows[0]["attempts"] == "2"
-    assert all(s["JobID"].rsplit(".", 1)[1] != "0" for s in rows[0]["_attempts"])
+    assert [s["JobName"] for s in rows[0]["_attempts"]] == ["triton.exe", "triton.exe"]
 
 
 def test_every_column_declares_a_reduction_and_the_rule_is_stated_once():

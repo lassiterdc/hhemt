@@ -2818,9 +2818,18 @@ def _aggregate_jobs(
         # Per-attempt disclosure: the solver steps ARE the resume attempts, and their
         # CANCELLED/COMPLETED breakdown is what [Q143] calls this campaign's subject.
         def _is_attempt(step: dict[str, str]) -> bool:
-            # Solver steps only: `.0` is the runner's own python wrapper, not an attempt.
+            # Solver steps only, classified by NAME. Step INDEX is not step IDENTITY: a
+            # campaign-window census of `JobName` at `.0` returns python 4771, apptainer
+            # 216, triton.exe 103 -- so `.0` is a real solver step on 319 of 5198 jobs,
+            # 283 of which have NO other numeric step and rendered an em-dash for a job
+            # that ran. `_NON_SOLVER_STEP_NAMES` is the toolkit's single declaration of
+            # which names are never the solver; imported locally to keep the renderer
+            # free of a module-level dependency on a runner.
+            from hhemt.run_simulation_runner import _NON_SOLVER_STEP_NAMES
+
             suffix = _step_suffix(step.get("JobID", ""))
-            return suffix.isdigit() and suffix != "0"
+            name = (step.get("JobName", "") or "").strip().lower()
+            return suffix.isdigit() and bool(name) and name not in _NON_SOLVER_STEP_NAMES
 
         attempts = sorted(
             (s for s in steps if _is_attempt(s)),
