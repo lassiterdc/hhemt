@@ -2030,9 +2030,47 @@ class _Reduction:
     over a wrong sum is unreachable -- swapping the callable moves the number AND the sentence.
     """
 
-    tag: str
-    rule: str
-    apply: Callable[[list[dict], dict], tuple[str, str]] | None
+    #: The caption's TERM for this reduction. REQUIRED (enforced below) and unique across
+    #: `_EFF_COLUMNS` (enforced at import, beside the tuple). Split from `tag` because the two
+    #: answer different questions, and conflating them produced the defect this closes: `tag`
+    #: is a header SUFFIX and is legitimately empty for a value that was looked up rather than
+    #: reduced, so the caption fell back to `r.tag or "joined"` and manufactured ONE term for
+    #: THREE different operations -- the only term on the page with no declaration, inside the
+    #: system whose premise is that every term has exactly one.
+    #:
+    #: Defaulted to "" rather than left required-positional so that adding the field does not
+    #: have to be one atomic rewrite of all six construction sites. The default is NOT a
+    #: permitted value: `__post_init__` rejects it, so the module still fails at IMPORT until
+    #: every site declares one. Smaller diff, identical loudness.
+    name: str = ""
+    tag: str = ""
+    #: WHY this reduction was chosen, as its own sentence. Separate from `rule` because `rule`
+    #: had been carrying both what-the-reduction-is and why-it-was-picked in one run of prose,
+    #: which is why the rationale could not be found as its own thing.
+    why: str = ""
+    rule: str = ""
+    apply: Callable[[list[dict], dict], tuple[str, str]] | None = None
+
+    def __post_init__(self) -> None:
+        """Reject a reduction that cannot be rendered. Construction-time, because a frozen
+        dataclass makes this a construction-time fact and there is no later moment at which
+        it becomes false.
+
+        Only PER-INSTANCE properties are checked here. Uniqueness is deliberately NOT: it is a
+        property of a SET, not of an instance, so enforcing it via a module-level registry in
+        `__post_init__` would be wrong-scoped -- it would false-trip on a test constructing a
+        standalone reduction that reuses a name, and it would make import order significant.
+        The set-level check lives beside `_EFF_COLUMNS`, which is the only place the set exists.
+        """
+        for field_name in ("name", "why", "rule"):
+            if not getattr(self, field_name).strip():
+                raise ValueError(
+                    f"_Reduction declared with an empty {field_name!r}. Every reduction must "
+                    f"name itself, say why it was chosen, and state its rule -- the caption, "
+                    f"the header tooltip and the per-value provenance are all renderings of "
+                    f"these, and a blank one is what let the term 'joined' be invented at "
+                    f"render time for three different operations."
+                )
 
 
 def _slurm_seconds(text: str) -> float:
@@ -2174,6 +2212,12 @@ def _reduce_joined(field: str):
 
 
 _SUM_STEPS = _Reduction(
+    name="Summed across steps",
+    why=(
+        "CPU time is additive across a job's steps, so the job's total is their sum. This is "
+        "`seff`'s own reduction, chosen so this number agrees with what the cluster's standard "
+        "tool reports rather than offering a second opinion a reader would have to reconcile."
+    ),
     tag="\u03a3 steps",
     rule=(
         "Summed across every step of the job, including the batch step — `seff`'s own "
@@ -2186,6 +2230,13 @@ _SUM_STEPS = _Reduction(
     apply=_reduce_cpu_sum,
 )
 _MAX_STEPS = _Reduction(
+    name="Maximum across steps",
+    why=(
+        "A memory request has to be sized for the largest step, not the average one, so the "
+        "peak is the number that decides whether the next run fits. The peak step is often the "
+        "runner's own wrapper rather than the solver -- measured 817884K against 33164K on one "
+        "job -- which is why each cell names the step it came from."
+    ),
     tag="max step",
     rule=(
         "The largest value across the job's steps, which is `seff`'s reduction and the correct "
@@ -2195,6 +2246,13 @@ _MAX_STEPS = _Reduction(
     apply=_reduce_rss_max,
 )
 _JOB_RECORD = _Reduction(
+    name="Read from the job record",
+    why=(
+        "A job's wall time is neither the sum nor the maximum of its steps' -- measured on one "
+        "job as 296 s against a 235 s sum and a 67 s max, three different numbers of which only "
+        "one is the job's elapsed time. It is read from the allocation's own record because it "
+        "is not reconstructible from the steps at all."
+    ),
     tag="job record",
     rule=(
         "Read from the job's own accounting record rather than reduced from its steps -- `seff` "
@@ -2217,6 +2275,13 @@ _JOB_RECORD = _Reduction(
 #: already reads. So the column rendered an em-dash on every row while an authoritative value
 #: sat in an already-open file. The fallback is ADDITIVE -- it never overwrites a toolkit value.
 _QUEUE_JOIN = _Reduction(
+    name="Queue-wait lookup",
+    why=(
+        "The wait happened to the allocation, not to any step, so there is nothing to reduce. "
+        "hhemt's own per-job map is preferred because it is exact; the SLURM fallback exists "
+        "because that map is routinely empty -- it derives from `_walltime` ledgers a render "
+        "bundle does not carry, so an off-cluster re-render has no access to it."
+    ),
     # EMPTY tag, matching the joined-column family. The tag slot renders as a header SUFFIX
     # describing a REDUCTION over steps -- `(job record)`, `(Σ steps)`, `(max step)` -- and a
     # queue wait is neither reduced nor summarised, it is looked up. A non-empty tag here
@@ -2236,6 +2301,14 @@ _QUEUE_JOIN = _Reduction(
 #: Authored once here and rendered three ways -- header symbol, header/value tooltip, and
 #: the caption -- which is what keeps it from being restated in prose somewhere.
 _ATTEMPTS_JOIN = _Reduction(
+    name="Attempt count",
+    why=(
+        "How many times a simulation ran is a property of hhemt's own per-attempt records, not "
+        "of SLURM accounting, which cannot distinguish an attempt from a concurrent simulation "
+        "-- the accounting rows are structurally identical in the two cases. Where the run "
+        "method cannot support the count, it is reported as not measured rather than given a "
+        "number a reader could not tell from a real one."
+    ),
     tag="",
     rule=(
         "How many times this simulation ran, joined from hhemt's own per-attempt records. "
@@ -2250,6 +2323,13 @@ _ATTEMPTS_JOIN = _Reduction(
 )
 
 _TOOLKIT_JOIN = _Reduction(
+    name="Carried from toolkit records",
+    why=(
+        "These describe what hhemt ASKED FOR rather than what SLURM measured, so no reduction "
+        "applies and none is claimed -- the value is carried from the record that made the "
+        "request. This is the family whose three members previously shared the invented term "
+        "'joined' despite one of them reading from SLURM accounting after all."
+    ),
     tag="",
     rule="Joined from hhemt's own per-rule records for this job, not from SLURM accounting.",
     apply=None,
@@ -2305,6 +2385,35 @@ _EFF_COLUMNS: tuple[_EffColumn, ...] = (
 )
 
 
+def _assert_reduction_names_unique(columns: tuple[_EffColumn, ...]) -> None:
+    """Two reductions may not share a caption term. Import-time, over the set.
+
+    A REQUIRED `name` closes the empty case but not the COLLISION case, and a collision is the
+    identical defect wearing a different field: two distinct operations rendered under one
+    heading, discovered by reading a shipped report rather than by running the code. That is
+    precisely how the `joined` collapse surfaced -- three operations, one `<dt>`, noticed in a
+    screenshot.
+
+    Keyed on OBJECT IDENTITY, not equality: two separately-declared reductions that happen to
+    be field-identical are still two declarations and still a collision. `_Reduction` is
+    frozen, so `id()` is stable for the lifetime of the module.
+    """
+    by_name: dict[str, int] = {}
+    for col in columns:
+        red = col.reduction
+        prior = by_name.setdefault(red.name, id(red))
+        if prior != id(red):
+            raise ValueError(
+                f"Two distinct reductions both declare the caption term {red.name!r}. "
+                f"One term names one operation: the caption renders each term once, so a "
+                f"shared term silently merges two rules under one heading and the reader "
+                f"cannot tell which column got which. Give each its own term."
+            )
+
+
+_assert_reduction_names_unique(_EFF_COLUMNS)
+
+
 def _reduction_caption() -> str:
     """The caption. Renders each DISTINCT `rule` exactly once, from the same declaration the
     headers and tooltips render -- so the page states each reduction in one place, not three."""
@@ -2317,14 +2426,32 @@ def _reduction_caption() -> str:
     for col in _EFF_COLUMNS:
         if col.reduction not in seen:
             seen.append(col.reduction)
-    items = "".join(
-        f"<dt><strong>{_esc(r.tag or 'joined')}</strong></dt><dd>{_esc(r.rule)}</dd>" for r in seen
-    )
+    # One BLOCK per reduction -- subheader, then why, then the method. The method line is
+    # DERIVED from the callable rather than authored, so a reducer that is edited or swapped
+    # changes this page. That is deterministic linkage: there is no hand-written sentence here
+    # that can silently fall out of date, because there is no hand-written sentence here at all.
+    blocks: list[str] = []
+    for r in seen:
+        if r.apply is None:
+            method = (
+                "No reduction is applied. The value is carried from its source as-is, so "
+                "there is no function to link."
+            )
+        else:
+            doc = (r.apply.__doc__ or "").strip().splitlines()
+            summary = doc[0].strip() if doc else "(the function carries no docstring)"
+            method = f"{r.apply.__name__}() — {summary}"
+        blocks.append(
+            f"<h5>{_esc(r.name)}</h5>"
+            f"<p>{_esc(r.why)}</p>"
+            f"<p><strong>Method.</strong> <code>{_esc(method)}</code></p>"
+            f"<p>{_esc(r.rule)}</p>"
+        )
     return (
-        "<p class='note'><strong>How each column was reduced.</strong> One row is one JOB; a "
-        "job's steps are aggregated. Every column header carries its reduction's symbol, and "
-        "hovering a header or a value repeats nothing -- both read this same declaration.</p>"
-        f"<dl class='options'>{items}</dl>"
+        "<h4>How each column was reduced</h4>"
+        "<p class='note'>One row is one JOB; a job's steps are aggregated. Every column "
+        "header carries its reduction's symbol, and hovering a header or a value repeats "
+        "nothing -- both read this same declaration.</p>" + "".join(blocks)
     )
 
 

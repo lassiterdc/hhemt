@@ -478,6 +478,38 @@ def main():
         except Exception as e:
             logger.warning(f"SLURM job-index harvest failed (non-fatal): {e}")
 
+        # Make job efficiency data a PRODUCT rather than an operator errand. The capture
+        # existed already but had no caller anywhere in src/, scripts/ or the Snakefile
+        # generators -- it ran only when a human typed `python -m hhemt.slurm_job_recovery`,
+        # which is why the store is empty on trees nobody remembered to back-fill. This rule
+        # is the right home: it already runs on the cluster where `sacct` resolves, it already
+        # re-persists two other read-models here, and it runs after consolidation, so the jobs
+        # it captures are finished and their accounting rows are final.
+        #
+        # `run_method` is passed from here because this is the one place it is authoritatively
+        # known; the capture module is stdlib-only and must not read a toolkit config.
+        #
+        # Non-fatal by the same rule as its neighbours. `backfill` degrades internally to
+        # "recovered nothing" on a missing sacct, a timeout, or a non-zero exit, so the local
+        # and off-cluster cases cost one no-op call rather than an error path.
+        try:
+            from hhemt.slurm_job_recovery import backfill
+
+            _rep = backfill(
+                analysis.analysis_paths.analysis_dir,
+                run_method=str(analysis.cfg_analysis.multi_sim_run_method or ""),
+            )
+            logger.info(
+                "SLURM job store: ids=%s rows=%s job_rows=%s batch_rows=%s missing=%s",
+                _rep["ids_in_csv"],
+                _rep["rows_recovered"],
+                _rep["ids_with_job_row"],
+                _rep["ids_with_batch_row"],
+                _rep["ids_missing"],
+            )
+        except Exception as e:
+            logger.warning(f"SLURM job-store capture failed (non-fatal): {e}")
+
         logger.info("Writing workflow summary markdown...")
         if args.verbose:
             print("Writing workflow summary...", flush=True)

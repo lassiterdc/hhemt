@@ -86,7 +86,15 @@ _SACCT_FIELDS = (
 #: Header of the emitted CSV. `StepKind` is DERIVED here rather than left to the reader:
 #: the job/batch distinction is the whole point of the file, and re-deriving it downstream
 #: from a suffix regex would be a second place that knowledge lives.
-RECOVERY_HEADER = ("MainJobID", "StepKind", *_SACCT_FIELDS)
+#: `RunMethod` is hhemt's own, not sacct's, and it is REQUIRED by the retention promise
+#: rather than merely useful. Under `batch_job` a job's solver steps are ATTEMPTS of one
+#: simulation; under `1_job_many_srun_tasks` they are DIFFERENT SIMULATIONS sharing one
+#: allocation -- and the accounting rows are structurally identical in the two cases, so a
+#: reducer reading sacct alone cannot tell them apart. Without this field the promise that a
+#: future aggregation bug is fixable from the stored rows does not hold for that mode: the
+#: rows would be there and would still be un-interpretable. It is supplied by the CALLER
+#: rather than read here, which keeps this module stdlib-only with no toolkit imports.
+RECOVERY_HEADER = ("MainJobID", "StepKind", "RunMethod", *_SACCT_FIELDS)
 
 #: sacct is invoked in chunks. 771 ids at ~9 chars is well under ARG_MAX, but a campaign
 #: that grows is exactly the case nobody re-measures, so the bound is explicit.
@@ -154,6 +162,56 @@ def main_job_ids_from_efficiency_csvs(analysis_dir: Path) -> list[str]:
                 if value.isdigit():
                     seen.add(value)
     return sorted(seen, key=int)
+
+
+def _job_ids_from_job_index(analysis_dir: Path) -> set[str]:
+    """Job ids from `_status/_job_index.json` -- the executor's own per-job log tree.
+
+    INDEPENDENT of the plugin's CSVs, which is the entire point: it is harvested from
+    `.snakemake/slurm_logs/rule_{name}/{wildcards}/{jobid}.log`, where the rule is the
+    directory and the job id is the filename, so it covers every job the executor submitted
+    rather than every job one downstream parser chose to keep.
+
+    Stdlib only, preserving this module's leaf property. Degrades to an empty set on any
+    read or parse failure -- a roster that is short is recoverable on the next capture,
+    whereas a raise here would take down a back-fill whose real work is unrelated.
+    """
+    import json as _json_ji
+
+    path = analysis_dir / "_status" / "_job_index.json"
+    if not path.is_file():
+        return set()
+    try:
+        payload = _json_ji.loads(path.read_text())
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    return {str(k) for k in payload if str(k).isdigit()}
+
+
+def _job_ids_from_existing_store(analysis_dir: Path) -> set[str]:
+    """Job ids already in the store, so an aged-out job stays in the roster.
+
+    Without this the store is a SNAPSHOT of whatever sacct still retains, not an amended
+    product: sacct silently omits ids past its retention window, so a later capture would
+    quietly shrink the population. Re-querying an aged-out id costs one entry in a batched
+    sacct call and returns nothing; the row already held is what survives, via the
+    field-wise merge in `write_recovery_csv`.
+    """
+    path = analysis_dir.joinpath(*_EFF_RELDIR) / RECOVERY_FILENAME
+    if not path.is_file():
+        return set()
+    try:
+        text = path.read_text()
+    except OSError:
+        return set()
+    out: set[str] = set()
+    for row in csv.DictReader(io.StringIO(text)):
+        value = (row.get("MainJobID") or "").strip()
+        if value.isdigit():
+            out.add(value)
+    return out
 
 
 def recover_rows(job_ids: list[str], *, timeout_s: float = 60.0) -> list[dict[str, str]]:
@@ -229,13 +287,43 @@ def write_recovery_csv(analysis_dir: Path, rows: list[dict[str, str]]) -> Path |
     testable -- running twice must leave the file byte-identical AND mtime-unchanged.
     """
     eff_dir = analysis_dir.joinpath(*_EFF_RELDIR)
-    if not rows:
+    path_existing = eff_dir / RECOVERY_FILENAME
+    # AMEND, never replace. The prior form wrote whatever this capture returned, which makes
+    # the file a snapshot of sacct's current retention rather than a data product: a job aged
+    # out of the accounting database vanished from the store on the next capture, taking a
+    # measurement that was already safely recorded with it. Merge field-wise on the full step
+    # `JobID`, and NEVER let an empty new value overwrite a non-empty stored one -- that
+    # asymmetry is the whole mechanism. A re-run job legitimately updates its own fields; a
+    # job sacct no longer knows about contributes nothing and keeps what it had.
+    stored: dict[str, dict[str, str]] = {}
+    if path_existing.is_file():
+        try:
+            for prior in csv.DictReader(io.StringIO(path_existing.read_text())):
+                key = (prior.get("JobID") or "").strip()
+                if key:
+                    stored[key] = {k: (prior.get(k) or "") for k in RECOVERY_HEADER}
+        except OSError:
+            stored = {}
+    for row in rows:
+        key = (row.get("JobID") or "").strip()
+        if not key:
+            continue
+        target = stored.setdefault(key, {k: "" for k in RECOVERY_HEADER})
+        for field in RECOVERY_HEADER:
+            value = (row.get(field) or "").strip()
+            if value:
+                target[field] = value
+    if not stored:
         return None
+    merged_rows = sorted(
+        stored.values(),
+        key=lambda r: (int(r["MainJobID"]) if r.get("MainJobID", "").isdigit() else 0, r.get("StepKind", "")),
+    )
     eff_dir.mkdir(parents=True, exist_ok=True)
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=list(RECOVERY_HEADER), lineterminator="\n")
     writer.writeheader()
-    for row in rows:
+    for row in merged_rows:
         writer.writerow({key: row.get(key, "") for key in RECOVERY_HEADER})
     payload = buf.getvalue()
     path = eff_dir / RECOVERY_FILENAME
@@ -249,7 +337,7 @@ def write_recovery_csv(analysis_dir: Path, rows: list[dict[str, str]]) -> Path |
     return path
 
 
-def backfill(analysis_dir: Path, *, timeout_s: float = 60.0) -> dict[str, int]:
+def backfill(analysis_dir: Path, *, timeout_s: float = 60.0, run_method: str = "") -> dict[str, int]:
     """Recover and write for one analysis dir. Returns a coverage report.
 
     The report is the point, not a side note: a PARTIAL recovery changes what Stage B can
@@ -257,8 +345,31 @@ def backfill(analysis_dir: Path, *, timeout_s: float = 60.0) -> dict[str, int]:
     MainJobIDs the CSVs carry for which sacct returned no job row -- jobs aged out of the
     accounting database.
     """
-    ids = main_job_ids_from_efficiency_csvs(analysis_dir)
+    # The roster is the architectural lever. Sourcing it from the plugin's CSVs alone caps
+    # this store at "whatever the plugin already kept", so it can never become the SOLE
+    # source -- it is definitionally a subset of one of the sources it is meant to replace.
+    # Union three independent rosters instead:
+    #   - the executor's own per-job log tree, via _status/_job_index.json, which covers every
+    #     job submitted including the ones a later submission's flag-sidecar overwrite forgot;
+    #   - the store's OWN existing keys, so a job sacct has since aged out stays in the roster
+    #     and keeps its already-captured row rather than silently leaving the population;
+    #   - the plugin CSVs, retained so this is additive and nothing that works today regresses.
+    ids = sorted(
+        {
+            *main_job_ids_from_efficiency_csvs(analysis_dir),
+            *_job_ids_from_job_index(analysis_dir),
+            *_job_ids_from_existing_store(analysis_dir),
+        },
+        key=int,
+    )
     rows = recover_rows(ids, timeout_s=timeout_s)
+    # `run_method` is supplied by the CALLER rather than read here, which keeps this module
+    # stdlib-only. Stamped on every row because the retention promise depends on it: the step
+    # axis means ATTEMPTS under `batch_job` and DIFFERENT SIMULATIONS under
+    # `1_job_many_srun_tasks`, and the accounting rows are structurally identical in the two
+    # cases, so a stored row that omits the mode cannot be re-aggregated correctly later.
+    for _r in rows:
+        _r["RunMethod"] = run_method
     with_job = {r["MainJobID"] for r in rows if r["StepKind"] == "job"}
     with_batch = {r["MainJobID"] for r in rows if r["StepKind"] == "batch"}
     write_recovery_csv(analysis_dir, rows)
