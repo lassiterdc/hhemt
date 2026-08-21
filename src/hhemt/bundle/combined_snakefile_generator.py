@@ -172,6 +172,60 @@ _MODEL_STACK_CSS = """
 .model-stack>.model-section[data-model-absent],.model-stack>.model-section.model-absent{color:var(--uva-text-gray,#6b7280);background:var(--uva-light-gray,#f1f3f5);border:1px dashed var(--uva-medium-gray,#cccccc);border-radius:4px;padding:.75rem 1rem;font-style:italic;}
 """
 
+#: Iter-13 defect 2. The arm frame used to be sized ONCE, from its own `onload` handler, as
+#: `scrollHeight + 24`. That single measurement is taken when the inner document's `load`
+#: event fires -- which is BEFORE any content that builds asynchronously after load exists in
+#: the DOM. The reproduction-guide tables are exactly that: three Tabulator instances that
+#: build from a CDN script and populate their mount divs after `load`, so the frame locked to
+#: its pre-table height and everything below that point was clipped. This is COMBINED-ONLY
+#: because only the composed page embeds an arm in an <iframe>; a per-arm report embeds the
+#: figure document directly and has no frame to mis-size.
+#:
+#: The fix re-measures on ANY late content growth rather than hooking Tabulator specifically,
+#: so the next async widget added to a figure page inherits the fix instead of re-opening the
+#: bug. A ResizeObserver on the inner <html> and <body> is the generic instrument: it fires on
+#: any layout-size change regardless of what caused it.
+#:
+#: Three details are load-bearing.
+#: (1) The immediate `fit()` reproduces the previous one-shot behavior exactly, so a browser
+#:     without ResizeObserver is no worse off than before -- this strictly adds a later
+#:     correction, it never removes the original measurement.
+#: (2) The 2px epsilon and the pass cap bound a REAL feedback loop, not a hypothetical one:
+#:     growing the frame re-resolves any `vh`-sized element inside it, which changes
+#:     scrollHeight, which fires the observer again. Simulated against a fake DOM whose
+#:     scrollHeight depends on frame height: the bounded case (post-`min(70vh, 640px)`)
+#:     settles in 2 writes, and an UNBOUNDED bare `70vh` settles in 11 -- because a `vh`
+#:     fraction below 1 is a contraction, so the series converges on its own and the epsilon
+#:     stops it. The pass cap therefore never engages for either, and is a backstop only for
+#:     a pathological content function with gain >= 1. An earlier draft of this comment said
+#:     the companion height bound is "what makes that loop convergent"; that overstated it --
+#:     the bound makes convergence FASTER and the resting height LOWER, it is not what makes
+#:     the loop terminate.
+#: (3) The whole body stays inside try/catch, preserving the previous silent-fallback
+#:     semantics if same-origin DOM access is ever refused.
+_MODEL_STACK_JS = """
+(function () {
+  window.__fitArmFrame = function (f) {
+    try {
+      var w = f.contentWindow, d = w.document, r = d.documentElement;
+      var passes = 0;
+      var fit = function () {
+        if (passes > 40) { return; }
+        var h = Math.max(r.scrollHeight, d.body ? d.body.scrollHeight : 0) + 24;
+        if (Math.abs(h - f.clientHeight) > 2) { passes++; f.style.height = h + 'px'; }
+      };
+      fit();
+      var RO = w.ResizeObserver || window.ResizeObserver;
+      if (RO) {
+        var ro = new RO(fit);
+        ro.observe(r);
+        if (d.body) { ro.observe(d.body); }
+      }
+    } catch (e) {}
+  };
+})();
+"""
+
 
 def _extract_root_css_vars(bundle_root: Path) -> str:
     """The staged report.css :root{...} custom-property block, so a composed figure page's inlined
@@ -213,7 +267,7 @@ def _compose_model_pair_page(
             f'<div class="model-section" data-model="{_html.escape(model, quote=True)}">'
             f'<iframe class="model-arm-frame" loading="lazy" '
             f'title="{_html.escape(base_eid)} {_html.escape(plot_id)} ({_html.escape(model)})" '
-            "onload=\"try{this.style.height=(this.contentWindow.document.documentElement.scrollHeight+24)+'px';}catch(e){}\" "
+            'onload="__fitArmFrame(this)" '
             f'srcdoc="{_html.escape(inner, quote=True)}"></iframe></div>'
         )
 
@@ -223,7 +277,11 @@ def _compose_model_pair_page(
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
         f"<title>{_html.escape(base_eid)} — {_html.escape(humanize_plot_id(plot_id, sa_labels))}</title>"
-        f"<style>{root_css_vars}\n{_MODEL_STACK_CSS}</style></head>"
+        f"<style>{root_css_vars}\n{_MODEL_STACK_CSS}</style>"
+        # Defined ONCE per composed page rather than inlined into each iframe's onload
+        # attribute: one definition for both arms, and no attribute-escaping hazard around
+        # the quotes and braces the fitter needs.
+        f"<script>{_MODEL_STACK_JS}</script></head>"
         '<body class="model-pair-page">'
         # Iter-10 K: the `<h2 class="model-pair-heading">` that stood here carried the SAME
         # `{base_eid} — {humanize_plot_id(...)}` string as the <title> above, and the report
