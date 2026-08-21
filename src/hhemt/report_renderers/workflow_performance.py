@@ -81,16 +81,16 @@ def render(
         source_paths.extend(status_files)
         for sidecar in status_files:
             artist.add_channel("status", ProvenanceRef(source_path=str(sidecar.relative_to(analysis_dir))))
-        timeline_html = (
-            _provenance_timeline(status_payloads)
-            if status_payloads
-            else _absent_banner(
+        timeline = _provenance_timeline(status_payloads) if status_payloads else None
+        if timeline is None:
+            timeline_html = _absent_banner(
                 "Run timeline",
                 "No completed-rule records — the per-rule status sidecars "
                 "(_status/*.flag.json) were not found. They are written one at a time as "
                 "each workflow rule finishes; re-render after the run completes to populate.",
             )
-        )
+        else:
+            timeline_html = timeline.html
 
     # (2) SLURM efficiency -- glob + descend (os.scandir/os.stat; audit-invisible) to
     # EVERY inner efficiency_report_*.csv FILE, then declare them all. The plugin writes
@@ -161,14 +161,16 @@ def render(
                         _job_index = {str(k): str(v) for k, v in _loaded.items()}
                 except (OSError, ValueError):
                     _job_index = {}
-            slurm_html = _build_slurm_efficiency_html(
+            slurm = _build_slurm_efficiency_html(
                 [(str(p.relative_to(analysis_dir)), p.read_text()) for p in eff_csvs],
                 _job_purpose_map(status_payloads, _job_index),
                 scenario_map,
                 _gpu_hardware_for_partition,
                 recovery=_recovery_map,
             )
+            slurm_html = slurm.html
     else:
+        slurm = None
         slurm_html = _absent_banner(
             "SLURM Efficiency",
             "No SLURM resource-efficiency data — this analysis ran in local/native "
@@ -178,11 +180,20 @@ def render(
             "after the run completes to populate it.",
         )
 
+    # `[Q160]`(7): both tables are Tabulator fragments now, so their styles and scripts
+    # are emitted ONCE at document level while the body carries only mount points. A
+    # degenerate branch (no status sidecars, no efficiency CSV, or a CSV with no job
+    # rows) yields a banner and NO fragment, so a page with nothing to show contributes
+    # no Tabulator assets at all -- which is what keeps the absent-SLURM page small.
+    fragments = [
+        tbl.fragment for tbl in (timeline, slurm) if tbl is not None and tbl.fragment is not None
+    ]
     html = _wrap_html_doc(
         analysis_id,
         _resolve_inline_css(report_cfg),
         timeline_html,
         slurm_html,
+        fragments=fragments,
         page_title="Workflow performance",
         section_titles=_WORKFLOW_PERFORMANCE_SECTION_TITLES,
     )

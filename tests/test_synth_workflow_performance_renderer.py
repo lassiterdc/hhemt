@@ -54,6 +54,14 @@ def _render(analysis_dir: Path, *, slurm_csv: str | None = None) -> tuple[str, d
     return output_path.read_text(), manifest
 
 
+#: `[Q160]`(7): these tables are Tabulator data grids now, so a rendered row is a JSON
+#: entry in `tableOptions.data` rather than a server-rendered `<td>`. The whole-cell
+#: DISCRIMINATION the original `<td>18573918</td>` assertion existed for is preserved and
+#: not weakened: `"Job ID (job record)": "18573918"` cannot match the step grain
+#: `18573918.0` any more than the `<td>` form could, because both delimit the full value.
+_JOB_GRAIN_CELL = '"Job ID (job record)": "18573918"'
+
+
 def test_status_sidecars_are_declared_when_they_exist(tmp_path):
     """Every `_status/*.flag.json` the page OPENS is declared (declared ⊆ actual).
 
@@ -146,8 +154,8 @@ def test_slurm_section_renders_table_and_declares_the_csv_file(tmp_path):
     # The table's GRAIN moved from step to job ([Q145]/[Q153]), so the identity it renders
     # is the allocation `18573918`, not the step `18573918.0`. Asserted as a whole cell
     # rather than a substring: a bare `18573918` also matches the old step id, so it could
-    # not tell the two grains apart and would pass under either.
-    assert "<td>18573918</td>" in html
+    # not tell the two grains apart and would pass under either. See _JOB_GRAIN_CELL.
+    assert _JOB_GRAIN_CELL in html
     # Memory-used % is now a reduction over steps rather than the plugin's own column, and
     # renders at one decimal (694.12 MB of 1000.0 MB requested).
     assert "69.4" in html
@@ -188,7 +196,7 @@ def test_slurm_report_nested_inside_a_csv_named_directory(tmp_path):
 
     html = output_path.read_text()
     # Job grain per [Q145]/[Q153]; whole-cell form so it cannot pass on the old step id.
-    assert "<td>18573918</td>" in html, "nested report was not found by the recursive glob"
+    assert _JOB_GRAIN_CELL in html, "nested report was not found by the recursive glob"
     assert "69.4" in html
 
     manifest = json.loads((analysis_dir / "plots" / "workflow_performance.manifest.json").read_text())
@@ -219,6 +227,6 @@ def test_slurm_report_path_is_a_directory_not_a_file(tmp_path):
     NOT raise IsADirectoryError on read_text()."""
     html, manifest = _render(tmp_path / "analysis", slurm_csv=_EFF_HEADER + _EFF_ROW)
     # Job grain per [Q145]/[Q153]; whole-cell form so it cannot pass on the old step id.
-    assert "<td>18573918</td>" in html and "69.4" in html
+    assert _JOB_GRAIN_CELL in html and "69.4" in html
     declared = manifest["source_paths_relative"]
     assert any(p.endswith("efficiency_report_deadbeef.csv") for p in declared), declared

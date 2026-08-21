@@ -1,10 +1,11 @@
 """Metadata report renderer (ADR-14 / C10).
 
 Renders ONE mostly-static HTML page under the "Metadata" ReportingSet category,
-with three sub-sections. It is NOT fully self-contained: per [Q148] the Reproduction
-Guide tables load Tabulator from a CDN. That trade is recorded in full below; it is
-stated here too so the first sentence does not have to be walked back by the reader
-who only gets that far ([Q149]).
+with three sub-sections. It IS fully self-contained and renders with no network at view
+time. That was briefly untrue -- [Q148] traded it away when the Reproduction Guide tables
+adopted CDN Tabulator -- and [Q160](7) bought it back by vendoring Tabulator and bundling
+it inline, so the retraction that used to stand here is retired rather than left behind a
+later correction ([Q149]).
 
   (1) Provenance summary  -- projected from the persisted RO-Crate sidecar
       {analysis_dir}/ro-crate-metadata.json (the read-model persisted at
@@ -24,14 +25,15 @@ who only gets that far ([Q149]).
       former latest-by-mtime selection showed only the most recent
       invocation's jobs -- on a re-render, the render jobs and nothing else.
 
-Mostly-static inline-CSS HTML, with ONE deliberate exception ([Q148]). The
-provenance, data-availability and SLURM sections are self-contained and render
-with no network. The three Reproduction Guide tables load Tabulator from a CDN
-(~420 KB at view time) so their columns are user-resizable -- a trade made
-explicitly, accepting that THOSE tables do not render in an archived, emailed,
-or bundle-local copy while the rest of the page still does. Inline-Tabulator
-bundling would remove the dependency but is unimplemented and silently falls
-back to CDN (Gotcha 51). Mirrors errors_and_warnings.py elsewhere.
+Mostly-static inline-CSS HTML with NO network dependency. The Reproduction Guide
+tables are Tabulator data grids so their columns are user-resizable ([Q146]/[Q148]),
+and Tabulator itself is VENDORED and bundled inline ([Q160](7)) rather than fetched
+from a CDN -- so the whole page renders in an archived, emailed, or bundle-local copy.
+The cost is size: the bundle is ~462 KB of asset bytes, emitted ONCE per document (the
+Plotly precedent), which on a page of this kind is the large majority of its bytes and
+a low-single-digit percentage of a delivered report. Mirrors errors_and_warnings.py
+elsewhere. NOTE for a maintainer reading `hhemt architecture.md`: its Gotcha 51 records
+inline bundling as unimplemented and is STALE as of this change.
 
 Renderer-IO audit (Gotcha 53): the ONLY files opened during render() are the
 declared sources -- the RO-Crate sidecar and (when present) the one globbed
@@ -207,11 +209,6 @@ span.badge { display: inline-block; padding: 1px 7px; border-radius: 8px;
    render_inline_css() (white on dark blue). The sort target is the label SPAN, not the
    whole `th`: the header cell now also contains that column's filter input, and binding
    sort to the cell would sort the table on every click into the input. */
-table.sortable th { user-select: none; white-space: nowrap; }
-table.sortable span.th-label { cursor: pointer; display: block; }
-table.sortable span.th-label::after { content: " \\2195"; opacity: 0.35; font-size: 10px; }
-table.sortable th.sorted-asc span.th-label::after { content: " \\2191"; opacity: 1; }
-table.sortable th.sorted-desc span.th-label::after { content: " \\2193"; opacity: 1; }
 input.col-filter { width: 100%; box-sizing: border-box; margin-top: 3px;
                    padding: 2px 4px; font-size: 11px; font-weight: 400; }
 /* Iter-11 item 24. EVERY table on this page is wrapped in div.table-scroll, so every
@@ -253,124 +250,6 @@ sub, sup { line-height: 0; font-size: 0.75em; }
 span.units { white-space: nowrap; }
 span.expr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 """
-
-# Inline vanilla-JS sort + filter shim, used by the Run-timeline and SLURM-efficiency
-# tables. Still NOT Tabulator -- but [Q148] retired the reason this comment used to give,
-# and the correction belongs here rather than behind a later one ([Q149]). The page is NO
-# LONGER network-free: the three Reproduction Guide tables adopted CDN Tabulator, so
-# "a CDN dependency would contradict the page's own thesis" is FALSE as of that adoption.
-# What survives is narrower and still true: these two tables keep the ~40-line shim so
-# they render in an archived, emailed, or bundle-local copy where the CDN is unreachable
-# -- the guide tables, by that same trade, do not. Inline-Tabulator bundling would remove
-# the split but is unimplemented and silently falls back to CDN (Gotcha 51).
-#
-# Numeric-aware compare: cells that parse as floats sort numerically, everything else
-# case-insensitively as text. Empty and em-dash cells sort last in both directions so a
-# missing measurement never masquerades as the smallest value.
-_SORT_FILTER_JS = """
-(function () {
-  function cellText(row, i) { return (row.cells[i] ? row.cells[i].innerText : "").trim(); }
-  function cmp(a, b) {
-    var blankA = (a === "" || a === "\\u2014"), blankB = (b === "" || b === "\\u2014");
-    if (blankA || blankB) { return blankA && blankB ? 0 : (blankA ? 1 : -1); }
-    var na = parseFloat(a), nb = parseFloat(b);
-    if (!isNaN(na) && !isNaN(nb) && /^[-+0-9.eE]+$/.test(a) && /^[-+0-9.eE]+$/.test(b)) {
-      return na - nb;
-    }
-    return a.toLowerCase().localeCompare(b.toLowerCase());
-  }
-  // Multi-key sort. The key LIST comes from the table's own data-default-sort attribute
-  // or from a single clicked column; no table's order is named in this shim.
-  function sortBy(table, body, keys, desc) {
-    var rows = Array.prototype.slice.call(body.rows);
-    rows.sort(function (r1, r2) {
-      for (var k = 0; k < keys.length; k++) {
-        var d = cmp(cellText(r1, keys[k]), cellText(r2, keys[k]));
-        if (d !== 0) { return desc ? -d : d; }
-      }
-      return 0;
-    });
-    rows.forEach(function (r) { body.appendChild(r); });
-  }
-  // Iter-11 item 11: PER-COLUMN filters, ANDed. The retired single filter bar tested the
-  // whole row's text, so it could not express a conjunction ("this partition AND that
-  // model") and it matched text in columns the reader had not asked about -- at 23
-  // columns that hid rows for reasons invisible on the page.
-  function applyFilters(table, body) {
-    var inputs = table.querySelectorAll("input.col-filter");
-    Array.prototype.slice.call(body.rows).forEach(function (r) {
-      var show = true;
-      Array.prototype.forEach.call(inputs, function (inp) {
-        if (!show) { return; }
-        var needle = inp.value.toLowerCase();
-        if (!needle) { return; }
-        var i = parseInt(inp.getAttribute("data-col"), 10);
-        if (cellText(r, i).toLowerCase().indexOf(needle) === -1) { show = false; }
-      });
-      r.style.display = show ? "" : "none";
-    });
-  }
-  function setColumnVisible(table, idx, visible) {
-    var v = visible ? "" : "none";
-    Array.prototype.forEach.call(table.querySelectorAll("tr"), function (r) {
-      var c = r.cells[idx];
-      if (c) { c.style.display = v; }
-    });
-  }
-  document.querySelectorAll("table.sortable").forEach(function (table) {
-    var body = table.tBodies[0];
-    if (!body) { return; }
-    var heads = table.querySelectorAll("thead th");
-    heads.forEach(function (th, idx) {
-      var label = th.querySelector("span.th-label");
-      if (label) {
-        label.addEventListener("click", function () {
-          var desc = th.classList.contains("sorted-asc");
-          heads.forEach(function (o) { o.classList.remove("sorted-asc", "sorted-desc"); });
-          th.classList.add(desc ? "sorted-desc" : "sorted-asc");
-          sortBy(table, body, [idx], desc);
-        });
-      }
-      var inp = th.querySelector("input.col-filter");
-      if (inp) {
-        // Typing in a header input must not also sort the column it sits in.
-        inp.addEventListener("click", function (e) { e.stopPropagation(); });
-        inp.addEventListener("input", function () { applyFilters(table, body); });
-      }
-    });
-    // Iter-11 item 16: default sort, applied once on load. A comma-separated column-index
-    // list, so a table can declare a stable secondary key; read off the DOM rather than
-    // hard-coded here, which is what keeps this shim table-agnostic.
-    var ds = (table.getAttribute("data-default-sort") || "").trim();
-    if (ds) {
-      var keys = ds.split(",").map(function (s) { return parseInt(s, 10); })
-                   .filter(function (n) { return !isNaN(n); });
-      if (keys.length) {
-        if (heads[keys[0]]) { heads[keys[0]].classList.add("sorted-asc"); }
-        sortBy(table, body, keys, false);
-      }
-    }
-    // Iter-11 item 11: left column-selector panel, present ONLY when the emitting call
-    // site asked for one. The reproduction-guide tables deliberately have none (item 16).
-    var panel = document.querySelector("aside.col-panel[data-table='" + table.id + "']");
-    if (panel) {
-      heads.forEach(function (th, idx) {
-        var lbl = th.querySelector("span.th-label");
-        var row = document.createElement("label");
-        var cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = true;
-        cb.addEventListener("change", function () { setColumnVisible(table, idx, cb.checked); });
-        row.appendChild(cb);
-        row.appendChild(document.createTextNode(" " + (lbl ? lbl.textContent : "")));
-        row.title = lbl ? lbl.textContent : "";
-        panel.appendChild(row);
-      });
-    }
-  });
-})();
-"""
-
 
 def _esc(value: Any) -> str:
     """HTML-escape any dynamic value before interpolation.
@@ -471,74 +350,6 @@ def _grid_table(headers: list[str], rows: list[list[str]]) -> str:
     )
 
 
-def _sortable_grid_table(
-    headers: list[str],
-    rows: list[list[str]],
-    *,
-    table_id: str,
-    column_panel: bool = False,
-    default_sort: tuple[int, ...] = (),
-    header_tooltips: tuple[str, ...] = (),
-) -> str:
-    """`_grid_table` plus click-to-sort headers, PER-COLUMN filters, and an optional
-    left column-selector panel.
-
-    Iter-11 item 11. The single whole-row filter box is GONE, and `filter_label` with it
-    -- a clean cut, since nothing outside this module referenced either. That box tested
-    the row's whole text, so it could not express a conjunction and it matched in columns
-    the reader had not asked about; at 23 columns it hid rows for reasons the page did not
-    show. Each column now carries its own input, inside its own `th`, ANDed across columns.
-
-    Iter-11 item 16. `column_panel` is opt-IN. Two of three call-site families want a
-    panel; the reproduction-guide tables explicitly do not, and an opt-OUT default would
-    put a suppression flag on the tables that asked for less. `default_sort` is a column-
-    index tuple rendered into `data-default-sort` and applied once on load by the shim, so
-    no table's order is hard-coded in the JS.
-
-    Iter-11 item 24. The table is wrapped in `div.table-scroll`: height-bounded, scrolling
-    in both axes, with a sticky header so the column names and their filters stay on
-    screen. The header's white-on-dark-blue colouring is UNTOUCHED -- it comes from
-    `render_inline_css()` per the brand_theme stipulation, and nothing here restates it.
-
-    Static HTML + the inline `_SORT_FILTER_JS` shim only -- no CDN, no Tabulator (see
-    `_SORT_FILTER_JS` for why). Degrades to a plain readable table when JavaScript is
-    unavailable, which is the state the page must survive in an archived/emailed copy.
-    Row cells are PRE-ESCAPED HTML fragments.
-    """
-    if not rows:
-        return ""
-    # [Q153] header tooltip. Header TEXT goes through `_esc`, so a per-column statement needs
-    # its own attribute rather than being smuggled into the label. One optional parameter,
-    # deliberately not widened into a mechanism: the value is supplied by the caller's column
-    # declaration, so this function states no rule of its own.
-    head = "".join(
-        '<th{tip}><span class="th-label">{label}</span>'
-        '<input class="col-filter" type="text" data-col="{i}" placeholder="filter" '
-        'aria-label="Filter by {label}"></th>'.format(
-            i=i,
-            label=_esc(h),
-            tip=f' title="{_esc(header_tooltips[i])}"' if i < len(header_tooltips) and header_tooltips[i] else "",
-        )
-        for i, h in enumerate(headers)
-    )
-    body = "\n    ".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
-    sort_attr = (
-        f' data-default-sort="{",".join(str(i) for i in default_sort)}"' if default_sort else ""
-    )
-    scroll = (
-        '<div class="table-scroll">\n'
-        f'<table class="sortable" id="{_esc(table_id)}"{sort_attr}>\n'
-        f"  <thead><tr>{head}</tr></thead>\n"
-        "  <tbody>\n    " + body + "\n  </tbody>\n</table>\n</div>"
-    )
-    if not column_panel:
-        return scroll
-    return (
-        '<div class="table-tools">\n'
-        f'<aside class="col-panel" data-table="{_esc(table_id)}" role="region" '
-        'aria-label="Column visibility"><strong>Columns</strong></aside>\n'
-        f"{scroll}\n</div>"
-    )
 
 
 # --- RO-Crate @graph navigation helpers --------------------------------------
@@ -1422,7 +1233,75 @@ def _build_provenance_html(
     )
 
 
-def _provenance_timeline(payloads: list[dict]) -> str:
+
+class _MountedTable(NamedTuple):
+    """A Tabulator table split into page markup and a document-level fragment.
+
+    Same two-part shape as `ReprexGuide` and for the same reason: the ~40 KB shared
+    filter blob and Tabulator's own assets are emitted ONCE per document, so a table
+    contributes a mount point to the body and its styles/script to the document.
+    """
+
+    html: str
+    #: None on a degenerate branch that renders a banner instead of a grid -- the caller
+    #: filters, so an empty table never contributes Tabulator assets to the document.
+    fragment: tuple[str, TableFragment] | None
+
+
+def _mounted_tabulator_table(
+    headers: list[str],
+    rows: list[list[str]],
+    *,
+    container_id: str,
+    header_tooltips: tuple[str, ...] = (),
+) -> _MountedTable:
+    """Build one Tabulator fragment from `_sortable_grid_table`'s (headers, rows) shape.
+
+    `[Q160]`(7). The run-timeline and SLURM-efficiency tables converge on the appendix's
+    Tabulator data grid, per the user's ruling. `column_panel=True` matches
+    `scenario_status_appendix` and preserves the column-selector both tables already
+    had; the "Copy table" / "Reset all" controls live inside that aside, so they come
+    along for free ([Q152] wanted them here and the decoupled `column_panel=False`
+    toolbar already existed for tables that have no aside).
+
+    `resizableColumns` is an EXPLICIT per-call override ([Q146]/[Q148]) and MUST NOT be
+    promoted to `build_options_dict`'s shared default: at `fitDataStretch` with 39
+    columns the 3px resize handle sits adjacent to the next column's left edge, which is
+    why the appendix keeps it off. These tables carry 7-13 columns, so the handles are
+    far apart.
+
+    Cells are pre-escaped HTML fragments (`<code>`, badges), hence `formatter: "html"`
+    on every column — the same treatment the reproduction-guide tables use.
+    """
+    df = _df_for(headers, rows, {})
+    columns_spec = build_columns_spec(df[headers], visible_columns_default=None, header_filter=True)
+    for i, col_spec in enumerate(columns_spec):
+        col_spec["formatter"] = "html"
+        if i < len(header_tooltips) and header_tooltips[i]:
+            col_spec["headerTooltip"] = header_tooltips[i]
+    fragment = build_table_fragment(
+        container_id=container_id,
+        options=build_options_dict(
+            df,
+            columns_spec=columns_spec,
+            # Bounded exactly as the reproduction-guide tables are, and for the reason
+            # recorded there: `vh` resolves against the IFRAME height, which the combined
+            # report sets imperatively once from the arm frame's onload handler, while
+            # Tabulator reads options.height ONCE at construction. A fixed ceiling makes
+            # that divergence unreachable.
+            table_height="min(70vh, 640px)",
+            pagination_size=0,
+            persistence_id=container_id,
+            extra_options={"resizableColumns": True},
+        ),
+        js_mode=_TABULATOR_JS_MODE,
+        renderer_name="workflow_performance",
+        column_panel=True,
+    )
+    return _MountedTable(f'<div id="{container_id}-mount"></div>', (container_id, fragment))
+
+
+def _provenance_timeline(payloads: list[dict]) -> _MountedTable | None:
     """Whole-experiment run timeline, projected from `_status/*.flag.json`.
 
     This is the record the Process section cannot supply on a sensitivity master
@@ -1444,7 +1323,7 @@ def _provenance_timeline(payloads: list[dict]) -> str:
         for p in payloads
     ]
     if not rows:
-        return ""
+        return None
     rows.sort(key=lambda r: r[0])
     note = (
         f"<p class='note'><strong>Run timeline.</strong> {_esc(len(rows))} completed "
@@ -1452,23 +1331,23 @@ def _provenance_timeline(payloads: list[dict]) -> str:
         "from setup through consolidation, not the most recent run — regenerating this report "
         f"cannot shorten it. {_TABLE_INTERACTION_NOTE}</p>"
     )
-    table = _sortable_grid_table(
+    # `[Q160]`(7): the container id MUST NOT equal the section anchor. `_heading` below
+    # derives the <h3> id from the title via `_anchor` ("Run timeline" -> "run-timeline"),
+    # so an equal table id would put the attribute on TWO elements -- invalid HTML, and
+    # the jump-nav's data-jump="run-timeline" would resolve to whichever the parser
+    # reached first. Same collision the SLURM table dodges; the pattern is to suffix the
+    # TABLE id, never to rename the section.
+    mounted = _mounted_tabulator_table(
         ["Completed at", "Job desc", "Rule", "Sub-analysis", "Event", "Model", "SLURM job"],
         rows,
-        # `[Q160]`(7): the table id MUST NOT equal the section anchor. `_heading` below
-        # derives the <h3> id from the title via `_anchor` ("Run timeline" ->
-        # "run-timeline"), so the pre-move id put the attribute on TWO elements --
-        # invalid HTML, and the jump-nav's data-jump="run-timeline" would resolve to
-        # whichever the parser reached first. This is the SAME collision the SLURM
-        # table already dodges with "slurm-efficiency-table"; the pattern is to suffix
-        # the TABLE id, never to rename the section.
-        table_id="run-timeline-table",
-        column_panel=True,
+        container_id="run-timeline-table",
     )
     # `[Q160]`(7): promoted from a `<h4>5b.` sub-block of `5. Process` on the Metadata
     # page to a top-level section of the Workflow performance page, so the jump-nav
     # anchor resolves. `_heading` is what mints that anchor.
-    return _heading("Run timeline") + "\n" + note + table
+    return _MountedTable(
+        _heading("Run timeline") + "\n" + note + mounted.html, mounted.fragment
+    )
 
 
 # --- (2) Reproduction guide --------------------------------------------------
@@ -2037,10 +1916,10 @@ def _build_reprex_guide_html(
             ),
         )
         # [Q148]: these three tables render through Tabulator so their columns are
-        # user-resizable, accepting the CDN dependency at view time. Scoped to THIS call
-        # family -- the provenance, data-availability and SLURM sections keep the
-        # self-contained `_sortable_grid_table` path, so only this section goes blank
-        # without a network.
+        # user-resizable. The CDN dependency that trade originally accepted is GONE as of
+        # [Q160](7) -- Tabulator is vendored and bundled inline for this page, and the
+        # run-timeline and SLURM tables became Tabulator grids too, so there is no longer
+        # a self-contained/CDN split within the page to scope this comment against.
         #
         # `resizableColumns: True` is an EXPLICIT per-call override of the shared
         # default, which is False (`build_options_dict`, iter 9.1). WITHOUT it, adoption
@@ -2074,7 +1953,7 @@ def _build_reprex_guide_html(
                 # attribute selectors cannot reach these cells; the class can.
                 col_spec["cssClass"] = "trf-has-tip"
         fragments.append(
-            (bucket, build_table_fragment(
+            (f"reprex-{bucket}", build_table_fragment(
                 container_id=f"reprex-{bucket}",
                 options=build_options_dict(
                     df_full,
@@ -2096,7 +1975,10 @@ def _build_reprex_guide_html(
                     persistence_id=f"reprex-{bucket}",
                     extra_options={"resizableColumns": True},
                 ),
-                js_mode="cdn",  # inline bundling is unimplemented (Gotcha 51)
+                # Inert here by contract (see build_table_fragment): the cdn/inline
+                # switch is applied once per document in `_wrap_html_doc`. Passed for
+                # symmetry with the page's actual mode rather than a stale literal.
+                js_mode=_TABULATOR_JS_MODE,
                 renderer_name="metadata",
                 column_panel=False,
             ))
@@ -3081,16 +2963,26 @@ def _build_slurm_efficiency_html(
     scenario_map: dict[tuple[str, str, str], dict[str, str]],
     gpu_hardware_for_partition,
     recovery: dict[str, dict[str, dict[str, str]]] | None = None,
-) -> str:
-    """Render the UNION of every efficiency report at JOB grain ([Q145]), reduced per [Q153]."""
+) -> _MountedTable:
+    """Render the UNION of every efficiency report at JOB grain ([Q145]), reduced per [Q153].
+
+    `[Q160]`(7): returns a `_MountedTable` rather than a bare string, because the table is
+    a Tabulator fragment now. The degenerate branches (no CSV text, no job rows) carry a
+    banner and a `None`-free empty fragment list is NOT possible in that shape, so they
+    return a `_MountedTable` whose fragment is None -- the caller filters.
+    """
     recovery = recovery or {}
     heading = _heading("SLURM Efficiency")
     if not csv_texts:
-        return heading + "\n" + _banner("The SLURM resource-efficiency report is present but empty.")
+        return _MountedTable(
+            heading + "\n" + _banner("The SLURM resource-efficiency report is present but empty."), None
+        )
 
     _header, merged = _parse_efficiency_csvs(csv_texts)
     if not merged:
-        return heading + "\n" + _banner("The SLURM resource-efficiency reports contain no job rows.")
+        return _MountedTable(
+            heading + "\n" + _banner("The SLURM resource-efficiency reports contain no job rows."), None
+        )
 
     step_rows = _enrich_efficiency_rows(merged, purpose_map, scenario_map, gpu_hardware_for_partition)
     # Carry the toolkit-joined fields onto the job they belong to before collapsing, so the
@@ -3183,22 +3075,19 @@ def _build_slurm_efficiency_html(
             "the scenario slug as its event id."
         )
     summary += _reduction_caption()
-    table = _sortable_grid_table(
+    # DISTINCT from the section heading's own anchor -- `_anchor("SLURM Efficiency")` is
+    # "slurm-efficiency", and an equal table id would put it on TWO elements.
+    mounted = _mounted_tabulator_table(
         [col.header for col in _EFF_COLUMNS],
         grid,
-        # DISTINCT from the section heading's own anchor. `_heading` derives the <h3> id from
-        # the title via `_anchor` ("SLURM Efficiency" -> "slurm-efficiency"), so a table id of
-        # the same string put the attribute on TWO elements -- invalid HTML, and the nav's
-        # data-jump="slurm-efficiency" then resolved to whichever the parser reached first.
-        table_id="slurm-efficiency-table",
-        column_panel=True,
+        container_id="slurm-efficiency-table",
         header_tooltips=tuple(col.reduction.rule for col in _EFF_COLUMNS),
     )
-    parts = [heading, summary, table]
+    parts = [heading, summary, mounted.html]
     if undisplayed:
         parts.append(_undisplayed_columns_note(undisplayed))
     parts.append(_EFF_UNCAPTURED_NOTE)
-    return "\n".join(parts)
+    return _MountedTable("\n".join(parts), mounted.fragment)
 
 
 def _resolve_all_efficiency_csvs(eff_dir: Path) -> list[Path]:
@@ -3407,6 +3296,16 @@ def _build_data_availability_html(report_path: Path) -> str:
 #: The page's sections, in render order. Module-level so the jump-nav and the test's
 #: anchor coverage read ONE declaration -- a literal in each drifted silently when the
 #: Data Availability section landed and only the nav learned about it.
+#: [Q160](7): every Tabulator table on the Metadata page AND on the Workflow performance
+#: page bundles its assets inline rather than pulling them from a CDN. The user's ruling
+#: was to converge the run-timeline and SLURM tables on the appendix's Tabulator style AND
+#: to land inline bundling, so the convergence does not cost the offline rendering the old
+#: `_sortable_grid_table` shim was kept for. Scoped to these two pages deliberately: the
+#: global `report_config.interactive.tabulator_js_mode` default stays "cdn", so
+#: scenario_status_appendix / per_analysis_summary / the cross-experiment tables are
+#: untouched and their emitted bytes are unchanged.
+_TABULATOR_JS_MODE = "inline"
+
 _SECTION_TITLES = ("Provenance", "Data Availability", "Reproduction Guide")
 
 #: `[Q160]`(7): the run-timeline and SLURM-efficiency tables are PERFORMANCE data and
@@ -3505,11 +3404,21 @@ def _wrap_html_doc(
     # `_build_reprex_guide_html`, which returns markup and mount points together, and a
     # mount keeps the table's DOM adjacent to its own <script> without threading the
     # fragment list through every section builder.
-    tabulator_head = tabulator_head_assets() if frags else ""
+    # [Q160](7): this page's tables are INLINE-bundled, so the rendered HTML needs no
+    # network at view time -- in an archived copy, an emailed copy, or a bundle-local
+    # copy. That is the property the run-timeline/SLURM shim used to preserve by
+    # staying non-Tabulator; inline bundling now preserves it for every table on the
+    # page at once, which is what let those two tables converge on the appendix style.
+    tabulator_head = tabulator_head_assets(_TABULATOR_JS_MODE) if frags else ""
     frag_styles = "".join(f.styles for _, f in frags)
+    # [Q160](7): the tuple key is the FULL container id, not a reprex-scoped suffix.
+    # `_TRF_MOUNT_JS` was already container-id-generic (it reads the attribute and looks
+    # up `{id}-mount`); only this f-string hardcoded the `reprex-` prefix, which meant no
+    # table outside the reproduction guide could mount. Generalising it is what lets the
+    # run-timeline and SLURM tables become fragments on the sibling page.
     frag_mounts = "".join(
-        f'<template data-trf-mount="reprex-{bucket}">{f.markup}</template>'
-        for bucket, f in frags
+        f'<template data-trf-mount="{container_id}">{f.markup}</template>'
+        for container_id, f in frags
     )
     frag_scripts = (
         "<script>"
@@ -3528,7 +3437,7 @@ def _wrap_html_doc(
         f"{_jump_nav(section_titles)}"
         f"{body}"
         f"{frag_mounts}"
-        f"<script>{_SORT_FILTER_JS}{_JUMP_NAV_JS}</script>"
+        f"<script>{_JUMP_NAV_JS}</script>"
         f"{frag_scripts}"
         "</body></html>"
     )

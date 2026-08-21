@@ -126,6 +126,65 @@ def _full_crate() -> dict:
     return _crate(_ROOT, _DESCRIPTOR, _LICENSE, _TOOLKIT_SRC, _APP, _SIF, _INPUT_FILE, _VAR, _ZARR, _RUN)
 
 
+def _tabulator_rows(mounted) -> list[dict]:
+    """The Tabulator row data a built table carries, as a list of {header: cell} dicts.
+
+    `[Q160]`(7): the run-timeline and SLURM tables are Tabulator data grids now, so a
+    rendered row is a JSON entry in `tableOptions.data` rather than a server-rendered
+    `<tr>`/`<td>`. The DATA is unchanged and the cells are still the same pre-escaped HTML
+    fragments; only the carrier moved. Locating a cell BY HEADER KEY here is strictly more
+    robust than the positional `<td>` index this replaces, which the old helper's own
+    docstring warned would "silently follow the wrong column".
+
+    Takes the `_MountedTable`, NOT its `.html`: a builder returns page markup (heading,
+    summary, mount point) separately from the document-level fragment, and the options
+    JSON lives in the FRAGMENT's script. Reading `.html` finds no rows by construction.
+    """
+    import json as _json
+
+    assert mounted.fragment is not None, "table rendered a banner, not a grid"
+    script = mounted.fragment[1].script
+    # Only the `data` ARRAY is parsed, never the whole options object: `build_table_fragment`
+    # performs sentinel substitution AFTER json.dumps, replacing quoted `__TRF_*` sentinels
+    # with BARE JS expressions, so `tableOptions` is valid JavaScript and invalid JSON. The
+    # data array holds only strings and survives that substitution intact.
+    start = script.index('"data": [') + len('"data": ')
+    depth, i = 0, start
+    while True:
+        if script[i] == "[":
+            depth += 1
+        elif script[i] == "]":
+            depth -= 1
+            if depth == 0:
+                break
+        elif script[i] == '"':  # skip string bodies so a bracket in a cell cannot fool us
+            i += 1
+            while script[i] != '"':
+                i += 2 if script[i] == "\\" else 1
+        i += 1
+    return _json.loads(script[start : i + 1])
+
+
+def _cell_text(value: str) -> str:
+    """Strip the HTML wrapper off a cell so a test can compare the visible text."""
+    import re as _re
+
+    return _re.sub(r"<[^>]+>", "", value).strip()
+
+
+def _rendered_text(mounted) -> str:
+    """Page markup PLUS the fragment's script — everything the table renders, in one string.
+
+    `[Q160]`(7): a cell VALUE now lives in the fragment's `tableOptions.data`, while the
+    heading, summary and notes stay in the section markup. A "does this value reach the
+    reader" assertion has to look at both, and looking at `.html` alone silently stops
+    covering every cell in the grid.
+    """
+    if mounted.fragment is None:
+        return mounted.html
+    return mounted.html + mounted.fragment[1].script
+
+
 def _fake_analysis(analysis_dir: Path):
     """render() reads exactly two attributes off the analysis object."""
     return types.SimpleNamespace(
@@ -812,13 +871,13 @@ def test_unrecognised_csv_column_is_disclosed_not_silently_dropped():
     """
     csv_text = _EFF_HEADER.rstrip("\n") + ",GPUUtilPct\n"
     csv_text += "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0,87.5\n"
-    html = metadata._build_slurm_efficiency_html([("r", csv_text)], {}, {}, lambda p: "")
+    html = metadata._build_slurm_efficiency_html([("r", csv_text)], {}, {}, lambda p: "").html
     assert "Unrecognised column" in html
     assert "GPUUtilPct" in html
 
     # A report carrying only known columns emits no such note.
     plain = _EFF_HEADER + "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0\n"
-    assert "Unrecognised column" not in metadata._build_slurm_efficiency_html([("r", plain)], {}, {}, lambda p: "")
+    assert "Unrecognised column" not in metadata._build_slurm_efficiency_html([("r", plain)], {}, {}, lambda p: "").html
 
 
 def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
@@ -866,7 +925,7 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
             "0": {"JobID": "222.0", "TRESUsageInTot": "cpu=00:01:31,energy=0,mem=512K"},
         },
     }
-    html = metadata._build_slurm_efficiency_html(
+    mounted = metadata._build_slurm_efficiency_html(
         [("r", _EFF_HEADER + zero_row + measured_row)], {}, {}, lambda p: "", recovery
     )
 
@@ -876,10 +935,13 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
         A positional index would silently follow the wrong column the next time the column
         order changes, and pass while measuring something else.
         """
-        headers = re.findall(r'<span class="th-label">(.*?)</span>', html)
-        idx = next(i for i, h in enumerate(headers) if h.startswith("Billed CPU used"))
-        row = next(r for r in re.findall(r"<tr>(.*?)</tr>", html, re.S) if f"<td>{job_id}</td>" in r)
-        return re.findall(r"<td>(.*?)</td>", row, re.S)[idx]
+        rows = _tabulator_rows(mounted)
+        key = next(k for k in rows[0] if k.startswith("Billed CPU used"))
+        job_key = next(k for k in rows[0] if k.startswith("Job ID"))
+        row = next(r for r in rows if _cell_text(r[job_key]) == job_id)
+        # RAW, not stripped: the caller asserts on the tooltip text this cell carries in a
+        # `title=` attribute, exactly as the pre-Tabulator `<td>` form did.
+        return row[key]
 
     # Arm 1 -- no step reported CPU time, so the ratio has no numerator. The cell must read
     # as not-measured; a `0.00` here would assert the job used no processor.
@@ -894,8 +956,9 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
     assert "91.000 CPU-seconds" in _eff_cell("222")
 
     # The suppression must be legible as not-measured, and the note must say so.
-    assert "—" in html
-    assert "not-measured" in html or "no CPU time" in html
+    _text = _rendered_text(mounted)
+    assert "—" in _text
+    assert "not-measured" in _text or "no CPU time" in _text
 
 
 def test_resume_attempts_are_numbered_in_the_description_column():
@@ -937,11 +1000,13 @@ def test_resume_attempts_are_numbered_in_the_description_column():
             "attempt_by_jobstep": json.dumps({"777.0": 0, "777.2": 2}),
         }
     }
-    html_out = metadata._build_slurm_efficiency_html(
-        [("r", _EFF_HEADER + labelled + resumed + unlabelled)],
-        purpose_map,
-        scenario_map,
-        lambda p: "",
+    html_out = _rendered_text(
+        metadata._build_slurm_efficiency_html(
+            [("r", _EFF_HEADER + labelled + resumed + unlabelled)],
+            purpose_map,
+            scenario_map,
+            lambda p: "",
+        )
     )
 
     # The SUBJECT of both arms moved when the table went to job grain ([Q145]/[Q153]): the
@@ -1023,8 +1088,10 @@ def test_job_purpose_and_hardware_are_joined_in_from_toolkit_records():
             "backend_used": "gpu",
         }
     }
-    html = metadata._build_slurm_efficiency_html(
-        [("r", csv_text)], purpose_map, scenario_map, lambda p: "a6000" if p else ""
+    html = _rendered_text(
+        metadata._build_slurm_efficiency_html(
+            [("r", csv_text)], purpose_map, scenario_map, lambda p: "a6000" if p else ""
+        )
     )
     for expected in ("simulate", "gpu_0_r1", "tritonswmm", "gpu-a6000", "a6000"):
         assert expected in html, expected
@@ -1071,7 +1138,7 @@ def test_run_timeline_counts_rules_not_workflow_steps():
             "slurm_job_id": "18393109",
         },
     ]
-    html = metadata._provenance_timeline(payloads)
+    html = metadata._provenance_timeline(payloads).html
     assert "workflow step" not in html, "improvised synonym for Snakemake 'rule'"
     assert "2" in html, "the count itself must survive the rename"
 
@@ -1196,16 +1263,20 @@ def test_a_total_scenario_join_miss_is_disclosed_not_silent():
         [{"rule_name": "run_triton", "slurm_job_id": "18573918", "event_id": slug, "model_type": "triton"}]
     )
     stale = {("", "0", "triton"): {"run_mode": "hybrid"}}
-    html_miss = metadata._build_slurm_efficiency_html([("r", _EFF_HEADER + _EFF_ROW)], purpose_map, stale, lambda p: "")
+    html_miss = metadata._build_slurm_efficiency_html(
+        [("r", _EFF_HEADER + _EFF_ROW)], purpose_map, stale, lambda p: ""
+    ).html
     assert "Scenario-record join: 0 of 1" in html_miss
     assert "No simulation row matched" in html_miss
 
     fresh = {("", slug, "triton"): {"run_mode": "hybrid"}}
-    html_hit = metadata._build_slurm_efficiency_html([("r", _EFF_HEADER + _EFF_ROW)], purpose_map, fresh, lambda p: "")
+    html_hit = metadata._build_slurm_efficiency_html(
+        [("r", _EFF_HEADER + _EFF_ROW)], purpose_map, fresh, lambda p: ""
+    ).html
     assert "Scenario-record join: 1 of 1" in html_hit
     assert "No simulation row matched" not in html_hit
 
-    html_none = metadata._build_slurm_efficiency_html([("r", _EFF_HEADER + _EFF_ROW)], {}, {}, lambda p: "")
+    html_none = metadata._build_slurm_efficiency_html([("r", _EFF_HEADER + _EFF_ROW)], {}, {}, lambda p: "").html
     assert "Scenario-record join: 0 of 0" in html_none
     assert "No simulation row matched" not in html_none
 
@@ -1454,24 +1525,15 @@ def test_queue_column_falls_back_to_slurm_planned_and_discloses_its_source():
     csv = _EFF_HEADER + row
 
     def queue_cell(recovery, scenario_map):
-        html = metadata._build_slurm_efficiency_html(
+        mounted = metadata._build_slurm_efficiency_html(
             [("r", csv)], {}, scenario_map, lambda p: "", recovery
         )
-        m = _re.search(r'<table[^>]*id="[^"]*slurm-efficiency[^"]*"[^>]*>(.*?)</table>', html, _re.S)
-        assert m, "no slurm-efficiency table rendered"
-        tbl = m.group(1)
-        heads = [_re.sub(r"<[^>]+>", "", x).strip()
-                 for x in _re.findall(r"<th[^>]*>(.*?)</th>", tbl, _re.S)]
-        assert "Queue, this job (s)" in heads, f"queue header absent; got {heads}"
-        i = heads.index("Queue, this job (s)")
-        body = _re.findall(r"<tr[^>]*>(.*?)</tr>", tbl, _re.S)
-        for tr in body:
-            tds = _re.findall(r"<td[^>]*>(.*?)</td>", tr, _re.S)
-            if len(tds) > i:
-                raw = tds[i]
-                title = _re.search(r'title="([^"]*)"', raw)
-                return _re.sub(r"<[^>]+>", "", raw).strip(), (title.group(1) if title else "")
-        raise AssertionError("no data row rendered")
+        rows = _tabulator_rows(mounted)
+        assert rows, "no data row rendered"
+        assert "Queue, this job (s)" in rows[0], f"queue header absent; got {sorted(rows[0])}"
+        raw = rows[0]["Queue, this job (s)"]
+        title = _re.search(r'title="([^"]*)"', raw)
+        return _cell_text(raw), (title.group(1) if title else "")
 
     job = {"JobID": "777", "Elapsed": "00:01:40", "NCPUS": "1"}
 

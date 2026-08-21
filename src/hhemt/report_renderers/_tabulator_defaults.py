@@ -29,8 +29,8 @@ from __future__ import annotations
 
 import json
 import re
-import warnings
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import pandas as pd
@@ -59,6 +59,16 @@ _TABULATOR_JS_CDN = (
 _TABULATOR_CSS_CDN = (
     f"https://cdn.jsdelivr.net/npm/tabulator-tables@{_TABULATOR_VERSION}"
     "/dist/css/tabulator.min.css"
+)
+#: Vendored copies of the SAME pinned version the CDN URLs above name, for
+#: `js_mode="inline"`. Version-derived on purpose: the pin is the single source, so a
+#: bump that is not accompanied by re-vendoring fails loudly at read time rather than
+#: silently serving one version from the CDN and another from disk. Ships in the wheel
+#: via the existing `report_templates/**/*` package-data glob (pyproject.toml) — no
+#: packaging change was needed. Integrity is pinned by
+#: tests/test_tabulator_vendored_assets.py.
+_TABULATOR_VENDOR_DIR = (
+    Path(__file__).parent.parent / "report_templates" / "vendor" / "tabulator" / _TABULATOR_VERSION
 )
 
 _PERSISTENCE_ID_CHARSET_RE = re.compile(r"[^A-Za-z0-9_.\-]")
@@ -996,8 +1006,38 @@ class TableFragment(NamedTuple):
     script: str
 
 
-def tabulator_head_assets() -> str:
-    """CDN ``<link>`` + ``<script>`` tags. Emit ONCE per document."""
+def tabulator_head_assets(js_mode: str = "cdn") -> str:
+    """Tabulator's CSS + JS for the document head. Emit ONCE per document.
+
+    ``js_mode="cdn"`` emits ``<link>`` + ``<script src=...>`` tags pointing at
+    jsDelivr. ``js_mode="inline"`` emits the vendored asset bytes inside ``<style>``
+    and ``<script>`` so the page renders with no network at view time — in an
+    archived copy, an emailed copy, or a bundle-local copy.
+
+    This is the ONLY site in the package that references Tabulator's assets at all;
+    `build_table_fragment` emits per-table markup and script but no asset reference.
+    So the cdn/inline switch lives here and nowhere else, and a caller selects it by
+    threading `js_mode` to this function rather than by configuring a fragment.
+
+    Both branches derive from `_TABULATOR_VERSION`: the CDN URLs interpolate it and
+    the vendored directory is named for it. They therefore cannot silently disagree —
+    bumping the pin without re-vendoring yields a missing directory and a loud
+    `FileNotFoundError` here, not a page that quietly mixes two Tabulator versions.
+    """
+    if js_mode == "inline":
+        css = (_TABULATOR_VENDOR_DIR / "tabulator.min.css").read_text(encoding="utf-8")
+        js = (_TABULATOR_VENDOR_DIR / "tabulator.min.js").read_text(encoding="utf-8")
+        # The MIT notice travels with the copy. This is the license obligation, not a
+        # courtesy: MIT permits redistribution provided the copyright notice and
+        # permission notice accompany the redistributed portion. An HTML comment keeps
+        # it in the delivered artifact without rendering.
+        notice = (_TABULATOR_VENDOR_DIR / "LICENSE").read_text(encoding="utf-8").strip()
+        return (
+            f"<!-- Tabulator {_TABULATOR_VERSION} (https://tabulator.info) — bundled inline.\n"
+            f"{notice}\n-->\n"
+            f"<style>{css}</style>\n"
+            f"<script>{js}</script>"
+        )
     return (
         f'<link rel="stylesheet" href="{_TABULATOR_CSS_CDN}">\n'
         f'<script src="{_TABULATOR_JS_CDN}"></script>'
@@ -1159,17 +1199,14 @@ def build_table_fragment(
     never had them (they rendered via `_sortable_grid_table`), so this preserves
     the status quo rather than removing a feature.
 
-    ``js_mode="inline"`` is not yet implemented; emits a one-time warning
-    and falls back to CDN. Tracked at /design-figure Phase C follow-up.
+    ``js_mode`` is accepted here for call-site symmetry but is NOT consumed by this
+    function: a fragment emits per-table markup and script only, and carries no
+    reference to Tabulator's own assets. The cdn/inline switch is applied ONCE per
+    document by `tabulator_head_assets`, so a caller assembling its own <head> (rather
+    than using `build_html_document`) must thread `js_mode` THERE for it to take
+    effect. Inline bundling was unimplemented until [Q160](7); the warn-and-fall-back
+    stub that used to sit here is retired with it.
     """
-    if js_mode == "inline":
-        warnings.warn(
-            f"{renderer_name}: tabulator_js_mode='inline' is not yet "
-            "implemented; falling back to CDN. Inline bundling is "
-            "scheduled for /design-figure Phase C iteration.",
-            stacklevel=2,
-        )
-
     options_json = json.dumps(options, default=_json_default)
     # Sentinel substitution — placed AFTER json.dumps so the sentinels are not
     # quoted as bare identifiers; the regex matches the JSON-stringified form.
@@ -1518,7 +1555,7 @@ def build_html_document(
         "<head>\n"
         '<meta charset="utf-8">\n'
         f"<title>{title}</title>\n"
-        f"{tabulator_head_assets()}\n"
+        f"{tabulator_head_assets(js_mode)}\n"
         "<style>\n"
         f"{frag.styles}"
         "</style>\n"
