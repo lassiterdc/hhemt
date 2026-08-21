@@ -251,6 +251,174 @@ def main() -> int:
             logger.info(
                 "Container mode — skipping on-cluster compile (SIF carries the binary)"
             )
+            # Container-mode solver provenance. The native capture
+            # (system.py::_capture_tritonswmm_provenance) is UNREACHABLE here: both of
+            # its call sites (system.py:645, :1486) live inside the two compiles this
+            # branch skips, and container mode clones no TRITON tree for it to read.
+            # Left unhandled, system.log.triton_head_sha stays unset ->
+            # processing_analysis._stamp_triton_provenance omits the root attr ->
+            # every model_defects verdict resolves "indeterminate / no_producing_sha"
+            # and check_coupled_resume_validity reports INDETERMINATE. On a SHARED
+            # system_directory the field can instead retain a sha written by an earlier
+            # NATIVE compile, which is worse than absence: it names a binary that did
+            # not produce the data. The image carries the producing sha as an OCI
+            # label, so read it and write the SAME field the native path writes —
+            # every downstream consumer is then unchanged.
+            #
+            # Weaker than the native path by design: this TRUSTS the image's label
+            # rather than verifying a git tree (system.py::_verify_tritonswmm_pin is
+            # likewise skipped here). A mislabelled image is believed. That is still
+            # strictly better than the unanchored status quo, and a label/filename
+            # disagreement is visible to an operator.
+            #
+            # TWO ARMS, sandbox first. An apptainer SANDBOX DIRECTORY exposes its
+            # labels as a plain JSON file, so that arm needs no `apptainer` binary at
+            # all and is tried first unconditionally. A packed .sif exposes them only
+            # through `apptainer inspect` — and on a cluster where apptainer is
+            # module-only (UVA Rivanna) the bare argv form CANNOT run: measured
+            # `bash -c "apptainer inspect --json {sif}"` -> rc 127 `command not found`,
+            # while `bash -c "module load apptainer/1.5.0 && apptainer inspect …"` ->
+            # rc 0 with the label recovered. `apptainer_module` is consumed at exactly
+            # two other sites (workflow.py process rung, run_simulation.py sim rung)
+            # and at NEITHER is it the setup rung, so without the prefix here the .sif
+            # arm is dead on any module-gated cluster. Emitting the module load from
+            # the TOOLKIT rather than asking each estate to widen additional_modules
+            # keeps containerization a first-class toolkit feature and fixes every
+            # such cluster at once.
+            #
+            # Prefixed-then-plain, mirroring workflow.py::_tmux_session_is_live's
+            # ATTEMPT-LIST structure (its retry PREDICATE is widened below — see the
+            # three-valued split at the non-zero-rc branch): the
+            # prefixed form answers on a module-gated cluster, and the plain fallback
+            # answers where apptainer is on the default PATH with no modulefile
+            # (Frontier), where the prefixed form would short-circuit. When
+            # apptainer_module is None/empty the attempt list is the plain form alone
+            # — byte-identical to a deployment that never had a module.
+            #
+            # Graceful-absent throughout: EVERY failure route leaves the field unset,
+            # which downstream already reads as INDETERMINATE — never a false claim.
+            try:
+                import json as _json
+                import shlex as _shlex
+                import subprocess as _subprocess
+
+                from hhemt.config.hpc_system import resolve_container_spec
+
+                _cspec = resolve_container_spec(cfg_hpc)
+                _labels: dict = {}
+                _inspect_ran = False
+                _image_error: str | None = None
+                if _cspec is not None and _cspec.sif_path:
+                    _sif = Path(_cspec.sif_path)
+                    _sandbox_labels = _sif / ".singularity.d" / "labels.json"
+                    if _sandbox_labels.is_file():
+                        # Sandbox directory: labels are a plain file. No binary, no
+                        # module, no subprocess.
+                        _labels = _json.loads(_sandbox_labels.read_text()) or {}
+                        _inspect_ran = True
+                    else:
+                        # Packed .sif: only `apptainer inspect` can read the labels.
+                        _q_sif = _shlex.quote(str(_sif))
+                        _inspect = f"apptainer inspect --json {_q_sif}"
+                        _mod = getattr(_cspec, "apptainer_module", None)
+                        _attempts = (
+                            [f"module load {_shlex.quote(_mod)} && {_inspect}"] if _mod else []
+                        ) + [_inspect]
+                        for _cmd in _attempts:
+                            try:
+                                _r = _subprocess.run(
+                                    ["bash", "-c", _cmd],
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=120,
+                                )
+                            except (OSError, _subprocess.TimeoutExpired):
+                                continue
+                            if _r.returncode != 0:
+                                # THREE-VALUED, and the split is measured rather than
+                                # assumed (UVA Rivanna, read-only):
+                                #   rc 127  + "command not found"      -> binary absent
+                                #   rc 1    + "Lmod has detected …"    -> bad modulefile
+                                #   rc 255  + "FATAL: Failed to open"  -> bad IMAGE
+                                # The first two mean the FORM could not run the tool, so
+                                # the next form may still answer — retry. The third means
+                                # apptainer RAN and rejected the image, which the next
+                                # form cannot change — stop and report it AS an image
+                                # problem. A bare `!= 0 -> continue` sends a corrupt-image
+                                # operator to fix their MODULE; a bare `== 127 -> continue`
+                                # sends a wrong-modulefile operator to inspect a perfectly
+                                # good CONTAINER. Both are the same wrong-remedy defect in
+                                # opposite directions, which is why neither is used.
+                                #
+                                # Contrast workflow.py::_tmux_session_is_live, whose
+                                # `rc == 127 or "command not found"` IS complete: `tmux
+                                # has-session` returns non-zero for exactly one meaningful
+                                # reason. This probe is a `module load X && …` COMPOUND
+                                # with two failure producers in series plus the tool, so it
+                                # needs one more term, not fewer.
+                                _err = f"{_r.stderr}".lower()
+                                if (
+                                    _r.returncode == 127
+                                    or "command not found" in _err
+                                    or "lmod has detected" in _err
+                                ):
+                                    continue
+                                # The tool ran and refused the image. Keep the first line
+                                # of its own diagnosis; it is more specific than anything
+                                # reconstructable from the return code.
+                                _image_error = (
+                                    f"{_r.stderr}".strip().splitlines() or ["(no stderr)"]
+                                )[0]
+                                break
+                            _inspect_ran = True
+                            _labels = (
+                                ((_json.loads(_r.stdout) or {}).get("data") or {})
+                                .get("attributes", {})
+                                .get("labels", {})
+                            ) or {}
+                            break
+                _sha = _labels.get("org.hhemt.triton_sha")
+                if _sha:
+                    system.log.triton_head_sha.set(str(_sha))
+                    system.log.write()
+                    logger.info(f"[Provenance] container TRITON producing sha {_sha}")
+                elif _inspect_ran:
+                    # The image WAS read and carries no label — an image defect.
+                    logger.warning(
+                        "Container mode: no org.hhemt.triton_sha label found on "
+                        f"{getattr(_cspec, 'sif_path', None)} — the consolidated tree "
+                        "will carry no triton_producing_sha, and every model-defect "
+                        "verdict will resolve INDETERMINATE."
+                    )
+                elif _image_error is not None:
+                    # apptainer RAN and REFUSED the image — an image problem, not a
+                    # module one. Quoting its own FATAL line is what stops an operator
+                    # from being sent to fix `container.apptainer_module` over a
+                    # corrupt, truncated, or wrong-format container.
+                    logger.warning(
+                        "Container mode: `apptainer inspect` could not read "
+                        f"{getattr(_cspec, 'sif_path', None)} — {_image_error}. "
+                        "Provenance was NOT captured; the container itself is "
+                        "unreadable, so re-transfer or rebuild it. The apptainer "
+                        "module loaded correctly, so container.apptainer_module is "
+                        "NOT the problem."
+                    )
+                else:
+                    # No form could RUN apptainer — a MISSING/WRONG MODULE, not a
+                    # label-less image. Kept as a distinct message so an operator is
+                    # not sent to inspect a perfectly good container.
+                    logger.warning(
+                        "Container mode: could not run `apptainer inspect` on "
+                        f"{getattr(_cspec, 'sif_path', None)} in any form "
+                        f"(container.apptainer_module={getattr(_cspec, 'apptainer_module', None)!r}). "
+                        "Provenance was NOT captured; set container.apptainer_module to "
+                        "the cluster's apptainer modulefile, or ship a sandbox-directory "
+                        "container whose labels need no binary."
+                    )
+            except Exception as _prov_exc:  # never fail setup on a provenance read
+                logger.warning(
+                    f"Container-mode TRITON provenance capture failed: {_prov_exc}"
+                )
 
         # Phase 1b: Compile TRITON-SWMM (coupled model)
         if _native_compile and args.compile_triton_swmm:
