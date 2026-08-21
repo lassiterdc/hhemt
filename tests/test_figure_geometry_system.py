@@ -139,12 +139,12 @@ def test_group_colour_is_invariant_to_filtering_the_group_set():
     Pre-fix this asserts False: order.index("gpu") is 2 against the full set and
     0 against the GPU-only set, so the two calls return different palette slots.
     """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_group_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
 
     palette = ["#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442"]
     all_groups = ["serial", "cpu", "gpu", "hybrid"]
     gpu_only = ["gpu"]
-    assert _stable_group_color("gpu", palette, all_groups) == _stable_group_color(
+    assert _stable_hardware_color("gpu", palette, all_groups) == _stable_hardware_color(
         "gpu", palette, gpu_only
     ), "GPU marker colour must not depend on which other families are in the panel"
 
@@ -210,34 +210,35 @@ def test_family_baseline_disclosure_survives_the_axis_relabel():
     assert "minimum-device run" in src, "the footnote disclosure must remain"
 
 
-def test_group_colour_is_unchanged_for_the_full_family_set():
-    """S12 must be a pure invariance fix, not a re-palette. These four values are
-    what the benchmarking figures render today; if S12 changes any of them it has
-    shifted colours on figures under review, which is not what it is for."""
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_group_color
+def test_every_cpu_mode_takes_the_cpu_colour_and_gpu_takes_its_own():
+    """The hardware ruling: colour is locked to hardware, so serial / cpu / hybrid --
+    all one hardware family -- share slot 0, and gpu takes the next slot. This
+    REPLACES the mode-keyed expectation, which asserted four colours for what is
+    three CPU modes and one GPU."""
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
 
     palette = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#F0E442", "#000000")
     full = ["serial", "cpu", "gpu", "hybrid"]
-    assert _stable_group_color("serial", palette, full) == "#0072B2"
-    assert _stable_group_color("cpu", palette, full) == "#E69F00"
-    assert _stable_group_color("gpu", palette, full) == "#009E73"
-    assert _stable_group_color("hybrid", palette, full) == "#CC79A7"
+    assert {_stable_hardware_color(g, palette, full) for g in ("serial", "cpu", "hybrid")} == {"#0072B2"}
+    assert _stable_hardware_color("gpu", palette, full) == "#E69F00"
 
 
 def test_single_cpu_aliases_resolve_to_the_serial_slot():
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_group_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
 
     palette = ("#0072B2", "#E69F00", "#009E73", "#CC79A7")
     for alias in ("serial", "single_cpu", "single-cpu"):
-        assert _stable_group_color(alias, palette, [alias]) == "#0072B2"
+        assert _stable_hardware_color(alias, palette, [alias]) == "#0072B2"
 
 
-def test_unknown_groups_sort_deterministically_after_the_known_block():
-    """Exercises the else branch, which the current corpus does not reach."""
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_group_color
+def test_a_non_gpu_accelerator_token_currently_takes_the_cpu_colour():
+    """`_hardware_family` splits GPU tokens and collapses everything else to `cpu`, so
+    an accelerator not spelled `gpu*` shares the CPU colour. Pinned as the KNOWN limit
+    rather than left implicit: widening the rule moves baseline anchoring and column
+    layout too, since all three consumers read the same function."""
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
 
-    palette = tuple(f"#{i:06x}" for i in range(8))
-    groups = ["gpu", "fpga", "apu"]
-    assert _stable_group_color("apu", palette, groups) == palette[4]
-    assert _stable_group_color("fpga", palette, groups) == palette[5]
-    assert _stable_group_color("apu", palette, ["apu", "fpga"]) == palette[4]
+    palette = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00")
+    groups = ["serial", "cpu", "gpu", "hybrid", "apu", "fpga"]
+    assert _stable_hardware_color("apu", palette, groups) == "#0072B2"
+    assert _stable_hardware_color("fpga", palette, groups) == "#0072B2"
