@@ -994,7 +994,7 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
         order changes, and pass while measuring something else.
         """
         headers = re.findall(r'<span class="th-label">(.*?)</span>', html)
-        idx = next(i for i, h in enumerate(headers) if h.startswith("CPU eff"))
+        idx = next(i for i, h in enumerate(headers) if h.startswith("Billed CPU used"))
         row = next(r for r in re.findall(r"<tr>(.*?)</tr>", html, re.S) if f"<td>{job_id}</td>" in r)
         return re.findall(r"<td>(.*?)</td>", row, re.S)[idx]
 

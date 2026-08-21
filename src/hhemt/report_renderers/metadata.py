@@ -2427,6 +2427,35 @@ def _assert_reduction_names_unique(columns: tuple[_EffColumn, ...]) -> None:
 _assert_reduction_names_unique(_EFF_COLUMNS)
 
 
+def _eff_label(key: str) -> str:
+    """A live column's reader-facing LABEL, read from its declaration.
+
+    Prose that names a column must not hand-author its label: that makes a second copy of a
+    string the `_EffColumn` table already owns, and the two drift silently at the next rename.
+    They already did -- the disclosure note below called this table's CPU column "CPU
+    efficiency" after it was renamed to "Billed CPU used", so the note named a column the page
+    no longer had.
+
+    Fails LOUD on an unknown key, at import, because the alternative is a note rendering
+    `<em></em>` -- a silently empty reference is the failure this accessor exists to prevent,
+    and returning "" would reintroduce it in a new costume.
+
+    Deliberately NOT used for every emphasised name in that note. Two of them -- `CPU model`
+    and `Queue time` -- name a MEASUREMENT rather than a column, and have no declaration to
+    read. `Queue time` is the clearest case: the live column's label is `Queue, this job (s)`,
+    which does not fit the sentence it appears in, and that misfit is the diagnostic. Derive
+    where the prose names a COLUMN; write plainly where it names a CONCEPT.
+    """
+    for col in _EFF_COLUMNS:
+        if col.key == key:
+            return col.label
+    raise KeyError(
+        f"No _EffColumn declares key {key!r}, so no label can be derived for prose that "
+        f"names it. Either the column was removed and the prose referencing it is now stale, "
+        f"or the key is misspelled; both are defects this lookup refuses to paper over."
+    )
+
+
 #: The sort/filter/hide affordance sentence, authored ONCE and rendered by every table that
 #: offers those controls. It was previously written out at two call sites and had already
 #: diverged -- one carried the "criteria across columns are combined" clause and the other
@@ -2495,7 +2524,8 @@ _EFF_UNCAPTURED_NOTE = (
     "measured; it never means the job did not wait. The column reports the queue THIS JOB "
     "waited, which is a property of the row; the simulation's accumulated queue across all "
     "of its allocations is a property of a set one row does not span, and is not shown here. "
-    "<em>CPU efficiency</em> is shown as not-measured wherever SLURM reported no CPU time "
+    f"<em>{_eff_label('cpu_eff_pct').removesuffix(' (%)')}</em> is shown as not-measured "
+    "wherever SLURM reported no CPU time "
     "for the job step; a zero there would claim the job used no processor, which is not "
     "what an absent measurement means.</p>"
     "<p class='note'><strong>Why most rows carry no purpose, sub-analysis or compute "
@@ -2507,7 +2537,8 @@ _EFF_UNCAPTURED_NOTE = (
     "report that is the majority of rows. An em-dash in these columns means the row could "
     "not be matched to a toolkit record — never that the job ran without a partition, "
     "without MPI ranks, or outside a sub-analysis. Every one of those values existed; this "
-    "table cannot currently reach them, and the <em>Record</em> column says which rows those "
+    f"table cannot currently reach them, and the <em>{_eff_label('record')}</em> column says "
+    "which rows those "
     "are. This is a MEASURED CEILING rather than a capture failure: the join already matches "
     "87 of the 88 job ids the sidecars still retain, or 99% of its available keys. The "
     "shortfall is structural — this table is a cumulative history across every workflow "
