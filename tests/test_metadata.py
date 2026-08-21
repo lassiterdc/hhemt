@@ -105,11 +105,30 @@ def test_upgrade_doc_to_workflow_run_crate():
     assert metadata.canonical_jsonld_from_doc(doc2) == s1
 
 
-def test_bundle_schema_version_bumped_to_v3():
-    # C8: round-trippable Workflow-Run-Crate + reprex carriage = bundle schema v3.
+def test_bundle_schema_version_matches_the_fixtures():
+    """The constant and the committed fixtures must name the SAME generation.
+
+    RENAMED off `_bumped_to_v3`: a test named for one version pins that
+    version, so it fails on every future bump and is repaired by editing the
+    number in its own name -- which is how it came to assert v3 against a v4
+    constant. Pinning the RELATION instead means the next bump needs no edit
+    here, and a bump that forgets the fixtures fails loudly rather than
+    silently shipping six confusing BundleSchemaErrors.
+    """
+    import json
+    from pathlib import Path
+
     from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION
 
-    assert BUNDLE_SCHEMA_VERSION == 3
+    assert BUNDLE_SCHEMA_VERSION == 4
+    fixtures = Path(__file__).parent / "fixtures" / "bundles"
+    for manifest in sorted(fixtures.glob("*/bundle_manifest.json")):
+        declared = json.loads(manifest.read_text())["bundle_schema_version"]
+        assert declared == BUNDLE_SCHEMA_VERSION, (
+            f"{manifest.parent.name} declares bundle_schema_version={declared} "
+            f"but the toolkit is at {BUNDLE_SCHEMA_VERSION}; re-emit via "
+            f"`python -m tests.fixtures.bundles.build_fixtures`"
+        )
 
 
 def test_sidecar_compare_and_write_idempotent(tmp_path):

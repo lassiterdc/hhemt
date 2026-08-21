@@ -1262,6 +1262,71 @@ def test_reader_visible_prose_uses_one_dash_convention():
     )
 
 
+def test_scenario_status_registers_the_scenario_directory_slug(tmp_path):
+    """The sidecar's `event_id` is the scenario SLUG, and the slug IS the directory basename.
+
+    The two spellings this reader registered before — the integer `event_iloc` and
+    `event_index.{iloc}` — coincide with the slug ONLY when the analysis has a single
+    weather indexer literally named `event_index` whose value equals the iloc. That is
+    true of the synthetic fixture and of no real analysis, so the join silently missed
+    on every real tree. The vocabulary here is stated in the test rather than inherited
+    from a fixture, which is the whole point: a fixture is what hid this.
+    """
+    for slug in ("year.9_event_type.compound_event_id.1", "event_index.0"):
+        d = tmp_path / slug.replace(".", "_")
+        d.mkdir()
+        (d / "scenario_status.csv").write_text(
+            f"event_iloc,model_type,scenario_directory\n0,triton,/scratch/u/system/an/sims/{slug}\n"
+        )
+        scenario_map, path = metadata._read_scenario_status(d)
+        assert path is not None
+        assert ("", slug, "triton") in scenario_map, slug
+        assert ("", "0", "triton") in scenario_map, slug
+
+
+def test_scenario_status_slug_key_carries_a_non_empty_sa_id(tmp_path):
+    """The sensitivity arm: `sa_id` is non-empty on BOTH sides there, so the tuple must carry it.
+
+    On a non-sensitivity analysis both sides degrade to `""` and agree, which is why an
+    `sa_id`-shaped bug would be invisible on every other case in this module.
+    """
+    slug = "year.9_event_type.compound_event_id.1"
+    (tmp_path / "scenario_status.csv").write_text(
+        "sa_id,event_iloc,model_type,scenario_directory\n"
+        f"12,0,tritonswmm,/scratch/u/system/an/subanalyses/sa_12/sims/{slug}\n"
+    )
+    scenario_map, _path = metadata._read_scenario_status(tmp_path)
+    assert ("12", slug, "tritonswmm") in scenario_map
+    assert ("", slug, "tritonswmm") not in scenario_map
+
+
+def test_a_total_scenario_join_miss_is_disclosed_not_silent():
+    """A total join miss must READ as a miss, not as absent data.
+
+    The em-dash is the sanctioned not-captured marker, so before this disclosure a
+    total join failure rendered as a well-formed table of legitimate-looking blanks.
+    The third arm is the one that keeps the banner honest: an efficiency report with
+    no joinable simulation rows must produce no warning at all.
+    """
+    slug = "year.9_event_type.compound_event_id.1"
+    purpose_map = metadata._job_purpose_map(
+        [{"rule_name": "run_triton", "slurm_job_id": "18573918", "event_id": slug, "model_type": "triton"}]
+    )
+    stale = {("", "0", "triton"): {"run_mode": "hybrid"}}
+    html_miss = metadata._build_slurm_efficiency_html([("r", _EFF_HEADER + _EFF_ROW)], purpose_map, stale, lambda p: "")
+    assert "Scenario-record join: 0 of 1" in html_miss
+    assert "No simulation row matched" in html_miss
+
+    fresh = {("", slug, "triton"): {"run_mode": "hybrid"}}
+    html_hit = metadata._build_slurm_efficiency_html([("r", _EFF_HEADER + _EFF_ROW)], purpose_map, fresh, lambda p: "")
+    assert "Scenario-record join: 1 of 1" in html_hit
+    assert "No simulation row matched" not in html_hit
+
+    html_none = metadata._build_slurm_efficiency_html([("r", _EFF_HEADER + _EFF_ROW)], {}, {}, lambda p: "")
+    assert "Scenario-record join: 0 of 0" in html_none
+    assert "No simulation row matched" not in html_none
+
+
 def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     """Iter-10 H: 'the presentation of sub datasets is unreadable; it's just a massive list
     of filepaths ... i think a branch structure like people use to display folder structure

@@ -27,12 +27,41 @@ def test_matrix_yields_four_sections_for_three_models():
 
     sections = page_sections(["triton", "tritonswmm", "swmm"])
     assert [(m, k) for m, k, _g in sections] == [
+        ("triton", "peak_flood_depth"),
         ("tritonswmm", "peak_flood_depth"),
         ("tritonswmm", "conduit_flow"),
         ("swmm", "conduit_flow"),
-        ("triton", "peak_flood_depth"),
     ]
     assert len(sections) == 4
+
+
+def test_page_sections_reaches_every_arm_in_the_matrix():
+    """PAGE_MODEL_ORDER is display-only, so an arm can be added to ARM_GROUPS
+    and to MODEL_ORDER yet forgotten here -- it would then vanish from the
+    composite page with no other failure, which is the one silent gap the
+    split-constant design introduces. This converts it into a red one, and
+    derives the expected arm set from ARM_GROUPS so it cannot go stale.
+    """
+    from hhemt.report_renderers._model_arms import (
+        ARM_GROUPS,
+        MODEL_DISPLAY_NAMES,
+        MODEL_ORDER,
+        PAGE_MODEL_ORDER,
+        page_sections,
+    )
+
+    every_arm = {(model, kind) for kind, arms in ARM_GROUPS.items() for model in arms}
+    every_model = sorted({model for arms in ARM_GROUPS.values() for model in arms})
+    reached = {(model, kind) for model, kind, _g in page_sections(every_model)}
+
+    assert reached == every_arm, f"arms unreachable from the page: {sorted(every_arm - reached)}"
+    assert set(PAGE_MODEL_ORDER) == set(MODEL_ORDER), (
+        f"display and tie-break tuples cover different models: {sorted(set(PAGE_MODEL_ORDER) ^ set(MODEL_ORDER))}"
+    )
+    # per_sim_event_page indexes MODEL_DISPLAY_NAMES[model_type] unguarded.
+    assert set(every_model) <= set(MODEL_DISPLAY_NAMES), (
+        f"rendered arm has no display name: {sorted(set(every_model) - set(MODEL_DISPLAY_NAMES))}"
+    )
 
 
 @pytest.mark.parametrize(

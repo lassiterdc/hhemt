@@ -961,3 +961,51 @@ def synthetic_two_sensitivity_bundle_fixture(rendered_synth_sensitivity, tmp_pat
     # insensitive to whether the target currently exists.
     shutil.copytree(dir_a, dir_b, symlinks=True)
     return dir_a, dir_b
+
+
+@pytest.fixture(scope="session")
+def synth_prepared_scenario(tritonswmm_cpu_compiled, tmp_path_factory):
+    """A synth scenario prepared far enough to have written its inflow capture.
+
+    `tritonswmm_cpu_compiled` is a compile-only GATE: it skips on a missing
+    toolchain, hard-fails under HHEMT_REQUIRE_COMPILE_TIER=1, and returns None.
+    Depend on it for the gate and retrieve the case separately -- the pattern
+    `rendered_synth_multi_sim` and `synthetic_multisim_completed` already use.
+    Treating its value as an analysis is what made this fixture error at setup.
+    """
+    import os
+
+    from tests.fixtures.test_case_catalog import Local_TestCases
+
+    os.environ["HHEMT_TEST_RUNS_ROOT_OVERRIDE"] = str(tmp_path_factory.mktemp("capture"))
+    case = Local_TestCases.retrieve_synth_all_models_test_case(start_from_scratch=True)
+    scen = case.analysis._retrieve_sim_run_processing_object(0)._scenario
+    scen.prepare_scenario()
+    return scen
+
+
+@pytest.fixture
+def synth_case_hydrology_disabled(tmp_path, monkeypatch):
+    """A synth analysis with toggle_use_swmm_for_hydrology=False.
+
+    Constructed through `additional_system_configs` rather than by mutating
+    `cfg_system` on a built analysis: Gotcha 73 -- the runners read the PERSISTED
+    config from a subprocess, so an in-memory mutation never reaches them.
+
+    Shape verified against the live call site at
+    tests/test_synth_timeseries_consolidation.py:104-114, which is the same seam the
+    private-estate runner uses: the builder is the CLASS
+    `retrieve_synth_TRITON_SWMM_test_case` (test_case_builder.py:283), not a
+    `Local_TestCases` method, and runs-root isolation is the env override rather than
+    a keyword -- which is what keeps `start_from_scratch=True`'s wipe off the shared
+    session cache (the sanctioned exception in the per-worktree-cache stipulation).
+    """
+    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    return retrieve_synth_TRITON_SWMM_test_case(
+        analysis_name="synth_hydrology_disabled",
+        n_events=1,
+        start_from_scratch=True,
+        additional_system_configs={"toggle_use_swmm_for_hydrology": False},
+    ).analysis

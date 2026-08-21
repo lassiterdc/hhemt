@@ -659,6 +659,65 @@ def _build_system_results(
     return dict_system_results
 
 
+#: Column headers for the Subcatchment Runoff Summary section, in file order.
+#: MEASURED against a real Norfolk hydrology rpt (2026-08-17): the section header
+#: spans three physical lines and the data rows are fixed-width, so this tuple is
+#: authored against a real file, never inferred from the header text.
+LST_COL_HEADERS_SUBCATCH_RUNOFF_SUMMARY = (
+    "subcatchment_id",
+    "total_precip_mm",
+    "total_runon_mm",
+    "total_evap_mm",
+    "total_infil_mm",
+    "imperv_runoff_mm",
+    "perv_runoff_mm",
+    "total_runoff_mm",
+    "total_runoff_10e6_ltr",
+    "peak_runoff_cms",
+    "runoff_coeff",
+)
+
+
+def parse_hydrology_rpt_summary(f_rpt: Path):
+    """Capture everything a hydrology-only ``.rpt`` carries that nothing else does.
+
+    WHY THIS EXISTS, and why it is not a duplicate of `_build_system_results`.
+    A hydrology-only rpt has NO `Node Time Series Results` section, so the
+    reclaim truncator is a provable no-op on it (it returns early on a missing
+    body sentinel) and the file's 289 KB is recoverable only by deletion. But
+    39% of it is the Subcatchment Runoff Summary, whose `Total Runoff 10^6 ltr`
+    column is the per-subcatchment runoff volume the user asked to preserve, and
+    beside it sits the Runoff Quantity Continuity error -- the only hydrology
+    mass-balance record on disk. Deleting without this capture discards both
+    silently.
+
+    Reuses `return_lines_for_section_of_rpt` + `format_rpt_section_into_dataframe`,
+    the SAME pair the three existing summary sections use, so this adds a column
+    tuple rather than a second parsing idiom, and takes NO new dependency
+    (`swmmio` / `pyswmm` are not needed and must not be introduced here).
+
+    Returns an `xr.Dataset` indexed on `subcatchment_id` whose attrs carry the two
+    continuity errors and `flow_units`. Raises nothing on a missing section: an
+    absent Subcatchment Runoff Summary yields an empty Dataset with the attrs
+    still populated, because a hydrology model with zero subcatchments is legal.
+    """
+    with open(f_rpt, "r", encoding="latin-1") as fh:
+        rpt_lines = fh.readlines()
+    dict_system_results = return_swmm_system_outputs(rpt_lines)
+    lst_rows = return_lines_for_section_of_rpt(
+        "Subcatchment Runoff Summary", lines=rpt_lines
+    )
+    df = format_rpt_section_into_dataframe(
+        lst_rows, list(LST_COL_HEADERS_SUBCATCH_RUNOFF_SUMMARY)
+    )
+    if not df.empty:
+        df = df.set_index("subcatchment_id")
+    ds = df.to_xarray()
+    ds = convert_datavars_to_dtype(ds, lst_dtypes_to_try=[float, str])
+    ds.attrs = dict_system_results
+    return ds
+
+
 def _parse_analysis_end_line(end_line: str):
     """Parse the analysis end datetime line from the RPT file."""
     # parse analysis end time

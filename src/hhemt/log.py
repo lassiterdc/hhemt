@@ -533,7 +533,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     SWMM_link_summary_written: Optional[LogField[bool]] = None
     raw_SWMM_outputs_cleared: Optional[LogField[bool]] = None
     full_SWMM_timeseries_cleared: Optional[LogField[bool]] = None
-    # Post-processing reclaim (analysis_config.reclaim_after_processing) of
+    # Post-processing reclaim (analysis_config.remove_after_processing) of
     # out_tritonswmm/swmm/*.out -- the coupled-SWMM binary outputs, NEVER the .rpt, which
     # is a live completion predicate. Distinct from raw_SWMM_outputs_cleared, which records
     # the clear_raw pass over the RAW SIM tree; these are two axes and two records.
@@ -549,6 +549,14 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # pass over the RAW SIM tree) and from raw_SWMM_binaries_reclaimed (out_tritonswmm/swmm
     # binaries): three axes, three records.
     hydro_out_reclaimed: Optional[LogField[bool]] = None
+    # Three ADDITIVE records for the regeneration-cost classes. Same change class as the
+    # allowlisted additive fields above: Optional and defaulted None, so every
+    # pre-existing log_{model}.json deserialises unchanged and consumers coalesce
+    # None -> not reclaimed. These are NEW keys, never renames of existing ones --
+    # renaming an on-disk log key is the break that WOULD owe a LAYOUT_VERSION bump.
+    prep_inputs_reclaimed: Optional[LogField[bool]] = None
+    hydrographs_reclaimed: Optional[LogField[bool]] = None
+    standalone_rpt_reclaimed: Optional[LogField[bool]] = None
 
     # Validators for LogField types
     _validate_bool_fields = field_validator(

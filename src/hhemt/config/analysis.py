@@ -14,13 +14,42 @@ from hhemt.config.eda import eda_config
 from hhemt.config.report import report_config as _report_config_model
 
 ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "swmm"]]
-ReclaimValue = Literal[
-    "all", "none"
-] | list[Literal["timeseries", "raw_swmm_binaries", "coupled_rpt", "hydro_out"]]
+# Artifact-class vocabulary, ordered by REGENERATION COST rather than by filename.
+# The partition rule against `clear_raw`, stated so a future artifact classifies
+# itself without a lookup table: `clear_raw` decides which MODEL's raw solver
+# outputs to delete (its members ARE model types); `remove_after_processing`
+# decides which ARTIFACT CLASSES to remove once the per-model summaries are
+# provably intact. An artifact identified by the model that produced it is a
+# clear_raw concern; anything else is a class here.
+#
+# ALIAS RENAMED WITH THE FIELD (round 5, user directive): RemoveValue ->
+# RemoveValue. The alias IS this field's type and appears in public signatures,
+# so leaving it behind would put two names on one concept in the file the rename
+# exists to clean. The four PRIVATE helpers keep `_reclaim_*` names -- see the
+# rename-boundary ruling in the round-5 amendment.
+#
+#   T0 (regenerable by template-fill, no solver): prep_inputs
+#   T1 (regenerable by re-running the CHEAP SWMM hydrology solver): hydrographs,
+#      hydro_out -- BUT ONLY while the other of the pair survives; electing BOTH
+#      makes a re-prep hard-fail at hydrograph_outputs_gate and recovery requires
+#      clearing hydro_swmm_sim_completed and re-simulating hydrology by hand.
+#   T2 (regenerable only by re-running an EXPENSIVE solver): timeseries,
+#      raw_swmm_binaries, coupled_rpt, standalone_rpt
+RemoveValue = Literal["all", "none"] | list[
+    Literal[
+        "timeseries",
+        "raw_swmm_binaries",
+        "coupled_rpt",
+        "hydro_out",
+        "prep_inputs",
+        "hydrographs",
+        "standalone_rpt",
+    ]
+]
 # Deliberately NOT a widening of ClearRawValue: that alias is ALSO ForceRerunSpec.subject's
 # type (see the comment directly below), so adding an artifact-class member to it would make
 # that member a legal force-rerun subject, where it means nothing. Different axis --
-# ClearRawValue enumerates MODEL TYPES over raw sim outputs; ReclaimValue enumerates
+# ClearRawValue enumerates MODEL TYPES over raw sim outputs; RemoveValue enumerates
 # ARTIFACT CLASSES over post-processing redundancy -- so a different alias.
 # Legacy shape, RETAINED as the accepted input form and as `ForceRerunSpec.subject`'s type.
 # Every existing config value stays valid and keeps its exact present meaning; the
@@ -751,9 +780,9 @@ class analysis_config(cfgBaseModel):
     #
     # TWO KNOBS, TWO AXES -- do not conflate them. `clear_raw` is per-MODEL-TYPE over RAW
     # SIMULATION outputs and fires inside write_timeseries_outputs.
-    # `reclaim_after_processing` is per-ARTIFACT-CLASS over POST-PROCESSING REDUNDANCY and
+    # `remove_after_processing` is per-ARTIFACT-CLASS over POST-PROCESSING REDUNDANCY and
     # fires in the process runner only after the summaries are provably intact.
-    reclaim_after_processing: ReclaimValue = Field(
+    remove_after_processing: RemoveValue = Field(
         "none",
         description=(
             "Post-processing reclaim policy. Fires ONLY after the per-model summary "
@@ -847,22 +876,22 @@ class analysis_config(cfgBaseModel):
                     )
         return v
 
-    @field_validator("reclaim_after_processing", mode="after")
+    @field_validator("remove_after_processing", mode="after")
     @classmethod
-    def _validate_reclaim_after_processing(cls, v):
+    def _validate_remove_after_processing(cls, v):
         """Mirror of _validate_clear_raw's three reject arms, on the artifact-class axis."""
         if isinstance(v, list):
             if not v:
                 raise ValueError(
-                    "reclaim_after_processing list form cannot be empty; use 'none' to reclaim nothing"
+                    "remove_after_processing list form cannot be empty; use 'none' to reclaim nothing"
                 )
             if len(v) != len(set(v)):
-                raise ValueError(f"reclaim_after_processing list contains duplicates: {v}")
+                raise ValueError(f"remove_after_processing list contains duplicates: {v}")
             for item in v:
                 if item in ("all", "none"):
                     raise ValueError(
-                        f"reclaim_after_processing list cannot contain sentinel value {item!r}; "
-                        f"use the sentinel as a bare string (reclaim_after_processing: {item})"
+                        f"remove_after_processing list cannot contain sentinel value {item!r}; "
+                        f"use the sentinel as a bare string (remove_after_processing: {item})"
                     )
         return v
 

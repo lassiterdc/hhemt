@@ -1671,6 +1671,9 @@ _RECLAIM_LOG_FIELDS: dict[str, str] = {
     "raw_SWMM_binaries_reclaimed": "coupled raw SWMM .out binaries",
     "coupled_rpt_truncated": "coupled SWMM report body (truncated in place)",
     "hydro_out_reclaimed": "SWMM hydrology output (hydro.out)",
+    "prep_inputs_reclaimed": "scenario-prep inputs (dats/, extbc/, sim_weather.nc)",
+    "hydrographs_reclaimed": "TRITON inflow hydrographs (strmflow/), captured to zarr first",
+    "standalone_rpt_reclaimed": "standalone SWMM reports (full.rpt truncated; hydro.rpt captured then removed)",
 }
 
 
@@ -1694,7 +1697,7 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
     2. IT READS THE LOG, NEVER THE CONFIG. ``CheckResult``'s own docstring forbids deriving
        ``instrument`` from ``cfg_analysis.clear_raw`` because "that records configured
        intent". The symmetric error here would be labelling a scenario reclaimed from
-       ``cfg_analysis.reclaim_after_processing`` -- a scenario that failed before the
+       ``cfg_analysis.remove_after_processing`` -- a scenario that failed before the
        reclaim fired, or one processed by a pre-feature toolkit, would be mislabelled.
 
     3. DISCLOSED DENOMINATOR. Every ``check_*`` derives ``passed`` from ``len(details) == 0``,

@@ -554,8 +554,7 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
 
     backend = analysis._workflow_builder._get_report_cfg_static_backend()
     so_ext = _output_ext_for(backend, "system_overview")
-    pfd_ext = _output_ext_for(backend, "per_sim_peak_flood_depth")
-    cf_ext = _output_ext_for(backend, "per_sim_conduit_flow")
+    ep_ext = _output_ext_for(backend, "per_sim_event_page")
     pas_ext = _output_ext_for(backend, "per_analysis_summary")
     assert (plots_dir / f"system_overview{so_ext}").exists()
     assert (plots_dir / "per_analysis" / f"summary_table{pas_ext}").exists()
@@ -565,16 +564,27 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
 
         event_id = compute_event_id_slug(ev)
         # ADR-2: figures carry the canonical plot ID as their stem
-        # (peak_flood_depth__evt.{event_id}); the manifest carries the same id as
-        # a first-class plot_id field, equal to the stem by construction (R2/R4).
+        # (event_page__evt.{event_id}); the manifest carries the same id as a
+        # first-class plot_id field, equal to the stem by construction (R2/R4).
         import json
 
-        pfd_stem = f"peak_flood_depth__evt.{event_id}"
-        cf_stem = f"conduit_flow__evt.{event_id}"
-        assert (plots_dir / "per_sim" / event_id / f"{pfd_stem}{pfd_ext}").exists()
-        assert (plots_dir / "per_sim" / event_id / f"{cf_stem}{cf_ext}").exists()
-        pfd_manifest = json.loads((plots_dir / "per_sim" / event_id / f"{pfd_stem}.manifest.json").read_text())
-        assert pfd_manifest["plot_id"] == pfd_stem
+        ep_stem = f"event_page__evt.{event_id}"
+        ep_dir = plots_dir / "per_sim" / event_id
+        assert (ep_dir / f"{ep_stem}{ep_ext}").exists()
+        ep_manifest = json.loads((ep_dir / f"{ep_stem}.manifest.json").read_text())
+        assert ep_manifest["plot_id"] == ep_stem
+        # The composite RETIRED the two separately-addressable per-sim figures on
+        # the NON-SENSITIVITY path: per_sim_event_page.render calls both builders
+        # in-process and writes exactly ONE output. Asserting their ABSENCE pins the
+        # retirement itself, so a partial revert that re-emits them fails here
+        # instead of silently restoring a two-manifest shape the rule_all / bundle
+        # enumeration no longer knows about. (The per-sa sensitivity path still
+        # emits both files; that path is exercised in test_synth_05.)
+        for _retired in ("peak_flood_depth", "conduit_flow"):
+            assert not list(ep_dir.glob(f"{_retired}__evt.*")), (
+                f"{_retired} re-emitted as a standalone per-sim figure; the composite "
+                f"event_page is the sole non-sensitivity per-sim output"
+            )
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")

@@ -88,6 +88,24 @@ _RECLAIM_COUPLED_SWMM_SUFFIXES: frozenset[str] = frozenset({".out"})
 # flooded. Using the same sentinel _scan_metadata_and_summaries uses to find the body start
 # (swmm_output_parser.py:463) is what keeps head and parser from disagreeing.
 _RPT_BODY_START_SENTINEL = "Node Time Series Results"
+# The trailer is captured as a contiguous BLOCK from this sentinel to EOF, never as
+# the single matching line. MEASURED on two real rpts (2026-08-17): both end
+#     Analysis begun on:  ...
+#     Analysis ended on:  ...
+#     Total elapsed time: HH:MM:SS
+# so a one-line trailer silently drops "Total elapsed time".
+#
+# RETAINED-REGION INVARIANT, and it is what makes the standalone-rpt reclaim need no
+# consumer gate: every consumer of a truncated rpt reads only the HEAD, a SUMMARY
+# TABLE, or this TRAILER BLOCK -- never the per-timestep body. The six-site census at
+# HEAD d17c732 is
+#   run_simulation.py:1007 (write target, not a read)
+#   analysis.py:5168 -> retrieve_swmm_performance_stats_from_rpt (trailer; RAISES on absence)
+#   sensitivity_benchmarking.py:1403 -> parse_total_elapsed (trailer)
+#   workflow.py:3049 and :9121 (declared figure sources; provenance only)
+#   swmm_output_parser.py:201-215 (the three summary tables, head region)
+# Widening what the truncator drops REQUIRES re-running that census. The invariant is
+# enforced by a test asserting both trailer readers succeed against truncator OUTPUT.
 _RPT_TRAILER_SENTINEL = "Analysis ended on"
 # The marker MUST NOT contain any parser sentinel, or truncation stops being idempotent (a
 # second pass would find a body start that is not one) and _scan_metadata_and_summaries
@@ -95,7 +113,7 @@ _RPT_TRAILER_SENTINEL = "Analysis ended on"
 # test_truncation_marker_contains_no_parser_sentinel.
 _RPT_TRUNCATION_MARKER = (
     "  ===  hhemt: {n_dropped} lines of per-timestep results were reclaimed by "
-    "reclaim_after_processing. The report header, continuity tables and summary tables "
+    "remove_after_processing. The report header, continuity tables and summary tables "
     "above, and the trailer below, are unmodified. This file is TRUNCATED, not deleted: it "
     "remains the coupled-run completion signal. Rebuilding the coupled SWMM summaries from "
     "raw is no longer possible; re-simulate instead.  ===\n"
@@ -1651,7 +1669,7 @@ class TRITONSWMM_sim_post_processing:
     # siblings (paths.py:127-146) -- one per (model, artifact family) -- so the reclaim
     # drop set is DERIVED from that pairing rather than hand-listed. A ninth summary
     # family added later without a pairing entry fails the disjointness guard in
-    # tests/test_synth_reclaim_after_processing.py rather than silently escaping it.
+    # tests/test_synth_remove_after_processing.py rather than silently escaping it.
     _TIMESERIES_ATTRS_BY_MODEL: dict[str, tuple[str, ...]] = {
         "tritonswmm": (
             "output_tritonswmm_triton_timeseries",
@@ -1676,11 +1694,25 @@ class TRITONSWMM_sim_post_processing:
 
     @staticmethod
     def _reclaim_classes(policy) -> tuple[str, ...]:
-        """Normalize a ReclaimValue to the tuple of artifact classes it elects."""
+        """Normalize a RemoveValue to the tuple of artifact classes it elects."""
         if policy is None or policy == "none":
             return ()
         if policy == "all":
-            return ("timeseries", "raw_swmm_binaries", "coupled_rpt", "hydro_out")
+            # "all" is the FULL class set, and that is load-bearing rather than a
+            # convenience: a class omitted here is silently unreachable via the
+            # sentinel while remaining reachable via the list form, which is the
+            # shape in which a new class ships half-wired. Electing "all" therefore
+            # elects hydro_out AND hydrographs together -- see the T1 note on
+            # RemoveValue: that combination removes the re-prep path entirely.
+            return (
+                "timeseries",
+                "raw_swmm_binaries",
+                "coupled_rpt",
+                "hydro_out",
+                "prep_inputs",
+                "hydrographs",
+                "standalone_rpt",
+            )
         return tuple(policy)
 
     @staticmethod
@@ -1693,7 +1725,7 @@ class TRITONSWMM_sim_post_processing:
         """ScenarioPaths attr names the reclaim would remove for this model + policy.
 
         NAME-level and STATIC on purpose. The falsifying disjointness guard in
-        tests/test_synth_reclaim_after_processing.py asserts a property of the NAME SETS
+        tests/test_synth_remove_after_processing.py asserts a property of the NAME SETS
         -- that the drop set never intersects summary_paths._SUMMARY_STEMS_BY_MODEL's
         pairing -- and must run without a fixture, because a guard that needs a compiled
         synth model is a guard that gets skipped. Resolving these names to concrete Paths
@@ -1755,6 +1787,31 @@ class TRITONSWMM_sim_post_processing:
             path.unlink()
             restamp_parent_sentinels(path, analysis_dir=analysis_dir)  # PATTERN B
 
+    @staticmethod
+    def _capture_landed(path) -> bool:
+        """True iff a capture artifact exists AND OPENS. Both legs, never just one.
+
+        STATICMETHOD, not a closure, and the distinction is the point. As a closure
+        inside the reclaim method this could not be reached without running the
+        function that uses it, so its two negative arms would never be asserted --
+        the same shape as the disclosed-denominator defect the architecture doc names
+        for `check_*`. At class scope it is directly testable.
+
+        Openability, not just existence: a zarr store is a DIRECTORY, so `.exists()`
+        is True for an empty one and there is no meaningful `st_size` to fall back on.
+        `processing_analysis.py:191` records the same reasoning for the analysis tree --
+        "a present-but-corrupt zarr (a write that crashed mid-stream) .exists() as True".
+        """
+        if path is None or not Path(path).exists():
+            return False
+        try:
+            import xarray as _xr
+
+            _xr.open_zarr(str(path), consolidated=False).close()
+        except Exception:
+            return False
+        return True
+
     def _truncate_coupled_rpt(self, rpt_path: Path, analysis_dir, verbose: bool) -> bool:
         """Truncate a finalized coupled rpt to header+summaries+trailer. Returns True iff written.
 
@@ -1771,7 +1828,8 @@ class TRITONSWMM_sim_post_processing:
         from hhemt.du_sentinels import restamp_parent_sentinels
 
         head: list[str] = []
-        trailer: str | None = None
+        trailer_lines: list[str] = []
+        trailer_started = False
         n_dropped = 0
         body_started = False
         with open(rpt_path, "r", errors="replace") as fh:
@@ -1784,12 +1842,30 @@ class TRITONSWMM_sim_post_processing:
                         continue
                 n_dropped += 1
                 if _RPT_TRAILER_SENTINEL in line:
-                    trailer = line
+                    trailer_started = True
+                if trailer_started:
+                    # BLOCK, not LINE. MEASURED on two real rpts (2026-08-17):
+                    # test_data/swmm_refactoring_reference/hydraulics.rpt and a real
+                    # Norfolk swmm/hydro.rpt both end
+                    #     Analysis begun on:  ...
+                    #     Analysis ended on:  ...
+                    #     Total elapsed time: HH:MM:SS
+                    # so a single-line trailer keyed on "Analysis ended on" DROPS
+                    # "Total elapsed time". That line is not decorative:
+                    # swmm_output_parser.retrieve_swmm_performance_stats_from_rpt
+                    # RAISES ValueError when it is absent (there is no graceful
+                    # branch), and parse_total_elapsed returns None, which silently
+                    # empties the SWMM-only series in sensitivity_benchmarking.
+                    # Capturing from the sentinel to EOF is bounded by construction
+                    # (SWMM writes at most three lines after it) and stays idempotent,
+                    # because a second pass finds no body start and returns early.
+                    trailer_lines.append(line)
+                    n_dropped -= 1
         if not body_started:
             if verbose:
                 print(f"[reclaim] {rpt_path}: no time-series body found -- already truncated, skipping.", flush=True)
             return False
-        if trailer is None:
+        if not trailer_lines:
             print(
                 f"[reclaim] REFUSING to truncate {rpt_path}: no {_RPT_TRAILER_SENTINEL!r} line. "
                 "The coupled SWMM report is not finalized, so this run is not complete and the "
@@ -1801,14 +1877,14 @@ class TRITONSWMM_sim_post_processing:
         with open(tmp, "w") as out:
             out.writelines(head)
             out.write(_RPT_TRUNCATION_MARKER.format(n_dropped=n_dropped))
-            out.write(trailer)
+            out.writelines(trailer_lines)
         os.replace(tmp, rpt_path)
         restamp_parent_sentinels(rpt_path, analysis_dir=analysis_dir)  # PATTERN B
         if verbose:
             print(f"[reclaim] truncated {rpt_path}: dropped {n_dropped} time-series line(s).", flush=True)
         return True
 
-    def reclaim_after_processing(
+    def remove_after_processing(
         self,
         *,
         model_type: Literal["tritonswmm", "triton", "swmm"],
@@ -1836,12 +1912,12 @@ class TRITONSWMM_sim_post_processing:
            three model types.
         4. THE PERFORMANCE TIMESERIES. Absent from the old body; present in the pairing.
 
-        The policy is read from ``cfg_analysis.reclaim_after_processing``, which the process
+        The policy is read from ``cfg_analysis.remove_after_processing``, which the process
         runner loads from the PERSISTED config (Gotcha 73: this is a subprocess, so a
         driver-side in-memory mutation never reaches here). It NEVER re-derives intent from
         ``clear_raw``; the two are orthogonal axes.
         """
-        policy = getattr(self._analysis.cfg_analysis, "reclaim_after_processing", "none")
+        policy = getattr(self._analysis.cfg_analysis, "remove_after_processing", "none")
         classes = self._reclaim_classes(policy)
         if not classes:
             return
@@ -1893,6 +1969,71 @@ class TRITONSWMM_sim_post_processing:
                 self._remove_reclaimed(_hydro_out, analysis_dir, verbose)
                 reclaimed_hydro_out = True
 
+        # ---- The three regeneration-cost classes (S1/S2 vocabulary) ----------------
+        # Each is model-INDEPENDENT (a scenario-prep or per-model-report artifact, not a
+        # per-model output), so each fires on the tritonswmm pass only -- the same
+        # racing-models guard the hydro_out branch above uses. On a triton-only or
+        # swmm-only analysis `model_type` is never "tritonswmm" and all three are inert.
+        removed_prep_inputs = False
+        removed_hydrographs = False
+        removed_standalone_rpt = False
+        if model_type == "tritonswmm":
+            # T0 -- regenerable by prepare_scenario template-fill, no solver. No capture
+            # gate: nothing is lost that a re-prep cannot rebuild from persistent inputs.
+            if "prep_inputs" in classes:
+                for _p in (
+                    self.scen_paths.dir_weather_datfiles,
+                    self.scen_paths.extbc_tseries.parent,
+                    self.scen_paths.weather_timeseries,
+                ):
+                    if _p is not None and Path(_p).exists():
+                        self._remove_reclaimed(Path(_p), analysis_dir, verbose)
+                        removed_prep_inputs = True
+
+            # T1 -- CAPTURE-GATED, and the gate is the whole safety property. On every
+            # pre-existing scenario tree the capture is absent (it is introduced by this
+            # commit), so this class is a disclosed NO-OP on the first post-apply run
+            # rather than a deletion of data nothing has yet preserved.
+            if "hydrographs" in classes:
+                _cap = Path(self.scen_paths.sim_folder) / "processed" / "hydrology_inflow_summary.zarr"
+                if self._capture_landed(_cap):
+                    for _p in (self.scen_paths.hyg_timeseries, self.scen_paths.hyg_locs):
+                        if _p is not None and Path(_p).exists():
+                            self._remove_reclaimed(Path(_p), analysis_dir, verbose)
+                            removed_hydrographs = True
+                elif verbose:
+                    print(
+                        f"[reclaim] scenario {self._scenario.event_iloc}: 'hydrographs' elected but "
+                        f"the capture at {_cap} is absent or unopenable -- declining. Re-run "
+                        "processing after the capture lands.",
+                        flush=True,
+                    )
+
+            # T2 -- full.rpt is TRUNCATED (five live consumers read its head or trailer,
+            # and one RAISES on a missing 'Total elapsed time', which is why S3's
+            # trailer-BLOCK fix is a precondition rather than a companion). hydro.rpt is
+            # capture-then-DELETE: the truncator is a provable no-op on it (no
+            # time-series body) and 39% of it is the Subcatchment Runoff Summary, the
+            # only per-subcatchment runoff-volume and hydrology-continuity record on disk.
+            if "standalone_rpt" in classes:
+                _full_rpt = self.scen_paths.swmm_full_rpt_file
+                if _full_rpt is not None and Path(_full_rpt).exists():
+                    if self._truncate_coupled_rpt(Path(_full_rpt), analysis_dir, verbose):
+                        removed_standalone_rpt = True
+                _hydro_rpt = Path(str(self.scen_paths.swmm_hydro_inp).replace(".inp", ".rpt"))
+                _hydro_cap = Path(self.scen_paths.sim_folder) / "processed" / "hydrology_rpt_summary.zarr"
+                if _hydro_rpt.exists() and not self._capture_landed(_hydro_cap):
+                    from hhemt.du_sentinels import restamp_parent_sentinels
+                    from hhemt.swmm_output_parser import parse_hydrology_rpt_summary
+
+                    _ds = parse_hydrology_rpt_summary(_hydro_rpt)
+                    _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
+                    _ds.to_zarr(_hydro_cap, mode="w")
+                    restamp_parent_sentinels(_hydro_cap, analysis_dir=analysis_dir)  # PATTERN B
+                if _hydro_rpt.exists() and self._capture_landed(_hydro_cap):
+                    self._remove_reclaimed(_hydro_rpt, analysis_dir, verbose)
+                    removed_standalone_rpt = True
+
         effective_policy = list(classes)
         removed: set[str] = set()
         for klass, path in self._reclaim_paths(model_type, policy=effective_policy, which=which):
@@ -1915,6 +2056,12 @@ class TRITONSWMM_sim_post_processing:
             self.log.coupled_rpt_truncated.set(True)
         if reclaimed_hydro_out and getattr(self.log, "hydro_out_reclaimed", None):
             self.log.hydro_out_reclaimed.set(True)
+        if removed_prep_inputs and getattr(self.log, "prep_inputs_reclaimed", None):
+            self.log.prep_inputs_reclaimed.set(True)
+        if removed_hydrographs and getattr(self.log, "hydrographs_reclaimed", None):
+            self.log.hydrographs_reclaimed.set(True)
+        if removed_standalone_rpt and getattr(self.log, "standalone_rpt_reclaimed", None):
+            self.log.standalone_rpt_reclaimed.set(True)
         return
 
     @property
