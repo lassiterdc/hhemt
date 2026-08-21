@@ -1378,12 +1378,21 @@ def test_varied_values_cell_carries_the_tooltip_affordance_as_one_rule():
 
     cfg = report_config()
     css = _resolve_inline_css(cfg)
-    expected_color = cfg.errors_and_warnings.primary_color
+    expected_color = cfg.errors_and_warnings.affordance_color
 
     # Isolate the ONE rule, so the declarations are checked inside a single block.
-    match = re.search(r"strong\.tip-affordance\s*\{([^}]*)\}", css)
+    # The selector is a LIST as of the report-wide affordance (`strong.tip-affordance,
+    # td[title], span[title], abbr[title]`), so the pattern captures the whole selector
+    # list and requires `strong.tip-affordance` to be a member of it. A bare substring
+    # test would pass over an empty match set and certify nothing.
+    match = re.search(
+        r"(?:^|\}|\n)\s*([^{}]*\bstrong\.tip-affordance\b[^{}]*)\{([^}]*)\}", css
+    )
     assert match is not None, f"no strong.tip-affordance rule in the emitted CSS:\n{css}"
-    block = match.group(1)
+    assert "strong.tip-affordance" in match.group(1), (
+        f"strong.tip-affordance is not a member of the matched selector list: {match.group(1)!r}"
+    )
+    block = match.group(2)
 
     assert "cursor: help" in block, f"affordance rule lacks the help cursor: {block!r}"
     assert re.search(r"border-bottom:\s*1px\s+dotted", block), f"affordance rule lacks the dotted underline: {block!r}"

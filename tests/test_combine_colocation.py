@@ -119,11 +119,21 @@ def test_harvest_stacks_both_models_one_spec_per_plot(tmp_path) -> None:
     assert spec.report_kwargs["category"] != _base_experiment("synth_cc_clean_tritonswmm")
     assert spec.report_kwargs["subcategory"] == "synth_cc_clean"
     labels = json.loads(spec.report_kwargs["labels"])
-    # Iter-11 items 5+9: `models` retired as a facet. It is a pure function of `base`, which
-    # IS the subcategory asserted on the line above, so it could never partition the figures
-    # beneath that subcategory. Asserted as the invariant -- no facet may restate the
-    # subcategory -- rather than as `"models" not in labels`, so a future facet re-introducing
-    # the same value under a different key still fails.
+    # Iter-11 items 5+9 retired the `experiment` facet: it restated the subcategory asserted
+    # on the line above, so it could never partition the figures beneath that subcategory.
+    # Asserted as the invariant -- no facet may restate the subcategory -- rather than as a
+    # key-absence check, so a future facet re-introducing the same value under a different
+    # key still fails.
+    #
+    # Iter-13 CORRECTION. This comment also claimed `models` was retired for the same reason,
+    # "a pure function of `base`". That is FALSE and the claim is removed rather than
+    # annotated, because a false rationale reads as ground truth to the next author. It holds
+    # for which arms a BASE has children for; it fails for which arms a given FIGURE rendered,
+    # since `tri_html` is None whenever the pure-TRITON child has no counterpart at that plot
+    # id. Measured on the delivered bundle: `conduit_flow` occurs 0 times in the pure-TRITON
+    # child and 28 times in the coupled one, so inside one subcategory 28 composed pages carry
+    # one arm and 28+ carry two. `models` is RESTORED and is always populated; it passes the
+    # assertion below because its values name model arms and never a base experiment.
     assert labels, "labels dict is empty — the probe is measuring nothing"
     assert spec.report_kwargs["subcategory"] not in labels.values()
 
@@ -200,9 +210,19 @@ def test_harvest_coupled_only_single_section(tmp_path) -> None:
     page = (bundle_root / paired[0].output_path_template).read_text(encoding="utf-8")
     assert '<div class="model-section" data-model="tritonswmm"' in page
     assert '<div class="model-section" data-model="triton"' not in page
-    # Iter-11 items 5+9: `models` retired (see VMS-C2). A coupled-only base is exactly the
-    # case where that facet held ONE value, which is what disqualified it. The single-section
-    # property this test exists to pin is asserted on the two lines above, unchanged.
+    # Iter-13 CORRECTION. This comment claimed `models` was retired and that a coupled-only
+    # base "is exactly the case where that facet held ONE value, which is what disqualified
+    # it". Both halves are FALSE and are removed rather than annotated, because a false
+    # rationale reads as ground truth to the next author. A coupled-only base is the case that
+    # VINDICATES the facet: it is where `models` reads `TRITON-SWMM only` and thereby
+    # distinguishes this page from the two-arm pages in the same subcategory. Holding one
+    # value HERE is what partitioning looks like from inside a single-member partition -- the
+    # facet is degenerate only if it holds one value across the WHOLE set, which measurement
+    # refuted (28 one-arm vs 28+ two-arm pages under one base).
+    #
+    # The single-section property this test exists to pin is asserted on the two lines above,
+    # unchanged. The assertion below is likewise unchanged and still holds: `models` is always
+    # populated, so the labels dict is never empty.
     assert json.loads(paired[0].report_kwargs["labels"]) != {}
 
 

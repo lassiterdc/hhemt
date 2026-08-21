@@ -2227,7 +2227,13 @@ _SUM_STEPS = _Reduction(
         "recorded resource usage rather than from its `TotalCPU` field, which reads zero "
         "for work done inside an `srun` step and so would report only the batch wrapper's "
         "own CPU. A step that recorded no CPU time is left out of the sum rather than "
-        "counted as zero, so a job with no usable measurement reads blank, not 0%."
+        "counted as zero, so a job with no usable measurement reads blank, not 0%. The "
+        "denominator is the CPU-time the allocation was BILLED — its CPU count times its "
+        "wall time — so this is the share of what you were charged for that was consumed, "
+        "not the share of its cores the solver kept busy. The two differ here and the gap "
+        "is the point: a job's solver steps run one after another with the allocation idle "
+        "between them, so on this campaign the figure tracks how much of the allocation had "
+        "a solver running in it rather than how hard that solver worked."
     ),
     apply=_reduce_cpu_sum,
 )
@@ -2360,7 +2366,12 @@ _EFF_COLUMNS: tuple[_EffColumn, ...] = (
     _EffColumn("Elapsed", "Elapsed", _JOB_RECORD),
     _EffColumn("NNodes", "Nodes", _JOB_RECORD),
     _EffColumn("NCPUS", "CPUs", _JOB_RECORD),
-    _EffColumn("cpu_eff_pct", "CPU eff (%)", _SUM_STEPS),
+    # The header names the DENOMINATOR because every available misreading of this cell is a
+    # misreading of the denominator. Measured over 56 multi-attempt campaign jobs: this
+    # column's median is 78.9%, the solver's own per-step CPU utilization is 95.2%, and the
+    # solver's occupancy of the job's wall time is 78.5% -- so the column tracks OCCUPANCY,
+    # not solver efficiency, and "CPU eff" invited exactly the wrong reading.
+    _EffColumn("cpu_eff_pct", "Billed CPU used (%)", _SUM_STEPS),
     _EffColumn("max_rss_mb", "Max RSS (MB)", _MAX_STEPS),
     _EffColumn("RequestedMem_MB", "Req mem (MB)", _JOB_RECORD),
     _EffColumn("mem_used_pct", "Mem used (%)", _MAX_STEPS),
@@ -2642,13 +2653,17 @@ def _enrich_efficiency_rows(
 #: CSV columns deliberately not displayed. Each is a RESTATEMENT of a neighbour the table
 #: does show (raw `MaxRSS`/`ReqMem` strings vs their parsed `_MB` forms; `TotalCPU` vs the
 #: CPU-efficiency percentage derived from it), or plumbing (`MainJobID` is the join key,
-#: shown as `Job ID`; `JobName` is the executable name, always `python`; `RuleName` appears
-#: only on clusters that store job comments and is superseded by the toolkit's own purpose).
+#: shown as `Job ID`; `JobName` is the executable name and is NOT always `python` -- the
+#: campaign census recorded at `_is_attempt` returns python 4771 / apptainer 216 /
+#: triton.exe 103 at step `.0` alone, which is exactly why that classifier keys ON it; it is
+#: undisplayed because the reader-facing purpose is joined in, not because it is constant;
+#: `RuleName` appears only on clusters that store job comments and is superseded by the
+#: toolkit's own purpose).
 #: Listing them here is what lets an UNRECOGNISED column be reported instead of dropped.
 _EFF_KNOWN_UNDISPLAYED: frozenset[str] = frozenset(
     {
         "",  # the plugin's unnamed DataFrame index column
-        "JobName",  # always the executable (`python`); the real purpose is joined in
+        "JobName",  # the executable, NOT always `python`; classified on, purpose joined in
         "TotalCPU",  # shown as the derived CPU-efficiency percentage
         "Elapsed_sec",  # parsed restatement of Elapsed
         "TotalCPU_sec",  # parsed restatement of TotalCPU
