@@ -447,9 +447,8 @@ def _b4b_family_key(sub) -> str:
     config regardless of GPU hardware (the N3 ruling comment below states why).
     Comparisons are WITHIN a family only (BIT4BIT is within-backend).
 
-    NOT interchangeable with _config_diff._hw_family_key, which still returns a
-    per-hardware token (a6000 / a100-80). That sibling's "matching
-    raw_resume_identity._b4b_family_key" docstring claim has been false since N3.
+    Same DEVICE-CLASS axis as _config_diff._hw_family_key; NOT the per-hardware axis
+    sensitivity_benchmarking._hardware_family implements.
     """
     c = getattr(sub, "cfg_analysis", None)
     if str(getattr(c, "run_mode", "") or "") != "gpu":
@@ -682,7 +681,8 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     # PER-FAMILY cross-config raw byte-identity over the master's OWN subs. Applicable
     # on BOTH the clean master (n_resumes==0) and the resume master (n_resumes>0): each family
     # is compared within itself against its minimum-device reference (serial-CPU for the cpu
-    # family; 1-GPU for the single GPU family; per the N3 user ruling at _b4b_family_key, GPU is ONE family and not one per hardware), so a GPU config is NEVER compared to a CPU
+    # class; 1-GPU for the single GPU class -- the DEVICE-CLASS axis at _b4b_family_key
+    # collapses every GPU hardware into one class), so a GPU config is NEVER compared to a CPU
     # config. The clean-vs-resume comparison lives on the combine surface
     # (cross_experiment_intercomparison), NOT here (F8: the old within-master b4b_clean_vs_resume
     # figure is removed).

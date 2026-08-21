@@ -219,13 +219,22 @@ def _to_int(attrs: dict, key: str) -> int:
 
 
 def _hw_family_key(g: dict) -> str:
-    """Per-HARDWARE family key matching raw_resume_identity._b4b_family_key: 'cpu' for any
-    non-GPU group, else the GPU hardware token (a6000 / a100-80) from the representative
-    config's partition (Gotcha 54). Finer than _within_family (a6000 != a100), so a GPU
-    config is classified against its OWN 1-GPU hardware, never a different GPU."""
+    """DEVICE-CLASS key ('cpu' | 'gpu') — the COARSE axis. See the stipulation
+    "the three compute-config axes are run mode, hardware, and device class".
+
+    Every GPU group buckets as 'gpu' regardless of hardware token, so a GPU config is
+    compared against ONE GPU reference and cross-hardware divergence can SURFACE rather
+    than being partitioned out of existence. This is the same axis
+    raw_resume_identity._b4b_family_key uses; it is NOT the axis
+    sensitivity_benchmarking._hardware_family uses, which is deliberately per-hardware
+    because a scaling baseline must stay within one hardware.
+
+    User ruling 2026-08-21: "For benchmarking we absolutely need to isolate by hardware.
+    For compute config and hotstart resume sensitivity analysis, it's CPU vs GPU."
+    """
     if not any(str(rm) == "gpu" for rm in g.get("run_modes", [])):
         return "cpu"
-    return _gpu_hardware(g.get("attrs", {})) or "gpu"
+    return "gpu"
 
 
 def _device_count_key(g: dict) -> tuple:
@@ -235,6 +244,24 @@ def _device_count_key(g: dict) -> tuple:
     return (_to_int(a, "n_nodes"), _to_int(a, "n_gpus"), _to_int(a, "n_mpi_procs"), _to_int(a, "n_omp_threads"))
 
 
+def _family_ref_key(g: dict) -> tuple:
+    """Within-family reference ordering for a group — deterministic under ties.
+
+    Mirrors raw_resume_identity._b4b_ref_key, and for the same measured reason. Once
+    _hw_family_key collapsed to the device-class axis, GPU x1 (a6000) and GPU x1 (a100-80)
+    share a bucket AND tie on _device_count_key at (1, 1, 0, 0), so min() would resolve on
+    group arrival order: three of the six orderings of one three-group fixture picked
+    a6000, three picked a100-80. The reference row could therefore move between renders of
+    the SAME data. Tiebreak on the ensemble partition alphabetically, then on the first
+    member id. Which GPU hardware wins is immaterial; that the rule is deterministic is
+    not. Selecting on the partition string also makes this figure name the SAME GPU
+    reference b4b names, because both sort 'gpu-a100-80' before 'gpu-a6000'.
+    """
+    a = g.get("attrs", {}) or {}
+    members = g.get("members") or [""]
+    return (_device_count_key(g), str(a.get("hpc.partition", "") or ""), str(members[0]))
+
+
 @dataclass(frozen=True)
 class BaselineSpec:
     """Declares HOW a set of identity groups is partitioned and which member of each
@@ -242,8 +269,8 @@ class BaselineSpec:
 
     ``family_keyed=False`` reproduces the single-baseline rule build_config_diff_figure
     uses today (the serial-CPU group is the one baseline for the whole figure).
-    ``family_keyed=True`` partitions by hardware family (``_hw_family_key``: 'cpu', or a
-    GPU hardware token) and gives each family its own minimum-device baseline, which is
+    ``family_keyed=True`` partitions by DEVICE CLASS (``_hw_family_key``: 'cpu' | 'gpu')
+    and gives each class its own minimum-device baseline, which is
     the rule b4b_clean_identity and _family_reference_group already use.
 
     Consumers MUST run ``_align_to`` against the resolved baseline's DataArray before any
@@ -278,25 +305,27 @@ def resolve_baseline_groups(groups: list[dict], spec: BaselineSpec) -> dict[str,
         out.setdefault(_hw_family_key(g), [])
     for fam in out:
         peers = [g for g in groups if _hw_family_key(g) == fam]
-        out[fam] = min(peers, key=_device_count_key)
+        out[fam] = min(peers, key=_family_ref_key)
     return out
 
 
 def _family_reference_group(g: dict, groups: list[dict]) -> dict:
-    """The within-hardware-family minimum-device reference group for g (matches
-    b4b_clean_identity: cpu -> serial-CPU, each GPU-hardware -> its 1-GPU). Falls back to g
-    when no family peer exists (g is its family's only member)."""
+    """The within-DEVICE-CLASS minimum-device reference group for g (matches
+    b4b_clean_identity: cpu -> serial-CPU, gpu -> the one GPU reference). Ordering is
+    _family_ref_key, NOT _device_count_key, because the device count alone ties two
+    single-GPU groups on different hardware and min() would then resolve on arrival order.
+    Falls back to g when no family peer exists (g is its family's only member)."""
     fam = _hw_family_key(g)
     peers = [x for x in groups if _hw_family_key(x) == fam]
-    return min(peers, key=_device_count_key) if peers else g
+    return min(peers, key=_family_ref_key) if peers else g
 
 
 def partition_groups_by_family(groups: list[dict]) -> dict[str, list[dict]]:
     """Return ``{family_key: [groups in panel order]}`` over the shared family rule.
 
     The family key is ``_hw_family_key``: ``'cpu'`` for any group with no GPU member, else
-    that group's GPU hardware token, so an a6000 config is never bucketed with an a100-80
-    one. Within a family the order is ``_panel_order_key`` -- the SAME ordering the
+    ``'gpu'``, so every GPU config shares one bucket and cross-hardware divergence can
+    surface. Within a family the order is ``_panel_order_key`` -- the SAME ordering the
     config-diff panels already use, so a reader who has learned one figure's panel order has
     learned the other's.
 

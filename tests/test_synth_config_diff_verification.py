@@ -202,9 +202,10 @@ def _grp_attrs(run_modes, member, attrs) -> dict:
 
 
 def test_family_reference_group_within_family_min_device():
-    # Q1 (iter-2): each group's within-family reference is its OWN hardware family's minimum-device
-    # group (CPU -> serial-CPU; each GPU hardware -> its 1-GPU) -- matching b4b_clean_identity, so
-    # a GPU config is NEVER referenced against serial-CPU or against a DIFFERENT GPU hardware.
+    # User ruling 2026-08-21: config-diff takes the DEVICE-CLASS axis (cpu | gpu), matching
+    # b4b_clean_identity, so a GPU config is never referenced against serial-CPU but IS
+    # referenced against the single GPU reference regardless of hardware token. Benchmarking
+    # keeps the finer per-hardware axis; see sensitivity_benchmarking._hardware_family.
     from hhemt.eda._config_diff import _family_reference_group, _hw_family_key
 
     serial = _grp_attrs(["serial"], "sa_serial", {"n_nodes": 1, "n_gpus": 0, "n_mpi_procs": 1, "n_omp_threads": 1})
@@ -214,16 +215,24 @@ def test_family_reference_group_within_family_min_device():
     a100_1 = _grp_attrs(["gpu"], "sa_a100_1", {"n_nodes": 1, "n_gpus": 1, "hpc.partition": "gpu-a100-80"})
     groups = [serial, mpi8, a6000_1, a6000_4, a100_1]
 
-    # hardware-family keys are FINER than CPU/GPU: a6000 != a100.
+    # device-class keys are COARSE: every GPU token collapses to one 'gpu' bucket.
     assert _hw_family_key(serial) == "cpu"
     assert _hw_family_key(mpi8) == "cpu"
-    assert _hw_family_key(a6000_4) == "a6000"
-    assert _hw_family_key(a100_1) == "a100-80"
+    assert _hw_family_key(a6000_4) == "gpu"
+    assert _hw_family_key(a100_1) == "gpu"
+    assert _hw_family_key(a6000_4) == _hw_family_key(a100_1), (
+        "a6000 and a100-80 must share one device class, or cross-hardware divergence is "
+        "partitioned out of the config-diff comparison and cannot surface"
+    )
 
-    # references: CPU -> serial-CPU; each GPU hardware -> its OWN 1-GPU (never serial, never a different GPU).
+    # references: CPU -> serial-CPU; every GPU -> the ONE deterministically-chosen GPU
+    # reference (never serial). The GPU winner is a100_1 because _family_ref_key breaks the
+    # (1,1,0,0) device-count tie on the partition string and 'gpu-a100-80' < 'gpu-a6000';
+    # asserted from BOTH member orderings so a pass cannot rest on arrival order.
     assert _family_reference_group(mpi8, groups) is serial
-    assert _family_reference_group(a6000_4, groups) is a6000_1
-    assert _family_reference_group(a100_1, groups) is a100_1  # its own family's min-device (itself)
+    assert _family_reference_group(a6000_4, groups) is a100_1
+    assert _family_reference_group(a100_1, groups) is a100_1
+    assert _family_reference_group(a6000_4, [serial, mpi8, a100_1, a6000_4, a6000_1]) is a100_1
     # a lone-family member falls back to itself.
     lone = _grp_attrs(["gpu"], "sa_a40", {"n_gpus": 2, "hpc.partition": "gpu-a40"})
     assert _family_reference_group(lone, [lone]) is lone

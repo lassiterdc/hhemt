@@ -899,8 +899,9 @@ def _resolve_global_baseline(df: pd.DataFrame, *, t_col: str, indep_col: str) ->
 
 
 def _hardware_family(gv: str) -> str:
-    """The hardware COLUMN a group belongs to: every GPU token is its own family,
-    every non-GPU group shares the single `cpu` family.
+    """Implements the HARDWARE axis — every GPU token is its own hardware, every non-GPU
+    group shares the single `cpu` hardware. See the stipulation "the three compute-config
+    axes are run mode, hardware, and device class".
 
     Promoted from `_resolve_family_baselines`'s nested `_family_of` so the figure
     builder can partition columns by the SAME rule the baselines anchor on. Two
@@ -913,14 +914,12 @@ def _hardware_family(gv: str) -> str:
 def _resolve_family_baselines(df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str) -> dict[str, float]:
     """Return ``{group_value: baseline_wallclock}``, anchored PER HARDWARE FAMILY.
 
-    Mirrors ``_config_diff``'s ``_hw_family_key`` / ``_device_count_key`` /
-    ``_family_reference_group``: CPU configs anchor on the serial-CPU run, and each GPU
+    Implements the HARDWARE axis: CPU configs anchor on the serial-CPU run, and each GPU
     hardware token anchors on ITS OWN minimum-device run.
 
-    It deliberately does NOT mirror ``raw_resume_identity``'s ``_b4b_family_key``, and the
-    divergence is CORRECT rather than drift. N3 (2026-08-02, ``463ab9ed``) collapsed that
-    one to a single ``gpu`` family so cross-hardware divergence could SURFACE in the
-    identity view. Collapsing it here would anchor an a6000 run against an a100-80
+    ``_config_diff`` and ``raw_resume_identity`` both implement the DEVICE-CLASS axis; the
+    divergence is the user's 2026-08-21 ruling, not drift. Collapsing GPU tokens HERE would
+    anchor an a6000 run against an a100-80
     baseline and report a cross-hardware performance RATIO dressed as a scaling
     efficiency -- the exact number the paragraph below measures at 1.51 against a true
     0.255. The shape rule: N3's collapse is right for IDENTITY views and wrong for

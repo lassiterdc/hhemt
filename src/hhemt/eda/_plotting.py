@@ -322,7 +322,7 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
     )
 
     label_by_cfg = _b4b_str_map(ds, "config_label")  # already deterministic (F2)
-    family_by_cfg = _b4b_str_map(ds, "family")  # "cpu" / "a6000" / "a100-80"
+    family_by_cfg = _b4b_str_map(ds, "family")  # "cpu" / "gpu" (device class)
     is_ref_by_cfg = _b4b_bool_map(ds, "is_reference")
 
     def _label(cfg: str) -> str:
