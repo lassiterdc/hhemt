@@ -197,37 +197,6 @@ def test_provenance_declares_the_sidecar_and_nothing_undeclared(tmp_path):
     assert manifest["plot_id"] == "metadata"
 
 
-def test_status_sidecars_and_tree_are_declared_when_they_exist(tmp_path):
-    """Every `_status/*.flag.json` the page OPENS is declared (declared ⊆ actual).
-
-    Globbing is audit-invisible (os.scandir), but `read_text()` is not — so a sidecar
-    that is read and not declared would break the ADR-6 invariant, and one that is
-    declared and not read would put a false claim in the bundle manifest.
-    """
-    analysis_dir = tmp_path / "analysis"
-    (analysis_dir / "_status").mkdir(parents=True)
-    (analysis_dir / "ro-crate-metadata.json").write_text(json.dumps(_full_crate()))
-    for name, payload in (
-        ("a_setup_target_0_complete.flag.json", {"rule_name": "setup_target_0", "slurm_job_id": "1"}),
-        ("c_run_complete.flag.json", {"rule_name": "simulation_sa_x_evt_0", "slurm_job_id": "2"}),
-    ):
-        (analysis_dir / "_status" / name).write_text(json.dumps(payload))
-
-    output_path = analysis_dir / "plots" / "metadata.html"
-    metadata.render(_fake_analysis(analysis_dir), report_config(), output_path)
-    manifest = json.loads((analysis_dir / "plots" / "metadata.manifest.json").read_text())
-    declared = manifest["source_paths_relative"]
-
-    assert "_status/a_setup_target_0_complete.flag.json" in declared
-    assert "_status/c_run_complete.flag.json" in declared
-    assert manifest["renderer_data"]["status_flag_count"] == 2
-
-    # And the timeline they back is actually rendered, with derived purposes.
-    html = output_path.read_text()
-    assert "Run timeline" in html
-    assert "compile / setup" in html and "simulate" in html
-
-
 def test_volatile_fields_never_reach_the_rendered_page(tmp_path):
     """R3: the crafted sidecar's startTime + agent(hostname) must not surface.
 
@@ -721,73 +690,6 @@ def test_required_when_falls_back_to_the_triggers_declared_default():
 # --- R5: SLURM efficiency ----------------------------------------------------
 
 
-def test_slurm_section_renders_table_and_declares_the_csv_file(tmp_path):
-    """R5: the globbed CSV is rendered AND declared as a source — the FILE, not the dir."""
-    html, manifest, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=_EFF_HEADER + _EFF_ROW)
-    # The table's GRAIN moved from step to job ([Q145]/[Q153]), so the identity it renders
-    # is the allocation `18573918`, not the step `18573918.0`. Asserted as a whole cell
-    # rather than a substring: a bare `18573918` also matches the old step id, so it could
-    # not tell the two grains apart and would pass under either.
-    assert "<td>18573918</td>" in html
-    # Memory-used % is now a reduction over steps rather than the plugin's own column, and
-    # renders at one decimal (694.12 MB of 1000.0 MB requested).
-    assert "69.4" in html
-    declared = manifest["source_paths_relative"]
-    assert "ro-crate-metadata.json" in declared
-    assert any(p.endswith(".csv") for p in declared), declared
-    # Declaring the DIRECTORY would raise in _validate_source_path once it exists.
-    assert "logs/slurm_efficiency_report" not in declared
-
-
-def test_slurm_report_nested_inside_a_csv_named_directory(tmp_path):
-    """The REAL production shape: the `.csv` path is a DIRECTORY, report nested inside.
-
-    snakemake-executor-plugin-slurm treats `--slurm-efficiency-report-path` as a
-    DIRECTORY and writes `efficiency_report_{run_uuid}.csv` into it, while the toolkit
-    passes a file-shaped `slurm_efficiency_report_{ts}.csv` path. So on every SLURM run
-    the plugin mkdir's a directory with that `.csv` name and the real report lands one
-    level deeper. The pre-2026-07-20 flat glob matched the DIRECTORY and `read_text()`
-    raised `IsADirectoryError`, killing the whole `plot_metadata` rule; on the paths
-    that did not crash it silently matched no real report at all, which is why this
-    panel had never rendered data on any SLURM run.
-
-    Nothing else in this file constructs this shape — every other SLURM test writes a
-    plain file — so without this test the fix is unexercised against the case that
-    motivated it.
-    """
-    analysis_dir = tmp_path / "analysis"
-    analysis_dir.mkdir(exist_ok=True)
-    (analysis_dir / "ro-crate-metadata.json").write_text(json.dumps(_full_crate()))
-
-    # The plugin's actual layout: a DIRECTORY whose name ends in .csv, report inside.
-    eff_dir = analysis_dir / "logs" / "slurm_efficiency_report"
-    csv_named_dir = eff_dir / "slurm_efficiency_report_20260101T000000.csv"
-    csv_named_dir.mkdir(parents=True, exist_ok=True)
-    (csv_named_dir / "efficiency_report_abc123.csv").write_text(_EFF_HEADER + _EFF_ROW)
-
-    output_path = analysis_dir / "plots" / "metadata.html"
-    # Must not raise IsADirectoryError.
-    metadata.render(_fake_analysis(analysis_dir), report_config(), output_path)
-
-    html = output_path.read_text()
-    # Job grain per [Q145]/[Q153]; whole-cell form so it cannot pass on the old step id.
-    assert "<td>18573918</td>" in html, "nested report was not found by the recursive glob"
-    assert "69.4" in html
-
-    manifest = json.loads((analysis_dir / "plots" / "metadata.manifest.json").read_text())
-    declared = manifest["source_paths_relative"]
-    # The NESTED file must be declared -- never the .csv-named directory, which
-    # _validate_source_path rejects as a directory-as-source (Gotcha 66d).
-    assert any(p.endswith("efficiency_report_abc123.csv") for p in declared), declared
-
-
-def test_slurm_csv_with_header_only_degrades(tmp_path):
-    """R5: a header-only CSV yields the heading + an info banner, not an empty table."""
-    html, _, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=_EFF_HEADER)
-    assert 'id="slurm-efficiency"' in html
-    assert "no job rows" in html
-
-
 # --- R7: graceful degradation across every absent-source state ---------------
 
 
@@ -823,14 +725,6 @@ def test_empty_input_parts_degrades_gracefully(tmp_path):
     assert "Input digests not captured" in html
 
 
-def test_absent_slurm_csv_degrades_gracefully(tmp_path):
-    """R7: no efficiency CSV -> heading present, teardown-timing explained."""
-    html, manifest, _ = _render(tmp_path, doc=_full_crate())
-    assert 'id="slurm-efficiency"' in html
-    assert "teardown" in html
-    assert not any(p.endswith(".csv") for p in manifest["source_paths_relative"])
-
-
 def test_minimal_crate_renders_without_exception(tmp_path):
     """R7: the worst case (bare root + descriptor) still renders all three sections."""
     html, _, _ = _render(tmp_path, doc=_crate(_ROOT, _DESCRIPTOR))
@@ -848,17 +742,6 @@ def test_type_may_be_a_list(tmp_path):
 
 
 # --- R5 regression (Q8): efficiency report is a `.csv`-named DIRECTORY ---------
-
-
-def test_slurm_report_path_is_a_directory_not_a_file(tmp_path):
-    """Regression (Q8): the plugin writes efficiency_report_{uuid}.csv INSIDE a
-    `.csv`-named directory; the renderer must descend to the inner file and must
-    NOT raise IsADirectoryError on read_text()."""
-    html, manifest, _ = _render(tmp_path, doc=_full_crate(), slurm_csv=_EFF_HEADER + _EFF_ROW)
-    # Job grain per [Q145]/[Q153]; whole-cell form so it cannot pass on the old step id.
-    assert "<td>18573918</td>" in html and "69.4" in html
-    declared = manifest["source_paths_relative"]
-    assert any(p.endswith("efficiency_report_deadbeef.csv") for p in declared), declared
 
 
 def test_resolve_all_efficiency_csvs_flat_nested_and_absent(tmp_path):

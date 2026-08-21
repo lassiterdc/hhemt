@@ -55,6 +55,10 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     # Metadata (ADR-14 / C10) is an all-static table/prose page -- emits HTML
     # unconditionally, like the other table renderers above.
     "metadata": {"matplotlib": ".html", "plotly": ".html"},
+    # workflow_performance ([Q160](7)): the run timeline + SLURM efficiency page,
+    # extracted out of metadata. All-static HTML tables, so both backends resolve to
+    # .html exactly as metadata does.
+    "workflow_performance": {"matplotlib": ".html", "plotly": ".html"},
     # eda_compute_sensitivity (R11): the in-report adapter for the compute-sensitivity
     # EDA figure family. The EDA free-functions emit interactive Plotly HTML
     # unconditionally (no matplotlib branch), so both backends resolve to .html.
@@ -144,6 +148,7 @@ _RENDERER_KIND_LABELS: dict[str, str] = {
     "errors_and_warnings": "Errors and warnings",
     "disk_utilization": "Disk utilization",
     "metadata": "Run metadata",
+    "workflow_performance": "Workflow performance",
     "cross_experiment_compatibility": "Cross-experiment compatibility",
     "cross_experiment_intercomparison": "Clean vs resume intercomparison",
     "cross_experiment_intercomparison_maps": "Clean vs resume spatial difference maps",

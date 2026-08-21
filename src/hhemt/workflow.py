@@ -764,6 +764,7 @@ class _ReportingSetDispatchMixin:
             "errors_and_warnings",
             "disk_utilization",
             "metadata",
+            "workflow_performance",
         ):
             return {"input_flag": input_flag, "ctx": ctx}
         if builder_key in ("per_sim", "per_sim_per_sa", "eda_compute_sensitivity"):
@@ -814,6 +815,7 @@ class _ReportingSetDispatchMixin:
             "errors_and_warnings": base._build_plot_rule_block_errors_and_warnings,
             "disk_utilization": base._build_plot_rule_block_disk_utilization,
             "metadata": base._build_plot_rule_block_metadata,
+            "workflow_performance": base._build_plot_rule_block_workflow_performance,
             "per_sim_per_sa": getattr(self, "_build_plot_rule_block_per_sim_per_sa", None),
             "sensitivity_benchmarking": getattr(self, "_build_plot_rule_block_sensitivity_benchmarking", None),
             "eda_compute_sensitivity": getattr(self, "_build_plot_rule_block_eda_compute_sensitivity", None),
@@ -2225,6 +2227,50 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         )
         return _emit_plot_rule(spec, ctx)
 
+    def _build_plot_rule_block_workflow_performance(
+        self,
+        input_flag: str = "_status/e_consolidate_complete.flag",
+        *,
+        ctx: RuleEmissionContext | None = None,
+    ) -> str:
+        """Emit the Snakemake rule for the Workflow performance page (`[Q160]`(7)).
+
+        The whole-experiment run timeline (projected from the per-rule
+        `_status/*.flag.json` sidecars) and the SLURM resource-efficiency table, both
+        extracted out of the Metadata page because they describe how the workflow RAN
+        rather than what it produced.
+
+        `report_kwargs["category"]` MUST equal `_TMPL_WORKFLOW_PERFORMANCE`'s
+        (`"Workflow performance"`) — the co-sourcing guard checks exactly this.
+
+        NOTE the `source_paths` here is the RULE-emission declaration used to render the
+        caption's Sources block; it is deliberately EMPTY because this page's real source
+        set is discovered at render time (a glob over `_status/` and over the efficiency
+        report directory) and is legitimately empty on a fresh analysis. The renderer's
+        own `emit_plot_with_sources` call is what declares the actual reads.
+        """
+        if ctx is None:
+            ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
+
+        spec = RuleSpec(
+            rule_name="plot_workflow_performance",
+            renderer_module="workflow_performance",
+            input_flags=(input_flag,),
+            output_path_template="plots/workflow_performance__OUTPUT_EXT__",
+            source_paths=(),
+            wildcards=(),
+            extra_cli_flags=(),
+            extra_params=(),
+            report_kwargs={
+                "caption": "report/captions/workflow_performance.rst",
+                "category": "Workflow performance",
+                "labels": '{"figure": "Workflow performance"}',
+            },
+            resources_yaml="mem_mb=1000, time_min=5",
+            log_path_template="logs/plots/workflow_performance.log",
+        )
+        return _emit_plot_rule(spec, ctx)
+
     def _build_process_rule_block(
         self,
         model_type: str,
@@ -2669,6 +2715,8 @@ rule consolidate_scenario:
             _plot_items.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
         if renderer_active("metadata", _disabled):
             _plot_items.append(f'"plots/metadata{_ext["metadata"]}"')
+        if renderer_active("workflow_performance", _disabled):
+            _plot_items.append(f'"plots/workflow_performance{_ext["workflow_performance"]}"')
         _rule_all_input_block = ",\n        ".join(
             [
                 '"_status/e_consolidate_complete.flag"',
@@ -7926,6 +7974,8 @@ onerror:
             rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
         if renderer_active("metadata", _disabled):
             rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
+        if renderer_active("workflow_performance", _disabled):
+            rule_all_inputs.append(f'"plots/workflow_performance{_ext["workflow_performance"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
 
@@ -8663,6 +8713,8 @@ onerror:
             rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
         if renderer_active("metadata", _disabled):
             rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
+        if renderer_active("workflow_performance", _disabled):
+            rule_all_inputs.append(f'"plots/workflow_performance{_ext["workflow_performance"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
         rule_all_inputs.extend(

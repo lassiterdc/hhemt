@@ -202,13 +202,15 @@ non_breaking_allowlist:
       v8/b3 ADDED "cross_experiment_intercomparison_maps" (the clean-vs-resume spatial diff-maps
       renderer). v9/F2 ADDED "cross_experiment_errors_and_warnings" (the NEW top-level
       cross-experiment E&W roll-up renderer restoring a discoverable health surface — distinct
-      from the v8/a2-retired aggregate "combined_errors_and_warnings"). Each add/removal is a
-      renderer key that changes NO existing analysis's on-disk
+      from the v8/a2-retired aggregate "combined_errors_and_warnings"). [Q160](7) ADDED
+      "workflow_performance" (the run-timeline + SLURM-efficiency page extracted out of the
+      Metadata page; a NEW renderer whose figure stem no existing analysis carries). Each
+      add/removal is a renderer key that changes NO existing analysis's on-disk
       figure filenames (the C-LAYOUT invariant the mandate protects), so it is non-breaking.
       CHANGE-SCOPED via layout_signature: this exemption covers ONLY the current file content;
       any future grammar/stem edit yields a different hash and re-fires Check B (preserving
       layout-relevance per _load_allowlist).
-    layout_signature: "9f141e0b9fb1a5cdb255bdffba70e9803a97b33633766d04d33da24d952613ef"
+    layout_signature: "b5bf538ace86855c8321e37c2429b7ee257bc67e860634363b7e20a3f7735dda"
   - path: src/hhemt/cf_conventions.py
     justification: >-
       q8-tracked-vars-naming-divergence — _CF_VARIABLE_MAP metadata-only edit: add the

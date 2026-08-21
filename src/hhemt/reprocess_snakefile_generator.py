@@ -238,6 +238,8 @@ def generate_reprocess_snakefile(
         _plot_items.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
     if renderer_active("metadata", _disabled):
         _plot_items.append(f'"plots/metadata{_ext["metadata"]}"')
+    if renderer_active("workflow_performance", _disabled):
+        _plot_items.append(f'"plots/workflow_performance{_ext["workflow_performance"]}"')
     _rule_all_plot_block = ",\n        ".join(_plot_items)
     _render_report_input_block = ",\n        ".join([*_plot_items, '"scenario_status.csv"'])
 
@@ -374,6 +376,8 @@ onerror:
         snakefile_content += builder._build_plot_rule_block_disk_utilization()
     if renderer_active("metadata", _disabled):
         snakefile_content += builder._build_plot_rule_block_metadata()
+    if renderer_active("workflow_performance", _disabled):
+        snakefile_content += builder._build_plot_rule_block_workflow_performance()
 
     # ---- Export scenario status (always emitted) ----
     snakefile_content += builder._build_export_scenario_status_rule(

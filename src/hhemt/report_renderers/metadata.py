@@ -1369,19 +1369,27 @@ def _build_provenance_html(
     doc: dict,
     analysis_dir: Path | None = None,
     analysis: TRITONSWMM_analysis | None = None,
-    status_payloads: list[dict] | None = None,
 ) -> str:
     """Project the RO-Crate JSON-LD @graph into a static provenance recreation chain.
 
     Ordered disclosed -> verifiable: BLUF verifiability anchors, then
     Identity -> Software -> Provenance chain -> Environment -> Inputs -> Process ->
-    Run timeline -> Outputs. Allow-list BY CONSTRUCTION: each sub-block reaches only
-    for the named safe fields it enumerates; `_prop` refuses the volatile keys as a
-    backstop.
+    Outputs. Allow-list BY CONSTRUCTION: each sub-block reaches only for the named
+    safe fields it enumerates; `_prop` refuses the volatile keys as a backstop.
 
-    The provenance chain and run timeline are appended only when the caller supplies
-    the analysis context, so the crate-only call path (tests, a bare sidecar read)
-    keeps working unchanged.
+    The provenance chain is appended only when the caller supplies the analysis
+    context, so the crate-only call path (tests, a bare sidecar read) keeps working
+    unchanged.
+
+    `[Q160]`(7): the `5b. Run timeline` sub-block that used to sit between Process and
+    Outputs is PERFORMANCE data and now renders on the Workflow performance page
+    (`workflow_performance.py`). Numbering is unaffected -- `5b` was a SUB-label of
+    `5. Process`, so removing it leaves `5` and `6` contiguous rather than opening a
+    hole. The `status_payloads` parameter went with it: measured, the timeline was its
+    ONLY consumer in this function, so retaining it would leave a dead parameter that
+    reads as a live input. Retaining the READ while removing the RENDERER is the
+    specific mistake to avoid here -- it diverges declared from actual and Gotcha 53
+    makes that a fatal render-time ProcessingError, not a warning.
     """
     graph = _graph(doc)
     root = _by_id(graph, _ROOT_ID) or {}
@@ -1397,8 +1405,6 @@ def _build_provenance_html(
         if analysis_dir is not None
         else ""
     )
-    timeline_html = _provenance_timeline(status_payloads or []) if status_payloads else ""
-
     return "\n".join(
         s
         for s in [
@@ -1410,7 +1416,6 @@ def _build_provenance_html(
             _provenance_environment(sif),
             _provenance_inputs(inputs),
             _provenance_process(runs),
-            timeline_html,
             _provenance_outputs(graph, root, analysis_dir=analysis_dir, analysis=analysis),
         ]
         if s
@@ -1450,10 +1455,20 @@ def _provenance_timeline(payloads: list[dict]) -> str:
     table = _sortable_grid_table(
         ["Completed at", "Job desc", "Rule", "Sub-analysis", "Event", "Model", "SLURM job"],
         rows,
-        table_id="run-timeline",
+        # `[Q160]`(7): the table id MUST NOT equal the section anchor. `_heading` below
+        # derives the <h3> id from the title via `_anchor` ("Run timeline" ->
+        # "run-timeline"), so the pre-move id put the attribute on TWO elements --
+        # invalid HTML, and the jump-nav's data-jump="run-timeline" would resolve to
+        # whichever the parser reached first. This is the SAME collision the SLURM
+        # table already dodges with "slurm-efficiency-table"; the pattern is to suffix
+        # the TABLE id, never to rename the section.
+        table_id="run-timeline-table",
         column_panel=True,
     )
-    return "<h4>5b. Run timeline</h4>\n" + note + table
+    # `[Q160]`(7): promoted from a `<h4>5b.` sub-block of `5. Process` on the Metadata
+    # page to a top-level section of the Workflow performance page, so the jump-nav
+    # anchor resolves. `_heading` is what mints that anchor.
+    return _heading("Run timeline") + "\n" + note + table
 
 
 # --- (2) Reproduction guide --------------------------------------------------
@@ -3392,7 +3407,14 @@ def _build_data_availability_html(report_path: Path) -> str:
 #: The page's sections, in render order. Module-level so the jump-nav and the test's
 #: anchor coverage read ONE declaration -- a literal in each drifted silently when the
 #: Data Availability section landed and only the nav learned about it.
-_SECTION_TITLES = ("Provenance", "Data Availability", "Reproduction Guide", "SLURM Efficiency")
+_SECTION_TITLES = ("Provenance", "Data Availability", "Reproduction Guide")
+
+#: `[Q160]`(7): the run-timeline and SLURM-efficiency tables are PERFORMANCE data and
+#: render on the Workflow performance page (`workflow_performance.py`), which owns this
+#: title tuple. It is declared HERE rather than there because `_jump_nav` and
+#: `_wrap_html_doc` are shared across both pages, and a second copy of the anchor
+#: vocabulary is exactly the drift the single-declaration comment above forbids.
+_WORKFLOW_PERFORMANCE_SECTION_TITLES = ("Run timeline", "SLURM Efficiency")
 
 
 #: Iter-12 item {23}. The jump-nav links carry `data-jump` as well as `href`, and the
@@ -3425,10 +3447,10 @@ _JUMP_NAV_JS = """
 """
 
 
-def _jump_nav() -> str:
+def _jump_nav(section_titles: tuple[str, ...] = _SECTION_TITLES) -> str:
     links = " &middot; ".join(
         f'<a href="#{_anchor(t)}" data-jump="{_anchor(t)}">{_esc(t)}</a>'
-        for t in _SECTION_TITLES
+        for t in section_titles
     )
     return f'<nav class="jump-nav">{links}</nav>'
 
@@ -3453,9 +3475,18 @@ def _wrap_html_doc(
     inline_css: str,
     *sections: str,
     fragments: list[TableFragment] | None = None,
+    page_title: str = "Metadata",
+    section_titles: tuple[str, ...] = _SECTION_TITLES,
 ) -> str:
     """<!DOCTYPE> + inline <style> + <h2> title + jump-nav (one anchor per
-    `_SECTION_TITLES` entry) + the section fragments.
+    `section_titles` entry) + the section fragments.
+
+    `page_title` and `section_titles` are PARAMETERS rather than module constants
+    because `workflow_performance.py` renders a SECOND page through this same wrapper
+    (`[Q160]`(7)). Both default to this page's values, so the metadata call site below
+    is byte-unchanged and no second wrapper was needed. Renderer-to-renderer import is
+    the established pattern here, not a novel reach: `per_sim_event_page` imports from
+    `per_sim_peak_flood_depth`, and `per_sim_conduit_flow` from `system_overview`.
 
     Each renderer .html is shown in an iframe by the Snakemake report engine, so
     inline CSS is mandatory (no shared stylesheet reaches the iframe) and the
@@ -3493,8 +3524,8 @@ def _wrap_html_doc(
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
         f"{tabulator_head}"
         f"<style>{inline_css}{_SUPPLEMENTAL_CSS}{frag_styles}</style></head><body>"
-        f"<h2>Metadata — {_esc(analysis_id)}</h2>"
-        f"{_jump_nav()}"
+        f"<h2>{_esc(page_title)} — {_esc(analysis_id)}</h2>"
+        f"{_jump_nav(section_titles)}"
         f"{body}"
         f"{frag_mounts}"
         f"<script>{_SORT_FILTER_JS}{_JUMP_NAV_JS}</script>"
@@ -3567,7 +3598,12 @@ def render(
     report_cfg: report_config,
     output_path: Path,
 ) -> Path:
-    """Render the Metadata page (provenance + reproduction guide + SLURM efficiency)."""
+    """Render the Metadata page (provenance + data availability + reproduction guide).
+
+    `[Q160]`(7): the run timeline and the SLURM-efficiency table are no longer here.
+    They are PERFORMANCE data and render on the Workflow performance page
+    (`workflow_performance.py`), which owns their reads and their declarations.
+    """
     from hhemt.report_renderers._figure_emission import emit_plot_with_sources
     from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 
@@ -3587,16 +3623,14 @@ def render(
         note="metadata page (RO-Crate provenance sidecar + reprex taxonomy + SLURM efficiency)",
     ) as artist:
         artist.add_channel("provenance", ProvenanceRef(source_path=_SIDECAR_FILENAME))
-        # The whole-experiment records the crate cannot carry: the per-rule status
-        # sidecars (run timeline + the rule-name<->JobID map the SLURM table joins on)
-        # and the consolidated tree's ADR-15 producing stamps. Every sidecar actually
-        # OPENED is declared below, per the declared-subset-of-actual invariant;
-        # `_status/` is already copytree'd into the bundle, so this adds manifest rows
-        # and no payload bytes.
-        status_payloads, status_files = _read_status_flag_payloads(analysis_dir)
-        source_paths.extend(status_files)
-        for sidecar in status_files:
-            artist.add_channel("status", ProvenanceRef(source_path=str(sidecar.relative_to(analysis_dir))))
+        # `[Q160]`(7): the per-rule `_status/*.flag.json` read that used to sit here is
+        # GONE, with the two things that consumed it -- the run timeline and the
+        # rule-name<->JobID map the SLURM table joins on. Both now live on the Workflow
+        # performance page, which performs the read AND the declaration together.
+        # Keeping the read here after removing its renderers would put a true-but-
+        # purposeless row in the bundle manifest and, worse, diverge declared from
+        # actual in the direction Gotcha 53 punishes. The consolidated tree's ADR-15
+        # producing stamps STAY -- `_provenance_outputs` below still projects them.
         tree_path = _resolve_consolidated_tree(analysis_dir, analysis)
         if tree_path is not None:
             source_paths.append(tree_path)
@@ -3607,9 +3641,7 @@ def render(
         # (1) Provenance -- one declared open() on the sidecar -> audit Tier-1 ap == d.
         if sidecar_path.exists():
             doc = json.loads(sidecar_path.read_text())
-            provenance_html = _build_provenance_html(
-                doc, analysis_dir=analysis_dir, analysis=analysis, status_payloads=status_payloads
-            )
+            provenance_html = _build_provenance_html(doc, analysis_dir=analysis_dir, analysis=analysis)
         else:
             provenance_html = _absent_banner(
                 "Provenance",
@@ -3640,94 +3672,11 @@ def render(
         _sensitivity_varied_values(analysis),
     )
 
-    # (4) SLURM efficiency -- glob + descend (os.scandir/os.stat; audit-invisible)
-    # to EVERY inner efficiency_report_*.csv FILE, then declare them all. The plugin
-    # writes the real CSV INSIDE a `.csv`-NAMED DIRECTORY (see
-    # _resolve_all_efficiency_csvs), so read_text() on the glob match itself raises
-    # IsADirectoryError, and declaring the directory would raise in
-    # _validate_source_path (directory-as-source rejected unless zarr).
-    #
-    # Declaring the whole union is also what carries it into the render bundle:
-    # `_harvest_and_copy_sources` copies exactly the declared set and
-    # `_copy_supporting_files` never touches logs/, so bundle carriage follows
-    # declaration and needs no bundle-side change.
-    eff_dir = analysis_dir.joinpath(*_SLURM_EFF_RELDIR)
-    eff_csvs = _resolve_all_efficiency_csvs(eff_dir)
-    # Stage-A recovery of the job and `.batch` rows the plugin's parsing drops. Declared
-    # unconditionally per ADR-6 D3 so the info-icon names it even before the back-fill runs.
-    _recovery_map, _recovery_path = _load_job_recovery(analysis_dir)
-    scenario_map, scenario_status_path = _read_scenario_status(analysis_dir)
-    _apply_config_fallbacks(scenario_map, analysis)
-    if scenario_status_path is not None:
-        source_paths.append(scenario_status_path)
-
-    def _gpu_hardware_for_partition(partition: str) -> str:
-        """Partition -> GPU hardware, via the toolkit's own deterministic resolver.
-
-        In-memory config only (no file read): `resolve_gpu_target` returns
-        (None, None) for a CPU partition, an undeclared partition, or a missing
-        HPC-system config, so this degrades to an empty cell rather than raising.
-        """
-        try:
-            from hhemt.config.hpc_system import resolve_gpu_target
-
-            hardware, _backend = resolve_gpu_target(getattr(analysis, "cfg_hpc_system", None), partition)
-        except Exception:  # noqa: BLE001 -- a display column must not break the render
-            return ""
-        return hardware or ""
-
-    if eff_csvs:
-        source_paths.extend(eff_csvs)
-        # Stage-A recovery artifact, declared only in the branch that reads it: the
-        # absent-SLURM path declares no CSV at all, and an unconditional append here
-        # broke that contract (caught by test_absent_slurm_csv_degrades_gracefully).
-        if _recovery_path is not None:
-            source_paths.append(_recovery_path)
-        with prov.artist(
-            axes_id="html_section",
-            kind="table",
-            note="SLURM resource-efficiency reports (union across all workflow submissions)",
-        ) as artist:
-            for csv_path in eff_csvs:
-                artist.add_channel(
-                    "data",
-                    ProvenanceRef(source_path=str(csv_path.relative_to(analysis_dir))),
-                )
-            if scenario_status_path is not None:
-                artist.add_channel("scenario_status", ProvenanceRef(source_path=_SCENARIO_STATUS_FILENAME))
-            # Tier 2 of the purpose join. Declared INSIDE this branch, matching the
-            # `_recovery_path` contract directly above: the absent-SLURM path reads
-            # nothing here and must declare nothing. Declared even when absent (ADR-6
-            # D3) so the info-icon names the source, and because the renderer-IO audit
-            # requires declared >= actual reads. Graceful-absent: an unreadable or
-            # missing index yields {} and the join degrades to exactly Tier 1.
-            _job_index_path = analysis_dir / "_status" / "_job_index.json"
-            source_paths.append(_job_index_path)
-            artist.add_channel("job_index", ProvenanceRef(source_path="_status/_job_index.json"))
-            _job_index: dict[str, str] = {}
-            if _job_index_path.exists():
-                try:
-                    _loaded = json.loads(_job_index_path.read_text())
-                    if isinstance(_loaded, dict):
-                        _job_index = {str(k): str(v) for k, v in _loaded.items()}
-                except (OSError, ValueError):
-                    _job_index = {}
-            slurm_html = _build_slurm_efficiency_html(
-                [(str(p.relative_to(analysis_dir)), p.read_text()) for p in eff_csvs],
-                _job_purpose_map(status_payloads, _job_index),
-                scenario_map,
-                _gpu_hardware_for_partition,
-                recovery=_recovery_map,
-            )
-    else:
-        slurm_html = _absent_banner(
-            "SLURM Efficiency",
-            "No SLURM resource-efficiency data — this analysis ran in local/native "
-            "mode, or the end-of-workflow efficiency report has not yet been written. "
-            "It is finalized at workflow teardown, AFTER the report is rendered, so it "
-            "is expected to be absent on the run that produces this page; re-render "
-            "after the run completes to populate it.",
-        )
+    # `[Q160]`(7): the SLURM-efficiency block that used to sit here -- CSV resolution,
+    # the Stage-A job recovery read, the scenario_status join, the GPU-hardware
+    # resolver and the whole declaration set they owed -- moved WHOLE to
+    # `workflow_performance.py`. It is PERFORMANCE data, not provenance. Nothing of it
+    # is retained here: a partial retention is what would diverge declared from actual.
 
     html = _wrap_html_doc(
         analysis_id,
@@ -3735,7 +3684,6 @@ def render(
         provenance_html,
         data_availability_html,
         reprex_guide.html,
-        slurm_html,
         fragments=reprex_guide.fragments,
     )
     return emit_plot_with_sources(
@@ -3748,10 +3696,6 @@ def render(
             "renderer": "metadata",
             "sidecar_present": sidecar_path.exists(),
             "validation_report_present": validation_report_path.exists(),
-            "slurm_csv_present": bool(eff_csvs),
-            "slurm_csv_count": len(eff_csvs),
-            "status_flag_count": len(status_files),
-            "scenario_status_present": scenario_status_path is not None,
         },
         provenance=prov,
     )

@@ -105,6 +105,7 @@ _STANDARD_CATEGORY_ORDER: tuple[str, ...] = (
     "System Information",
     "Simulation Health (placeholder)",
     "Per Simulation Results",
+    "Workflow performance",
     "Metadata",
 )
 
@@ -206,6 +207,26 @@ _TMPL_METADATA = RuleSpecTemplate(
     wildcards=(),
     resources_yaml="mem_mb=1000, time_min=5",
     log_path_template="_logs/plots/metadata.log",
+)
+# workflow_performance ([Q160](7)): the run timeline + SLURM efficiency page, extracted
+# out of metadata because both describe how the workflow RAN rather than what it
+# produced. Unconditional table renderer (emits .html under both static backends);
+# shared by the default and benchmarking sets. Facts mirror the source-side builder
+# (workflow.py _build_plot_rule_block_workflow_performance); the `category` here is
+# cross-checked against that builder's report(category=) by
+# tests/test_reporting_set_cosourcing.py.
+_TMPL_WORKFLOW_PERFORMANCE = RuleSpecTemplate(
+    rule_name="plot_workflow_performance",
+    renderer_module="workflow_performance",
+    output_path_template="plots/workflow_performance__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/workflow_performance.rst",
+        "category": "Workflow performance",
+        "labels": '{"figure": "Workflow performance"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=1000, time_min=5",
+    log_path_template="_logs/plots/workflow_performance.log",
 )
 # Cross-experiment combined set (PIP-1 Phase 4). INERT on source/bundle
 # generators (no workflow.py builder, no bundle snakefile rule); consumed ONLY
@@ -415,6 +436,7 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("errors_and_warnings", rule_spec_template=(_TMPL_ERRORS_AND_WARNINGS,)),
     RendererSelection("disk_utilization", rule_spec_template=(_TMPL_DISK_UTILIZATION,)),
     RendererSelection("metadata", rule_spec_template=(_TMPL_METADATA,)),
+    RendererSelection("workflow_performance", rule_spec_template=(_TMPL_WORKFLOW_PERFORMANCE,)),
 )
 
 # The benchmarking (sensitivity-master) set: the five common renderers shared by
@@ -428,6 +450,7 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("errors_and_warnings", rule_spec_template=(_TMPL_ERRORS_AND_WARNINGS,)),
     RendererSelection("disk_utilization", rule_spec_template=(_TMPL_DISK_UTILIZATION,)),
     RendererSelection("metadata", rule_spec_template=(_TMPL_METADATA,)),
+    RendererSelection("workflow_performance", rule_spec_template=(_TMPL_WORKFLOW_PERFORMANCE,)),
     RendererSelection(
         "per_sim_per_sa",
         predicate_key="has_sa_event_pairs",

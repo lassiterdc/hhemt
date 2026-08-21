@@ -43,6 +43,9 @@ class _StubBuilder(wf._ReportingSetDispatchMixin):
     def _build_plot_rule_block_metadata(self, input_flag=None, ctx=None):
         return "META\n"
 
+    def _build_plot_rule_block_workflow_performance(self, input_flag=None, ctx=None):
+        return "WFPERF\n"
+
     def _build_plot_rule_block_per_analysis_summary(self, input_flag=None, ctx=None):
         return "PA\n"
 
