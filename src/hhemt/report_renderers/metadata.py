@@ -1110,6 +1110,49 @@ def _path_tree_html(paths: list[str]) -> str:
     )
 
 
+def _consolidated_group_paths(
+    analysis_dir: Path | None,
+    analysis: TRITONSWMM_analysis | None,
+) -> tuple[list[str], bool]:
+    """Return (group paths, is_realized) for the consolidated store's node hierarchy.
+
+    The Outputs section's other tree is the crate's `hasPart` FILE-PATH list, which stops
+    AT `analysis_datatree.zarr` and never descends into it. This supplies the missing half:
+    the DataTree GROUP hierarchy INSIDE the store.
+
+    `is_realized` is True when the paths were read off the store on disk, False when they
+    are the code-declared vocabulary from `processing_analysis`. The caller MUST label the
+    two differently -- a provenance page presenting the toolkit's schema as this dataset's
+    structure asserts nodes the run may not have produced.
+
+    No new declared source: `_resolve_consolidated_tree` is already called in `render()`
+    and the store it resolves is already in `source_paths`, so this opens nothing the
+    renderer-IO provenance audit (Gotcha 53) has not already been told about. Only the
+    tree's metadata is read; no chunk is materialized. Both arguments are forwarded because
+    the resolver PREFERS the paths the analysis declares -- passing None for `analysis`
+    would silently degrade resolution to the filename fallback on the sensitivity-master
+    path, which is the shape this section is most often rendered for.
+    """
+    tree_path = _resolve_consolidated_tree(analysis_dir, analysis) if analysis_dir else None
+    if tree_path is not None and tree_path.exists():
+        try:
+            import xarray as xr
+
+            tree = xr.open_datatree(tree_path, engine="zarr", chunks=None, consolidated=False)
+        except Exception:
+            tree = None
+        if tree is not None:
+            groups = sorted(g.lstrip("/") for g in tree.groups if g.strip("/"))
+            if groups:
+                return [f"{tree_path.name}/{g}" for g in groups], True
+    from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as _pp
+
+    declared = sorted(
+        set(_pp._MODE_TO_TREE_PATH.values()) | set(_pp._TIMESERIES_MODE_TO_TREE_PATH.values())
+    )
+    return [f"analysis_datatree.zarr/{g}" for g in declared], False
+
+
 _MINUS = "−"  # U+2212 MINUS SIGN -- a hyphen is not a minus in a typeset exponent.
 
 
@@ -1224,7 +1267,12 @@ def _operation_html(descriptor: dict) -> str:
     return f'{_esc(prose)}<br><span class="expr">{_expr_html(str(expr))}</span>'
 
 
-def _provenance_outputs(graph: list[dict], root: dict) -> str:
+def _provenance_outputs(
+    graph: list[dict],
+    root: dict,
+    analysis_dir: Path | None = None,
+    analysis: TRITONSWMM_analysis | None = None,
+) -> str:
     dataset = _find_consolidated_dataset(graph)
     parts: list[str] = ["<h4>6. Outputs &amp; CF data dictionary</h4>"]
     if dataset is None:
@@ -1243,6 +1291,23 @@ def _provenance_outputs(graph: list[dict], root: dict) -> str:
     if sub_parts:
         # Iter-10 H: a folder tree, not a space-joined run of <code> spans.
         rows.append((f"Sub-datasets (hasPart) — {len(sub_parts)}", _path_tree_html(list(sub_parts))))
+    # Iter-13 bullet 9. The hasPart tree above is a FILE-PATH listing: it stops at
+    # `analysis_datatree.zarr` and never descends into it, so a reader learns the store
+    # exists and nothing about what is in it. This row supplies the store's own DataTree
+    # GROUP hierarchy, rendered INLINE through the same branch-tree renderer rather than
+    # behind a disclosure widget -- the user asked for the structure shown "rather than
+    # forcing the user to hit the dropdown". The sub-analysis membership dropdown above is
+    # deliberately left alone; the user called it good and desirable.
+    _group_paths, _realized = _consolidated_group_paths(analysis_dir, analysis)
+    if _group_paths:
+        rows.append(
+            (
+                "Store hierarchy — this run"
+                if _realized
+                else "Store hierarchy — typical (store not carried in this bundle)",
+                _path_tree_html(_group_paths),
+            )
+        )
     parts.append(_kv_table(rows))
 
     # Descriptor columns come from MODULE introspection (cf_conventions._QUANTITY_PROVENANCE),
@@ -1346,7 +1411,7 @@ def _build_provenance_html(
             _provenance_inputs(inputs),
             _provenance_process(runs),
             timeline_html,
-            _provenance_outputs(graph, root),
+            _provenance_outputs(graph, root, analysis_dir=analysis_dir, analysis=analysis),
         ]
         if s
     )
@@ -1999,7 +2064,19 @@ def _build_reprex_guide_html(
                 options=build_options_dict(
                     df_full,
                     columns_spec=columns_spec,
-                    table_height="70vh",  # preserves the Iter-11 item-24 height bound
+                    # Iter-13. Bounded exactly as `div.table-scroll` is bounded by the
+                    # `max-height: min(70vh, 640px)` rule above, and for the same reason
+                    # recorded there: `vh` resolves against the IFRAME's height, and the
+                    # combined report sets that height IMPERATIVELY ONCE, from the arm
+                    # frame's own onload handler (`scrollHeight + 24`). Tabulator reads
+                    # options.height ONCE at construction (config/report.py, table_height
+                    # field description), so a post-construction frame grow re-resolves the
+                    # CSS box while the render window stays fixed at its pre-grow size --
+                    # two one-shot measurements that cannot agree. A fixed ceiling makes
+                    # that divergence unreachable, because a re-resolved `vh` cannot move
+                    # the box past it. The Iter-11 item-24 height bound is preserved: 70vh
+                    # still governs wherever it is the smaller of the two.
+                    table_height="min(70vh, 640px)",
                     pagination_size=0,
                     persistence_id=f"reprex-{bucket}",
                     extra_options={"resizableColumns": True},
