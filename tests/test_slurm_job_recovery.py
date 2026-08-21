@@ -40,12 +40,12 @@ from hhemt.slurm_job_recovery import (
 # shape. Every other field on every other line is this job's own measured value.
 _SACCT_OUT = "\n".join(
     [
-        "18396137|e3da81a4-f297-4525-b241-00806b447136|00:02:00|00:03.744||1|1||8000M|gpu-a100-80|00:30:00|00:00:32|billing=516,cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25||COMPLETED",
-        "18396137.batch|batch|00:02:00|00:03.744|327556K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:03,energy=0,fs/disk=81960071,gres/gpumem=0,gres/gpuutil=0,mem=327556K,pages=0,vmem=322932K|COMPLETED",
-        "18396137.extern|extern|00:02:00|00:00:00|1024K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:00,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=1024K,pages=0,vmem=1024K|COMPLETED",
-        "18396137.0|python|00:01:51|00:00:00|491288K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:17,energy=0,fs/disk=398636714,gres/gpumem=0,gres/gpuutil=0,mem=491288K,pages=0,vmem=466660K|COMPLETED",
-        "18396137.1|triton.exe|00:00:15|00:00:00|49524K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:13,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=49524K,pages=0,vmem=15728K|CANCELLED by 554635",  # noqa: E501 -- real sacct State; the only fixture row with whitespace past col 120
-        "18396137.4|triton.exe|00:00:20|00:00:00|50860K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:18,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=50860K,pages=0,vmem=14724K|COMPLETED",
+        "18396137|e3da81a4-f297-4525-b241-00806b447136|00:02:00|00:03.744||1|1||8000M|gpu-a100-80|00:30:00|00:00:32|billing=516,cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25||2026-08-11T14:36:24|2026-08-11T14:36:56|2026-08-11T14:38:56|COMPLETED",
+        "18396137.batch|batch|00:02:00|00:03.744|327556K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:03,energy=0,fs/disk=81960071,gres/gpumem=0,gres/gpuutil=0,mem=327556K,pages=0,vmem=322932K|2026-08-11T14:36:56|2026-08-11T14:36:56|2026-08-11T14:38:56|COMPLETED",
+        "18396137.extern|extern|00:02:00|00:00:00|1024K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:00,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=1024K,pages=0,vmem=1024K|2026-08-11T14:36:56|2026-08-11T14:36:56|2026-08-11T14:38:56|COMPLETED",
+        "18396137.0|python|00:01:51|00:00:00|491288K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:17,energy=0,fs/disk=398636714,gres/gpumem=0,gres/gpuutil=0,mem=491288K,pages=0,vmem=466660K|2026-08-11T14:37:03|2026-08-11T14:37:03|2026-08-11T14:38:54|COMPLETED",
+        "18396137.1|triton.exe|00:00:15|00:00:00|49524K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:13,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=49524K,pages=0,vmem=15728K|2026-08-11T14:37:14|2026-08-11T14:37:14|2026-08-11T14:37:29|CANCELLED by 554635",  # noqa: E501 -- real sacct State; the only fixture row with whitespace past col 120
+        "18396137.4|triton.exe|00:00:20|00:00:00|50860K|1|1|1|||||cpu=1,gres/gpu=1,mem=8000M,node=1|udc-an37-25|cpu=00:00:18,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=50860K,pages=0,vmem=14724K|2026-08-11T14:38:34|2026-08-11T14:38:34|2026-08-11T14:38:54|COMPLETED",
     ]
 )
 
@@ -218,3 +218,37 @@ def test_backfill_reports_coverage_rather_than_a_boolean(tmp_path, monkeypatch):
     written = tmp_path / "logs" / "slurm_efficiency_report" / RECOVERY_FILENAME
     assert written.is_file()
     assert written.read_text().splitlines()[0] == ",".join(RECOVERY_HEADER)
+
+
+def test_a_requeued_job_id_retains_both_instances(tmp_path, monkeypatch):
+    """INVARIANT: two recorded EXECUTIONS of one job id are two rows in the store.
+
+    One job id can carry several instances -- a requeue re-submits the same id, and this
+    cluster requeues on node failure by default (`JobRequeue = 1`). The fixture is the real
+    shape of job 18583265: an execution that ran 07:54:22 on 8 CPUs before NODE_FAIL, and
+    the requeued instance that never started.
+
+    TWO independent implementations FAIL this, which is the point. Omitting `-D` from the
+    sacct query means the first execution never arrives at all. Passing `-D` while keying
+    the merge on the bare `JobID` means both arrive and the field-wise merge lets the
+    cancelled instance's non-empty `00:00:00` overwrite the `07:54:22` that did the work.
+    A DIFFERENT correct implementation PASSES however it spells the key, as long as both
+    executions survive and the NODE_FAIL one keeps its own Elapsed.
+    """
+    requeued = "\n".join(
+        [
+            "18583265|bench_gpu|07:54:22|00:00:00||1|8||64G|gpu|1-12:00:00|00:00:10|cpu=8,node=1|udc-an28-1||2026-08-16T10:43:33|2026-08-16T10:43:43|2026-08-16T18:38:05|NODE_FAIL",
+            "18583265|bench_gpu|00:00:00|00:00:00||1|0||64G|gpu|1-12:00:00|05:22:50||None assigned||2026-08-16T18:38:10|None|2026-08-17T00:03:01|CANCELLED by 554635",  # noqa: E501 -- real sacct State
+        ]
+    )
+    _fake_sacct(monkeypatch, requeued)
+    _write_eff_csv(tmp_path, ["18583265"])
+    backfill(tmp_path)
+
+    written = tmp_path / "logs" / "slurm_efficiency_report" / RECOVERY_FILENAME
+    body = [line for line in written.read_text().splitlines()[1:] if line]
+    job_rows = [line.split(",") for line in body]
+    elapsed_idx = list(RECOVERY_HEADER).index("Elapsed")
+
+    assert len(job_rows) == 2, f"a requeued job id must keep both executions; store holds {len(job_rows)}"
+    assert "07:54:22" in {r[elapsed_idx] for r in job_rows}, "the NODE_FAIL execution's Elapsed was overwritten"

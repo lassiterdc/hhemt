@@ -2461,6 +2461,7 @@ class TRITONSWMM_analysis:
             "cell_border_color": _t.neutral_medium,
             "row_alt_bg_color": _t.neutral_light,
             "row_hover_bg_color": _t.accent_color,
+            "affordance_color": _t.affordance_color,
         }
         self._cfg_report = type(self._cfg_report).model_validate(
             {

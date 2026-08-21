@@ -137,9 +137,9 @@ _BUCKET_COLOR: dict[str, str] = {
     "experiment": "#009E73",  # bluish green
 }
 _BUCKET_HEADING: dict[str, str] = {
-    "user": "Supply — you provide these (USER)",
-    "hpc": "Amend — bundled, but revise for your machine (HPC)",
-    "experiment": "Keep — these define the experiment (EXPERIMENT)",
+    "user": "you provide these (USER)",
+    "hpc": "bundled, but revise for your machine (HPC)",
+    "experiment": "these define the experiment (EXPERIMENT)",
 }
 _BUCKET_INSTRUCTION: dict[str, str] = {
     "user": (
@@ -1377,15 +1377,13 @@ def _provenance_timeline(payloads: list[dict]) -> str:
         return ""
     rows.sort(key=lambda r: r[0])
     note = (
-        f"<p class='note'><strong>Run timeline.</strong> {_esc(len(rows))} completed workflow "
-        "step(s), recorded one file at a time as each finished. This is the whole experiment "
+        f"<p class='note'><strong>Run timeline.</strong> {_esc(len(rows))} completed "
+        "rule(s), recorded one file at a time as each finished. This is the whole experiment "
         "from setup through consolidation, not the most recent run — regenerating this report "
-        "cannot shorten it. Click a column heading to sort; type in a column's own box to "
-        "filter on that column (criteria across columns are combined); use the panel at left "
-        "to hide columns.</p>"
+        f"cannot shorten it. {_TABLE_INTERACTION_NOTE}</p>"
     )
     table = _sortable_grid_table(
-        ["Completed at", "What it did", "Rule", "Sub-analysis", "Event", "Model", "SLURM job"],
+        ["Completed at", "Job desc", "Rule", "Sub-analysis", "Event", "Model", "SLURM job"],
         rows,
         table_id="run-timeline",
         column_panel=True,
@@ -1991,6 +1989,10 @@ def _build_reprex_guide_html(
             col_spec["formatter"] = "html"
             if col_spec["title"] in tip_columns:
                 col_spec["tooltip"] = "__TRF_TOOLTIP__"
+                # File 4's `.tabulator-cell.trf-has-tip` rule. Tabulator's `tooltip`
+                # option renders its own popup and sets no DOM `title`, so the
+                # attribute selectors cannot reach these cells; the class can.
+                col_spec["cssClass"] = "trf-has-tip"
         fragments.append(
             (bucket, build_table_fragment(
                 container_id=f"reprex-{bucket}",
@@ -2414,6 +2416,16 @@ def _assert_reduction_names_unique(columns: tuple[_EffColumn, ...]) -> None:
 _assert_reduction_names_unique(_EFF_COLUMNS)
 
 
+#: The sort/filter/hide affordance sentence, authored ONCE and rendered by every table that
+#: offers those controls. It was previously written out at two call sites and had already
+#: diverged -- one carried the "criteria across columns are combined" clause and the other
+#: did not, so a reader met two different descriptions of one behaviour.
+_TABLE_INTERACTION_NOTE = (
+    "Click a column heading to sort; type in a column's own box to filter on that column "
+    "(criteria across columns are combined); use the panel at left to hide columns."
+)
+
+
 def _reduction_caption() -> str:
     """The caption. Renders each DISTINCT `rule` exactly once, from the same declaration the
     headers and tooltips render -- so the page states each reduction in one place, not three."""
@@ -2449,9 +2461,9 @@ def _reduction_caption() -> str:
         )
     return (
         "<h4>How each column was reduced</h4>"
-        "<p class='note'>One row is one JOB; a job's steps are aggregated. Every column "
-        "header carries its reduction's symbol, and hovering a header or a value repeats "
-        "nothing -- both read this same declaration.</p>" + "".join(blocks)
+        "<p class='note'>Every column header carries its reduction's symbol, and hovering "
+        "a header or a value repeats nothing — both read this same declaration.</p>"
+        + "".join(blocks)
     )
 
 
@@ -2487,14 +2499,12 @@ _EFF_UNCAPTURED_NOTE = (
     "table cannot currently reach them, and the <em>Record</em> column says which rows those "
     "are. This is a MEASURED CEILING rather than a capture failure: the join already matches "
     "87 of the 88 job ids the sidecars still retain, or 99% of its available keys. The "
-    "shortfall is structural -- this table is a cumulative HISTORY across every workflow "
+    "shortfall is structural — this table is a cumulative history across every workflow "
     "submission, while <code>_status/*.flag.json</code> is a last-wins SNAPSHOT, so most rows "
-    "predate the records that survive. An earlier version of this note promised the values "
-    "were recoverable from SLURM accounting or from the engine's log tree; both were measured "
-    "and neither holds -- <code>sacct</code> Comment is empty on this cluster, AdminComment "
-    "carries node telemetry rather than rule identity, and the log tree retains 5 of 771 job "
-    "ids. Re-running does not recover them either: a fresh run overwrites the same per-rule "
-    "slots.</p>"
+    "predate the records that survive. The values are not recoverable elsewhere: "
+    "<code>sacct</code> Comment is empty on this cluster, AdminComment carries node telemetry "
+    "rather than rule identity, and the engine's log tree retains 5 of 771 job ids. Re-running "
+    "does not recover them either — a fresh run overwrites the same per-rule slots.</p>"
 )
 
 
@@ -2996,8 +3006,7 @@ def _build_slurm_efficiency_html(
         f"<p class='note'>{_esc(len(rows))} job(s) across {_esc(len(csv_texts))} efficiency "
         f"report(s), one row per JOB with its steps aggregated. {_esc(n_recovered)} job(s) "
         f"carry a recovered accounting record; a job without one shows an em-dash in the "
-        f"columns read from it. Click a column heading to sort; type in a column's own box to "
-        f"filter on that column; use the panel at left to hide columns.</p>"
+        f"columns read from it. {_TABLE_INTERACTION_NOTE}</p>"
     ) + _reduction_caption()
     table = _sortable_grid_table(
         [col.header for col in _EFF_COLUMNS],
@@ -3286,7 +3295,27 @@ def _wrap_html_doc(
 #: deliberately carries no affordance -- styling it would advertise a hover that shows
 #: nothing.
 _TIP_AFFORDANCE_CSS = (
-    "strong.tip-affordance {{ cursor: help; border-bottom: 1px dotted {primary_color}; color: {primary_color}; }}\n"
+    # Attribute selection, not class selection: a class rule reaches only the one
+    # site that remembers to apply it, and the requirement is report-wide. Every
+    # element carrying a native `title` tooltip matches, in every renderer, with no
+    # renderer change. button/a/iframe are excluded deliberately -- a control hint
+    # and a frame label are not tooltip-bearing text.
+    "strong.tip-affordance, td[title], span[title], abbr[title] "
+    "{{ cursor: help; border-bottom: 1px dotted {affordance_color}; color: {affordance_color}; }}\n"
+    # `th` takes the underline only: the header background is {primary_color} navy,
+    # against which #A85000 measures 2.46:1 versus white's 13.56:1.
+    "th[title] {{ cursor: help; border-bottom: 1px dotted currentColor; }}\n"
+    # The hovered row drops the colour: analysis.py's D-5 overlay sets
+    # row_hover_bg_color to the full-saturation accent, against which the affordance
+    # colour measures 1.77:1 -- at exactly the moment the reader hovers to read the
+    # tooltip. The dotted underline is the redundant channel that survives, so the
+    # affordance is never lost, only de-emphasised.
+    "tr:hover td[title] {{ color: inherit; border-bottom-color: currentColor; }}\n"
+    # Tabulator's `tooltip` column option returns a string that Tabulator renders
+    # itself; it sets no DOM `title`, so no attribute selector can reach it. The
+    # cell carries `cssClass: trf-has-tip` instead (see the companion spec).
+    ".tabulator-cell.trf-has-tip "
+    "{{ cursor: help; border-bottom: 1px dotted {affordance_color}; color: {affordance_color}; }}\n"
 )
 
 
@@ -3303,7 +3332,10 @@ def _resolve_inline_css(report_cfg: report_config) -> str:
         from hhemt.config.report import ErrorsAndWarningsConfig
 
         style = ErrorsAndWarningsConfig()
-    return style.render_inline_css() + _TIP_AFFORDANCE_CSS.format(primary_color=style.primary_color)
+    return style.render_inline_css() + _TIP_AFFORDANCE_CSS.format(
+        primary_color=style.primary_color,
+        affordance_color=getattr(style, "affordance_color", "#A85000"),
+    )
 
 
 def render(

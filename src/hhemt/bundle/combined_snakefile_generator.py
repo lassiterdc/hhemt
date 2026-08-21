@@ -401,20 +401,50 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         # this path derives both from one function.
                         #
                         # Iter-11 items 5 and 9 (ONE defect, two symptoms). The former
-                        # `experiment` / `models` pair was DEGENERATE at this level and that is
-                        # what dead-ended the navigation: Snakemake builds a facet table whose
-                        # COLUMNS are the label keys, `experiment` restated the `subcategory`
-                        # the reader had just clicked, and `models` is a pure function of
-                        # `base` (by_base keys the arm map BY base above), so neither could
+                        # `experiment` facet was DEGENERATE at this level and that is what
+                        # dead-ended the navigation: Snakemake builds a facet table whose
+                        # COLUMNS are the label keys, and `experiment` restated the
+                        # `subcategory` the reader had just clicked, so it could not
                         # partition. A facet that cannot partition renders ONE row where a
                         # figure list belongs -- which is why Key Results dead-ended before the
                         # benchmarking figures and Per Simulation Results inserted a redundant
                         # experiment level. The replacement facets are read off the plot id,
                         # which the ADR-2 grammar already encodes: per-sim figures vary in
                         # sa_id and event_id, benchmarking figures vary in the descriptor.
-                        # The key set is FIXED (never conditional) because Snakemake does not
-                        # validate key consistency across results.
-                        "labels": _json.dumps(_plot_id_facets(plot_id)),
+                        #
+                        # Iter-13. TWO claims that stood here are RETIRED because measurement
+                        # falsified them; they are named rather than deleted so the next
+                        # reader does not re-derive them.
+                        #
+                        # (1) `models` was retired alongside `experiment` as "a pure function
+                        # of `base`". That holds for which arms a BASE has children for; it
+                        # FAILS for which arms a given FIGURE rendered, because `tri_html` is
+                        # None whenever the pure-TRITON child has no counterpart at that plot
+                        # id. Measured on the delivered bundle: `conduit_flow` occurs 0 times
+                        # in the pure-TRITON child and 28 times in the coupled one, so inside
+                        # the single subcategory `synth_cc_clean` 28 composed pages carry one
+                        # arm and 28+ carry two. `models` partitions there, and it is the axis
+                        # this campaign exists to expose -- so it is restored, supplied by the
+                        # call site from the arm pair already in hand.
+                        #
+                        # (2) "The key set is FIXED (never conditional) because Snakemake does
+                        # not validate key consistency across results." The premise is true and
+                        # the conclusion does not follow: the per-arm reports already ship
+                        # THREE distinct key sets in ONE report (8 results with {figure}, 1
+                        # with {independent_var, figure}, 56 with {figure, sa_id, event_id})
+                        # and render correctly. The fixed set was what emitted an all-blank
+                        # row -- measured 18 of them, and NO result populated all three.
+                        # Absent facets are now OMITTED rather than emitted empty.
+                        "labels": _json.dumps(
+                            _plot_id_facets(
+                                plot_id,
+                                models=(
+                                    "TRITON-SWMM + TRITON"
+                                    if tri_html is not None
+                                    else ("TRITON-SWMM only" if ts_eid else "TRITON only")
+                                ),
+                            )
+                        ),
                     },
                     resources_yaml="mem_mb=1000, time_min=5",
                     log_path_template=f"_logs/plots/{rn}.log",
@@ -423,7 +453,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
     return tuple(specs)
 
 
-def _plot_id_facets(plot_id: str) -> dict[str, str]:
+def _plot_id_facets(plot_id: str, *, models: str = "") -> dict[str, str]:
     """Split an ADR-2 plot id into the facets that PARTITION a harvested figure set.
 
     Grammar (`report_plot_ids.py`): ``{renderer_kind}[__{descriptor}][__sa.{sa_id}]
@@ -438,10 +468,13 @@ def _plot_id_facets(plot_id: str) -> dict[str, str]:
     figure filename. `canonical_plot_id` remains the sole MINTER; this is a read-only
     consumer, and a grammar change would surface here as blank facets rather than silently.
 
-    Returns a FIXED key set. Snakemake performs no key-consistency check on `labels`
+    Returns ONLY the facets that carry a value, so the key set is heterogeneous across
+    results by design. Snakemake performs no key-consistency check on `labels`
     (`report/html_reporter/data/results.py` passes `res.labels` straight to the React app),
-    so a heterogeneous key set across results is unvalidated territory; a fixed set with
-    empty-string absences is the shape the delivered report already demonstrates.
+    and heterogeneity is not unvalidated territory: the per-arm reports already ship three
+    distinct key sets in one report and render correctly. Emitting an absent facet as an
+    empty string is what produced the blank index columns, so an absent facet is now
+    omitted, and the guard below makes an all-empty return unrepresentable.
     """
     stem = plot_id
     for _ext in (".html", ".png", ".svg"):
@@ -449,7 +482,7 @@ def _plot_id_facets(plot_id: str) -> dict[str, str]:
             stem = stem[: -len(_ext)]
             break
     segments = stem.split("__")[1:]
-    facets = {"sub-analysis": "", "event": "", "variant": ""}
+    facets: dict[str, str] = {}
     for seg in segments:
         if seg.startswith("sa."):
             facets["sub-analysis"] = seg[3:]
@@ -457,6 +490,14 @@ def _plot_id_facets(plot_id: str) -> dict[str, str]:
             facets["event"] = seg[4:]
         else:
             facets["variant"] = seg.replace(".", " ")
+    if models:
+        facets["models"] = models
+    if not facets or any(v == "" for v in facets.values()):
+        raise ValueError(
+            f"combined report: plot id {plot_id!r} produced facets {facets!r}; "
+            "every emitted facet must carry a non-empty value, and at least one "
+            "facet must be present, or the report renders a blank index column."
+        )
     return facets
 
 

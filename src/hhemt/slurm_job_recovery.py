@@ -80,6 +80,21 @@ _SACCT_FIELDS = (
     "AllocTRES",
     "NodeList",
     "TRESUsageInTot",
+    # `Submit` is the requeue discriminator and is REQUIRED, not decorative. `sacct -j`
+    # returns only the MOST RECENT instance of a job id, so a requeued job's earlier
+    # execution is reachable only under `-D` -- and once `-D` is on, `JobID` alone no
+    # longer identifies a row. Measured on Rivanna: `JobRequeue = 1`, and job 18583265
+    # ran 07:54:22 on 8 CPUs, hit NODE_FAIL, and was requeued into a cancelled instance;
+    # the default query returns ONLY the second, reporting `Elapsed=00:00:00, NCPUS=0`
+    # for a job that ran eight hours.
+    #
+    # `Start`/`End` make the step TOPOLOGY computable from the stored rows: whether a
+    # job's solver steps ran SEQUENTIALLY (attempts of one simulation) or CONCURRENTLY
+    # (different simulations sharing an allocation) is the fork `RunMethod` declares, and
+    # without these two fields nothing stored beside that field can contradict it.
+    "Submit",
+    "Start",
+    "End",
     "State",
 )
 
@@ -229,7 +244,17 @@ def recover_rows(job_ids: list[str], *, timeout_s: float = 60.0) -> list[dict[st
         chunk = job_ids[start : start + _CHUNK]
         try:
             proc = subprocess.run(
-                ["sacct", "-j", ",".join(chunk), "-n", "-P", "-o", ",".join(_SACCT_FIELDS)],
+                # `-D/--duplicates` is REQUIRED, not defensive. When job ids are supplied
+                # with `-j`, sacct returns only the MOST RECENT instance of each id; a
+                # requeued job's earlier execution is otherwise never returned, and this
+                # cluster requeues on node failure by default (`JobRequeue = 1`). Measured:
+                # over one campaign window `sacct -D` returned 5221 job rows against 5219
+                # without it, and the surviving row for one of the two reported
+                # `Elapsed=00:00:00, NCPUS=0` for a job that ran 07:54:22 on 8 CPUs.
+                # This flag is only safe alongside the composite `(JobID, Submit)` merge
+                # key below -- with the bare `JobID` key the two instances fuse field-wise
+                # and the cancelled one overwrites the one that did the work.
+                ["sacct", "-D", "-j", ",".join(chunk), "-n", "-P", "-o", ",".join(_SACCT_FIELDS)],
                 capture_output=True,
                 text=True,
                 timeout=timeout_s,
@@ -295,18 +320,26 @@ def write_recovery_csv(analysis_dir: Path, rows: list[dict[str, str]]) -> Path |
     # `JobID`, and NEVER let an empty new value overwrite a non-empty stored one -- that
     # asymmetry is the whole mechanism. A re-run job legitimately updates its own fields; a
     # job sacct no longer knows about contributes nothing and keeps what it had.
-    stored: dict[str, dict[str, str]] = {}
+    #
+    # The key is the PAIR (step JobID, Submit), never JobID alone. One job id can carry
+    # several INSTANCES -- a requeue re-submits the same id, and `recover_rows` now passes
+    # `-D` so both arrive. Under a bare-JobID key the field-wise rule above fuses them and
+    # the later instance wins every non-empty field, so a NODE_FAIL execution's real
+    # Elapsed is overwritten by the requeued instance's `00:00:00`. Measured on Rivanna:
+    # job 18583265 ran 07:54:22 on 8 CPUs before NODE_FAIL, and its requeued instance ran
+    # not at all. Both are real rows and the store keeps both.
+    stored: dict[tuple[str, str], dict[str, str]] = {}
     if path_existing.is_file():
         try:
             for prior in csv.DictReader(io.StringIO(path_existing.read_text())):
-                key = (prior.get("JobID") or "").strip()
-                if key:
+                key = ((prior.get("JobID") or "").strip(), (prior.get("Submit") or "").strip())
+                if key[0]:
                     stored[key] = {k: (prior.get(k) or "") for k in RECOVERY_HEADER}
         except OSError:
             stored = {}
     for row in rows:
-        key = (row.get("JobID") or "").strip()
-        if not key:
+        key = ((row.get("JobID") or "").strip(), (row.get("Submit") or "").strip())
+        if not key[0]:
             continue
         target = stored.setdefault(key, {k: "" for k in RECOVERY_HEADER})
         for field in RECOVERY_HEADER:
@@ -317,7 +350,11 @@ def write_recovery_csv(analysis_dir: Path, rows: list[dict[str, str]]) -> Path |
         return None
     merged_rows = sorted(
         stored.values(),
-        key=lambda r: (int(r["MainJobID"]) if r.get("MainJobID", "").isdigit() else 0, r.get("StepKind", "")),
+        key=lambda r: (
+            int(r["MainJobID"]) if r.get("MainJobID", "").isdigit() else 0,
+            r.get("StepKind", ""),
+            r.get("Submit", ""),
+        ),
     )
     eff_dir.mkdir(parents=True, exist_ok=True)
     buf = io.StringIO()

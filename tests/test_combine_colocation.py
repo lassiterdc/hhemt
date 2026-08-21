@@ -138,27 +138,47 @@ def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> No
     future facet is added under a different key carrying the same string.
     """
     bundle_root = tmp_path / "combined"
-    _write_child(bundle_root, "expA_tritonswmm", "metadata", _TS_HTML)
-    _write_child(bundle_root, "expA_triton", "metadata", _TRI_HTML)
+    # Iter-13 fixture widening. TWO plot ids of DIFFERENT ADR-2 segment shapes, because the
+    # per-spec assertions below are cross-spec claims and a one-plot-id fixture cannot
+    # discriminate: the retired homogeneity clause compared paired[0] against itself and was
+    # true for ANY implementation. `metadata` carries no segment (facets: models only); the
+    # per-sim id carries sa. + evt. (facets: sub-analysis, event, models).
+    plot_ids = ("metadata", "peak_flood_depth__sa.gpu_0_r1__evt.event_index.0")
+    for pid in plot_ids:
+        _write_child(bundle_root, "expA_tritonswmm", pid, _TS_HTML)
+        _write_child(bundle_root, "expA_triton", pid, _TRI_HTML)
     specs = _harvest_per_experiment_rule_specs(bundle_root)
-    paired = [s for s in specs if "metadata" in s.rule_name]
-    assert paired, "no harvested metadata spec — the probe is measuring nothing"
-    for spec in paired:
+    paired = [s for s in specs if s.output_path_template.startswith("paired_figures/")]
+    # State the denominator rather than assuming it: an assertion over one spec cannot fail.
+    assert len(paired) == len(plot_ids), (
+        f"fixture yielded {len(paired)} harvested spec(s) for {len(plot_ids)} plot id(s) — "
+        "the cross-spec assertions below would not discriminate"
+    )
+    by_plot = {PurePosixPath(s.output_path_template).stem: s for s in paired}
+    assert set(by_plot) == set(plot_ids), f"unexpected harvested stems {sorted(by_plot)}"
+    for plot_id, spec in sorted(by_plot.items()):
         labels = json.loads(spec.report_kwargs["labels"])
-        assert labels, "labels dict is empty — the probe is measuring nothing"
-        name_shown = humanize_plot_id("metadata")
+        name_shown = humanize_plot_id(plot_id)
         restating = [k for k, v in labels.items() if v == name_shown]
         assert not restating, f"facet(s) {restating} restate the result name {name_shown!r}"
-        # Iter-11 items 5+9. The two facets this line used to pin -- `models` and
-        # `experiment` -- were measured DEGENERATE at the per-experiment level: `experiment`
-        # restates the subcategory and `models` is a function of it, so the facet table
-        # rendered one row instead of a figure list. What replaces them is asserted as the
-        # invariant rather than as a key list, so a differently-keyed correct implementation
-        # still passes: no facet may equal the subcategory, and the key set must be the same
-        # on every harvested spec (Snakemake performs no key-consistency check of its own,
-        # so a heterogeneous set reaches the bundled React app unvalidated).
+        # Iter-11 items 5+9: `experiment` was measured DEGENERATE at this level -- it restated
+        # the subcategory, so the facet table rendered one row where a figure list belongs.
+        # Asserted as the invariant rather than as a key list, so a differently-keyed correct
+        # implementation still passes.
         assert spec.report_kwargs["subcategory"] not in labels.values()
-        assert set(labels) == set(json.loads(paired[0].report_kwargs["labels"]))
+        # Iter-13. The clause that stood here asserted a FIXED key set across harvested specs.
+        # That doctrine is RETIRED by measurement: emitting an absent facet as "" is what
+        # produced the blank index columns (18 all-blank rows in the delivered combined
+        # report), and heterogeneity is not unvalidated territory -- the per-arm reports
+        # already ship three distinct key sets in ONE report and render correctly. What
+        # replaces it is the invariant the emitter now enforces.
+        assert labels, f"{plot_id}: harvested spec emitted no facet at all"
+        assert all(v != "" for v in labels.values()), f"{plot_id}: empty facet value in {labels}"
+    # The two shapes must actually DIFFER, or the widened denominator is nominal rather than
+    # real and every cross-spec claim above degenerates to a single-shape check.
+    assert set(json.loads(by_plot[plot_ids[0]].report_kwargs["labels"])) != set(
+        json.loads(by_plot[plot_ids[1]].report_kwargs["labels"])
+    ), "fixture plot ids produced identical key sets — widen them"
 
 
 def test_harvest_no_base_experiment_category(tmp_path) -> None:

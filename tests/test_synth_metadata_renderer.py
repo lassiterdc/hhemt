@@ -1154,6 +1154,114 @@ def test_job_purpose_and_hardware_are_joined_in_from_toolkit_records():
     assert "What the job did" not in html, "the renamed header must not survive anywhere"
 
 
+def test_no_banned_column_header_survives_anywhere():
+    """Ruling {25} renamed the SLURM header and guarded it; the Run-timeline sibling was
+    left behind because the guard was written over the retired STRING rather than over the
+    CLASS, and was scoped to one builder's output rather than to the module.
+
+    Population is every header string this module can author, which is why this reads the
+    source rather than one rendered fragment.
+    """
+    import inspect
+
+    src = inspect.getsource(metadata)
+    found = [b for b in ("What it did", "What the job did") if b in src]
+    assert not found, f"banned column header(s) still authored in metadata.py: {found}"
+
+
+def test_run_timeline_counts_rules_not_workflow_steps():
+    """The generated Snakefile declares 129 literal `rule` statements with no wildcards in
+    any rule name, so a completed `_status/*.flag.json` records a completed RULE and
+    'workflow step' is an improvised synonym for a concept Snakemake already names.
+    """
+    payloads = [
+        {
+            "written_at": "2026-08-11T13:31:00-04:00",
+            "rule_name": "setup_target_2",
+            "slurm_job_id": "18393070",
+        },
+        {
+            "written_at": "2026-08-11T13:31:35-04:00",
+            "rule_name": "prepare_sa_openmp_7_r2_evt_event_index_0",
+            "sa_id": "openmp_7_r2",
+            "event_id": "event_index.0",
+            "slurm_job_id": "18393109",
+        },
+    ]
+    html = metadata._provenance_timeline(payloads)
+    assert "workflow step" not in html, "improvised synonym for Snakemake 'rule'"
+    assert "2" in html, "the count itself must survive the rename"
+
+
+def test_reduction_glossary_defines_each_term_once():
+    """REGRESSION GUARD, not a red test. The defect it targets -- one `<dt>` bound to three
+    different definitions, all reading `joined` -- was fixed by `_Reduction.name`, so this
+    passes on arrival and exists to keep it passing.
+
+    Anchored on the structural invariant (no duplicate subheader), never on a particular
+    name, so it discriminates on structure rather than on wording. The non-empty precondition
+    is load-bearing: without it a caption that renders NO subheader at all would pass
+    vacuously, which is the failure mode a bare `not dupes` assertion cannot distinguish
+    from success.
+    """
+    names = re.findall(r"<h5>(.*?)</h5>", metadata._reduction_caption())
+    assert names, "precondition: the caption renders one subheader per distinct reduction"
+    dupes = {n for n in names if names.count(n) > 1}
+    assert not dupes, f"term(s) defined more than once in one glossary: {dupes}"
+
+
+@pytest.mark.parametrize("bucket", ["user", "hpc", "experiment"])
+def test_bucket_heading_does_not_repeat_badge_verb(bucket):
+    """The heading renders the badge -- which IS the verb -- immediately followed by a
+    heading opening with that same verb, so the reader saw "Supply Supply - you provide
+    these (USER)".
+    """
+    badge_text = re.sub(r"<[^>]+>", "", metadata._bucket_badge(bucket)).strip()
+    verb = metadata._BUCKET_VERB[bucket]
+    assert badge_text == verb, "precondition: the badge renders the verb"
+    assert not metadata._BUCKET_HEADING[bucket].startswith(verb), (
+        f"heading repeats the badge verb {verb!r} immediately after it"
+    )
+
+
+def test_table_interaction_note_is_single_sourced():
+    """The sort/filter/hide sentence was authored at two call sites and had already
+    diverged -- one carried the "criteria across columns are combined" clause and the other
+    did not. Population is the module source, because the duplication is between builders.
+    """
+    import inspect
+
+    src = re.sub(r"\s+", " ", inspect.getsource(metadata))
+    n = src.count("Click a column heading to sort")
+    assert n <= 1, f"interaction sentence authored {n} times; single-source it"
+
+
+def test_reader_visible_prose_uses_one_dash_convention():
+    """Reader-visible prose mixed an em dash and an ASCII '--' for the same mark.
+
+    SCOPE IS DELIBERATELY NARROWER THAN "all reader-visible prose", and the residual is
+    disclosed rather than hidden. This asserts over `_EFF_UNCAPTURED_NOTE`, the block the
+    dash-convention repair governed, where the count is now ZERO.
+
+    `_reduction_caption()` is EXCLUDED and carries 10 ASCII '--' at the time of writing: 8
+    in the six `_Reduction.why`/`.rule` fields and 2 in `apply.__doc__` first lines. Those
+    are not residue of an incomplete repair -- they are prose authored by the
+    `_Reduction.name` round, in a structure that did not exist when the dash convention was
+    enumerated, and the remaining sweep was explicitly declined for this round.
+
+    The second pair is the one worth noticing: rendering `apply.__doc__` promoted DEVELOPER
+    DOCSTRINGS into reader-visible prose, so docstrings are now subject to reader-facing
+    conventions they were never written against. Widening this test to the caption is a
+    one-line change (add `metadata._reduction_caption()` back to the tuple) and should
+    happen in the same pass that sweeps those 10.
+    """
+    prose = re.sub(r"<[^>]+>", "", metadata._EFF_UNCAPTURED_NOTE)
+    ascii_dash = re.findall(r"(?<![-<!])--(?!>)", prose)
+    assert not ascii_dash, (
+        f"{len(ascii_dash)} ASCII '--' in prose that elsewhere uses an em dash"
+    )
+
+
 def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     """Iter-10 H: 'the presentation of sub datasets is unreadable; it's just a massive list
     of filepaths ... i think a branch structure like people use to display folder structure

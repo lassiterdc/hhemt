@@ -800,6 +800,10 @@ class _HtmlTableStyleBase(cfgBaseModel):
     table_font_size_px: int = Field(13)
     row_alt_bg_color: str = Field("#F1F1EF")
     row_hover_bg_color: str = Field("#FFE4C4")
+    # Tooltip-affordance colour. Brand-derived like the four keys above and set from
+    # brand_theme.affordance_color by the D-5 overlay; the literal here is the
+    # no-theme-context fallback. NOT accent_color: raw #E57200 is 3.12:1 on white.
+    affordance_color: str = Field("#A85000")
 
 
 _ERRORS_AND_WARNINGS_EXTRA_CSS = """\
