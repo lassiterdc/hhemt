@@ -211,6 +211,7 @@ rule process_triton:
     output: "_status/d_process_triton_evt-{event_id}_complete.flag"
     log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_triton_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -243,6 +244,7 @@ rule process_tritonswmm:
     output: "_status/d_process_tritonswmm_evt-{event_id}_complete.flag"
     log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -275,6 +277,7 @@ rule process_swmm:
     output: "_status/d_process_swmm_evt-{event_id}_complete.flag"
     log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -307,6 +310,7 @@ rule consolidate_scenario:
     output:
         flag="_status/f_consolidate_scenario_evt-{event_id}_complete.flag",
         du_sentinel="sims/{event_id}/_status/_du.json",
+    priority: 100
     log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
