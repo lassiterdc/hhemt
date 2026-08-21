@@ -443,11 +443,14 @@ def _b4b_config_attrs(sub) -> dict:
 
 
 def _b4b_family_key(sub) -> str:
-    """Hardware-family bucket key: 'cpu' for every non-GPU config, else the GPU hardware
-    token (a6000 / a100-80 / …) from the ensemble partition (Gotcha 54: partition IS the
-    hardware axis). Comparisons are WITHIN a family only (BIT4BIT is within-backend)."""
-    from hhemt.eda._config_diff import _gpu_hardware
+    """Hardware-family bucket key: 'cpu' for every non-GPU config, 'gpu' for EVERY GPU
+    config regardless of GPU hardware (the N3 ruling comment below states why).
+    Comparisons are WITHIN a family only (BIT4BIT is within-backend).
 
+    NOT interchangeable with _config_diff._hw_family_key, which still returns a
+    per-hardware token (a6000 / a100-80). That sibling's "matching
+    raw_resume_identity._b4b_family_key" docstring claim has been false since N3.
+    """
     c = getattr(sub, "cfg_analysis", None)
     if str(getattr(c, "run_mode", "") or "") != "gpu":
         return "cpu"

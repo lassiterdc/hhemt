@@ -876,12 +876,19 @@ def _hardware_family(gv: str) -> str:
 def _resolve_family_baselines(df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str) -> dict[str, float]:
     """Return ``{group_value: baseline_wallclock}``, anchored PER HARDWARE FAMILY.
 
-    Mirrors the family rule the codebase already implements twice -- ``_config_diff``'s
-    ``_hw_family_key`` / ``_device_count_key`` / ``_family_reference_group`` and
-    ``raw_resume_identity``'s ``_b4b_family_key`` / ``_b4b_ref_key``: CPU configs anchor on
-    the serial-CPU run, and each GPU hardware token anchors on ITS OWN minimum-device run.
-    A third, differently-shaped implementation here would be the divergence those two
-    already avoid, so the semantics are copied rather than re-derived.
+    Mirrors ``_config_diff``'s ``_hw_family_key`` / ``_device_count_key`` /
+    ``_family_reference_group``: CPU configs anchor on the serial-CPU run, and each GPU
+    hardware token anchors on ITS OWN minimum-device run.
+
+    It deliberately does NOT mirror ``raw_resume_identity``'s ``_b4b_family_key``, and the
+    divergence is CORRECT rather than drift. N3 (2026-08-02, ``463ab9ed``) collapsed that
+    one to a single ``gpu`` family so cross-hardware divergence could SURFACE in the
+    identity view. Collapsing it here would anchor an a6000 run against an a100-80
+    baseline and report a cross-hardware performance RATIO dressed as a scaling
+    efficiency -- the exact number the paragraph below measures at 1.51 against a true
+    0.255. The shape rule: N3's collapse is right for IDENTITY views and wrong for
+    SCALING views. This docstring previously claimed all three implementations matched;
+    that claim was false from N3 until it was corrected here.
 
     Why this is not a mode on ``_resolve_serial_baseline``: that function returns a SCALAR
     and feeds a scalar ``anchor=`` parameter, while the per-family answer is a MAPPING --
