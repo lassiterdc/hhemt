@@ -1,5 +1,23 @@
 """Sensitivity benchmarking renderer.
 
+GPU SCALING IS EXPRESSLY NOT A SCIENCE QUESTION FOR THESE EXPERIMENTS, and the two
+strong-scaling panels below are retained for a reason that is NOT their result. The user
+ruling is verbatim: "the point of these experiments is NOT to say anything about GPU
+scaling, the point is to look at the cross section of potential hardware and hotstart
+resume sensitivities of the model. So any 'conclusions' about GPU scaling are void for
+this set of experiments." A multi-GPU slowdown on a model this small is EXPECTED and
+carries no finding.
+
+The panels nonetheless SHIP, UNANNOTATED, because this campaign is also a figure-design
+exercise and a four-panel figure is a subject of aesthetic review in its own right. Do
+NOT gate, delete, retitle, or add a guard note to the rendered panels -- that disposition
+is itself a user ruling. What is prohibited is a CLAIM: no prose, caption, commit message,
+knowledge doc, or docstring may state a GPU-scaling conclusion drawn from these axes.
+
+This comment exists so a later reader cannot re-derive that conclusion from the same data
+and believe it new. It is a source-side guard and never renders, so it satisfies the
+guard requirement without violating the no-note-on-the-panel ruling.
+
 Four stacked panels: Wall-clock | Compute-cost (= wallclock × n_devices) | Strong-scaling
 speedup | Strong-scaling efficiency. TWO x-axis groups, not one shared axis: the top pair
 is keyed on ``independent_var`` (typical: ``n_devices``) and the bottom pair on
