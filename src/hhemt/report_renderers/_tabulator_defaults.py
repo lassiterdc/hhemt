@@ -999,6 +999,10 @@ class TableFragment(NamedTuple):
     caller owns the wrapping, because a multi-table page concatenates several
     ``script`` bodies after ONE ``tabulator_shared_js()`` emission rather than
     opening a script tag per table.
+
+    ``script`` is SELF-SCOPED (wrapped in an IIFE) precisely because of that
+    concatenation: two bodies sharing a scope would redeclare their top-level
+    ``const`` bindings, which is a parse-time error that blanks the whole page.
     """
 
     styles: str
@@ -1373,6 +1377,15 @@ def build_table_fragment(
             "</div>\n"
         ),
         script=(
+            # SELF-SCOPED BY CONSTRUCTION. A multi-table page concatenates N of these
+            # bodies into ONE <script> (metadata.py, workflow_performance.py), so N
+            # top-level `const tableOptions` / `__trfTable` / `__trfColumnGroups`
+            # collide at PARSE time -- and a classic script that fails to parse runs
+            # NONE of its statements, including the _TRF_MOUNT_JS that clones the
+            # <template> markup in. The page then renders EMPTY, not merely
+            # un-tabulated. Separate <script> tags do NOT help: a top-level `const`
+            # binds in the shared global lexical environment.
+            "(function () {\n"
             f"const tableOptions = {options_json};\n"
             f'const __trfTable = new Tabulator("#{container_id}", tableOptions);\n'
             "// Column-visibility sidebar — populated after tableBuilt so\n"
@@ -1519,6 +1532,9 @@ def build_table_fragment(
                     + "});\n"
                 )
             )
+            # Closes the IIFE opened at the head of this body. See the comment there:
+            # every top-level binding in this fragment is scoped by this wrap.
+            + "})();\n"
         ),
     )
 
