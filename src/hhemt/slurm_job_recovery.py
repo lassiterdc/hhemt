@@ -410,7 +410,36 @@ def backfill(analysis_dir: Path, *, timeout_s: float = 60.0, run_method: str = "
     with_job = {r["MainJobID"] for r in rows if r["StepKind"] == "job"}
     with_batch = {r["MainJobID"] for r in rows if r["StepKind"] == "batch"}
     write_recovery_csv(analysis_dir, rows)
+    # The CONSOLIDATED store, folding this capture together with the executor plugin's own
+    # CSVs and the job-to-rule index into ONE dataset. Written here rather than at render
+    # time because that is the whole point: the three sources were joined in the renderer,
+    # so a disagreement between them surfaced as a wrong cell rather than as an error and
+    # no single file could be pointed at as the source of truth.
+    #
+    # Imported INSIDE the function, deliberately. This module's contract is stdlib-only, no
+    # toolkit imports, so a runner subprocess can use it without pulling in the workflow
+    # builder (it mirrors `slurm_liveness.py` for that reason). `slurm_store` needs xarray,
+    # so a module-level import here would break that contract for every caller including
+    # the ones that never consolidate.
+    #
+    # Best-effort by the same rule that governs the rest of this module: every failure mode
+    # degrades to "recovered nothing" rather than raising, because a store write must never
+    # take down a workflow whose real work already succeeded. The CSV is already on disk at
+    # this point, so a failure here loses the consolidation, not the capture.
+    store_written = False
+    try:
+        from hhemt.slurm_store import consolidate
+
+        store_written = consolidate(analysis_dir, recovery_rows=rows) is not None
+    except Exception as exc:  # noqa: BLE001 -- a store write must not fail a workflow
+        print(
+            f"[job-recovery] WARNING: consolidated store not written ({type(exc).__name__}: {exc}); "
+            f"the recovery CSV is unaffected",
+            file=sys.stderr,
+            flush=True,
+        )
     return {
+        "store_written": int(store_written),
         "ids_in_csv": len(ids),
         "rows_recovered": len(rows),
         "ids_with_job_row": len(with_job),
