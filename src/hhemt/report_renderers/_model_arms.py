@@ -30,12 +30,29 @@ ARM_GROUPS: dict[str, dict[str, str]] = {
     },
 }
 
-#: Section order on the composite page, per the user's stated order
-#: (TRITON-SWMM, then SWMM, then TRITON). ALSO the tie-break order for the
-#: legacy single-figure path, where it reproduces the historical coupled-wins
-#: choice exactly: "tritonswmm" is first, so a legacy caller that passes no
-#: model_type still gets the coupled arm it got before.
+#: Tie-break order for the LEGACY single-figure path ONLY -- NOT the page's
+#: display order, which is PAGE_MODEL_ORDER below. `resolve_arm_group` with
+#: `model_type=None` returns the first applicable arm in this tuple, so
+#: "tritonswmm" MUST stay first: that is what reproduces the historical
+#: coupled-wins choice byte-for-byte for the sensitivity per-sa per-sim rules,
+#: which carry no model axis. This tuple ALSO fixes the list order of
+#: `arms_for` and `groups_for`, which the cross-arm colour-scale tests in
+#: tests/test_synth_reclaim_capture_and_arms.py assert by list equality --
+#: so reordering it is a behavioural change in three places, not a display
+#: tweak. Reorder PAGE_MODEL_ORDER instead.
 MODEL_ORDER: tuple[str, ...] = ("tritonswmm", "swmm", "triton")
+
+#: Section order on the composite per-scenario page, per the user's stated
+#: reading order: TRITON depth, TRITON-SWMM depth, TRITON-SWMM conduits, SWMM
+#: conduits -- which puts the two peak-flood maps adjacent and the two conduit
+#: figures adjacent. Deliberately SEPARATE from MODEL_ORDER: display order is a
+#: presentation choice, MODEL_ORDER is a behavioural contract with the legacy
+#: path, and collapsing them makes every future reordering a silent change to
+#: which arm the legacy figures plot. The two tuples MUST cover the same model
+#: set -- a model present in ARM_GROUPS but missing here vanishes from the page
+#: with no other failure, which is what
+#: `test_page_sections_reaches_every_arm_in_the_matrix` exists to catch.
+PAGE_MODEL_ORDER: tuple[str, ...] = ("triton", "tritonswmm", "swmm")
 
 #: Within one model section, the renderer order (depth before conduits).
 RENDERER_ORDER: tuple[str, ...] = ("peak_flood_depth", "conduit_flow")
@@ -91,14 +108,17 @@ def page_sections(enabled_model_types) -> list[tuple[str, str, str]]:
     """Ordered `(model_type, renderer_kind, group)` sections for one scenario page.
 
     Grouped by MODEL first (so the page reads as model headers) and by
-    RENDERER_ORDER within a model. For a three-model analysis this yields FOUR
-    sections: TRITON-SWMM depth, TRITON-SWMM conduits, SWMM conduits, TRITON
-    depth. The count is derived, never hardcoded -- a coupled-only analysis
-    yields two and a tritonswmm+swmm analysis yields three.
+    RENDERER_ORDER within a model, walking PAGE_MODEL_ORDER -- the DISPLAY
+    tuple -- and never MODEL_ORDER, which is the legacy tie-break. For a
+    three-model analysis this yields FOUR sections: TRITON depth, TRITON-SWMM
+    depth, TRITON-SWMM conduits, SWMM conduits, so the two depth maps sit
+    adjacent and the two conduit figures sit adjacent. The count is derived,
+    never hardcoded -- a coupled-only analysis yields two and a
+    tritonswmm+swmm analysis yields three.
     """
     out: list[tuple[str, str, str]] = []
     enabled = set(enabled_model_types)
-    for model in MODEL_ORDER:
+    for model in PAGE_MODEL_ORDER:
         if model not in enabled:
             continue
         for kind in RENDERER_ORDER:
