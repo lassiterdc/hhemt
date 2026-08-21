@@ -59,7 +59,7 @@ from plotly.subplots import make_subplots
 # Canonical order pins the known families to fixed slots; unknowns append
 # deterministically (sorted) after the known block.
 #: Recognized group SPELLINGS. NOT the palette index source -- colour now indexes
-#: `_CANONICAL_HARDWARE` via `_hardware_family`, because this tuple's alias slots shift
+#: `_CANONICAL_RUN_MODES`, because this tuple's alias slots shift
 #: every family two positions right. Do not reintroduce it as an ordering.
 _CANONICAL_GROUP_ORDER = ("serial", "single_cpu", "single-cpu", "cpu", "gpu", "hybrid")
 
@@ -71,80 +71,117 @@ _CANONICAL_GROUP_ORDER = ("serial", "single_cpu", "single-cpu", "cpu", "gpu", "h
 _CANONICAL_FAMILIES = ("serial", "cpu", "gpu", "hybrid")
 _FAMILY_ALIASES = {"single_cpu": "serial", "single-cpu": "serial"}
 
-#: Hardware families in canonical COLOUR order. `cpu` is the only closed member -- every
-#: non-GPU run mode collapses into it via `_hardware_family` -- so it is pinned to slot 0
-#: unconditionally and its colour never depends on which other hardware is present. GPU
-#: tokens are open-ended (a6000, a100-80, and whatever the next cluster brings) and are
-#: appended in the SAME sort order `_hw_cols` uses to lay out the scaling columns.
-_CANONICAL_HARDWARE = ("cpu",)
+#: Run modes in canonical COLOUR order. The first four are the CPU modes the run_mode
+#: axis actually carries (`synthetic_experiment.py`) and are singletons. The fifth,
+#: `gpu`, is a FAMILY: it expands AT ITS OWN POSITION into whichever GPU run modes the
+#: frame carries -- bare `gpu` on a single-hardware master, or one entry per hardware
+#: token once `:546-556` qualifies them. So the slot is never reserved-and-idle, which
+#: is what keeps a six-series matrix inside the palette's first six entries.
+_CANONICAL_RUN_MODES = ("serial", "openmp", "mpi", "hybrid", "gpu")
+
+#: Palette slots that are poor LINE colours on white. Okabe-Ito's yellow and black are
+#: fine as fills and bad as thin series lines, and before this module widened its
+#: canonical block they were where `openmp` and `mpi` landed -- not by choice, but as
+#: the residue of falling outside a four-member tuple into the derived tail. Reaching
+#: them is now announced rather than silent.
+_WEAK_LINE_SLOTS = frozenset({"#F0E442", "#000000"})
 
 
-def _hardware_color_order(all_groups=None) -> tuple[str, ...]:
-    """Canonical hardware ordering for palette indexing: `cpu`, then GPU tokens.
+def _run_mode_color_order(all_groups=None) -> tuple[str, ...]:
+    """Canonical run-mode ordering for palette indexing.
 
-    Deliberately mirrors the `key=lambda f: (f != "cpu", f)` sort `_hw_cols` applies at
-    the column-partition site. A second ordering rule would let a family sit in column 1
-    and carry column 2's colour -- the same two-rules divergence `_hardware_family`'s
-    docstring names for baselines, one channel over.
+    ONE rule, applied uniformly: walk `_CANONICAL_RUN_MODES` left to right; at each
+    entry emit the members of that entry's family that the frame carries, sorted; then
+    append everything unrecognized, sorted. Four of the five canonical entries are
+    singleton families and emit themselves. `gpu` is the one family with members --
+    `gpu`, `gpu (a6000)`, `gpu (a100-80)` -- and it emits them in place.
+
+    Expansion-in-place, rather than a reserved `gpu` slot plus a separate tail, is what
+    keeps the real matrix inside the palette's usable range. The rewrite at `:546-556`
+    replaces bare `gpu` with hardware-qualified tokens whenever more than one token is
+    present, so a reserved slot would sit idle on exactly the frames that need the room,
+    pushing the second token onto `#F0E442`.
+
+    GPU members sort ASCENDING here, which is the same order `_hw_cols` gives them
+    (`key=lambda f: (f != "cpu", f)` reduces to a plain sort among GPU tokens). One
+    order, two consumers: the token that colours first also occupies the left GPU column.
+
+    `cpu` is deliberately NOT canonical. A reserved slot for it costs a palette entry in
+    every frame including the ones that never use it. It is also not aliased to `serial`:
+    `single_cpu` is unambiguously a spelling of serial, but a bare `cpu` could name a
+    multicore run, and a wrong alias silently merges two series.
     """
-    fams = {_hardware_family(str(g)) for g in (all_groups or [])}
-    return _CANONICAL_HARDWARE + tuple(sorted(fams - set(_CANONICAL_HARDWARE)))
+    modes = {_FAMILY_ALIASES.get(str(g), str(g)) for g in (all_groups or [])}
+    order: list[str] = []
+    for canon in _CANONICAL_RUN_MODES:
+        if canon == "gpu":
+            members = sorted(m for m in modes if _hardware_family(m) != "cpu")
+            order.extend(members or [canon])
+        else:
+            order.append(canon)
+    order.extend(sorted(modes - set(order)))
+    return tuple(order)
 
 
-def _stable_hardware_color(group_value, palette, all_groups=None):
-    """Palette colour for ``group_value``'s HARDWARE, not for its run mode.
+def _stable_run_mode_color(group_value, palette, all_groups=None):
+    """Palette colour for ``group_value``'s RUN MODE.
 
-    The user's ruling: colour is locked to hardware (CPU, a100, a6000). So the four CPU
-    run modes -- serial, openmp, mpi, hybrid -- share ONE colour, and each GPU token gets
-    its own. The key is `_hardware_family`, the same rule `_resolve_family_baselines`
-    anchors on and `_hw_cols` partitions columns by, so a group cannot be anchored
-    against one family, drawn in another's column, and coloured as a third.
+    The colour axis is run mode: serial, openmp, mpi, hybrid, and one entry per GPU
+    hardware token -- a GPU run is serial-or-MPI with no threading, so each GPU hardware
+    behaves as its own run mode rather than as a variant of one. Hardware remains the
+    axis for scaling-panel COLUMN layout (`_hw_cols`) and for baseline anchoring
+    (`_resolve_family_baselines`), both keyed on `_hardware_family`; this function is the
+    only one of the three that reads run mode, and that separation is deliberate.
 
-    Set-independence, and what changed. The predecessor (`_stable_group_color`) indexed
-    `_CANONICAL_FAMILIES`, which is RUN MODE. Its docstring claimed `all_groups` was
-    "retained and IGNORED", but that held only on the canonical branch: every value
-    outside the four-member tuple fell through to an `extras` list built FROM
-    `all_groups`. On the real matrix that is `openmp`, `mpi`, `gpu (a6000)` and
-    `gpu (a100-80)` -- i.e. exactly the values this ruling is about were the set-dependent
-    ones. Keying on hardware shrinks that exposure rather than moving it: CPU run modes
-    no longer enter the list at all, so `extras` now varies only with the GPU TOKEN set,
-    and `cpu` is fixed at slot 0 unconditionally. The residual is a GPU-token-only frame,
-    where the plotly call site already passes the UNFILTERED `_color_groups` for exactly
-    this reason.
+    What this keeps from the hardware-keyed interlude it replaces, because both were
+    genuine defects of the ORIGINAL mode-keyed implementation rather than artifacts of
+    the reversal:
 
-    Palette overflow is announced, never silent. Okabe-Ito ships 8 entries and the
-    hardware set is open-ended; a wrapped index would make one colour mean two hardware
-    families, which is the single thing the ruling cannot tolerate. The colour is still
-    returned (a figure that renders wrong is better than one that does not render) but
-    the collision is named in a warning.
+    * Fixed slots for the closed CPU vocabulary. The predecessor pinned only
+      ``("serial", "cpu", "gpu", "hybrid")``, so `openmp` and `mpi` fell into an
+      `all_groups`-derived tail -- which made them set-dependent, and landed them on
+      `#000000` and `#F0E442`, the two worst line colours in the palette. Widening the
+      canonical block to the four real CPU modes fixes both at once.
+    * A filtered frame warns instead of mis-colouring. A caller passing a per-panel group
+      list is the shape of the measured panel-vs-legend divergence; it cannot be
+      prevented by construction over an open vocabulary, so it is detected.
+    * Palette exhaustion is announced. A wrapped index makes one colour mean two run
+      modes, and reaching a weak line slot is announced for the same reason.
     """
-    order = _hardware_color_order(all_groups)
+    order = _run_mode_color_order(all_groups)
     if len(order) > len(palette):
         warnings.warn(
-            f"sensitivity_benchmarking: {len(order)} hardware families "
-            f"({', '.join(order)}) exceed the {len(palette)}-colour palette, so at least "
-            "two families now share a colour. Marker colour is locked to hardware, so a "
-            "reused colour means two hardware families in one figure -- widen the palette "
-            "or facet the figure by hardware before reading it.",
+            f"sensitivity_benchmarking: {len(order)} run modes ({', '.join(order)}) "
+            f"exceed the {len(palette)}-colour palette, so at least two now share a "
+            "colour. Colour is the run-mode axis, so a reused colour means two run modes "
+            "in one figure -- widen the palette before reading it.",
             stacklevel=2,
         )
-    hw = _hardware_family(str(group_value))
-    if hw not in order:
-        # `all_groups` did not contain this group's own hardware, which can only mean the
+    gv = _FAMILY_ALIASES.get(str(group_value), str(group_value))
+    if gv not in order:
+        # `all_groups` did not contain this group's own run mode, which can only mean the
         # caller passed a FILTERED frame. That is the exact shape of the measured
         # panel-vs-legend bug: the panel renumbers from its filtered set while the legend
         # numbers from the unfiltered one, and the same series takes two palette slots.
-        # `cpu` is unaffected (slot 0 unconditionally), so this fires only for GPU tokens.
+        # The four canonical CPU modes are unaffected -- their slots are fixed.
         warnings.warn(
-            f"sensitivity_benchmarking: hardware {hw!r} is absent from all_groups "
+            f"sensitivity_benchmarking: run mode {gv!r} is absent from all_groups "
             f"({', '.join(order)}), so its colour is being resolved from a filtered set. "
-            "Pass the UNFILTERED group list -- a per-panel list renumbers GPU tokens and "
-            "the legend, drawn from the whole frame, will disagree with the panel.",
+            "Pass the UNFILTERED group list -- a per-panel list renumbers the derived "
+            "tail and the legend, drawn from the whole frame, will disagree with it.",
             stacklevel=2,
         )
         return palette[0 % len(palette)]
-    idx = order.index(hw)
-    return palette[idx % len(palette)]
+    color = palette[order.index(gv) % len(palette)]
+    if color in _WEAK_LINE_SLOTS:
+        warnings.warn(
+            f"sensitivity_benchmarking: run mode {gv!r} resolved to {color}, a poor line "
+            "colour on white. This is the slot `openmp` and `mpi` used to land on by "
+            "accident; reaching it now means the run-mode count has outgrown the "
+            "palette's usable range -- widen the palette or facet the figure.",
+            stacklevel=2,
+        )
+    return color
 
 
 from hhemt.figure_caption import add_figure_caption, content_width_px
@@ -1165,7 +1202,7 @@ def _draw_metric_panel(
             continue
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
-        color = _stable_hardware_color(gv, palette, groups)
+        color = _stable_run_mode_color(gv, palette, groups)
         with prov.artist(
             axes_id="ax_metric",
             kind="line",
@@ -1258,7 +1295,7 @@ def _draw_panel(
     gpu_marker = static_cfg.gpu_marker if static_cfg is not None else sens_cfg.gpu_marker
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = _stable_hardware_color(gv, palette, groups)
+        color = _stable_run_mode_color(gv, palette, groups)
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         marker = gpu_marker if is_gpu_group else cpu_marker
@@ -1919,7 +1956,7 @@ def _plotly_metric_panel(
     available_cfg_cols = [c for c in cfg_cols if c in df.columns]
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = _stable_hardware_color(gv, sens_cfg.palette, groups)
+        color = _stable_run_mode_color(gv, sens_cfg.palette, groups)
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
@@ -2082,7 +2119,7 @@ def _plotly_metric_panel_precomputed(
     on hybrid markers (matplotlib reference parity for panels 3+4).
     """
     groups = sorted(df_for_groups["group_value"].dropna().unique(), key=str)
-    # `_stable_hardware_color`'s third parameter is named `all_groups` and its whole
+    # `_stable_run_mode_color`'s third parameter is named `all_groups` and its whole
     # purpose is a palette index that does not shift when the group set shrinks.
     # `df_for_groups` here is ALREADY filtered to one hardware family, so passing
     # `groups` gives a GPU-only column order.index("gpu") == 0 while the legend --
@@ -2152,7 +2189,7 @@ def _plotly_metric_panel_precomputed(
             if not marker_xs:
                 # Empty all-rows fall back to line data for markers.
                 marker_xs, marker_ys, marker_sa = line_xs, line_ys, line_sa
-        color = _stable_hardware_color(gv, sens_cfg.palette, _color_groups)
+        color = _stable_run_mode_color(gv, sens_cfg.palette, _color_groups)
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}

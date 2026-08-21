@@ -139,12 +139,12 @@ def test_group_colour_is_invariant_to_filtering_the_group_set():
     Pre-fix this asserts False: order.index("gpu") is 2 against the full set and
     0 against the GPU-only set, so the two calls return different palette slots.
     """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
 
     palette = ["#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442"]
     all_groups = ["serial", "cpu", "gpu", "hybrid"]
     gpu_only = ["gpu"]
-    assert _stable_hardware_color("gpu", palette, all_groups) == _stable_hardware_color(
+    assert _stable_run_mode_color("gpu", palette, all_groups) == _stable_run_mode_color(
         "gpu", palette, gpu_only
     ), "GPU marker colour must not depend on which other families are in the panel"
 
@@ -210,35 +210,48 @@ def test_family_baseline_disclosure_survives_the_axis_relabel():
     assert "minimum-device run" in src, "the footnote disclosure must remain"
 
 
-def test_every_cpu_mode_takes_the_cpu_colour_and_gpu_takes_its_own():
-    """The hardware ruling: colour is locked to hardware, so serial / cpu / hybrid --
-    all one hardware family -- share slot 0, and gpu takes the next slot. This
-    REPLACES the mode-keyed expectation, which asserted four colours for what is
-    three CPU modes and one GPU."""
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
+def test_every_run_mode_in_the_family_set_takes_its_own_colour():
+    """Colour is the RUN MODE axis, so all four values here are distinct.
+
+    This replaces a hardware-keyed expectation that had serial / cpu / hybrid sharing
+    one slot; the user reversed that reading ("3 run modes are DIFFERENT COLORS"). It
+    also replaces the ORIGINAL mode-keyed expectation, which pinned literal slots that
+    the canonical-block widening moved -- so the assertion is on DISTINCTNESS plus the
+    two slots that are actually contractual, rather than on all four literals."""
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
 
     palette = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#F0E442", "#000000")
     full = ["serial", "cpu", "gpu", "hybrid"]
-    assert {_stable_hardware_color(g, palette, full) for g in ("serial", "cpu", "hybrid")} == {"#0072B2"}
-    assert _stable_hardware_color("gpu", palette, full) == "#E69F00"
+    colours = {g: _stable_run_mode_color(g, palette, full) for g in full}
+    assert len(set(colours.values())) == 4, f"run modes share colours: {colours}"
+    # `serial` and `hybrid` are canonical, so their slots are contractual; `cpu` and
+    # `gpu` are derived-tail members and are pinned only as distinct, above.
+    assert colours["serial"] == "#0072B2"
+    assert colours["hybrid"] == "#CC79A7"
 
 
 def test_single_cpu_aliases_resolve_to_the_serial_slot():
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
 
     palette = ("#0072B2", "#E69F00", "#009E73", "#CC79A7")
     for alias in ("serial", "single_cpu", "single-cpu"):
-        assert _stable_hardware_color(alias, palette, [alias]) == "#0072B2"
+        assert _stable_run_mode_color(alias, palette, [alias]) == "#0072B2"
 
 
-def test_a_non_gpu_accelerator_token_currently_takes_the_cpu_colour():
-    """`_hardware_family` splits GPU tokens and collapses everything else to `cpu`, so
-    an accelerator not spelled `gpu*` shares the CPU colour. Pinned as the KNOWN limit
-    rather than left implicit: widening the rule moves baseline anchoring and column
-    layout too, since all three consumers read the same function."""
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
+def test_a_non_gpu_accelerator_token_is_its_own_run_mode_for_colour_but_cpu_for_hardware():
+    """The KNOWN limit, restated for the run-mode colour axis.
+
+    On the COLOUR axis an unrecognized token is simply another run mode and gets its own
+    entry. On the HARDWARE axis -- which drives column layout and baseline anchoring --
+    `_hardware_family` still collapses anything not spelled `gpu*` into `cpu`. That
+    asymmetry is deliberate and is the settled disposition: the user's hardware
+    vocabulary contains no non-GPU accelerator, and widening `_hardware_family` would
+    move anchoring and layout, not just colour."""
+    from hhemt.report_renderers.sensitivity_benchmarking import _hardware_family, _stable_run_mode_color
 
     palette = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00")
     groups = ["serial", "cpu", "gpu", "hybrid", "apu", "fpga"]
-    assert _stable_hardware_color("apu", palette, groups) == "#0072B2"
-    assert _stable_hardware_color("fpga", palette, groups) == "#0072B2"
+    colours = {g: _stable_run_mode_color(g, palette, groups) for g in ("apu", "fpga")}
+    assert colours["apu"] != colours["fpga"], f"unrecognized tokens share a colour: {colours}"
+    assert _hardware_family("apu") == "cpu"
+    assert _hardware_family("fpga") == "cpu"

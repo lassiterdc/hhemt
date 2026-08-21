@@ -858,19 +858,27 @@ def test_axis_split_does_not_change_the_scaling_computation():
     assert via_group == via_literal
 
 
-# --- Marker colour is locked to HARDWARE, not to run mode ---------------------
+# --- Marker colour is the RUN MODE axis -------------------------------------
 #
-# The user's ruling: "The marker COLOR is supposed to be locked to hardware (CPU,
-# a100, a6000, etc), serial FILL style (opaque vs just the outline) is supposed to be
-# triggered if there are multiple runs of the SAME config". Fill already satisfies its
-# half (`_fill` keys on `n_replicates`); these pin the colour half.
+# The user's corrected ruling, after reversing an earlier hardware-keyed reading:
+# "3 run modes are DIFFERENT COLORS... GPU is kind of like a run mode since it's serial
+# or MPI only, no threading, so each GPU hardware gets its own color." So the colour
+# axis carries six values on the real matrix -- serial / openmp / mpi / hybrid and one
+# per GPU hardware token. Hardware stays the axis for COLUMN layout and BASELINE
+# anchoring; these tests pin only colour.
 #
-# Each of these FAILS against the pre-change mode-keyed `_stable_group_color`, which
-# indexed `_CANONICAL_FAMILIES = ("serial", "cpu", "gpu", "hybrid")`. Measured before
-# the change, the four CPU-hardware run modes resolved to four DIFFERENT palette
-# entries: serial #0072B2, openmp #000000, mpi #F0E442, hybrid #CC79A7.
+# Each of these fails against the ORIGINAL mode-keyed implementation as well as against
+# the hardware-keyed interlude, because the original pinned only four run modes and let
+# `openmp` and `mpi` fall into an `all_groups`-derived tail -- which both made them
+# set-dependent and landed them on the palette's black and yellow.
 
 _REAL_MATRIX_GROUPS = ["serial", "openmp", "mpi", "hybrid", "gpu (a6000)", "gpu (a100-80)"]
+
+#: Okabe-Ito entries that are poor thin-line colours on white. Duplicated from the
+#: module under test ON PURPOSE: a test that imported the constant would pass no matter
+#: what the module put in it, which is the tautology this pair of colours already caused
+#: once.
+_WEAK = {"#F0E442", "#000000"}
 
 
 def _bench_palette():
@@ -879,138 +887,163 @@ def _bench_palette():
     return SensitivityReportConfig(independent_vars=["n_devices"]).palette
 
 
-def test_every_cpu_run_mode_shares_one_colour_because_they_share_one_hardware():
-    """serial / openmp / mpi / hybrid all run on CPU, so they get ONE colour.
+def test_every_run_mode_on_the_real_matrix_gets_its_own_colour():
+    """Six run modes in, six distinct colours out.
 
-    Asserts the SET of distinct colours has size 1 rather than checking pairs, so a
-    partial fix that merges two of the four modes and leaves the others split still
-    reddens. Pre-change this set had four members.
+    Asserted as a cardinality over the SET rather than pairwise, so a scheme that merges
+    any two -- for instance one that keyed on hardware and collapsed the four CPU modes
+    -- reddens here regardless of which two it merged.
     """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
 
     pal = _bench_palette()
-    cpu_modes = ["serial", "openmp", "mpi", "hybrid"]
-    colours = {_stable_hardware_color(g, pal, _REAL_MATRIX_GROUPS) for g in cpu_modes}
-    assert len(colours) == 1, (
-        "CPU run modes must share one colour under the hardware ruling; got "
-        f"{ {g: _stable_hardware_color(g, pal, _REAL_MATRIX_GROUPS) for g in cpu_modes} }"
-    )
+    colours = {g: _stable_run_mode_color(g, pal, _REAL_MATRIX_GROUPS) for g in _REAL_MATRIX_GROUPS}
+    assert len(set(colours.values())) == len(_REAL_MATRIX_GROUPS), f"run modes share colours: {colours}"
 
 
-def test_distinct_gpu_hardware_never_shares_a_colour_with_cpu_or_with_each_other():
-    """The three hardware families on the real matrix are three distinct colours.
+def test_openmp_and_mpi_never_take_the_palettes_black_or_yellow():
+    """The measured defect of the original mode-keyed implementation.
 
-    The denominator is asserted, not assumed: three families in, three colours out. A
-    scheme that collapsed everything to one colour would satisfy a pairwise
-    "gpu != cpu" check on its own and fails here.
+    `openmp` resolved to #000000 and `mpi` to #F0E442 -- not by choice, but because both
+    fell outside a four-member canonical tuple into the derived tail. This pins the
+    outcome for the two modes that actually regressed AND asserts the whole rendered set
+    is free of the weak slots, so a future widening cannot push a different mode onto
+    them unnoticed.
     """
-    from hhemt.report_renderers.sensitivity_benchmarking import _hardware_family, _stable_hardware_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
 
     pal = _bench_palette()
-    families = {_hardware_family(g) for g in _REAL_MATRIX_GROUPS}
-    assert len(families) == 3, f"fixture no longer spans three hardware families: {sorted(families)}"
-    colours = {_stable_hardware_color(g, pal, _REAL_MATRIX_GROUPS) for g in _REAL_MATRIX_GROUPS}
-    assert len(colours) == 3, f"expected one colour per hardware family, got {sorted(colours)}"
+    for mode in ("openmp", "mpi"):
+        got = _stable_run_mode_color(mode, pal, _REAL_MATRIX_GROUPS)
+        assert got not in _WEAK, f"{mode} resolved to the weak line colour {got}"
+    rendered = {_stable_run_mode_color(g, pal, _REAL_MATRIX_GROUPS) for g in _REAL_MATRIX_GROUPS}
+    assert not (rendered & _WEAK), f"weak line colours in the rendered set: {sorted(rendered & _WEAK)}"
 
 
-def test_cpu_colour_is_absolutely_set_independent():
-    """`cpu` is the one CLOSED hardware family, so its colour is slot 0 unconditionally.
+def test_each_gpu_hardware_token_is_its_own_run_mode_with_its_own_colour():
+    """"each GPU hardware gets its own color" -- and neither shares with a CPU mode.
 
-    This is the strongest form of the invariant `_stable_group_color`'s docstring
-    records as a MEASURED bug, and it holds here with no caller cooperation at all:
-    a panel filtered to CPU alone, or to nothing, still resolves CPU to the same entry.
+    The denominator is asserted: two GPU tokens in the fixture, two colours out, and the
+    intersection with the CPU block empty. A scheme that gave every GPU one colour would
+    satisfy a bare "gpu != serial" check and fails here.
     """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
 
     pal = _bench_palette()
-    frames = [_REAL_MATRIX_GROUPS, ["serial"], ["serial", "gpu (a6000)"], []]
-    colours = {_stable_hardware_color("serial", pal, f) for f in frames}
-    assert len(colours) == 1, f"cpu colour moved across frames: {colours}"
-    assert colours == {pal[0]}, f"cpu is not pinned to palette slot 0: {colours}"
+    gpu = {_stable_run_mode_color(g, pal, _REAL_MATRIX_GROUPS) for g in ("gpu (a6000)", "gpu (a100-80)")}
+    cpu = {_stable_run_mode_color(g, pal, _REAL_MATRIX_GROUPS) for g in ("serial", "openmp", "mpi", "hybrid")}
+    assert len(gpu) == 2, f"the two GPU hardware tokens share a colour: {gpu}"
+    assert not (gpu & cpu), f"a GPU token shares a colour with a CPU run mode: {sorted(gpu & cpu)}"
+
+
+def test_the_four_cpu_run_modes_are_absolutely_set_independent():
+    """The closed half of the vocabulary takes FIXED slots, with no caller cooperation.
+
+    This is the strongest form of the invariant the predecessor's docstring recorded as
+    a measured bug, and it is exactly what the original implementation did NOT provide
+    for `openmp` and `mpi`: their slots came from an `all_groups`-derived tail, so they
+    moved when the frame changed.
+    """
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
+
+    pal = _bench_palette()
+    frames = [_REAL_MATRIX_GROUPS, ["openmp"], ["serial", "openmp"], ["openmp", "gpu (a6000)"], []]
+    for mode in ("serial", "openmp", "mpi", "hybrid"):
+        colours = {_stable_run_mode_color(mode, pal, f) for f in frames}
+        assert len(colours) == 1, f"{mode} moved across frames: {colours}"
 
 
 def test_a_gpu_token_keeps_its_colour_across_every_frame_carrying_the_full_token_set():
-    """GPU tokens are an OPEN vocabulary, so their slots are assigned from the token set
-    the caller supplies. The guarantee is therefore conditional and is stated as such:
-    the colour is stable across any frame that still carries the whole token set, which
-    is the contract the plotly call site already honours by passing the unfiltered
-    `_color_groups` rather than its per-panel `groups`.
+    """GPU run modes are an OPEN vocabulary, so their slots come from the supplied set.
+
+    The guarantee is conditional and stated as such: stable across any frame carrying the
+    whole token set, which is the contract the plotly call site honours by passing the
+    unfiltered `_color_groups` rather than its per-panel `groups`.
     """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
 
     pal = _bench_palette()
     full = _REAL_MATRIX_GROUPS
-    # Same token set, three different frames: reordered, CPU modes dropped, duplicated.
-    frames = [
-        full,
-        list(reversed(full)),
-        ["gpu (a6000)", "gpu (a100-80)"],
-        full + ["gpu (a6000)"],
-    ]
+    frames = [full, list(reversed(full)), ["gpu (a6000)", "gpu (a100-80)"], full + ["gpu (a6000)"]]
     for gv in ("gpu (a6000)", "gpu (a100-80)"):
-        colours = {_stable_hardware_color(gv, pal, f) for f in frames}
+        colours = {_stable_run_mode_color(gv, pal, f) for f in frames}
         assert len(colours) == 1, f"{gv} changed colour across frames with the same token set: {colours}"
 
 
-def test_a_filtered_frame_that_hides_a_groups_own_hardware_warns_instead_of_mis_colouring():
+def test_a_filtered_frame_that_hides_a_groups_own_run_mode_warns_instead_of_mis_colouring():
     """The residual the conditional guarantee leaves open, made LOUD rather than silent.
 
-    A caller passing a per-panel frame is the exact shape of the measured
-    panel-vs-legend divergence. It cannot be prevented by construction over an open
-    vocabulary, so it is detected: asking for a hardware family absent from
-    `all_groups` warns and names the remedy.
+    Fires only for the derived tail -- the four canonical CPU modes have fixed slots and
+    cannot be renumbered by a filtered frame, which the silent arm below pins.
     """
     import warnings
 
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
 
     pal = _bench_palette()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        _stable_hardware_color("gpu (a6000)", pal, ["serial", "openmp"])
+        _stable_run_mode_color("gpu (a6000)", pal, ["serial", "openmp"])
     assert any("filtered set" in str(w.message) for w in caught), (
         f"no filtered-frame warning; warnings seen: {[str(w.message) for w in caught]}"
     )
-    # And the well-formed call stays silent, so the warning discriminates.
     with warnings.catch_warnings(record=True) as quiet:
         warnings.simplefilter("always")
-        _stable_hardware_color("gpu (a6000)", pal, _REAL_MATRIX_GROUPS)
+        _stable_run_mode_color("openmp", pal, ["serial"])
     assert not [w for w in quiet if "filtered set" in str(w.message)], (
-        f"well-formed call warned: {[str(w.message) for w in quiet]}"
+        f"a canonical CPU mode warned on a filtered frame: {[str(w.message) for w in quiet]}"
     )
 
 
-def test_colour_order_pins_cpu_to_slot_zero_and_matches_the_column_sort_key():
-    """Colour order and the scaling-panel COLUMN order must not disagree.
-
-    `_hw_cols` sorts with `key=lambda f: (f != "cpu", f)`. A second ordering rule for
-    colour would let a family sit in column 1 and carry column 2's colour — the same
-    two-rules hazard `_hardware_family`'s own docstring names for baselines.
-    """
-    from hhemt.report_renderers.sensitivity_benchmarking import _hardware_color_order, _hardware_family
-
-    order = _hardware_color_order(_REAL_MATRIX_GROUPS)
-    column_order = sorted({_hardware_family(g) for g in _REAL_MATRIX_GROUPS}, key=lambda f: (f != "cpu", f))
-    assert order[0] == "cpu", f"cpu is not pinned to slot 0: {order}"
-    assert list(order) == column_order, f"colour order {list(order)} != column order {column_order}"
-
-
-def test_more_hardware_than_palette_warns_rather_than_silently_reusing_a_colour():
-    """Okabe-Ito has 8 entries and the hardware set is open-ended, so overflow is
-    reachable. A silently reused colour would mean two hardware families — the one
-    failure the ruling cannot tolerate — so overflow must be announced.
+def test_more_run_modes_than_palette_warns_rather_than_silently_reusing_a_colour():
+    """Okabe-Ito has 8 entries and the GPU-token half of the vocabulary is open-ended, so
+    overflow is reachable. A silently reused colour would mean two run modes.
     """
     import warnings
 
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_hardware_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
 
     pal = _bench_palette()
-    many = ["serial"] + [f"gpu (hw{i:02d})" for i in range(len(pal) + 2)]
+    many = list(_REAL_MATRIX_GROUPS) + [f"gpu (hw{i:02d})" for i in range(len(pal))]
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         for gv in many:
-            _stable_hardware_color(gv, pal, many)
-    assert any("palette" in str(w.message).lower() for w in caught), (
-        f"no palette-overflow warning raised for {len(many)} hardware families over a "
-        f"{len(pal)}-colour palette; warnings seen: {[str(w.message) for w in caught]}"
+            _stable_run_mode_color(gv, pal, many)
+    assert any("exceed the" in str(w.message) for w in caught), (
+        f"no palette-overflow warning for {len(many)} run modes over {len(pal)} colours; "
+        f"warnings seen: {[str(w.message) for w in caught]}"
+    )
+
+
+def test_reaching_a_weak_line_slot_is_announced():
+    """The weak slots are still IN the palette, so a large-enough run-mode set reaches
+    them before true overflow. Announced, because that is precisely how `openmp` and
+    `mpi` acquired black and yellow the first time without anyone choosing it.
+    """
+    import warnings
+
+    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
+
+    pal = _bench_palette()
+    many = list(_REAL_MATRIX_GROUPS) + ["gpu (hw1)", "gpu (hw2)"]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        rendered = {_stable_run_mode_color(g, pal, many) for g in many}
+    assert rendered & _WEAK, f"fixture no longer reaches a weak slot; rendered {sorted(rendered)}"
+    assert any("poor line colour" in str(w.message) for w in caught), (
+        f"weak slot reached with no warning; warnings seen: {[str(w.message) for w in caught]}"
+    )
+
+
+def test_colour_axis_and_column_axis_are_deliberately_different_axes():
+    """Colour is run mode; columns and baselines are hardware. The two must NOT be the
+    same partition, or the reversal has silently re-collapsed onto hardware.
+    """
+    from hhemt.report_renderers.sensitivity_benchmarking import _hardware_family, _stable_run_mode_color
+
+    pal = _bench_palette()
+    n_colours = len({_stable_run_mode_color(g, pal, _REAL_MATRIX_GROUPS) for g in _REAL_MATRIX_GROUPS})
+    n_hw = len({_hardware_family(g) for g in _REAL_MATRIX_GROUPS})
+    assert (n_colours, n_hw) == (6, 3), (
+        f"expected 6 run-mode colours over 3 hardware families; got {n_colours} and {n_hw}"
     )
