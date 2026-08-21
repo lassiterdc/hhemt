@@ -1,11 +1,8 @@
 """Sensitivity benchmarking renderer.
 
-SCOPE OF THIS FIGURE, so a later reader does not over-read it. Accuracy and
-presentation ARE in scope here and are legitimate grounds for QC and feedback.
-Benchmarking CONCLUSIONS are not: this experiment's subject is byte-for-byteness
-across compute configs and clean-vs-hotstart-resume, so anti-scaling on a tiny
-synthetic case is expected rather than a failure. Report the numbers accurately;
-do not interpret them.
+SCOPE. Accuracy and aesthetics ARE grounds for QC and feedback here. Benchmarking
+CONCLUSIONS are not this experiment's business — its subject is byte-for-byteness
+across compute configs and clean-vs-hotstart-resume.
 
 Four stacked panels: Wall-clock | Compute-cost (= wallclock × n_devices) | Strong-scaling
 speedup | Strong-scaling efficiency. TWO x-axis groups, not one shared axis: the top pair
