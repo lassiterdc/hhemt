@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from hhemt.report_plot_ids import EVENT_LABEL_COLUMN
 from hhemt.report_renderers._tabulator_defaults import (
     build_columns_spec,
     build_html_document,
@@ -214,7 +215,7 @@ def _build_tabulator_html(
     # Option A (iter 4, agreed at scratch L4150). Algorithm: first-match-wins
     # over (1) prefix dispatch (perf_/actual_/snakemake_), (2) Scenario ID base
     # set ∪ cfg_analysis.weather_event_indices (config-derived), (3) Status set,
-    # (4) elimination-fallback "Independent variables / Other".
+    # (4) elimination-fallback "Configuration".
     #
     # Provenance citations:
     #   - perf_*  → analysis.py:2418 (PERF_VARS_ORDERED loop) + export_scenario_status.py:8-9 docstring
@@ -227,7 +228,7 @@ def _build_tabulator_html(
     #     (`self.backend = "gpu" if cfg_analysis.run_mode == "gpu" else "cpu"`) →
     #     scenario.py:632 (logged at scenario-setup) → analysis.py:2519/2525 (read back
     #     into df_status). backend_used is a REQUESTED-config value despite its
-    #     misleading name; it belongs in Independent variables / Other.
+    #     misleading name; it belongs in Configuration.
     # iter 9.4 — column_groups is computed earlier (before build_columns_spec)
     # so we can reorder df columns to match the group order. It's reused
     # here for the sidebar payload.
@@ -254,6 +255,7 @@ _SCENARIO_ID_BASE_FIELDS = frozenset(
         "sa_id",
         "subanalysis_id",
         "sub_analysis_iloc",
+        EVENT_LABEL_COLUMN,
     }
 )
 
@@ -279,10 +281,10 @@ def _build_column_groups(
       1. Prefix dispatch: ``perf_*``, ``actual_*``, ``snakemake_*`` → 3 groups.
       2. Scenario ID = ``_SCENARIO_ID_BASE_FIELDS`` ∪ ``cfg_analysis.weather_event_indices``.
       3. Status = ``_STATUS_FIELDS``.
-      4. Elimination fallback → "Independent variables / Other".
+      4. Elimination fallback → "Configuration".
 
     The output preserves declared group order (Scenario ID first, then Status,
-    Independent variables / Other, Performance breakdown, Actual resource
+    Configuration, Performance breakdown, Actual resource
     utilization, Snakemake derived resource allocation). Within a group,
     columns appear in df.columns order — so the sidebar reflects the CSV's
     canonical column ordering (from ``analysis.py::_reorder_df_status_columns``).

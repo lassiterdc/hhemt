@@ -47,6 +47,7 @@ from hhemt.figure_panels import (
     WATERSHED_LEGEND_LABEL,
     watershed_legend_marker,
 )
+from hhemt.report_plot_ids import event_page_reference
 from hhemt.report_renderers._map_bounds import (
     compute_padded_square_bounds,
 )
@@ -547,7 +548,7 @@ def render(
     with prov.artist(
         axes_id="ax_depth",
         kind="image",
-        note=f"peak flood depth raster ({_norm_label}, event {event_iloc})",
+        note=f"peak flood depth raster ({_norm_label}, {event_page_reference(analysis, event_iloc)})",
     ) as a:
         a.add_channel("z", depth_ref)
         a.add_channel(
@@ -643,7 +644,7 @@ def render(
     with prov.artist(
         axes_id="ax_wse",
         kind="image",
-        note=f"water surface elevation = depth + DEM (event {event_iloc})",
+        note=f"water surface elevation = depth + DEM ({event_page_reference(analysis, event_iloc)})",
     ) as a:
         a.add_channel("z", wse_ref_depth)
         a.add_channel("z", wse_ref_dem)
@@ -1154,7 +1155,7 @@ def _build_peak_flood_depth_figure(
     with prov.artist(
         axes_id="ax_depth_plotly",
         kind="image",
-        note=f"peak flood depth raster (event {event_iloc})"
+        note=f"peak flood depth raster ({event_page_reference(analysis, event_iloc)})"
         + (f"; datashader pre-raster (cell_count={cell_count})" if use_datashader else ""),
     ) as a:
         a.add_channel("z", depth_ref)
@@ -1229,7 +1230,7 @@ def _build_peak_flood_depth_figure(
     with prov.artist(
         axes_id="ax_wse_plotly",
         kind="image",
-        note=f"water surface elevation = depth + DEM (event {event_iloc})"
+        note=f"water surface elevation = depth + DEM ({event_page_reference(analysis, event_iloc)})"
         + (f"; datashader pre-raster (cell_count={cell_count})" if use_datashader else ""),
     ) as a:
         a.add_channel("z", wse_ref_depth)

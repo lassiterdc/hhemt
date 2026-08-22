@@ -423,7 +423,10 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
                 report_kwargs={
                     "caption": "report/captions/per_sim_event_page.rst",
                     "category": "Per Simulation Results",
-                    "labels": '{"figure": "Simulation results", "event_id": "{event_id}"}',
+                    "labels": (
+                        '(lambda w: {"figure": "Simulation results", '
+                        '"event": _report_label_value(_EVENT_LABELS, w.event_id, "event")})'
+                    ),
                 },
                 wildcards=("event_id",),
                 resources_yaml="mem_mb=8000, time_min=30",
@@ -469,7 +472,11 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
                 report_kwargs={
                     "caption": "report/captions/per_sim_peak_flood_depth.rst",
                     "category": "Per Simulation Results",
-                    "labels": '{"figure": "Peak flood depth", "sa_id": "{sa_id}", "event_id": "{event_id}"}',
+                    "labels": (
+                        '(lambda w: {"figure": "Peak flood depth", '
+                        '"sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), '
+                        '"event": _report_label_value(_EVENT_LABELS, w.event_id, "event")})'
+                    ),
                 },
                 wildcards=("sa_id", "event_id"),
                 resources_yaml="mem_mb=4000, time_min=15",
@@ -483,7 +490,11 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
                 report_kwargs={
                     "caption": "report/captions/per_sim_conduit_flow.rst",
                     "category": "Per Simulation Results",
-                    "labels": '{"figure": "Conduit flow", "sa_id": "{sa_id}", "event_id": "{event_id}"}',
+                    "labels": (
+                        '(lambda w: {"figure": "Conduit flow", '
+                        '"sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), '
+                        '"event": _report_label_value(_EVENT_LABELS, w.event_id, "event")})'
+                    ),
                 },
                 wildcards=("sa_id", "event_id"),
                 resources_yaml="mem_mb=4000, time_min=15",

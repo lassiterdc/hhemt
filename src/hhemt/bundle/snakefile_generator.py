@@ -28,6 +28,7 @@ from typing import Literal
 
 import yaml
 
+from hhemt.report_plot_ids import LABEL_GLOBALS_BLOCK
 from hhemt.workflow import (
     RuleEmissionContext,
     RuleSpec,
@@ -288,6 +289,7 @@ def _build_preamble() -> str:
         '    _toolkit_version = _pkg_version("hhemt")\n'
         "except Exception:\n"
         '    _toolkit_version = "unknown"\n'
+        + LABEL_GLOBALS_BLOCK
     )
 
 

@@ -47,7 +47,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from hhemt.report_plot_ids import plot_output_template as _plot_output_template
+from hhemt.report_plot_ids import (
+    LABEL_GLOBALS_BLOCK,
+)
+from hhemt.report_plot_ids import (
+    plot_output_template as _plot_output_template,
+)
 from hhemt.workflow import (
     _resolve_rule_all_extensions,
     _scenario_summaries_present,
@@ -288,6 +293,7 @@ report: "report/workflow_description.rst"
 
 SIM_IDS = {available_event_ids!r}
 ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
+{LABEL_GLOBALS_BLOCK}
 
 rule all:
     input:

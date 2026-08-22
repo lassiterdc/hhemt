@@ -248,6 +248,7 @@ def apply_post_process_surgery(
     navbar_text: str | None = None,
     category_order: list[str] | None = None,
     sa_labels: dict[str, str] | None = None,
+    event_labels: dict[str, str] | None = None,
 ) -> str:
     """Apply all React-bundle post-process replacements and return modified text.
 
@@ -462,7 +463,7 @@ def apply_post_process_surgery(
     # intact so links/downloads keep working; the charset excludes "/" and ":" so paths/URLs
     # never match, and the base64 figure blob carries no plain `"name": "<stem>.ext"` fragment.
     def _humanize_card_name(m):
-        return '"name": "' + humanize_plot_id(m.group(1), sa_labels) + '"'
+        return '"name": "' + humanize_plot_id(m.group(1), sa_labels, event_labels) + '"'
 
     html_text = re.sub(r'"name": "([A-Za-z0-9_.]+\.(?:html|png|svg))"', _humanize_card_name, html_text)
 
@@ -492,6 +493,7 @@ def apply_post_process_surgery_to_zip(
     navbar_text: str | None = None,
     category_order: list[str] | None = None,
     sa_labels: dict[str, str] | None = None,
+    event_labels: dict[str, str] | None = None,
 ) -> None:
     """Apply post-process surgery to `analysis_report/report.html` inside a zip.
 
@@ -532,6 +534,7 @@ def apply_post_process_surgery_to_zip(
             navbar_text=navbar_text,
             category_order=category_order,
             sa_labels=sa_labels,
+            event_labels=event_labels,
         )
         inner_html.write_text(modified)
         # Re-zip. shutil.make_archive writes `<base>.zip` from `root_dir`.

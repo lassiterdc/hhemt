@@ -38,6 +38,7 @@ from hhemt.config.hpc_system import (
 from hhemt.exceptions import ConfigurationError, WorkflowError
 from hhemt.report_plot_ids import (
     _OUTPUT_EXT_BY_RENDERER,
+    LABEL_GLOBALS_BLOCK,
 )
 from hhemt.report_plot_ids import (
     output_ext_for as _output_ext_for,
@@ -2753,6 +2754,7 @@ report: "report/workflow_description.rst"
 
 SIM_IDS = {event_ids!r}
 ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
+{LABEL_GLOBALS_BLOCK}
 
 rule all:
     input:
@@ -9236,6 +9238,7 @@ def _sensitivity_source_paths(wildcards):
 
         helpers = f"""
 ILOC_BY_EVENT_ID_BY_SA = {iloc_by_event_id_by_sa!r}
+{LABEL_GLOBALS_BLOCK}
 
 def _per_sim_per_sa_flood_depth_sources(wildcards):
     from hhemt.report_renderers._figure_emission import (

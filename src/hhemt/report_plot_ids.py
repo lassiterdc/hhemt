@@ -202,7 +202,135 @@ def sa_labels_from_status(analysis_dir) -> dict[str, str]:
     return out
 
 
-def humanize_plot_id(plot_id: str, sa_labels=None) -> str:
+#: The toolkit-canonical event display-label column. `weather_event_label_column`
+#: names the SOURCE column in the user's events CSV; `_project_events_table`
+#: renames it to this literal at ingress, so every downstream consumer keys on one
+#: name and none of them can disagree about what the column is called.
+EVENT_LABEL_COLUMN = "event_label"
+
+
+def event_display_name(analysis, event_iloc) -> str | None:
+    """``event_iloc`` -> configured human display name, or ``None``.
+
+    Reads the label off ``analysis.df_sims``, projected at analysis construction,
+    so this performs no file open: a renderer calling it inside ``render()``
+    incurs no ``audit_renderer_io`` declared-source obligation.
+
+    NEVER raises. An unset ``weather_event_label_column``, an absent column, an
+    out-of-range ``event_iloc`` or an empty cell all yield ``None`` and the caller
+    falls back to its current text. Partial coverage is legal by design.
+    """
+    try:
+        df = analysis.df_sims
+        if EVENT_LABEL_COLUMN not in df.columns or event_iloc not in df.index:
+            return None
+        value = df.loc[event_iloc, EVENT_LABEL_COLUMN]
+    except Exception:  # noqa: BLE001 -- presentation must never fail a render
+        return None
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def event_page_reference(analysis, event_iloc) -> str:
+    """The reader-facing event reference used on the per-simulation page.
+
+    Carries BOTH identifiers the reader needs and neither one the reader does not:
+    the human label for reading the figure, and the `event_iloc` integer for the
+    spoken cross-reference an operator makes while doing EDA with the report open
+    ("let's look at event iloc 3"). The `event_id` SLUG is deliberately absent --
+    it is unspeakable and it already appears on the caption, which is the surface
+    that maps a figure to `sims/{event_id}/` and its `_status` flags.
+
+    When no label resolves the return value is `f"event {event_iloc}"`, which is
+    byte-identical to the text every current consumer already interpolates -- so an
+    unconfigured analysis renders unchanged at every call site with no per-site
+    fallback expression.
+    """
+    label = event_display_name(analysis, event_iloc)
+    return f"{label} (event {event_iloc})" if label else f"event {event_iloc}"
+
+
+def event_labels_from_status(analysis_dir) -> dict[str, str]:
+    """``{event_id slug: display label}`` from scenario_status.csv, or ``{}``.
+
+    The event-axis twin of ``sa_labels_from_status``, and deliberately the same
+    shape: the CSV ships in every bundle AND sits in every live analysis dir, so
+    ONE reader serves the source-side and bundle-side callers alike.
+
+    The slug is the basename of ``scenario_directory`` -- the same string
+    ``compute_event_id_slug`` produced when the scenario directory was created --
+    which is what makes this map joinable to the ``evt.{event_id}`` segment of a
+    canonical plot ID without re-deriving the slug from the indexer columns.
+
+    NEVER raises: an absent or unreadable CSV yields ``{}``, and the caller then
+    falls back to today's text, so a bundle without the CSV renders unchanged.
+    """
+    import csv as _csv
+    from pathlib import Path as _Path
+
+    path = _Path(analysis_dir) / "scenario_status.csv"
+    if not path.exists():
+        return {}
+    out: dict[str, str] = {}
+    try:
+        with path.open() as fh:
+            for row in _csv.DictReader(fh):
+                scen_dir = str(row.get("scenario_directory") or "")
+                label = str(row.get(EVENT_LABEL_COLUMN) or "").strip()
+                if not scen_dir or not label:
+                    continue
+                out[_Path(scen_dir).name] = label
+    except (OSError, ValueError, KeyError):
+        return {}
+    return out
+
+
+def report_label_value(mapping, key, fallback_prefix) -> str:
+    """One resolved, brace-safe value for a Snakemake ``report(labels=...)`` entry.
+
+    Two jobs, both of which must happen at the same place. It resolves the display
+    label for `key`, falling back to `f"{fallback_prefix} {key}"` -- which is the raw
+    identifier under a readable prefix, so an unconfigured analysis still reads
+    sensibly. And it escapes braces, because `expand_labels` re-expands every
+    resolved label VALUE through `apply_wildcards`, so a user-authored label
+    containing `{` or `}` would be read as a wildcard template and abort the render
+    with `WorkflowError: Failed to resolve wildcards`.
+
+    NEVER raises: a missing key, an empty value, or a non-dict mapping all yield the
+    fallback, so a report renders with raw identifiers rather than failing.
+    """
+    try:
+        value = (mapping or {}).get(key)
+    except Exception:  # noqa: BLE001 -- presentation must never fail a render
+        value = None
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        text = f"{fallback_prefix} {key}"
+    return text.replace("{", "{{").replace("}", "}}")
+
+
+#: Snakefile preamble text emitted VERBATIM by every generator that writes rules
+#: carrying `report(labels=...)`. Read at Snakefile PARSE time rather than frozen at
+#: generation time, because `scenario_status.csv` is written by the
+#: `export_scenario_status` RULE -- so at generation time it does not yet exist and a
+#: frozen map would be empty on a first run. `workflow.basedir` is the Snakefile's own
+#: directory, which is the analysis dir source-side and the bundle root bundle-side, so
+#: one block serves every generator with no path threading.
+LABEL_GLOBALS_BLOCK = """
+from hhemt.report_plot_ids import (
+    event_labels_from_status as _event_labels_from_status,
+    report_label_value as _report_label_value,
+    sa_labels_from_status as _sa_labels_from_status,
+)
+
+_EVENT_LABELS = _event_labels_from_status(workflow.basedir)
+_SA_LABELS = _sa_labels_from_status(workflow.basedir)
+"""
+
+
+def humanize_plot_id(plot_id: str, sa_labels=None, event_labels=None) -> str:
     """Deterministic plot-id -> human display label (K1).
 
     Parses the ADR-2 grammar (segments joined by "__"; "." within a segment) and
@@ -232,7 +360,10 @@ def humanize_plot_id(plot_id: str, sa_labels=None) -> str:
             _sa = seg[3:]
             extras.append((sa_labels or {}).get(_sa) or f"sub-analysis {_sa}")
         elif seg.startswith("evt."):
-            extras.append(f"event {seg[4:]}")
+            # Mirrors the sa. branch above: a supplied display label wins, the raw
+            # slug is the fallback, so every non-threading caller renders unchanged.
+            _evt = seg[4:]
+            extras.append((event_labels or {}).get(_evt) or f"event {_evt}")
         else:
             # descriptor: "{independent_var}.vs.total" -> "independent var vs total runtime"
             desc = seg.replace(".vs.total", " vs total runtime").replace(".", " ").replace("_", " ")

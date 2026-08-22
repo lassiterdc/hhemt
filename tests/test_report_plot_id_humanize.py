@@ -83,3 +83,25 @@ def test_labels_are_model_fungible():
 
     stem = canonical_plot_id("config_diff_maps")
     assert humanize_plot_id(stem + ".html") == humanize_plot_id(stem)
+
+
+def test_event_arm_uses_a_supplied_label():
+    """R2-4: the evt. segment mirrors the sa. segment — a supplied map wins."""
+    from hhemt.report_plot_ids import humanize_plot_id
+
+    stem = "peak_flood_depth__evt.year.9"
+    labels = {"year.9": "2009-11-11 07:10 - Ida remnant"}
+    assert humanize_plot_id(stem, None, labels) == (
+        "Peak flood depth: 2009-11-11 07:10 - Ida remnant"
+    )
+
+
+def test_event_arm_falls_back_to_the_slug_when_no_map_is_supplied():
+    """The no-map path must be byte-identical to the pre-R2-4 output, which is what
+    keeps every non-threading caller rendering unchanged."""
+    from hhemt.report_plot_ids import humanize_plot_id
+
+    stem = "peak_flood_depth__evt.year.9"
+    assert humanize_plot_id(stem) == "Peak flood depth: event year.9"
+    assert humanize_plot_id(stem, None, {}) == "Peak flood depth: event year.9"
+    assert humanize_plot_id(stem, None, {"other": "x"}) == "Peak flood depth: event year.9"

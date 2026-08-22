@@ -1104,9 +1104,10 @@ class TRITONSWMM_sensitivity_analysis:
         # S4: resolve sa_id card names to derived compute-config labels. Threaded to
         # BOTH branches -- the html and the zip carry the same card names, and
         # resolving one alone would ship a divergence between two delivered artifacts.
-        from .report_plot_ids import sa_labels_from_status
+        from .report_plot_ids import event_labels_from_status, sa_labels_from_status
 
         _sa_labels = sa_labels_from_status(self.analysis_paths.analysis_dir)
+        _event_labels = event_labels_from_status(self.analysis_paths.analysis_dir)
         try:
             if format == "html":
                 out.write_text(
@@ -1115,6 +1116,7 @@ class TRITONSWMM_sensitivity_analysis:
                         navbar_text=_navbar,
                         category_order=_category_order,
                         sa_labels=_sa_labels,
+                        event_labels=_event_labels,
                     )
                 )
             else:
@@ -1123,6 +1125,7 @@ class TRITONSWMM_sensitivity_analysis:
                     navbar_text=_navbar,
                     category_order=_category_order,
                     sa_labels=_sa_labels,
+                    event_labels=_event_labels,
                 )
         except Exception:
             pass

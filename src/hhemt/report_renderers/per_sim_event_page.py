@@ -114,10 +114,12 @@ def render(
         )
 
     interactive = report_cfg.interactive
+    from hhemt.report_plot_ids import event_page_reference
+
     html_text = render_scrollable_report(
         figures,
         [],
-        title=f"Simulation results - event {event_iloc}",
+        title=f"Simulation results - {event_page_reference(analysis, event_iloc)}",
         brand=None,
         plotly_js_mode=interactive.plotly_js_mode,
         tabulator_js_mode=interactive.tabulator_js_mode,

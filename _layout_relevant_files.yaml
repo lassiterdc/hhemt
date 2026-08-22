@@ -245,3 +245,20 @@ non_breaking_allowlist:
       on-disk analysis-tree layout and no consolidated-output field; nothing under
       analysis_dir/ changes shape. Same class as case_manifest.py / reprex_config.py /
       reprex_taxonomy.py.
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      per-sim-event-labeling -- ADDITIVE OPTIONAL weather_event_label_column field
+      (str | None, default None) naming a presentation column on the existing
+      weather_events_to_simulate CSV. Pure input-config schema; adds no on-disk
+      analysis-tree layout, no _version.json field, and no consolidated-output
+      variable. Every existing config omits it and validates unchanged under
+      extra="forbid". Same class as the eda_config and remove_after_processing
+      entries above.
+  - path: src/hhemt/report_plot_ids.py
+    justification: >-
+      per-sim-event-labeling -- ADDITIVE event_display_name(analysis, event_iloc)
+      resolver co-located with sa_labels_from_status. Touches NO figure stem: it
+      references neither canonical_plot_id, plot_output_template, nor
+      _OUTPUT_EXT_BY_RENDERER, so the C-LAYOUT property this file is listed for
+      (figure filenames) is untouched. Same class as the additive
+      _OUTPUT_EXT_BY_RENDERER-key entry above.
