@@ -1255,7 +1255,11 @@ def _mounted_tabulator_table(
     container_id: str,
     header_tooltips: tuple[str, ...] = (),
 ) -> _MountedTable:
-    """Build one Tabulator fragment from `_sortable_grid_table`'s (headers, rows) shape.
+    """Build one Tabulator fragment from a (headers, rows) pair — `headers` a list of column
+    titles, `rows` a list of equal-length row lists whose cells are PRE-ESCAPED HTML.
+
+    That shape is inherited from `_sortable_grid_table`, the vanilla-JS shim this page used
+    before [Q160](7); the shim is DELETED, so the name is history rather than a pointer.
 
     `[Q160]`(7). The run-timeline and SLURM-efficiency tables converge on the appendix's
     Tabulator data grid, per the user's ruling. `column_panel=True` matches
@@ -1490,7 +1494,10 @@ def _config_field_tooltips() -> dict[str, str]:
 def _df_for(
     headers: list[str], rows: list[list[str]], tips: dict[str, list[str]]
 ) -> pd.DataFrame:
-    """Reshape `_sortable_grid_table`'s (headers, rows) into Tabulator's row-dict model.
+    """Reshape a (headers, rows) pair into Tabulator's row-dict model.
+
+    The (headers, rows) shape is inherited from the deleted `_sortable_grid_table` shim; the
+    name is retained as history and no longer resolves to a symbol in this file.
 
     Cells are PRE-ESCAPED HTML fragments (badges, `<code>`, `<strong>`), so every
     column is rendered with `formatter: "html"` at the call site.
