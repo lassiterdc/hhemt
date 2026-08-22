@@ -11,19 +11,19 @@ later correction ([Q149]).
       {analysis_dir}/ro-crate-metadata.json (the read-model persisted at
       consolidation; Decision D1). Excludes the volatile startTime/agent
       (producer hostname + wall-clock) graph fields.
-  (2) Reproduction guide  -- every config field grouped USER=Supply /
+  (2) Data availability   -- whether the post-processing reclaim was recorded
+      and is consistent, projected from the `Data availability` check in the
+      SAME {analysis_dir}/validation_report.json the Errors-and-Warnings
+      renderer reads (ADR-14 D1: no second read-model). Graceful-absent on a
+      tree consolidated before the reclaim shipped.
+  (3) Reproduction guide  -- every config field grouped USER=Supply /
       HPC=Amend / EXPERIMENT=Keep via reprex_taxonomy.all_field_bucket
       (pure config-SCHEMA introspection; placeholders only, zero-user-info).
-  (3) SLURM efficiency    -- the UNION of every globbed
-      slurm_efficiency_report_*.csv (Decision D2), enriched with the
-      human-readable rule purpose from _status/*.flag.json and the hardware /
-      concurrency columns from scenario_status.csv. EMPTY on the producing run
-      (each CSV is written at Snakemake teardown, AFTER render_report);
-      populates on a later re-render / reprocess. This is inherent, not a
-      defect. The union is load-bearing: each CSV covers exactly ONE Snakemake
-      invocation (the plugin builds it from `sacct --name={run_uuid}`), so the
-      former latest-by-mtime selection showed only the most recent
-      invocation's jobs -- on a re-render, the render jobs and nothing else.
+
+  The run-timeline and SLURM-efficiency tables are NOT on this page. `[Q160]`(7)
+  moved them to `workflow_performance.py`, which imports `_build_slurm_efficiency_html`
+  and the page chrome from here; the section-title tuple for that page is declared
+  beside `_SECTION_TITLES` below for the single-declaration reason stated there.
 
 Mostly-static inline-CSS HTML with NO network dependency. The Reproduction Guide
 tables are Tabulator data grids so their columns are user-resizable ([Q146]/[Q148]),
@@ -36,9 +36,11 @@ elsewhere. NOTE for a maintainer reading `hhemt architecture.md`: its Gotcha 51 
 inline bundling as unimplemented and is STALE as of this change.
 
 Renderer-IO audit (Gotcha 53): the ONLY files opened during render() are the
-declared sources -- the RO-Crate sidecar and (when present) the one globbed
-SLURM efficiency CSV. Globbing fires os.scandir, not open, so it is
-audit-invisible. The reprex taxonomy is pure in-memory introspection.
+declared sources -- the RO-Crate sidecar, the consolidated store (metadata only,
+for the group hierarchy), and validation_report.json. The SLURM efficiency CSV is
+NO LONGER among them: `[Q160]`(7) moved that read to workflow_performance.py, which
+declares it in its own source_paths. The reprex taxonomy is pure in-memory
+introspection.
 """
 
 from __future__ import annotations
@@ -2983,6 +2985,13 @@ def _build_slurm_efficiency_html(
     recovery: dict[str, dict[str, dict[str, str]]] | None = None,
 ) -> _MountedTable:
     """Render the UNION of every efficiency report at JOB grain ([Q145]), reduced per [Q153].
+
+    The union is load-bearing: each CSV covers exactly ONE Snakemake invocation (the
+    plugin builds it from `sacct --name={run_uuid}`), so the former latest-by-mtime
+    selection showed only the most recent invocation's jobs -- on a re-render, the render
+    jobs and nothing else. The table is EMPTY on the producing run, because each CSV is
+    written at Snakemake teardown AFTER the report renders; it populates on a later
+    re-render or reprocess. That is inherent, not a defect.
 
     `[Q160]`(7): returns a `_MountedTable` rather than a bare string, because the table is
     a Tabulator fragment now. The degenerate branches (no CSV text, no job rows) carry a

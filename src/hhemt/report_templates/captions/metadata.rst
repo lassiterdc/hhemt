@@ -7,13 +7,16 @@ Experiment provenance and reproduction metadata for **{{ snakemake.config.analys
   written at consolidation. The verifiability anchors — code git-SHA, SIF sha256, and
   input digests — are called out at the top. The producer's hostname and wall-clock
   are deliberately excluded so this page is safe to ship inside a render bundle.
+- **Data availability** — whether the post-processing reclaim was recorded and is
+  consistent, projected from the ``Data availability`` check in the same
+  ``validation_report.json`` the Errors-and-Warnings section reads. Reclaimed artifact
+  classes were removed deliberately, after the toolkit verified the corresponding
+  summary outputs were present and openable, so an absent timeseries or raw output here
+  is a disclosed reclaim rather than a loss.
 - **Reproduction guide** — every configuration field grouped by what a reproducer must
   do with it: *supply* (user-specific, never bundled), *amend* (HPC-specific, bundled
   but machine-dependent), or *keep* (experiment-defining). Values shown are schema
   descriptions and placeholders only, never the producing user's configuration.
-- **SLURM efficiency** — the resource-utilization report for SLURM executions. It is
-  finalized at workflow teardown, *after* this report renders, so it is expected to be
-  empty on the run that produces this page and populates on any later re-render.
 
 **Sources:**
 

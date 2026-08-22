@@ -1,6 +1,6 @@
 Simulation results for scenario **{{ snakemake.wildcards.event_id }}** — one scrollable page carrying every model's panels for this event.
 
-Scroll the page rather than clicking between figures: each enabled model gets its own header, in the order **TRITON-SWMM**, **SWMM**, **TRITON**, and each header is followed by that model's applicable panels.
+Scroll the page rather than clicking between figures: each enabled model gets its own header, in the order **TRITON**, **TRITON-SWMM**, **SWMM**, and each header is followed by that model's applicable panels. That order puts the two depth maps adjacent and the two conduit figures adjacent, so like panels can be compared without scrolling past an unlike one.
 
 **Which sections appear is derived from the models this analysis ran, not fixed.** The two panel families cover different model sets because the models produce different things: peak flood depth needs a 2D depth field, which only the TRITON-bearing arms produce, while conduit flow needs a pipe network, which only the SWMM-bearing arms produce. So depth covers **TRITON-SWMM** and **TRITON**, conduit flow covers **TRITON-SWMM** and **SWMM**, and a three-model analysis yields four sections. A model that ran but has no applicable panel family is absent from this page by construction rather than dropped silently.
 
