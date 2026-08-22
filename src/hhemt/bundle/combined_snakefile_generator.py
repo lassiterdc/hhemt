@@ -458,7 +458,35 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                     report_kwargs={
                         "caption": "report/captions/_harvested.rst",
                         "category": category,  # the figure's ORIGINAL category (NO base-experiment category)
-                        "subcategory": base,  # clean/resume grouped as a subcategory within the category
+                        # Driver: the user's combined-report navigation directive, quoted in the
+                        # session sidequest `# Sidequest 0 —
+                        # combined-report-loses-child-navigation-and-collapses-figures`. It carries
+                        # NO [Qn] ledger tag -- it is a sidequest-scoped directive, not a Part-10
+                        # ruling -- so it is cited by name rather than by tag. Verbatim: "the
+                        # categories are benchmarking, byte for byte comparison, and compute config
+                        # EDA which are wiped out by the combine it seems", and "preserve the same
+                        # exact structure of the individual reports as nearly as possible".
+                        #
+                        # The child's OWN subcategory is composed with the experiment id
+                        # rather than discarded. `_figures_of` already harvests it (it is the third
+                        # tuple element, destructured as `subcategory` at the top of this loop) and
+                        # this line previously dropped it on the floor, which is what destroyed the
+                        # child's `Benchmarking` / `Compute-config EDA` / `Byte-for-byte comparison`
+                        # grouping in the combined report.
+                        #
+                        # Composed rather than nested because the engine offers exactly TWO
+                        # navigation levels -- `report(value, caption, category, subcategory,
+                        # labels, patterns, htmlindex)`, verified by introspection against the
+                        # installed snakemake 9.15.0 -- so the user's three-level
+                        # `Key Results -> synth_cc_resume -> Benchmarking` is unreachable. This
+                        # renders it as `Key Results -> [synth_cc_resume — Benchmarking]`: both
+                        # tokens, in his order, one click instead of two.
+                        #
+                        # The `base`-only fallback is load-bearing, not defensive: several figures
+                        # carry NO child subcategory (`_TMPL_SYSTEM_OVERVIEW` and
+                        # `_TMPL_DISK_UTILIZATION` declare `category` and no `subcategory`), and an
+                        # unconditional compose would give them a trailing-em-dash label.
+                        "subcategory": f"{base} — {subcategory}" if subcategory else base,
                         # NO "figure" facet here. On a harvested page the report result's own
                         # NAME is already humanize_plot_id(plot_id), so a facet carrying the
                         # same string restates the name rather than filtering by anything, and
@@ -502,14 +530,43 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         # row -- measured 18 of them, and NO result populated all three.
                         # Absent facets are now OMITTED rather than emitted empty.
                         "labels": _json.dumps(
-                            _plot_id_facets(
-                                plot_id,
-                                models=(
-                                    "TRITON-SWMM + TRITON"
-                                    if tri_html is not None
-                                    else ("TRITON-SWMM only" if ts_eid else "TRITON only")
+                            # `figure` FIRST and unconditional. The comment above said a
+                            # `figure` facet would "restate the name rather than filtering by
+                            # anything, and render the label twice". Measured against the
+                            # INSTALLED engine (snakemake 9.15.0), that premise is false: the
+                            # result's `name` is rendered as visible text NOWHERE. Columns are
+                            # the union of LABEL keys (`abstract_results.js::getLabels`), and
+                            # `name`'s only consumer in the bundled front end is
+                            # `result_view_button.js`'s `download:` filename attribute. So
+                            # this facet restates nothing visible -- it is the only identifying
+                            # column the table can carry.
+                            #
+                            # It is also what stops figures disappearing. `getData()` keys each
+                            # ROW on the joined label tuple and then does
+                            # `entries.get(key).set(arrayKey(entryToggleLabels), path)`, so two
+                            # figures sharing a tuple overwrite at the same key and the earlier
+                            # one becomes unreachable -- silently, because the data layer still
+                            # carries it (`render_results` keys on file path, so record counts
+                            # look correct). Measured on the delivered combined report: 4
+                            # figures present and unreachable, including
+                            # "Cross-hardware raw byte identity over time" under Key Results.
+                            #
+                            # FIRST is load-bearing, not cosmetic. `getLabels()` orders columns
+                            # by first appearance; `entryLabelValues.sort()` makes key 0 the
+                            # primary sort; and `getData()` considers only `labels.slice(1)`
+                            # for promotion to a toggle control, so a first key can never be
+                            # silently converted from a column into a toggle.
+                            {
+                                "figure": humanize_plot_id(plot_id, _sa_labels),
+                                **_plot_id_facets(
+                                    plot_id,
+                                    models=(
+                                        "TRITON-SWMM + TRITON"
+                                        if tri_html is not None
+                                        else ("TRITON-SWMM only" if ts_eid else "TRITON only")
+                                    ),
                                 ),
-                            )
+                            }
                         ),
                     },
                     resources_yaml="mem_mb=1000, time_min=5",

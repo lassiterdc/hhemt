@@ -139,13 +139,20 @@ def test_harvest_stacks_both_models_one_spec_per_plot(tmp_path) -> None:
 
 
 def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> None:
-    """A harvested page's labels must not repeat the string Snakemake already shows as its name.
+    """A harvested page's labels must not repeat a string the reader can already SEE, and must
+    distinguish figures that share a group.
 
-    The result's NAME on these pages is `humanize_plot_id(plot_id)`. A `figure` facet built from
-    the same call therefore filters nothing and renders the label a second time, which is the
-    duplicate-heading defect the user reported. Asserted as the INVARIANT — no facet value equals
-    the humanized plot id — rather than as `"figure" not in labels`, so the test still fails if a
-    future facet is added under a different key carrying the same string.
+    HISTORY, because the retired half reads as ground truth otherwise. This test formerly also
+    forbade any facet value equal to `humanize_plot_id(plot_id)`, on the rationale that the
+    result's NAME is shown and a matching facet "renders the label a second time, which is the
+    duplicate-heading defect the user reported". Measured against the installed engine, the
+    result NAME is rendered as visible text nowhere — its only consumer is a download filename
+    attribute — so no facet can duplicate it, and the search for that user report found none.
+    The clause blocked the `figure` facet, which is the only column that can identify a row.
+
+    What survives is the half that was well-founded: the SUBCATEGORY is visible, so a facet
+    restating it renders twice and cannot partition. Asserted as the INVARIANT rather than as a
+    key-absence check, so a differently-keyed facet carrying the same value still fails.
     """
     bundle_root = tmp_path / "combined"
     # Iter-13 fixture widening. TWO plot ids of DIFFERENT ADR-2 segment shapes, because the
@@ -168,9 +175,21 @@ def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> No
     assert set(by_plot) == set(plot_ids), f"unexpected harvested stems {sorted(by_plot)}"
     for plot_id, spec in sorted(by_plot.items()):
         labels = json.loads(spec.report_kwargs["labels"])
-        name_shown = humanize_plot_id(plot_id)
-        restating = [k for k, v in labels.items() if v == name_shown]
-        assert not restating, f"facet(s) {restating} restate the result name {name_shown!r}"
+        # RETIRED, and the premise is named rather than deleted so it is not re-derived.
+        # This asserted that no facet value may equal `humanize_plot_id(plot_id)`, on the
+        # rationale that the result's NAME is already shown and a matching facet would
+        # "render the label a second time". Measured against the INSTALLED engine
+        # (snakemake 9.15.0): `res.name` is rendered as visible text NOWHERE. Its only
+        # consumer in the bundled front end is `result_view_button.js`'s `download:`
+        # filename attribute. `result_info.js` does not reference it; the result
+        # breadcrumb carries `resultPath`, not the name; the results TABLE builds its
+        # columns from label keys alone (`abstract_results.js::getLabels`). There is no
+        # first rendering for a facet to duplicate, so the invariant guarded nothing and
+        # BLOCKED the one facet that makes a row identifiable.
+        #
+        # The sibling assertion below is NOT retired and is the one that was well-founded:
+        # the SUBCATEGORY is visible (it is the menu item the reader clicked), so a facet
+        # restating it really does render twice and really cannot partition.
         # Iter-11 items 5+9: `experiment` was measured DEGENERATE at this level -- it restated
         # the subcategory, so the facet table rendered one row where a figure list belongs.
         # Asserted as the invariant rather than as a key list, so a differently-keyed correct
@@ -324,3 +343,69 @@ def test_composed_page_stem_humanizes_to_the_curated_label(tmp_path) -> None:
         f"composed-page card name lost its curated renderer-kind label: "
         f"humanize_plot_id({stem!r}) == {humanize_plot_id(stem)!r}"
     )
+
+
+# NAVIGATION SHAPE — a POINTER, deliberately not a declaration.
+#
+# The combined-report navigation shape is the user's open decision. The three candidates are:
+#
+#   option 2 eid-first (LANDED)  f"{base} — {child}" if child else base
+#   option 2 transposed          f"{child} — {base}" if child else base
+#   option 3                     child or base
+#
+# The ONE place that changes is `combined_snakefile_generator.py`'s `"subcategory":` value
+# (currently line 489). It is composed INLINE there and nowhere else.
+#
+# A `_SUBCATEGORY_SHAPE` lambda stood here and was RETIRED, because it was dead code carrying a
+# false claim: nothing consumed it, and its comment said the three options "differ in this lambda
+# and in nothing else" — so a future author would have edited it, watched this suite pass, and
+# changed nothing. Do not re-introduce it. Wiring it into the test below would be worse than
+# leaving it unused: that test asserts tuple DISTINCTNESS, which is invariant across all three
+# shapes by construction, so consuming a shape helper there would make the test look
+# navigation-sensitive while being unable to tell the options apart.
+
+
+def test_harvested_figures_sharing_a_group_carry_distinct_label_tuples(tmp_path) -> None:
+    """Two figures in ONE (category, subcategory) group must not share a label tuple.
+
+    This is the invariant behind the user's "some of the key results aren't showing up".
+    `abstract_results.js::getData` keys each rendered ROW on the joined label tuple and then
+    does `entries.get(key).set(arrayKey(entryToggleLabels), path)` — so two figures sharing a
+    tuple overwrite at the same key and the earlier one becomes UNREACHABLE. The data layer
+    still carries it (`render_results` keys on file path), so record counts look correct and
+    the loss is invisible to any check that counts figures. Measured on the delivered combined
+    report: 4 figures present and unreachable.
+
+    Asserted as distinct-tuple COUNT rather than as `"figure" in labels`, so a differently
+    keyed implementation that also disambiguates still passes, and so the assertion
+    discriminates on behaviour rather than on the new facet's name.
+    """
+    bundle_root = tmp_path / "combined"
+    # Two segment-less plot ids: `_plot_id_facets` derives no facet from either, so pre-fix
+    # both carry the identical single `models` facet and collide. Measured pre-fix: 2 figures,
+    # 1 distinct tuple.
+    for pid in ("system_overview", "disk_utilization"):
+        _write_child(bundle_root, "expA_tritonswmm", pid, _TS_HTML)
+        _write_child(bundle_root, "expA_triton", pid, _TRI_HTML)
+
+    specs = [
+        s
+        for s in _harvest_per_experiment_rule_specs(bundle_root)
+        if s.output_path_template.startswith("paired_figures/")
+    ]
+    assert len(specs) == 2, f"fixture yielded {len(specs)} harvested spec(s) — cannot discriminate"
+
+    groups: dict[tuple[str, str], list[tuple[str, tuple]]] = {}
+    for s in specs:
+        rk = s.report_kwargs
+        key = (rk["category"], rk["subcategory"])
+        tup = tuple(sorted(json.loads(rk["labels"]).items()))
+        groups.setdefault(key, []).append((PurePosixPath(s.output_path_template).stem, tup))
+
+    for key, members in groups.items():
+        distinct = {t for _, t in members}
+        assert len(distinct) == len(members), (
+            f"group {key}: {len(members)} figures collapse to {len(distinct)} rendered row(s). "
+            f"Colliding tuples render one row and the earlier figures are unreachable. "
+            f"Members: {[stem for stem, _ in members]}"
+        )
