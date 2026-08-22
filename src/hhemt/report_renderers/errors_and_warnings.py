@@ -141,6 +141,12 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "The characterized divergence between one GPU and one serial CPU rank stays within "
         "its disclosed magnitude band.",
     ),
+    "forcing tail influence": (
+        "Forcing tail influence",
+        "No cell reaches its peak water level after that event's forcing ended \u2014 a "
+        "regression detector for the window trim, since a simulation running past its "
+        "forcing holds the coastal boundary frozen at the last tabulated value.",
+    ),
 }
 
 #: The one cell an unregistered check name renders. NOT prose invented for a predicate

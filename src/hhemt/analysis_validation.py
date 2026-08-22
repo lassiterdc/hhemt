@@ -1677,6 +1677,61 @@ _RECLAIM_LOG_FIELDS: dict[str, str] = {
 }
 
 
+#: Minutes of slack allowed before a per-cell time-of-maximum counts as post-forcing.
+#: The terminal TRITON snapshot lands ON the forced end by construction -- post-trim the
+#: simulation duration IS the forcing extent -- so the comparison is an equality case in
+#: the normal state and the strict ``>`` is what keeps a healthy run green. That leaves a
+#: one-ULP hazard: ``time_of_max_wlevel_min`` is an accumulation of reporting-step
+#: multiples and visibly carries float error (measured on the synth fixture: 24.666666666666664
+#: for an exact 24.666666666666668), so a terminal snapshot drifting one ULP the other way
+#: would fire on EVERY healthy analysis. This tolerance is bounded on both sides rather than
+#: picked: ~1e-6 min is eight orders ABOVE the float64 ULP at these magnitudes
+#: (2.8e-14 min at 180 min) and eight orders BELOW the smallest reporting step anyone
+#: configures (seconds). It cannot mask the regression this check exists to find, which is
+#: a whole-simulation-scale overrun, not a microsecond.
+_FORCING_TAIL_TOLERANCE_MIN = 1e-6
+
+
+def _forced_extent_minutes(weather_nc, time_dim: str) -> float | None:
+    """Minutes spanned by a per-scenario sim_weather.nc time coordinate, or None.
+
+    THE INTERVAL COMES FROM THE COORDINATE, NEVER FROM A CONFIG FIELD. An earlier
+    form of this took the step COUNT from the weather axis and the step INTERVAL
+    from ``TRITON_reporting_timestep_s`` -- two different clocks. They coincide on
+    the Norfolk campaigns (weather step 120 s, reporting timestep 120 s), which is
+    exactly why the error was invisible where it was authored; on the synth fixture
+    (weather step 60 s, reporting timestep 10 s) it understated the extent 6x, so a
+    healthy 180-minute run reported a forced end of 30 minutes and classified nearly
+    the whole simulation as post-forcing. The consumer is the regression detector for
+    the window trim, whose whole value is being independent of the config under
+    suspicion, so a config-derived interval defeated the instrument rather than
+    merely mis-scaling it.
+
+    ``time_dim`` is a schema LABEL, not a clock -- it names which coordinate to read
+    and contributes no quantity to the arithmetic.
+
+    Returns None when the extent cannot be derived (missing coordinate, non-datetime
+    coordinate, fewer than two steps). The caller counts that as INDETERMINATE rather
+    than assuming a value, because a guessed extent in this check manufactures the
+    exact false positive it exists to detect.
+    """
+    import numpy as np
+    import xarray as xr
+
+    try:
+        with xr.open_dataset(weather_nc, engine="h5netcdf") as ds:
+            if time_dim not in ds.coords and time_dim not in ds.variables:
+                return None
+            values = ds[time_dim].values
+    except Exception:
+        return None
+    if values.ndim != 1 or values.size < 2:
+        return None
+    if not np.issubdtype(values.dtype, np.datetime64):
+        return None
+    return float((values[-1] - values[0]) / np.timedelta64(1, "m"))
+
+
 def check_forcing_tail_influence(analysis) -> CheckResult:
     """Aggregate: did any per-cell maximum occur AFTER that event's forcing ended?
 
@@ -1685,7 +1740,8 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
     Its live reachability case is a hotstart resume against a stale checkpoint cfg
     carrying the pre-fix sim_duration, which prep-time assertions have already
     passed by. The instrument is deliberately independent of the cfg under
-    suspicion: the forced extent is re-derived from the per-scenario sim_weather.nc.
+    suspicion: the forced extent is re-derived from the per-scenario sim_weather.nc
+    time COORDINATE -- both the span and the interval, never a config field.
 
     Honest limit, restated so it is not lost: a max occurring after the forcing
     ended proves the tail SET that maximum. It does not prove the tail was
@@ -1713,11 +1769,12 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
             indeterminate += 1
             continue
         try:
-            with xr.open_dataset(wx, engine="h5netcdf") as ds:
-                n_steps = int(ds.sizes[analysis.cfg_analysis.weather_time_series_timestep_dimension_name])
-            forced_end_min = (n_steps - 1) * (
-                analysis.cfg_analysis.TRITON_reporting_timestep_s / 60.0
+            forced_end_min = _forced_extent_minutes(
+                wx, analysis.cfg_analysis.weather_time_series_timestep_dimension_name
             )
+            if forced_end_min is None:
+                indeterminate += 1
+                continue
             zarr = xr.open_zarr(summaries[0], consolidated=False)
             tmx = zarr["time_of_max_wlevel_min"].isel(event_iloc=0).values.astype(float)
             mx = zarr["max_wlevel_m"].isel(event_iloc=0).values.astype(float)
@@ -1728,7 +1785,7 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
         wet = np.isfinite(tmx) & (mx > 0.01)
         if not wet.any():
             continue
-        after = int((tmx[wet] > forced_end_min).sum())
+        after = int((tmx[wet] > forced_end_min + _FORCING_TAIL_TOLERANCE_MIN).sum())
         if after:
             details.append(
                 {
