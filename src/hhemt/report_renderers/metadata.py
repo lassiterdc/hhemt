@@ -81,6 +81,17 @@ from hhemt.report_renderers._tabulator_defaults import (
 _VOLATILE_EXCLUDED_KEYS: frozenset[str] = frozenset({"startTime", "endTime", "agent"})
 
 _SIDECAR_FILENAME = "ro-crate-metadata.json"
+# HOST, NOT CALLER. This module DEFINES the SLURM-efficiency reader -- these three globs plus
+# `_load_job_recovery`, `_build_slurm_efficiency_html` and `_resolve_all_efficiency_csvs` -- but
+# since `[Q160]`(7) its ONLY caller is `report_renderers/workflow_performance.py`.
+# `metadata.render()` reaches none of them; the SLURM table renders on the Workflow performance
+# page. They stayed here rather than moving because moving them would have been a ~390-line
+# relocation that changes no behaviour and breaks `tests/test_job_purpose_map_tiering.py`'s
+# import; `workflow_performance.py` imports them instead.
+#
+# Stated at the definition because its absence has a measured cost: a `grep` for
+# `slurm_efficiency_report` returns this file, and two readers independently took that
+# LOCATION for the renderer's BEHAVIOUR and reached opposite conclusions from correct greps.
 _SLURM_EFF_RELDIR = ("logs", "slurm_efficiency_report")
 _SLURM_EFF_GLOB = "slurm_efficiency_report_*.csv"
 _SLURM_EFF_INNER_GLOB = "efficiency_report_*.csv"  # plugin nests the real CSV inside the .csv-named dir
@@ -3536,7 +3547,14 @@ def render(
     with prov.artist(
         axes_id="html_section",
         kind="table",
-        note="metadata page (RO-Crate provenance sidecar + reprex taxonomy + SLURM efficiency)",
+        # This string is SHIPPED, not a comment: `_provenance.py` serializes it to
+        # `manifest["artists"][i]["note"]` in the emitted `<stem>.manifest.json` and renders
+        # it into the human-readable provenance header. It named "SLURM efficiency", which
+        # `[Q160]`(7) moved to the Workflow performance page -- a false claim in an artifact
+        # rather than in a comment. It also named the reprex taxonomy, which is built outside
+        # any artist block. Scoped to what THIS block actually declares: the sidecar and the
+        # consolidated tree's producing stamps.
+        note="metadata page, provenance section (RO-Crate sidecar + consolidated-tree producing stamps)",
     ) as artist:
         artist.add_channel("provenance", ProvenanceRef(source_path=_SIDECAR_FILENAME))
         # `[Q160]`(7): the per-rule `_status/*.flag.json` read that used to sit here is

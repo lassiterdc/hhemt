@@ -1,12 +1,18 @@
 """Unit tests for the Metadata report renderer (ADR-14 / C10).
 
-HPC-free / compile-free: the renderer's only inputs are the persisted RO-Crate
-sidecar and (optionally) the SLURM efficiency CSV, so every case here is driven
-by a CRAFTED sidecar and a minimal analysis stand-in. Crafting the crate is not
-a convenience — it is the only way to prove the R3 volatile-field exclusion (we
-must plant a KNOWN hostname/wall-clock sentinel and assert it never surfaces)
-and to exercise the R7 crate-shape branches (native run, sensitivity master,
-empty inputs) that a single real fixture cannot produce.
+HPC-free / compile-free. `metadata.render()` reads exactly two files — the persisted
+RO-Crate sidecar and `validation_report.json` (the Data Availability section) — plus
+in-memory config introspection for the reproduction guide, which reads no file. So every
+case here is driven by a CRAFTED sidecar and a minimal analysis stand-in. Crafting the crate
+is not a convenience — it is the only way to prove the R3 volatile-field exclusion (we must
+plant a KNOWN hostname/wall-clock sentinel and assert it never surfaces) and to exercise the
+R7 crate-shape branches (native run, sensitivity master, empty inputs) that a single real
+fixture cannot produce.
+
+This module ALSO unit-tests `_build_slurm_efficiency_html` and its helpers directly. Those
+still live in `metadata.py`, but since `[Q160]`(7) their only CALLER is
+`workflow_performance.py` — the module HOSTS them, the renderer does not reach them. Do not
+read the SLURM coverage below as evidence that `render()` reads a SLURM CSV; it does not.
 
 End-to-end integration on the production render path is covered separately by
 tests/test_synth_04_multisim_with_snakemake.py and
