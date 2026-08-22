@@ -190,6 +190,27 @@ def _capture_binary_provenance(sub: "TRITONSWMM_analysis") -> dict | None:
 
 
 class TRITONSWMM_analysis:
+    @staticmethod
+    def _project_events_table(events_df, weather_event_indices, label_column):
+        """Project the events table to the indexers plus an optional display label.
+
+        Pure and side-effect-free so it is unit-testable without an analysis
+        instance. When `label_column` is falsy or absent from the frame the
+        result is byte-identical to the historical `.loc[:, weather_event_indices]`
+        projection, which is what makes the None default a true no-op.
+
+        The label column is RENAMED to EVENT_LABEL_COLUMN so every downstream
+        consumer keys on one toolkit-canonical literal rather than on the user's
+        chosen column name.
+        """
+        from hhemt.report_plot_ids import EVENT_LABEL_COLUMN
+
+        projection = list(weather_event_indices)
+        if label_column and label_column in events_df.columns and label_column not in projection:
+            out = events_df.loc[:, [*projection, label_column]]
+            return out.rename(columns={label_column: EVENT_LABEL_COLUMN})
+        return events_df.loc[:, projection]
+
     def __init__(
         self,
         analysis_config_yaml: Path,
@@ -318,9 +339,16 @@ class TRITONSWMM_analysis:
         # preserve the construction-time contract relied on by callers/tests.
         self.analysis_paths.simulation_directory.mkdir(parents=True, exist_ok=True)
 
-        self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
-            :, self.cfg_analysis.weather_event_indices
-        ]
+        # Read at CONSTRUCTION, deliberately: audit_renderer_io wraps only
+        # module.render(...), so a construction-time read incurs no declared-source
+        # obligation at any renderer. _retrieve_weather_indexer_using_integer_index
+        # re-projects to weather_event_indices and is NOT widened, so
+        # compute_event_id_slug and every sims/{event_id}/ path are unaffected.
+        self.df_sims = self._project_events_table(
+            pd.read_csv(self.cfg_analysis.weather_events_to_simulate),
+            self.cfg_analysis.weather_event_indices,
+            self.cfg_analysis.weather_event_label_column,
+        )
         self._sim_run_objects: dict = {}
         self._sim_run_processing_objects: dict = {}
         self.backend = "gpu" if self.cfg_analysis.run_mode == "gpu" else "cpu"
@@ -3123,9 +3151,10 @@ class TRITONSWMM_analysis:
         # S4: resolve sa_id card names to derived compute-config labels. Threaded to
         # BOTH branches -- the html and the zip carry the same card names, and
         # resolving one alone would ship a divergence between two delivered artifacts.
-        from .report_plot_ids import sa_labels_from_status
+        from .report_plot_ids import event_labels_from_status, sa_labels_from_status
 
         _sa_labels = sa_labels_from_status(self.analysis_paths.analysis_dir)
+        _event_labels = event_labels_from_status(self.analysis_paths.analysis_dir)
         try:
             if format == "html":
                 out.write_text(
@@ -3134,6 +3163,7 @@ class TRITONSWMM_analysis:
                         navbar_text=_navbar,
                         category_order=_category_order,
                         sa_labels=_sa_labels,
+                        event_labels=_event_labels,
                     )
                 )
             else:
@@ -3142,6 +3172,7 @@ class TRITONSWMM_analysis:
                     navbar_text=_navbar,
                     category_order=_category_order,
                     sa_labels=_sa_labels,
+                    event_labels=_event_labels,
                 )
         except Exception:
             pass

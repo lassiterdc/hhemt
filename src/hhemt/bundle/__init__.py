@@ -392,9 +392,10 @@ class Bundle:
         # S4: resolve sa_id card names to derived compute-config labels, from the
         # bundle's own scenario_status.csv. Threaded to BOTH branches so the html
         # and the zip cannot diverge on card names.
-        from ..report_plot_ids import sa_labels_from_status
+        from ..report_plot_ids import event_labels_from_status, sa_labels_from_status
 
         _sa_labels = sa_labels_from_status(self._root)
+        _event_labels = event_labels_from_status(self._root)
         try:
             if format == "html":
                 output_path.write_text(
@@ -403,6 +404,7 @@ class Bundle:
                         bundle_mode=True,
                         navbar_text=_navbar,
                         sa_labels=_sa_labels,
+                        event_labels=_event_labels,
                     )
                 )
             else:
@@ -411,6 +413,7 @@ class Bundle:
                     bundle_mode=True,
                     navbar_text=_navbar,
                     sa_labels=_sa_labels,
+                    event_labels=_event_labels,
                 )
         except Exception:
             pass

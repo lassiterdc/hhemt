@@ -248,6 +248,7 @@ def _compose_model_pair_page(
     tri_html: str | None,
     root_css_vars: str = "",
     sa_labels: dict[str, str] | None = None,
+    event_labels: dict[str, str] | None = None,
 ) -> str:
     """Compose ONE self-contained page STACKING the TRITON-SWMM figure (top) and its pure-TRITON
     counterpart (below, when present) as a data-viz .model-stack / .model-section[data-model] column
@@ -276,7 +277,8 @@ def _compose_model_pair_page(
         body += _section("triton", tri_html)
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
-        f"<title>{_html.escape(base_eid)} — {_html.escape(humanize_plot_id(plot_id, sa_labels))}</title>"
+        f"<title>{_html.escape(base_eid)} — "
+        f"{_html.escape(humanize_plot_id(plot_id, sa_labels, event_labels))}</title>"
         f"<style>{root_css_vars}\n{_MODEL_STACK_CSS}</style>"
         # Defined ONCE per composed page rather than inlined into each iframe's onload
         # attribute: one definition for both arms, and no attribute-escaping hazard around
@@ -326,13 +328,15 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
     # Built ONCE here rather than per figure: the harvest emits one page per
     # (base-experiment, plot_id) pair and re-reading per page would re-parse the same
     # CSVs for every figure.
-    from ..report_plot_ids import sa_labels_from_status
+    from ..report_plot_ids import event_labels_from_status, sa_labels_from_status
 
     _sa_labels: dict[str, str] = {}
+    _event_labels: dict[str, str] = {}
     _crates_dir = bundle_root / "child_crates"
     if _crates_dir.exists():
         for _c in sorted(p for p in _crates_dir.iterdir() if p.is_dir()):
             _sa_labels.update(sa_labels_from_status(_c))
+            _event_labels.update(event_labels_from_status(_c))
     import json as _json
     import re as _re
 
@@ -427,7 +431,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
             cf = counterpart.get(plot_id)
             tri_html = cf[4].read_text(encoding="utf-8", errors="replace") if cf is not None else None
             page_html = _compose_model_pair_page(
-                base, plot_id, ts_html, tri_html, root_css_vars, _sa_labels
+                base, plot_id, ts_html, tri_html, root_css_vars, _sa_labels, _event_labels
             )
             (paired_dir / _re.sub(r"[^A-Za-z0-9_.]", "_", base)).mkdir(parents=True, exist_ok=True)
             # Per-base SUBDIRECTORY, so the page's filename STEM is exactly the plot id: the
@@ -797,13 +801,15 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
         # the children instead. sa_ids are unique per child by construction, and a
         # collision would mean two children ran the same sub-analysis, in which case
         # either label is correct.
-        from ..report_plot_ids import sa_labels_from_status
+        from ..report_plot_ids import event_labels_from_status, sa_labels_from_status
 
         _sa_labels: dict[str, str] = {}
+        _event_labels: dict[str, str] = {}
         _crates = bundle_root / "child_crates"
         if _crates.exists():
             for _child in sorted(p for p in _crates.iterdir() if p.is_dir()):
                 _sa_labels.update(sa_labels_from_status(_child))
+                _event_labels.update(event_labels_from_status(_child))
         try:
             if fmt == "html":
                 output_path.write_text(
@@ -813,6 +819,7 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
                         navbar_text=_COMBINED_NAVBAR_TEXT,
                         category_order=category_order,
                         sa_labels=_sa_labels,
+                        event_labels=_event_labels,
                     )
                 )
             else:
@@ -822,6 +829,7 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
                     navbar_text=_COMBINED_NAVBAR_TEXT,
                     category_order=category_order,
                     sa_labels=_sa_labels,
+                    event_labels=_event_labels,
                 )
         except Exception:
             pass

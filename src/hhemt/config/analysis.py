@@ -558,6 +558,17 @@ class analysis_config(cfgBaseModel):
         ...,
         description="Path to a .csv file defining weather event index used for sensitivity. The columns must correspond to the sytem's weather_event_indices.",
     )
+    weather_event_label_column: str | None = Field(
+        None,
+        description=(
+            "Optional column name in weather_events_to_simulate carrying a human-readable "
+            "display name for each event (e.g. '2003-09-17 05:44 - Hurricane Isabel'). "
+            "Presentation only: the value NEVER enters weather_event_indices, the event_id "
+            "slug, a figure stem, or any path segment. The column is renamed to the toolkit "
+            "canonical name at projection, so downstream consumers never see this value. "
+            "None disables labelling and every report surface falls back to its current text."
+        ),
+    )
     analysis_description: str | None = Field(
         None,
         description="For readability.",
