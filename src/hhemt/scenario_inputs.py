@@ -303,7 +303,6 @@ class ScenarioInputGenerator:
             find_closest_dem_coord,
         )
 
-        weather_timeseries = self.cfg_analysis.weather_timeseries
         weather_event_indexers = self.scenario.weather_event_indexers
         weather_time_series_storm_tide_datavar = (
             self.cfg_analysis.weather_time_series_storm_tide_datavar
@@ -321,7 +320,12 @@ class ScenarioInputGenerator:
             .dropna()
         )[weather_time_series_storm_tide_datavar].to_frame()
 
-        tseries_diff_hrs = pd.Series(df_water_levels.index).diff().dt.seconds / 60 / 60  # type: ignore
+        # .dt.seconds is the SECONDS COMPONENT (0-86399) and silently wraps on a
+        # gap of >= 24 h; .dt.total_seconds() is the non-wrapping form. Contiguous
+        # steps are unaffected, but a .dropna()'d index is not guaranteed contiguous.
+        tseries_diff_hrs = (
+            pd.Series(df_water_levels.index).diff().dt.total_seconds() / 60 / 60  # type: ignore
+        )
         tseries_diff_hrs.loc[0] = 0
 
         df_water_levels["time_hr"] = tseries_diff_hrs.cumsum().values

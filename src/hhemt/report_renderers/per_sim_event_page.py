@@ -132,6 +132,7 @@ def render(
     source_paths = [
         analysis.analysis_paths.analysis_datatree_zarr,
         Path(sys_paths.dem_processed),
+        # FORCING-READ: render-hydrology
         Path(analysis.cfg_analysis.weather_timeseries),
     ]
     watershed = analysis._system.cfg_system.watershed_gis_polygon

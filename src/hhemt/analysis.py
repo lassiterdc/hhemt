@@ -2878,6 +2878,7 @@ class TRITONSWMM_analysis:
             base_cfg = rep.source_analysis.cfg_analysis
             # --- slice the real weather to the first N reporting frames (+endpoint) ---
             time_dim = base_cfg.weather_time_series_timestep_dimension_name
+            # FORCING-READ: test-subset-slice
             with xr.open_dataset(base_cfg.weather_timeseries, engine="h5netcdf") as wx:
                 wx_short = wx.isel({time_dim: slice(0, n_reporting_timesteps + 1)}).load()
             # Write the sliced weather to the _test/ root (sibling of group_0/), NOT

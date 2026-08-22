@@ -1677,6 +1677,82 @@ _RECLAIM_LOG_FIELDS: dict[str, str] = {
 }
 
 
+def check_forcing_tail_influence(analysis) -> CheckResult:
+    """Aggregate: did any per-cell maximum occur AFTER that event's forcing ended?
+
+    Post-trim this is unreachable through the normal path, which is the point --
+    it is a REGRESSION detector on the window trim, not an ongoing science check.
+    Its live reachability case is a hotstart resume against a stale checkpoint cfg
+    carrying the pre-fix sim_duration, which prep-time assertions have already
+    passed by. The instrument is deliberately independent of the cfg under
+    suspicion: the forced extent is re-derived from the per-scenario sim_weather.nc.
+
+    Honest limit, restated so it is not lost: a max occurring after the forcing
+    ended proves the tail SET that maximum. It does not prove the tail was
+    artefactual -- real inland routing continues after real forcing stops.
+
+    DISCLOSED DENOMINATOR: the summary names examined and indeterminate counts, so
+    a vacuous pass is legible in the artifact rather than reading as a verified good.
+    """
+    import numpy as np
+    import xarray as xr
+
+    from hhemt.scenario import compute_event_id_slug
+
+    sims_dir = Path(analysis.analysis_paths.simulation_directory)
+    details: list[dict] = []
+    examined = 0
+    indeterminate = 0
+
+    for i in range(int(analysis.n_scenarios)):
+        evt = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(i))
+        scen = sims_dir / evt
+        wx = scen / "sim_weather.nc"
+        summaries = sorted((scen / "processed").glob("*TRITON_summary.zarr"))
+        if not wx.exists() or not summaries:
+            indeterminate += 1
+            continue
+        try:
+            with xr.open_dataset(wx, engine="h5netcdf") as ds:
+                n_steps = int(ds.sizes[analysis.cfg_analysis.weather_time_series_timestep_dimension_name])
+            forced_end_min = (n_steps - 1) * (
+                analysis.cfg_analysis.TRITON_reporting_timestep_s / 60.0
+            )
+            zarr = xr.open_zarr(summaries[0], consolidated=False)
+            tmx = zarr["time_of_max_wlevel_min"].isel(event_iloc=0).values.astype(float)
+            mx = zarr["max_wlevel_m"].isel(event_iloc=0).values.astype(float)
+        except Exception:
+            indeterminate += 1
+            continue
+        examined += 1
+        wet = np.isfinite(tmx) & (mx > 0.01)
+        if not wet.any():
+            continue
+        after = int((tmx[wet] > forced_end_min).sum())
+        if after:
+            details.append(
+                {
+                    "event_id": evt,
+                    "cells_max_after_forcing": after,
+                    "wet_cells": int(wet.sum()),
+                    "forced_end_min": forced_end_min,
+                }
+            )
+
+    return CheckResult(
+        name="forcing tail influence",
+        level="aggregate",
+        passed=not details,
+        applicable=examined > 0,
+        instrument="summary_tier",
+        summary=(
+            f"examined {examined} scenario(s), {indeterminate} indeterminate; "
+            f"{len(details)} with a per-cell maximum attained after their forcing ended"
+        ),
+        details=details,
+    )
+
+
 def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
     """Aggregate: which per-scenario artifact classes were DELIBERATELY reclaimed.
 
@@ -1807,6 +1883,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_resume_schedule_honored(analysis),  # Phase 5: replay_t / n_resumes vs configured schedule
             check_eda_calc_ran(analysis),  # F4: enumerated EDA figures vs present eda/*.verdict.json
             check_data_availability(analysis),  # reclaim disclosure: which artifact classes were reclaimed
+            check_forcing_tail_influence(analysis),  # regression detector: maxima set after the forcing ended
         ]
         + _read_persisted_eda_verdicts(analysis)
     )

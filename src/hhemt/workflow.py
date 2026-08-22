@@ -2303,6 +2303,7 @@ rule process_{model_type}:
     output: "_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"
     log: "{log_dir_str}/sims/process_{model_type}_evt-{{event_id}}.log"
     group: "process_evt_{{event_id}}"
+    priority: 100
     conda: "{conda_env_path}"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -2449,6 +2450,7 @@ rule consolidate_scenario:
     output:
         flag="_status/f_consolidate_scenario_evt-{{event_id}}_complete.flag",
         du_sentinel="sims/{{event_id}}/_status/_du.json",
+    priority: 100
     log: "{log_dir_str}/sims/consolidate_scenario_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
     resources:

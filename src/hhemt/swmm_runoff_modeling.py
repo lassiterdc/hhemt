@@ -100,7 +100,6 @@ class SWMMRunoffModeler:
         for SWMM input. Files are written to the scenario's weather data directory.
         Updates the scenario log with paths to created files.
         """
-        weather_timeseries = self.cfg_analysis.weather_timeseries
         weather_event_indexers = self.scenario.weather_event_indexers
         subcatchment_raingage_mapping = (
             self.system.cfg_system.subcatchment_raingage_mapping
@@ -162,7 +161,6 @@ class SWMMRunoffModeler:
         weather_time_series_storm_tide_datavar = (
             self.cfg_analysis.weather_time_series_storm_tide_datavar
         )
-        weather_timeseries = self.cfg_analysis.weather_timeseries
         weather_event_indexers = self.scenario.weather_event_indexers
 
         sim_id_str = self.scenario.sim_id_str
@@ -371,7 +369,10 @@ class SWMMRunoffModeler:
                         if (
                             need_to_create_time_series
                         ):  # create first column with time in hours
-                            tseries = pd.Series(d_inflow.index).diff().dt.seconds / 60 / 60  # type: ignore
+                            # .dt.seconds wraps on a >= 24 h gap; use total_seconds().
+                            tseries = (
+                                pd.Series(d_inflow.index).diff().dt.total_seconds() / 60 / 60  # type: ignore
+                            )
                             tseries.iloc[0] = 0
                             d_time_series["time_hr"] = tseries.cumsum().values
                             need_to_create_time_series = False

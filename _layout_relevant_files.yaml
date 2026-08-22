@@ -40,7 +40,22 @@ non_breaking_allowlist:
       use-set was paths.py decl + scenario.py construction + 3 test assert-not-None +
       2 workflow.py comments), ScenarioPaths is a runtime dataclass that is never
       serialized, and no Snakemake rule, log JSON, zarr, fingerprint, or _version.json
-      references them. No path or layout changes.
+      references them. No path or layout changes. AND synthetic-event-window-padding —
+      _write_sim_weather_nc now trims the selected event to its union-of-finite extent
+      before writing sim_weather.nc, and prepare_scenario gains a cross-artifact
+      assertion (_assert_scenario_forcing_window_agreement) that raises when the forcing
+      files, the SWMM window and the TRITON cfg sim_duration disagree. A rectangular
+      weather NetCDF NaN-pads every event shorter than the longest one onto a shared
+      timestep axis, so the untrimmed selection ran every event for the longest event's
+      duration with both solvers holding the coastal boundary at the truncation value.
+      Provably non-breaking: only the LENGTH of the per-scenario sim_weather.nc changes.
+      No path, filename, zarr group, log field, Snakemake rule, fingerprint payload, or
+      _version.json value is added, removed, or renamed, and the trim is the identity on
+      an unpadded input. SIGNATURE-SCOPED as of this change: this entry was previously
+      path-keyed with no layout_signature, which made the exemption PERMANENT — every
+      later edit to this file passed Check B silently. Re-stamp layout_signature whenever
+      a genuinely non-breaking change lands; a breaking one must bump LAYOUT_VERSION.
+    layout_signature: "51f5daf83ed46b199976c32a20b3be45d7571eb9fe3321b5e7e446f4d50fcb8d"
   - path: src/hhemt/paths.py
     justification: >-
       resume-validity-and-cross-experiment-intercomparison Phase 3 — retire the
