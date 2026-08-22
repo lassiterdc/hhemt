@@ -343,6 +343,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
         _load_source_paths,
     )
     from hhemt.config.eda import _RETIRED_EDA_FIGURE_STEMS
+    from hhemt.eda._sensitivity_figures import _PENDING_EDA_FIGURE_STEMS
     from hhemt.report_renderers._reporting_sets import get_reporting_set
 
     def _figures_of(eid: str) -> list[tuple]:
@@ -375,6 +376,13 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                 # A retired EDA figure (config-drift) left on a no-wipe re-render dir and
                 # carried into the child bundle by the wholesale plots/ copytree. Never
                 # surface it in the combined report (config/eda.py::_RETIRED_EDA_FIGURE_STEMS).
+                continue
+            if fpath.stem in _PENDING_EDA_FIGURE_STEMS:
+                # A NOT-YET-DESIGNED /eda-spinup stub (eda/_sensitivity_figures.py::
+                # _pending_figure): a ~10 MB inlined-Plotly page carrying a title and no
+                # panels. Distinct from the retired case above -- these stems are LIVE
+                # opt-ins via eda.enabled_plots and must NOT be added to _EDA_DROPS, which
+                # would strip them at config load. Suppress at the COMBINE guard only.
                 continue
             sidecar = fpath.with_suffix(".manifest.json")
             plot_id = _json.loads(sidecar.read_text()).get("plot_id", fpath.stem) if sidecar.exists() else fpath.stem

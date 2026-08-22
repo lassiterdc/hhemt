@@ -66,3 +66,29 @@ def build_cross_hardware_magnitude_figure(root: Path) -> go.Figure:
     panels. The design pass fills this to read
     ``{root}/eda/eda_cross_hardware_magnitude.zarr``."""
     return _pending_figure("eda_cross_hardware_magnitude")
+
+
+#: Figure stems whose builder above still returns ``_pending_figure`` — a titled empty
+#: figure with no panels. The combine catch-all glob
+#: (bundle/combined_snakefile_generator.py::_figures_of) skips these so a ~10 MB
+#: Plotly-bundle stub never ships in the combined report as an "Other"-category figure.
+#:
+#: DELETE A STEM FROM THIS SET IN THE SAME EDIT that replaces its ``_pending_figure``
+#: return above. A stale entry here is a SILENT reverse-direction failure: the designed
+#: figure renders correctly in the per-arm eda_report.html and is suppressed only in the
+#: combined report, where nothing signals the omission.
+#:
+#: This is deliberately NOT ``config.eda._EDA_DROPS`` and NOT
+#: ``config.eda._RETIRED_EDA_FIGURE_STEMS``. These figures are NOT-YET-DESIGNED, not
+#: RETIRED. Measured: adding a stem to ``_EDA_DROPS`` STRIPS it from ``enabled_plots`` at
+#: config load and warns that it was "dropped (F8)", destroying the opt-in that
+#: config/eda.py documents; adding it to ``_RETIRED_EDA_FIGURE_STEMS`` alone leaves the
+#: opt-in intact but emits a DeprecationWarning whose renamed and dropped lists are BOTH
+#: empty, on every config load that opts in.
+_PENDING_EDA_FIGURE_STEMS: frozenset[str] = frozenset(
+    {
+        "eda_rank_sensitivity",
+        "eda_resume_sensitivity",
+        "eda_cross_hardware_magnitude",
+    }
+)
