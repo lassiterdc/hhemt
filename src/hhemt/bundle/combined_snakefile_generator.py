@@ -487,12 +487,22 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         # `_TMPL_DISK_UTILIZATION` declare `category` and no `subcategory`), and an
                         # unconditional compose would give them a trailing-em-dash label.
                         "subcategory": f"{base} — {subcategory}" if subcategory else base,
-                        # NO "figure" facet here. On a harvested page the report result's own
-                        # NAME is already humanize_plot_id(plot_id), so a facet carrying the
-                        # same string restates the name rather than filtering by anything, and
-                        # renders the label twice. The per-master rules can carry a "figure"
-                        # facet because their names and facets are independently authored;
-                        # this path derives both from one function.
+                        # RETIRED CLAIM, kept because naming a retirement beats deleting it.
+                        # A `figure` facet IS emitted here -- see `"labels"` below. What stood
+                        # here said it must not be, and that claim is FALSE against the
+                        # installed engine (snakemake 9.15.0): the result's NAME is rendered as
+                        # visible text nowhere, its only consumer being
+                        # `result_view_button.js`'s `download:` filename attribute, so no facet
+                        # can restate it. The full refutation and its measurements are at the
+                        # `figure` facet itself.
+                        #
+                        # The retired text, verbatim:
+                        #   "NO "figure" facet here. On a harvested page the report result's own
+                        #    NAME is already humanize_plot_id(plot_id), so a facet carrying the
+                        #    same string restates the name rather than filtering by anything, and
+                        #    renders the label twice. The per-master rules can carry a "figure"
+                        #    facet because their names and facets are independently authored;
+                        #    this path derives both from one function."
                         #
                         # Iter-11 items 5 and 9 (ONE defect, two symptoms). The former
                         # `experiment` facet was DEGENERATE at this level and that is what

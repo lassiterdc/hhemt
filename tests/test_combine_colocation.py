@@ -147,7 +147,12 @@ def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> No
     result's NAME is shown and a matching facet "renders the label a second time, which is the
     duplicate-heading defect the user reported". Measured against the installed engine, the
     result NAME is rendered as visible text nowhere — its only consumer is a download filename
-    attribute — so no facet can duplicate it, and the search for that user report found none.
+    attribute — so no facet can duplicate it. The user report IS real and is quoted at
+    `combined_snakefile_generator.py:290-292` ("there are redundant headers. ## synth_cc_clean
+    — Run metadata appears twice in a row"), but it describes the composed PAGE's <h2>
+    duplicating the report chrome's own name rendering — fixed at Iter-10 K by removing that
+    <h2> — and has nothing to do with a facet key in the labels table. The rationale borrowed a
+    real complaint and misattributed its mechanism.
     The clause blocked the `figure` facet, which is the only column that can identify a row.
 
     What survives is the half that was well-founded: the SUBCATEGORY is visible, so a facet
