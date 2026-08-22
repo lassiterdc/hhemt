@@ -46,6 +46,14 @@ def load_event_hydrology_data(
     time_var = cfg_analysis.weather_time_series_timestep_dimension_name
     with xr.open_dataset(weather_path, engine="h5netcdf") as master:
         ws = master.sel(**weather_event_indexers)
+        # A rectangular master file NaN-pads every event shorter than the longest
+        # one. Plotting the untrimmed axis renders the storm as a short trace on a
+        # multi-day axis; once the simulation window follows the forcing extent it
+        # also makes the panel's x-extent exceed the simulation's. Trim to the same
+        # union-of-finite extent the selection site applies.
+        _keep = ws.notnull().to_array().any("variable").values
+        if _keep.any() and not _keep.all():
+            ws = ws.isel({time_var: _keep})
         times = ws[time_var].values
         rainfall = ws[rain_var].values.astype(float)
         bc_water_level = (

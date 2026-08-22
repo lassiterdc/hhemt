@@ -390,6 +390,7 @@ def render(
     )
 
     weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+    # FORCING-READ: render-hydrology
     weather_path = Path(analysis.cfg_analysis.weather_timeseries)
     hydro_data = load_event_hydrology_data(
         weather_path,
@@ -843,6 +844,7 @@ def _build_peak_flood_depth_figure(
     wse_masked = wse_da.where(wet_mask)
 
     weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+    # FORCING-READ: render-hydrology
     weather_path = Path(analysis.cfg_analysis.weather_timeseries)
     hydro_data = load_event_hydrology_data(
         weather_path,

@@ -9,7 +9,7 @@ import warnings
 import hhemt.utils as utils
 from datetime import datetime
 from pathlib import Path
-from hhemt.exceptions import CompilationError, ConfigurationError
+from hhemt.exceptions import CompilationError, ConfigurationError, ProcessingError
 from hhemt.log import (
     TRITONSWMM_scenario_log,
     TRITONSWMM_model_log,
@@ -25,6 +25,81 @@ from hhemt.swmm_full_model import SWMMFullModelBuilder
 
 
 lock = threading.Lock()
+
+
+def _assert_scenario_forcing_window_agreement(scenario) -> None:
+    """Require every per-scenario forcing artifact to agree on the event extent.
+
+    Raises ProcessingError naming the disagreeing pair. Skips silently when an
+    artifact a given toggle never produces is absent (SWMM-only runs have no
+    TRITON cfg; toggle_storm_tide_boundary=False produces no extbc file).
+    """
+
+    def _data_rows(path) -> int:
+        n = 0
+        with open(path) as fh:
+            for line in fh:
+                s = line.strip()
+                if s and not s.startswith((";", "%", "#")):
+                    n += 1
+        return n
+
+    observed: dict[str, int] = {}
+
+    extbc = scenario.scen_paths.extbc_tseries
+    if extbc is not None and Path(extbc).exists():
+        observed["extbc/tseries.txt"] = _data_rows(extbc)
+
+    dat_dir = scenario.scen_paths.dir_weather_datfiles
+    if dat_dir is not None and Path(dat_dir).exists():
+        for dat in sorted(Path(dat_dir).glob("grid-ind*.dat")):
+            observed[f"dats/{dat.name}"] = _data_rows(dat)
+
+    if not observed:
+        return
+
+    n_rows = set(observed.values())
+    if len(n_rows) != 1:
+        raise ProcessingError(
+            "scenario_forcing_window_agreement",
+            filepath=scenario.scen_paths.scenario_directory,
+            reason=f"forcing artifacts disagree on row count: {observed}",
+        )
+    n_steps = n_rows.pop()
+
+    inp = scenario._swmm_inp_for_sim_duration()
+    model = swmmio.Model(str(inp))
+    opts = model.inp.options.Value
+    start = pd.to_datetime(f"{opts.START_DATE} {opts.START_TIME}")
+    end = pd.to_datetime(f"{opts.END_DATE} {opts.END_TIME}")
+    window_s = int((end - start).total_seconds())
+    step_s = window_s / (n_steps - 1) if n_steps > 1 else 0
+    if n_steps > 1 and abs(step_s - round(step_s)) > 1e-6:
+        raise ProcessingError(
+            "scenario_forcing_window_agreement",
+            filepath=inp,
+            reason=(
+                f"SWMM window {window_s}s is not an integer multiple of "
+                f"{n_steps - 1} forcing intervals"
+            ),
+        )
+
+    cfg_path = scenario.scen_paths.triton_swmm_cfg
+    if cfg_path is not None and Path(cfg_path).exists():
+        declared = None
+        for line in Path(cfg_path).read_text().splitlines():
+            if line.strip().startswith("sim_duration="):
+                declared = int(float(line.split("=", 1)[1].strip()))
+                break
+        if declared is not None and declared != window_s:
+            raise ProcessingError(
+                "scenario_forcing_window_agreement",
+                filepath=cfg_path,
+                reason=(
+                    f"TRITON sim_duration={declared}s disagrees with the SWMM window "
+                    f"{window_s}s derived from {n_steps} forcing rows"
+                ),
+            )
 
 
 def compute_event_id_slug(weather_event_indexers: dict) -> str:
@@ -779,13 +854,40 @@ class TRITONSWMM_scenario:
             )
 
     def _write_sim_weather_nc(self):
+        # FORCING-READ: choke-point
         weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
+        tdim = (
+            self._analysis.cfg_analysis.weather_time_series_timestep_dimension_name
+        )
         with lock:
             with xr.open_dataset(
                 weather_timeseries, engine="h5netcdf"
             ) as ds_event_weather_series:
                 ds_event_ts = ds_event_weather_series.sel(weather_event_indexers).load()
+                # A rectangular weather NetCDF cannot store ragged events, so every
+                # event shorter than the longest one is NaN-padded on the SHARED
+                # timestep axis. Downstream consumers derive the simulation window
+                # from this coordinate (swmm_utils.py, START/END -> TRITON
+                # sim_duration), so an untrimmed selection runs every event for the
+                # longest event's duration with its boundary condition frozen at the
+                # last tabulated value. Trim once, here, upstream of every consumer.
+                finite = ds_event_ts.notnull().to_array().any("variable")
+                keep = finite.any(
+                    dim=[d for d in finite.dims if d != tdim]
+                ) if set(finite.dims) - {tdim} else finite
+                n_finite = int(keep.values.sum())
+                if n_finite == 0:
+                    raise ProcessingError(
+                        operation="_write_sim_weather_nc",
+                        filepath=weather_timeseries,
+                        reason=(
+                            f"event {weather_event_indexers} carries zero finite "
+                            "timesteps in the weather timeseries; it cannot be "
+                            "simulated. Remove it from weather_events_to_simulate."
+                        ),
+                    )
+                ds_event_ts = ds_event_ts.isel({tdim: keep.values})
                 utils.write_netcdf(
                     ds_event_ts,
                     self.scen_paths.weather_timeseries,
@@ -908,6 +1010,12 @@ class TRITONSWMM_scenario:
         # runs `apptainer exec {sif} {exe_in_sif}` (run_simulation.py:404-422), so the
         # per-sim native build symlink is never consumed.
         self._link_native_builds_into_sim()
+
+        # Cross-artifact invariant (fail-fast, mirrors _assert_dem_integrity):
+        # the forcing files, the SWMM window and the TRITON cfg must agree on
+        # this event's extent. They are written by three independent code paths,
+        # so agreement is an independent re-derivation, not a self-check.
+        _assert_scenario_forcing_window_agreement(self)
 
         self.log.scenario_creation_complete.set(True)
         print("Scenario preparation complete", flush=True)

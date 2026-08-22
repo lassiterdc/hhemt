@@ -391,10 +391,12 @@ def validate_analysis_config(cfg: analysis_config, cfg_hpc_system: Any | None = 
 
 def _validate_weather_data(cfg: analysis_config, result: ValidationResult):
     """Validate weather data files exist."""
+    # FORCING-READ: preflight
     if cfg.weather_timeseries and not Path(cfg.weather_timeseries).exists():
         result.add_error(
             field="analysis.weather_timeseries",
             message="Weather timeseries file does not exist",
+            # FORCING-READ: preflight
             current_value=str(cfg.weather_timeseries),
             fix_hint="Provide valid path to weather data file",
         )
@@ -1141,6 +1143,99 @@ def _validate_event_alignment(cfg: analysis_config, result: ValidationResult):
         )
 
 
+def _validate_selected_event_forcing_extent(
+    cfg: analysis_config, result: ValidationResult
+) -> None:
+    """Assert the SOURCE weather file's selected events carry usable forcing.
+
+    Deliberately NOT a window-vs-forcing check: after the selection-site trim the
+    window DERIVES from the forcing extent, so such a check is tautological. This
+    asserts three properties of the SOURCE file that the trim does not make true.
+    """
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
+
+    # FORCING-READ: preflight
+    if not cfg.weather_timeseries or not Path(cfg.weather_timeseries).exists():
+        return
+    if not cfg.weather_events_to_simulate or not Path(cfg.weather_events_to_simulate).exists():
+        return
+
+    time_dim = cfg.weather_time_series_timestep_dimension_name
+    try:
+        df_sims = pd.read_csv(cfg.weather_events_to_simulate).loc[:, cfg.weather_event_indices]
+        # FORCING-READ: preflight
+        ds = xr.open_dataset(cfg.weather_timeseries, engine="h5netcdf")
+    except Exception:
+        return  # file-level failures are surfaced by the checks above
+
+    empty: list[str] = []
+    ragged: list[str] = []
+    pad_fracs: list[float] = []
+    n_axis = int(ds.sizes[time_dim])
+    with ds:
+        for _, row in df_sims.iterrows():
+            sel = {k: row[k] for k in cfg.weather_event_indices}
+            label = ", ".join(f"{k}={v}" for k, v in sel.items())
+            try:
+                sub = ds.sel(**sel)
+            except Exception:
+                continue
+            finite = sub.notnull().to_array().any("variable").values
+            n_finite = int(finite.sum())
+            if n_finite == 0:
+                empty.append(label)
+                continue
+            where = np.flatnonzero(finite)
+            if int(where[-1] - where[0] + 1) != n_finite:
+                ragged.append(label)
+            pad_fracs.append(1.0 - n_finite / n_axis)
+
+    if empty:
+        result.add_error(
+            field="analysis.weather_events_to_simulate",
+            message=(
+                f"{len(empty)} selected event(s) carry ZERO finite forcing timesteps in "
+                # FORCING-READ: preflight
+                f"{cfg.weather_timeseries}: {empty[:5]}"
+                + (" ..." if len(empty) > 5 else "")
+            ),
+            current_value=str(cfg.weather_events_to_simulate),
+            fix_hint=(
+                "A rectangular weather NetCDF holds one slot per coordinate combination, "
+                "and most slots hold no event. Remove these rows, or regenerate the CSV "
+                "from the file's non-empty slots rather than from the coordinate product."
+            ),
+        )
+    if ragged:
+        result.add_warning(
+            field="analysis.weather_events_to_simulate",
+            message=(
+                f"{len(ragged)} selected event(s) have a NON-CONTIGUOUS finite forcing "
+                f"block: {ragged[:5]}. Both solvers interpolate linearly across an "
+                "interior gap rather than treating it as missing, so a hole becomes a "
+                "straight line through it."
+            ),
+            current_value=str(cfg.weather_events_to_simulate),
+            fix_hint="Fill or split the gap upstream, or accept the interpolation knowingly.",
+        )
+    if pad_fracs:
+        arr = np.asarray(pad_fracs, dtype=float)
+        result.add_warning(
+            field="analysis.weather_timeseries",
+            message=(
+                f"Selected-event forcing occupies a fraction of the {n_axis}-step shared "
+                f"axis: padding min={arr.min():.1%} median={np.median(arr):.1%} "
+                f"max={arr.max():.1%} over {arr.size} event(s). Each simulation runs only "
+                "its own forcing extent; this line discloses how much of the shared axis "
+                "is unused so the ratio can never again go unnoticed."
+            ),
+            current_value=f"{np.median(arr):.1%} median padding",
+            fix_hint="Informational. Store events raggedly upstream to eliminate the padding.",
+        )
+
+
 def _validate_storm_tide_data(cfg: analysis_config, result: ValidationResult):
     """Validate storm tide configuration when toggle enabled.
 
@@ -1157,9 +1252,11 @@ def _validate_storm_tide_data(cfg: analysis_config, result: ValidationResult):
     # Renderers (per_sim_peak_flood_depth / per_sim_conduit_flow event-hydrology
     # panels) read this variable; configuration drift here would surface as
     # KeyError deep in HPC.
+    # FORCING-READ: preflight
     if cfg.weather_timeseries and Path(cfg.weather_timeseries).exists():
         try:
             import xarray as xr
+            # FORCING-READ: preflight
             with xr.open_dataset(cfg.weather_timeseries, engine="h5netcdf") as ds:
                 avail = list(ds.data_vars)
                 rain_name = cfg.weather_time_series_spatial_mean_rainfall_datavar
@@ -1194,6 +1291,8 @@ def _validate_storm_tide_data(cfg: analysis_config, result: ValidationResult):
         except Exception:
             # NetCDF open failures are caught by other checks; don't surface here.
             pass
+
+    _validate_selected_event_forcing_extent(cfg, result)
 
     if cfg.toggle_storm_tide_boundary:
         # Boundary GIS file already checked in toggle dependencies
