@@ -281,6 +281,32 @@ def _resolve_rule_all_extensions(
     return {key: _output_ext_for(static_backend, key) for key in _OUTPUT_EXT_BY_RENDERER}
 
 
+def _benchmarking_report_kwargs() -> dict[str, str]:
+    """The benchmarking rule's ``report(...)`` kwargs, SOURCED from the registry.
+
+    `SensitivityAnalysisWorkflowBuilder._build_plot_rule_block_sensitivity_benchmarking`
+    previously hand-wrote a byte-identical copy of these four kwargs. That copy is why
+    the `__MODEL_ARM_LABEL__` sentinel added to `_reporting_sets.py` reached the BUNDLE
+    path (which harvests the registry) and not the MASTER path (which did not), leaving
+    the whole report-label channel inert on the only path where the benchmarking figure
+    exists. Measured at the time: three benchmarking goldens recaptured, zero models keys.
+
+    Raises rather than falling back. A fallback to a local default would restore exactly
+    the divergence this function exists to remove, and would do it silently -- the failure
+    mode that cost two rounds to find.
+    """
+    from hhemt.report_renderers._reporting_sets import get_reporting_set
+
+    for sel in get_reporting_set("benchmarking").renderer_selection:
+        for tpl in sel.rule_spec_template:
+            if tpl.renderer_module == "sensitivity_benchmarking":
+                return dict(tpl.report_kwargs)
+    raise RuntimeError(
+        "the 'benchmarking' reporting set carries no sensitivity_benchmarking "
+        "rule_spec_template, so the master builder cannot source its report kwargs"
+    )
+
+
 def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     """Emit a single Snakemake plot rule as a string.
 
@@ -9213,10 +9239,12 @@ def _sensitivity_source_paths(wildcards):
             extra_cli_flags=("--independent-var {wildcards.independent_var}",),
             extra_params=(),
             report_kwargs={
-                "caption": "report/captions/sensitivity_benchmarking.rst",
-                "category": "Key Results",
-                "subcategory": "Benchmarking",
-                "labels": '{"independent_var": "{independent_var}", "figure": "vs Total runtime"}',
+                # SOURCED from the registry, not restated. This method previously carried a
+                # byte-identical hand-written copy, so Spec 10's registry edit reached the
+                # bundle path (which harvests the registry) and NOT the master path (which
+                # did not) -- the whole labels channel was inert on the only path where the
+                # benchmarking figure exists. Two strings that must agree is the condition.
+                **_benchmarking_report_kwargs(),
             },
             resources_yaml="mem_mb=4000, time_min=10",
             log_path_template="logs/plots/sensitivity_benchmarking_{independent_var}.log",

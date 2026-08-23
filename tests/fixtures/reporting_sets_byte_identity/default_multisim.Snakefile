@@ -24,6 +24,16 @@ report: "report/workflow_description.rst"
 SIM_IDS = ['event_index.0', 'event_index.1', 'event_index.2']
 ILOC_BY_EVENT_ID = {'event_index.0': 0, 'event_index.1': 1, 'event_index.2': 2}
 
+from hhemt.report_plot_ids import (
+    event_labels_from_status as _event_labels_from_status,
+    report_label_value as _report_label_value,
+    sa_labels_from_status as _sa_labels_from_status,
+)
+
+_EVENT_LABELS = _event_labels_from_status(workflow.basedir)
+_SA_LABELS = _sa_labels_from_status(workflow.basedir)
+
+
 rule all:
     input:
         "_status/e_consolidate_complete.flag",
@@ -36,6 +46,7 @@ rule all:
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
         "plots/metadata.html",
+        "plots/workflow_performance.html",
         "analysis_report.zip",
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
@@ -205,6 +216,7 @@ rule process_triton:
     output: "_status/d_process_triton_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_triton_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -236,6 +248,7 @@ rule process_tritonswmm:
     output: "_status/d_process_tritonswmm_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -267,6 +280,7 @@ rule process_swmm:
     output: "_status/d_process_swmm_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -298,6 +312,7 @@ rule consolidate_scenario:
     output:
         flag="_status/f_consolidate_scenario_evt-{event_id}_complete.flag",
         du_sentinel="sims/{event_id}/_status/_du.json",
+    priority: 100
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
@@ -548,6 +563,31 @@ rule plot_metadata:
             > {log} 2>&1
         """
 
+rule plot_workflow_performance:
+    input:
+        consolidated = "_status/e_consolidate_complete.flag",
+    output:
+        report(
+            "plots/workflow_performance.html",
+            caption="report/captions/workflow_performance.rst",
+            category="Workflow performance",
+            labels={"figure": "Workflow performance"},
+        )
+    params:
+        source_paths = [],
+        source_paths_rst = '',
+    log: "logs/plots/workflow_performance.log"
+    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    resources: mem_mb=1000, time_min=5
+    shell:
+        """
+        {PYTHON} -m hhemt.report_renderers._cli workflow_performance \
+            --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
+            --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
+            --output {output} \
+            > {log} 2>&1
+        """
+
 localrules: export_scenario_status
 
 rule export_scenario_status:
@@ -600,6 +640,7 @@ rule render_report:
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
         "plots/metadata.html",
+        "plots/workflow_performance.html",
         "scenario_status.csv",
     output:
         "analysis_report.{format}"

@@ -41,7 +41,7 @@ onerror:
 
 rule all:
     input:
-        "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
+        "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
 
 rule master_consolidation:
     input: 
@@ -227,6 +227,31 @@ rule plot_metadata:
             > {log} 2>&1
         """
 
+rule plot_workflow_performance:
+    input:
+        consolidated = "_status/f_consolidate_master_complete.flag",
+    output:
+        report(
+            "plots/workflow_performance.html",
+            caption="report/captions/workflow_performance.rst",
+            category="Workflow performance",
+            labels={"figure": "Workflow performance"},
+        )
+    params:
+        source_paths = [],
+        source_paths_rst = '',
+    log: "logs/plots/workflow_performance.log"
+    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    resources: mem_mb=1000, time_min=5
+    shell:
+        """
+        {PYTHON} -m hhemt.report_renderers._cli workflow_performance \
+            --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
+            --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
+            --output {output} \
+            > {log} 2>&1
+        """
+
 localrules: export_scenario_status
 
 rule export_scenario_status:
@@ -290,7 +315,7 @@ rule plot_sensitivity_benchmarking:
             caption="report/captions/sensitivity_benchmarking.rst",
             category="Key Results",
             subcategory="Benchmarking",
-            labels={"independent_var": "{independent_var}", "figure": "vs Total runtime"},
+            labels={"independent_var": "{independent_var}", "figure": "vs Total runtime", "models": "TRITON-SWMM"},
         )
     wildcard_constraints:
         independent_var="[A-Za-z0-9_.]+",
@@ -318,6 +343,7 @@ rule render_report:
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
         "plots/metadata.html",
+        "plots/workflow_performance.html",
         "scenario_status.csv",
         "workflow_summary.md",
         expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices'])

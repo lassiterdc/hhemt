@@ -17,6 +17,8 @@ drift from `_reporting_sets.py`.
 
 from __future__ import annotations
 
+import pytest
+
 from hhemt.report_renderers._reporting_sets import get_reporting_set
 from hhemt.workflow import RuleEmissionContext, RuleSpec, _emit_plot_rule
 
@@ -91,3 +93,27 @@ def test_arm_ii_a_rule_without_the_sentinel_is_byte_identical_under_both_arms():
     empty_arm = _emit_plot_rule(_spec(plain), _ctx(""))
     assert set_arm == empty_arm
     assert plain in set_arm
+
+
+# --- Arm (iv): the one that catches INERTNESS ------------------------------------
+# Arms (i)-(iii) construct the context directly, so they verify the emitter and the
+# registry and say NOTHING about whether a real builder RESOLVES an arm. Round 8
+# measured exactly that gap: all three passed while the feature was inert on the
+# sensitivity-master source path. This arm drives a REAL builder and must FAIL before
+# Spec 8c and PASS after.
+@pytest.mark.slow
+def test_arm_iv_a_real_sensitivity_master_builder_resolves_a_nonempty_arm(
+    synth_sensitivity_analysis,
+):
+    builder = synth_sensitivity_analysis.sensitivity._workflow_builder._base_builder
+    ctx = builder._make_rule_emission_context(
+        static_backend=builder._get_report_cfg_static_backend()
+    )
+    assert ctx.model_arm, (
+        "a sensitivity master must resolve a non-empty model arm; an empty arm makes the "
+        "whole labels channel silently inert (Round 8: 3 benchmarking goldens, 0 models keys)"
+    )
+    generated = synth_sensitivity_analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
+        which="both", compression_level=5
+    )
+    assert f'"models": "{ctx.model_arm}"' in generated
