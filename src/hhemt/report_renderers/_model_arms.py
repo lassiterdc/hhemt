@@ -126,3 +126,25 @@ def page_sections(enabled_model_types) -> list[tuple[str, str, str]]:
             if group is not None:
                 out.append((model, kind, group))
     return out
+
+
+def arm_label(enabled_model_types) -> str:
+    """Display label for the single TRITON arm a benchmarking master carries, or "".
+
+    The `labels` channel's arm value, and the ONLY place its text is chosen. Reuses
+    MODEL_DISPLAY_NAMES so a report label and a composed per-scenario page header can
+    never disagree about what an arm is called.
+
+    Precedence is tritonswmm-first, mirroring `sensitivity_benchmarking._resolve_model_arm`
+    (which grounds it in `_find_perf_node`'s probe order) so config-truth agrees with the
+    plotted node under the single-arm invariant. Returns "" for a master carrying neither
+    TRITON arm -- a swmm-only master -- and the emitter drops the label key entirely on "",
+    because an empty facet value is what `combined_snakefile_generator._plot_id_facets`
+    refuses ("the report renders a blank index column").
+    """
+    enabled = set(enabled_model_types)
+    if "tritonswmm" in enabled:
+        return MODEL_DISPLAY_NAMES["tritonswmm"]
+    if "triton" in enabled:
+        return MODEL_DISPLAY_NAMES["triton"]
+    return ""

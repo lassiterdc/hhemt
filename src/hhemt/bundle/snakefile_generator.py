@@ -115,6 +115,23 @@ def write_regeneration_snakefile(
     return out
 
 
+def _bundle_arm_label(bundle_root: Path) -> str:
+    """The benchmarking arm label, read from the bundle's own cfg_system.yaml.
+
+    Reads the same REQUIRED `toggle_*_model` fields this module already reads for
+    `has_swmm_link_outputs` (see the predicate-evaluation comment below), so it inherits
+    that argued safety property: absence of those fields is impossible, which is what
+    makes reading them here admissible where reading an OPTIONAL cfg_analysis key would
+    not be. A missing cfg_system.yaml yields "", which the emitter turns into a dropped
+    label key rather than an empty facet value.
+    """
+    from hhemt.report_renderers._model_arms import arm_label
+
+    _sys_path = bundle_root / "cfg_system.yaml"
+    _cfg = (yaml.safe_load(_sys_path.read_text()) if _sys_path.is_file() else {}) or {}
+    return arm_label([m for m in ("tritonswmm", "triton", "swmm") if _cfg.get(f"toggle_{m}_model")])
+
+
 def _make_rule_emission_context(
     *,
     bundle_root: Path,
@@ -130,6 +147,7 @@ def _make_rule_emission_context(
         python_executable="python",
         log_dir_rel="_logs",
         conda_env_path="",
+        model_arm=_bundle_arm_label(bundle_root),
         config_args_str=("--system-config cfg_system.yaml \\\n            --analysis-config cfg_analysis.yaml"),
         is_sensitivity=is_sensitivity,
         static_backend=static_backend,

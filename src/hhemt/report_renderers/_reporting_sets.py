@@ -515,7 +515,12 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
                     "caption": "report/captions/sensitivity_benchmarking.rst",
                     "category": "Key Results",
                     "subcategory": "Benchmarking",
-                    "labels": '{"independent_var": "{independent_var}", "figure": "vs Total runtime"}',
+                    # `__MODEL_ARM_LABEL__` is the whole-fragment sentinel `_emit_plot_rule`
+                    # substitutes from `ctx.model_arm` (mirroring `__OUTPUT_EXT__`). It expands to
+                    # `, "models": "TRITON-SWMM"` / `, "models": "TRITON"`, or to NOTHING on a
+                    # master carrying neither TRITON arm. `models` is the same key the combined
+                    # report already emits, so the two surfaces name one facet, not two synonyms.
+                    "labels": '{"independent_var": "{independent_var}", "figure": "vs Total runtime"__MODEL_ARM_LABEL__}',
                 },
                 wildcards=("independent_var",),
                 resources_yaml="mem_mb=4000, time_min=10",

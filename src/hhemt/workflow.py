@@ -189,6 +189,7 @@ class RuleEmissionContext:
     is_sensitivity: bool
     static_backend: Literal["matplotlib", "plotly"]
     report_tail_slurm_partition: str = ""
+    model_arm: str = ""
 
 
 @dataclass(frozen=True)
@@ -321,6 +322,14 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     else:
         rk = spec.report_kwargs
         labels_str = rk.get("labels", '{"figure": "?"}')
+        # Mirrors the `__OUTPUT_EXT__` substitution at the output path above. The sentinel is
+        # the WHOLE label fragment, not just its value, so an unresolvable arm removes the key
+        # rather than emitting `"models": ""` -- which `_plot_id_facets` refuses. A rule whose
+        # labels carry no sentinel is byte-unchanged, because str.replace is identity there.
+        labels_str = labels_str.replace(
+            "__MODEL_ARM_LABEL__",
+            f', "models": "{ctx.model_arm}"' if ctx.model_arm else "",
+        )
         subcategory_line = f'\n            subcategory="{rk["subcategory"]}",' if "subcategory" in rk else ""
         output_block = (
             f"report(\n"
@@ -2067,6 +2076,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             if _runs_under_slurm
             else ""
         )
+        # Local import: keeps workflow.py's module-level import set unchanged and matches
+        # this file's existing habit for report_renderers symbols (:486, :727, :808, :2697).
+        from hhemt.report_renderers._model_arms import arm_label as _arm_label
+
         return RuleEmissionContext(
             python_executable=self.python_executable,
             log_dir_rel=log_dir_rel,
@@ -2075,6 +2088,17 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             is_sensitivity=bool(getattr(self.cfg_analysis, "toggle_sensitivity_analysis", False)),
             static_backend=static_backend,
             report_tail_slurm_partition=_report_tail_partition,
+            model_arm=_arm_label(
+                [
+                    m
+                    for m, on in (
+                        ("tritonswmm", self.system.cfg_system.toggle_tritonswmm_model),
+                        ("triton", self.system.cfg_system.toggle_triton_model),
+                        ("swmm", self.system.cfg_system.toggle_swmm_model),
+                    )
+                    if on
+                ]
+            ),
         )
 
     def _build_plot_rule_block_system_overview(

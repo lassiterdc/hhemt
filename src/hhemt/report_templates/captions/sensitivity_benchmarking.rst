@@ -4,4 +4,6 @@ The dependent variable (default ``performance.Total`` from the per-scenario perf
 
 **Sources:**
 
+**Axis ranges are auto-scaled independently per report.** Each panel's y-axis is fitted to this master's own data, so an equal bar height or curve position in the coupled (TRITON-SWMM) and uncoupled (TRITON) reports does NOT denote an equal value — the uncoupled arm is faster, and its axis is scaled accordingly. Read the axis tick labels before comparing across reports; the paired small-multiple in the combined report is the surface where the two arms share a page and a direct comparison is intended.
+
 {{ snakemake.params.source_paths_rst }}
