@@ -393,11 +393,19 @@ class Toolkit:
         return self.analysis.get_workflow_status()
 
     def _detect_execution_mode(self) -> Literal["auto", "local", "slurm"]:
-        """Detect appropriate execution mode from configuration and environment.
+        """Return the execution-mode value to hand to ``analysis.run()``.
+
+        Always returns ``"auto"``. This method does NOT read the environment and
+        does NOT itself choose between local and SLURM: execution locus is resolved
+        in exactly one place, ``analysis.run()``'s ``execution_mode == "auto"``
+        branch. See the comment below for what this method used to do and why that
+        was wrong.
 
         Returns:
-            "slurm" if in SLURM context or configured for SLURM,
-            "local" otherwise
+            ``"auto"``, always. ``"local"`` and ``"slurm"`` remain in the return
+            annotation because the value is passed straight through to
+            ``analysis.run(execution_mode=...)``, whose parameter accepts all three;
+            this method simply never selects the other two.
         """
         # Delegates: execution locus is resolved in exactly ONE place,
         # analysis.run()'s `execution_mode == "auto"` branch. This method
