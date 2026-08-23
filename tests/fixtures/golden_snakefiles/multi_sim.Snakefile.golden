@@ -24,6 +24,16 @@ report: "report/workflow_description.rst"
 SIM_IDS = ['event_id.0', 'event_id.1']
 ILOC_BY_EVENT_ID = {'event_id.0': 0, 'event_id.1': 1}
 
+from hhemt.report_plot_ids import (
+    event_labels_from_status as _event_labels_from_status,
+    report_label_value as _report_label_value,
+    sa_labels_from_status as _sa_labels_from_status,
+)
+
+_EVENT_LABELS = _event_labels_from_status(workflow.basedir)
+_SA_LABELS = _sa_labels_from_status(workflow.basedir)
+
+
 rule all:
     input:
         "_status/e_consolidate_complete.flag",
@@ -36,6 +46,7 @@ rule all:
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
         "plots/metadata.html",
+        "plots/workflow_performance.html",
         "analysis_report.zip",
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
@@ -411,7 +422,7 @@ rule plot_per_sim_event_page:
             "plots/per_sim/{event_id}/event_page__evt.{event_id}.html",
             caption="report/captions/per_sim_event_page.rst",
             category="Per Simulation Results",
-            labels={"figure": "Simulation results", "event_id": "{event_id}"},
+            labels=(lambda w: {"figure": "Simulation results", "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         event_id="[A-Za-z0-9_.]+",
@@ -570,6 +581,32 @@ rule plot_metadata:
             > {log} 2>&1
         """
 
+rule plot_workflow_performance:
+    input:
+        consolidated = "_status/e_consolidate_complete.flag",
+    output:
+        report(
+            "plots/workflow_performance.html",
+            caption="report/captions/workflow_performance.rst",
+            category="Workflow performance",
+            labels={"figure": "Workflow performance"},
+        )
+    params:
+        source_paths = [],
+        source_paths_rst = '',
+    log: "logs/plots/workflow_performance.log"
+    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    resources: mem_mb=1000, time_min=5
+    shell:
+        """
+        {PYTHON} -m hhemt.report_renderers._cli workflow_performance \
+            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
+            --output {output} \
+            > {log} 2>&1
+        """
+
 localrules: export_scenario_status
 
 rule export_scenario_status:
@@ -623,6 +660,7 @@ rule render_report:
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
         "plots/metadata.html",
+        "plots/workflow_performance.html",
         "scenario_status.csv",
     output:
         "analysis_report.{format}"
