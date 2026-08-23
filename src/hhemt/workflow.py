@@ -6135,7 +6135,19 @@ exit $snakemake_status
             else self.cfg_analysis.multi_sim_run_method
         )
         if execution_mode == "auto":
-            mode: Literal["local", "slurm"] = "slurm" if self.analysis.in_slurm else "local"
+            # Execution locus follows CONFIG, never the environment. Unlike
+            # submit_workflow, the batch_job / 1_job_many_srun_tasks branches do
+            # NOT return above this point, so effective_method can be any of the
+            # three and the mapping must be explicit. batch_job and
+            # 1_job_many_srun_tasks both mean "use the scheduler", so a login-node
+            # invocation submits rather than running consolidation/render compute
+            # on a shared login node.
+            # Do NOT read analysis.in_slurm here and do NOT make in_slurm itself
+            # config-only: run_simulation.py:820 still derives `using_srun` from
+            # it (Gotcha 32 per-rank GPU binding).
+            mode: Literal["local", "slurm"] = (
+                "local" if effective_method == "local" else "slurm"
+            )
         else:
             mode = execution_mode  # type: ignore[assignment]
 
@@ -6394,7 +6406,19 @@ exit $snakemake_status
 
         effective_method = self.cfg_analysis.multi_sim_run_method
         if execution_mode == "auto":
-            mode: Literal["local", "slurm"] = "slurm" if self.analysis.in_slurm else "local"
+            # Execution locus follows CONFIG, never the environment. Unlike
+            # submit_workflow, the batch_job / 1_job_many_srun_tasks branches do
+            # NOT return above this point, so effective_method can be any of the
+            # three and the mapping must be explicit. batch_job and
+            # 1_job_many_srun_tasks both mean "use the scheduler", so a login-node
+            # invocation submits rather than running consolidation/render compute
+            # on a shared login node.
+            # Do NOT read analysis.in_slurm here and do NOT make in_slurm itself
+            # config-only: run_simulation.py:820 still derives `using_srun` from
+            # it (Gotcha 32 per-rank GPU binding).
+            mode: Literal["local", "slurm"] = (
+                "local" if effective_method == "local" else "slurm"
+            )
         else:
             mode = execution_mode  # type: ignore[assignment]
 
@@ -9866,7 +9890,21 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # Effective execution mode dispatch — mirror the analysis-level
         # reprocess auto-detect.
         if execution_mode == "auto":
-            mode: Literal["local", "slurm"] = "slurm" if self.master_analysis.in_slurm else "local"
+            # Execution locus follows CONFIG, never the environment. Unlike
+            # submit_workflow, the batch_job / 1_job_many_srun_tasks branches do
+            # NOT return above this point, so effective_method can be any of the
+            # three and the mapping must be explicit. batch_job and
+            # 1_job_many_srun_tasks both mean "use the scheduler", so a login-node
+            # invocation submits rather than running consolidation/render compute
+            # on a shared login node.
+            # Do NOT read analysis.in_slurm here and do NOT make in_slurm itself
+            # config-only: run_simulation.py:820 still derives `using_srun` from
+            # it (Gotcha 32 per-rank GPU binding).
+            mode: Literal["local", "slurm"] = (
+                "local"
+                if self.master_analysis.cfg_analysis.multi_sim_run_method == "local"
+                else "slurm"
+            )
         else:
             mode = execution_mode  # type: ignore[assignment]
 
