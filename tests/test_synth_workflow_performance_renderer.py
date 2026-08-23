@@ -218,7 +218,17 @@ def test_absent_slurm_csv_degrades_gracefully(tmp_path):
     html, manifest = _render(tmp_path / "analysis")
     assert 'id="slurm-efficiency"' in html
     assert "teardown" in html
-    assert not any(p.endswith(".csv") for p in manifest["source_paths_relative"])
+    # Narrowed from a blanket `endswith(".csv")` to the EFFICIENCY csv specifically,
+    # which is what this test's name and docstring have always scoped it to. The
+    # blanket form was a safe over-approximation only while the efficiency CSV was the
+    # sole csv this renderer could declare; `scenario_status.csv` is now declared
+    # UNCONDITIONALLY per ADR-6 D3 (see workflow_performance.render), so the blanket
+    # form would forbid a declaration the convention requires. `_render` never writes a
+    # scenario_status.csv, so the R7 guarantee this test exists for -- the absent-SLURM
+    # path declares no efficiency CSV -- is preserved exactly.
+    assert not any(
+        "efficiency_report" in p for p in manifest["source_paths_relative"]
+    ), manifest["source_paths_relative"]
 
 
 def test_slurm_report_path_is_a_directory_not_a_file(tmp_path):

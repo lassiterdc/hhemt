@@ -107,8 +107,19 @@ def render(
     _recovery_map, _recovery_path = _load_job_recovery(analysis_dir)
     scenario_map, scenario_status_path = _read_scenario_status(analysis_dir)
     _apply_config_fallbacks(scenario_map, analysis)
-    if scenario_status_path is not None:
-        source_paths.append(scenario_status_path)
+    # ADR-6 D3: declare the expected source UNCONDITIONALLY. `scenario_status.csv` is
+    # written by the SEPARATE `export_scenario_status` rule, which can race AFTER this
+    # plot rule in the DAG (the same race `per_analysis_summary` documents), so a
+    # presence-gated declaration makes this figure's DECLARED SET render-timing-
+    # dependent -- two runs of the same analysis can declare different sources. That
+    # non-determinism is what made `test_same_named_figures_are_fungible` flaky once
+    # the model-keyed disjointness was normalized away. Declaring an expected-but-
+    # absent source is safe on all three consuming surfaces: `_validate_source_path`
+    # accepts non-existent paths, the renderer-IO audit only WARNS on declared-but-
+    # unread (`_provenance_audit.py:287`; it RAISES only on undeclared reads, `:235`),
+    # and the bundle harvest skips-with-warning (Gotcha 50). In-tree precedent:
+    # `disk_utilization.py` declares `_status/_du.json` the same way.
+    source_paths.append(analysis_dir / _SCENARIO_STATUS_FILENAME)
 
     def _gpu_hardware_for_partition(partition: str) -> str:
         """Partition -> GPU hardware, via the toolkit's own deterministic resolver.

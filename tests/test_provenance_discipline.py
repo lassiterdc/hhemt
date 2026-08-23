@@ -313,10 +313,20 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
     even if no direct artist methods are detected (e.g., when artists are
     produced by external helpers like `plot_continuous_raster`).
 
-    Exception: a pure delegating adapter (``_DELEGATING_RENDERERS``) creates no
-    artists at all and therefore cannot alias-rebind one. It must instead prove it
-    produces ZERO artist-creating calls -- a strictly stronger property than being
-    wrapped in a provenance block.
+    Exception: a module listed in ``_EXEMPT_RENDERER_KINDS`` creates no artists
+    locally, so it cannot satisfy this proxy. It must instead prove ZERO
+    artist-creating calls AND satisfy its declared exemption KIND's own
+    counter-assertion (``pure_delegate`` binds no ProvenanceLog; ``composer`` binds
+    one and threads it to the emit).
+
+    That is NOT strictly stronger than being wrapped in a provenance block, and the
+    earlier wording here claimed it was. An alias-rebind (``plot = ax.plot;
+    plot(...)``) produces a ``Call`` whose ``func`` is a ``Name`` rather than an
+    ``Attribute``, so it yields zero AST-visible artist calls BY CONSTRUCTION --
+    which is exactly what the zero-call counter-assertion accepts as proof of
+    innocence. The counter-assertion catches a DIRECT ``ax.plot(...)`` added to an
+    exempt module; it does not catch a rebind. See the ceiling note on
+    ``_EXEMPT_RENDERER_KINDS``.
     """
     source = path.read_text()
 
