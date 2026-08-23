@@ -269,9 +269,25 @@ class AxisGroup:
     label: str
 
     @classmethod
-    def for_var(cls, x_col: str, source_var: str, labels) -> AxisGroup:
-        """Build a group whose label is looked up under `source_var`, never passed in."""
-        return cls(x_col=x_col, source_var=source_var, label=labels.get(source_var, source_var))
+    def for_var(cls, x_col: str, source_var: str, labels, qualifier: str | None = None) -> AxisGroup:
+        """Build a group whose label is looked up under `source_var`, never passed in.
+
+        `qualifier` widens the lookup KEY without breaking the derivation invariant: the
+        label is still looked up, never supplied by the caller. It exists because one
+        variable can denote different units per column -- `n_devices` counts cores on a
+        CPU column and GPUs on a GPU column -- and the axis should say which.
+
+        The chain is `{source_var}.{qualifier}` then bare `source_var` then the variable
+        name. The fallback is what makes an absent qualified key degrade to exactly
+        today's behaviour rather than to a blank or a silent no-op.
+        """
+        if qualifier is None:
+            return cls(x_col=x_col, source_var=source_var, label=labels.get(source_var, source_var))
+        return cls(
+            x_col=x_col,
+            source_var=source_var,
+            label=labels.get(f"{source_var}.{qualifier}", labels.get(source_var, source_var)),
+        )
 
 
 def resolve_axis_groups(independent_var: str, sens_cfg) -> tuple[AxisGroup, AxisGroup]:
@@ -315,26 +331,47 @@ def _apply_matplotlib_axis_groups(ax_wall, ax_cost, ax_speedup, ax_eff, *, top, 
     ax_eff.set_xlabel(bottom.label)
 
 
-def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom) -> None:
+def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labels=None) -> None:
     """Plotly counterpart of `_apply_matplotlib_axis_groups`.
 
-    Axis refs are DERIVED from the figure (`xaxis.plotly_name`), never hardcoded: the
-    colspan on rows 1-2 makes the layout axis numbering skip, so row 4's refs are
-    x4 / (x5,x6) / (x6,x7,x8) at n_hw = 1 / 2 / 3 respectively.
+    Axis refs are DERIVED from the figure (`xaxis.plotly_name`), never hardcoded. Every
+    row is now `n_hw` columns wide, so the numbering is regular -- but deriving stays
+    correct under any future spec change, and the colspan this note used to describe
+    (rows 1-2 spanning the full width, which made the numbering skip) was removed when
+    those rows were faceted by hardware. Derive rather than count.
+
+    `hw_cols` and `labels` are consumed by the per-column x-axis titles below, and are
+    also what a row-scoped y-axis link would need; they are parameters rather than
+    recomputed here so the helper has one source for both.
     """
 
     def _xref(row: int, col: int) -> str:
         return fig.get_subplot(row, col).xaxis.plotly_name.replace("axis", "")
 
-    fig.update_xaxes(matches=_xref(2, 1), showticklabels=False, title_text="", row=1, col=1)
-    fig.update_xaxes(title_text=top.label, row=2, col=1)
+    # Rows 1-2 are faceted now, so these must loop over columns exactly as the bottom
+    # pair does. Pinned at col=1 they were correct only under the former colspan, where
+    # each row WAS one cell; after faceting, columns 2..n silently lost both the row-1
+    # match and the row-2 title. No test could see it: the axis fixture carries one
+    # hardware family, so col=1 is the only column that exists there.
+    for _ci in range(1, n_hw + 1):
+        fig.update_xaxes(matches=_xref(2, _ci), showticklabels=False, title_text="", row=1, col=_ci)
+        fig.update_xaxes(title_text=top.label, row=2, col=_ci)
     # Reachability: `n_hw = max(len(_hw_cols), 1)` at the call site, so n_hw >= 1 for
     # EVERY input class (including an empty group_value column) and this loop body
     # executes at least once on every plotly render. There is no reachable input for
     # which the bottom pair goes unlinked or unlabelled.
     for _ci in range(1, n_hw + 1):
         fig.update_xaxes(matches=_xref(4, _ci), showticklabels=False, title_text="", row=3, col=_ci)
-        fig.update_xaxes(title_text=bottom.label, row=4, col=_ci)
+        # The qualifier is the DEVICE CLASS (cpu/gpu), never the hardware token: the
+        # axis counts GPUs on every GPU column, so a per-hardware key would mint two
+        # entries obliged to carry the same string. Falls back to the shared label when
+        # the caller supplies no columns or labels, so the standalone path is unchanged.
+        if hw_cols is not None and labels is not None and _ci <= len(hw_cols):
+            _qual = "cpu" if hw_cols[_ci - 1] == "cpu" else "gpu"
+            _bottom_c = AxisGroup.for_var(_SCALING_AXIS_VAR, _SCALING_AXIS_VAR, labels, qualifier=_qual)
+            fig.update_xaxes(title_text=_bottom_c.label, row=4, col=_ci)
+        else:
+            fig.update_xaxes(title_text=bottom.label, row=4, col=_ci)
 
 
 # Module-level styling constants moved to `report_cfg.sensitivity` per the
@@ -1628,10 +1665,12 @@ def _build_sensitivity_benchmarking_figure(
     # Side-effect import: registers `triton_journal` Plotly template.
     from hhemt.report_renderers import _plotly_theme  # noqa: F401
 
-    # BM-6: the two SCALING panels get one column per hardware family (CPU, then
-    # one per GPU token); the wall-clock and compute-cost panels above stay full
-    # width via colspan. Columns are DERIVED from the data, so a family absent
-    # from this master produces no column rather than an empty one (P9).
+    # ALL FOUR panels get one column per hardware family (CPU, then one per GPU
+    # token). The wall-clock and compute-cost rows were previously full width via
+    # colspan and drew every group in one axes; faceting them is what lets the legend
+    # name the DECOMPOSITION alone, since a full-width row has no column to carry
+    # hardware. Columns are DERIVED from the data, so a family absent from this
+    # master produces no column rather than an empty one (P9).
     _hw_cols = sorted(
         {_hardware_family(str(gv)) for gv in df["group_value"].dropna().unique()},
         key=lambda f: (f != "cpu", f),
@@ -1645,10 +1684,11 @@ def _build_sensitivity_benchmarking_figure(
     # _apply_plotly_axis_groups below. Two reasons, both measured at HEAD 73696af:
     # (1) rows 1+2 plot `indep_value` while rows 3+4 plot `n_devices`, so one shared
     #     range is wrong whenever independent_var != n_devices;
-    # (2) `shared_xaxes=True` behaves DIFFERENTLY by _n_hw under this colspan spec --
-    #     at _n_hw == 1 rows 1-3 all get matches=<row4> and showticklabels=False, while
-    #     at _n_hw >= 2 rows 1-2 get matches=None and visible ticks. Explicit per-group
-    #     linking makes the layout identical at every _n_hw.
+    # (2) `shared_xaxes=True` behaved DIFFERENTLY by _n_hw under the former colspan
+    #     spec, and explicit per-group linking is what made the layout identical at
+    #     every _n_hw. The colspan is gone now that all four rows are faceted, but the
+    #     explicit linking is retained: reason (1) is independent of the layout and
+    #     still holds, and deriving refs stays correct under any future spec change.
     # vertical_spacing rises 0.06 -> 0.09 because row 2 now carries its own tick band
     # AND an x-axis title immediately above row 3's hardware subplot titles.
     fig = make_subplots(
@@ -1658,12 +1698,22 @@ def _build_sensitivity_benchmarking_figure(
         vertical_spacing=0.09,
         horizontal_spacing=_h_space,
         specs=[
-            [{"colspan": _n_hw}] + [None] * (_n_hw - 1),
-            [{"colspan": _n_hw}] + [None] * (_n_hw - 1),
+            [{} for _ in range(_n_hw)],
+            [{} for _ in range(_n_hw)],
             [{} for _ in range(_n_hw)],
             [{} for _ in range(_n_hw)],
         ],
-        subplot_titles=[""] * 2 + [f"{f}" for f in _hw_cols] + [""] * _n_hw,
+        # One title per CELL, row-major, and the grid is now 4 x _n_hw because every
+        # row is faceted. The hardware names belong on ROW 1 (the first _n_hw cells);
+        # every later row is blank. The previous expression predated faceting -- it
+        # emitted 2 titles for the two colspan rows plus _n_hw names plus _n_hw blanks,
+        # which is 2 + 2*_n_hw cells and no longer matches 4*_n_hw, so plotly's
+        # row-major fill pushed the names into rows 1-2 at arbitrary columns.
+        # The slice+pad keeps the count exact even if _hw_cols is empty, where
+        # _n_hw is floored at 1 and the names list is shorter than the row.
+        subplot_titles=(
+            ([f"{f}" for f in _hw_cols] + [""] * _n_hw)[:_n_hw] + [""] * (3 * _n_hw)
+        ),
     )
     fig.update_layout(
         template="plotly_white",
@@ -1707,19 +1757,29 @@ def _build_sensitivity_benchmarking_figure(
         (1, "wallclock_disp", "ax_wall_plotly"),
         (2, "compute_disp", "ax_cost_plotly"),
     ):
-        _plotly_metric_panel(
-            fig,
-            df,
-            y_col=y_col,
-            row=row,
-            panel_id=panel_id,
-            group_by_var=group_by_var,
-            sens_cfg=sens_cfg,
-            prov=prov,
-            show_in_legend=(row == 1),
-            gpu_legend_suffix=gpu_legend_suffix,
-            model_arm=model_arm,
-        )
+        # ONE accumulator per ROW, owned here rather than inside the panel: the row is
+        # now several panels and first-occurrence must be computed across all of them.
+        _row_legend_seen: set[str] = set()
+        for _ci, _fam in enumerate(_hw_cols, start=1):
+            _df_c = df[df["group_value"].astype(str).map(_hardware_family) == _fam]
+            if _df_c.empty:
+                continue
+            _plotly_metric_panel(
+                fig,
+                _df_c,
+                y_col=y_col,
+                row=row,
+                col=_ci,
+                panel_id=f"{panel_id}_{_fam}",
+                group_by_var=group_by_var,
+                sens_cfg=sens_cfg,
+                prov=prov,
+                show_in_legend=(row == 1),
+                legend_seen=_row_legend_seen,
+                color_groups=sorted(df["group_value"].dropna().unique(), key=str),
+                gpu_legend_suffix=gpu_legend_suffix,
+                model_arm=model_arm,
+            )
 
     # ---- Panels 3 + 4: speedup + efficiency, one column per hardware family --
     # Groups are DISJOINT across families, so filtering the per-group dicts
@@ -1807,7 +1867,14 @@ def _build_sensitivity_benchmarking_figure(
     # `shared_xaxes=True` made that row's axis the whole figure's axis at _n_hw == 1.
     # The two groups are the SAME objects the `_x_max_c` read above consumed (hoisted
     # to the top of this function), not a second resolution that merely agrees.
-    _apply_plotly_axis_groups(fig, n_hw=_n_hw, top=_axis_top, bottom=_axis_bottom)
+    _apply_plotly_axis_groups(
+        fig,
+        n_hw=_n_hw,
+        top=_axis_top,
+        bottom=_axis_bottom,
+        hw_cols=_hw_cols,
+        labels=sens_cfg.independent_var_labels,
+    )
     fig.update_yaxes(title_text=f"Wall-clock ({wall_unit})", row=1, col=1)
     fig.update_yaxes(title_text=f"Compute cost ({cost_unit} × devices)", row=2, col=1)
     # OE-1: the numerator is the FAMILY baseline (CPU -> serial CPU; each GPU hardware ->
@@ -1978,6 +2045,18 @@ def _plotly_metric_panel(
     sens_cfg,
     prov: ProvenanceLog,
     show_in_legend: bool,
+    col: int = 1,
+    # Hoisted from a local. With rows 1-2 faceted this function is called once per
+    # hardware column, so a per-call accumulator would gate first-occurrence PER
+    # COLUMN and fragment the legend into one copy per column -- worse than the
+    # duplication the gate was added to remove. One set, owned by the caller, spans
+    # every panel of the row.
+    legend_seen: set[str] | None = None,
+    # Colour key, deliberately DISTINCT from the drawn group set. `groups` below is
+    # derived from the FILTERED frame, and colour must not depend on the filter or a
+    # series takes different palette slots in different columns. Same contract as
+    # `_plotly_metric_panel_precomputed`'s parameter of this name.
+    color_groups: list | None = None,
     gpu_legend_suffix: str = "",
     model_arm: str | None = None,
 ) -> None:
@@ -1985,13 +2064,15 @@ def _plotly_metric_panel(
     groups = sorted(df["group_value"].dropna().unique(), key=str)
     cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"]
     available_cfg_cols = [c for c in cfg_cols if c in df.columns]
-    # First-occurrence gate for the legend. Several `gv` groups now share one
-    # decomposition label -- CPU-MPI and GPU both read `N ranks x 1 thread (MPI)` --
-    # so without this the one full-width row-1 panel emits duplicate identical rows.
-    _legend_seen: set[str] = set()
+    # First-occurrence gate for the legend. Several `gv` groups share one decomposition
+    # label -- CPU-MPI and GPU both read `N ranks x 1 thread (MPI)` -- so without this
+    # the row emits duplicate identical entries. The CALLER owns the set when the row is
+    # faceted, so first-occurrence is computed across every column rather than per panel.
+    _legend_seen = legend_seen if legend_seen is not None else set()
+    _color_groups = color_groups if color_groups is not None else groups
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = _stable_run_mode_color(gv, sens_cfg.palette, groups)
+        color = _stable_run_mode_color(gv, sens_cfg.palette, _color_groups)
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
@@ -2042,7 +2123,7 @@ def _plotly_metric_panel(
                         hoverinfo="skip",
                     ),
                     row=row,
-                    col=1,
+                    col=col,
                 )
         # Build hybrid n_mpi_procs annotations as marker text (matches matplotlib reference).
         marker_mode = "markers+text" if is_hybrid_group and "n_mpi_procs" in sub.columns else "markers"
@@ -2112,7 +2193,7 @@ def _plotly_metric_panel(
             fig.add_trace(
                 go.Scatter(**scatter_kwargs),
                 row=row,
-                col=1,
+                col=col,
             )
         _legend_seen.add(legend_name)
 

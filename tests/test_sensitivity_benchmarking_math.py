@@ -640,17 +640,26 @@ def _axis_fixture_cfg(independent_var):
 
 def _disjoint_axis_df():
     """indep_value ∈ {1, 2}; n_devices ∈ {16, 64}. The sets share no member, so a
-    panel's x values identify WHICH column it plotted with no ambiguity."""
-    return pd.DataFrame(
-        [
-            dict(sa_id="a", group_value="cpu", indep_value=1, n_devices=16,
+    panel's x values identify WHICH column it plotted with no ambiguity.
+
+    TWO hardware families, so `_n_hw == 2` and the figure has two columns. A
+    single-family fixture cannot check per-column behaviour AT ALL — every assertion
+    keyed on `col=1` passes vacuously on the only column that exists — and that is
+    exactly what hid the row-1/2 `col=1` pinning defect. The value sets are identical
+    across families on purpose: the families must differ in COLUMN, not in x values,
+    or an arm-1 failure could not be told from a wrong-family failure.
+    """
+    def _rows(gv):
+        return [
+            dict(sa_id=f"a_{gv}", group_value=gv, indep_value=1, n_devices=16,
                  wallclock_s=100.0, wallclock_disp=100.0, compute_disp=1600.0,
-                 n_mpi_procs=1, config_id="a", n_replicates=1),
-            dict(sa_id="b", group_value="cpu", indep_value=2, n_devices=64,
+                 n_mpi_procs=1, config_id=f"a_{gv}", n_replicates=1),
+            dict(sa_id=f"b_{gv}", group_value=gv, indep_value=2, n_devices=64,
                  wallclock_s=50.0, wallclock_disp=50.0, compute_disp=3200.0,
-                 n_mpi_procs=2, config_id="b", n_replicates=1),
+                 n_mpi_procs=2, config_id=f"b_{gv}", n_replicates=1),
         ]
-    )
+
+    return pd.DataFrame(_rows("cpu") + _rows("gpu (a6000)"))
 
 
 def test_axis_group_label_is_always_derived_from_its_own_variable():
@@ -718,8 +727,17 @@ def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(
     top, bottom = resolve_axis_groups(independent_var, cfg)
     fig, _ = _build_sensitivity_benchmarking_figure(
         df,
-        {"cpu": [(16, 1.0, "a"), (64, 2.0, "b")]},
-        {"cpu": [(16, 1.0, "a"), (64, 0.25, "b")]},
+        # Per-family, because rows 3+4 filter the precomputed dicts by hardware family.
+        # A family present in `df` but absent here draws an EMPTY column, which is the
+        # state the two-column widening first surfaced.
+        {
+            "cpu": [(16, 1.0, "a"), (64, 2.0, "b")],
+            "gpu (a6000)": [(16, 1.0, "a_gpu"), (64, 2.0, "b_gpu")],
+        },
+        {
+            "cpu": [(16, 1.0, "a"), (64, 0.25, "b")],
+            "gpu (a6000)": [(16, 1.0, "a_gpu"), (64, 0.25, "b_gpu")],
+        },
         wall_unit="s",
         cost_unit="s",
         independent_var=independent_var,
@@ -774,25 +792,42 @@ def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(
                         return cand.xaxis.title.text
         return ax.title.text
 
+    # The fixture carries TWO hardware families, so every arm below runs per COLUMN.
+    # Column order is `sorted(..., key=lambda f: (f != "cpu", f))` in the renderer:
+    # cpu first, then GPU tokens. The expected bottom titles are LITERALS, not
+    # recomputed via `AxisGroup.for_var`: recomputing with the same function production
+    # uses would move both sides together, so a wrong qualified lookup would satisfy
+    # the assertion -- tautologically green, which is the property this test exists to
+    # deny. Arms 1 and 3 are UNCHANGED.
+    _cols = ((1, "cores"), (2, "GPUs"))
+
     # --- TOP GROUP: rows 1+2 plot the configured independent_var, and are labelled by it.
     for row in (1, 2):
-        plotted = _x_values_on(_ref(row))
-        assert plotted, f"row {row} plotted nothing"
-        assert plotted <= {float(v) for v in top_values}, (
-            f"row {row} plotted {plotted}, which is not the independent_var value set "
-            f"{top_values} -- the top pair is keyed on the wrong column"
-        )
-        assert _visible_title(row) == top.label
+        for col, _ in _cols:
+            plotted = _x_values_on(_ref(row, col))
+            assert plotted, f"row {row} col {col} plotted nothing"
+            assert plotted <= {float(v) for v in top_values}, (
+                f"row {row} col {col} plotted {plotted}, which is not the independent_var "
+                f"value set {top_values} -- the top pair is keyed on the wrong column"
+            )
+            # Unqualified: the top pair's label is not device-class-qualified today.
+            assert _visible_title(row, col) == top.label
 
-    # --- BOTTOM GROUP: rows 3+4 plot n_devices, and are labelled by n_devices.
+    # --- BOTTOM GROUP: rows 3+4 plot n_devices, labelled by the DEVICE-CLASS-QUALIFIED
+    # label for that column -- `cores` on the CPU column, `GPUs` on a GPU column. The
+    # unqualified group label is carried by no column once the rows are faceted.
     for row in (3, 4):
-        plotted = _x_values_on(_ref(row))
-        assert plotted, f"row {row} plotted nothing"
-        assert plotted <= {16.0, 64.0}, (
-            f"row {row} plotted {plotted}, which is not the n_devices value set "
-            "{16.0, 64.0} -- the scaling pair is keyed on the wrong column"
-        )
-        assert _visible_title(row) == bottom.label
+        for col, expected_title in _cols:
+            plotted = _x_values_on(_ref(row, col))
+            assert plotted, f"row {row} col {col} plotted nothing"
+            assert plotted <= {16.0, 64.0}, (
+                f"row {row} col {col} plotted {plotted}, which is not the n_devices "
+                "value set {16.0, 64.0} -- the scaling pair is keyed on the wrong column"
+            )
+            assert _visible_title(row, col) == expected_title, (
+                f"row {row} col {col} is titled {_visible_title(row, col)!r}, expected "
+                f"{expected_title!r} -- the per-column qualified label did not reach this axis"
+            )
 
     # --- The two groups must be INDEPENDENT: no top-row axis may match a bottom-row axis.
     bottom_refs = {_ref(3), _ref(4)}

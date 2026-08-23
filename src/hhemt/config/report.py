@@ -731,8 +731,22 @@ class SensitivityReportConfig(cfgBaseModel):
         description="Okabe-Ito CVD-safe palette — verbatim `_OKABE_ITO` lines 54-63.",
     )
     independent_var_labels: dict[str, str] = Field(
-        default_factory=lambda: {"n_devices": "Number of Devices (CPUs or GPUs)"},
-        description="Verbatim `_INDEP_VAR_LABELS` line 65.",
+        default_factory=lambda: {
+            "n_devices": "Number of Devices (CPUs or GPUs)",
+            # Device-class-qualified labels. `AxisGroup.for_var` looks up
+            # `{source_var}.{qualifier}` first and falls back to the bare key, so a
+            # faceted figure names the unit its count actually denotes per column
+            # while any unqualified caller keeps the shared label above. The
+            # qualifier is the DEVICE CLASS, not the hardware token: the axis counts
+            # GPUs on every GPU column, so per-hardware keys would be obliged to
+            # carry the same string.
+            "n_devices.cpu": "cores",
+            "n_devices.gpu": "GPUs",
+        },
+        description=(
+            "`_INDEP_VAR_LABELS` line 65, plus the two device-class-qualified keys "
+            "the faceted benchmarking figure reads per column."
+        ),
     )
     figsize_inches: tuple[float, float] = Field(
         (7.0, 14.0),
