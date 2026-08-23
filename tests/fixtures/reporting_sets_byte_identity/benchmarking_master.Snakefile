@@ -47,7 +47,7 @@ onerror:
 
 rule all:
     input:
-        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_sa-0_complete.flag", "_status/e_consolidate_sa-1_complete.flag", "_status/e_consolidate_sa-2_complete.flag", "_status/e_consolidate_sa-3_complete.flag", "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
+        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_sa-0_complete.flag", "_status/e_consolidate_sa-1_complete.flag", "_status/e_consolidate_sa-2_complete.flag", "_status/e_consolidate_sa-3_complete.flag", "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
 
 rule setup_target_0:
     output: "_status/a_setup_target_0_complete.flag"
@@ -743,6 +743,31 @@ rule plot_metadata:
             > {log} 2>&1
         """
 
+rule plot_workflow_performance:
+    input:
+        consolidated = "_status/f_consolidate_master_complete.flag",
+    output:
+        report(
+            "plots/workflow_performance.html",
+            caption="report/captions/workflow_performance.rst",
+            category="Workflow performance",
+            labels={"figure": "Workflow performance"},
+        )
+    params:
+        source_paths = [],
+        source_paths_rst = '',
+    log: "logs/plots/workflow_performance.log"
+    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    resources: mem_mb=1000, time_min=5
+    shell:
+        """
+        {PYTHON} -m hhemt.report_renderers._cli workflow_performance \
+            --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
+            --output {output} \
+            > {log} 2>&1
+        """
+
 localrules: export_scenario_status
 
 rule export_scenario_status:
@@ -788,6 +813,16 @@ rule export_scenario_status:
 
 ILOC_BY_EVENT_ID_BY_SA = {'0': {'event_index.0': 0}, '1': {'event_index.0': 0}, '2': {'event_index.0': 0}, '3': {'event_index.0': 0}}
 
+from hhemt.report_plot_ids import (
+    event_labels_from_status as _event_labels_from_status,
+    report_label_value as _report_label_value,
+    sa_labels_from_status as _sa_labels_from_status,
+)
+
+_EVENT_LABELS = _event_labels_from_status(workflow.basedir)
+_SA_LABELS = _sa_labels_from_status(workflow.basedir)
+
+
 def _per_sim_per_sa_flood_depth_sources(wildcards):
     from hhemt.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
@@ -820,7 +855,7 @@ rule plot_per_sim_per_sa_peak_flood_depth:
             "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html",
             caption="report/captions/per_sim_peak_flood_depth.rst",
             category="Per Simulation Results",
-            labels={"figure": "Peak flood depth", "sa_id": "{sa_id}", "event_id": "{event_id}"},
+            labels=(lambda w: {"figure": "Peak flood depth", "sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         sa_id="[A-Za-z0-9_.]+",
@@ -851,7 +886,7 @@ rule plot_per_sim_per_sa_conduit_flow:
             "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html",
             caption="report/captions/per_sim_conduit_flow.rst",
             category="Per Simulation Results",
-            labels={"figure": "Conduit flow", "sa_id": "{sa_id}", "event_id": "{event_id}"},
+            labels=(lambda w: {"figure": "Conduit flow", "sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         sa_id="[A-Za-z0-9_.]+",
@@ -922,6 +957,7 @@ rule render_report:
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
         "plots/metadata.html",
+        "plots/workflow_performance.html",
         "scenario_status.csv",
         "workflow_summary.md",
         expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT),
