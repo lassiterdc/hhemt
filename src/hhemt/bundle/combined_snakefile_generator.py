@@ -28,7 +28,7 @@ from __future__ import annotations
 import warnings
 from pathlib import Path
 
-from hhemt.report_plot_ids import humanize_plot_id
+from hhemt.report_plot_ids import escape_label_braces, humanize_plot_id
 from hhemt.report_renderers._reporting_sets import get_reporting_set
 from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.workflow import (
@@ -571,7 +571,18 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                             # for promotion to a toggle control, so a first key can never be
                             # silently converted from a column into a toggle.
                             {
-                                "figure": humanize_plot_id(plot_id, _sa_labels),
+                                # escape_label_braces because THIS value reaches a Snakemake
+                                # `report(labels=...)` entry, where `expand_labels` re-expands
+                                # it through `apply_wildcards` -- so a `{` in any user-authored
+                                # sa/event label aborts the render. `report_label_value` escapes
+                                # for the per-master rules; `humanize_plot_id` does not, because
+                                # its other two consumers (the composed page `<title>` here and
+                                # the React `name` field in `_react_surgery`) are never
+                                # re-expanded and would show doubled braces to the reader. The
+                                # escape therefore belongs at THIS call, not inside the humanizer.
+                                "figure": escape_label_braces(
+                                    humanize_plot_id(plot_id, _sa_labels, _event_labels)
+                                ),
                                 **_plot_id_facets(
                                     plot_id,
                                     models=(

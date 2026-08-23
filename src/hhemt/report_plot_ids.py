@@ -287,6 +287,28 @@ def event_labels_from_status(analysis_dir) -> dict[str, str]:
     return out
 
 
+def escape_label_braces(text: str) -> str:
+    """Make `text` safe to place in a Snakemake ``report(labels=...)`` VALUE.
+
+    `expand_labels` re-expands every resolved label value through `apply_wildcards`,
+    so a `{` or `}` reaching that call is read as a wildcard template and aborts the
+    render with `WorkflowError: Failed to resolve wildcards`. Doubling the braces is
+    what makes a user-authored label containing one render as itself.
+
+    Declared ONCE and shared, rather than inlined at each call, because there are now
+    two independent producers of label values -- `report_label_value` for the
+    per-master rules and `humanize_plot_id` for the combined report's `figure` facet
+    -- and a second copy of the rule is the drift this module's own single-declaration
+    convention exists to prevent.
+
+    ONLY for values that reach a Snakemake label. It is WRONG for the other two
+    `humanize_plot_id` consumers: the composed page's `<title>` and the React `name`
+    field are never re-expanded, so escaping there would show doubled braces to the
+    reader.
+    """
+    return text.replace("{", "{{").replace("}", "}}")
+
+
 def report_label_value(mapping, key, fallback_prefix) -> str:
     """One resolved, brace-safe value for a Snakemake ``report(labels=...)`` entry.
 
@@ -308,7 +330,7 @@ def report_label_value(mapping, key, fallback_prefix) -> str:
     text = str(value).strip() if value is not None else ""
     if not text:
         text = f"{fallback_prefix} {key}"
-    return text.replace("{", "{{").replace("}", "}}")
+    return escape_label_braces(text)
 
 
 #: Snakefile preamble text emitted VERBATIM by every generator that writes rules
