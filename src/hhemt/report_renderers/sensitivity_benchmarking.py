@@ -344,6 +344,33 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom) -> None:
 # `sens_cfg.line_width`, `sens_cfg.palette`, `sens_cfg.independent_var_labels`.
 
 
+def _decomposition_label(group_value, *, is_gpu_group: bool, is_hybrid_group: bool) -> str:
+    """The series' DECOMPOSITION, named for a reader who does not know hhemt internals.
+
+    Presentation ONLY. This never becomes `df["group_value"]`, is never passed as
+    `group_col`, and never reaches `_hardware_family` or `_resolve_family_baselines` --
+    `group_value` is hardware-BEARING on purpose (see the `gpu (<token>)` rewrite) and
+    this label is deliberately many-to-one, so promoting it to the grouping key would
+    merge CPU-MPI with GPU and break per-hardware baseline resolution.
+
+    Hardware is carried by the COLUMN FACET, so no entry names it. A GPU run and a CPU
+    MPI run share `N ranks x 1 thread (MPI)` and are told apart by their column; that
+    merge is the design, not a collision. `serial` is not a strategy in a strong-scaling
+    figure -- it is the N=1 point every strategy starts from -- so it is labelled as the
+    baseline reference rather than as a fourth series.
+    """
+    if is_gpu_group:
+        return "N ranks × 1 thread (MPI)"
+    if is_hybrid_group:
+        return "N/2 ranks × 2 threads (MPI + OpenMP)"
+    token = str(group_value).strip().lower()
+    return {
+        "mpi": "N ranks × 1 thread (MPI)",
+        "openmp": "1 rank × N threads (OpenMP)",
+        "serial": "baseline: 1 rank × 1 thread (S = 1 by definition)",
+    }.get(token, str(group_value))
+
+
 def render(
     analysis: TRITONSWMM_analysis,
     report_cfg: report_config,
@@ -783,11 +810,15 @@ def render(
             )
 
     if group_by_var is not None:
-        # Asterisk after groups that get per-point n_mpi_procs annotations
-        # (currently: hybrid). Connects the legend entry to the bottom-panel footnote.
+        # The legend names the DECOMPOSITION, not the stored `run mode` value: the label
+        # is a function of (run mode, device class), so the title is the derived axis
+        # rather than `group_by_var`. The former asterisk on the hybrid entry is retired
+        # -- it pointed at the bottom-panel footnote explaining the per-point n_mpi_procs
+        # annotations, and the entry now states the rank count itself. It was also a
+        # literal `== "hybrid"` comparison, which the relabelling would have silently
+        # broken in this backend while the plotly one kept starring.
         handles, labels = ax_wall.get_legend_handles_labels()
-        starred = [f"{lab}*" if lab.lower() == "hybrid" else lab for lab in labels]
-        ax_wall.legend(handles, starred, title=group_by_var, loc="upper right")
+        ax_wall.legend(handles, labels, title="decomposition", loc="upper right")
 
     # Title placed via ax_wall.set_title so it's anchored to the top panel's data
     # area (truly plot-centered horizontally, not figure-centered) and matplotlib
@@ -1312,7 +1343,7 @@ def _draw_panel(
                     edgecolor="black",
                     linewidth=1.0,
                     zorder=3,
-                    label=str(gv),
+                    label=_decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group),
                 )
             if is_hybrid_group:
                 for _, r in sub.iterrows():
@@ -1356,7 +1387,7 @@ def _draw_panel(
                 edgecolor="black",
                 linewidth=1.0,
                 zorder=3,
-                label=str(gv),
+                label=_decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group),
             )
         # Hybrid: annotate every point with its n_mpi_procs value (per user spec).
         # Other groups: annotate only when duplicate x-values exist (helps disambiguate).
@@ -1639,7 +1670,11 @@ def _build_sensitivity_benchmarking_figure(
         colorway=list(sens_cfg.palette),
         showlegend=True,
         legend=dict(
-            title=group_by_var if group_by_var is not None else "",
+            # The series axis is the DERIVED `decomposition`, a function of
+            # (run mode, device class) -- not the stored `group_by_var` field. Kept
+            # byte-identical in wording to the matplotlib backend's title so the
+            # static and interactive reports cannot drift.
+            title="decomposition" if group_by_var is not None else "",
             orientation="v",
             yanchor="top",
             y=1.0,
@@ -1790,7 +1825,7 @@ def _build_sensitivity_benchmarking_figure(
     # hardware-column count grows -- which is why the middle column's long
     # "Number of Devices (CPUs or GPUs)" title is the one that reaches the block first.
     _bench_caption = (
-        "* number next to hybrid scenarios indicates number of MPI processes"
+        "The number beside each hybrid point is its MPI rank count."
         " Speedup and efficiency are measured against each hardware family's own"
         " minimum-device run (CPU → serial CPU; each GPU → its own 1-GPU run),"
         " so S = 1.0 denotes a different wall-clock on each curve."
@@ -1950,6 +1985,10 @@ def _plotly_metric_panel(
     groups = sorted(df["group_value"].dropna().unique(), key=str)
     cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"]
     available_cfg_cols = [c for c in cfg_cols if c in df.columns]
+    # First-occurrence gate for the legend. Several `gv` groups now share one
+    # decomposition label -- CPU-MPI and GPU both read `N ranks x 1 thread (MPI)` --
+    # so without this the one full-width row-1 panel emits duplicate identical rows.
+    _legend_seen: set[str] = set()
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
         color = _stable_run_mode_color(gv, sens_cfg.palette, groups)
@@ -1973,12 +2012,7 @@ def _plotly_metric_panel(
         # marker FILL channel now encodes replicate count; the connector dash is a
         # single constant style.
         arm_dash = "solid"
-        if is_gpu_group:
-            legend_name = f"{gv}{gpu_legend_suffix}"
-        elif is_hybrid_group:
-            legend_name = f"{gv}*"
-        else:
-            legend_name = str(gv)
+        legend_name = _decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
         if not is_single_point_group:
             # Average replicates of one config first, THEN take the per-N min across
             # distinct configs (the documented "best configuration at that resource
@@ -2002,7 +2036,7 @@ def _plotly_metric_panel(
                         y=per_x_min.values,
                         mode="lines",
                         line=dict(color=color, dash=arm_dash, width=sens_cfg.line_width),
-                        legendgroup=str(gv),
+                        legendgroup=legend_name,
                         name=legend_name,
                         showlegend=False,
                         hoverinfo="skip",
@@ -2068,9 +2102,9 @@ def _plotly_metric_panel(
                     color=_fill,
                     line=dict(color=color, width=1.4),
                 ),
-                legendgroup=str(gv),
+                legendgroup=legend_name,
                 name=legend_name,
-                showlegend=show_in_legend,
+                showlegend=show_in_legend and legend_name not in _legend_seen,
                 hovertemplate=hovertemplate_str,
             )
             if customdata is not None:
@@ -2080,6 +2114,7 @@ def _plotly_metric_panel(
                 row=row,
                 col=1,
             )
+        _legend_seen.add(legend_name)
 
 
 def _plotly_metric_panel_precomputed(
@@ -2199,7 +2234,7 @@ def _plotly_metric_panel_precomputed(
         # rationale). The ideal-reference line below is NOT a data connector and was
         # never arm-encoded.
         arm_dash = "solid"
-        legend_name = f"{gv}{gpu_legend_suffix}" if is_gpu_group else (f"{gv}*" if is_hybrid_group else str(gv))
+        legend_name = _decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
         # Build hover customdata + hybrid annotation text from sa_id provenance.
         marker_customdata = _build_customdata(marker_sa)
         marker_text = None
@@ -2232,7 +2267,7 @@ def _plotly_metric_panel_precomputed(
                 y=line_ys,
                 mode="lines",
                 line=dict(color=color, dash=arm_dash, width=sens_cfg.line_width),
-                legendgroup=str(gv),
+                legendgroup=legend_name,
                 name=legend_name,
                 showlegend=False,
                 hoverinfo="skip",
@@ -2264,7 +2299,7 @@ def _plotly_metric_panel_precomputed(
                 color=_marker_fill,
                 line=dict(color=color, width=1.4),
             ),
-            legendgroup=str(gv),
+            legendgroup=legend_name,
             name=legend_name,
             showlegend=show_in_legend,
             hovertemplate=hovertemplate_str,
