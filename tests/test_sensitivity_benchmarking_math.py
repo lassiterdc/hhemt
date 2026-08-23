@@ -702,11 +702,20 @@ def test_axis_groups_collapse_when_independent_var_is_n_devices():
 
 
 @pytest.mark.parametrize(
-    "independent_var, top_values",
-    [("analysis.n_mpi_procs", {1, 2}), ("n_devices", {1, 2})],
+    # `top_titles` is the expected row-2 x-axis title PER COLUMN, as a literal.
+    # It differs by parametrization because device-class qualification applies only
+    # where the label map defines a qualified key: `n_devices.cpu`/`.gpu` exist, so
+    # that axis names the unit its count denotes; `analysis.n_mpi_procs.*` does not,
+    # so the axis keeps its unqualified label -- ranks are ranks in every column, and
+    # titling a rank axis `cores` would be false.
+    "independent_var, top_values, top_titles",
+    [
+        ("analysis.n_mpi_procs", {1, 2}, ("analysis.n_mpi_procs", "analysis.n_mpi_procs")),
+        ("n_devices", {1, 2}, ("cores", "GPUs")),
+    ],
 )
 def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(
-    independent_var, top_values
+    independent_var, top_values, top_titles
 ):
     """THE FALSIFYING TEST.
 
@@ -810,8 +819,10 @@ def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(
                 f"row {row} col {col} plotted {plotted}, which is not the independent_var "
                 f"value set {top_values} -- the top pair is keyed on the wrong column"
             )
-            # Unqualified: the top pair's label is not device-class-qualified today.
-            assert _visible_title(row, col) == top.label
+            assert _visible_title(row, col) == top_titles[col - 1], (
+                f"row {row} col {col} is titled {_visible_title(row, col)!r}, expected "
+                f"{top_titles[col - 1]!r} -- the top group's per-column label is wrong"
+            )
 
     # --- BOTTOM GROUP: rows 3+4 plot n_devices, labelled by the DEVICE-CLASS-QUALIFIED
     # label for that column -- `cores` on the CPU column, `GPUs` on a GPU column. The

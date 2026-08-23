@@ -353,25 +353,35 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
     # each row WAS one cell; after faceting, columns 2..n silently lost both the row-1
     # match and the row-2 title. No test could see it: the axis fixture carries one
     # hardware family, so col=1 is the only column that exists there.
+    def _qualified(group, col: int) -> str:
+        """This column's label for `group`, device-class-qualified WHERE THAT APPLIES.
+
+        The qualifier is passed UNCONDITIONALLY and `for_var`'s fallback chain decides:
+        `{source_var}.{cpu|gpu}` if the map defines it, else the unqualified label. The
+        MAP is therefore the declaration of which variables admit qualification --
+        `n_devices` does (its count means cores on a CPU column and GPUs on a GPU one),
+        `analysis.n_mpi_procs` does not (ranks are ranks in every column). No identity
+        test against `_SCALING_AXIS_VAR` is needed or wanted: that would be a second
+        place this knowledge lives, and it could drift from the map.
+
+        This is what stops a rank-count axis being titled `cores` -- the error the
+        derived-label invariant exists to prevent -- without the caller deciding.
+        """
+        if hw_cols is None or labels is None or col > len(hw_cols):
+            return group.label
+        qual = "cpu" if hw_cols[col - 1] == "cpu" else "gpu"
+        return AxisGroup.for_var(group.x_col, group.source_var, labels, qualifier=qual).label
+
     for _ci in range(1, n_hw + 1):
         fig.update_xaxes(matches=_xref(2, _ci), showticklabels=False, title_text="", row=1, col=_ci)
-        fig.update_xaxes(title_text=top.label, row=2, col=_ci)
+        fig.update_xaxes(title_text=_qualified(top, _ci), row=2, col=_ci)
     # Reachability: `n_hw = max(len(_hw_cols), 1)` at the call site, so n_hw >= 1 for
     # EVERY input class (including an empty group_value column) and this loop body
     # executes at least once on every plotly render. There is no reachable input for
     # which the bottom pair goes unlinked or unlabelled.
     for _ci in range(1, n_hw + 1):
         fig.update_xaxes(matches=_xref(4, _ci), showticklabels=False, title_text="", row=3, col=_ci)
-        # The qualifier is the DEVICE CLASS (cpu/gpu), never the hardware token: the
-        # axis counts GPUs on every GPU column, so a per-hardware key would mint two
-        # entries obliged to carry the same string. Falls back to the shared label when
-        # the caller supplies no columns or labels, so the standalone path is unchanged.
-        if hw_cols is not None and labels is not None and _ci <= len(hw_cols):
-            _qual = "cpu" if hw_cols[_ci - 1] == "cpu" else "gpu"
-            _bottom_c = AxisGroup.for_var(_SCALING_AXIS_VAR, _SCALING_AXIS_VAR, labels, qualifier=_qual)
-            fig.update_xaxes(title_text=_bottom_c.label, row=4, col=_ci)
-        else:
-            fig.update_xaxes(title_text=bottom.label, row=4, col=_ci)
+        fig.update_xaxes(title_text=_qualified(bottom, _ci), row=4, col=_ci)
 
 
 # Module-level styling constants moved to `report_cfg.sensitivity` per the
