@@ -4106,7 +4106,12 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             analysis.cfg_analysis.local_cpu_cores_for_workflow = original_local_cores
 
         if not dry_run_result.get("success"):
-            raise RuntimeError("Dry run failed; workflow submission aborted.")
+            raise RuntimeError(
+                "Dry run failed; workflow submission aborted.\n"
+                f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
+                f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
+                "  (the log may be node-local and absent if this ran in a batch job)"
+            )
 
         # Override mode to indicate intended execution context
         dry_run_result["mode"] = "single_job"
@@ -5958,7 +5963,12 @@ exit $snakemake_status
             )
 
             if not dry_run_result.get("success"):
-                raise RuntimeError("Dry run failed; workflow submission aborted.")
+                raise RuntimeError(
+                    "Dry run failed; workflow submission aborted.\n"
+                    f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
+                    f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
+                    "  (the log may be node-local and absent if this ran in a batch job)"
+                )
 
             if dry_run:
                 self.analysis._refresh_log()
@@ -6050,7 +6060,12 @@ exit $snakemake_status
             )
 
         if not dry_run_result.get("success"):
-            raise RuntimeError("Dry run failed; workflow submission aborted.")
+            raise RuntimeError(
+                "Dry run failed; workflow submission aborted.\n"
+                f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
+                f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
+                "  (the log may be node-local and absent if this ran in a batch job)"
+            )
 
         if dry_run:
             self.analysis._refresh_log()
@@ -9684,7 +9699,12 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             )
 
             if not dry_run_result.get("success"):
-                raise RuntimeError("Dry run failed; workflow submission aborted.")
+                raise RuntimeError(
+                    "Dry run failed; workflow submission aborted.\n"
+                    f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
+                    f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
+                    "  (the log may be node-local and absent if this ran in a batch job)"
+                )
 
             if dry_run:
                 self.sensitivity_analysis._update_master_analysis_log()
@@ -9789,7 +9809,12 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             )
 
         if not dry_run_result.get("success"):
-            raise RuntimeError("Dry run failed; workflow submission aborted.")
+            raise RuntimeError(
+                "Dry run failed; workflow submission aborted.\n"
+                f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
+                f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
+                "  (the log may be node-local and absent if this ran in a batch job)"
+            )
 
         if dry_run:
             self.sensitivity_analysis._update_master_analysis_log()
