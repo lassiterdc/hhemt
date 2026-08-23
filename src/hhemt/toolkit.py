@@ -399,9 +399,15 @@ class Toolkit:
             "slurm" if in SLURM context or configured for SLURM,
             "local" otherwise
         """
-        if self.analysis.in_slurm or self.analysis.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
-            return "slurm"
-        return "local"
+        # Delegates: execution locus is resolved in exactly ONE place,
+        # analysis.run()'s `execution_mode == "auto"` branch. This method
+        # previously carried its own copy of the rule, and that copy was BOTH
+        # env-reading (`self.analysis.in_slurm`, which promotes a local-configured
+        # analysis inside an allocation) AND incomplete (it omitted the batch_job
+        # arm, so a batch_job config resolved "local"). Returning "auto" removes
+        # both defects by construction rather than repairing them in parallel.
+        # "auto" is already in this method's declared return type.
+        return "auto"
 
     @property
     def analysis_dir(self) -> Path:
