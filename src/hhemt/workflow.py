@@ -5982,7 +5982,18 @@ exit $snakemake_status
 
         # Standard workflow submission (existing logic)
         if mode == "auto":
-            mode = "slurm" if self.analysis.in_slurm else "local"
+            # Execution locus is a CONFIG property, not an environment property.
+            # `1_job_many_srun_tasks` and `batch_job` both return above, so this
+            # line is reachable ONLY with multi_sim_run_method == "local".
+            # Resolving to "local" preserves login-node behaviour exactly and
+            # removes only the in-allocation promotion (a locally-configured
+            # analysis silently becoming a SLURM workflow because $SLURM_JOB_ID
+            # happened to be set).
+            # Do NOT reintroduce a read of analysis.in_slurm here, and do NOT
+            # make in_slurm itself config-only: run_simulation.py:820 still
+            # derives `using_srun` from it, and narrowing that predicate would
+            # strip the inner srun supplying per-rank GPU binding (Gotcha 32).
+            mode = "local"
 
         # [Q8] Defect 2: publish the resolved execution LOCUS to the report-tail
         # partition predicate in _make_rule_emission_context, which runs inside
@@ -9673,7 +9684,11 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # Standard workflow submission (existing logic)
         # Detect execution mode
         if mode == "auto":
-            mode = "slurm" if self.master_analysis.in_slurm else "local"
+            # Config, not environment — see the sibling note in
+            # SnakemakeWorkflowBuilder.submit_workflow. The 1_job_many_srun_tasks
+            # and batch_job branches return above, so this line is reachable ONLY
+            # with multi_sim_run_method == "local".
+            mode = "local"
 
         # [Q8] Defect 2: the sensitivity plot-rule builders call
         # self._base_builder._make_rule_emission_context, so the resolved locus
