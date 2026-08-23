@@ -422,7 +422,7 @@ rule plot_per_sim_event_page:
             "plots/per_sim/{event_id}/event_page__evt.{event_id}.html",
             caption="report/captions/per_sim_event_page.rst",
             category="Per Simulation Results",
-            labels={"figure": "Simulation results", "event_id": "{event_id}"},
+            labels=(lambda w: {"figure": "Simulation results", "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         event_id="[A-Za-z0-9_.]+",

@@ -281,30 +281,48 @@ def _resolve_rule_all_extensions(
     return {key: _output_ext_for(static_backend, key) for key in _OUTPUT_EXT_BY_RENDERER}
 
 
-def _benchmarking_report_kwargs() -> dict[str, str]:
-    """The benchmarking rule's ``report(...)`` kwargs, SOURCED from the registry.
+def _registry_report_kwargs(rule_name: str) -> dict[str, str]:
+    """One rule's ``report(...)`` kwargs, SOURCED from the registry by rule name.
 
-    `SensitivityAnalysisWorkflowBuilder._build_plot_rule_block_sensitivity_benchmarking`
-    previously hand-wrote a byte-identical copy of these four kwargs. That copy is why
-    the `__MODEL_ARM_LABEL__` sentinel added to `_reporting_sets.py` reached the BUNDLE
-    path (which harvests the registry) and not the MASTER path (which did not), leaving
-    the whole report-label channel inert on the only path where the benchmarking figure
-    exists. Measured at the time: three benchmarking goldens recaptured, zero models keys.
+    Source-side builders previously hand-wrote byte-identical copies of these kwargs.
+    Two failures came out of that: the `__MODEL_ARM_LABEL__` sentinel reached the BUNDLE
+    path and not the MASTER path (three benchmarking goldens recaptured, zero models
+    keys), and `a43c2822`'s user-defined event labels reached the registry and the bundle
+    and never the source, so the cluster-rendered report shows raw ids for a feature that
+    is merged and approved.
+
+    Keyed on ``rule_name``, not ``renderer_module``: the per-sim-per-sa builder emits rules
+    named ``plot_per_sim_per_sa_*`` whose renderer_module is ``per_sim_*``, so rule_name is
+    the stable cross-reference (the same key `test_reporting_set_cosourcing` uses).
+
+    Scans every registered set and requires UNANIMITY. Measured 2026-08-23: 0 of 22 distinct
+    rule_names carry differing report_kwargs across the 6 registered sets, so this is a
+    well-defined lookup today; the assertion is what makes it fail loudly if that stops
+    being true rather than silently picking whichever set was iterated first.
 
     Raises rather than falling back. A fallback to a local default would restore exactly
     the divergence this function exists to remove, and would do it silently -- the failure
     mode that cost two rounds to find.
     """
-    from hhemt.report_renderers._reporting_sets import get_reporting_set
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS, get_reporting_set
 
-    for sel in get_reporting_set("benchmarking").renderer_selection:
-        for tpl in sel.rule_spec_template:
-            if tpl.renderer_module == "sensitivity_benchmarking":
-                return dict(tpl.report_kwargs)
-    raise RuntimeError(
-        "the 'benchmarking' reporting set carries no sensitivity_benchmarking "
-        "rule_spec_template, so the master builder cannot source its report kwargs"
-    )
+    found: list[dict[str, str]] = []
+    for set_name in REPORTING_SETS:
+        for sel in get_reporting_set(set_name).renderer_selection:
+            for tpl in sel.rule_spec_template:
+                if tpl.rule_name == rule_name:
+                    found.append(dict(tpl.report_kwargs))
+    if not found:
+        raise RuntimeError(
+            f"no registered reporting set carries a rule_spec_template for {rule_name!r}, "
+            "so the source-side builder cannot source its report kwargs"
+        )
+    if any(f != found[0] for f in found):
+        raise RuntimeError(
+            f"registered reporting sets disagree on report_kwargs for {rule_name!r}: "
+            f"{found!r}. A rule_name-keyed lookup is only well-defined under unanimity."
+        )
+    return found[0]
 
 
 def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
@@ -3505,9 +3523,9 @@ def _per_sim_event_page_sources(wildcards):
             extra_cli_flags=("--event-iloc {params.event_iloc}",),
             extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID[w.event_id]"),),
             report_kwargs={
-                "caption": "report/captions/per_sim_event_page.rst",
-                "category": "Per Simulation Results",
-                "labels": '{"figure": "Simulation results", "event_id": "{event_id}"}',
+                # SOURCED from the registry. The hand-written copy here is why a43c2822's
+                # user-defined event labels reached the bundle path and never the source.
+                **_registry_report_kwargs("plot_per_sim_event_page"),
             },
             resources_yaml="mem_mb=8000, time_min=30",
             log_path_template="logs/plots/per_sim_event_page_{event_id}.log",
@@ -9244,7 +9262,7 @@ def _sensitivity_source_paths(wildcards):
                 # bundle path (which harvests the registry) and NOT the master path (which
                 # did not) -- the whole labels channel was inert on the only path where the
                 # benchmarking figure exists. Two strings that must agree is the condition.
-                **_benchmarking_report_kwargs(),
+                **_registry_report_kwargs("plot_sensitivity_benchmarking"),
             },
             resources_yaml="mem_mb=4000, time_min=10",
             log_path_template="logs/plots/sensitivity_benchmarking_{independent_var}.log",
@@ -9334,9 +9352,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             ),
             extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID_BY_SA[w.sa_id][w.event_id]"),),
             report_kwargs={
-                "caption": "report/captions/per_sim_peak_flood_depth.rst",
-                "category": "Per Simulation Results",
-                "labels": '{"figure": "Peak flood depth", "sa_id": "{sa_id}", "event_id": "{event_id}"}',
+                # SOURCED from the registry -- see _registry_report_kwargs.
+                **_registry_report_kwargs("plot_per_sim_per_sa_peak_flood_depth"),
             },
             resources_yaml="mem_mb=4000, time_min=15",
             log_path_template="logs/plots/per_sim_per_sa_peak_flood_depth_sa-{sa_id}_{event_id}.log",
@@ -9367,9 +9384,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             ),
             extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID_BY_SA[w.sa_id][w.event_id]"),),
             report_kwargs={
-                "caption": "report/captions/per_sim_conduit_flow.rst",
-                "category": "Per Simulation Results",
-                "labels": '{"figure": "Conduit flow", "sa_id": "{sa_id}", "event_id": "{event_id}"}',
+                # SOURCED from the registry -- see _registry_report_kwargs.
+                **_registry_report_kwargs("plot_per_sim_per_sa_conduit_flow"),
             },
             resources_yaml="mem_mb=4000, time_min=15",
             log_path_template="logs/plots/per_sim_per_sa_conduit_flow_sa-{sa_id}_{event_id}.log",

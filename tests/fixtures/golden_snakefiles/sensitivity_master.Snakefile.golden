@@ -882,7 +882,7 @@ rule plot_per_sim_per_sa_peak_flood_depth:
             "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html",
             caption="report/captions/per_sim_peak_flood_depth.rst",
             category="Per Simulation Results",
-            labels={"figure": "Peak flood depth", "sa_id": "{sa_id}", "event_id": "{event_id}"},
+            labels=(lambda w: {"figure": "Peak flood depth", "sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         sa_id="[A-Za-z0-9_.]+",
@@ -914,7 +914,7 @@ rule plot_per_sim_per_sa_conduit_flow:
             "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html",
             caption="report/captions/per_sim_conduit_flow.rst",
             category="Per Simulation Results",
-            labels={"figure": "Conduit flow", "sa_id": "{sa_id}", "event_id": "{event_id}"},
+            labels=(lambda w: {"figure": "Conduit flow", "sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         sa_id="[A-Za-z0-9_.]+",
