@@ -1755,46 +1755,60 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
 
     from hhemt.scenario import compute_event_id_slug
 
-    sims_dir = Path(analysis.analysis_paths.simulation_directory)
     details: list[dict] = []
     examined = 0
     indeterminate = 0
 
-    for i in range(int(analysis.n_scenarios)):
-        evt = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(i))
-        scen = sims_dir / evt
-        wx = scen / "sim_weather.nc"
-        summaries = sorted((scen / "processed").glob("*TRITON_summary.zarr"))
-        if not wx.exists() or not summaries:
-            indeterminate += 1
-            continue
-        try:
-            forced_end_min = _forced_extent_minutes(
-                wx, analysis.cfg_analysis.weather_time_series_timestep_dimension_name
-            )
-            if forced_end_min is None:
+    # Iterate `_iter_subanalyses_or_self` like every other sensitivity-aware check in this
+    # module. A sensitivity MASTER carries `n_scenarios == n_events * n_subs` while its own
+    # `df_sims` holds only the events, so the previous master-scoped `range(n_scenarios)` +
+    # `analysis._retrieve_weather_indexer_using_integer_index(i)` raised `KeyError` on the
+    # first index past the event count (measured on the synth fixture: n_scenarios=4,
+    # df_sims index=[0] -> KeyError: 1). That raise propagated out of `validate_analysis`,
+    # so `persist_validation_report` -- whose four call sites ALL swallow it as non-fatal
+    # (export_scenario_status.py:444 and :540, consolidate_workflow.py:489,
+    # analysis.py:1081) -- silently wrote NO master-level validation_report.json at all,
+    # while every sub wrote its own. The master scope was also the wrong sims root: a
+    # master's `sims/` is empty (scenarios live under `subanalyses/sa_N/sims/`), so even
+    # without the raise this check examined zero scenarios on every sensitivity run.
+    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+        sims_dir = Path(sub.analysis_paths.simulation_directory)
+        for i in range(int(sub.n_scenarios)):
+            evt = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(i))
+            scen = sims_dir / evt
+            wx = scen / "sim_weather.nc"
+            summaries = sorted((scen / "processed").glob("*TRITON_summary.zarr"))
+            if not wx.exists() or not summaries:
                 indeterminate += 1
                 continue
-            zarr = xr.open_zarr(summaries[0], consolidated=False)
-            tmx = zarr["time_of_max_wlevel_min"].isel(event_iloc=0).values.astype(float)
-            mx = zarr["max_wlevel_m"].isel(event_iloc=0).values.astype(float)
-        except Exception:
-            indeterminate += 1
-            continue
-        examined += 1
-        wet = np.isfinite(tmx) & (mx > 0.01)
-        if not wet.any():
-            continue
-        after = int((tmx[wet] > forced_end_min + _FORCING_TAIL_TOLERANCE_MIN).sum())
-        if after:
-            details.append(
-                {
+            try:
+                forced_end_min = _forced_extent_minutes(
+                    wx, sub.cfg_analysis.weather_time_series_timestep_dimension_name
+                )
+                if forced_end_min is None:
+                    indeterminate += 1
+                    continue
+                zarr = xr.open_zarr(summaries[0], consolidated=False)
+                tmx = zarr["time_of_max_wlevel_min"].isel(event_iloc=0).values.astype(float)
+                mx = zarr["max_wlevel_m"].isel(event_iloc=0).values.astype(float)
+            except Exception:
+                indeterminate += 1
+                continue
+            examined += 1
+            wet = np.isfinite(tmx) & (mx > 0.01)
+            if not wet.any():
+                continue
+            after = int((tmx[wet] > forced_end_min + _FORCING_TAIL_TOLERANCE_MIN).sum())
+            if after:
+                row = {
                     "event_id": evt,
                     "cells_max_after_forcing": after,
                     "wet_cells": int(wet.sum()),
                     "forced_end_min": forced_end_min,
                 }
-            )
+                if sa_id is not None:
+                    row["sa_id"] = f"sa_{sa_id}"
+                details.append(row)
 
     return CheckResult(
         name="forcing tail influence",
