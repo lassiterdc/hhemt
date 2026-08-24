@@ -90,7 +90,15 @@ def _normalize_volatile(text: str) -> str:
     text = text.replace(str(Path(__file__).resolve().parents[1]), "{REPO_ROOT}")
     # Collapse the variable-depth relative path to the home data dir: a worktree
     # nests deeper than the primary tree, so the ``../`` count itself varies.
-    text = re.sub(r"(?:\.\./)+(\.local/share/)", r"{HOME_REL}/\1", text)
+    # The ``[^'"\s]*?`` is load-bearing on any host where ``$HOME`` is a SYMLINK
+    # (every Lustre/GPFS cluster home): ``os.path.relpath`` climbs to ``/`` and then
+    # descends through the RESOLVED path, so the ``../`` run is followed by the real
+    # home segments (``gpfs/tardis/home/u/``) rather than by ``.local/share/`` directly.
+    # Anchoring straight onto ``.local/share/`` therefore masks nothing off-laptop and
+    # the machine path survives into the comparison. Lazy + quote/space-excluding so it
+    # cannot cross a string boundary, and it matches empty where home is not a symlink,
+    # which keeps the primary-tree output byte-identical to the pre-fix form.
+    text = re.sub(r"(?:\.\./)+[^'\"\s]*?(\.local/share/)", r"{HOME_REL}/\1", text)
     return text
 
 
@@ -326,4 +334,33 @@ def test_report_tail_partition_native_dispatch_invariant_to_locus(
         assert _report_tail_partition(builder) == _Q8_CPU_PARTITION, (
             f"native dispatch emitted a different partition for locus={locus!r}; "
             f"the OR-clause must leave the native path byte-identical (ADR-19)."
+        )
+
+
+def test_home_data_dir_mask_survives_a_symlinked_home() -> None:
+    """The ``{HOME_REL}`` mask must fire whether or not ``$HOME`` is a symlink.
+
+    Two arms, because one arm alone cannot distinguish a working mask from a mask that
+    happens to match this machine. Where ``$HOME`` resolves to itself (a laptop),
+    ``os.path.relpath`` climbs only to the shared prefix and the ``../`` run is followed
+    directly by ``.local/share/``. Where ``$HOME`` is a symlink onto another filesystem
+    (every Lustre/GPFS cluster home), relpath climbs to ``/`` and descends through the
+    RESOLVED path first, so the run is followed by the real home segments.
+
+    Measured 2026-08-24: the pre-fix pattern masked the first arm and not the second, so
+    5 byte-identity goldens failed on Rivanna while passing locally — a red that looked
+    like golden staleness and was environment sensitivity. This test is the falsifiable
+    guard, and it needs no cluster to run.
+    """
+    laptop = "'../../../.local/share/hhemt/examples/norfolk/x.shp'"
+    cluster = "'../../../../../../../../../gpfs/tardis/home/u/.local/share/hhemt/examples/norfolk/x.shp'"
+
+    for arm, text in (("laptop", laptop), ("symlinked-home", cluster)):
+        got = _normalize_volatile(text)
+        assert "{HOME_REL}/.local/share/" in got, (
+            f"{arm} arm: the home-data-dir mask did not fire, so a machine-specific path "
+            f"survives into the byte-identity comparison. got={got!r}"
+        )
+        assert "gpfs" not in got and "/home/u/" not in got, (
+            f"{arm} arm: a machine-specific segment leaked past the mask. got={got!r}"
         )

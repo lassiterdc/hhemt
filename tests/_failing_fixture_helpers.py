@@ -45,7 +45,18 @@ def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) ->
         )
 
     dst_system_dir = tmp_path / "system"
-    shutil.copytree(src_system_dir, dst_system_dir)
+    # symlinks=True: copy links AS links instead of following them -- the same remedy,
+    # for the same reason, as the two `copytree` sites in `tests/conftest.py`. Each
+    # scenario dir carries `build -> {_software}/triton/build_tritonswmm_cpu`, a link
+    # into the SHARED compile tier that another chunk rebuilds as routine setup: the
+    # reconfigure-from-clean `rm -rf`s the build dir's contents, and a follow-symlinks
+    # copytree landing inside that window raises `shutil.Error ... [Errno 2]` on the
+    # SOURCE. Measured on Rivanna run 20260824T021951Z: `build_tritonswmm_cpu` was
+    # rebuilt at 23:41 mid-run (666 files under it, 4037 under `_software`), and the 3
+    # `test_synth_static_plots` errors are exactly that read. The clone does not own the
+    # compile tier and has no business dereferencing it; copying the link preserves the
+    # scenario's structure and is insensitive to whether the target currently exists.
+    shutil.copytree(src_system_dir, dst_system_dir, symlinks=True)
 
     # Write the modified master configs INSIDE dst_system_dir (NOT at tmp_path
     # root). The source layout has system_config.yaml + analysis_config.yaml
