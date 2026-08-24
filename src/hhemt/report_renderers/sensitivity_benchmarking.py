@@ -104,6 +104,22 @@ _HOLLOW_FILL = "rgba(0,0,0,0)"
 #: transparent-face spelling and is not the string `"None"` nor the object `None`.
 _HOLLOW_FILL_MPL = "none"
 
+#: Hover labels for the per-point config columns. ONE map, not two: this text was
+#: duplicated inline at both hover-emission sites, which is the repeated-definition
+#: shape the single-source mandate forbids -- two hand-maintained copies of one list
+#: drift, and adding a column meant remembering to edit both.
+#:
+#: `n_replicates` is worded as a COUNT OF RUNS, deliberately. A bare "Replicates: 2"
+#: reads equally as "this config ran twice" and "this is replicate 2 of N", and only
+#: the first is true -- every replicate is drawn as its own marker.
+_CFG_HOVER_LABELS: dict[str, str] = {
+    "n_mpi_procs": "MPI ranks",
+    "n_omp_threads": "OMP threads",
+    "n_gpus": "GPUs",
+    "n_nodes": "Nodes",
+    "n_replicates": "Runs of this config",
+}
+
 
 from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
@@ -655,15 +671,15 @@ def render(
         #
         # `n_replicates` USED to drive marker FILL (hollow = this config has repeated
         # runs). That encoding is retired -- every marker is hollow now -- so the column
-        # currently has NO consumer in this renderer. Measured, not assumed: the only two
-        # reads were the two fill sites, and the retired lookup's own comment recorded
-        # that it "was never read again". It is kept rather than dropped because it is one
-        # cheap groupby recording a true fact about the experiment, it sits beside the
-        # `n_mpi_procs`/`n_omp_threads`/`n_gpus`/`n_nodes` columns that exist solely to
-        # feed hover customdata, and moving the replicate fact to hover is the obvious way
-        # to restore what the fill channel used to say. If that is declined, this column
-        # is a genuine removal candidate -- do not read its survival as evidence of a
-        # consumer.
+        # feeds the hover payload, alongside the n_mpi_procs/n_omp_threads/n_gpus/
+        # n_nodes columns it sits beside. It briefly had NO consumer -- the two fill
+        # sites were its only reads until the fill channel became a constant -- and was
+        # kept through that window rather than dropped. The hover addition restored a
+        # consumer, so the earlier note calling it a removal candidate is retired: this
+        # column is read.
+        #
+        # Its purpose is to say WHICH configs repeated. The fill channel used to carry
+        # that and no longer does, so hover is now the only place a reader can learn it.
         df["config_id"] = df["sa_id"].astype(str).str.replace(r"_r\d+$", "", regex=True)
         df["n_replicates"] = df["config_id"].map(df.groupby("config_id")["sa_id"].nunique()).astype(int)
         # Iteration 4 (FQ3 + FQ9b): qualify GPU group names with their hardware token when
@@ -2248,7 +2264,7 @@ def _plotly_metric_panel(
 ) -> None:
     """Plot one of the wallclock/compute-cost panels (raw data per group)."""
     groups = sorted(df["group_value"].dropna().unique(), key=str)
-    cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"]
+    cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes", "n_replicates"]
     available_cfg_cols = [c for c in cfg_cols if c in df.columns]
     # First-occurrence gate for the legend. Several `gv` groups share one decomposition
     # label -- CPU-MPI and GPU both read `N ranks x 1 thread (MPI)` -- so without this
@@ -2328,12 +2344,7 @@ def _plotly_metric_panel(
             # today; the rename is here so that adding one later cannot re-form the
             # collision silently.
             for j, _cfg_col in enumerate(available_cfg_cols):
-                label = {
-                    "n_mpi_procs": "MPI ranks",
-                    "n_omp_threads": "OMP threads",
-                    "n_gpus": "GPUs",
-                    "n_nodes": "Nodes",
-                }.get(_cfg_col, _cfg_col)
+                label = _CFG_HOVER_LABELS.get(_cfg_col, _cfg_col)
                 hover_lines.append(f"{label}: %{{customdata[{j}]}}")
         hovertemplate_str = "<br>".join(hover_lines) + "<extra></extra>"
         with prov.artist(
@@ -2412,7 +2423,7 @@ def _plotly_metric_panel_precomputed(
     # literal, so the index cannot move whatever frame arrives -- the defect is not fixed
     # but unrepresentable, which is why the parameter is gone rather than defaulted.
     # Per-sa_id config lookup for hover customdata + hybrid annotations (F2, F3).
-    sa_cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"]
+    sa_cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes", "n_replicates"]
     available_cfg_cols = [c for c in sa_cfg_cols if c in df_for_groups.columns]
     if available_cfg_cols and "sa_id" in df_for_groups.columns:
         # Deduplicate to one row per sa_id (config doesn't vary within an sa_id).
@@ -2492,12 +2503,7 @@ def _plotly_metric_panel_precomputed(
             # to the last config field for every statement below. The free-name
             # check cannot see this -- the name is bound, just to the wrong thing.
             for j, _cfg_col in enumerate(available_cfg_cols):
-                label = {
-                    "n_mpi_procs": "MPI ranks",
-                    "n_omp_threads": "OMP threads",
-                    "n_gpus": "GPUs",
-                    "n_nodes": "Nodes",
-                }.get(_cfg_col, _cfg_col)
+                label = _CFG_HOVER_LABELS.get(_cfg_col, _cfg_col)
                 hover_lines.append(f"{label}: %{{customdata[{j}]}}")
         hovertemplate_str = "<br>".join(hover_lines) + "<extra></extra>"
         # Line trace through per-N min — dashed, no markers, no hover (line is connective only).
