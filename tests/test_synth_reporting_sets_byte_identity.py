@@ -54,13 +54,17 @@ _PYTEST_TMP_RE = re.compile(re.escape(tempfile.gettempdir()) + r"/pytest-of-[^/]
 # suite-1's ``{HOME_REL}`` pattern, while preserving the FILENAME. The content-hash dir
 # is masked separately below (it is a fixture-generator content-address, not dispatch
 # signal — see the ``{HASH}`` mask in ``_normalize_volatile``).
-# The ``[^'"\s]*?`` carries the same symlinked-$HOME case suite-1 documents: where
-# home is a symlink the relpath descends through the RESOLVED path, so the ``../``
-# run is followed by the real home segments before this root. Matches empty on a
-# non-symlinked home, so primary-tree behaviour is unchanged.
-_SYNTH_MODELS_REL_RE = re.compile(
-    r"(?:\.\./)+[^'\"\s]*?" + re.escape(str(_SYNTH_MODELS_ROOT).lstrip("/"))
-)
+# ANCHOR ON THE SUBSTITUTED TOKEN, NOT ON THE ROOT TEXT. A ``../``-relative path
+# CONTAINS the absolute root as a substring — the root's leading ``/`` is supplied by
+# the final ``../`` of the climb — so the absolute replace in ``_normalize_volatile``
+# fires INSIDE the relative path, and by the time any root-anchored relative regex runs
+# its anchor text is already gone. Anchoring on ``{SYNTH_MODELS}`` and running AFTER the
+# absolute replace strips whatever ``../`` climb and resolved-home descent precedes the
+# token, which is the only part that differs between a symlinked-$HOME cluster
+# (``../../..{RESOLVED_HOME_SEGMENTS}{SYNTH_MODELS}``) and a non-symlinked laptop
+# (``../../..{SYNTH_MODELS}``). The FILENAME and the content-hash dir are preserved, and
+# a ``../`` path carrying no ``{SYNTH_MODELS}`` token is left untouched.
+_SYNTH_MODELS_PREFIX_RE = re.compile(r"(?:\.\./)+[^'\"\s]*?(?=\{SYNTH_MODELS\})")
 
 
 def _normalize_volatile(text: str) -> str:
@@ -79,7 +83,7 @@ def _normalize_volatile(text: str) -> str:
     text = text.replace(str(_SYNTH_RUNS_ROOT), "{SYNTH_RUNS}")
     text = re.sub(r"\{SYNTH_RUNS\}/[^/\"' ]+", "{SYNTH_RUNS}/{WT}", text)  # mask worktree slug
     text = text.replace(str(_SYNTH_MODELS_ROOT), "{SYNTH_MODELS}")  # absolute form (if any)
-    text = _SYNTH_MODELS_REL_RE.sub("{SYNTH_MODELS}", text)  # variable-depth ../-relative form
+    text = _SYNTH_MODELS_PREFIX_RE.sub("", text)  # ../-climb + resolved-home prefix left by the replace above
     # The synth-model cache-dir NAME is a 16-hex `_cache_key` over
     # SyntheticModelParams + toolkit version + SHA-1 of every
     # src/hhemt/synthetic_model/*.py (cache.py). Any generator-source edit or
@@ -135,23 +139,44 @@ def test_reprocess_master_byte_identical(synth_sensitivity_analysis):
     _check(generated, "benchmarking_reprocess_master.Snakefile")
 
 
-def test_synth_models_mask_survives_a_symlinked_home() -> None:
-    """``_SYNTH_MODELS_REL_RE`` must fire whether or not ``$HOME`` is a symlink.
+def test_synth_models_mask_converges_across_a_symlinked_home() -> None:
+    """``_normalize_volatile`` must converge across a symlinked and a non-symlinked ``$HOME``.
+
+    Asserted at the NORMALIZER, not at one mask: the defect this guards lives in the
+    ORDER of the masks, not in either mask. The absolute-root replace fires inside a
+    ``../``-relative path and consumes the anchor a root-anchored relative regex would
+    need, so asserting on that regex alone cannot observe the failure — it substitutes
+    correctly on a raw string and never reaches the ordering. Reverting the mask fix
+    makes this test red; the previous regex-level form stayed green.
 
     Same defect class, and the same two arms, as suite-1's
     ``test_home_data_dir_mask_survives_a_symlinked_home``: a symlinked home makes
     ``os.path.relpath`` descend through the RESOLVED path, so the ``../`` run is followed
     by the real home segments before this cache root rather than by the root directly.
-    Anchoring straight onto the unresolved root masks nothing off-laptop.
     """
     root_rel = str(_SYNTH_MODELS_ROOT).lstrip("/")
-    laptop = f"'../../../{root_rel}/abc0123456789def/model.inp'"
-    cluster = f"'../../../../../../../../../gpfs/tardis/{root_rel}/abc0123456789def/model.inp'"
+    key = "abc0123456789def"
+    laptop = f"watershed_rel_path='../../../../../../../{root_rel}/{key}/watershed.geojson',"
+    cluster = (
+        f"watershed_rel_path='../../../../../../../sfs/gpfs/tardis/{root_rel}/"
+        f"{key}/watershed.geojson',"
+    )
 
-    for arm, text in (("laptop", laptop), ("symlinked-home", cluster)):
-        got = _SYNTH_MODELS_REL_RE.sub("{SYNTH_MODELS}", text)
-        assert "{SYNTH_MODELS}" in got, (
-            f"{arm} arm: the synth-models mask did not fire, so a machine-specific path "
-            f"survives into the byte-identity comparison. got={got!r}"
-        )
-        assert "gpfs" not in got, f"{arm} arm: a machine-specific segment leaked. got={got!r}"
+    got_laptop = _normalize_volatile(laptop)
+    got_cluster = _normalize_volatile(cluster)
+    assert got_laptop == got_cluster, (
+        "the normalizer did not converge across homes, so the byte-identity comparison "
+        f"is machine-bound. laptop={got_laptop!r} cluster={got_cluster!r}"
+    )
+    assert "{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson" in got_laptop, (
+        f"the synth-models mask did not fire. got={got_laptop!r}"
+    )
+    assert "gpfs" not in got_cluster, f"a machine-specific segment leaked. got={got_cluster!r}"
+    assert "../" not in got_cluster, f"a relative-climb residual survived. got={got_cluster!r}"
+
+    # differently-positioned satisfying input: a ../-relative path carrying no
+    # model-cache token is real signal and must be returned byte-unchanged.
+    unrelated = "source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}]"
+    assert _normalize_volatile(unrelated) == unrelated, (
+        f"an unrelated ../-relative path was mangled. got={_normalize_volatile(unrelated)!r}"
+    )
