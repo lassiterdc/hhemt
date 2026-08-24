@@ -81,6 +81,75 @@ def test_zero_byte_perf_file_is_skipped(synthetic_perf_dir):
     )
 
 
+def test_malformed_perf_file_is_skipped(synthetic_perf_dir):
+    """A concurrent-writer-interleaved ``performance{N}.txt`` must be SKIPPED with a
+    ``UserWarning``, not crash the aggregator.
+
+    Two real shapes, both measured on Rivanna in the ``synth_sensitivity`` fixture
+    corpus (2026-08-23):
+
+      (a) a trailing numeric fragment after the ``Average`` row -- 10 of 1080 files in
+          ``sa_0``, e.g. ``performance201.txt`` ending in a bare ``.6453`` line.
+          ``read_csv`` NaN-pads it into a row and ``df_ranks["Rank"].astype(int)``
+          raises ``ValueError: invalid literal for int() with base 10: '.6453'``.
+      (b) a mangled ``Average`` row -- ``performance911.txt`` in the ``sa_2`` set-aside
+          tree reads ``AAverage``, leaving no ``Average`` sentinel, so
+          ``df[df["Rank"] == "Average"].iloc[0]`` raises
+          ``IndexError: single positional indexer is out-of-bounds``.
+
+    Pre-fix, EITHER shape fails the whole process rule, which costs the sub-analysis
+    its ``d_process`` flag. The assertions below anchor on raise/return behavior, not
+    on warning wording, so they discriminate on behavior in both pre- and post-fix
+    worlds.
+    """
+    import warnings
+
+    from hhemt.process_simulation import _aggregate_perf_tseries
+
+    # (a) trailing-fragment interleave, appended to an otherwise valid checkpoint.
+    synthetic_perf_dir.joinpath("performance11.txt").write_text(
+        "%Rank, Compute, MPI, IO, Resize, SWMM, Other, Simulation, Init, Total\n"
+        "0, 110, 0, 0, 0, 55, 0, 165, 0, 165\n"
+        "1, 132, 0, 0, 0, 44, 0, 176, 0, 176\n"
+        "Average, 121, 0, 0, 0, 49.5, 0, 170.5, 0, 170.5\n"
+        ".6453\n"
+    )
+    # (b) Average-row interleave, which consumes the sentinel token entirely.
+    synthetic_perf_dir.joinpath("performance12.txt").write_text(
+        "%Rank, Compute, MPI, IO, Resize, SWMM, Other, Simulation, Init, Total\n"
+        "0, 120, 0, 0, 0, 60, 0, 180, 0, 180\n"
+        "1, 144, 0, 0, 0, 48, 0, 192, 0, 192\n"
+        "AAverage, 132, 0, 0, 0, 54, 0, 186, 0, 186\n"
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ds = _aggregate_perf_tseries(
+            synthetic_perf_dir, resume_steps=[]
+        )  # raises ValueError / IndexError pre-fix
+
+    # Both malformed files are skipped: the series covers exactly the 10 valid
+    # checkpoints built by the fixture.
+    assert ds.sizes["timestep_min"] == 10
+    # The skipped checkpoints do not leak into the reset-row join's iloc set: the
+    # per-rank sum still telescopes to the final cumulative of checkpoint 10.
+    assert ds["Total"].sum(dim="timestep_min").max(dim="Rank").item() == pytest.approx(
+        160.0, rel=1e-6
+    )
+    # A UserWarning naming the malformed file(s) was emitted, and it carries the
+    # DIAGNOSIS (concurrent writers), not merely the fact of a skip -- this artifact is
+    # the only place duplicate execution is visible, so a generic message would read as
+    # noise and delete the detector.
+    assert any(
+        issubclass(w.category, UserWarning) and "malformed" in str(w.message).lower()
+        for w in caught
+    )
+    assert any(
+        issubclass(w.category, UserWarning) and "concurrent" in str(w.message).lower()
+        for w in caught
+    )
+
+
 def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
     """Verify ``max(Rank)`` of summed-deltas equals the slowest-rank final cumulative.
 
