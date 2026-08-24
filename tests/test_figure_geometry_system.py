@@ -131,34 +131,46 @@ def test_align_x_pixel_pad_converts_against_the_declared_width():
 # ---- FQ4: legend colour and panel colour must agree -----------------------
 
 
-def test_group_colour_is_invariant_to_filtering_the_group_set():
-    """The legend is built from the UNFILTERED frame; the per-hardware columns
-    are built from a FILTERED one. If colour depends on which groups happen to
-    be present, the legend swatch and the plotted marker disagree.
+def test_group_colour_takes_no_group_set_at_all():
+    """Set-independence, in the STRONGEST form: there is no set to depend on.
 
-    Pre-fix this asserts False: order.index("gpu") is 2 against the full set and
-    0 against the GPU-only set, so the two calls return different palette slots.
+    The predecessor asserted that two calls with different `all_groups` agreed. That
+    guarded a real defect -- the legend is built from the UNFILTERED frame while each
+    hardware column is built from a FILTERED one, and an OPEN run-mode vocabulary derived
+    its palette index from whichever set arrived, so the swatch and the marker could
+    disagree. Colour now indexes a CLOSED four-entry decomposition map by literal, so the
+    parameter is GONE rather than defaulted, and this asserts the signature to keep it
+    gone: a resolver that reacquires a group-set parameter has reacquired the defect.
     """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
+    import inspect
 
-    palette = ["#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442"]
-    all_groups = ["serial", "cpu", "gpu", "hybrid"]
-    gpu_only = ["gpu"]
-    assert _stable_run_mode_color("gpu", palette, all_groups) == _stable_run_mode_color(
-        "gpu", palette, gpu_only
-    ), "GPU marker colour must not depend on which other families are in the panel"
+    from hhemt.report_renderers.sensitivity_benchmarking import _decomposition_color
+
+    params = set(inspect.signature(_decomposition_color).parameters)
+    assert not (params & {"all_groups", "color_groups", "groups"}), (
+        f"_decomposition_color must not take a group set; got {sorted(params)}"
+    )
+    palette = ("#0072B2", "#E69F00", "#009E73", "#CC79A7")
+    kw = dict(is_gpu_group=True, is_hybrid_group=False)
+    assert _decomposition_color("gpu (a6000)", palette, **kw) == _decomposition_color("gpu (a100-80)", palette, **kw), (
+        "two GPU tokens share one decomposition and must therefore share one colour"
+    )
 
 
-def test_precomputed_panel_accepts_an_unfiltered_colour_group_list():
-    """The plumbing that makes the invariant above reachable from the renderer."""
+def test_precomputed_panel_no_longer_threads_a_colour_group_list():
+    """The plumbing the retired invariant needed, asserted GONE.
+
+    Leaving a `color_groups` parameter in place would be a defaulted knob whose only
+    purpose was to fix a defect that can no longer occur -- dead weight that reads as
+    live machinery.
+    """
     import inspect
 
     from hhemt.report_renderers.sensitivity_benchmarking import (
         _plotly_metric_panel_precomputed,
     )
 
-    sig = inspect.signature(_plotly_metric_panel_precomputed)
-    assert "color_groups" in sig.parameters
+    assert "color_groups" not in inspect.signature(_plotly_metric_panel_precomputed).parameters
 
 
 # ---- FQ5: summary-tier verdicts must declare their detection floor --------
@@ -210,48 +222,74 @@ def test_family_baseline_disclosure_survives_the_axis_relabel():
     assert "minimum-device run" in src, "the footnote disclosure must remain"
 
 
-def test_every_run_mode_in_the_family_set_takes_its_own_colour():
-    """Colour is the RUN MODE axis, so all four values here are distinct.
+def test_every_decomposition_takes_its_own_colour():
+    """Colour is the DECOMPOSITION axis, so the four decompositions are four colours.
 
-    This replaces a hardware-keyed expectation that had serial / cpu / hybrid sharing
-    one slot; the user reversed that reading ("3 run modes are DIFFERENT COLORS"). It
-    also replaces the ORIGINAL mode-keyed expectation, which pinned literal slots that
-    the canonical-block widening moved -- so the assertion is on DISTINCTNESS plus the
-    two slots that are actually contractual, rather than on all four literals."""
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
+    The denominator moved from six run modes to four decompositions when the user ruled
+    that colour and symbol are locked and both key the compute configuration, with
+    hardware carried by the column alone. Distinctness is what is contractual; which
+    literal slot each takes is asserted once, in the locked-map test, so this does not
+    duplicate it.
+    """
+    from hhemt.report_renderers.sensitivity_benchmarking import _DECOMPOSITION_STYLE, _decomposition_color
 
     palette = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#F0E442", "#000000")
-    full = ["serial", "cpu", "gpu", "hybrid"]
-    colours = {g: _stable_run_mode_color(g, palette, full) for g in full}
-    assert len(set(colours.values())) == 4, f"run modes share colours: {colours}"
-    # `serial` and `hybrid` are canonical, so their slots are contractual; `cpu` and
-    # `gpu` are derived-tail members and are pinned only as distinct, above.
-    assert colours["serial"] == "#0072B2"
-    assert colours["hybrid"] == "#CC79A7"
+    cases = {
+        "mpi": dict(is_gpu_group=False, is_hybrid_group=False),
+        "openmp": dict(is_gpu_group=False, is_hybrid_group=False),
+        "hybrid": dict(is_gpu_group=False, is_hybrid_group=True),
+        "serial": dict(is_gpu_group=False, is_hybrid_group=False),
+    }
+    colours = {g: _decomposition_color(g, palette, **kw) for g, kw in cases.items()}
+    assert len(set(colours.values())) == len(_DECOMPOSITION_STYLE), f"decompositions share colours: {colours}"
 
 
-def test_single_cpu_aliases_resolve_to_the_serial_slot():
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
+def test_single_cpu_aliases_resolve_to_the_serial_decomposition():
+    """The alias must reach the LABEL, because the label now keys all three channels.
+
+    It used to live only in the colour resolver, so an aliased spelling could take the
+    serial colour while its legend text and marker symbol fell to the open-vocabulary
+    tail -- three channels, two answers.
+    """
+    from hhemt.report_renderers.sensitivity_benchmarking import (
+        _decomposition_color,
+        _decomposition_label,
+        _decomposition_symbol,
+    )
 
     palette = ("#0072B2", "#E69F00", "#009E73", "#CC79A7")
-    for alias in ("serial", "single_cpu", "single-cpu"):
-        assert _stable_run_mode_color(alias, palette, [alias]) == "#0072B2"
+    kw = dict(is_gpu_group=False, is_hybrid_group=False)
+    ref = (
+        _decomposition_label("serial", **kw),
+        _decomposition_symbol("serial", **kw),
+        _decomposition_color("serial", palette, **kw),
+    )
+    for alias in ("single_cpu", "single-cpu"):
+        got = (
+            _decomposition_label(alias, **kw),
+            _decomposition_symbol(alias, **kw),
+            _decomposition_color(alias, palette, **kw),
+        )
+        assert got == ref, f"{alias} diverged from serial across label/symbol/colour: {got} != {ref}"
 
 
-def test_a_non_gpu_accelerator_token_is_its_own_run_mode_for_colour_but_cpu_for_hardware():
-    """The KNOWN limit, restated for the run-mode colour axis.
+def test_an_unrecognized_token_falls_to_the_style_fallback_and_is_cpu_for_hardware():
+    """The KNOWN limit, restated for the decomposition axis.
 
-    On the COLOUR axis an unrecognized token is simply another run mode and gets its own
-    entry. On the HARDWARE axis -- which drives column layout and baseline anchoring --
-    `_hardware_family` still collapses anything not spelled `gpu*` into `cpu`. That
-    asymmetry is deliberate and is the settled disposition: the user's hardware
-    vocabulary contains no non-GPU accelerator, and widening `_hardware_family` would
-    move anchoring and layout, not just colour."""
-    from hhemt.report_renderers.sensitivity_benchmarking import _hardware_family, _stable_run_mode_color
+    The predecessor gave an unrecognized token its own colour, because the run-mode
+    vocabulary was open on the colour axis. The decomposition vocabulary is CLOSED at
+    four, so an unrecognized token takes the declared fallback instead -- it renders
+    rather than aborting a report, and it is honest that the figure has no key for it.
+    On the HARDWARE axis `_hardware_family` still collapses anything not spelled `gpu*`
+    into `cpu`; that asymmetry is unchanged and deliberate.
+    """
+    from hhemt.report_renderers.sensitivity_benchmarking import (
+        _DECOMPOSITION_STYLE_FALLBACK,
+        _decomposition_style,
+        _hardware_family,
+    )
 
-    palette = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00")
-    groups = ["serial", "cpu", "gpu", "hybrid", "apu", "fpga"]
-    colours = {g: _stable_run_mode_color(g, palette, groups) for g in ("apu", "fpga")}
-    assert colours["apu"] != colours["fpga"], f"unrecognized tokens share a colour: {colours}"
-    assert _hardware_family("apu") == "cpu"
-    assert _hardware_family("fpga") == "cpu"
+    kw = dict(is_gpu_group=False, is_hybrid_group=False)
+    for token in ("apu", "fpga"):
+        assert _decomposition_style(token, **kw) == _DECOMPOSITION_STYLE_FALLBACK
+        assert _hardware_family(token) == "cpu"

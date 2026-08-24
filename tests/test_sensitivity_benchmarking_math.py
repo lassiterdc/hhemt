@@ -63,12 +63,14 @@ def _xy(points):
 class TestComputeSpeedup:
     def test_perfect_speedup_doubling(self):
         """t halves each time N doubles → S = N exactly."""
-        df = _df([
-            ("a", "mpi", 1, 100.0),
-            ("b", "mpi", 2, 50.0),
-            ("c", "mpi", 4, 25.0),
-            ("d", "mpi", 8, 12.5),
-        ])
+        df = _df(
+            [
+                ("a", "mpi", 1, 100.0),
+                ("b", "mpi", 2, 50.0),
+                ("c", "mpi", 4, 25.0),
+                ("d", "mpi", 8, 12.5),
+            ]
+        )
         result = _compute_speedup_per_group(df, t_col="wallclock_s", indep_col="n_devices", group_col="group")
         assert "mpi" in result
         pts = sorted(result["mpi"], key=lambda r: r[0])
@@ -79,11 +81,13 @@ class TestComputeSpeedup:
 
     def test_imperfect_speedup(self):
         """Realistic numbers: S(2)=1.8, S(4)=3.5 (sub-linear)."""
-        df = _df([
-            ("a", "mpi", 1, 10.0),
-            ("b", "mpi", 2, 10.0 / 1.8),  # ≈5.555
-            ("c", "mpi", 4, 10.0 / 3.5),  # ≈2.857
-        ])
+        df = _df(
+            [
+                ("a", "mpi", 1, 10.0),
+                ("b", "mpi", 2, 10.0 / 1.8),  # ≈5.555
+                ("c", "mpi", 4, 10.0 / 3.5),  # ≈2.857
+            ]
+        )
         result = _compute_speedup_per_group(df, t_col="wallclock_s", indep_col="n_devices", group_col="group")
         ns = [p[0] for p in sorted(result["mpi"], key=lambda r: r[0])]
         ss = [p[1] for p in sorted(result["mpi"], key=lambda r: r[0])]
@@ -92,20 +96,24 @@ class TestComputeSpeedup:
 
     def test_missing_n1_baseline_excludes_group(self):
         """Group without N=1 has no anchor; entire group dropped from speedup output."""
-        df = _df([
-            ("a", "openmp", 2, 5.0),
-            ("b", "openmp", 4, 2.5),
-        ])
+        df = _df(
+            [
+                ("a", "openmp", 2, 5.0),
+                ("b", "openmp", 4, 2.5),
+            ]
+        )
         result = _compute_speedup_per_group(df, t_col="wallclock_s", indep_col="n_devices", group_col="group")
         assert "openmp" not in result
 
     def test_min_y_at_duplicate_n(self):
         """Multiple sa rows at same N within a group → use MIN wallclock (fastest config wins)."""
-        df = _df([
-            ("a", "hybrid", 1, 10.0),
-            ("b", "hybrid", 4, 4.0),  # slower
-            ("c", "hybrid", 4, 2.0),  # faster — should win
-        ])
+        df = _df(
+            [
+                ("a", "hybrid", 1, 10.0),
+                ("b", "hybrid", 4, 4.0),  # slower
+                ("c", "hybrid", 4, 2.0),  # faster — should win
+            ]
+        )
         result = _compute_speedup_per_group(df, t_col="wallclock_s", indep_col="n_devices", group_col="group")
         pts = sorted(result["hybrid"], key=lambda r: r[0])
         # Anchor: t(1)=10. At N=4 use min wallclock 2.0 → S = 10/2 = 5.0.
@@ -115,12 +123,14 @@ class TestComputeSpeedup:
 
     def test_multiple_groups_independent(self):
         """Each run_mode is anchored to its own t(1); cross-group leakage is forbidden."""
-        df = _df([
-            ("a", "mpi", 1, 10.0),
-            ("b", "mpi", 4, 2.5),
-            ("c", "openmp", 1, 20.0),  # different baseline
-            ("d", "openmp", 4, 5.0),
-        ])
+        df = _df(
+            [
+                ("a", "mpi", 1, 10.0),
+                ("b", "mpi", 4, 2.5),
+                ("c", "openmp", 1, 20.0),  # different baseline
+                ("d", "openmp", 4, 5.0),
+            ]
+        )
         result = _compute_speedup_per_group(df, t_col="wallclock_s", indep_col="n_devices", group_col="group")
         # mpi: S(4) = 10/2.5 = 4
         # openmp: S(4) = 20/5 = 4
@@ -151,12 +161,14 @@ class TestComputeSpeedup:
 class TestComputeEfficiency:
     def test_strong_efficiency_perfect(self):
         """Perfect speedup S=N → E_strong = S/N = 1.0 at every N."""
-        df = _df([
-            ("a", "mpi", 1, 8.0),
-            ("b", "mpi", 2, 4.0),
-            ("c", "mpi", 4, 2.0),
-            ("d", "mpi", 8, 1.0),
-        ])
+        df = _df(
+            [
+                ("a", "mpi", 1, 8.0),
+                ("b", "mpi", 2, 4.0),
+                ("c", "mpi", 4, 2.0),
+                ("d", "mpi", 8, 1.0),
+            ]
+        )
         result = _compute_efficiency_per_group(
             df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode="strong"
         )
@@ -165,11 +177,13 @@ class TestComputeEfficiency:
 
     def test_strong_efficiency_imperfect(self):
         """S(N)=1.8 at N=2 → E = 0.9. S(N)=3.5 at N=4 → E = 0.875."""
-        df = _df([
-            ("a", "mpi", 1, 10.0),
-            ("b", "mpi", 2, 10.0 / 1.8),
-            ("c", "mpi", 4, 10.0 / 3.5),
-        ])
+        df = _df(
+            [
+                ("a", "mpi", 1, 10.0),
+                ("b", "mpi", 2, 10.0 / 1.8),
+                ("c", "mpi", 4, 10.0 / 3.5),
+            ]
+        )
         result = _compute_efficiency_per_group(
             df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode="strong"
         )
@@ -180,27 +194,39 @@ class TestComputeEfficiency:
 
     def test_weak_efficiency_equals_speedup_numerically(self):
         """E_weak(N) = t(1)/t(N), same number as speedup but different interpretation."""
-        df = _df([
-            ("a", "mpi", 1, 10.0),
-            ("b", "mpi", 2, 11.0),  # weak: per-device problem fixed; t grew slightly with N
-            ("c", "mpi", 4, 12.5),
-        ])
-        weak = dict(_xy(_compute_efficiency_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode="weak"
-        )["mpi"]))
+        df = _df(
+            [
+                ("a", "mpi", 1, 10.0),
+                ("b", "mpi", 2, 11.0),  # weak: per-device problem fixed; t grew slightly with N
+                ("c", "mpi", 4, 12.5),
+            ]
+        )
+        weak = dict(
+            _xy(
+                _compute_efficiency_per_group(
+                    df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode="weak"
+                )["mpi"]
+            )
+        )
         assert weak[1] == pytest.approx(1.0)
         assert weak[2] == pytest.approx(10.0 / 11.0)
         assert weak[4] == pytest.approx(10.0 / 12.5)  # 0.8
 
     def test_weak_efficiency_min_y_at_duplicate_n(self):
-        df = _df([
-            ("a", "hybrid", 1, 10.0),
-            ("b", "hybrid", 4, 14.0),
-            ("c", "hybrid", 4, 12.0),  # min wins
-        ])
-        result = dict(_xy(_compute_efficiency_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode="weak"
-        )["hybrid"]))
+        df = _df(
+            [
+                ("a", "hybrid", 1, 10.0),
+                ("b", "hybrid", 4, 14.0),
+                ("c", "hybrid", 4, 12.0),  # min wins
+            ]
+        )
+        result = dict(
+            _xy(
+                _compute_efficiency_per_group(
+                    df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode="weak"
+                )["hybrid"]
+            )
+        )
         assert result[4] == pytest.approx(10.0 / 12.0)
 
     def test_efficiency_invalid_mode_raises(self):
@@ -211,10 +237,12 @@ class TestComputeEfficiency:
             )
 
     def test_efficiency_missing_n1_excludes_group(self):
-        df = _df([
-            ("a", "openmp", 2, 5.0),
-            ("b", "openmp", 4, 3.0),
-        ])
+        df = _df(
+            [
+                ("a", "openmp", 2, 5.0),
+                ("b", "openmp", 4, 3.0),
+            ]
+        )
         for mode in ("strong", "weak"):
             result = _compute_efficiency_per_group(
                 df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode=mode
@@ -230,20 +258,25 @@ class TestGlobalBaselineSpeedup:
         """Global baseline = min t at smallest N across all groups (typically the
         serial baseline). Each group's points normalize against that anchor.
         """
-        df = _df([
-            ("a", "serial", 1, 4.0),  # global min t at N=1 → anchor
-            ("b", "mpi",    2, 2.0),
-            ("c", "openmp", 2, 3.0),
-            ("d", "hybrid", 4, 1.0),
-        ])
+        df = _df(
+            [
+                ("a", "serial", 1, 4.0),  # global min t at N=1 → anchor
+                ("b", "mpi", 2, 2.0),
+                ("c", "openmp", 2, 3.0),
+                ("d", "hybrid", 4, 1.0),
+            ]
+        )
         result = _compute_speedup_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices", group_col="group",
+            df,
+            t_col="wallclock_s",
+            indep_col="n_devices",
+            group_col="group",
             baseline_mode="global",
         )
         # All four groups should appear (no per-group N=1 anchor required).
         assert set(result.keys()) == {"serial", "mpi", "openmp", "hybrid"}
         assert dict(_xy(result["serial"])) == {1: pytest.approx(1.0)}
-        assert dict(_xy(result["mpi"])) == {2: pytest.approx(4.0 / 2.0)}    # 2.0
+        assert dict(_xy(result["mpi"])) == {2: pytest.approx(4.0 / 2.0)}  # 2.0
         assert dict(_xy(result["openmp"])) == {2: pytest.approx(4.0 / 3.0)}  # ≈1.333
         assert dict(_xy(result["hybrid"])) == {4: pytest.approx(4.0 / 1.0)}  # 4.0
 
@@ -251,13 +284,18 @@ class TestGlobalBaselineSpeedup:
         """If multiple groups have N=1 entries, the smallest wallclock among them
         is the global anchor.
         """
-        df = _df([
-            ("a", "serial",  1, 5.0),
-            ("b", "openmp1", 1, 4.0),  # min at N=1 → global anchor
-            ("c", "openmp1", 2, 2.0),
-        ])
+        df = _df(
+            [
+                ("a", "serial", 1, 5.0),
+                ("b", "openmp1", 1, 4.0),  # min at N=1 → global anchor
+                ("c", "openmp1", 2, 2.0),
+            ]
+        )
         result = _compute_speedup_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices", group_col="group",
+            df,
+            t_col="wallclock_s",
+            indep_col="n_devices",
+            group_col="group",
             baseline_mode="global",
         )
         # Anchor = 4.0. serial @ N=1: 4.0/5.0 = 0.8 (slower than baseline).
@@ -269,13 +307,18 @@ class TestGlobalBaselineSpeedup:
 
     def test_global_anchor_includes_groups_without_n1(self):
         """Per-group mode would exclude these; global mode includes them."""
-        df = _df([
-            ("a", "serial", 1, 10.0),
-            ("b", "mpi",    2, 5.0),    # no N=1 entry in mpi group
-            ("c", "openmp", 4, 4.0),    # no N=1 entry in openmp group
-        ])
+        df = _df(
+            [
+                ("a", "serial", 1, 10.0),
+                ("b", "mpi", 2, 5.0),  # no N=1 entry in mpi group
+                ("c", "openmp", 4, 4.0),  # no N=1 entry in openmp group
+            ]
+        )
         result = _compute_speedup_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices", group_col="group",
+            df,
+            t_col="wallclock_s",
+            indep_col="n_devices",
+            group_col="group",
             baseline_mode="global",
         )
         assert "mpi" in result
@@ -285,25 +328,37 @@ class TestGlobalBaselineSpeedup:
 
     def test_global_efficiency_strong_normalizes_by_N(self):
         """Strong efficiency: anchor / (N × t(N))."""
-        df = _df([
-            ("a", "serial", 1, 4.0),
-            ("b", "mpi",    2, 2.0),
-        ])
+        df = _df(
+            [
+                ("a", "serial", 1, 4.0),
+                ("b", "mpi", 2, 2.0),
+            ]
+        )
         result = _compute_efficiency_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices", group_col="group",
-            mode="strong", baseline_mode="global",
+            df,
+            t_col="wallclock_s",
+            indep_col="n_devices",
+            group_col="group",
+            mode="strong",
+            baseline_mode="global",
         )
         # Anchor = 4.0. mpi @ N=2: E = 4.0 / (2 × 2.0) = 1.0 (perfect efficiency).
         assert dict(_xy(result["mpi"])) == {2: pytest.approx(1.0)}
 
     def test_global_efficiency_weak_does_not_normalize_by_N(self):
-        df = _df([
-            ("a", "serial", 1, 4.0),
-            ("b", "mpi",    2, 2.0),
-        ])
+        df = _df(
+            [
+                ("a", "serial", 1, 4.0),
+                ("b", "mpi", 2, 2.0),
+            ]
+        )
         result = _compute_efficiency_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices", group_col="group",
-            mode="weak", baseline_mode="global",
+            df,
+            t_col="wallclock_s",
+            indep_col="n_devices",
+            group_col="group",
+            mode="weak",
+            baseline_mode="global",
         )
         # Anchor = 4.0. mpi @ N=2: E_weak = 4.0 / 2.0 = 2.0.
         assert dict(_xy(result["mpi"])) == {2: pytest.approx(2.0)}
@@ -312,7 +367,10 @@ class TestGlobalBaselineSpeedup:
         df = _df([("a", "serial", 1, 5.0)])
         with pytest.raises(ValueError, match="baseline_mode"):
             _compute_speedup_per_group(
-                df, t_col="wallclock_s", indep_col="n_devices", group_col="group",
+                df,
+                t_col="wallclock_s",
+                indep_col="n_devices",
+                group_col="group",
                 baseline_mode="invalid",
             )
 
@@ -330,9 +388,7 @@ class TestFindPerfNode:
     def _tree(self, group: str):
         import xarray as xr
 
-        perf = xr.Dataset(
-            {"Total": ("event_iloc", [12.5])}, coords={"event_iloc": [0]}
-        )
+        perf = xr.Dataset({"Total": ("event_iloc", [12.5])}, coords={"event_iloc": [0]})
         return xr.DataTree.from_dict({f"/sa_serial_0_r1/{group}": perf})
 
     def test_triton_only_performance_node_is_found(self):
@@ -381,10 +437,7 @@ class TestModelArmEncoding:
     def _connector_lines(fig):
         # Data-connector lines only; the ideal-reference line (legendgroup="ideal")
         # is not an arm connector and is excluded.
-        return [
-            t for t in fig.data
-            if t.mode == "lines" and getattr(t, "legendgroup", None) != "ideal"
-        ]
+        return [t for t in fig.data if t.mode == "lines" and getattr(t, "legendgroup", None) != "ideal"]
 
     @staticmethod
     def _marker_traces(fig):
@@ -409,9 +462,16 @@ class TestModelArmEncoding:
         )
         fig = make_subplots(rows=1, cols=1)
         _plotly_metric_panel(
-            fig, df, y_col="wallclock_disp", row=1, panel_id="p",
-            group_by_var="run_mode", sens_cfg=self._sens_cfg(),
-            prov=ProvenanceLog(), show_in_legend=True, model_arm=model_arm,
+            fig,
+            df,
+            y_col="wallclock_disp",
+            row=1,
+            panel_id="p",
+            group_by_var="run_mode",
+            sens_cfg=self._sens_cfg(),
+            prov=ProvenanceLog(),
+            show_in_legend=True,
+            model_arm=model_arm,
         )
         return fig
 
@@ -424,15 +484,21 @@ class TestModelArmEncoding:
         )
 
         per_group = {"gpu": [(1.0, 1.0, "sa_gpu_0"), (2.0, 2.0, "sa_gpu_1")]}
-        df_for_groups = pd.DataFrame(
-            {"group_value": ["gpu", "gpu"], "sa_id": ["sa_gpu_0", "sa_gpu_1"]}
-        )
+        df_for_groups = pd.DataFrame({"group_value": ["gpu", "gpu"], "sa_id": ["sa_gpu_0", "sa_gpu_1"]})
         fig = make_subplots(rows=1, cols=1)
         _plotly_metric_panel_precomputed(
-            fig, per_group, df_for_groups=df_for_groups, row=1, panel_id="p",
-            ideal_kind="linear", x_max=2.0, ideal_label="ideal",
-            sens_cfg=self._sens_cfg(), prov=ProvenanceLog(),
-            show_in_legend=True, model_arm=model_arm,
+            fig,
+            per_group,
+            df_for_groups=df_for_groups,
+            row=1,
+            panel_id="p",
+            ideal_kind="linear",
+            x_max=2.0,
+            ideal_label="ideal",
+            sens_cfg=self._sens_cfg(),
+            prov=ProvenanceLog(),
+            show_in_legend=True,
+            model_arm=model_arm,
         )
         return fig
 
@@ -461,16 +527,12 @@ class TestModelArmEncoding:
         # THE requirement: same figure, different arm -> byte-identical symbology.
         encodings = {arm: self._encoding(self._panel12_fig(arm)) for arm in self._ARMS}
         distinct = {enc for enc in encodings.values()}
-        assert len(distinct) == 1, (
-            "benchmarking symbology must be identical across model arms; got "
-            + repr(encodings)
-        )
+        assert len(distinct) == 1, "benchmarking symbology must be identical across model arms; got " + repr(encodings)
 
     def test_panel34_symbology_identical_across_every_arm(self):
         encodings = {arm: self._encoding(self._panel34_fig(arm)) for arm in self._ARMS}
         assert len({enc for enc in encodings.values()}) == 1, (
-            "benchmarking symbology must be identical across model arms; got "
-            + repr(encodings)
+            "benchmarking symbology must be identical across model arms; got " + repr(encodings)
         )
 
     def test_no_arm_conditioned_fill_or_dash_survives(self):
@@ -482,14 +544,14 @@ class TestModelArmEncoding:
             for fig in (self._panel12_fig(arm), self._panel34_fig(arm)):
                 markers = self._marker_traces(fig)
                 assert markers, "expected at least one marker trace"
-                assert not any(
-                    str(t.marker.symbol).endswith("-open") for t in markers
-                ), f"arm-conditioned open-fill survived for model_arm={arm!r}"
+                assert not any(str(t.marker.symbol).endswith("-open") for t in markers), (
+                    f"arm-conditioned open-fill survived for model_arm={arm!r}"
+                )
                 lines = self._connector_lines(fig)
                 assert lines, "expected a connector line for the multi-point group"
-                assert all(
-                    t.line.dash == "solid" for t in lines
-                ), f"connector dash is not the constant single-arm style for {arm!r}"
+                assert all(t.line.dash == "solid" for t in lines), (
+                    f"connector dash is not the constant single-arm style for {arm!r}"
+                )
 
 
 def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=200.0):
@@ -512,9 +574,7 @@ def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=2
         {"Total": ("event_iloc", [perf_total])},
         coords={"event_iloc": [0]},
     )
-    xr.DataTree.from_dict({"/sa_serial_6_r1/tritonswmm/performance": ds}).to_zarr(
-        tree_path, consolidated=False
-    )
+    xr.DataTree.from_dict({"/sa_serial_6_r1/tritonswmm/performance": ds}).to_zarr(tree_path, consolidated=False)
     if write_csv:
         pd.DataFrame(
             {
@@ -575,9 +635,7 @@ def test_collect_rows_result_is_unchanged_when_the_ledger_csv_is_absent(tmp_path
     and without any CSV, the answer is identically the datatree value.
     """
     with_csv, _ = _collect_rows(_stub_analysis(tmp_path / "a"), "performance.Total")
-    without_csv, _ = _collect_rows(
-        _stub_analysis(tmp_path / "b", write_csv=False), "performance.Total"
-    )
+    without_csv, _ = _collect_rows(_stub_analysis(tmp_path / "b", write_csv=False), "performance.Total")
     assert with_csv[0]["value"] == pytest.approx(200.0)
     assert without_csv[0]["value"] == pytest.approx(with_csv[0]["value"]), (
         "the presence of scenario_status.csv must not influence any plotted value"
@@ -601,21 +659,17 @@ def test_collect_rows_reads_simulation_from_datatree_like_every_other_column(tmp
         {"Total": ("event_iloc", [200.0]), "Simulation": ("event_iloc", [150.0])},
         coords={"event_iloc": [0]},
     )
-    xr.DataTree.from_dict({"/sa_serial_6_r1/tritonswmm/performance": ds}).to_zarr(
-        tree_path, consolidated=False
+    xr.DataTree.from_dict({"/sa_serial_6_r1/tritonswmm/performance": ds}).to_zarr(tree_path, consolidated=False)
+    pd.DataFrame({"sa_id": ["serial_6_r1"], "event_iloc": [0], "wall_clock_ledger_s": [900.0]}).to_csv(
+        tmp_path / "scenario_status.csv", index=False
     )
-    pd.DataFrame(
-        {"sa_id": ["serial_6_r1"], "event_iloc": [0], "wall_clock_ledger_s": [900.0]}
-    ).to_csv(tmp_path / "scenario_status.csv", index=False)
     sub = SimpleNamespace(
         df_sims=pd.DataFrame(index=[0]),
         _get_enabled_model_types=lambda: {"tritonswmm"},
     )
     analysis = SimpleNamespace(
         sensitivity=SimpleNamespace(sub_analyses={"serial_6_r1": sub}),
-        analysis_paths=SimpleNamespace(
-            sensitivity_datatree_zarr=tree_path, analysis_dir=tmp_path
-        ),
+        analysis_paths=SimpleNamespace(sensitivity_datatree_zarr=tree_path, analysis_dir=tmp_path),
     )
     rows, _ = _collect_rows(analysis, "performance.Simulation")
     assert rows[0]["value"] == pytest.approx(150.0)
@@ -649,14 +703,33 @@ def _disjoint_axis_df():
     across families on purpose: the families must differ in COLUMN, not in x values,
     or an arm-1 failure could not be told from a wrong-family failure.
     """
+
     def _rows(gv):
         return [
-            dict(sa_id=f"a_{gv}", group_value=gv, indep_value=1, n_devices=16,
-                 wallclock_s=100.0, wallclock_disp=100.0, compute_disp=1600.0,
-                 n_mpi_procs=1, config_id=f"a_{gv}", n_replicates=1),
-            dict(sa_id=f"b_{gv}", group_value=gv, indep_value=2, n_devices=64,
-                 wallclock_s=50.0, wallclock_disp=50.0, compute_disp=3200.0,
-                 n_mpi_procs=2, config_id=f"b_{gv}", n_replicates=1),
+            dict(
+                sa_id=f"a_{gv}",
+                group_value=gv,
+                indep_value=1,
+                n_devices=16,
+                wallclock_s=100.0,
+                wallclock_disp=100.0,
+                compute_disp=1600.0,
+                n_mpi_procs=1,
+                config_id=f"a_{gv}",
+                n_replicates=1,
+            ),
+            dict(
+                sa_id=f"b_{gv}",
+                group_value=gv,
+                indep_value=2,
+                n_devices=64,
+                wallclock_s=50.0,
+                wallclock_disp=50.0,
+                compute_disp=3200.0,
+                n_mpi_procs=2,
+                config_id=f"b_{gv}",
+                n_replicates=1,
+            ),
         ]
 
     return pd.DataFrame(_rows("cpu") + _rows("gpu (a6000)"))
@@ -683,9 +756,7 @@ def test_axis_group_label_is_always_derived_from_its_own_variable():
 def test_axis_groups_diverge_when_independent_var_is_not_n_devices():
     """The condition under which the defect was visible. `source_var` differs, so the
     two groups' labels differ, so the two panel pairs cannot share one label."""
-    top, bottom = resolve_axis_groups(
-        "analysis.n_mpi_procs", _axis_fixture_cfg("analysis.n_mpi_procs")
-    )
+    top, bottom = resolve_axis_groups("analysis.n_mpi_procs", _axis_fixture_cfg("analysis.n_mpi_procs"))
     assert top.x_col == "indep_value"
     assert top.source_var == "analysis.n_mpi_procs"
     assert bottom.x_col == "n_devices"
@@ -714,9 +785,7 @@ def test_axis_groups_collapse_when_independent_var_is_n_devices():
         ("n_devices", {1, 2}, ("cores", "GPUs")),
     ],
 )
-def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(
-    independent_var, top_values, top_titles
-):
+def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(independent_var, top_values, top_titles):
     """THE FALSIFYING TEST.
 
     Fails whenever a panel's visible x-axis title is not the label of the variable
@@ -844,8 +913,7 @@ def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(
     bottom_refs = {_ref(3), _ref(4)}
     for row in (1, 2):
         assert (fig.get_subplot(row, 1).xaxis.matches or _ref(row)) not in bottom_refs, (
-            f"row {row} is linked to a scaling-panel axis; the top pair would be forced "
-            "onto the n_devices range"
+            f"row {row} is linked to a scaling-panel axis; the top pair would be forced onto the n_devices range"
         )
 
 
@@ -866,9 +934,7 @@ def test_matplotlib_panels_form_two_independent_shared_groups_with_their_own_lab
     top, bottom = resolve_axis_groups("analysis.n_mpi_procs", cfg)
     fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(4, 1, sharex=False)
     try:
-        _apply_matplotlib_axis_groups(
-            ax_wall, ax_cost, ax_speedup, ax_eff, top=top, bottom=bottom
-        )
+        _apply_matplotlib_axis_groups(ax_wall, ax_cost, ax_speedup, ax_eff, top=top, bottom=bottom)
         shared = ax_wall.get_shared_x_axes()
         assert shared.joined(ax_wall, ax_cost)
         assert ax_speedup.get_shared_x_axes().joined(ax_speedup, ax_eff)
@@ -894,12 +960,18 @@ def test_axis_split_does_not_change_the_scaling_computation():
         ]
     )
     via_group = _compute_speedup_per_group(
-        df, t_col="wallclock_s", indep_col=bottom.x_col,
-        group_col="group_value", baseline_mode="global",
+        df,
+        t_col="wallclock_s",
+        indep_col=bottom.x_col,
+        group_col="group_value",
+        baseline_mode="global",
     )
     via_literal = _compute_speedup_per_group(
-        df, t_col="wallclock_s", indep_col="n_devices",
-        group_col="group_value", baseline_mode="global",
+        df,
+        t_col="wallclock_s",
+        indep_col="n_devices",
+        group_col="group_value",
+        baseline_mode="global",
     )
     assert via_group == via_literal
 
@@ -933,163 +1005,156 @@ def _bench_palette():
     return SensitivityReportConfig(independent_vars=["n_devices"]).palette
 
 
-def test_every_run_mode_on_the_real_matrix_gets_its_own_colour():
-    """Six run modes in, six distinct colours out.
+_DECOMP_KW = {
+    "mpi": dict(is_gpu_group=False, is_hybrid_group=False),
+    "openmp": dict(is_gpu_group=False, is_hybrid_group=False),
+    "hybrid": dict(is_gpu_group=False, is_hybrid_group=True),
+    "serial": dict(is_gpu_group=False, is_hybrid_group=False),
+    "gpu (a6000)": dict(is_gpu_group=True, is_hybrid_group=False),
+    "gpu (a100-80)": dict(is_gpu_group=True, is_hybrid_group=False),
+}
+
+
+def _colour_of(gv, pal=None):
+    from hhemt.report_renderers.sensitivity_benchmarking import _decomposition_color
+
+    return _decomposition_color(gv, pal or _bench_palette(), **_DECOMP_KW[gv])
+
+
+def test_every_decomposition_on_the_real_matrix_gets_its_own_colour():
+    """Four decompositions in, four distinct colours out.
 
     Asserted as a cardinality over the SET rather than pairwise, so a scheme that merges
-    any two -- for instance one that keyed on hardware and collapsed the four CPU modes
-    -- reddens here regardless of which two it merged.
+    any two reddens regardless of which two. The denominator is FOUR, not the six run
+    modes the predecessor asserted: the user ruled colour onto the decomposition axis, so
+    the two GPU tokens no longer carry colours of their own.
     """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _DECOMPOSITION_STYLE
 
-    pal = _bench_palette()
-    colours = {g: _stable_run_mode_color(g, pal, _REAL_MATRIX_GROUPS) for g in _REAL_MATRIX_GROUPS}
-    assert len(set(colours.values())) == len(_REAL_MATRIX_GROUPS), f"run modes share colours: {colours}"
+    colours = {g: _colour_of(g) for g in _REAL_MATRIX_GROUPS}
+    assert len(set(colours.values())) == len(_DECOMPOSITION_STYLE), f"decompositions share colours: {colours}"
 
 
-def test_openmp_and_mpi_never_take_the_palettes_black_or_yellow():
-    """The measured defect of the original mode-keyed implementation.
+def test_colour_and_symbol_are_locked_one_to_one():
+    """The user's ruling, as a bijection: each SYMBOL has its own COLOUR.
 
-    `openmp` resolved to #000000 and `mpi` to #F0E442 -- not by choice, but because both
-    fell outside a four-member canonical tuple into the derived tail. This pins the
-    outcome for the two modes that actually regressed AND asserts the whole rendered set
-    is free of the weak slots, so a future widening cannot push a different mode onto
-    them unnoticed.
+    Asserted over the MAP here; the emitted-figure half lives in
+    `test_sensitivity_benchmarking_symbology.py`, which is where a defect in the CALL
+    SITES would show. Both directions are checked -- a map with four symbols and three
+    colours and a map with three symbols and four colours are different defects, and a
+    one-sided count catches only one of them.
     """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _DECOMPOSITION_STYLE
 
-    pal = _bench_palette()
-    for mode in ("openmp", "mpi"):
-        got = _stable_run_mode_color(mode, pal, _REAL_MATRIX_GROUPS)
-        assert got not in _WEAK, f"{mode} resolved to the weak line colour {got}"
-    rendered = {_stable_run_mode_color(g, pal, _REAL_MATRIX_GROUPS) for g in _REAL_MATRIX_GROUPS}
+    pairs = set(_DECOMPOSITION_STYLE.values())
+    symbols = {sym for sym, _idx in pairs}
+    indices = {idx for _sym, idx in pairs}
+    assert len(pairs) == len(_DECOMPOSITION_STYLE), f"two decompositions share a style: {pairs}"
+    assert len(symbols) == len(pairs), f"a symbol is reused across colours: {sorted(pairs)}"
+    assert len(indices) == len(pairs), f"a palette slot is reused across symbols: {sorted(pairs)}"
+
+
+def test_no_decomposition_takes_the_palettes_black_or_yellow():
+    """The measured defect of the original mode-keyed implementation, still guarded.
+
+    `openmp` resolved to #000000 and `mpi` to #F0E442 -- not by choice, but as the residue
+    of falling outside a canonical tuple into a derived tail. That mechanism is gone, but
+    the guard is MORE load-bearing than it was: point colour IS line colour now, so a weak
+    line slot degrades the primary encoding rather than one incidental fill.
+    """
+    rendered = {_colour_of(g) for g in _REAL_MATRIX_GROUPS}
     assert not (rendered & _WEAK), f"weak line colours in the rendered set: {sorted(rendered & _WEAK)}"
 
 
-def test_each_gpu_hardware_token_is_its_own_run_mode_with_its_own_colour():
-    """"each GPU hardware gets its own color" -- and neither shares with a CPU mode.
+def test_a_gpu_token_shares_colour_and_symbol_with_cpu_mpi():
+    """The SUPERSEDED clause, inverted and pinned.
 
-    The denominator is asserted: two GPU tokens in the fixture, two colours out, and the
-    intersection with the CPU block empty. A scheme that gave every GPU one colour would
-    satisfy a bare "gpu != serial" check and fails here.
+    `[Q161]`(1) fixed colour as the run-mode axis and gave each GPU hardware a colour of
+    its own; the user retired that. Hardware is carried by the COLUMN and by nothing else,
+    so a GPU MPI run and a CPU MPI run now share BOTH channels and are told apart by their
+    column. Pinned in both channels, because a change that moved only the symbol would
+    leave the legend key many-to-one over colour -- the state this replaced.
     """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _decomposition_symbol
 
-    pal = _bench_palette()
-    gpu = {_stable_run_mode_color(g, pal, _REAL_MATRIX_GROUPS) for g in ("gpu (a6000)", "gpu (a100-80)")}
-    cpu = {_stable_run_mode_color(g, pal, _REAL_MATRIX_GROUPS) for g in ("serial", "openmp", "mpi", "hybrid")}
-    assert len(gpu) == 2, f"the two GPU hardware tokens share a colour: {gpu}"
-    assert not (gpu & cpu), f"a GPU token shares a colour with a CPU run mode: {sorted(gpu & cpu)}"
-
-
-def test_the_four_cpu_run_modes_are_absolutely_set_independent():
-    """The closed half of the vocabulary takes FIXED slots, with no caller cooperation.
-
-    This is the strongest form of the invariant the predecessor's docstring recorded as
-    a measured bug, and it is exactly what the original implementation did NOT provide
-    for `openmp` and `mpi`: their slots came from an `all_groups`-derived tail, so they
-    moved when the frame changed.
-    """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
-
-    pal = _bench_palette()
-    frames = [_REAL_MATRIX_GROUPS, ["openmp"], ["serial", "openmp"], ["openmp", "gpu (a6000)"], []]
-    for mode in ("serial", "openmp", "mpi", "hybrid"):
-        colours = {_stable_run_mode_color(mode, pal, f) for f in frames}
-        assert len(colours) == 1, f"{mode} moved across frames: {colours}"
-
-
-def test_a_gpu_token_keeps_its_colour_across_every_frame_carrying_the_full_token_set():
-    """GPU run modes are an OPEN vocabulary, so their slots come from the supplied set.
-
-    The guarantee is conditional and stated as such: stable across any frame carrying the
-    whole token set, which is the contract the plotly call site honours by passing the
-    unfiltered `_color_groups` rather than its per-panel `groups`.
-    """
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
-
-    pal = _bench_palette()
-    full = _REAL_MATRIX_GROUPS
-    frames = [full, list(reversed(full)), ["gpu (a6000)", "gpu (a100-80)"], full + ["gpu (a6000)"]]
     for gv in ("gpu (a6000)", "gpu (a100-80)"):
-        colours = {_stable_run_mode_color(gv, pal, f) for f in frames}
-        assert len(colours) == 1, f"{gv} changed colour across frames with the same token set: {colours}"
+        assert _colour_of(gv) == _colour_of("mpi"), f"{gv} does not share CPU-MPI's colour"
+        assert _decomposition_symbol(gv, **_DECOMP_KW[gv]) == _decomposition_symbol("mpi", **_DECOMP_KW["mpi"]), (
+            f"{gv} does not share CPU-MPI's symbol"
+        )
 
 
-def test_a_filtered_frame_that_hides_a_groups_own_run_mode_warns_instead_of_mis_colouring():
-    """The residual the conditional guarantee leaves open, made LOUD rather than silent.
+def test_every_decomposition_is_absolutely_set_independent():
+    """The strongest form: there is no group set to depend on.
 
-    Fires only for the derived tail -- the four canonical CPU modes have fixed slots and
-    cannot be renumbered by a filtered frame, which the silent arm below pins.
+    The predecessor could assert this only for the four CPU modes, because the GPU half of
+    the vocabulary was open and derived its slot from the supplied set. The decomposition
+    vocabulary is closed at four literal indices, so the guarantee is now unconditional
+    and covers the GPU tokens too -- and the parameter that carried the dependence is
+    gone, which is why this asserts the SIGNATURE rather than sampling frames.
     """
-    import warnings
+    import inspect
 
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _decomposition_color
 
-    pal = _bench_palette()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        _stable_run_mode_color("gpu (a6000)", pal, ["serial", "openmp"])
-    assert any("filtered set" in str(w.message) for w in caught), (
-        f"no filtered-frame warning; warnings seen: {[str(w.message) for w in caught]}"
-    )
-    with warnings.catch_warnings(record=True) as quiet:
-        warnings.simplefilter("always")
-        _stable_run_mode_color("openmp", pal, ["serial"])
-    assert not [w for w in quiet if "filtered set" in str(w.message)], (
-        f"a canonical CPU mode warned on a filtered frame: {[str(w.message) for w in quiet]}"
+    params = set(inspect.signature(_decomposition_color).parameters)
+    assert not (params & {"all_groups", "color_groups", "groups"}), (
+        f"_decomposition_color reacquired a group-set parameter: {sorted(params)}"
     )
 
 
-def test_more_run_modes_than_palette_warns_rather_than_silently_reusing_a_colour():
-    """Okabe-Ito has 8 entries and the GPU-token half of the vocabulary is open-ended, so
-    overflow is reachable. A silently reused colour would mean two run modes.
+def test_a_palette_too_short_for_the_declared_indices_raises():
+    """Overflow is unreachable through the group set and REACHABLE through the palette.
+
+    The predecessor warned when the run-mode count outgrew the palette; the vocabulary is
+    closed now, so that cannot happen. What a user CAN still do is supply a short custom
+    `palette`, and a silently wrapped index would make one colour mean two decompositions
+    -- the same harm, so it raises rather than warns.
     """
-    import warnings
+    import pytest
 
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
+    from hhemt.report_renderers.sensitivity_benchmarking import _DECOMPOSITION_STYLE
 
-    pal = _bench_palette()
-    many = list(_REAL_MATRIX_GROUPS) + [f"gpu (hw{i:02d})" for i in range(len(pal))]
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        for gv in many:
-            _stable_run_mode_color(gv, pal, many)
-    assert any("exceed the" in str(w.message) for w in caught), (
-        f"no palette-overflow warning for {len(many)} run modes over {len(pal)} colours; "
-        f"warnings seen: {[str(w.message) for w in caught]}"
-    )
+    highest = max(idx for _sym, idx in _DECOMPOSITION_STYLE.values())
+    short = _bench_palette()[:highest]
+    with pytest.raises(ValueError, match="palette has"):
+        for gv in _REAL_MATRIX_GROUPS:
+            _colour_of(gv, pal=short)
 
 
 def test_reaching_a_weak_line_slot_is_announced():
-    """The weak slots are still IN the palette, so a large-enough run-mode set reaches
-    them before true overflow. Announced, because that is precisely how `openmp` and
-    `mpi` acquired black and yellow the first time without anyone choosing it.
+    """Still reachable, because `sens_cfg.palette` is user-supplied.
+
+    The declared indices are measured against the Okabe-Ito ordering; a caller may reorder
+    the palette so a decomposition lands on yellow or black. Announced, because that is
+    precisely how `openmp` and `mpi` acquired black and yellow the first time without
+    anyone choosing it.
     """
     import warnings
 
-    from hhemt.report_renderers.sensitivity_benchmarking import _stable_run_mode_color
-
-    pal = _bench_palette()
-    many = list(_REAL_MATRIX_GROUPS) + ["gpu (hw1)", "gpu (hw2)"]
+    pal = list(_bench_palette())
+    pal[0] = "#000000"  # a weak slot where `hybrid` indexes
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        rendered = {_stable_run_mode_color(g, pal, many) for g in many}
+        rendered = {_colour_of(g, pal=tuple(pal)) for g in _REAL_MATRIX_GROUPS}
     assert rendered & _WEAK, f"fixture no longer reaches a weak slot; rendered {sorted(rendered)}"
-    assert any("poor line colour" in str(w.message) for w in caught), (
+    assert any("poor LINE colour" in str(w.message) for w in caught), (
         f"weak slot reached with no warning; warnings seen: {[str(w.message) for w in caught]}"
     )
 
 
 def test_colour_axis_and_column_axis_are_deliberately_different_axes():
-    """Colour is run mode; columns and baselines are hardware. The two must NOT be the
-    same partition, or the reversal has silently re-collapsed onto hardware.
-    """
-    from hhemt.report_renderers.sensitivity_benchmarking import _hardware_family, _stable_run_mode_color
+    """Colour is the decomposition; columns are hardware. The two must NOT be the same
+    partition, or the ruling has silently re-collapsed colour onto hardware.
 
-    pal = _bench_palette()
-    n_colours = len({_stable_run_mode_color(g, pal, _REAL_MATRIX_GROUPS) for g in _REAL_MATRIX_GROUPS})
+    The denominator moved 6 -> 4 with the ruling; the INVARIANT did not. Four is now
+    strictly fewer than the six group values, which is the point: several group values
+    share one colour precisely because they share one decomposition.
+    """
+    from hhemt.report_renderers.sensitivity_benchmarking import _hardware_family
+
+    n_colours = len({_colour_of(g) for g in _REAL_MATRIX_GROUPS})
     n_hw = len({_hardware_family(g) for g in _REAL_MATRIX_GROUPS})
-    assert (n_colours, n_hw) == (6, 3), (
-        f"expected 6 run-mode colours over 3 hardware families; got {n_colours} and {n_hw}"
+    assert (n_colours, n_hw) == (4, 3), (
+        f"expected 4 decomposition colours over 3 hardware families; got {n_colours} and {n_hw}"
     )

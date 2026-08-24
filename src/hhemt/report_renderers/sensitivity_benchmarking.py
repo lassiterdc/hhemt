@@ -49,145 +49,36 @@ import plotly.io as pio
 import xarray as xr
 from plotly.subplots import make_subplots
 
-# Q1 fungibility (iter-2): color must be STABLE per group_value across arms. A
-# pure-TRITON arm and a TRITON-SWMM arm that differ in which groups are present
-# would otherwise get shifted palette indices (color = palette[i % len]) and the
-# same hardware family would read as two colors across the co-located figures.
-# Canonical order pins the known families to fixed slots; unknowns append
-# deterministically (sorted) after the known block.
-#: Recognized group SPELLINGS. NOT the palette index source -- colour now indexes
-#: `_CANONICAL_RUN_MODES`, because this tuple's alias slots shift
-#: every family two positions right. Do not reintroduce it as an ordering.
+# COLOUR IS THE DECOMPOSITION AXIS. Hardware is carried by the COLUMN FACET and by
+# nothing else; colour and marker symbol are LOCKED one-to-one and both key the
+# decomposition (see `_DECOMPOSITION_STYLE`). A GPU MPI run therefore draws the SAME
+# colour and the SAME symbol as a CPU MPI run and is told apart by its column.
+#
+# SUPERSEDED DOCTRINE, recorded because the retired code argued for it at length: colour
+# used to be the RUN-MODE axis, under which "each GPU hardware behaves as its own run
+# mode" and every GPU token took a palette slot of its own. That is no longer the design.
+# The machinery it needed -- `_stable_run_mode_color`, `_run_mode_color_order`,
+# `_CANONICAL_RUN_MODES`, and the `all_groups`/`color_groups` plumbing that existed to
+# keep an OPEN vocabulary's derived tail from renumbering under a filtered frame -- is
+# retired with it. The vocabulary colour indexes is now CLOSED at four literal slots, so
+# set-dependence is not fixed but IMPOSSIBLE.
+#: Recognized group SPELLINGS. Retained as the alias source only; it is not, and must not
+#: become, a palette-index ordering.
 _CANONICAL_GROUP_ORDER = ("serial", "single_cpu", "single-cpu", "cpu", "gpu", "hybrid")
 
 
-#: Hardware FAMILIES, de-aliased. `_CANONICAL_GROUP_ORDER` spent six slots on four
-#: concepts (`single_cpu`/`single-cpu` are spellings of `serial`), so indexing against
-#: it directly pushes every family two positions right and lands gpu on #56B4E9 beside
-#: serial's #0072B2 -- two blues in the figure whose whole job is CPU-vs-GPU comparison.
+#: Hardware FAMILIES, de-aliased -- still the axis for scaling-panel COLUMN layout
+#: (`_hw_cols`) and baseline anchoring (`_resolve_family_baselines`), both keyed on
+#: `_hardware_family`. Hardware's ONLY remaining visual channel is the column.
 _CANONICAL_FAMILIES = ("serial", "cpu", "gpu", "hybrid")
 _FAMILY_ALIASES = {"single_cpu": "serial", "single-cpu": "serial"}
 
-#: Run modes in canonical COLOUR order. The first four are the CPU modes the run_mode
-#: axis actually carries (`synthetic_experiment.py`) and are singletons. The fifth,
-#: `gpu`, is a FAMILY: it expands AT ITS OWN POSITION into whichever GPU run modes the
-#: frame carries -- bare `gpu` on a single-hardware master, or one entry per hardware
-#: token once `:546-556` qualifies them. So the slot is never reserved-and-idle, which
-#: is what keeps a six-series matrix inside the palette's first six entries.
-_CANONICAL_RUN_MODES = ("serial", "openmp", "mpi", "hybrid", "gpu")
-
 #: Palette slots that are poor LINE colours on white. Okabe-Ito's yellow and black are
-#: fine as fills and bad as thin series lines, and before this module widened its
-#: canonical block they were where `openmp` and `mpi` landed -- not by choice, but as
-#: the residue of falling outside a four-member tuple into the derived tail. Reaching
-#: them is now announced rather than silent.
+#: fine as fills and bad as thin series lines. This guard became MORE load-bearing, not
+#: less, when the user ruled that point colour IS line colour: every decomposition colour
+#: is now drawn as a connector, so a weak line slot degrades the primary encoding rather
+#: than one incidental fill.
 _WEAK_LINE_SLOTS = frozenset({"#F0E442", "#000000"})
-
-
-def _run_mode_color_order(all_groups=None) -> tuple[str, ...]:
-    """Canonical run-mode ordering for palette indexing.
-
-    ONE rule, applied uniformly: walk `_CANONICAL_RUN_MODES` left to right; at each
-    entry emit the members of that entry's family that the frame carries, sorted; then
-    append everything unrecognized, sorted. Four of the five canonical entries are
-    singleton families and emit themselves. `gpu` is the one family with members --
-    `gpu`, `gpu (a6000)`, `gpu (a100-80)` -- and it emits them in place.
-
-    Expansion-in-place, rather than a reserved `gpu` slot plus a separate tail, is what
-    keeps the real matrix inside the palette's usable range. The rewrite at `:546-556`
-    replaces bare `gpu` with hardware-qualified tokens whenever more than one token is
-    present, so a reserved slot would sit idle on exactly the frames that need the room,
-    pushing the second token onto `#F0E442`.
-
-    GPU members sort ASCENDING here, which is the same order `_hw_cols` gives them
-    (`key=lambda f: (f != "cpu", f)` reduces to a plain sort among GPU tokens). One
-    order, two consumers: the token that colours first also occupies the left GPU column.
-
-    `cpu` is deliberately NOT canonical. A reserved slot for it costs a palette entry in
-    every frame including the ones that never use it. It is also not aliased to `serial`:
-    `single_cpu` is unambiguously a spelling of serial, but a bare `cpu` could name a
-    multicore run, and a wrong alias silently merges two series.
-    """
-    modes = {_FAMILY_ALIASES.get(str(g), str(g)) for g in (all_groups or [])}
-    order: list[str] = []
-    for canon in _CANONICAL_RUN_MODES:
-        if canon == "gpu":
-            members = sorted(m for m in modes if _hardware_family(m) != "cpu")
-            order.extend(members or [canon])
-        else:
-            order.append(canon)
-    order.extend(sorted(modes - set(order)))
-    return tuple(order)
-
-
-def _stable_run_mode_color(group_value, palette, all_groups=None):
-    """Palette colour for ``group_value``'s RUN MODE.
-
-    The colour axis is run mode: serial, openmp, mpi, hybrid, and one entry per GPU
-    hardware token -- a GPU run is serial-or-MPI with no threading, so each GPU hardware
-    behaves as its own run mode rather than as a variant of one. Hardware remains the
-    axis for scaling-panel COLUMN layout (`_hw_cols`) and for baseline anchoring
-    (`_resolve_family_baselines`), both keyed on `_hardware_family`; this function is the
-    only one of the three that reads run mode, and that separation is deliberate.
-
-    SCOPE: "each GPU hardware behaves as its own run mode" is a claim about COLOUR and
-    about nothing else. It is NOT a claim about the figure's symbology as a whole, and
-    reading it as one is the mistake the marker channel used to make -- symbol keyed on
-    `is_gpu_group`, which put HARDWARE into a channel the column facet already carries.
-    Symbol keys on DECOMPOSITION (`_DECOMPOSITION_SYMBOLS`), under which a GPU run and a
-    CPU MPI run share one symbol because they share one decomposition. Run mode and
-    decomposition are different quantities -- `_decomposition_label` is deliberately
-    many-to-one over run mode -- so the two statements are orthogonal, not in tension.
-
-    What this keeps from the hardware-keyed interlude it replaces, because both were
-    genuine defects of the ORIGINAL mode-keyed implementation rather than artifacts of
-    the reversal:
-
-    * Fixed slots for the closed CPU vocabulary. The predecessor pinned only
-      ``("serial", "cpu", "gpu", "hybrid")``, so `openmp` and `mpi` fell into an
-      `all_groups`-derived tail -- which made them set-dependent, and landed them on
-      `#000000` and `#F0E442`, the two worst line colours in the palette. Widening the
-      canonical block to the four real CPU modes fixes both at once.
-    * A filtered frame warns instead of mis-colouring. A caller passing a per-panel group
-      list is the shape of the measured panel-vs-legend divergence; it cannot be
-      prevented by construction over an open vocabulary, so it is detected.
-    * Palette exhaustion is announced. A wrapped index makes one colour mean two run
-      modes, and reaching a weak line slot is announced for the same reason.
-    """
-    order = _run_mode_color_order(all_groups)
-    if len(order) > len(palette):
-        warnings.warn(
-            f"sensitivity_benchmarking: {len(order)} run modes ({', '.join(order)}) "
-            f"exceed the {len(palette)}-colour palette, so at least two now share a "
-            "colour. Colour is the run-mode axis, so a reused colour means two run modes "
-            "in one figure -- widen the palette before reading it.",
-            stacklevel=2,
-        )
-    gv = _FAMILY_ALIASES.get(str(group_value), str(group_value))
-    if gv not in order:
-        # `all_groups` did not contain this group's own run mode, which can only mean the
-        # caller passed a FILTERED frame. That is the exact shape of the measured
-        # panel-vs-legend bug: the panel renumbers from its filtered set while the legend
-        # numbers from the unfiltered one, and the same series takes two palette slots.
-        # The four canonical CPU modes are unaffected -- their slots are fixed.
-        warnings.warn(
-            f"sensitivity_benchmarking: run mode {gv!r} is absent from all_groups "
-            f"({', '.join(order)}), so its colour is being resolved from a filtered set. "
-            "Pass the UNFILTERED group list -- a per-panel list renumbers the derived "
-            "tail and the legend, drawn from the whole frame, will disagree with it.",
-            stacklevel=2,
-        )
-        return palette[0 % len(palette)]
-    color = palette[order.index(gv) % len(palette)]
-    if color in _WEAK_LINE_SLOTS:
-        warnings.warn(
-            f"sensitivity_benchmarking: run mode {gv!r} resolved to {color}, a poor line "
-            "colour on white. This is the slot `openmp` and `mpi` used to land on by "
-            "accident; reaching it now means the run-mode count has outgrown the "
-            "palette's usable range -- widen the palette or facet the figure.",
-            stacklevel=2,
-        )
-    return color
 
 
 from hhemt.figure_caption import add_figure_caption, content_width_px
@@ -544,7 +435,13 @@ def _decomposition_label(group_value, *, is_gpu_group: bool, is_hybrid_group: bo
         return "N ranks × 1 thread (MPI)"
     if is_hybrid_group:
         return "N/2 ranks × 2 threads (MPI + OpenMP)"
-    token = str(group_value).strip().lower()
+    # De-alias BEFORE the lookup. `single_cpu` / `single-cpu` are spellings of `serial`,
+    # and this label is now the sole key for the legend TEXT, the marker SYMBOL and the
+    # series COLOUR alike -- so an un-aliased spelling would fall to the open-vocabulary
+    # tail and take a different label, a different mark and a different colour from the
+    # series it IS. The alias lived only in the retired colour resolver; moving it here
+    # keeps one source for all three channels.
+    token = _FAMILY_ALIASES.get(str(group_value).strip().lower(), str(group_value).strip().lower())
     return {
         "mpi": "N ranks × 1 thread (MPI)",
         "openmp": "1 rank × N threads (OpenMP)",
@@ -552,35 +449,101 @@ def _decomposition_label(group_value, *, is_gpu_group: bool, is_hybrid_group: bo
     }.get(token, str(group_value))
 
 
-#: Marker symbol per DECOMPOSITION, keyed on the label `_decomposition_label` returns.
-#: Symbol is the PARALLELIZATION-STRATEGY axis and carries nothing else: hardware is
-#: carried by the COLUMN FACET and run mode by COLOUR, so a GPU MPI run and a CPU MPI
-#: run take the SAME symbol and are told apart by their column -- the same merge
-#: `_decomposition_label` already makes for the legend TEXT.
+#: The LOCKED decomposition -> (marker symbol, palette INDEX) pairing. ONE dict, so the
+#: colour<->symbol relationship the user ruled ("each SYMBOL should have its own COLOR")
+#: cannot be half-changed: there is no edit that moves a symbol without moving its colour.
+#:
+#: Both channels key the DECOMPOSITION and nothing else. Hardware is carried by the COLUMN
+#: FACET, so a GPU MPI run and a CPU MPI run take the SAME colour AND the SAME symbol and
+#: are told apart by their column -- the merge `_decomposition_label` already makes for the
+#: legend TEXT, now extended to the marks so the legend row and the series it stands for
+#: finally agree on all three.
 #:
 #: Keying on the LABEL rather than on `group_value` is the point. The legend swatch is
-#: drawn from the first trace claiming a label, so any symbol rule that reads
-#: `group_value` directly can hand two group_values sharing one label two different
-#: symbols -- and the legend then shows one of them for both. That is the shipped defect
-#: this replaces: the legend's MPI row drew a CIRCLE while the GPU columns drew
-#: TRIANGLES under the same key. One function decides both, so they cannot diverge.
-_DECOMPOSITION_SYMBOLS: dict[str, str] = {
-    "N ranks × 1 thread (MPI)": "circle",
-    "1 rank × N threads (OpenMP)": "square",
-    "N/2 ranks × 2 threads (MPI + OpenMP)": "diamond",
-    "baseline: 1 rank × 1 thread (S = 1 by definition)": "star",
+#: drawn from the first trace claiming a label, so any rule that reads `group_value`
+#: directly can hand two co-labelled groups different marks -- and the legend then shows
+#: one of them for both. That was the shipped defect: the legend's MPI row drew a CIRCLE
+#: while the GPU columns drew TRIANGLES under the same key. One dict decides both channels
+#: for both, so they cannot diverge.
+#:
+#: PALETTE INDICES, not literal hex, so `sens_cfg.palette` / `static_cfg.series_palette`
+#: stay authoritative and the frozen 8-entry Okabe-Ito set stays the single colour source.
+#: The four indices are DISTINCT literals into an 8-entry palette, so a modulo collision is
+#: unreachable by construction rather than warned about after the fact.
+#:
+#: WHICH four, and why these four. Measured over all C(8,4)=70 subsets of the palette
+#: under CIEDE2000 after a Vienot-Brettel-Mollon dichromat simulation, restricted to the
+#: six line-safe entries (`_WEAK_LINE_SLOTS` excluded, because point colour IS line colour
+#: now). The Pareto frontier over (normal-vision, red-green) separation has exactly two
+#: members, differing in ONE slot: sky blue (#56B4E9) or reddish purple (#CC79A7).
+#: Reddish purple wins once ROLE is accounted for -- it is assigned to `serial`, whose star
+#: is a lone point at N=1 that shares an x position with no other series in any column, so
+#: its colour does the least discriminating work of the four. That frees the three
+#: OVERLAPPING curves (MPI / OpenMP / hybrid) to take blue, orange and bluish green, whose
+#: red-green bottleneck is 20.3 against 15.5 for the previous assignment and 11.8 for the
+#: six-colour run-mode set this replaces.
+_DECOMPOSITION_STYLE: dict[str, tuple[str, int]] = {
+    # label: (plotly marker symbol, index into the Okabe-Ito palette)
+    "N ranks × 1 thread (MPI)": ("circle", 2),  # bluish green #009E73
+    "1 rank × N threads (OpenMP)": ("square", 1),  # orange       #E69F00
+    "N/2 ranks × 2 threads (MPI + OpenMP)": ("diamond", 0),  # blue         #0072B2
+    "baseline: 1 rank × 1 thread (S = 1 by definition)": ("star", 3),  # reddish purple #CC79A7
 }
+
+#: Where an unmapped run mode lands. A fallback rather than a raise: the run-mode
+#: vocabulary is open at the edges (`_decomposition_label` returns `str(group_value)` for
+#: anything it does not recognise) and an unknown mode should render, not abort a report.
+_DECOMPOSITION_STYLE_FALLBACK: tuple[str, int] = ("circle", 2)
+
+
+def _decomposition_style(group_value, *, is_gpu_group: bool, is_hybrid_group: bool) -> tuple[str, int]:
+    """The (symbol, palette index) pair for `group_value`'s decomposition.
+
+    The single lookup both channels go through. `_decomposition_symbol` and
+    `_decomposition_color` are thin views on it and must stay that way -- a second lookup
+    is how a locked pair comes unlocked.
+    """
+    label = _decomposition_label(group_value, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+    return _DECOMPOSITION_STYLE.get(label, _DECOMPOSITION_STYLE_FALLBACK)
 
 
 def _decomposition_symbol(group_value, *, is_gpu_group: bool, is_hybrid_group: bool) -> str:
-    """Plotly marker symbol for `group_value`'s decomposition.
+    """Plotly marker symbol for `group_value`'s decomposition."""
+    return _decomposition_style(group_value, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)[0]
 
-    Falls back to `circle` for a label the map does not carry -- the same open-vocabulary
-    tail `_decomposition_label` returns `str(group_value)` for. A fallback rather than a
-    raise: an unmapped run mode should render, not abort the report.
+
+def _decomposition_color(group_value, palette, *, is_gpu_group: bool, is_hybrid_group: bool) -> str:
+    """Series colour for `group_value`'s decomposition -- marker outline AND connector.
+
+    Set-INDEPENDENT by construction: the index is a literal from a closed four-entry map,
+    so no `all_groups` parameter exists to be passed a filtered frame. The panel-vs-legend
+    divergence the retired resolver warned about cannot be expressed here.
+
+    Two things are still checked, because both remain reachable through a CUSTOM palette:
+    a palette too short for the declared indices (raises -- a silently wrapped index would
+    make one colour mean two decompositions), and a decomposition landing on a weak line
+    slot (warns -- `sens_cfg.palette` is user-supplied and its first four entries are not
+    guaranteed to be the Okabe-Ito ones this map was measured against).
     """
-    label = _decomposition_label(group_value, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
-    return _DECOMPOSITION_SYMBOLS.get(label, "circle")
+    _symbol, index = _decomposition_style(group_value, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+    if index >= len(palette):
+        raise ValueError(
+            f"sensitivity_benchmarking: palette has {len(palette)} entries but the "
+            f"decomposition style map declares index {index}. Colour is the decomposition "
+            "axis and its indices are distinct by construction; a wrapped index would make "
+            "one colour mean two decompositions. Supply a palette of at least "
+            f"{max(i for _s, i in _DECOMPOSITION_STYLE.values()) + 1} entries."
+        )
+    color = palette[index]
+    if color in _WEAK_LINE_SLOTS:
+        warnings.warn(
+            f"sensitivity_benchmarking: decomposition {group_value!r} resolved to {color}, "
+            "a poor LINE colour on white. Point colour IS line colour in this figure, so "
+            "this degrades the primary encoding rather than one incidental fill -- reorder "
+            "the supplied palette so its first four entries are line-safe.",
+            stacklevel=2,
+        )
+    return color
 
 
 def render(
@@ -618,8 +581,7 @@ def render(
 
     if independent_var not in df_setup.columns:
         raise ValueError(
-            f"{independent_var!r} is not a resolvable benchmarking axis; "
-            f"resolvable columns: {sorted(df_setup.columns)}"
+            f"{independent_var!r} is not a resolvable benchmarking axis; resolvable columns: {sorted(df_setup.columns)}"
         )
 
     dependent_var = report_cfg.sensitivity.dependent_var
@@ -1002,9 +964,7 @@ def render(
         static_cfg=static_cfg,
     )
 
-    _apply_matplotlib_axis_groups(
-        ax_wall, ax_cost, ax_speedup, ax_eff, top=_axis_top, bottom=_axis_bottom
-    )
+    _apply_matplotlib_axis_groups(ax_wall, ax_cost, ax_speedup, ax_eff, top=_axis_top, bottom=_axis_bottom)
     ax_wall.set_ylabel(f"Wall-clock time ({wall_unit})")
     ax_cost.set_ylabel(f"Compute cost ({cost_unit} × devices)")
     ax_speedup.set_ylabel("Strong-Scaling Speedup\n" + r"$S(N) = t(1)\,/\,t(N)$")
@@ -1441,7 +1401,12 @@ def _draw_metric_panel(
             continue
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
-        color = _stable_run_mode_color(gv, palette, groups)
+        color = _decomposition_color(
+            gv,
+            palette,
+            is_gpu_group=str(gv).lower().startswith("gpu"),
+            is_hybrid_group=str(gv).lower() == "hybrid",
+        )
         with prov.artist(
             axes_id="ax_metric",
             kind="line",
@@ -1536,9 +1501,9 @@ def _draw_panel(
     cpu_marker = static_cfg.cpu_marker if static_cfg is not None else sens_cfg.cpu_marker
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = _stable_run_mode_color(gv, palette, groups)
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
+        color = _decomposition_color(gv, palette, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
         # Hardware is OUT of the symbol channel: it is carried by the column facet in the
         # plotly branch and named in the legend text here, so `gpu_marker` no longer
         # selects. This branch has no per-decomposition marker vocabulary to replace it
@@ -1896,9 +1861,7 @@ def _build_sensitivity_benchmarking_figure(
         # row-major fill pushed the names into rows 1-2 at arbitrary columns.
         # The slice+pad keeps the count exact even if _hw_cols is empty, where
         # _n_hw is floored at 1 and the names list is shorter than the row.
-        subplot_titles=(
-            ([f"{f}" for f in _hw_cols] + [""] * _n_hw)[:_n_hw] + [""] * (3 * _n_hw)
-        ),
+        subplot_titles=(([f"{f}" for f in _hw_cols] + [""] * _n_hw)[:_n_hw] + [""] * (3 * _n_hw)),
     )
     fig.update_layout(
         template="plotly_white",
@@ -1961,7 +1924,6 @@ def _build_sensitivity_benchmarking_figure(
                 prov=prov,
                 show_in_legend=(row == 1),
                 legend_seen=_row_legend_seen,
-                color_groups=sorted(df["group_value"].dropna().unique(), key=str),
                 gpu_legend_suffix=gpu_legend_suffix,
                 model_arm=model_arm,
             )
@@ -1991,7 +1953,6 @@ def _build_sensitivity_benchmarking_figure(
             row=3,
             col=_ci,
             panel_id=f"ax_speedup_plotly_c{_ci}",
-            color_groups=sorted(df["group_value"].dropna().unique(), key=str),
             ideal_kind="linear",
             x_max=_x_max_c,
             ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
@@ -2010,7 +1971,6 @@ def _build_sensitivity_benchmarking_figure(
             row=4,
             col=_ci,
             panel_id=f"ax_efficiency_plotly_c{_ci}",
-            color_groups=sorted(df["group_value"].dropna().unique(), key=str),
             ideal_kind="constant",
             ideal_value=1.0,
             x_max=_x_max_c,
@@ -2247,11 +2207,6 @@ def _plotly_metric_panel(
     # duplication the gate was added to remove. One set, owned by the caller, spans
     # every panel of the row.
     legend_seen: set[str] | None = None,
-    # Colour key, deliberately DISTINCT from the drawn group set. `groups` below is
-    # derived from the FILTERED frame, and colour must not depend on the filter or a
-    # series takes different palette slots in different columns. Same contract as
-    # `_plotly_metric_panel_precomputed`'s parameter of this name.
-    color_groups: list | None = None,
     gpu_legend_suffix: str = "",
     model_arm: str | None = None,
 ) -> None:
@@ -2264,14 +2219,13 @@ def _plotly_metric_panel(
     # the row emits duplicate identical entries. The CALLER owns the set when the row is
     # faceted, so first-occurrence is computed across every column rather than per panel.
     _legend_seen = legend_seen if legend_seen is not None else set()
-    _color_groups = color_groups if color_groups is not None else groups
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = _stable_run_mode_color(gv, sens_cfg.palette, _color_groups)
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         is_single_point_group = is_serial_group or len(sub) == 1
+        color = _decomposition_color(gv, sens_cfg.palette, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
         marker_symbol = _decomposition_symbol(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
         # Iteration 4: model-arm encoding REMOVED. This renderer is structurally
         # single-arm (see _resolve_model_arm's docstring: each sibling master enables
@@ -2407,7 +2361,6 @@ def _plotly_metric_panel_precomputed(
     all_rows_per_group: dict | None = None,
     ideal_show_in_legend: bool = False,
     model_arm: str | None = None,
-    color_groups: list | None = None,
 ) -> None:
     """Plot speedup / efficiency panel from precomputed per-group data.
 
@@ -2421,15 +2374,12 @@ def _plotly_metric_panel_precomputed(
     on hybrid markers (matplotlib reference parity for panels 3+4).
     """
     groups = sorted(df_for_groups["group_value"].dropna().unique(), key=str)
-    # `_stable_run_mode_color`'s third parameter is named `all_groups` and its whole
-    # purpose is a palette index that does not shift when the group set shrinks.
-    # `df_for_groups` here is ALREADY filtered to one hardware family, so passing
-    # `groups` gives a GPU-only column order.index("gpu") == 0 while the legend --
-    # built solely from row 1 on the UNFILTERED frame (show_in_legend=(row == 1)) --
-    # gives order.index("gpu") == 2. Same series, two palette slots. `color_groups`
-    # is the unfiltered list; it defaults to `groups` so single-panel callers are
-    # unchanged.
-    _color_groups = color_groups if color_groups is not None else groups
+    # NO colour key is threaded here any more. The retired resolver took an `all_groups`
+    # list because an OPEN run-mode vocabulary derived its palette index from the supplied
+    # set, so a per-column FILTERED frame renumbered the tail and the same series took two
+    # slots in one figure. Colour now indexes a CLOSED four-entry decomposition map by
+    # literal, so the index cannot move whatever frame arrives -- the defect is not fixed
+    # but unrepresentable, which is why the parameter is gone rather than defaulted.
     # Per-sa_id config lookup for hover customdata + hybrid annotations (F2, F3).
     sa_cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"]
     available_cfg_cols = [c for c in sa_cfg_cols if c in df_for_groups.columns]
@@ -2491,10 +2441,10 @@ def _plotly_metric_panel_precomputed(
             if not marker_xs:
                 # Empty all-rows fall back to line data for markers.
                 marker_xs, marker_ys, marker_sa = line_xs, line_ys, line_sa
-        color = _stable_run_mode_color(gv, sens_cfg.palette, _color_groups)
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
+        color = _decomposition_color(gv, sens_cfg.palette, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
         marker_symbol = _decomposition_symbol(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
         # Iteration 4: model-arm encoding REMOVED (see _plotly_metric_panel for the
         # rationale). The ideal-reference line below is NOT a data connector and was

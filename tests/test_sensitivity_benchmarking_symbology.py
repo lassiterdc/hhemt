@@ -225,6 +225,122 @@ def test_every_legend_key_maps_to_one_marker_symbol():
     )
 
 
+# ── Invariant 1b: colour and symbol are locked, and colour is the line colour ──
+
+
+def legend_style_pairs(fig) -> dict[str, set[tuple[str, str]]]:
+    """Per legend key, the SET of (marker symbol, marker outline colour) pairs drawn.
+
+    The outline is the marker's colour identity: the FILL is the replicate channel
+    (hollow == this config ran more than once), so a filled and a hollow marker of the
+    same series legitimately differ in `marker.color` while sharing `marker.line.color`.
+    """
+    out: dict[str, set[tuple[str, str]]] = {}
+    for trace in fig.data:
+        if "markers" not in (getattr(trace, "mode", "") or ""):
+            continue
+        marker = getattr(trace, "marker", None)
+        symbol = getattr(marker, "symbol", None)
+        outline = getattr(getattr(marker, "line", None), "color", None)
+        if symbol is None or outline is None:
+            continue
+        out.setdefault(str(trace.name), set()).add((str(symbol), str(outline)))
+    return out
+
+
+def test_colour_and_symbol_are_locked_one_to_one_on_the_built_figure():
+    """Each symbol has its own colour, and each colour its own symbol.
+
+    The user's ruling: "each SYMBOL should have its own COLOR ... so color-symbol is a
+    locked relationship". The map-level half is asserted in
+    `test_sensitivity_benchmarking_math.py`; THIS is the emitted half, and it is not
+    redundant with it -- a map can be a perfect bijection while a CALL SITE resolves one
+    channel through it and the other through something else, which is exactly the class of
+    defect that shipped when symbol read `is_gpu_group` and colour read a run-mode
+    resolver.
+
+    Both directions are checked. A figure with four symbols over three colours and one
+    with three symbols over four colours are different defects, and a single cardinality
+    comparison catches only one of them.
+    """
+    pairs_by_key = legend_style_pairs(build_figure())
+    assert pairs_by_key, "no marker traces were emitted -- the fixture built an empty figure"
+
+    unstable = {k: sorted(v) for k, v in pairs_by_key.items() if len(v) > 1}
+    assert not unstable, f"legend key(s) drawn with more than one (symbol, colour) pair: {unstable}"
+
+    pairs = {p for v in pairs_by_key.values() for p in v}
+    symbols = {s for s, _c in pairs}
+    colours = {c for _s, c in pairs}
+    assert len(symbols) == len(pairs), (
+        f"a symbol is drawn in more than one colour, so the lock is broken: {sorted(pairs)}"
+    )
+    assert len(colours) == len(pairs), (
+        f"a colour is drawn with more than one symbol, so the lock is broken: {sorted(pairs)}"
+    )
+
+
+def test_marker_colour_equals_line_colour_for_every_connected_series():
+    """ "point color = line color", asserted on the drawn traces.
+
+    Checked on the figure rather than at the assignment because the risk is two SOURCES
+    that happen to agree: the marker outline and the connector are set in different
+    `go.Scatter` calls, and nothing in either call names the other. A single local feeding
+    both is the current implementation and this is what would catch it drifting.
+
+    Series with no connector are skipped by construction, not by exception: the serial
+    baseline is a lone point and draws no line, so it has no line colour to match. The
+    `checked` guard keeps that skip from swallowing every series.
+    """
+    fig = build_figure()
+    marker_colour = {k: {c for _s, c in v} for k, v in legend_style_pairs(fig).items()}
+    line_colour: dict[str, set[str]] = {}
+    for trace in fig.data:
+        if (getattr(trace, "mode", "") or "") != "lines":
+            continue
+        colour = getattr(getattr(trace, "line", None), "color", None)
+        if colour is None or str(trace.name) not in marker_colour:
+            continue
+        line_colour.setdefault(str(trace.name), set()).add(str(colour))
+
+    mismatches = {k: (sorted(marker_colour[k]), sorted(v)) for k, v in line_colour.items() if marker_colour[k] != v}
+    assert not mismatches, f"marker outline and connector colour disagree: {mismatches}"
+    assert len(line_colour) >= 2, (
+        f"only {len(line_colour)} connected series were checked -- too few for this "
+        "assertion to discriminate; the fixture must carry at least two multi-point series"
+    )
+
+
+def test_a_gpu_series_is_drawn_exactly_like_cpu_mpi_on_the_built_figure():
+    """Hardware is the COLUMN and nothing else, asserted where it is visible.
+
+    The retired doctrine gave each GPU hardware token a colour of its own. Under the
+    ruling a GPU MPI run and a CPU MPI run share one decomposition, so they share one
+    legend key, one symbol and one colour, and are told apart by their column alone. This
+    checks the emitted figure rather than the map, because the GPU path reaches the marker
+    through `is_gpu_group`, which is precisely the flag the retired scheme keyed on.
+    """
+    fig = build_figure()
+    mpi_key = "N ranks × 1 thread (MPI)"
+    pairs = legend_style_pairs(fig).get(mpi_key)
+    assert pairs, f"the MPI legend key is absent from the figure; keys={sorted(legend_style_pairs(fig))}"
+    assert len(pairs) == 1, (
+        f"the MPI key -- which the CPU-MPI series and both GPU series all carry -- is drawn "
+        f"with more than one (symbol, colour) pair: {sorted(pairs)}"
+    )
+    # And the key really is shared, or the assertion above is vacuous.
+    gpu_cols = [c for c in (2, 3) if panel_marker_xs(fig, 1, c)]
+    assert gpu_cols, "no GPU column carried marker traces"
+    for col in gpu_cols:
+        ref = fig.get_subplot(1, col).xaxis.plotly_name.replace("axis", "")
+        names = {
+            str(t.name)
+            for t in fig.data
+            if (getattr(t, "xaxis", None) or "x") == ref and "markers" in (getattr(t, "mode", "") or "")
+        }
+        assert names == {mpi_key}, f"GPU column {col} drew unexpected legend keys: {sorted(names)}"
+
+
 # ── Invariant 2: an axis labels only positions that were run ───────────────
 
 
