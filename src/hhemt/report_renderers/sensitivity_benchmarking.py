@@ -130,6 +130,15 @@ def _stable_run_mode_color(group_value, palette, all_groups=None):
     (`_resolve_family_baselines`), both keyed on `_hardware_family`; this function is the
     only one of the three that reads run mode, and that separation is deliberate.
 
+    SCOPE: "each GPU hardware behaves as its own run mode" is a claim about COLOUR and
+    about nothing else. It is NOT a claim about the figure's symbology as a whole, and
+    reading it as one is the mistake the marker channel used to make -- symbol keyed on
+    `is_gpu_group`, which put HARDWARE into a channel the column facet already carries.
+    Symbol keys on DECOMPOSITION (`_DECOMPOSITION_SYMBOLS`), under which a GPU run and a
+    CPU MPI run share one symbol because they share one decomposition. Run mode and
+    decomposition are different quantities -- `_decomposition_label` is deliberately
+    many-to-one over run mode -- so the two statements are orthogonal, not in tension.
+
     What this keeps from the hardware-keyed interlude it replaces, because both were
     genuine defects of the ORIGINAL mode-keyed implementation rather than artifacts of
     the reversal:
@@ -358,6 +367,45 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
     def _xref(row: int, col: int) -> str:
         return fig.get_subplot(row, col).xaxis.plotly_name.replace("axis", "")
 
+    def _plotted_xs(row: int, col: int) -> list[float]:
+        """The x values MARKERS occupy in this panel, ascending.
+
+        Derived from the figure rather than passed in, for the same reason the axis refs
+        above are: this helper runs after every trace is added, so the figure already
+        carries the answer and a fourth parameter would be a second source that can
+        disagree with the first. It is also automatically right for BOTH pairs -- the top
+        pair plots the configured independent_var and the bottom pair plots `n_devices`,
+        and neither this helper nor its caller has to know which.
+
+        MARKER-BEARING traces only, and that restriction is load-bearing rather than
+        tidy. The ideal-reference line is drawn at `x = [1.0, x_max]`; `x_max` is a real
+        per-column data max, but the `1.0` is a CONSTANT. On any column whose smallest
+        device count is 2 an all-traces union would emit a tick at N=1 that no run
+        occupies -- reintroducing, from the other direction, exactly the phantom tick
+        this replaces. `mode` is checked with `in` because the hybrid series is
+        `markers+text`.
+        """
+        ref = _xref(row, col)
+        vals: set[float] = set()
+        for tr in fig.data:
+            if (getattr(tr, "xaxis", None) or "x") != ref:
+                continue
+            if "markers" not in (getattr(tr, "mode", "") or ""):
+                continue
+            # `is None`, never `or ()`: plotly normalizes `x` to a numpy array, and
+            # `array or ()` raises `ValueError: The truth value of an array with more
+            # than one element is ambiguous`. Measured -- the falsy-default idiom
+            # crashed every plotly render of this figure on first run.
+            xs = getattr(tr, "x", None)
+            if xs is None:
+                continue
+            for v in xs:
+                try:
+                    vals.add(float(v))
+                except (TypeError, ValueError):
+                    continue
+        return sorted(vals)
+
     def _yref(row: int, col: int) -> str:
         return fig.get_subplot(row, col).yaxis.plotly_name.replace("axis", "")
 
@@ -413,19 +461,37 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
     for _ci in range(1, n_hw + 1):
         fig.update_xaxes(matches=_xref(2, _ci), showticklabels=False, title_text="", row=1, col=_ci)
         fig.update_xaxes(title_text=_qualified(top, _ci), row=2, col=_ci)
-        # Integer ticks. Device counts are whole numbers, and with no tick control
-        # anywhere in this module the GPU columns' [1,3] range autoticks to
-        # 1, 1.5, 2, 2.5, 3 -- an axis advertising half a GPU. Set on BOTH members of
-        # the pair: `matches` links the RANGE, not tick configuration, so a leader-only
-        # fix leaves the follower's GRIDLINES fractional even though its labels are
-        # hidden by `showticklabels=False`.
+        # Ticks at the device counts this column ACTUALLY RAN. The predecessor set
+        # `dtick=1`, which fixed the fractional-GPU axis (the GPU columns' [1,3] range
+        # autoticked to 1, 1.5, 2, 2.5, 3) but replaced it with a phantom-tick axis: a
+        # CPU sweep of {1, 2, 4, 8} drew ticks at 3, 5, 6 and 7, advertising four
+        # resource levels the experiment never ran. `tickvals` fixes both -- every tick
+        # is a run, and nothing between runs is drawn -- and it is the honest form for a
+        # DESIGNED matrix, whose x values are a small chosen set rather than a range.
         #
-        # Gated because the top pair plots the CONFIGURED independent_var, which need
-        # not be integer-valued. See the scope note in `_qualified`'s docstring for why
-        # this identity test is not the one that docstring rules out.
+        # Derived PER COLUMN: the CPU column's set and a GPU column's set differ, so one
+        # shared tick list would be wrong in at least one column.
+        #
+        # Set on BOTH members of the pair: `matches` links the RANGE, not tick
+        # configuration, so a leader-only fix leaves the follower's GRIDLINES on the old
+        # scheme even though its labels are hidden by `showticklabels=False`. Derived
+        # ONCE from the LABELLED member and applied to both, so the two cannot disagree.
+        #
+        # Empty-set fallback to the old behaviour: a panel with no marker trace has no
+        # tick values to name, and `tickvals=[]` would erase the axis entirely.
+        #
+        # Gate UNCHANGED from the `dtick` form it replaces. The top pair plots the
+        # CONFIGURED independent_var; whether a continuous independent_var also wants
+        # ticks-at-data is a separate question from this one, and widening the gate here
+        # would answer it silently. See the scope note in `_qualified`'s docstring for
+        # why this identity test is not the one that docstring rules out.
         if top.source_var == _SCALING_AXIS_VAR:
+            _tv = _plotted_xs(2, _ci)
             for _r in (1, 2):
-                fig.update_xaxes(tickmode="linear", dtick=1, row=_r, col=_ci)
+                if _tv:
+                    fig.update_xaxes(tickmode="array", tickvals=_tv, row=_r, col=_ci)
+                else:
+                    fig.update_xaxes(tickmode="linear", dtick=1, row=_r, col=_ci)
     # Reachability: `n_hw = max(len(_hw_cols), 1)` at the call site, so n_hw >= 1 for
     # EVERY input class (including an empty group_value column) and this loop body
     # executes at least once on every plotly render. There is no reachable input for
@@ -433,19 +499,30 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
     for _ci in range(1, n_hw + 1):
         fig.update_xaxes(matches=_xref(4, _ci), showticklabels=False, title_text="", row=3, col=_ci)
         fig.update_xaxes(title_text=_qualified(bottom, _ci), row=4, col=_ci)
-        # Integer ticks, ungated: the bottom pair is hard-keyed to `_SCALING_AXIS_VAR`
-        # (see `bottom = AxisGroup.for_var(_SCALING_AXIS_VAR, ...)`), which is a device
-        # count and integer by construction, so no test is needed here. Both members
-        # for the same reason as the top pair -- row 3 hides labels but draws gridlines.
+        # Ticks at the device counts this column actually ran, ungated: the bottom pair
+        # is hard-keyed to `_SCALING_AXIS_VAR` (see
+        # `bottom = AxisGroup.for_var(_SCALING_AXIS_VAR, ...)`), so there is no
+        # independent_var question to gate on. Same derivation, same both-members rule,
+        # and the same empty-set fallback as the top pair above.
+        _tv = _plotted_xs(4, _ci)
         for _r in (3, 4):
-            fig.update_xaxes(tickmode="linear", dtick=1, row=_r, col=_ci)
+            if _tv:
+                fig.update_xaxes(tickmode="array", tickvals=_tv, row=_r, col=_ci)
+            else:
+                fig.update_xaxes(tickmode="linear", dtick=1, row=_r, col=_ci)
 
 
 # Module-level styling constants moved to `report_cfg.sensitivity` per the
 # config-driven refactor (see plan: full sweep — eliminate hardcoded params).
 # Per-call: `sens_cfg = report_cfg.sensitivity` and read `sens_cfg.cpu_marker`,
-# `sens_cfg.gpu_marker`, `sens_cfg.point_size`, `sens_cfg.line_style`,
-# `sens_cfg.line_width`, `sens_cfg.palette`, `sens_cfg.independent_var_labels`.
+# `sens_cfg.point_size`, `sens_cfg.line_style`, `sens_cfg.line_width`,
+# `sens_cfg.palette`, `sens_cfg.independent_var_labels`.
+#
+# `sens_cfg.gpu_marker` is NOT in that list any more. Hardware is carried by the column
+# facet, not by the marker symbol, so no site in this module selects a marker on
+# `is_gpu_group`. The plotly branch keys symbol on decomposition
+# (`_DECOMPOSITION_SYMBOLS`); the matplotlib branch has no per-decomposition marker
+# vocabulary and uses `cpu_marker` for every series.
 
 
 def _decomposition_label(group_value, *, is_gpu_group: bool, is_hybrid_group: bool) -> str:
@@ -473,6 +550,37 @@ def _decomposition_label(group_value, *, is_gpu_group: bool, is_hybrid_group: bo
         "openmp": "1 rank × N threads (OpenMP)",
         "serial": "baseline: 1 rank × 1 thread (S = 1 by definition)",
     }.get(token, str(group_value))
+
+
+#: Marker symbol per DECOMPOSITION, keyed on the label `_decomposition_label` returns.
+#: Symbol is the PARALLELIZATION-STRATEGY axis and carries nothing else: hardware is
+#: carried by the COLUMN FACET and run mode by COLOUR, so a GPU MPI run and a CPU MPI
+#: run take the SAME symbol and are told apart by their column -- the same merge
+#: `_decomposition_label` already makes for the legend TEXT.
+#:
+#: Keying on the LABEL rather than on `group_value` is the point. The legend swatch is
+#: drawn from the first trace claiming a label, so any symbol rule that reads
+#: `group_value` directly can hand two group_values sharing one label two different
+#: symbols -- and the legend then shows one of them for both. That is the shipped defect
+#: this replaces: the legend's MPI row drew a CIRCLE while the GPU columns drew
+#: TRIANGLES under the same key. One function decides both, so they cannot diverge.
+_DECOMPOSITION_SYMBOLS: dict[str, str] = {
+    "N ranks × 1 thread (MPI)": "circle",
+    "1 rank × N threads (OpenMP)": "square",
+    "N/2 ranks × 2 threads (MPI + OpenMP)": "diamond",
+    "baseline: 1 rank × 1 thread (S = 1 by definition)": "star",
+}
+
+
+def _decomposition_symbol(group_value, *, is_gpu_group: bool, is_hybrid_group: bool) -> str:
+    """Plotly marker symbol for `group_value`'s decomposition.
+
+    Falls back to `circle` for a label the map does not carry -- the same open-vocabulary
+    tail `_decomposition_label` returns `str(group_value)` for. A fallback rather than a
+    raise: an unmapped run mode should render, not abort the report.
+    """
+    label = _decomposition_label(group_value, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+    return _DECOMPOSITION_SYMBOLS.get(label, "circle")
 
 
 def render(
@@ -1422,14 +1530,24 @@ def _draw_panel(
     groups = sorted(df["group_value"].dropna().unique(), key=str)
     # Dual-source publication style: static_cfg overrides palette + cpu/gpu markers.
     palette = static_cfg.series_palette if static_cfg is not None else sens_cfg.palette
+    # `gpu_marker` is deliberately NOT read here any more: hardware is out of the symbol
+    # channel, and its only consumer was the branch below. The config field survives for
+    # other consumers; leaving the binding would be an unused local (ruff F841).
     cpu_marker = static_cfg.cpu_marker if static_cfg is not None else sens_cfg.cpu_marker
-    gpu_marker = static_cfg.gpu_marker if static_cfg is not None else sens_cfg.gpu_marker
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
         color = _stable_run_mode_color(gv, palette, groups)
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
-        marker = gpu_marker if is_gpu_group else cpu_marker
+        # Hardware is OUT of the symbol channel: it is carried by the column facet in the
+        # plotly branch and named in the legend text here, so `gpu_marker` no longer
+        # selects. This branch has no per-decomposition marker vocabulary to replace it
+        # with -- `sens_cfg` offers exactly two markers -- so every series takes
+        # `cpu_marker`, which is already what `_draw_metric_panel` does for ALL groups
+        # including GPU. The two matplotlib sites now agree. Giving this branch the
+        # four-symbol strategy map the plotly branch carries needs a config field
+        # (`decomposition_markers`), which is a schema change, not a figure iteration.
+        marker = cpu_marker
         is_single_point_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         if is_single_point_group or len(sub) == 1:
             with prov.artist(
@@ -2154,12 +2272,7 @@ def _plotly_metric_panel(
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         is_single_point_group = is_serial_group or len(sub) == 1
-        if is_gpu_group:
-            marker_symbol = "triangle-up"
-        elif is_serial_group:
-            marker_symbol = "star"
-        else:
-            marker_symbol = "circle"
+        marker_symbol = _decomposition_symbol(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
         # Iteration 4: model-arm encoding REMOVED. This renderer is structurally
         # single-arm (see _resolve_model_arm's docstring: each sibling master enables
         # exactly one TRITON arm) and no cross_experiment_* renderer consumes it, so
@@ -2382,12 +2495,7 @@ def _plotly_metric_panel_precomputed(
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
-        if is_gpu_group:
-            marker_symbol = "triangle-up"
-        elif is_serial_group:
-            marker_symbol = "star"
-        else:
-            marker_symbol = "circle"
+        marker_symbol = _decomposition_symbol(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
         # Iteration 4: model-arm encoding REMOVED (see _plotly_metric_panel for the
         # rationale). The ideal-reference line below is NOT a data connector and was
         # never arm-encoded.
