@@ -228,6 +228,16 @@ class FacetConfig:
 #: speedup S(N) and efficiency E_s(N) are defined against device count and nothing else.
 _SCALING_AXIS_VAR = "n_devices"
 
+#: Rows whose per-column y-axes share ONE ruler, linked to column 1. See the linking
+#: block in `_apply_plotly_axis_groups`. All four rows are linked: rows 1-2 so the
+#: absolute wall-clock and cost panels can be read across hardware, and rows 3-4 per the
+#: standing D3 ruling, which permits a shared ruler on the scaling panels because a
+#: comparable AXIS is not a claim -- the directive on scaling conclusions binds what the
+#: figure ASSERTS (titles, captions, annotations), not its axis ranges.
+#:
+#: Scoping the link is a one-line change to this tuple; the reasoning travels with it.
+_Y_LINKED_ROWS: tuple[int, ...] = (1, 2, 3, 4)
+
 #: The DataFrame column holding the configured independent_var's values. Assigned
 #: exactly once, at `df["indep_value"] = df["sa_id"].map(df_setup[independent_var])`.
 #: Single-writer by construction, which is why it is a constant here rather than a
@@ -347,6 +357,25 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
 
     def _xref(row: int, col: int) -> str:
         return fig.get_subplot(row, col).xaxis.plotly_name.replace("axis", "")
+
+    def _yref(row: int, col: int) -> str:
+        return fig.get_subplot(row, col).yaxis.plotly_name.replace("axis", "")
+
+    # Y-LINKING. Each listed row's columns share ONE ruler, linked to column 1. Without
+    # it every column autoranges to its own data -- including its own ideal reference
+    # line, whose extent is that column's max N -- so side-by-side panels carry
+    # different rulers and are not comparable, which is the benefit the faceting exists
+    # to deliver. Refs are DERIVED for the same reason the x-refs are.
+    #
+    # `matches=` rather than a computed common range: it is this file's own idiom for
+    # the x-axes, it UNIONS ranges instead of imposing one, and so it does not also
+    # decide the separate question of whether the speedup panel should be clipped.
+    #
+    # An explicit `range=` OVERRIDES `matches=`; see the note at the empirical-clipped
+    # branch below, which is the one place a per-column `range=` is set.
+    for _row in _Y_LINKED_ROWS:
+        for _ci in range(2, n_hw + 1):
+            fig.update_yaxes(matches=_yref(_row, 1), row=_row, col=_ci)
 
     # Rows 1-2 are faceted now, so these must loop over columns exactly as the bottom
     # pair does. Pinned at col=1 they were correct only under the former colspan, where
@@ -1864,6 +1893,16 @@ def _build_sensitivity_benchmarking_figure(
             default=None,
         )
         if max_empirical is not None and max_empirical > 0:
+            # IF YOU REVIVE THIS BRANCH, DROP THIS LOOP. An explicit `range=` OVERRIDES
+            # `matches=`, and `_apply_plotly_axis_groups` now links every row's columns
+            # to column 1 (see `_Y_LINKED_ROWS`). Setting a per-column range here would
+            # silently win over that link and restore the per-column rulers the linking
+            # exists to remove -- with no error, because both calls are individually
+            # valid. The global `max_empirical` computed above is the right VALUE; apply
+            # it once to column 1 and let the link carry it, or drop it and keep the
+            # union. This branch is currently unreachable: its gate reads
+            # `speedup_range_mode`, whose only source is a `getattr` default because
+            # `speedup_panel_range_mode` has no Pydantic field anywhere.
             for _ci in range(1, _n_hw + 1):
                 fig.update_yaxes(range=[0, max_empirical * 1.1], row=3, col=_ci)
             # The ideal-reference line's truncation is communicated via the legend
