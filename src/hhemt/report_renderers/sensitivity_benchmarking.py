@@ -80,6 +80,30 @@ _FAMILY_ALIASES = {"single_cpu": "serial", "single-cpu": "serial"}
 #: than one incidental fill.
 _WEAK_LINE_SLOTS = frozenset({"#F0E442", "#000000"})
 
+#: EVERY marker is hollow. The user ruled it for OCCLUSION -- "i think id rather just go
+#: to all the hollow fill since sometimes multiple configs kinda overlap" -- and it holds
+#: unconditionally, with no data-dependent branch anywhere.
+#:
+#: This RETIRES the replicate-count fill encoding. Fill used to mean "this compute config
+#: was run more than once" (hollow) versus once (solid); that clause is superseded, and the
+#: `n_replicates` column it read is now surfaced nowhere in the figure. The caption's
+#: surviving clause -- every replicate is plotted -- is the whole of what the reader is
+#: told about replicates.
+#:
+#: `rgba(0,0,0,0)` rather than `"white"`: a white fill is opaque and hides whatever a
+#: marker lands on, which is the occlusion this exists to remove. Transparent lets an
+#: overlapped marker, a gridline and the ideal-reference line all read through.
+_HOLLOW_FILL = "rgba(0,0,0,0)"
+
+#: The SAME hollow, spelled for matplotlib. Two constants because the two renderers do not
+#: share a colour vocabulary: `rgba(0,0,0,0)` is a plotly/CSS string and matplotlib's colour
+#: parser rejects it outright -- `ValueError: 'c' argument must be a color, a sequence of
+#: colors, or a sequence of numbers, not 'rgba(0,0,0,0)'`. Measured, not anticipated: the
+#: first pass used the plotly spelling at all six sites, the plotly report rendered
+#: perfectly, and the matplotlib PUBLICATION path raised. `"none"` is matplotlib's
+#: transparent-face spelling and is not the string `"None"` nor the object `None`.
+_HOLLOW_FILL_MPL = "none"
+
 
 from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
@@ -625,9 +649,21 @@ def render(
         # replicate marker and is
         # deliberately NOT part of config identity (_config_diff._derive_config_label:
         # "Replicate suffixes are NOT in the identity, so replicates share one label").
-        # n_replicates drives marker FILL (open = this config has repeated runs) and the
-        # line aggregation averages over replicates before the per-N min is taken, so the
-        # min rule selects the best distinct CONFIG rather than the luckiest RUN.
+        # `config_id` is what the line aggregation groups on: it averages over replicates
+        # before the per-N min is taken, so the min rule selects the best distinct CONFIG
+        # rather than the luckiest RUN. That is the load-bearing half of this pair.
+        #
+        # `n_replicates` USED to drive marker FILL (hollow = this config has repeated
+        # runs). That encoding is retired -- every marker is hollow now -- so the column
+        # currently has NO consumer in this renderer. Measured, not assumed: the only two
+        # reads were the two fill sites, and the retired lookup's own comment recorded
+        # that it "was never read again". It is kept rather than dropped because it is one
+        # cheap groupby recording a true fact about the experiment, it sits beside the
+        # `n_mpi_procs`/`n_omp_threads`/`n_gpus`/`n_nodes` columns that exist solely to
+        # feed hover customdata, and moving the replicate fact to hover is the obvious way
+        # to restore what the fill channel used to say. If that is declined, this column
+        # is a genuine removal candidate -- do not read its survival as evidence of a
+        # consumer.
         df["config_id"] = df["sa_id"].astype(str).str.replace(r"_r\d+$", "", regex=True)
         df["n_replicates"] = df["config_id"].map(df.groupby("config_id")["sa_id"].nunique()).astype(int)
         # Iteration 4 (FQ3 + FQ9b): qualify GPU group names with their hardware token when
@@ -1423,10 +1459,10 @@ def _draw_metric_panel(
             ax.scatter(
                 xs,
                 ys,
-                color=color,
+                facecolor=_HOLLOW_FILL_MPL,
+                edgecolor=color,
                 marker=cpu_marker,
                 s=sens_cfg.point_size,
-                edgecolor="black",
                 linewidth=1.0,
                 zorder=3,
             )
@@ -1524,10 +1560,10 @@ def _draw_panel(
                 ax.scatter(
                     sub["indep_value"],
                     sub[y_col],
-                    color=color,
+                    facecolor=_HOLLOW_FILL_MPL,
+                    edgecolor=color,
                     marker=marker,
                     s=sens_cfg.point_size,
-                    edgecolor="black",
                     linewidth=1.0,
                     zorder=3,
                     label=_decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group),
@@ -1568,10 +1604,10 @@ def _draw_panel(
             ax.scatter(
                 sub["indep_value"],
                 sub[y_col],
-                color=color,
+                facecolor=_HOLLOW_FILL_MPL,
+                edgecolor=color,
                 marker=marker,
                 s=sens_cfg.point_size,
-                edgecolor="black",
                 linewidth=1.0,
                 zorder=3,
                 label=_decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group),
@@ -2051,7 +2087,7 @@ def _build_sensitivity_benchmarking_figure(
         " Speedup and efficiency are measured against each hardware family's own"
         " minimum-device run (CPU → serial CPU; each GPU → its own 1-GPU run),"
         " so S = 1.0 denotes a different wall-clock on each curve."
-        " Hollow markers mark compute configurations run more than once;"
+        " Every marker is hollow so overlapping configurations stay readable;"
         " every replicate is plotted."
     )
     _bench_plot_h = 1000 - 30  # height minus top margin; bottom is what we are deriving
@@ -2306,14 +2342,9 @@ def _plotly_metric_panel(
             note=f"markers {gv} (panel {panel_id})",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
-            # BM-3: hollow marker == this config has repeated runs, matching the
-            # encoding already applied on panels 3+4. No sa_id lookup is needed
-            # here: the marker arrays ARE `sub`'s rows in `sub`'s order, so the
-            # n_replicates column is already point-aligned. `rgba(0,0,0,0)` over
-            # "white" keeps the plot background visible through the marker.
-            _fill = color
-            if "n_replicates" in sub.columns:
-                _fill = ["rgba(0,0,0,0)" if int(r) > 1 else color for r in sub["n_replicates"].fillna(1)]
+            # Every marker hollow, unconditionally (`_HOLLOW_FILL`). The per-point
+            # `n_replicates` branch that used to build a fill LIST here is retired with
+            # the encoding it served; a scalar is all that is left to pass.
             scatter_kwargs = dict(
                 x=sub["indep_value"],
                 y=sub[y_col],
@@ -2324,7 +2355,7 @@ def _plotly_metric_panel(
                 marker=dict(
                     symbol=marker_symbol,
                     size=max(int(sens_cfg.point_size**0.5), 6),
-                    color=_fill,
+                    color=_HOLLOW_FILL,
                     line=dict(color=color, width=1.4),
                 ),
                 legendgroup=legend_name,
@@ -2391,15 +2422,10 @@ def _plotly_metric_panel_precomputed(
     else:
         sa_cfg_lookup = None
 
-    # BM-3: n_replicates drives marker FILL -- a config with repeated runs renders
-    # hollow. The column is computed in render() at the `_r\d+`-strip and was never
-    # read again; this is the lookup that consumes it. Built here rather than passed
-    # in because `df_for_groups` IS the same frame render() computed it on, so a new
-    # parameter would thread a value already in scope.
-    if "n_replicates" in df_for_groups.columns and "sa_id" in df_for_groups.columns:
-        n_rep_by_sa = df_for_groups.drop_duplicates(subset=["sa_id"]).set_index("sa_id")["n_replicates"].astype(int)
-    else:
-        n_rep_by_sa = None
+    # The `n_rep_by_sa` lookup that stood here is GONE. Its own comment recorded that
+    # `n_replicates` "was never read again; this is the lookup that consumes it" -- so
+    # with the fill encoding retired it had exactly zero remaining consumers, and keeping
+    # a per-sa_id reindex alive to feed nothing would be machinery that reads as live.
 
     def _extract_xyz(data):
         """Return (xs, ys, sa_ids) from one of the supported per-group data formats."""
@@ -2497,14 +2523,8 @@ def _plotly_metric_panel_precomputed(
                 a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
                 fig.add_trace(go.Scatter(**line_trace), row=row, col=col)
         # Markers trace — all-row points (or fall back to per-N-min if all-row not provided).
-        # BM-3: hollow marker == this config has repeated runs. Per-POINT, not
-        # per-trace: a group can mix replicated and single-run configs, so the fill
-        # is a list aligned to marker_xs. `rgba(0,0,0,0)` rather than "white" keeps
-        # the plot background visible through the marker on any template.
-        _marker_fill = color
-        if n_rep_by_sa is not None and marker_sa is not None:
-            _reps = n_rep_by_sa.reindex(marker_sa)
-            _marker_fill = ["rgba(0,0,0,0)" if (r == r and int(r) > 1) else color for r in _reps]
+        # Every marker hollow, unconditionally (`_HOLLOW_FILL`). The per-point fill list
+        # this built from `n_rep_by_sa` is retired with the encoding it served.
         marker_kwargs = dict(
             x=marker_xs,
             y=marker_ys,
@@ -2512,7 +2532,7 @@ def _plotly_metric_panel_precomputed(
             marker=dict(
                 symbol=marker_symbol,
                 size=max(int(sens_cfg.point_size**0.5), 6),
-                color=_marker_fill,
+                color=_HOLLOW_FILL,
                 line=dict(color=color, width=1.4),
             ),
             legendgroup=legend_name,

@@ -74,6 +74,18 @@ _CPU_BASE_S = 400.0
 _GPU_BASE_S = {"gpu-a6000": 95.0, "gpu-a100-80": 60.0}
 _N_REPLICATES = 2
 
+#: Configs the fixture runs exactly ONCE. Load-bearing, and it is the third fixture
+#: property this module guards rather than assumes.
+#:
+#: Marker fill USED to encode replicate count -- hollow meant "run more than once". With
+#: every config replicated, a pre-ruling renderer draws every marker hollow too, so an
+#: "every marker is hollow" assertion would pass in BOTH worlds and pin nothing. One
+#: single-run config makes the pre-ruling renderer draw exactly one SOLID marker, which is
+#: what gives the assertion something to catch. `serial` is chosen because it is the lone
+#: baseline point: changing its replicate count moves no device count, no symbol and no
+#: colour, so the other invariants in this module are undisturbed.
+_SINGLE_RUN_RUN_MODES = frozenset({"serial"})
+
 
 def _matrix_frame() -> pd.DataFrame:
     """The renderer's input frame. Wall-clock values are SYNTHETIC layout fixtures.
@@ -92,7 +104,8 @@ def _matrix_frame() -> pd.DataFrame:
         base = _GPU_BASE_S[partition] if is_gpu else _CPU_BASE_S
         wall = base / (n_dev**0.72) if n_dev > 1 else base
         config_id = f"{group_value}@{n_dev}"
-        for replicate in range(_N_REPLICATES):
+        n_reps = 1 if run_mode in _SINGLE_RUN_RUN_MODES else _N_REPLICATES
+        for replicate in range(n_reps):
             w = wall * (1 + rng.normal(0, 0.03))
             rows.append(
                 {
@@ -106,7 +119,7 @@ def _matrix_frame() -> pd.DataFrame:
                     "compute_hr": w * n_dev / 3600,
                     "wallclock_disp": w / 60,
                     "compute_disp": w * n_dev / 60,
-                    "n_replicates": _N_REPLICATES,
+                    "n_replicates": n_reps,
                     "n_mpi_procs": n_mpi,
                     "n_omp_threads": n_omp,
                     "n_gpus": n_gpus,
@@ -339,6 +352,99 @@ def test_a_gpu_series_is_drawn_exactly_like_cpu_mpi_on_the_built_figure():
             if (getattr(t, "xaxis", None) or "x") == ref and "markers" in (getattr(t, "mode", "") or "")
         }
         assert names == {mpi_key}, f"GPU column {col} drew unexpected legend keys: {sorted(names)}"
+
+
+# ── Invariant 1c: every marker is hollow ───────────────────────────────────
+
+
+def marker_fills(fig) -> dict[str, set]:
+    """Per legend key, the SET of `marker.color` values drawn under it.
+
+    Values are normalised to hashables: the retired encoding produced a per-point LIST
+    (one fill per marker), so a scalar and a list are both possible readings of this
+    property and the test must be able to see either.
+    """
+    out: dict[str, set] = {}
+    for trace in fig.data:
+        if "markers" not in (getattr(trace, "mode", "") or ""):
+            continue
+        fill = getattr(getattr(trace, "marker", None), "color", None)
+        if fill is None:
+            continue
+        key = tuple(str(f) for f in fill) if isinstance(fill, (list, tuple)) else str(fill)
+        out.setdefault(str(trace.name), set()).add(key)
+    return out
+
+
+def solid_marker_traces(fig) -> dict[str, set]:
+    """Legend keys carrying any fill other than the transparent one."""
+    return {k: v for k, v in marker_fills(fig).items() if v != {"rgba(0,0,0,0)"}}
+
+
+def test_every_marker_is_hollow():
+    """No marker carries a fill, on any trace, under any data.
+
+    The user ruled this for OCCLUSION -- "id rather just go to all the hollow fill since
+    sometimes multiple configs kinda overlap" -- and it RETIRES the replicate-count fill
+    encoding, under which fill meant "this config was run more than once".
+
+    Asserted on the built figure rather than on the constant, because the defect this
+    replaces was never in the constant: `rgba(0,0,0,0)` was already the hollow value, and
+    what varied was the per-point BRANCH each call site wrapped it in. A test reading
+    `_HOLLOW_FILL` would have been green throughout.
+
+    Fill is checked as a whole-trace property including the LIST form, since the retired
+    encoding emitted one fill per point.
+    """
+    solid = solid_marker_traces(build_figure())
+    assert not solid, f"marker traces carrying a fill: {solid}"
+
+
+def test_both_hollow_spellings_parse_in_their_own_renderer():
+    """The two hollow constants are NOT interchangeable, and the wrong one raises.
+
+    `rgba(0,0,0,0)` is a plotly/CSS string; matplotlib's colour parser rejects it with
+    `ValueError: 'c' argument must be a color ... not 'rgba(0,0,0,0)'`. The first pass at
+    the all-hollow change used the plotly spelling at all six sites: the plotly report
+    rendered perfectly and the matplotlib PUBLICATION path raised, so the defect was
+    invisible in the figure everyone was looking at.
+
+    This is the fast guard. `tests/test_synth_static_plots.py` catches it too, end-to-end,
+    but only after a full static-plot render -- too slow to be the first thing that tells
+    you which spelling you used.
+    """
+    import matplotlib.colors as mcolors
+
+    from hhemt.report_renderers.sensitivity_benchmarking import _HOLLOW_FILL, _HOLLOW_FILL_MPL
+
+    assert mcolors.to_rgba(_HOLLOW_FILL_MPL)[3] == 0.0, (
+        f"_HOLLOW_FILL_MPL={_HOLLOW_FILL_MPL!r} is not a transparent matplotlib colour"
+    )
+    with pytest.raises(ValueError):
+        mcolors.to_rgba(_HOLLOW_FILL)
+    assert _HOLLOW_FILL.startswith("rgba("), (
+        f"_HOLLOW_FILL={_HOLLOW_FILL!r} is no longer the plotly spelling; if the two "
+        "renderers now share one vocabulary, collapse the constants rather than leaving "
+        "a pair whose distinction no longer holds"
+    )
+
+
+def test_the_fixture_contains_a_config_that_would_have_rendered_SOLID():
+    """Guard on the fixture: without a single-run config the hollow test pins nothing.
+
+    Fill used to be hollow for replicated configs, so a fixture in which EVERY config is
+    replicated renders all-hollow under the retired encoding too -- and
+    `test_every_marker_is_hollow` would pass identically before and after the ruling. The
+    same rot risk the non-contiguous-sweep and co-labelled-groups guards cover, on the
+    third invariant.
+    """
+    reps = _matrix_frame().groupby("config_id")["n_replicates"].max()
+    single = sorted(reps[reps <= 1].index)
+    assert single, (
+        "every config in the fixture is replicated, so a pre-ruling renderer would draw "
+        f"all markers hollow and the hollow invariant is unfalsifiable; replicate counts: "
+        f"{reps.to_dict()}"
+    )
 
 
 # ── Invariant 2: an axis labels only positions that were run ───────────────
