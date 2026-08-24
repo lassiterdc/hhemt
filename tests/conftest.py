@@ -454,6 +454,125 @@ def synth_sensitivity_mixed_prefixed_columns():
     return case.analysis
 
 
+# ========== Builder completion markers (fixture-owned, provenance-stamped) ==========
+# A tree's builder owns the claim that the tree is DONE. The toolkit's own workflow flags
+# (`e_consolidate_complete.flag`, `f_consolidate_master_complete.flag`) attest that a
+# workflow STAGE ran; they do not attest that the artifacts these fixtures' consumers
+# require are present, and gating on them let an incomplete tree be re-read indefinitely.
+# Measured 2026-08-23: `synth_sensitivity` carried no `sensitivity_datatree.zarr` for 13
+# hours across three cluster runs, and ten tests reported as FAILED for a precondition
+# their own fixture had not met.
+#
+# Four arms. Arm 0 is what makes the other three terminate.
+_FIXTURE_MARKER_REL = "_status/_fixture_complete.json"
+
+_BUILDER_SOURCES = (
+    Path(__file__).resolve(),
+    Path(__file__).resolve().parent / "fixtures" / "test_case_catalog.py",
+    Path(__file__).resolve().parent / "fixtures" / "test_case_builder.py",
+)
+
+
+def _builder_provenance() -> dict:
+    """Identity of the code that builds a tree, plus the toolkit sha when readable.
+
+    Provenance is what makes a marker refusable rather than merely present. The toolkit
+    already applies the same idea to figures -- `StalePlotsError: figures built at X,
+    report rendering at Y` -- and that check is what catches a tree built by a different
+    toolkit than the one now reading it.
+    """
+    import subprocess
+
+    digest = hashlib.sha256()
+    for src in _BUILDER_SOURCES:
+        try:
+            digest.update(src.read_bytes())
+        except OSError:
+            digest.update(b"<unreadable>")
+    sha = ""
+    with contextlib.suppress(Exception):
+        sha = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parents[1]), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    return {"builder_digest": digest.hexdigest(), "toolkit_sha": sha}
+
+
+def _unmet_payload(analysis_dir: Path, payload: tuple[str, ...]) -> list[str]:
+    return [rel for rel in payload if not (analysis_dir / rel).exists()]
+
+
+def _marker_state(analysis_dir: Path, payload: tuple[str, ...]) -> str:
+    """absent | stale | unsatisfied | complete."""
+    import json
+
+    marker = analysis_dir / _FIXTURE_MARKER_REL
+    if not marker.is_file():
+        return "absent"
+    try:
+        record = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "absent"
+    if record.get("provenance") != _builder_provenance():
+        return "stale"
+    if _unmet_payload(analysis_dir, payload):
+        return "unsatisfied"
+    return "complete"
+
+
+def _finish_build(analysis_dir: Path, payload: tuple[str, ...], fixture_name: str) -> None:
+    """ARM 0 -- verify the builder's own postcondition, RAISE if it failed, else mark.
+
+    Raising is deliberate and is what routes the failure correctly. A tree that cannot be
+    built is a LOST PRECONDITION, not a failing test: raising here leaves this fixture out
+    of the chunk's `session_fixtures_ok`, which the suite aggregator classifies VOID
+    ("expected session fixture(s) did not complete setup") instead of reporting the
+    downstream consumers as FAILED. Returning quietly is what produced ten tests blamed
+    for a fixture's failure.
+
+    The marker is written LAST and only here, so it can never attest a build that did not
+    reach this point.
+    """
+    import json
+
+    missing = _unmet_payload(analysis_dir, payload)
+    if missing:
+        raise RuntimeError(
+            f"{fixture_name}: build finished but its postcondition is UNMET -- missing "
+            f"{missing} under {analysis_dir}. The tree is INCOMPLETE and must not be "
+            "marked complete; consumers of this fixture would otherwise read it as done. "
+            "This is a builder failure, not a test failure."
+        )
+    marker = analysis_dir / _FIXTURE_MARKER_REL
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        json.dumps(
+            {"provenance": _builder_provenance(), "payload": list(payload)},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _warn_unsatisfied(analysis_dir: Path, payload: tuple[str, ...], fixture_name: str) -> None:
+    """ARM 3 -- a marker that was earned once and no longer holds. Never silent."""
+    import warnings
+
+    warnings.warn(
+        f"{fixture_name}: completion marker present but its payload is UNSATISFIED "
+        f"(missing {_unmet_payload(analysis_dir, payload)} under {analysis_dir}). A prior "
+        "build wrote a marker it no longer earns, or the tree was damaged after it was "
+        "written. Rebuilding. This arm is deliberately UNBOUNDED -- it terminates through "
+        "the postcondition raise, at the cost of the failing stage, because the workflow "
+        "resumes from its own per-stage flags rather than rebuilding the tree.",
+        stacklevel=2,
+    )
+
+
 @pytest.fixture(scope="session")
 def synthetic_multisim_completed(tritonswmm_cpu_compiled):
     """Yield a synth multisim TRITONSWMM_analysis with sim outputs produced.
@@ -496,8 +615,11 @@ def synthetic_multisim_completed(tritonswmm_cpu_compiled):
 
     # Ensure the analysis is in a "post-consolidate" state. If
     # ``e_consolidate_complete.flag`` is absent, run() once to materialize.
-    consolidate_flag = analysis_dir / "_status" / "e_consolidate_complete.flag"
-    if not consolidate_flag.exists():
+    payload = ("analysis_datatree.zarr", "_status/e_consolidate_complete.flag")
+    state = _marker_state(analysis_dir, payload)
+    if state == "unsatisfied":
+        _warn_unsatisfied(analysis_dir, payload, "synthetic_multisim_completed")
+    if state != "complete":
         report_config = (
             _Path(__file__).resolve().parents[0].parent
             / "tests"
@@ -509,6 +631,7 @@ def synthetic_multisim_completed(tritonswmm_cpu_compiled):
             from_scratch=False,
             report_config=report_config if report_config.exists() else None,
         )
+        _finish_build(analysis_dir, payload, "synthetic_multisim_completed")
 
     return analysis
 
@@ -562,9 +685,13 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     # ``f_consolidate_master_complete.flag`` is absent, run the master
     # sensitivity workflow once locally to materialize per-sa flags + the
     # master flag + the sensitivity_datatree.zarr.
-    master_flag = analysis_dir / "_status" / "f_consolidate_master_complete.flag"
-    if not master_flag.exists():
+    payload = ("sensitivity_datatree.zarr", "_status/f_consolidate_master_complete.flag")
+    state = _marker_state(analysis_dir, payload)
+    if state == "unsatisfied":
+        _warn_unsatisfied(analysis_dir, payload, "synthetic_sensitivity_completed")
+    if state != "complete":
         sensitivity.submit_workflow(mode="local")
+        _finish_build(analysis_dir, payload, "synthetic_sensitivity_completed")
 
     return sensitivity
 
