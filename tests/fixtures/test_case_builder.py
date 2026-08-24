@@ -418,7 +418,30 @@ class retrieve_synth_TRITON_SWMM_test_case:
         _effective_pin = (additional_system_configs or {}).get(
             "TRITONSWMM_branch_key", TRITON_PIN
         )
-        provision_borrower(self._software_root / "triton", pin=_effective_pin)
+        # PROVISION THE CONFIGURED TREE, never a fixed `_software/triton`.
+        # `_write_configs` applies `additional_system_configs` LAST
+        # (`system_cfg.update(kwargs["additional_system_configs"])`, :501), so a
+        # caller overriding TRITONSWMM_software_directory got that value in the
+        # system cfg while this call provisioned a DIFFERENT tree. Two harms
+        # followed. (1) The cfg's tree was then filled by
+        # `system.py::_download_tritonswmm_source`, which holds no lock of any
+        # kind. (2) The hardcoded tree was clobbered even though nothing read it,
+        # and it is the tree the estate's `_SOFTWARE_ROOT` docstring reserves for
+        # extbc_ablation_resume_b4b. Measured 2026-08-24: SLURM job 18864593 died
+        # at this call with `git clone ... exit 128` / "Untracked working tree file
+        # '.gitignore' would be overwritten by merge" while sibling job 18864594
+        # wrote the same path from another node. The `.triton.provision.lock` did
+        # not serialize them: job 18864835 measured two nodes acquiring one
+        # resolve_filelock lock on this GPFS home at t+0.00s each.
+        _effective_software_dir = (additional_system_configs or {}).get(
+            "TRITONSWMM_software_directory"
+        )
+        provision_borrower(
+            Path(_effective_software_dir)
+            if _effective_software_dir is not None
+            else self._software_root / "triton",
+            pin=_effective_pin,
+        )
 
         self._write_configs(
             n_events=n_events,
