@@ -22,6 +22,7 @@ Example:
 """
 
 import os
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -304,6 +305,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         additional_system_configs: dict | None = None,
         hpc_system_config_yaml: Path | None = None,
         runs_root_override: Path | None = None,
+        share_scratch_root: bool = False,
     ):
         self.artifacts = get_or_build_synthetic_case(params)
         self.analysis_name = analysis_name
@@ -362,6 +364,27 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # override (census-green-up Phase 1) — see the CRITICAL note above: the
         # ~326MB compiled tier must be shared/reused, never re-cloned per test.
         self._software_root = _slug_runs_root / "_software"
+        # A start_from_scratch build MUTATES a tree other tests read. Under the chunked
+        # HPC harness those readers run CONCURRENTLY in a different pytest session, so
+        # the wipe lands under them and surfaces as StalePlotsError or a shutil failure
+        # naming the shared slug cache. census-green-up Phase 1 introduced
+        # runs_root_override for exactly this and applied it at 10 of 35 wiper fixtures;
+        # making it the DEFAULT here is the same remedy at ONE site instead of many, so a
+        # fixture added later inherits it instead of having to remember.
+        #
+        # SCOPE, stated because it was measured and is easy to overclaim: this closes a
+        # LATENT hazard on ten trees where a shared wiper and a shared reader coexist. It
+        # does NOT explain the observed synth_multi_sim failures -- every wiper site for
+        # that tree was ALREADY isolated (conftest.py:260/266/279/318/806), so that race
+        # cannot be a wipe race and this change must not be credited for fixing it.
+        #
+        # `_software_root` is pinned to the slug path above, OUTSIDE the if/else that
+        # chooses runs_root, so the one-borrow/one-compile invariants are untouched.
+        # Opt out with share_scratch_root=True only when a LATER reader must see the tree
+        # this build produces.
+        if start_from_scratch and _runs_root_override is None and not share_scratch_root:
+            runs_root = Path(tempfile.mkdtemp(prefix="hhemt-scratch-")) / "synthetic_test_runs"
+            self.system_directory = runs_root / analysis_name
         if start_from_scratch and self.system_directory.exists():
             ut.fast_rmtree(self.system_directory)
         self.system_directory.mkdir(parents=True, exist_ok=True)

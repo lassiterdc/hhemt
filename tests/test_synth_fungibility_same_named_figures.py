@@ -11,6 +11,7 @@ source of truth, ``_figure_emission.py``) + the Gotcha-53 renderer-IO audit. Com
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -18,11 +19,49 @@ import pytest
 # SWMM-specific source markers a pure-TRITON figure legitimately drops (and NOTHING else).
 _SWMM_MARKERS = ("swmm", "hydraulics.inp", "hydro.inp", "swmm_link", "max_flow_cms", ".rpt", ".out")
 
+# Per-model status-flag sidecars, whose FILENAME embeds the model type by design:
+# `{c_run|d_process}_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag[.json]`
+# (the builders in `src/hhemt/constants.py`; that grammar is called a "persistent
+# contract" there). `workflow_performance` declares every `_status/*.flag.json` it
+# read_text()s, as the Gotcha-53 declared-superset-of-actual invariant REQUIRES --
+# so the coupled master declares `*_tritonswmm_*` and the pure-TRITON master
+# declares `*_triton_*`, and the two sets are DISJOINT rather than nested.
+#
+# That is NOT a fungibility violation and NOT a renderer defect: it is provenance
+# faithfully naming the model-specific artifact that backs the same-named page.
+# Anonymizing it renderer-side would falsify the provenance record. So the model
+# axis is normalized HERE, in the comparison key -- exactly as `_normalize_source`
+# already normalizes the build-location and analysis-identity axes, which differ
+# across the two separately-built masters for reasons that are likewise not the
+# fungibility under test.
+#
+# Anchored to the flag grammar (prefix + model token) so it CANNOT touch a genuine
+# SWMM data source: `swmm_hydro.inp` / `swmm_hydraulics.inp` carry no `c_run_` /
+# `d_process_` prefix and pass through untouched -- which is what keeps
+# `system_overview` available as the non-vacuity SWMM-drop witness below.
+#
+# On alternation order, corrected after measuring rather than asserting: the
+# longest-first order below is DEFENSIVE, not load-bearing for the current token
+# set. The trailing `_` is what disambiguates -- matching "triton" inside
+# "tritonswmm" leaves `s`, not `_`, so the branch fails and Python backtracks to
+# "tritonswmm" regardless of order. Both orders were measured equal here. Order
+# WOULD decide in two cases: if the trailing `_` were ever dropped (shortest-first
+# then yields `c_run_{MODEL}swmm_...`, verified), or if a future model token were
+# an UNDERSCORE-separated extension of another (`triton` vs `triton_gpu`, where
+# shortest-first yields `c_run_{MODEL}_gpu_...`, also verified). Longest-first is
+# kept because it is correct under all three shapes and costs nothing.
+#
+# A change to the flag grammar makes this a no-op and the test goes RED with the
+# disjoint sets named -- it fails loud, never silently.
+_MODEL_KEYED_STATUS_FLAG = re.compile(r"^(c_run|d_process)_(tritonswmm|triton|swmm)_")
+
 
 def _normalize_source(src: str, analysis_name: str) -> str:
     """Collapse a declared source to a build-location- and analysis-identity-independent key.
 
-    ``source_paths_relative`` are relative to each master's own ``analysis_dir``. A source OUTSIDE
+    Three axes are collapsed: build location, analysis identity, and MODEL TYPE (see
+    ``_MODEL_KEYED_STATUS_FLAG``). ``source_paths_relative`` are relative to each master's own
+    ``analysis_dir``. A source OUTSIDE
     that dir (e.g. the ``_sensitivity_configs/{analysis_name}.csv`` compute-config manifest) carries
     a ``../`` prefix whose depth reflects where the master was BUILT and embeds the master's own
     ``analysis_name`` in its basename -- both differ across two SEPARATELY-built, differently-named
@@ -31,7 +70,8 @@ def _normalize_source(src: str, analysis_name: str) -> str:
     the per-master ``analysis_name`` -> a fixed placeholder (drops analysis identity), so a genuine
     cross-arm DATA-source divergence still differs by basename and is still caught, while the
     per-analysis provenance CSV and the in-dir data zarr both normalize equal across arms."""
-    return Path(src).name.replace(analysis_name, "{ANALYSIS}")
+    key = Path(src).name.replace(analysis_name, "{ANALYSIS}")
+    return _MODEL_KEYED_STATUS_FLAG.sub(r"\1_{MODEL}_", key)
 
 
 def _sources_by_plot(plots_dir: Path, analysis_name: str) -> dict[str, set[str]]:

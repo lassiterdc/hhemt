@@ -2643,9 +2643,20 @@ class TRITONSWMM_analysis:
 
         # Determine execution mode
         if execution_mode == "auto":
+            # Execution locus is a CONFIG property, not an environment property.
+            # `self.in_slurm` was the first disjunct here and is deliberately GONE:
+            # it promoted a `local`-configured analysis to a slurm workflow merely
+            # because $SLURM_JOB_ID was set, which is how a synth fixture running
+            # inside an array element reached generate_snakemake_config(mode="slurm")
+            # and tripped its max_concurrent_jobs assert.
+            # THIS IS THE SINGLE resolver for execution locus. cli.py and toolkit.py
+            # previously carried their own copies; both now pass "auto" and delegate
+            # here, so the rule is stated once.
+            # Do NOT reintroduce a read of self.in_slurm, and do NOT make in_slurm
+            # itself config-only: run_simulation.py:820 still derives `using_srun`
+            # from it for Gotcha-32 per-rank GPU binding.
             if (
-                self.in_slurm
-                or self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
+                self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
                 or self.cfg_analysis.multi_sim_run_method == "batch_job"
             ):
                 exec_mode = "slurm"

@@ -443,8 +443,15 @@ def main():
 
             persist_validation_report(analysis)
             logger.info("Re-persisted validation_report.json (post-CSV) so the CSV-created check passes")
-        except Exception as e:
-            logger.warning(f"post-export validation_report.json re-persist failed (non-fatal): {e}")
+        except Exception:
+            # Traceback, not a one-line repr: this rule DECLARES validation_report.json as an
+            # output, so Snakemake already fails the job. What the operator loses to a bare
+            # `{e}` is the diagnosis -- a master-blind check raising KeyError renders as the
+            # single character `1`. Non-fatal is retained so scenario_status.csv and
+            # workflow_summary.md still land; the output declaration is the hard stop.
+            logger.exception(
+                "post-export validation_report.json re-persist failed (rule will fail on the declared output)"
+            )
 
         # Write workflow summary markdown
         # Persist the jobid -> rule index into _status/, which is copytree'd into every
@@ -539,8 +546,10 @@ def main():
 
             persist_validation_report(analysis)
             logger.info("Re-persisted validation_report.json (post-CSV, ordering-correct)")
-        except Exception as e:
-            logger.warning(f"validation_report.json re-persist failed (non-fatal): {e}")
+        except Exception:
+            # See the sibling handler above: the enclosing rule declares this artifact, so the
+            # traceback is the only thing the swallow was still costing.
+            logger.exception("validation_report.json re-persist failed (rule will fail on the declared output)")
 
         logger.info("Status export completed successfully")
         if args.verbose:

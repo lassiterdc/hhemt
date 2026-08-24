@@ -155,6 +155,15 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     # docstring names — which had been red for both fields.
     "resume_interruption_schedule": "experiment",
     "toggle_consolidate_timeseries": "experiment",
+    # per-sim-event-labeling: names the presentation column on the user's own
+    # weather_events_to_simulate CSV. "experiment" by the RULE above (non-Path,
+    # not an HPC-execution field), and independently by SIBLING CONSISTENCY --
+    # weather_event_indices names OTHER columns of that SAME file and is already
+    # "experiment". Two fields naming columns of one artifact must share a bucket,
+    # or the metadata renderer's reproduction guide tells a reproducer to Supply
+    # one and Keep the other for the same CSV. Caught by
+    # test_field_bucket_is_total / test_every_config_field_appears_exactly_once.
+    "weather_event_label_column": "experiment",
 }
 
 

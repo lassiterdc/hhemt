@@ -394,14 +394,16 @@ def run_command(
         else:
             run_mode = "resume"
 
-        # Determine execution context (local vs SLURM)
-        if analysis.in_slurm or analysis.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
-            execution_mode = "slurm"
-        else:
-            execution_mode = "local"
+        # Execution locus is resolved in exactly ONE place, analysis.run()'s
+        # `execution_mode == "auto"` branch. This site previously carried its own
+        # copy, which was BOTH env-reading (`analysis.in_slurm`, promoting a
+        # local-configured analysis inside an allocation) AND incomplete (it omitted
+        # the batch_job arm, so a batch_job config resolved "local"). Delegating
+        # removes both defects rather than repairing them in parallel.
+        execution_mode = "auto"
 
         if not quiet:
-            console.print(f"\n[cyan]Submitting workflow in {execution_mode} mode ({run_mode})...[/cyan]")
+            console.print(f"\n[cyan]Submitting workflow ({run_mode}); locus auto-detected from config...[/cyan]")
 
         # Execute workflow via high-level orchestration API
         result = analysis.run(
@@ -424,7 +426,10 @@ def run_command(
             console.print("[dim]No simulations were executed.[/dim]")
         else:
             console.print("[bold green]✓ Workflow complete![/bold green]")
-            if execution_mode == "slurm" and result.job_id:
+            # Keyed on the ARTIFACT, not on a locus string: a job id exists iff a
+            # SLURM job was submitted, so `result.job_id` is the exact condition and
+            # it stays correct now that execution_mode is "auto" at this point.
+            if result.job_id:
                 console.print(f"[dim]SLURM Job ID: {result.job_id}[/dim]")
             if result.execution_time:
                 console.print(f"[dim]Execution time: {result.execution_time:.1f}s[/dim]")

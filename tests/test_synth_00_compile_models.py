@@ -4,9 +4,30 @@ import pytest
 
 import tests.utils_for_testing as tst_ut
 
-pytestmark = pytest.mark.skipif(
-    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-)
+# NO module-level scheduler gate, deliberately. This module carried
+# `skipif(is_scheduler_context(), reason="Only runs on non-HPC systems.")` from its
+# first commit (4e4da31d), inherited wholesale from the `test_PC_*` convention this
+# module's docstring names. That convention was one half of a two-sided routing
+# scheme whose other half -- the `test_UVA_*` / `test_frontier_*` / `test_PILOT_*`
+# platform tier -- has since been deleted, so the gate was routing away from a tier
+# that no longer exists.
+#
+# It was not free: it skips the WHOLE module, and because a module-level skipif is
+# evaluated BEFORE fixture setup, it also pre-empted `tritonswmm_cpu_compiled`'s own
+# `require_compile_tier()` hard-fail. A warm step running inside a SLURM allocation
+# therefore compiled nothing and reported `5 skipped` at exit 0.
+#
+# What protects this module is CAPABILITY gating, which is purpose-built for the
+# real hazard and is live: `tritonswmm_cpu_compiled` skips when cmake+mpic++ are
+# absent and hard-fails under HHEMT_REQUIRE_COMPILE_TIER=1, and `test_compile_swmm`
+# is deliberately ungated because SWMM needs only cmake and a C compiler (see the
+# comment above the TRITON compiles below). Nothing here reads the environment:
+# `system.py` carries zero `os.environ` / `SLURM_JOB_ID` / `in_slurm` references, so
+# these compiles produce the same artifact inside an allocation as outside one.
+#
+# Scoped to THIS module. The other scheduler gates in the suite are untouched: the
+# dead-rationale finding was established for this module's gate specifically and
+# says nothing about theirs.
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")

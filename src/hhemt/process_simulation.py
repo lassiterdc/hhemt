@@ -2128,6 +2128,7 @@ def _aggregate_perf_tseries(
     dfs = []
     perfs_with_negatives: list[str] = []
     empty_perfs: list[str] = []
+    malformed_perfs: list[tuple[str, str]] = []
     dfs_with_negatives: list[pd.DataFrame] = []
     for f in files:
         m = re.search(r"performance(\d+)", f.name)
@@ -2145,8 +2146,26 @@ def _aggregate_perf_tseries(
             empty_perfs.append(str(f))
             continue
         tstep_iloc = int(m.group(1))
+        # Parse BEFORE recording the iloc. Ordering is load-bearing: `tstep_ilocs_seen`
+        # feeds the ledger-driven reset-row join below, which converts an iloc to a
+        # `timestep_min` coord and looks it up in `full.index`. Recording an iloc whose
+        # file was then skipped yields a coord that is absent from the index, `idx`
+        # comes back empty, and the resume correction is dropped SILENTLY -- the exact
+        # failure the join's own comment was written to prevent. The 0-byte branch above
+        # avoids this by `continue`-ing before the add; this branch must too.
+        try:
+            df_ranks, _ = parse_performance_file(f)
+        except ProcessingError as exc:
+            # A concurrent-writer interleave (see parse_performance_file's structural
+            # validation). Skip this checkpoint rather than fail the whole process rule:
+            # the per-rank `groupby(level='Rank').diff()` below telescopes across a gap,
+            # so omitting one reporting step of ~1081 leaves the cumulative sum intact.
+            # Measured incidence 10/1080 and 3/1080 across two synth_sensitivity trees.
+            # Raising instead would cost the sub-analysis its `d_process` flag and, with
+            # it, the whole fixture tree.
+            malformed_perfs.append((str(f), exc.reason or str(exc)))
+            continue
         tstep_ilocs_seen.add(tstep_iloc)
-        df_ranks, _ = parse_performance_file(f)
         df_ranks = df_ranks.reset_index()
         df_ranks["timestep_min"] = tstep_iloc * min_per_tstep
         df_ranks = df_ranks.set_index(["timestep_min", "Rank"])
@@ -2179,6 +2198,45 @@ def _aggregate_perf_tseries(
             ),
             UserWarning,
             stacklevel=2,
+        )
+
+    if malformed_perfs:
+        _detail = chr(10).join(f"    - {p}: {why}" for p, why in malformed_perfs)
+        warnings.warn(
+            (
+                f"Skipped {len(malformed_perfs)} MALFORMED performance.txt file(s) in "
+                f"{raw_perf_dir}; the wallclock series omits those reporting steps.\n"
+                "These files are the on-disk fingerprint of TWO PROCESSES writing this "
+                "performance directory CONCURRENTLY -- each writing from offset 0 with "
+                "a slightly different formatted length, leaving one writer's overhang "
+                "behind. TRITON's own writer truncates (output.h uses a default-mode "
+                "std::ofstream), so a single process cannot produce this. Treat it as "
+                "evidence of duplicate simulation execution for this scenario (see the "
+                "racing-runner duplication class in the architecture doc's gotchas), "
+                "NOT as a TRITON output-format bug. Every other artifact this sim wrote "
+                "is under the same doubt; the performance dump is merely the only one "
+                "where the interleave is textually visible.\n"
+                f" Skipped files:\n{_detail}"
+            ),
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if not dfs:
+        # Every file was skipped (0-byte and/or malformed). `pd.concat([])` raises an
+        # opaque `ValueError: No objects to concatenate` two frames below the real
+        # cause; the `if not files:` guard above covers "no files on disk", not "all
+        # files skipped". Reachable through the ALREADY-SHIPPED 0-byte branch alone, so
+        # this hole predates the malformed branch, which merely widens it.
+        raise ProcessingError(
+            "aggregate TRITON performance time series",
+            filepath=Path(raw_perf_dir),
+            reason=(
+                f"all {len(empty_perfs) + len(malformed_perfs)} performance{{N}}.txt "
+                f"file(s) were skipped ({len(empty_perfs)} empty, "
+                f"{len(malformed_perfs)} malformed); no timing data remains to "
+                "aggregate."
+            ),
         )
 
     full = pd.concat(dfs).sort_index()
@@ -2315,7 +2373,60 @@ def parse_performance_file(filepath):
     # Clean up column names (remove leading % and whitespace)
     df.columns = df.columns.str.lstrip("%").str.strip()
 
-    # Separate average row from rank rows
+    # Structural validation, BEFORE any cast. TRITON writes this file from
+    # output.h's `std::ofstream output(filedir)` (default mode -> truncating) as
+    # exactly N integer-labelled rank rows plus one "Average" row, so any other
+    # token in the Rank column is by construction not TRITON's output. Two shapes
+    # are observed in the wild, and they have ONE cause:
+    #   (a) a trailing numeric fragment after the Average row (e.g. a bare ".6453"
+    #       line), which read_csv NaN-pads into a valid-looking row and which then
+    #       explodes at the Rank astype(int) below;
+    #   (b) a mangled Average row ("AAverage"), which leaves the file with no
+    #       Average sentinel at all and explodes at the .iloc[0] below.
+    # Both are the fingerprint of TWO PROCESSES writing one performance/ directory
+    # concurrently, each from offset 0 with a slightly different formatted length.
+    # The proof is not the junk token, it is that in
+    # synth_sensitivity.setaside-20260824T0000Z sa_2 performance911.txt the rank
+    # row and the Average row carry DIFFERENT numbers (0.5636 vs 0.5606, 3.466 vs
+    # 3.464) -- a single 1-rank TRITON process computes Average as the mean over
+    # one element, so those lines are byte-identical in all healthy files.
+    # Raise a TYPED error so the aggregator can skip this checkpoint narrowly; a
+    # row-drop "repair" here would silently admit mixed-provenance timings.
+    # Do NOT add a NaN check: a TRITON build can legitimately print a non-finite
+    # timing (see the known negative-times artifact warned about in
+    # _aggregate_perf_tseries), and a NaN clause would newly reject files that
+    # parse correctly today.
+    if "Rank" not in df.columns:
+        raise ProcessingError(
+            "parse TRITON performance file",
+            filepath=Path(filepath),
+            reason="no 'Rank' column in the header row; the file is not a TRITON "
+            "performance dump (likely a concurrent-writer interleave).",
+        )
+    _rank_tokens = df["Rank"].astype(str).str.strip()
+    _junk = _rank_tokens[~(_rank_tokens.str.fullmatch(r"\d+") | (_rank_tokens == "Average"))]
+    if len(_junk):
+        raise ProcessingError(
+            "parse TRITON performance file",
+            filepath=Path(filepath),
+            reason=f"unparseable Rank token(s) {sorted(set(_junk))}; expected integer "
+            "rank labels and one 'Average'. Evidence of two processes writing this "
+            "performance directory concurrently.",
+        )
+    if not (_rank_tokens == "Average").any():
+        raise ProcessingError(
+            "parse TRITON performance file",
+            filepath=Path(filepath),
+            reason="no 'Average' row. TRITON always writes one; its absence means the "
+            "row was overwritten mid-line by a concurrent writer.",
+        )
+
+    # Separate average row from rank rows. NOTE: `s_average` is discarded by the
+    # only production caller (`_aggregate_perf_tseries`, which unpacks
+    # `df_ranks, _`). The Average-presence check above is therefore a DETECTOR, not
+    # a functional prerequisite -- do not "fix" a future IndexError here by making
+    # Average optional; that would remove one of the two clauses that catch the
+    # interleave.
     s_average = df[df["Rank"] == "Average"].iloc[0].drop("Rank")
     s_average.name = "Average"
 

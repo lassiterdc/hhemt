@@ -225,18 +225,84 @@ def test_artist_calls_enclosed_in_provenance_block(path: Path) -> None:
         )
 
 
-# Pure DELEGATING adapters: renderers that expose the uniform render(...) signature
-# but create ZERO artists, delegating all figure emission (and its provenance) to a
-# module that itself carries the discipline. `eda_compute_sensitivity` (Gotcha 67d /
-# R11) delegates to `hhemt.eda._plotting.render_eda_plots`, which emits via
-# `emit_plot_with_sources` and owns the provenance block.
+# Renderers that create ZERO artists locally and therefore cannot satisfy the
+# "at least one `with <name>.artist(...)` block" proxy below. This is a NAME LIST
+# and there is no getting around that: a module that creates no artists is, at the
+# AST level, indistinguishable from one that forgot to. What the list buys is that
+# each entry's RATIONALE is machine-checked rather than merely asserted in a
+# comment -- the two entries have DIFFERENT shapes and a single shared rationale
+# would be false of one of them.
 #
-# The exemption is SELF-POLICING, not a bare allowlist: an exempt module must
-# additionally be proven to contain ZERO artist-producing calls (asserted below).
-# The instant someone adds an `ax.plot(...)` or a `go.Scatter(...)` to a listed
-# module, the exemption STOPS APPLYING and this test fails -- so the alias-rebind
-# guard this test exists to provide is fully preserved.
-_DELEGATING_RENDERERS: frozenset[str] = frozenset({"eda_compute_sensitivity.py"})
+#   "pure_delegate"  -- owns NO provenance. Delegates figure emission AND its
+#                       provenance to a module that carries the discipline itself.
+#                       `eda_compute_sensitivity` (Gotcha 67d / R11) delegates to
+#                       `hhemt.eda._plotting.render_eda_plots`, which emits via
+#                       `emit_plot_with_sources` and owns the provenance block.
+#                       Counter-assertion: zero artist calls AND binds NO
+#                       ProvenanceLog (binding one would mean it owns provenance
+#                       after all, i.e. it is the other kind).
+#
+#   "composer"       -- OWNS provenance. Binds a ProvenanceLog, threads it into
+#                       delegate builders that write into it, and hands it to
+#                       `emit_plot_with_sources(provenance=...)` itself.
+#                       `per_sim_event_page` composes the per-model figures built
+#                       by `per_sim_peak_flood_depth` / `per_sim_conduit_flow`.
+#                       Counter-assertion: zero artist calls AND binds a
+#                       ProvenanceLog AND threads it to a `provenance=` kwarg.
+#
+# KNOWN CEILING, stated so nobody prices this higher than it is: "zero artist
+# calls" is an AST-visible property, and an alias-rebind (`plot = ax.plot;
+# plot(...)`) produces zero AST-visible artist calls BY CONSTRUCTION. So the
+# counter-assertion catches a DIRECT `ax.plot(...)` added to an exempt module --
+# it does NOT catch the alias-rebind this test's docstring names. That limitation
+# is inherent to the exemption and predates this entry; it is why the list is kept
+# to modules whose composer/delegate shape is independently reviewed, not opened
+# to a general structural predicate.
+#
+# Why NOT a general "accept any zero-artist module that owns a ProvenanceLog"
+# rule: measured against the current tree, NINE other renderers (workflow_
+# performance, metadata, errors_and_warnings, per_analysis_summary,
+# scenario_status_appendix, disk_utilization, and the three cross_experiment_*
+# modules) also have zero AST-visible artist calls and bind a threaded
+# ProvenanceLog -- they pass today only because they additionally carry a
+# `with prov.artist(...)` block declaring the provenance of work done inside HTML
+# helper functions. A general predicate would stop REQUIRING those blocks,
+# trading guard strength on nine modules to accommodate one.
+_EXEMPT_RENDERER_KINDS: dict[str, str] = {
+    "eda_compute_sensitivity.py": "pure_delegate",
+    "per_sim_event_page.py": "composer",
+}
+_DELEGATING_RENDERERS: frozenset[str] = frozenset(_EXEMPT_RENDERER_KINDS)
+
+
+def _binds_provenance_log(tree: ast.AST) -> set[str]:
+    """Names bound to a `ProvenanceLog()` construction."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            func = node.value.func
+            ctor = (
+                func.id if isinstance(func, ast.Name)
+                else func.attr if isinstance(func, ast.Attribute)
+                else None
+            )
+            if ctor == "ProvenanceLog":
+                names.update(
+                    t.id for t in node.targets if isinstance(t, ast.Name)
+                )
+    return names
+
+
+def _threads_provenance_kwarg(tree: ast.AST, names: set[str]) -> bool:
+    """True if some call receives `provenance=<one of names>`."""
+    return any(
+        kw.arg == "provenance"
+        and isinstance(kw.value, ast.Name)
+        and kw.value.id in names
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        for kw in node.keywords
+    )
 
 
 @pytest.mark.parametrize("path", _renderer_files(), ids=lambda p: p.name)
@@ -247,10 +313,20 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
     even if no direct artist methods are detected (e.g., when artists are
     produced by external helpers like `plot_continuous_raster`).
 
-    Exception: a pure delegating adapter (``_DELEGATING_RENDERERS``) creates no
-    artists at all and therefore cannot alias-rebind one. It must instead prove it
-    produces ZERO artist-creating calls -- a strictly stronger property than being
-    wrapped in a provenance block.
+    Exception: a module listed in ``_EXEMPT_RENDERER_KINDS`` creates no artists
+    locally, so it cannot satisfy this proxy. It must instead prove ZERO
+    artist-creating calls AND satisfy its declared exemption KIND's own
+    counter-assertion (``pure_delegate`` binds no ProvenanceLog; ``composer`` binds
+    one and threads it to the emit).
+
+    That is NOT strictly stronger than being wrapped in a provenance block, and the
+    earlier wording here claimed it was. An alias-rebind (``plot = ax.plot;
+    plot(...)``) produces a ``Call`` whose ``func`` is a ``Name`` rather than an
+    ``Attribute``, so it yields zero AST-visible artist calls BY CONSTRUCTION --
+    which is exactly what the zero-call counter-assertion accepts as proof of
+    innocence. The counter-assertion catches a DIRECT ``ax.plot(...)`` added to an
+    exempt module; it does not catch a rebind. See the ceiling note on
+    ``_EXEMPT_RENDERER_KINDS``.
     """
     source = path.read_text()
 
@@ -274,14 +350,45 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
                 or _is_plotly_trace_call(node)
             )
         ]
+        kind = _EXEMPT_RENDERER_KINDS[path.name]
         assert not artist_calls, (
-            f"{path.name} is listed in _DELEGATING_RENDERERS (exempt from the "
+            f"{path.name} is listed in _EXEMPT_RENDERER_KINDS (exempt from the "
             f"provenance-block requirement) but creates "
             f"{len(artist_calls)} artist(s) at line(s) "
             f"{[n.lineno for n in artist_calls]}. A module that creates artists "
             f"MUST bind a ProvenanceLog and wrap them in `with prov.artist(...)`; "
-            f"remove it from _DELEGATING_RENDERERS."
+            f"remove it from _EXEMPT_RENDERER_KINDS."
         )
+        # Per-kind counter-assertion: the exemption's stated RATIONALE must hold,
+        # not just the zero-artist precondition it shares with the other kind.
+        log_names = _binds_provenance_log(tree)
+        if kind == "pure_delegate":
+            assert not log_names, (
+                f"{path.name} is exempt as a 'pure_delegate' (owns NO provenance; "
+                f"the delegate module carries the discipline) but binds a "
+                f"ProvenanceLog to {sorted(log_names)}. A module that owns a "
+                f"ProvenanceLog is a 'composer', not a pure delegate -- either "
+                f"reclassify it in _EXEMPT_RENDERER_KINDS or drop the log."
+            )
+        elif kind == "composer":
+            assert log_names, (
+                f"{path.name} is exempt as a 'composer' (creates no artists "
+                f"locally but OWNS the provenance its delegates write into) yet "
+                f"binds no ProvenanceLog. A composer must bind one and hand it to "
+                f"`emit_plot_with_sources(provenance=...)`; if provenance is "
+                f"genuinely owned downstream, reclassify it as 'pure_delegate'."
+            )
+            assert _threads_provenance_kwarg(tree, log_names), (
+                f"{path.name} is exempt as a 'composer' and binds a ProvenanceLog "
+                f"{sorted(log_names)}, but never passes it as `provenance=` to an "
+                f"emit call -- so nothing it collects reaches the manifest sidecar. "
+                f"Thread it into `emit_plot_with_sources(..., provenance=prov)`."
+            )
+        else:  # pragma: no cover -- guarded by the mapping's own vocabulary
+            raise AssertionError(
+                f"{path.name}: unknown exemption kind {kind!r}; expected one of "
+                f"{{'pure_delegate', 'composer'}}."
+            )
         return
 
     tree = ast.parse(source, filename=str(path))
