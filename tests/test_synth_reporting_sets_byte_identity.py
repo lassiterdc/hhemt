@@ -54,7 +54,13 @@ _PYTEST_TMP_RE = re.compile(re.escape(tempfile.gettempdir()) + r"/pytest-of-[^/]
 # suite-1's ``{HOME_REL}`` pattern, while preserving the FILENAME. The content-hash dir
 # is masked separately below (it is a fixture-generator content-address, not dispatch
 # signal — see the ``{HASH}`` mask in ``_normalize_volatile``).
-_SYNTH_MODELS_REL_RE = re.compile(r"(?:\.\./)+" + re.escape(str(_SYNTH_MODELS_ROOT).lstrip("/")))
+# The ``[^'"\s]*?`` carries the same symlinked-$HOME case suite-1 documents: where
+# home is a symlink the relpath descends through the RESOLVED path, so the ``../``
+# run is followed by the real home segments before this root. Matches empty on a
+# non-symlinked home, so primary-tree behaviour is unchanged.
+_SYNTH_MODELS_REL_RE = re.compile(
+    r"(?:\.\./)+[^'\"\s]*?" + re.escape(str(_SYNTH_MODELS_ROOT).lstrip("/"))
+)
 
 
 def _normalize_volatile(text: str) -> str:
@@ -127,3 +133,25 @@ def test_reprocess_master_byte_identical(synth_sensitivity_analysis):
     builder = synth_sensitivity_analysis.sensitivity._workflow_builder
     generated = builder.generate_reprocess_master_snakefile_content(which="both", start_with="render")
     _check(generated, "benchmarking_reprocess_master.Snakefile")
+
+
+def test_synth_models_mask_survives_a_symlinked_home() -> None:
+    """``_SYNTH_MODELS_REL_RE`` must fire whether or not ``$HOME`` is a symlink.
+
+    Same defect class, and the same two arms, as suite-1's
+    ``test_home_data_dir_mask_survives_a_symlinked_home``: a symlinked home makes
+    ``os.path.relpath`` descend through the RESOLVED path, so the ``../`` run is followed
+    by the real home segments before this cache root rather than by the root directly.
+    Anchoring straight onto the unresolved root masks nothing off-laptop.
+    """
+    root_rel = str(_SYNTH_MODELS_ROOT).lstrip("/")
+    laptop = f"'../../../{root_rel}/abc0123456789def/model.inp'"
+    cluster = f"'../../../../../../../../../gpfs/tardis/{root_rel}/abc0123456789def/model.inp'"
+
+    for arm, text in (("laptop", laptop), ("symlinked-home", cluster)):
+        got = _SYNTH_MODELS_REL_RE.sub("{SYNTH_MODELS}", text)
+        assert "{SYNTH_MODELS}" in got, (
+            f"{arm} arm: the synth-models mask did not fire, so a machine-specific path "
+            f"survives into the byte-identity comparison. got={got!r}"
+        )
+        assert "gpfs" not in got, f"{arm} arm: a machine-specific segment leaked. got={got!r}"
