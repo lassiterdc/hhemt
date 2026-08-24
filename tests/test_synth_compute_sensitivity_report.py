@@ -36,15 +36,29 @@ def test_compute_sensitivity_set_wires_eda_renderer():
 
 
 @pytest.mark.slow
-def test_r11_eda_adapter_passes_provenance_audit(rendered_synth_sensitivity):
+def test_r11_eda_adapter_passes_provenance_audit(rendered_synth_sensitivity, tmp_path):
     """R11 (compile-tier): run the EDA calc+plot on a rendered sensitivity master,
     then render the in-report eda_compute_sensitivity adapter under the renderer-IO
     provenance audit (Gotcha 53). The adapter delegates to render_eda_plots, which
-    self-declares its sources, so the audit must NOT raise."""
+    self-declares its sources, so the audit must NOT raise.
+
+    Runs against an ISOLATED CLONE, never the session fixture itself. ``analysis.eda()``
+    is a MUTATING facade by design: it re-persists ``validation_report.json`` whole-tree
+    and then deliberately re-renders the one Errors-and-Warnings figure so the facade
+    leaves a self-consistent tree (``fae1492``; the alternative leaves the figure strictly
+    older than the read-model, which ``_assert_report_not_older_than_read_model`` refuses).
+    That re-render rewrites ``plots/errors_and_warnings/validation_report.manifest.json``,
+    so calling it on the session-scoped fixture breaks that fixture's read-only contract
+    and the R7 drift guard correctly fails the session at teardown -- attributing the
+    failure to whichever test happened to run last, not to this one. Measured on Rivanna
+    run ``20260824T021951Z`` (reported against ``test_workflow_status``) and reproduced
+    locally in 4m24s. The product behaviour is correct; the isolation is this test's to own.
+    """
     from hhemt.report_renderers import eda_compute_sensitivity
     from hhemt.report_renderers._provenance_audit import audit_renderer_io
+    from tests._failing_fixture_helpers import clone_analysis_to_tmp
 
-    analysis = rendered_synth_sensitivity
+    analysis = clone_analysis_to_tmp(rendered_synth_sensitivity, tmp_path)
     analysis.eda()  # produce plots/eda/config_diff_maps.html + its manifest sidecar
 
     root = Path(analysis.analysis_paths.analysis_dir)
