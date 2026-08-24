@@ -390,8 +390,17 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
         MAP is therefore the declaration of which variables admit qualification --
         `n_devices` does (its count means cores on a CPU column and GPUs on a GPU one),
         `analysis.n_mpi_procs` does not (ranks are ranks in every column). No identity
-        test against `_SCALING_AXIS_VAR` is needed or wanted: that would be a second
-        place this knowledge lives, and it could drift from the map.
+        test against `_SCALING_AXIS_VAR` is needed or wanted FOR LABEL QUALIFICATION:
+        that would be a second place this knowledge lives, and it could drift from the
+        map.
+
+        That prohibition is scoped to QUALIFICATION and does not reach every question
+        about the axis variable. The integer-tick gate a few lines below DOES test
+        `== _SCALING_AXIS_VAR`, deliberately, because it asks a different question: which
+        variables admit a device-class LABEL is something the map can express, whereas
+        which variables are INTEGER-VALUED is a property of the variable that no map
+        entry could carry. Different question, different mechanism -- not a drift of
+        this one.
 
         This is what stops a rank-count axis being titled `cores` -- the error the
         derived-label invariant exists to prevent -- without the caller deciding.
@@ -404,6 +413,19 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
     for _ci in range(1, n_hw + 1):
         fig.update_xaxes(matches=_xref(2, _ci), showticklabels=False, title_text="", row=1, col=_ci)
         fig.update_xaxes(title_text=_qualified(top, _ci), row=2, col=_ci)
+        # Integer ticks. Device counts are whole numbers, and with no tick control
+        # anywhere in this module the GPU columns' [1,3] range autoticks to
+        # 1, 1.5, 2, 2.5, 3 -- an axis advertising half a GPU. Set on BOTH members of
+        # the pair: `matches` links the RANGE, not tick configuration, so a leader-only
+        # fix leaves the follower's GRIDLINES fractional even though its labels are
+        # hidden by `showticklabels=False`.
+        #
+        # Gated because the top pair plots the CONFIGURED independent_var, which need
+        # not be integer-valued. See the scope note in `_qualified`'s docstring for why
+        # this identity test is not the one that docstring rules out.
+        if top.source_var == _SCALING_AXIS_VAR:
+            for _r in (1, 2):
+                fig.update_xaxes(tickmode="linear", dtick=1, row=_r, col=_ci)
     # Reachability: `n_hw = max(len(_hw_cols), 1)` at the call site, so n_hw >= 1 for
     # EVERY input class (including an empty group_value column) and this loop body
     # executes at least once on every plotly render. There is no reachable input for
@@ -411,6 +433,12 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
     for _ci in range(1, n_hw + 1):
         fig.update_xaxes(matches=_xref(4, _ci), showticklabels=False, title_text="", row=3, col=_ci)
         fig.update_xaxes(title_text=_qualified(bottom, _ci), row=4, col=_ci)
+        # Integer ticks, ungated: the bottom pair is hard-keyed to `_SCALING_AXIS_VAR`
+        # (see `bottom = AxisGroup.for_var(_SCALING_AXIS_VAR, ...)`), which is a device
+        # count and integer by construction, so no test is needed here. Both members
+        # for the same reason as the top pair -- row 3 hides labels but draws gridlines.
+        for _r in (3, 4):
+            fig.update_xaxes(tickmode="linear", dtick=1, row=_r, col=_ci)
 
 
 # Module-level styling constants moved to `report_cfg.sensitivity` per the
