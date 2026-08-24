@@ -47,8 +47,11 @@ class synthetic_experiment_config(cfgBaseModel):
     n_rows: int = Field(
         default=120,
         description=(
-            "Synthetic grid rows (N-S). MUST be divisible by every rank in rank_sweep "
-            "(coupling-deadlock invariant); default 120 covers ranks {2,4,8}."
+            "Synthetic grid rows (N-S). MUST be divisible by every rank the experiment "
+            "matrix EMITS -- not merely those in rank_sweep, because the fixed GPU and "
+            "hybrid config rows carry their own n_mpi_procs (coupling-deadlock "
+            "invariant). Default 120 covers the default emitted set {1,2,3,4,8}; note "
+            "128 would NOT, because 128 % 3 != 0 strands the 3-GPU config."
         ),
     )
     rainfall_peak_mm_per_hr: float = Field(
@@ -129,10 +132,50 @@ class synthetic_experiment_config(cfgBaseModel):
     def _validate_coupling_invariant(self) -> synthetic_experiment_config:
         """Reject (n_rows, rank_sweep) combos that would deadlock the TRITON-SWMM
         coupling collective (a rank owning zero coupling junctions)."""
+        from hhemt.synthetic_experiment import _DEM_FIXED_CONFIG, _configs
         from hhemt.synthetic_model import SyntheticModelParams
         from hhemt.synthetic_model.swmm_template import _N_COUPLING_NODES, _node_matrix_rows
 
-        ranks = sorted({int(r) for r in self.rank_sweep})
+        # Ranks are DERIVED from the matrix THIS config actually emits. Nothing is
+        # exempt: every emitted rank is guarded, and a config that emits fewer ranks is
+        # guarded against fewer because it will run fewer -- not because its path is
+        # excused. Deriving from rank_sweep alone was the blind spot: _GPU_CONFIGS and
+        # _HYBRID_CONFIGS carry their own n_mpi_procs that never passed through here.
+        # Measured on the default compute config, emitted {1,2,3,4,8} vs sweep {2,4,8},
+        # so ranks 1 and 3 were unguarded -- and 3 (the 3-GPU config) is safe today only
+        # because 120 % 3 == 0. An n_rows tuned to the sweep alone (e.g. 128) strands it
+        # silently.
+        #
+        # The two experiment kinds are mutually exclusive (see dem_resolution_ladder's
+        # own description) and have SEPARATE row builders, so the emitted rank set is
+        # read from whichever one applies. The resolution sweep is the transpose of the
+        # compute sweep -- ONE fixed config across N cell sizes -- and that config is
+        # _DEM_FIXED_CONFIG, pinned at 1 rank (corroborated at swmm_template.py: "
+        # dem_resolution_matrix_rows pins a 1-rank _DEM_FIXED_CONFIG"). Rank 1 clears
+        # all three guards for any n_rows, so this is a real check that passes, not a
+        # skipped one.
+        if self.dem_resolution_ladder:
+            _emitted = [_DEM_FIXED_CONFIG]
+        else:
+            _emitted = _configs(tuple(self.rank_sweep))
+        _rank_origin: dict[int, set[str]] = {}
+        for _row in _emitted:
+            _rank_origin.setdefault(int(_row[2]), set()).add(str(_row[0]))
+        ranks = sorted(_rank_origin)
+
+        def _origin(r: int) -> str:
+            """Where a rank came from, so the message is actionable for an operator who
+            never typed it.
+
+            On the resolution sweep, rank_sweep generates no rows at all, so naming it
+            would send the operator to a knob that cannot fix the error.
+            """
+            if self.dem_resolution_ladder:
+                return "the fixed DEM-resolution config row (_DEM_FIXED_CONFIG)"
+            if r in {int(x) for x in self.rank_sweep}:
+                return "rank_sweep"
+            return "the fixed " + "/".join(sorted(_rank_origin[r])) + " config row(s)"
+
         if not ranks:
             return self
 
@@ -144,8 +187,8 @@ class synthetic_experiment_config(cfgBaseModel):
                 message=(
                     f"max rank {max(ranks)} exceeds the fixed number of SWMM coupling "
                     f"junctions (_N_COUPLING_NODES={_N_COUPLING_NODES}); a rank would own "
-                    f"zero coupling nodes and deadlock the coupling collective. Reduce the "
-                    f"largest rank in rank_sweep to <= {_N_COUPLING_NODES}."
+                    f"zero coupling nodes and deadlock the coupling collective. That rank "
+                    f"comes from {_origin(max(ranks))}. Reduce it to <= {_N_COUPLING_NODES}."
                 ),
                 config_path=None,
             )
@@ -157,10 +200,11 @@ class synthetic_experiment_config(cfgBaseModel):
             raise ConfigurationError(
                 field="n_rows",
                 message=(
-                    f"n_rows={self.n_rows} is not divisible by rank(s) {bad_div} in rank_sweep; "
+                    f"n_rows={self.n_rows} is not divisible by rank(s) "
+                    f"{ {r: _origin(r) for r in bad_div} }; "
                     f"TRITON's row-strip decomposition would be uneven and a rank could own "
                     f"zero coupling nodes -> ENSIFY_COMM_WORLD deadlock. Choose an n_rows "
-                    f"divisible by every rank in rank_sweep."
+                    f"divisible by EVERY rank the matrix emits, not only those in rank_sweep."
                 ),
                 config_path=None,
             )

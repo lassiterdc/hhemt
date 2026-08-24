@@ -541,9 +541,16 @@ _DECOMPOSITION_STYLE: dict[str, tuple[str, int]] = {
     "baseline: serial (S = 1 by definition)": ("star", 3),  # reddish purple #CC79A7
 }
 
-#: Where an unmapped run mode lands. A fallback rather than a raise: the run-mode
-#: vocabulary is open at the edges (`_decomposition_label` returns `str(group_value)` for
-#: anything it does not recognise) and an unknown mode should render, not abort a report.
+#: Where an unmapped LABEL lands. A fallback rather than a raise -- and the reason is NOT
+#: that the run-mode vocabulary is open. `run_mode` is a closed five-value `Literal`
+#: (`config/analysis.py`). What is open is `group_value`: `_decomposition_label` keys on
+#: it, not on run_mode, and `group_value` is the value of whatever CSV column
+#: `report_config.sensitivity.group_by_var` names -- a free `str | None` validated only
+#: as "is it a column". Two REACHABLE cases land here, one of them the DEFAULT:
+#:   group_by_var=None (the default) -> group_value "all"      -> label "all"
+#:   group_by_var="hpc.partition"    -> group_value "standard" -> label "standard"
+#: Neither is a key of `_DECOMPOSITION_STYLE`, and neither is an error. Raising here
+#: would abort a report on its default configuration.
 _DECOMPOSITION_STYLE_FALLBACK: tuple[str, int] = ("circle", 2)
 
 
@@ -1141,18 +1148,34 @@ def _ensure_n_devices_column(df_setup: pd.DataFrame, independent_var: str) -> pd
     run_mode = df_setup[run_mode_col].astype(str).str.lower() if run_mode_col is not None else ""
     n_gpus = df_setup[resolved["n_gpus"]]
     is_gpu = (run_mode == "gpu") | (n_gpus > 0)
+    # THIS EDGE owns the BROADER gpu predicate above (a hybrid row that also requested a
+    # GPU counts as devices, not cores) and the .astype(int) cast below; the shared core
+    # owns only the arithmetic. Row-wise rather than vectorized so both callers execute
+    # the SAME function -- a `.where()` here would leave the "shared" core unshared on
+    # this path. df_setup is the sensitivity table (tens of rows), not a hot loop.
+    from hhemt.compute_config import n_devices_from
+
     df_setup = df_setup.assign(
-        n_devices=n_gpus.where(
-            is_gpu,
-            # NO n_nodes factor: `n_mpi_procs` is TOTAL ranks per simulation, not ranks
-            # per node (config/analysis.py:292; run_simulation.py emits
-            # `srun -N {n_nodes} --ntasks={n_mpi_procs}`, and SLURM's --ntasks is total).
-            # Multiplying by n_nodes double-counted, inflating N by n_nodes on every
-            # multi-node CPU row and understating efficiency by 1/n_nodes. This product
-            # now agrees with eda/_config_diff.py::_device_count, which computes the same
-            # quantity as `ranks x threads`, and with the `n_devices.cpu` axis label
-            # ("cores") in config/report.py.
-            df_setup[resolved["n_mpi_procs"]] * df_setup[resolved["n_omp_threads"]],
+        # NO n_nodes factor: `n_mpi_procs` is TOTAL ranks per simulation, not ranks
+        # per node (config/analysis.py:292; run_simulation.py emits
+        # `srun -N {n_nodes} --ntasks={n_mpi_procs}`, and SLURM's --ntasks is total).
+        # Multiplying by n_nodes double-counted, inflating N by n_nodes on every
+        # multi-node CPU row and understating efficiency by 1/n_nodes. That arithmetic
+        # now lives in hhemt.compute_config.n_devices_from, which eda/_config_diff.py::
+        # _device_count also calls -- so the two agree by CONSTRUCTION rather than by
+        # coincidence, and the `n_devices.cpu` axis label ("cores") stays true.
+        n_devices=pd.Series(
+            [
+                n_devices_from(is_gpu=bool(g), n_gpus=int(ng), n_mpi_procs=int(nm), n_omp_threads=int(no))
+                for g, ng, nm, no in zip(
+                    is_gpu,
+                    n_gpus,
+                    df_setup[resolved["n_mpi_procs"]],
+                    df_setup[resolved["n_omp_threads"]],
+                    strict=True,
+                )
+            ],
+            index=df_setup.index,
         ).astype(int)
     )
     return df_setup

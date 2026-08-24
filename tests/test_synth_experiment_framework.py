@@ -84,6 +84,52 @@ def test_coupling_strip_ownership_rejected(tmp_path):
         _cfg(_write_hpc_yaml(tmp_path / "hpc.yaml"), n_rows=16, rank_sweep=(8,))
 
 
+def test_coupling_guard_covers_ranks_only_the_fixed_rows_emit(tmp_path):
+    """The WIDENING itself, which nothing else in the tree asserts.
+
+    `test_coupling_divisibility_rejected` above passes identically before and after the
+    widening -- it uses a rank that IS in rank_sweep -- so without this test a later
+    refactor back to `sorted({int(r) for r in self.rank_sweep})` would go green.
+
+    The discriminating input is an n_rows divisible by every rank in the sweep but NOT
+    by a rank only the fixed rows emit: 128 % 2 == 128 % 4 == 128 % 8 == 0, while
+    128 % 3 == 2, and 3 arrives solely from `_GPU_CONFIGS`' 3-GPU row. Under the old
+    sweep-only derivation this config constructs cleanly and the 3-GPU sim strands at
+    runtime in a coupling-collective deadlock -- a HANG, the worst failure shape on HPC.
+
+    The PROVENANCE is asserted, not only the raise. The user's ruling was "fail fast and
+    emit an informative error message", and an operator who never typed a 3 cannot act on
+    "rank 3 is not covered"; the message has to say where the 3 came from. An untested
+    message is one refactor away from losing that clause silently.
+    """
+    with pytest.raises(ConfigurationError) as excinfo:
+        _cfg(_write_hpc_yaml(tmp_path / "hpc.yaml"), n_rows=128)
+    msg = str(excinfo.value)
+    assert "3" in msg, f"the offending rank is not named: {msg}"
+    assert "the fixed gpu config row(s)" in msg, (
+        f"the message names no provenance for rank 3, so an operator who never typed a 3 cannot act on it: {msg}"
+    )
+
+
+def test_coupling_guard_checks_the_resolution_sweep_against_its_own_emitted_rank(tmp_path):
+    """The non-exemption invariant, given a witness instead of only a comment.
+
+    A DEM-resolution config is the compute sweep's transpose: ONE fixed compute config
+    (`_DEM_FIXED_CONFIG`, pinned at 1 rank) across N cell sizes, built by
+    `dem_resolution_matrix_rows` and never by `_configs`. So its emitted rank set is {1},
+    and rank 1 clears all three guards for any n_rows. It is CHECKED against what it
+    emits, not excused: this small grid is rejected under the compute-config arm, where
+    the emitted set is {1,2,3,4,8}, and the only thing that differs is which rows the
+    config will actually run.
+    """
+    hpc = _write_hpc_yaml(tmp_path / "hpc.yaml")
+    ladder_cfg = _cfg(hpc, n_cols=32, n_rows=32, dem_resolution_ladder=(3.5, 7.0, 14.0))
+    assert ladder_cfg.n_rows == 32
+
+    with pytest.raises(ConfigurationError):
+        _cfg(hpc, n_cols=32, n_rows=32)
+
+
 def test_matrix_is_partition_as_axis(tmp_path):
     """build_experiment_matrix emits hpc.partition, NO retired system.gpu_* columns,
     and every column is a valid sensitivity-CSV column (no Unknown-column error)."""

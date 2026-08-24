@@ -760,8 +760,20 @@ def _device_count(attrs: dict) -> int:
 
     ONE definition, shared by the panel ordering and the within-panel config list, so the
     user's "smaller to larger compute configs" rule means the same thing at both levels."""
+    from hhemt.compute_config import n_devices_from
+
+    # THIS EDGE owns coercion and the GPU predicate; the core owns only the arithmetic.
+    # `_to_int` swallows a malformed attr to 0 and `max(x, 1)` floors ranks/threads,
+    # because this is an ORDERING key -- a panel must sort, never abort. The predicate
+    # is the NARROW `run_mode == "gpu"`; the renderer's is deliberately broader. Do not
+    # move either into the core: see its module docstring.
     ng, nm, no = (_to_int(attrs, k) for k in ("n_gpus", "n_mpi_procs", "n_omp_threads"))
-    return ng if str(attrs.get("run_mode", "")) == "gpu" else max(nm, 1) * max(no, 1)
+    return n_devices_from(
+        is_gpu=str(attrs.get("run_mode", "")) == "gpu",
+        n_gpus=ng,
+        n_mpi_procs=max(nm, 1),
+        n_omp_threads=max(no, 1),
+    )
 
 
 def _panel_order_key(g: dict) -> tuple:
