@@ -27,7 +27,6 @@ from __future__ import annotations
 import os
 import re
 import sys
-import tempfile
 from pathlib import Path
 
 import platformdirs
@@ -40,13 +39,31 @@ _CAPTURE = os.environ.get("CAPTURE_REPORTING_SET_GOLDENS") == "1"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SYNTH_RUNS_ROOT = synthetic_runs_root()
 _SYNTH_MODELS_ROOT = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_models"
-# The synth fixtures' runs_root is nested under pytest's tmp base (Phase 1's
-# `runs_root_override` isolation), so the goldens bake `{tmpdir}/pytest-of-{user}/
-# pytest-{N}/{basetemp}/...`. Only the `{tmpdir}/pytest-of-{user}/pytest-{N}` prefix
-# is volatile (the per-invocation counter increments and the user/tmpdir are
-# machine-specific); the nodeid-derived `{basetemp}` is deterministic, so it is left
-# intact as real signal. Without this mask the goldens stay machine- and run-bound.
-_PYTEST_TMP_RE = re.compile(re.escape(tempfile.gettempdir()) + r"/pytest-of-[^/]+/pytest-\d+")
+# The synth fixtures' runs_root is nested under pytest's tmp base (the fixtures set
+# `HHEMT_TEST_RUNS_ROOT_OVERRIDE` from `tmp_path` / `tmp_path_factory.mktemp`), so the
+# goldens bake `{basetemp}/{nodeid-slug}/...`. Only the basetemp PREFIX is volatile; the
+# nodeid-derived slug is deterministic and is left intact as real signal.
+#
+# ASK PYTEST FOR THE BASETEMP, NEVER MATCH ITS SHAPE. The basetemp is CHOSEN by the
+# invoker, not discoverable by pattern: the Rivanna suite harness passes an explicit
+# `--basetemp=$TMPDIR/hhemt-suite-{run_id}-{cid}`, which no `pytest-of-*/pytest-N`
+# pattern can ever match, so a shape-matching mask leaves the whole basetemp unmasked
+# off-laptop. A shape mask is stale-by-construction for a value another program picks:
+# the harness may rename that directory at any time. `getbasetemp()` is the authority
+# pytest itself uses to build every `tmp_path`, so masking its literal string tracks
+# whatever the invoker chose. It is also always RESOLVED, which a mask built from
+# `tempfile.gettempdir()` is not -- so this additionally covers a symlinked `$TMPDIR`,
+# where the two disagree and the shape mask silently matches nothing.
+_PYTEST_BASETEMP: str | None = None
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _capture_pytest_basetemp(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Stash this invocation's effective pytest basetemp for `_normalize_volatile`."""
+    global _PYTEST_BASETEMP
+    _PYTEST_BASETEMP = str(tmp_path_factory.getbasetemp())
+
+
 # Model-cache source-path attributions appear as variable-depth ``../``-relative paths
 # (``os.path.relpath`` from the deep analysis dir climbs to ``/`` then descends through
 # the absolute home dir into the out-of-repo model cache). The ``../`` depth varies with
@@ -79,7 +96,8 @@ def _normalize_volatile(text: str) -> str:
     """
     text = text.replace(sys.executable, "{PYTHON}")
     text = text.replace(str(_REPO_ROOT), "{REPO_ROOT}")
-    text = _PYTEST_TMP_RE.sub("{PYTEST_TMP}", text)  # pytest tmp base (counter/user/tmpdir)
+    if _PYTEST_BASETEMP:  # this invocation's basetemp, whatever the invoker chose
+        text = text.replace(_PYTEST_BASETEMP, "{PYTEST_TMP}")
     text = text.replace(str(_SYNTH_RUNS_ROOT), "{SYNTH_RUNS}")
     text = re.sub(r"\{SYNTH_RUNS\}/[^/\"' ]+", "{SYNTH_RUNS}/{WT}", text)  # mask worktree slug
     text = text.replace(str(_SYNTH_MODELS_ROOT), "{SYNTH_MODELS}")  # absolute form (if any)
@@ -157,10 +175,7 @@ def test_synth_models_mask_converges_across_a_symlinked_home() -> None:
     root_rel = str(_SYNTH_MODELS_ROOT).lstrip("/")
     key = "abc0123456789def"
     laptop = f"watershed_rel_path='../../../../../../../{root_rel}/{key}/watershed.geojson',"
-    cluster = (
-        f"watershed_rel_path='../../../../../../../sfs/gpfs/tardis/{root_rel}/"
-        f"{key}/watershed.geojson',"
-    )
+    cluster = f"watershed_rel_path='../../../../../../../sfs/gpfs/tardis/{root_rel}/{key}/watershed.geojson',"
 
     got_laptop = _normalize_volatile(laptop)
     got_cluster = _normalize_volatile(cluster)
@@ -179,4 +194,47 @@ def test_synth_models_mask_converges_across_a_symlinked_home() -> None:
     unrelated = "source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}]"
     assert _normalize_volatile(unrelated) == unrelated, (
         f"an unrelated ../-relative path was mangled. got={_normalize_volatile(unrelated)!r}"
+    )
+
+
+def test_pytest_tmp_mask_survives_an_explicitly_chosen_basetemp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_normalize_volatile`` must converge across every basetemp an invoker may choose.
+
+    Asserted at the NORMALIZER over three REAL basetemp shapes, all measured from
+    ``tmp_path_factory.getbasetemp()``: pytest's default, the Rivanna suite harness's
+    explicit ``--basetemp=$TMPDIR/hhemt-suite-{run_id}-{cid}``, and a default basetemp
+    under a symlinked ``$TMPDIR`` (where ``getbasetemp()`` is resolved and
+    ``tempfile.gettempdir()`` is not). A shape-matching mask converges on the first arm
+    only, so reverting this fix makes this test red ON CONVERGENCE -- a behavioural
+    failure rather than a missing-attribute error, because ``raising=False`` lets the
+    arms run against code that never reads the attribute.
+    """
+    arms = {
+        "default": "/tmp/pytest-of-someuser/pytest-177",
+        "harness-explicit": "/tmp/hhemt-suite-20260824T000000Z-00",
+        "symlinked-tmpdir": "/sfs/gpfs/tardis/scratch/u/pytest-of-someuser/pytest-0",
+    }
+    template = "analysis_dir = '{BT}/synth_multi_sim_builder0/synthetic_test_runs/multisim',"
+
+    got = {}
+    for arm, basetemp in arms.items():
+        monkeypatch.setattr(sys.modules[__name__], "_PYTEST_BASETEMP", basetemp, raising=False)
+        got[arm] = _normalize_volatile(template.replace("{BT}", basetemp))
+
+    assert len(set(got.values())) == 1, (
+        "the pytest-tmp mask did not converge across basetemp shapes, so the "
+        f"byte-identity comparison is invoker-bound. {got}"
+    )
+    masked = next(iter(got.values()))
+    assert "{PYTEST_TMP}/synth_multi_sim_builder0/" in masked, f"the basetemp mask did not fire. got={masked!r}"
+    for token in ("hhemt-suite", "pytest-of", "/sfs/"):
+        assert token not in masked, f"an invoker-specific segment {token!r} leaked. got={masked!r}"
+
+    # differently-positioned satisfying input: a line carrying no basetemp is real
+    # signal and must be returned byte-unchanged.
+    unrelated = "shell: 'python -m hhemt.setup_workflow --analysis-config cfg.yaml'"
+    assert _normalize_volatile(unrelated) == unrelated, (
+        f"an unrelated line was mangled. got={_normalize_volatile(unrelated)!r}"
     )
