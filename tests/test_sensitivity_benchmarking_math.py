@@ -45,6 +45,34 @@ def _df(rows):
     return pd.DataFrame(rows, columns=["sa_id", "group", "n_devices", "wallclock_s"])
 
 
+def test_n_devices_cpu_derivation_excludes_node_factor():
+    """`n_devices` on a CPU row is ranks x threads-per-rank, with NO n_nodes factor.
+
+    `n_mpi_procs` is TOTAL ranks per simulation (config/analysis.py:292; the emitted
+    `srun -N {n_nodes} --ntasks={n_mpi_procs}` makes --ntasks the total), so a node
+    factor double-counts. Pinned at n_nodes=2 because every compute-config fixture in
+    the tree carries n_nodes=1 -- the multiplicative identity -- so no existing row
+    can discriminate the two forms. The GPU row is included to hold the other branch
+    fixed: it must stay n_gpus regardless.
+    """
+    from hhemt.report_renderers.sensitivity_benchmarking import _ensure_n_devices_column
+
+    df = pd.DataFrame(
+        [
+            {"sa_id": "h1", "run_mode": "hybrid", "n_mpi_procs": 4, "n_omp_threads": 2, "n_gpus": 0, "n_nodes": 2},
+            {"sa_id": "m1", "run_mode": "mpi", "n_mpi_procs": 8, "n_omp_threads": 1, "n_gpus": 0, "n_nodes": 2},
+            {"sa_id": "g1", "run_mode": "gpu", "n_mpi_procs": 2, "n_omp_threads": 1, "n_gpus": 2, "n_nodes": 2},
+        ]
+    )
+    out = _ensure_n_devices_column(df, "n_devices")
+    got = dict(zip(out["sa_id"], out["n_devices"].astype(int), strict=True))
+    assert got == {"h1": 8, "m1": 8, "g1": 2}, (
+        f"n_devices at n_nodes=2 is {got}; expected h1=8 (4 ranks x 2 threads), "
+        f"m1=8 (8 ranks x 1 thread), g1=2 (GPUs, not a CPU product). A value of 16 "
+        f"for h1/m1 is the retired n_nodes double-count."
+    )
+
+
 def _xy(points):
     """Strip production 3-tuple (n, value, sa_id) provenance triples to (n, value).
 

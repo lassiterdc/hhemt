@@ -42,7 +42,8 @@ from hhemt.report_renderers._provenance import ProvenanceLog
 
 # The real compute-config matrix shape, transcribed from
 # `hhemt.synthetic_experiment`'s config list, with `n_devices` derived exactly as
-# `_ensure_n_devices_column` derives it (GPUs when present, else mpi x omp).
+# `_ensure_n_devices_column` derives it (GPUs when present, else mpi x omp -- n_nodes
+# is deliberately NOT a factor; `n_mpi_procs` is TOTAL ranks per simulation).
 #
 # TWO properties of this fixture are load-bearing and must survive any edit:
 #
@@ -334,7 +335,7 @@ def test_a_gpu_series_is_drawn_exactly_like_cpu_mpi_on_the_built_figure():
     through `is_gpu_group`, which is precisely the flag the retired scheme keyed on.
     """
     fig = build_figure()
-    mpi_key = "N ranks × 1 thread (MPI)"
+    mpi_key = "MPI ranks"
     pairs = legend_style_pairs(fig).get(mpi_key)
     assert pairs, f"the MPI legend key is absent from the figure; keys={sorted(legend_style_pairs(fig))}"
     assert len(pairs) == 1, (

@@ -15,9 +15,10 @@ Special line-drawing rules per the user-locked Phase 6 iter-2 spec:
 
 - ``hybrid`` (or any group with multiple points sharing the same x-value): the line
   passes through the **minimum** y-value at each x; remaining points are still drawn
-  as markers and (for hybrid) annotated with their ``n_mpi_procs`` value to highlight
-  the most computationally efficient configuration when several share the same
-  resource budget.
+  as markers and (for hybrid) annotated with their ``n_omp_threads`` value -- threads
+  per rank -- to highlight the most computationally efficient configuration when
+  several share the same resource budget. Ranks stay recoverable as
+  ``n_devices / n_omp_threads``, so one number identifies the decomposition.
 - ``serial`` / single-CPU group (always one point on the curve): rendered as a single
   larger distinguished marker, no connecting line.
 - GPU runs (``n_gpus > 0``): distinct marker shape from CPU runs.
@@ -30,7 +31,9 @@ dimensioned by ``event_iloc``. SWMM-only sub-analyses fall back to per-scenario
 
 Derived columns: when ``independent_var`` is ``n_devices`` and the column is absent
 from the sensitivity CSV, the renderer computes it as
-``n_gpus if run_mode == "gpu" else n_mpi_procs * n_omp_threads * n_nodes``.
+``n_gpus if run_mode == "gpu" else n_mpi_procs * n_omp_threads``. There is deliberately
+NO ``n_nodes`` factor: ``n_mpi_procs`` is TOTAL ranks per simulation, so ranks times
+threads-per-rank is already the full parallel width.
 """
 
 from __future__ import annotations
@@ -472,20 +475,26 @@ def _decomposition_label(group_value, *, is_gpu_group: bool, is_hybrid_group: bo
     baseline reference rather than as a fourth series.
     """
     if is_gpu_group:
-        return "N ranks × 1 thread (MPI)"
+        return "MPI ranks"
     if is_hybrid_group:
-        return "N/2 ranks × 2 threads (MPI + OpenMP)"
+        return "MPI + OpenMP (point label = threads/rank)"
     # De-alias BEFORE the lookup. `single_cpu` / `single-cpu` are spellings of `serial`,
     # and this label is now the sole key for the legend TEXT, the marker SYMBOL and the
     # series COLOUR alike -- so an un-aliased spelling would fall to the open-vocabulary
     # tail and take a different label, a different mark and a different colour from the
     # series it IS. The alias lived only in the retired colour resolver; moving it here
     # keeps one source for all three channels.
+    #
+    # The four labels assert NO counts. A count in a legend entry is a claim about the
+    # matrix, and the retired `N/2 ranks x 2 threads` entry was true only because both
+    # live hybrid rows happened to carry omp=2. The decomposition ARITHMETIC now reaches
+    # the reader through the x axis (N = ranks x threads/rank) and, for hybrid, through
+    # the per-point threads-per-rank annotation the hybrid entry names.
     token = _FAMILY_ALIASES.get(str(group_value).strip().lower(), str(group_value).strip().lower())
     return {
-        "mpi": "N ranks × 1 thread (MPI)",
-        "openmp": "1 rank × N threads (OpenMP)",
-        "serial": "baseline: 1 rank × 1 thread (S = 1 by definition)",
+        "mpi": "MPI ranks",
+        "openmp": "OpenMP threads",
+        "serial": "baseline: serial (S = 1 by definition)",
     }.get(token, str(group_value))
 
 
@@ -524,10 +533,12 @@ def _decomposition_label(group_value, *, is_gpu_group: bool, is_hybrid_group: bo
 #: six-colour run-mode set this replaces.
 _DECOMPOSITION_STYLE: dict[str, tuple[str, int]] = {
     # label: (plotly marker symbol, index into the Okabe-Ito palette)
-    "N ranks × 1 thread (MPI)": ("circle", 2),  # bluish green #009E73
-    "1 rank × N threads (OpenMP)": ("square", 1),  # orange       #E69F00
-    "N/2 ranks × 2 threads (MPI + OpenMP)": ("diamond", 0),  # blue         #0072B2
-    "baseline: 1 rank × 1 thread (S = 1 by definition)": ("star", 3),  # reddish purple #CC79A7
+    # KEYS ARE THE `_decomposition_label` RETURN STRINGS. Editing one side alone drops
+    # every series to `_DECOMPOSITION_STYLE_FALLBACK`, which RENDERS rather than raising.
+    "MPI ranks": ("circle", 2),  # bluish green #009E73
+    "OpenMP threads": ("square", 1),  # orange       #E69F00
+    "MPI + OpenMP (point label = threads/rank)": ("diamond", 0),  # blue         #0072B2
+    "baseline: serial (S = 1 by definition)": ("star", 3),  # reddish purple #CC79A7
 }
 
 #: Where an unmapped run mode lands. A fallback rather than a raise: the run-mode
@@ -1037,10 +1048,11 @@ def render(
         # The legend names the DECOMPOSITION, not the stored `run mode` value: the label
         # is a function of (run mode, device class), so the title is the derived axis
         # rather than `group_by_var`. The former asterisk on the hybrid entry is retired
-        # -- it pointed at the bottom-panel footnote explaining the per-point n_mpi_procs
-        # annotations, and the entry now states the rank count itself. It was also a
-        # literal `== "hybrid"` comparison, which the relabelling would have silently
-        # broken in this backend while the plotly one kept starring.
+        # -- it pointed at the bottom-panel footnote explaining the per-point
+        # threads-per-rank annotations, and the hybrid entry now names that point label
+        # in its own text, so the pointer is redundant. It was also a literal
+        # `== "hybrid"` comparison, which the relabelling would have silently broken in
+        # this backend while the plotly one kept starring.
         handles, labels = ax_wall.get_legend_handles_labels()
         ax_wall.legend(handles, labels, title="decomposition", loc="upper right")
 
@@ -1099,7 +1111,11 @@ def _resolve_setup_col(df_setup: pd.DataFrame, bare: str) -> str | None:
 
 
 def _ensure_n_devices_column(df_setup: pd.DataFrame, independent_var: str) -> pd.DataFrame:
-    """Derive ``n_devices`` from ``run_mode`` × n_gpus / (n_mpi × n_omp × n_nodes) if absent.
+    """Derive ``n_devices`` from ``run_mode`` × n_gpus / (n_mpi × n_omp) if absent.
+
+    ``n_nodes`` is deliberately NOT a factor. ``n_mpi_procs`` is TOTAL ranks per
+    simulation, so ``ranks × threads-per-rank`` is already the full parallel width;
+    a node factor double-counts. See the comment at the assignment below.
 
     Resolves every compute column by bare-or-``analysis.``-prefixed name (see
     ``_resolve_setup_col``), else derivation silently no-ops on a prefixed-column suite and a
@@ -1128,7 +1144,15 @@ def _ensure_n_devices_column(df_setup: pd.DataFrame, independent_var: str) -> pd
     df_setup = df_setup.assign(
         n_devices=n_gpus.where(
             is_gpu,
-            df_setup[resolved["n_mpi_procs"]] * df_setup[resolved["n_omp_threads"]] * df_setup[resolved["n_nodes"]],
+            # NO n_nodes factor: `n_mpi_procs` is TOTAL ranks per simulation, not ranks
+            # per node (config/analysis.py:292; run_simulation.py emits
+            # `srun -N {n_nodes} --ntasks={n_mpi_procs}`, and SLURM's --ntasks is total).
+            # Multiplying by n_nodes double-counted, inflating N by n_nodes on every
+            # multi-node CPU row and understating efficiency by 1/n_nodes. This product
+            # now agrees with eda/_config_diff.py::_device_count, which computes the same
+            # quantity as `ranks x threads`, and with the `n_devices.cpu` axis label
+            # ("cores") in config/report.py.
+            df_setup[resolved["n_mpi_procs"]] * df_setup[resolved["n_omp_threads"]],
         ).astype(int)
     )
     return df_setup
@@ -1427,9 +1451,12 @@ def _draw_metric_panel(
     A red ideal-reference line is overlaid at zorder=2 — above the gridlines (zorder=0)
     but below the data markers (zorder=3) so points always render in front.
 
-    For hybrid groups (or any group with duplicate x-values), each marker is
-    annotated with its `n_mpi_procs` value. Same convention as the wallclock /
-    compute-cost panels.
+    For hybrid groups ONLY, each marker is annotated with its `n_omp_threads` value
+    (threads per rank). Same convention as the wallclock / compute-cost panels, which
+    likewise no longer annotate non-hybrid groups on duplicate x-values: under the
+    threads-per-rank annotation a non-hybrid label is a constant and disambiguates
+    nothing. The annotation is guarded on `n_omp_threads` being present, because the
+    column is only assigned when the sensitivity CSV declares it.
 
     - ``ideal_kind='linear'``: y = x (the perfect-speedup S(N) = N reference).
     - ``ideal_kind='constant'``: y = ``ideal_value`` (perfect efficiency = 1.0).
@@ -1438,15 +1465,24 @@ def _draw_metric_panel(
     # Dual-source publication style: static_cfg overrides palette + cpu marker.
     palette = static_cfg.series_palette if static_cfg is not None else sens_cfg.palette
     cpu_marker = static_cfg.cpu_marker if static_cfg is not None else sens_cfg.cpu_marker
-    # Annotation lookup: map (group_value, n_devices) → n_mpi_procs at the MIN-y row.
+    # Annotation lookup: map (group_value, n_devices) → n_omp_threads at the MIN-y row.
+    # Threads-per-rank, NOT ranks: with N = ranks x threads/rank, ranks = N / threads,
+    # so the thread count plus the x position determines the decomposition uniquely.
     df_min = (
         df.loc[df.groupby(["group_value", "n_devices"])["wallclock_s"].idxmin()]
         if "wallclock_s" in df.columns and not df.empty
         else df
     )
-    annotation_lookup = {
-        (str(r["group_value"]), int(r["n_devices"])): int(r["n_mpi_procs"]) for _, r in df_min.iterrows()
-    }
+    # GUARDED on column presence, unlike the retired n_mpi_procs read: n_mpi_procs is
+    # assigned unconditionally (~:701) but n_omp_threads only when the sensitivity CSV
+    # declares it (~:706-709), so an unguarded read raises KeyError on a suite that
+    # declares neither `n_omp_threads` nor `analysis.n_omp_threads`. Empty dict degrades
+    # to no annotation via the `if n_omp is not None` gate below.
+    annotation_lookup = (
+        {(str(r["group_value"]), int(r["n_devices"])): int(r["n_omp_threads"]) for _, r in df_min.iterrows()}
+        if "n_omp_threads" in df_min.columns
+        else {}
+    )
     for i, gv in enumerate(groups):
         pts = metric_per_group[gv]
         if not pts:
@@ -1484,10 +1520,10 @@ def _draw_metric_panel(
             )
         if str(gv).lower() == "hybrid":
             for x, y in zip(xs, ys, strict=True):
-                n_mpi = annotation_lookup.get((str(gv), int(x)))
-                if n_mpi is not None:
+                n_omp = annotation_lookup.get((str(gv), int(x)))
+                if n_omp is not None:
                     ax.annotate(
-                        str(n_mpi),
+                        str(n_omp),
                         xy=(x, y),
                         xytext=(6, 6),
                         textcoords="offset points",
@@ -1584,10 +1620,10 @@ def _draw_panel(
                     zorder=3,
                     label=_decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group),
                 )
-            if is_hybrid_group:
+            if is_hybrid_group and "n_omp_threads" in sub.columns:
                 for _, r in sub.iterrows():
                     ax.annotate(
-                        str(int(r["n_mpi_procs"])),
+                        str(int(r["n_omp_threads"])),
                         xy=(r["indep_value"], r[y_col]),
                         xytext=(6, 6),
                         textcoords="offset points",
@@ -1628,12 +1664,17 @@ def _draw_panel(
                 zorder=3,
                 label=_decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group),
             )
-        # Hybrid: annotate every point with its n_mpi_procs value (per user spec).
-        # Other groups: annotate only when duplicate x-values exist (helps disambiguate).
-        if is_hybrid_group or sub["indep_value"].duplicated().any():
+        # Hybrid ONLY: annotate every point with its threads-per-rank value (per user
+        # spec). The retired `or sub["indep_value"].duplicated().any()` arm annotated
+        # non-hybrid groups too; under the threads-per-rank annotation a non-hybrid
+        # label is a constant (1 for MPI, the thread count for OpenMP) and disambiguates
+        # nothing, so it is noise. Ranks stay recoverable as x / threads-per-rank.
+        # The column guard mirrors the plotly sites: n_omp_threads is assigned only when
+        # the sensitivity CSV declares it (~:706-709), unlike n_mpi_procs (~:701).
+        if is_hybrid_group and "n_omp_threads" in sub.columns:
             for _, r in sub.iterrows():
                 ax.annotate(
-                    str(int(r["n_mpi_procs"])),
+                    str(int(r["n_omp_threads"])),
                     xy=(r["indep_value"], r[y_col]),
                     xytext=(6, 6),
                     textcoords="offset points",
@@ -2321,11 +2362,11 @@ def _plotly_metric_panel(
                     row=row,
                     col=col,
                 )
-        # Build hybrid n_mpi_procs annotations as marker text (matches matplotlib reference).
-        marker_mode = "markers+text" if is_hybrid_group and "n_mpi_procs" in sub.columns else "markers"
+        # Build hybrid threads-per-rank annotations as marker text (matches matplotlib).
+        marker_mode = "markers+text" if is_hybrid_group and "n_omp_threads" in sub.columns else "markers"
         marker_text = (
-            sub["n_mpi_procs"].fillna(0).astype(int).astype(str).tolist()
-            if is_hybrid_group and "n_mpi_procs" in sub.columns
+            sub["n_omp_threads"].fillna(0).astype(int).astype(str).tolist()
+            if is_hybrid_group and "n_omp_threads" in sub.columns
             else None
         )
         # Hover customdata: per-point MPI ranks, OMP threads, GPUs, Nodes (F2).
@@ -2492,9 +2533,9 @@ def _plotly_metric_panel_precomputed(
         marker_customdata = _build_customdata(marker_sa)
         marker_text = None
         marker_mode = "markers"
-        if is_hybrid_group and marker_customdata is not None and "n_mpi_procs" in available_cfg_cols:
-            mpi_col_idx = available_cfg_cols.index("n_mpi_procs")
-            marker_text = [str(int(row[mpi_col_idx])) for row in marker_customdata]
+        if is_hybrid_group and marker_customdata is not None and "n_omp_threads" in available_cfg_cols:
+            omp_col_idx = available_cfg_cols.index("n_omp_threads")
+            marker_text = [str(int(row[omp_col_idx])) for row in marker_customdata]
             marker_mode = "markers+text"
         hover_lines = [f"<b>{legend_name}</b>", "x: %{x}", "y: %{y:.3f}"]
         if marker_customdata is not None and available_cfg_cols:
