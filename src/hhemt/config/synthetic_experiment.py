@@ -51,7 +51,7 @@ class synthetic_experiment_config(cfgBaseModel):
             "matrix EMITS -- not merely those in rank_sweep, because the fixed GPU and "
             "hybrid config rows carry their own n_mpi_procs (coupling-deadlock "
             "invariant). Default 120 covers the default emitted set {1,2,3,4,8}; note "
-            "128 would NOT, because 128 % 3 != 0 strands the 3-GPU config."
+            "128 would NOT, because 128 % 3 != 0 and 3 is emitted by the fixed GPU row."
         ),
     )
     rainfall_peak_mm_per_hr: float = Field(
@@ -142,9 +142,11 @@ class synthetic_experiment_config(cfgBaseModel):
         # excused. Deriving from rank_sweep alone was the blind spot: _GPU_CONFIGS and
         # _HYBRID_CONFIGS carry their own n_mpi_procs that never passed through here.
         # Measured on the default compute config, emitted {1,2,3,4,8} vs sweep {2,4,8},
-        # so ranks 1 and 3 were unguarded -- and 3 (the 3-GPU config) is safe today only
-        # because 120 % 3 == 0. An n_rows tuned to the sweep alone (e.g. 128) strands it
-        # silently.
+        # so ranks 1 and 3 were unguarded. The default n_rows=120 happens to be divisible
+        # by 3, so rank 3 clears guard (2) today by coincidence rather than by design; an
+        # n_rows tuned to the sweep alone (e.g. 128) leaves it unexamined. What the
+        # widening buys is that rank 3 REACHES the guards -- NOT a claim that any
+        # particular unguarded config hangs (see guard (2)'s note).
         #
         # The two experiment kinds are mutually exclusive (see dem_resolution_ladder's
         # own description) and have SEPARATE row builders, so the emitted rank set is
@@ -195,6 +197,16 @@ class synthetic_experiment_config(cfgBaseModel):
 
         # (2) n_rows divisible by every rank -> TRITON row-strips are exactly equal
         # (k*n_rows/rank), independent of TRITON's remainder distribution.
+        #
+        # This is guard (3)'s PRECONDITION, not a redundant net beside it: guard (3)
+        # walks k*strip..(k+1)*strip with strip = n_rows // r, which covers the whole
+        # grid only when the division is exact. Divisibility is what makes guard (3)'s
+        # model sound. It is a CONSERVATIVE precondition, NOT a demonstrated hang -- a
+        # non-divisible n_rows does not by itself starve a strip (measured at n_rows=128,
+        # r=3: 3/2/3 nodes under equal division, 3/3/2 with the remainder spread), and
+        # 3-GPU runs have completed cleanly. Whether this should be an error or a warning
+        # turns on TRITON's actual remainder rule, which is unread; do not demote it
+        # without first making guard (3) remainder-aware.
         bad_div = [r for r in ranks if self.n_rows % r != 0]
         if bad_div:
             raise ConfigurationError(
@@ -212,6 +224,12 @@ class synthetic_experiment_config(cfgBaseModel):
         # (3) Every equal row-strip must own >= 1 coupling node. Reuse the
         # solver-authoritative placement helper (it also asserts the interior span
         # is large enough for _N_COUPLING_NODES nodes).
+        #
+        # COVERAGE NOTE: the walk below is EQUAL-DIVISION ONLY. With strip = n_rows // r
+        # it examines rows 0..(r*strip - 1) and never the n_rows % r remainder rows --
+        # at n_rows=128, r=3 that is rows 126..127. Guard (2) is what keeps that gap
+        # empty by requiring exact division. Anyone making this walk remainder-aware
+        # must do so BEFORE relaxing guard (2), or the remainder rows go unexamined.
         params = SyntheticModelParams(n_cols=self.n_cols, n_rows=self.n_rows, cell_size_m=self.cell_size_m)
         try:
             node_mrs = sorted(_node_matrix_rows(params))

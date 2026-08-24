@@ -93,9 +93,20 @@ def test_coupling_guard_covers_ranks_only_the_fixed_rows_emit(tmp_path):
 
     The discriminating input is an n_rows divisible by every rank in the sweep but NOT
     by a rank only the fixed rows emit: 128 % 2 == 128 % 4 == 128 % 8 == 0, while
-    128 % 3 == 2, and 3 arrives solely from `_GPU_CONFIGS`' 3-GPU row. Under the old
-    sweep-only derivation this config constructs cleanly and the 3-GPU sim strands at
-    runtime in a coupling-collective deadlock -- a HANG, the worst failure shape on HPC.
+    128 % 3 == 2, and 3 arrives solely from `_GPU_CONFIGS`' 3-GPU row.
+
+    WHY THIS INPUT IS REJECTED, stated accurately: because 128 is not divisible by 3,
+    which would leave guard (3)'s equal-strip walk not covering the whole grid --
+    `strip = 128 // 3 = 42` and the walk examines rows 0..125, never 126..127. Guard (2)
+    is therefore the PRECONDITION that makes guard (3)'s model exact, not a redundant
+    net beside it. This is a CONSERVATIVE precondition, NOT a demonstrated hang: at this
+    very input the strips own 3/2/3 coupling nodes under equal division and 3/3/2 with
+    the remainder spread, so nothing is starved, and two 3-GPU runs from the campaign
+    that motivated this guard completed cleanly. What the widening buys is that rank 3
+    REACHES the guards at all -- previously it was never examined, whatever its fate at
+    runtime would have been. Whether guard (2) should be an error or a warning turns on
+    TRITON's actual row-decomposition remainder rule, which is unread; that is queued
+    for triton-specialist and is deliberately not decided here.
 
     The PROVENANCE is asserted, not only the raise. The user's ruling was "fail fast and
     emit an informative error message", and an operator who never typed a 3 cannot act on
