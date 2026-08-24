@@ -171,6 +171,25 @@ def _build_case(
         sensitivity_csv=sensitivity_csv,
         **model_arm_toggles(model_arm),
         start_from_scratch=start_from_scratch,
+        # SHARED-FILESYSTEM STAGING. The builder materializes three files under its own
+        # `self.system_directory` -- `weather_events_to_simulate.csv` (test_case_builder.py:474)
+        # plus `system_config.yaml` and `analysis_config.yaml` (:567-570) -- and threads the
+        # analysis yaml into every Snakemake rule shell as `--analysis-config`. Under
+        # `start_from_scratch=True` the builder redirects that directory to a
+        # `tempfile.mkdtemp()` root (test_case_builder.py:385-387), which is NODE-LOCAL; under
+        # `multi_sim_run_method='batch_job'` the `setup_target_*` rules are dispatched as
+        # separate SLURM jobs on OTHER nodes, where that path does not exist. Measured
+        # 2026-08-24: jobs 18869483 and 18869586 both FAILED 1:0 on
+        # "[ERROR] Analysis config not found: /tmp/hhemt-scratch-99nh9f9i/synthetic_test_runs/
+        # synth_cc_clean_tritonswmm/analysis_config.yaml". Supplying `runs_root_override`
+        # suppresses that redirect -- its guard requires the override to be None -- and stages
+        # the three files under the caller's own base on the shared filesystem. It does NOT
+        # touch `system_cfg['system_directory']`, which `_write_configs` applies from
+        # `additional_system_configs` LAST (test_case_builder.py:524), so the analysis dir and
+        # the `run(from_scratch=True)` wipe target are exactly what they were. When the caller
+        # names no system_directory the value is None and the tmpdir redirect stands: that
+        # caller is off-cluster or local-only, and its analysis tree is node-local too.
+        runs_root_override=(Path(system_directory).parent if system_directory is not None else None),
         additional_system_configs=system_cfg,
         hpc_system_config_yaml=hpc_cfg,
         additional_analysis_configs={
