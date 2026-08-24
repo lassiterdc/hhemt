@@ -3,7 +3,7 @@
 SINGLE SOURCE of the experiment matrix (F-B-1): this module owns the
 compute-config sweep enumeration — the fixed GPU/serial/openmp/hybrid rows plus
 the mpi-rank rows GENERATED from ``synthetic_experiment_config.rank_sweep`` (the
-default ``(2, 4, 8)`` reproduces the historical 28-row baseline byte-for-byte).
+default ``(2, 4, 8)`` reproduces the 30-row fixed-list baseline byte-for-byte).
 ``scripts/experiments/_matrix_builder.py`` is retired; its sole importer
 (``synth_compute_config.py``) re-points at the ``write_clean_matrix_csv`` /
 ``write_resume_matrix_csv`` writers here. A ``src -> scripts`` import would break
@@ -102,6 +102,15 @@ _OPENMP_CONFIGS = [
 _HYBRID_CONFIGS = [
     ("hybrid", 1, 2, 2, 0, "standard", 2),
     ("hybrid", 1, 4, 2, 0, "standard", 2),
+    # The SECOND 8-device hybrid decomposition. With the x axis at total devices,
+    # (4 ranks x 2 threads) and (2 ranks x 4 threads) both land at N=8 and share the
+    # hybrid colour, symbol and hollow fill -- so the per-point threads-per-rank
+    # annotation is the ONLY discriminator, which is what makes the annotation
+    # demonstrable in the default matrix rather than only in principle. 8 admits no
+    # third non-degenerate hybrid split: 8x1 is pure MPI and 1x8 is pure OpenMP.
+    # rank 2 is already in the default rank_sweep, so _validate_coupling_invariant
+    # (which iterates rank_sweep only) is unchanged by this row.
+    ("hybrid", 1, 2, 4, 0, "standard", 2),
 ]
 
 

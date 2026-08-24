@@ -99,7 +99,7 @@ def test_matrix_is_partition_as_axis(tmp_path):
     cfg = _cfg(_write_hpc_yaml(tmp_path / "hpc.yaml"))
     df = build_experiment_matrix(cfg)
 
-    assert len(df) == 28  # 14 configs x 2 replicates (default rank_sweep reproduces baseline)
+    assert len(df) == 30  # 15 configs x 2 replicates (default rank_sweep reproduces baseline)
     assert "hpc.partition" in df.columns
     assert "system.gpu_hardware" not in df.columns
     assert "system.gpu_compilation_backend" not in df.columns
@@ -167,4 +167,4 @@ def test_resume_matrix_uses_generous_walltime(tmp_path):
     write_resume_matrix_csv(csv)
     df = pd.read_csv(csv)
     assert (df["hpc_time_min_per_sim"] == _CLEAN_WALLTIME_MIN).all()
-    assert len(df) == 28  # 14 configs x 2 replicates (rank_sweep=(2,4,8))
+    assert len(df) == 30  # 15 configs x 2 replicates (rank_sweep=(2,4,8))
