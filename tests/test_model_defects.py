@@ -115,8 +115,13 @@ def test_registry_reproduces_the_user_ruled_mapping_at_b3820a4():
     }
     assert got["TRITON-COUPLED-RESUME-REPLAY"] == "absent"
     assert got["TRITON-RESUME-DEPTH-SCATTER"] == "present"
-    # 5d2ad1e8 is not in the ORNL-tracked clone, so this one is honestly unanswerable live.
-    assert got["TRITON-RESUME-EXTBC-GHOST-RING"] == "indeterminate"
+    # INVARIANT, not a position: a fix sha absent from THIS clone's object DB is honestly
+    # unanswerable live; one that is present must classify PRESENT at b3820a4, which
+    # predates it. Asserting `indeterminate` unconditionally encoded the ORNL-tracked
+    # clone's contents, so fetching the fork into HHEMT_TRITON_CLONE — the obvious way to
+    # make ancestry answerable — reddened this test with no diagnostic.
+    expected_ghost = "indeterminate" if not _clone_has(SHA_EXTBC_GHOST_RING_FIX) else "present"
+    assert got["TRITON-RESUME-EXTBC-GHOST-RING"] == expected_ghost
     # ...and the shipped registry answers it from the cached set instead.
     assert _v("TRITON-RESUME-EXTBC-GHOST-RING", SHA_DEPTH_SCATTER_FIX).status == "present"
 

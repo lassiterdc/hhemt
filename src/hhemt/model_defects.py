@@ -23,10 +23,16 @@ contradict.
 
 ANCESTRY IS NOT ALWAYS COMPUTABLE, AND IS NOT ALWAYS RIGHT.
   * Not computable: ``merge-base --is-ancestor`` needs both shas in one object DB. The
-    canonical clone tracks ORNL upstream (``code.ornl.gov/hydro/triton.git``) and does NOT
-    contain ``5d2ad1e8``, which lives only on the user's fork; and a render BUNDLE carries
+    availability of a given sha depends on WHICH remote a given clone tracks: ORNL upstream
+    (``code.ornl.gov/hydro/triton.git``) and the fork (``github.com/lassiterdc/triton.git``)
+    are both named ``triton.git`` and carry different histories, so a sha can be resolvable
+    in one clone and absent in another on the same machine. (The synthetic-test canonical
+    tracks the fork as of the pin re-point; the maintainer clone at ``HHEMT_TRITON_CLONE``
+    and the container ``.def`` builds still track ORNL.) And a render BUNDLE carries
     zarr stores and figures, never a git repo, so ``report-from-bundle`` on any other
-    machine has no clone at all. Hence ``also_present_in`` / ``known_absent_in``: shas whose
+    machine has no clone at all — that half of the argument is remote-independent and is
+    what makes the cached sets necessary rather than merely convenient. Hence
+    ``also_present_in`` / ``known_absent_in``: shas whose
     ancestry was resolved ONCE at registry-authoring time, on a machine that had both, and
     cached here so the read path needs no clone.
   * Not right: ancestry answers "did this history contain that commit", never "does this

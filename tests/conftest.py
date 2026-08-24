@@ -47,6 +47,24 @@ def pytest_configure(config):
     )
 
 
+def pytest_report_header(config):
+    """Declare the MODEL versions this session exercises, on every run.
+
+    WHY THIS EXISTS: the suite spent its life validating against a TRITON that the
+    experiments do not run, and no stamp in the system could detect it, because the
+    divergence was in the REMOTE and every record carried only the commit.
+
+    KNOWN LIMIT, stated rather than discovered later: pytest suppresses report headers
+    under `-q`, and the Rivanna harness runs `pytest -q`. So this reaches an interactive
+    or default run and NOT the SLURM chunk logs; the per-chunk provenance stamp in
+    `harness/pytest_suite/submit_suite_uva.sh` is the surface that covers those, and it
+    records the same (remote, commit) pair.
+    """
+    from tests.fixtures._triton_source_cache import model_version_lines
+
+    return model_version_lines()
+
+
 # Phase 4 — periodic TTL+liveness backstop for the synthetic_test_runs cache.
 # WHY THIS HOOK, AND WHY THESE GUARDS (all four are load-bearing):
 #   * pytest_sessionfinish fires ONCE per xdist worker PLUS ONCE in the

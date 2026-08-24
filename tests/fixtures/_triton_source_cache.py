@@ -21,9 +21,12 @@ WHY A CANONICAL STORE, AND WHY THIS SHAPE (every element is load-bearing):
     `repack -a -d` silently re-absorbs the alternate's objects, restoring
     ~322 MB with the alternates file still in place.
   * `refs/pins/{sha}` anchors every borrowed pin, and the canonical is
-    refreshed with a NARROWED refspec. `+refs/*:refs/*` (a --mirror clone's
-    default) has `refs/*` as its destination namespace, so `fetch --prune`
-    prunes `refs/pins/*` and the next gc destroys the anchored object.
+    refreshed with a NARROWED refspec whose destination is
+    `refs/remotes/origin/*`. `+refs/*:refs/*` (a --mirror clone's default) has
+    `refs/*` as its destination namespace, so `fetch --prune` prunes
+    `refs/pins/*` and the next gc destroys the anchored object; a
+    `refs/heads/*` destination is rejected outright by git on this non-bare
+    store. The shipped destination can reach neither failure.
   * The canonical lives OUTSIDE `synthetic_test_runs/` so the Phase 4 reaper
     can never target it.
 """
@@ -40,24 +43,34 @@ import platformdirs
 import hhemt.utils as ut
 from hhemt._filelock_compat import resolve_filelock
 
-TRITON_GIT_URL = "https://code.ornl.gov/hydro/triton.git"
+#: THE TRITON SOURCE IDENTITY FOR THE SYNTHETIC-TEST TIER, AND IT IS A PAIR.
+#: A COMMIT ALONE IS NOT AN IDENTITY, measured rather than cautionary: 3a832f7d
+#: resolves on BOTH the ORNL upstream and this fork and names a DIFFERENT codebase on
+#: each, so a pin-only record is self-consistent while describing the wrong repository.
+#: `system.py:781-784` records the same trap on the production clone: both remotes are
+#: named `triton.git`, and `_verify_tritonswmm_pin` compares the COMMIT and never the
+#: REMOTE, so a clone from the wrong remote whose HEAD matches the pin verifies clean.
+#: Never record one without the other — record TRITON_SOURCE_DESCRIPTOR.
+TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 
-#: THE single declaration of the TRITON build pin for the synthetic-test tier.
-#: PHASE 1 VALUE = the then-current fixture pin, so Phase 1 is a behavior-
-#: preserving refactor: `test_case_builder.py:415` still writes this same sha into
-#: TRITONSWMM_branch_key, so the provisioner's checkout and the config's pin agree
-#: and `system.py::_verify_tritonswmm_pin` passes. Phase 2 bumps this constant to
-#: 3a832f7d IN THE SAME COMMIT that re-points :415 to TRITON_PIN — the two edits
-#: MUST land together, because a provisioner pin that differs from the config pin
-#: raises ConfigurationError on every synth construction (system.py:701).
-#: Do NOT reuse `hhemt.system._PINNED_TRITON_COUPLED_RESUME_FIX_SHA`: that is the
-#: fix-ANCESTRY reference point that `git merge-base --is-ancestor {fix} HEAD`
-#: classifies every build against. Collapsing the two makes
-#: `triton_has_coupled_resume_fix` trivially True for every build by
-#: construction, destroying the ancestry-not-equality property Gotcha 69 chose
-#: deliberately. The two values coinciding after the Phase-2 bump is exactly what
-#: makes the reuse look attractive and is why it must be refused.
-TRITON_PIN = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
+#: The commit the Norfolk experiments run. A STRICT ADVANCE over the previous ORNL pin
+#: 3a832f7d: `git merge-base --is-ancestor 3a832f7d5eed 5d2ad1e8adf9` exits 0 and
+#: `git rev-list --count 3a832f7d5eed..5d2ad1e8adf9` is 7, so the re-point is a
+#: fast-forward in content terms, not a codebase swap, and the previous pin stays
+#: reachable both as an ancestor and via its own refs/pins anchor. The seven carry the
+#: coupled-resume and extbc-ghost-ring fixes; `hhemt.model_defects` classifies 3a832f7d
+#: as CARRYING two registered defects (TRITON-RESUME-DEPTH-SCATTER and
+#: TRITON-RESUME-EXTBC-GHOST-RING, both via `also_present_set`) and this pin as carrying
+#: none. The suite was validating coupled-resume behaviour against a build the toolkit's
+#: own registry already called defective.
+#: THIS CONSTANT AND `test_case_builder.py`'s config write MUST MOVE TOGETHER: a
+#: provisioner pin that differs from the config pin raises ConfigurationError on every
+#: synth construction (`system.py::_verify_tritonswmm_pin`).
+TRITON_PIN = "5d2ad1e8adf9a85d7df14e885b76e59a10f9a98b"
+
+#: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
+#: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.
+TRITON_SOURCE_DESCRIPTOR = f"{TRITON_GIT_URL}@{TRITON_PIN}"
 
 _PROVISION_LOCK_TIMEOUT_SECONDS = 1800
 
@@ -100,6 +113,32 @@ def _rev_parse(tree: Path, ref: str) -> str | None:
     if r.returncode != 0:
         return None
     return r.stdout.strip()
+
+
+def _normalize_remote(url: str) -> str:
+    """Compare-form for a git remote URL: trailing slash and `.git` suffix stripped,
+    case-folded.
+
+    LOAD-BEARING, NOT COSMETIC. A bare `!=` on the raw strings reports a mismatch for
+    `https://github.com/lassiterdc/triton/` against `https://github.com/lassiterdc/triton.git`
+    — the SAME repository — so a repair keyed on the naive comparison rewrites a correct
+    remote on every call. Measured on two scratch repos: the naive form returns True
+    (repair) on that pair; this form returns False.
+    """
+    u = (url or "").strip().rstrip("/")
+    if u.endswith(".git"):
+        u = u[: -len(".git")]
+    return u.lower()
+
+
+def _canonical_origin(canonical: Path) -> str | None:
+    """`origin`'s URL in `canonical`, or None when it has no origin / is not a repo."""
+    r = subprocess.run(
+        ["git", "-C", str(canonical), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+    )
+    return r.stdout.strip() if r.returncode == 0 else None
 
 
 def borrower_is_healthy(tree: Path, pin: str) -> bool:
@@ -280,8 +319,15 @@ def ensure_canonical(*, pin: str = TRITON_PIN) -> Path:
     canonical_root(), then `git config gc.auto 0` on it and, via
     `submodule foreach --recursive`, on each submodule. (2) cheap no-network
     check `git rev-parse --verify {pin}^{commit}`; return early if present.
-    (3) otherwise `git fetch --prune origin '+refs/heads/*:refs/heads/*'
-    '+refs/tags/*:refs/tags/*'` — NEVER '+refs/*:refs/*'. (4) re-check; raise
+    (2b) ADOPT-TIME REMOTE IDENTITY: if the store's `origin` does not denote
+    TRITON_GIT_URL (compared normalized), `git remote set-url` it and FORCE the
+    fetch below — an existing store is adopted unconditionally, so a canonical
+    created against a previous URL is otherwise reused forever against the new
+    one. (3) otherwise `git fetch --prune origin
+    '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'` — the
+    destination is refs/remotes/*, NEVER refs/heads/* (git refuses to fetch into
+    the checked-out branch of a non-bare repo, and this canonical MUST be
+    non-bare) and NEVER '+refs/*:refs/*'. (4) re-check; raise
     if still absent (a pin unreachable from any ref or tag). (5)
     `git update-ref refs/pins/{pin} {pin}`, and the same for each submodule's
     HEAD via `submodule foreach --recursive`, so a submodule-side gc cannot
@@ -310,11 +356,41 @@ def ensure_canonical(*, pin: str = TRITON_PIN) -> Path:
         # Cheap no-network check FIRST — the common case is an already-current
         # canonical, and a fetch per construction would be a network round-trip
         # inside a constructor.
-        if _rev_parse(canonical, pin) is None:
+        # ADOPT-TIME REMOTE IDENTITY, checked BEFORE the pin. The create branch above
+        # fires only when a canonical is ABSENT; an existing store is adopted
+        # unconditionally, so one created against a PREVIOUS TRITON_GIT_URL is reused
+        # forever against the new one. A pin check cannot detect that — ORNL upstream and
+        # the fork are both named `triton.git` and one sha can resolve on both while
+        # naming a different codebase. REPAIR rather than refuse: this store is a
+        # toolkit-owned cache, and the re-point is a fast-forward superset, so the fetch
+        # only ADDS objects and no borrower can lose one. The previous pin stays reachable
+        # twice over — as an ancestor of the new pin, and via its own refs/pins anchor,
+        # which the narrowed refspec below cannot prune.
+        origin = _canonical_origin(canonical)
+        force_fetch = origin is not None and _normalize_remote(origin) != _normalize_remote(
+            TRITON_GIT_URL
+        )
+        if force_fetch:
+            subprocess.run(
+                ["git", "-C", str(canonical), "remote", "set-url", "origin", TRITON_GIT_URL],
+                check=True,
+            )
+
+        if force_fetch or _rev_parse(canonical, pin) is None:
             subprocess.run(
                 [
                     "git", "-C", str(canonical), "fetch", "--prune", "origin",
-                    "+refs/heads/*:refs/heads/*",
+                    # DESTINATION IS refs/remotes/origin/*, NOT refs/heads/*. Git REFUSES
+                    # to fetch into the checked-out branch of a non-bare repo — measured
+                    # `fatal: refusing to fetch into branch 'refs/heads/main' checked out
+                    # at ...`, rc 128, UNCONDITIONALLY under a forced (+) refspec, even
+                    # when that branch is already up to date. The canonical MUST be
+                    # non-bare (see this module's docstring) and its HEAD is on a branch,
+                    # so the previous destination could never succeed here; it went
+                    # unnoticed only because the cheap check above always short-circuited
+                    # past it. The narrowing rationale is unchanged and strengthened: this
+                    # destination namespace cannot touch refs/pins/* either.
+                    "+refs/heads/*:refs/remotes/origin/*",
                     "+refs/tags/*:refs/tags/*",
                 ],
                 check=True,
@@ -323,7 +399,11 @@ def ensure_canonical(*, pin: str = TRITON_PIN) -> Path:
                 raise RuntimeError(
                     f"TRITON pin {pin} is unreachable from any branch or tag on "
                     f"{TRITON_GIT_URL} after a narrowed fetch of the canonical at "
-                    f"{canonical}. The pin is wrong, or the commit was removed upstream."
+                    f"{canonical} (its origin now reads "
+                    f"{_canonical_origin(canonical)}). The pin is wrong, the commit was "
+                    f"removed upstream, or the pin belongs to a DIFFERENT remote than "
+                    f"TRITON_GIT_URL names — both TRITON remotes are called `triton.git`, "
+                    f"so check the remote before assuming the pin."
                 )
 
         # Anchor the pin so a later `fetch --prune` + gc cannot destroy it. The
@@ -368,7 +448,7 @@ def provision_borrower(dest: Path, *, pin: str = TRITON_PIN) -> Path:
         `tests/conftest.py`, every `tests/test_synth_*.py`), and
         `.github/workflows/test.yml` runs bare `pytest` on a runner with no
         persistent cache — the REQUIRED `build (ubuntu-latest, 3.12)` status check.
-        An unconditional 322 MB clone from code.ornl.gov there is a new network
+        An unconditional 322 MB clone from TRITON_GIT_URL's host there is a new network
         dependency for the fast tier, and the same regression hits any offline
         developer run.
 
@@ -504,3 +584,33 @@ def provision_borrower(dest: Path, *, pin: str = TRITON_PIN) -> Path:
             check=True,
         )
     return dest
+
+
+def model_version_lines() -> list[str]:
+    """The MODEL versions this suite exercises, as printable lines.
+
+    DERIVED, never restated: every value is read from its single declaration site, so
+    these lines cannot drift from the thing they report. That property is the whole
+    point — this file already carried three separate comment blocks describing a state
+    the code had moved past.
+
+    The TRITON identity is a (remote, commit) PAIR. See TRITON_GIT_URL.
+
+    SWMM appears TWICE in a coupled analysis and the two are different versions:
+      * STANDALONE (`toggle_swmm_model`) is cloned by `system.py` at
+        `system_config.SWMM_tag_key`, read here from the model default.
+      * COUPLED (`toggle_tritonswmm_model`) is VENDORED inside TRITON at
+        `external/swmm` and compiled into triton.exe. Its version travels with the
+        TRITON pin and cannot be read without a clone, so this line names the deciding
+        command instead of asserting a number. Measured at the pin above: 5.2.3.
+    """
+    from hhemt.config.system import system_config
+
+    swmm_tag = system_config.model_fields["SWMM_tag_key"].default
+    return [
+        f"TRITON-SWMM source: {TRITON_SOURCE_DESCRIPTOR}",
+        f"SWMM (standalone build): {swmm_tag} (system_config.SWMM_tag_key default)",
+        "SWMM (coupled): vendored in TRITON at external/swmm; its version travels with "
+        "the TRITON pin above. Read it with: git -C {TRITONSWMM_software_directory} show "
+        "{pin}:external/swmm/CMakeLists.txt",
+    ]

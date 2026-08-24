@@ -38,6 +38,7 @@ from hhemt.experiments import TRITON_SWMM_experiment
 from hhemt.system import TRITONSWMM_system
 from tests.fixtures import worktree_slug
 from tests.fixtures._triton_source_cache import (
+    TRITON_GIT_URL,
     TRITON_PIN,
     provision_borrower,
     slug_runs_root,
@@ -462,7 +463,12 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "TRITONSWMM_software_directory": str(
                 self._software_root / "triton"
             ),
-            "TRITONSWMM_git_URL": "https://code.ornl.gov/hydro/triton.git",
+            # SINGLE-SOURCED with the provisioner. A literal here and a different literal
+            # in `_triton_source_cache.py` lets a re-point half-land: the provisioner
+            # clones one remote while this config declares the other, and
+            # `_verify_tritonswmm_pin` compares the COMMIT and never the REMOTE, so the
+            # mismatch verifies clean.
+            "TRITONSWMM_git_URL": TRITON_GIT_URL,
             "TRITONSWMM_branch_key": TRITON_PIN,
             "SWMM_software_directory": str(self._software_root / "swmm"),
             "triton_swmm_configuration_template": str(
