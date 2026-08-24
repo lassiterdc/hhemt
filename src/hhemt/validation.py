@@ -1648,7 +1648,9 @@ def _validate_per_sa_row_caps(
                 )
 
 
-def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "ValidationResult") -> None:
+def _validate_container_config(
+    cfg_analysis, cfg_hpc_system, result: "ValidationResult", cfg_system=None
+) -> None:
     """ADR-1 preflight (R10): container mode requires a resolvable ContainerSpec.
 
     Accumulates into the shared ValidationResult (the established preflight
@@ -1736,6 +1738,114 @@ def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "Validation
                 "On the from_doi path this is repointed automatically at ingest."
             ),
         )
+
+    # ---- Version-match guard -------------------------------------------------
+    # A container SKIPS the compile, and the compile is where _verify_tritonswmm_pin
+    # fires -- so without this, a containerized run has NO pin verification of any
+    # kind and a SIF built at the wrong TRITON runs silently. Measured on Rivanna:
+    # hpc_system_config_uva.yaml names an image whose org.hhemt.triton_sha is
+    # 15eb18a5, at which model_defects records all three registry defects PRESENT.
+    #
+    # FAIL-CLOSED on a missing label: "cannot prove a match" must not read as
+    # "passes" in the guard whose purpose is to stop an unverified image. Safe
+    # because every container the estate references IS labelled; the only unlabelled
+    # artifact on scratch is a build probe no config names.
+    _pin = getattr(cfg_system, "TRITONSWMM_branch_key", None) if cfg_system is not None else None
+    if not _pin:
+        return
+    from hhemt.container_labels import (
+        looks_like_sha,
+        read_container_labels,
+        sha_in_filename,
+        shas_match,
+    )
+
+    if not looks_like_sha(_pin):
+        # Native mode tolerates a branch name because _verify_tritonswmm_pin rev-parses
+        # it against the CLONE. Container mode has no clone, so a branch name cannot be
+        # resolved locally, and resolving it remotely would verify against a MOVING
+        # target. build_sifs_uva.sh already requires a ref TIP (`ls-remote | grep -q
+        # "^$TRITON_SHA"`); refusing a non-sha here keeps preflight and the build script
+        # agreeing about what a legal pin is.
+        result.add_error(
+            field="TRITONSWMM_branch_key",
+            message=(
+                f"container mode requires TRITONSWMM_branch_key to be a git SHA, but it is "
+                f"{_pin!r}. A container skips the compile, so there is no clone to resolve a "
+                "branch name against, and the image's org.hhemt.triton_sha label is a SHA. "
+                "This is stricter than native mode deliberately."
+            ),
+            fix_hint="Set TRITONSWMM_branch_key to the full commit SHA the SIF was built at.",
+        )
+        return
+
+    _mod = getattr(cspec, "apptainer_module", None)
+    for _field, _p in _declared:
+        if not _p:
+            continue
+        _res = read_container_labels(_p, apptainer_module=_mod)
+        if not _res.read:
+            result.add_error(
+                field=_field,
+                message=(
+                    f"container mode could not read provenance labels from '{_p}': "
+                    f"{_res.error}. The TRITON version inside the image cannot be verified "
+                    f"against TRITONSWMM_branch_key ({_pin[:12]})."
+                ),
+                fix_hint=(
+                    "If apptainer reported a FATAL open/format error the IMAGE is the problem "
+                    "(re-transfer or rebuild it); container.apptainer_module is NOT at fault, "
+                    "because the module form is tried before the bare form."
+                ),
+            )
+            continue
+        _img = _res.triton_sha
+        if not _img:
+            result.add_error(
+                field=_field,
+                message=(
+                    f"container at '{_p}' carries no org.hhemt.triton_sha label, so the TRITON "
+                    f"version inside it cannot be verified against TRITONSWMM_branch_key "
+                    f"({_pin[:12]}). An unverifiable image is refused rather than trusted."
+                ),
+                fix_hint=(
+                    "Rebuild via hpc/build_sifs_uva.sh, which stamps the label from the pin and "
+                    "already fails the build if fewer than two pin occurrences land."
+                ),
+            )
+            continue
+        if not shas_match(_img, _pin):
+            result.add_error(
+                field=_field,
+                message=(
+                    f"container at '{_p}' was built at TRITON {_img[:12]} but the analysis pins "
+                    f"{_pin[:12]}. The simulation would run a DIFFERENT solver than the one the "
+                    "analysis declares, and nothing downstream would say so."
+                ),
+                fix_hint=(
+                    "Point at the SIF built at the pinned commit, or re-pin "
+                    "TRITONSWMM_branch_key to the commit this image was built at."
+                ),
+            )
+            continue
+        _fname_sha = sha_in_filename(_p)
+        if _fname_sha and not shas_match(_fname_sha, _img):
+            # Label and filename disagree -> the image was RENAMED or COPIED. Its own
+            # label is authoritative and matches the pin, so the run would be correct
+            # while every human reading the path is misled. Named separately from a
+            # version mismatch because the remedy is to rename the file, not to re-pin.
+            result.add_error(
+                field=_field,
+                message=(
+                    f"container at '{_p}' has a filename naming TRITON {_fname_sha} but an "
+                    f"org.hhemt.triton_sha label of {_img[:12]}. The label matches the pin, so "
+                    "the image is correct and its NAME is wrong -- it was renamed or copied."
+                ),
+                fix_hint=(
+                    "Rename the container so its basename carries the label's sha, or re-point "
+                    "the config at the correctly-named image."
+                ),
+            )
 
 
 # ============================================================================
@@ -1857,7 +1967,7 @@ def preflight_validate(
 
     # ADR-1 (R10): container-mode requires a resolvable ContainerSpec/sif_path.
     # No-op in native mode (byte-identical to today's preflight).
-    _validate_container_config(cfg_analysis, cfg_hpc_system, result)
+    _validate_container_config(cfg_analysis, cfg_hpc_system, result, cfg_system)
 
     # R6: a multi-resume interruption schedule is unsafe under
     # multi_sim_run_method='1_job_many_srun_tasks' (no job-end cgroup reap).

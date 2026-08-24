@@ -308,6 +308,7 @@ def _sensitivity_source_paths(wildcards):
 
 rule plot_sensitivity_benchmarking:
     input:
+        "scenario_status.csv",
         master = "_status/f_consolidate_master_complete.flag",
     output:
         report(

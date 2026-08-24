@@ -5077,6 +5077,8 @@ class TRITONSWMM_analysis:
             "actual_total_gpus",
             "actual_gpu_backend",
             "actual_build_type",
+            "actual_cpu",
+            "actual_gpu",
         ]
         fixed_snakemake = [
             "snakemake_allocated_nTasks",
@@ -5242,6 +5244,10 @@ class TRITONSWMM_analysis:
                     row["actual_total_gpus"] = log_data["total_gpus"]
                     row["actual_gpu_backend"] = log_data["gpu_backend"]
                     row["actual_build_type"] = log_data["build_type"]
+                    # OBSERVED device identity, distinct from the REQUESTED hardware the
+                    # partition selector implies. None on a log predating the emission.
+                    row["actual_cpu"] = log_data["cpu"]
+                    row["actual_gpu"] = log_data["gpu"]
                 elif model_type == "triton":
                     log_out_path = (scen.scen_paths.out_triton or scen.scen_paths.sim_folder) / "log.out"
                     log_data = parse_triton_log_file(log_out_path)
@@ -5251,6 +5257,8 @@ class TRITONSWMM_analysis:
                     row["actual_total_gpus"] = log_data["total_gpus"]
                     row["actual_gpu_backend"] = log_data["gpu_backend"]
                     row["actual_build_type"] = log_data["build_type"]
+                    row["actual_cpu"] = log_data["cpu"]
+                    row["actual_gpu"] = log_data["gpu"]
                 else:  # swmm
                     swmm_report_data = retrieve_swmm_performance_stats_from_rpt(scen.scen_paths.swmm_full_rpt_file)
                     row["actual_nTasks"] = 1
@@ -5259,6 +5267,11 @@ class TRITONSWMM_analysis:
                     row["actual_total_gpus"] = None
                     row["actual_gpu_backend"] = "none"
                     row["actual_build_type"] = "SWMM"
+                    # SWMM writes no TRITON RUN INFO block, so device identity is not
+                    # observed here. None says "not measured"; it does not say "no GPU"
+                    # (actual_gpu_backend already carries that).
+                    row["actual_cpu"] = None
+                    row["actual_gpu"] = None
 
                 # Performance breakdown from processed summary dataset
                 row.update(self._get_performance_summary_row(event_iloc, model_type))

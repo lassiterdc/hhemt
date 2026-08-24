@@ -163,6 +163,14 @@ _TRITON_REPO = "https://github.com/lassiterdc/triton.git"
 SHA_COUPLED_RESUME_FIX = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
 SHA_DEPTH_SCATTER_FIX = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"
 SHA_EXTBC_GHOST_RING_FIX = "5d2ad1e8adf9a85d7df14e885b76e59a10f9a98b"
+#: `main` on the fork: the ghost-ring fix CHERRY-PICKED onto 9db367dd (probes excluded), plus the
+#: RUN INFO GPU-device-name emission. NOT a descendant of 5d2ad1e8 -- a cherry-pick mints a new
+#: sha, so `merge-base --is-ancestor 5d2ad1e8 21e666d6` answers 1 while the change IS present.
+#: Ancestry cannot express a cherry-pick any more than it can express a revert, which is why this
+#: sha must appear in the explicit sets below. Content-verified: src/ghost_ring.h is blob-identical
+#: to 5d2ad1e8, and src/triton.h is whitespace-normalised identical once the probe blocks are
+#: stripped.
+SHA_MAIN_GHOST_RING_AND_GPU = "21e666d6e0efc3383344813853386aaba1474785"
 
 #: Historical PRODUCING shas whose ancestry was resolved ONCE here, at registry-authoring time,
 #: against a clone that had them — the read path has no clone (see module docstring) and would
@@ -178,7 +186,13 @@ REGISTRY: tuple[ModelDefect, ...] = (
         title="Coupled SWMM re-initializes from t=0 on a hotstart resume",
         fixed_in=SHA_COUPLED_RESUME_FIX,
         known_absent_in=frozenset(
-            {SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER, SHA_DEPTH_SCATTER_FIX, SHA_EXTBC_GHOST_RING_FIX}
+            {
+                SHA_COUPLED_RESUME_FIX,
+                SHA_PRE_DEPTH_SCATTER,
+                SHA_DEPTH_SCATTER_FIX,
+                SHA_EXTBC_GHOST_RING_FIX,
+                SHA_MAIN_GHOST_RING_AND_GPU,
+            }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
         trigger="resumed_coupled",
@@ -188,7 +202,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
         defect_id="TRITON-RESUME-DEPTH-SCATTER",
         title="Replayed SWMM node depths are never scattered to the per-rank new_depth[]",
         fixed_in=SHA_DEPTH_SCATTER_FIX,
-        known_absent_in=frozenset({SHA_DEPTH_SCATTER_FIX, SHA_EXTBC_GHOST_RING_FIX}),
+        known_absent_in=frozenset(
+            {SHA_DEPTH_SCATTER_FIX, SHA_EXTBC_GHOST_RING_FIX, SHA_MAIN_GHOST_RING_AND_GPU}
+        ),
         also_present_in=frozenset(
             {SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}
         ),
@@ -199,7 +215,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
         defect_id="TRITON-RESUME-EXTBC-GHOST-RING",
         title="The extbc perimeter ghost ring is not restored across a hotstart resume",
         fixed_in=SHA_EXTBC_GHOST_RING_FIX,
-        known_absent_in=frozenset({SHA_EXTBC_GHOST_RING_FIX}),
+        known_absent_in=frozenset({SHA_EXTBC_GHOST_RING_FIX, SHA_MAIN_GHOST_RING_AND_GPU}),
         also_present_in=frozenset(
             {SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER, SHA_DEPTH_SCATTER_FIX}
         ),

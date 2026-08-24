@@ -412,6 +412,21 @@ def read_text_file_as_list_of_strings(file):
     return contents
 
 
+_EMPTY_TRITON_LOG_FIELDS: dict[str, Any] = {
+    "nTasks": None,
+    "omp_threads_per_task": None,
+    "gpus_per_task": None,
+    "total_gpus": None,
+    "gpu_backend": None,
+    "build_type": None,
+    "triton_git_version": None,
+    "wall_time_s": None,
+    "machine": None,
+    "cpu": None,
+    "gpu": None,
+}
+
+
 def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
     #  TODO retrieveing wall time from the log path is bad because if the sim
     # is resumed from a hotstart file, the time will only reflect the
@@ -438,39 +453,19 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
         - wall_time_s: float - Total wall time in seconds
         - machine: str - Machine name
         - cpu: str - CPU model
+        - gpu: str - GPU device model as reported by the runtime, or "none" on a
+          CPU-only build. Absent (None) on any log predating the GPU emission.
 
     Returns None for all fields if file doesn't exist or parsing fails.
     """
     if not log_file_path.exists():
-        return {
-            "nTasks": None,
-            "omp_threads_per_task": None,
-            "gpus_per_task": None,
-            "total_gpus": None,
-            "gpu_backend": None,
-            "build_type": None,
-            "triton_git_version": None,
-            "wall_time_s": None,
-            "machine": None,
-            "cpu": None,
-        }
+        return dict(_EMPTY_TRITON_LOG_FIELDS)
 
     try:
         content = read_text_file_as_string(log_file_path)
 
         # Initialize result dictionary with None values
-        result = {
-            "nTasks": None,
-            "omp_threads_per_task": None,
-            "gpus_per_task": None,
-            "total_gpus": None,
-            "gpu_backend": None,
-            "build_type": None,
-            "triton_git_version": None,
-            "wall_time_s": None,
-            "machine": None,
-            "cpu": None,
-        }
+        result = dict(_EMPTY_TRITON_LOG_FIELDS)
 
         # Parse each field using regex
         # Machine name
@@ -479,9 +474,13 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
             result["machine"] = match.group(1).strip()  # type: ignore
 
         # CPU model
-        match = re.search(r"CPU\s*:\s*(.+)", content)
+        match = re.search(r"^CPU\s*:\s*(.+)$", content, re.M)
         if match:
             result["cpu"] = match.group(1).strip()  # type: ignore
+
+        match = re.search(r"^GPU\s*:\s*(.+)$", content, re.M)
+        if match:
+            result["gpu"] = match.group(1).strip()  # type: ignore
 
         # nTasks
         match = re.search(r"nTasks\s*:\s*(\d+)", content)
@@ -530,18 +529,7 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
             f"Failed to parse TRITON log file {log_file_path}: {str(e)}",
             UserWarning,
         )
-        return {
-            "nTasks": None,
-            "omp_threads_per_task": None,
-            "gpus_per_task": None,
-            "total_gpus": None,
-            "gpu_backend": None,
-            "build_type": None,
-            "triton_git_version": None,
-            "wall_time_s": None,
-            "machine": None,
-            "cpu": None,
-        }
+        return dict(_EMPTY_TRITON_LOG_FIELDS)
 
 
 def return_dic_zarr_encodings(

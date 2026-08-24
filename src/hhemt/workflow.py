@@ -9297,6 +9297,11 @@ def _sensitivity_source_paths(wildcards):
             rule_name="plot_sensitivity_benchmarking",
             renderer_module="sensitivity_benchmarking",
             input_flags=("_status/f_consolidate_master_complete.flag",),
+            # scenario_status.csv carries the OBSERVED per-sim device identity this
+            # figure groups on. It is written by the separate `export_scenario_status`
+            # rule, so without it as a declared input the read is unordered -- the same
+            # defect class as the errors_and_warnings read-model (Gotcha 53 v9/F3).
+            additional_inputs=("scenario_status.csv",),
             output_path_template=_plot_output_template(
                 renderer_kind="benchmarking",
                 subdir="plots/sensitivity/benchmarking",
