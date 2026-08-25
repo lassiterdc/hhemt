@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -118,9 +119,20 @@ def test_analysis_run_stamps_version_file(norfolk_single_sim_analysis_cached) ->
     Lazy-stamping wire verification: proves the wire in analysis.py fires
     at the documented point and writes to AnalysisPaths.analysis_dir.
     Converts the manual-inspection DoD into an executable assertion.
+
+    The submission is mocked: the stamp fires at analysis.py:2619, inside
+    run() and above the parameter-translation block that precedes submission,
+    so the wire is fully exercised without launching a simulation. Measured
+    2026-08-25: the unmocked form cost ~6 min and 2.8 GB against a cold tree
+    and was the suite's only real-Norfolk-run site.
     """
     analysis = norfolk_single_sim_analysis_cached
-    analysis.run(from_scratch=False)
+    with patch.object(
+        analysis,
+        "submit_workflow",
+        return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"},
+    ):
+        analysis.run(from_scratch=False)
     version_path = analysis.analysis_paths.analysis_dir / "_version.json"
     assert version_path.exists()
     st = state.read_version_file(analysis.analysis_paths.analysis_dir)
