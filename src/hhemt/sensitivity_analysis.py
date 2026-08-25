@@ -21,6 +21,7 @@ from hhemt.config.hpc_system import resolve_additional_modules, resolve_gpu_targ
 from hhemt.exceptions import ConfigurationError
 from hhemt.scenario import TRITONSWMM_scenario
 from hhemt.utils import current_datetime_string, write_datatree_zarr
+from hhemt.validation import assert_configs_visible_cross_node
 from hhemt.workflow import (
     SensitivityAnalysisWorkflowBuilder,
     SnakemakeDiagnostics,
@@ -454,6 +455,21 @@ class TRITONSWMM_sensitivity_analysis:
             - snakefile_path: Path
             - message: str
         """
+        # OE-A login-node preflight, mirroring the Analysis.submit_workflow twin.
+        # This facade is reachable DIRECTLY (see the force-rerun comment below, which
+        # names the same caller class), so a guard only at the dispatch site would
+        # miss it. Pure predicate: invoking it twice on the dispatch path is free.
+        _m = self.master_analysis
+        assert_configs_visible_cross_node(
+            _m._system.cfg_system,
+            _m.cfg_analysis,
+            {
+                "--system-config": _m._system.system_config_yaml,
+                "--analysis-config": _m.analysis_config_yaml,
+                "--hpc-system-config": _m.hpc_system_config_yaml,
+            },
+            mode=mode,
+        )
         if overrides is None:
             from .orchestration import RunOverrides
 

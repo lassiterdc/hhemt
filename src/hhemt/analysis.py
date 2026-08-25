@@ -49,7 +49,7 @@ from hhemt.swmm_output_parser import (
     retrieve_swmm_performance_stats_from_rpt,
 )
 from hhemt.utils import fast_rmtree, parse_triton_log_file
-from hhemt.validation import ValidationResult, preflight_validate
+from hhemt.validation import ValidationResult, assert_configs_visible_cross_node, preflight_validate
 from hhemt.workflow import (
     SnakemakeDiagnostics,
     SnakemakeWorkflowBuilder,
@@ -3523,6 +3523,22 @@ class TRITONSWMM_analysis:
             - job_id: str | None - Job ID (only for slurm mode)
             - message: str - Status message
         """
+        # OE-A login-node preflight. Refuse BEFORE anything is stamped, written or
+        # deleted: under a slurm locus every rule reads these paths from a compute
+        # node, and a node-local one costs the whole allocation. `mode` here is the
+        # RESOLVED locus when run() delegated (analysis.py resolves it and passes it
+        # as `mode`), and "auto" when a caller reached this facade directly.
+        assert_configs_visible_cross_node(
+            self._system.cfg_system,
+            self.cfg_analysis,
+            {
+                "--system-config": self._system.system_config_yaml,
+                "--analysis-config": self.analysis_config_yaml,
+                "--hpc-system-config": self.hpc_system_config_yaml,
+            },
+            mode=mode,
+        )
+
         # Stamp _version.json at LAYOUT_VERSION on first materialization (lazy
         # stamp per version_migration_system master plan PI-1). Idempotent
         # under concurrent writers.

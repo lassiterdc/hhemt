@@ -1974,3 +1974,91 @@ def preflight_validate(
     _validate_resume_interruption_schedule(cfg_analysis, result)
 
     return result
+
+
+_NODE_LOCAL_ACK_ENV = "HHEMT_ALLOW_NODE_LOCAL_CONFIGS"
+_SLURM_RUN_METHODS = ("1_job_many_srun_tasks", "batch_job")
+
+
+def _iter_config_paths(cfg) -> list[tuple[str, Path]]:
+    """Return every ``(field_name, Path)`` pair the LIVE config model holds.
+
+    Derived from ``type(cfg).model_fields`` rather than from a hand-maintained
+    table so a new ``Path`` field is covered the moment it is declared.
+    ``bundle/_path_policy.py::_PATH_FIELD_POLICY`` enumerates the same 21 fields
+    for a DIFFERENT purpose (bundle-emit rewriting) and is deliberately not
+    reused: it is keyed to emit policy, its ``IS_NONE_ACCEPTABLE`` members are
+    excluded on report-regen grounds rather than visibility grounds, and it
+    structurally cannot carry the config-YAML paths themselves.
+    """
+    out: list[tuple[str, Path]] = []
+    for name in type(cfg).model_fields:
+        value = getattr(cfg, name, None)
+        if isinstance(value, Path):
+            out.append((name, value))
+        elif isinstance(value, (list, tuple)):
+            out.extend((f"{name}[{i}]", v) for i, v in enumerate(value) if isinstance(v, Path))
+    return out
+
+
+def assert_configs_visible_cross_node(
+    cfg_system: system_config,
+    cfg_analysis: analysis_config,
+    config_yamls: dict[str, Path | None],
+    *,
+    mode: str,
+) -> None:
+    """Refuse a SLURM-locus submission whose inputs sit on a node-local filesystem.
+
+    Under ``slurm`` every Snakemake rule is dispatched to a COMPUTE node and reads
+    its ``--system-config`` / ``--analysis-config`` arguments (and everything those
+    configs name) by ABSOLUTE path. A path under the system temp dir is node-local,
+    so the allocation is consumed and the rule dies on a bare ``FileNotFoundError``
+    hours later. Refuse on the login node instead.
+
+    Mirrors the same-class refusal at ``experiments.py`` (container-mode ingest whose
+    bundle_root sits under the temp dir) and the same refuse-plus-acknowledge idiom as
+    ``swmm_runoff_modeling.py``'s unvalidated-stack guard.
+
+    ``mode="auto"`` is resolved here by the SAME rule ``analysis.py``'s resolver
+    applies, because a direct ``submit_workflow`` caller never pre-resolves it.
+    """
+    import os
+    import tempfile
+
+    if os.environ.get(_NODE_LOCAL_ACK_ENV) == "1":
+        return
+    if mode == "auto":
+        locus = "slurm" if cfg_analysis.multi_sim_run_method in _SLURM_RUN_METHODS else "local"
+    else:
+        locus = mode
+    if locus != "slurm":
+        return
+
+    sys_tmp = Path(tempfile.gettempdir()).resolve()
+    offenders: list[str] = []
+    for label, yaml_path in config_yamls.items():
+        if yaml_path is not None and Path(yaml_path).resolve().is_relative_to(sys_tmp):
+            offenders.append(f"{label} {yaml_path}")
+    for cfg in (cfg_system, cfg_analysis):
+        for name, value in _iter_config_paths(cfg):
+            if value.resolve().is_relative_to(sys_tmp):
+                offenders.append(f"{type(cfg).__name__}.{name} = {value}")
+    if not offenders:
+        return
+
+    raise ConfigurationError(
+        field="analysis_dir",
+        message=(
+            f"Refusing to submit a SLURM workflow whose inputs sit under the system temp "
+            f"dir ({sys_tmp}), which is NODE-LOCAL on an HPC cluster. Every Snakemake rule "
+            f"is dispatched to a COMPUTE node that cannot see an orchestrator-local path, "
+            f"so the allocation is consumed and the rule dies on a bare FileNotFoundError. "
+            f"Offending input(s):\n  "
+            + "\n  ".join(offenders)
+            + f"\nStage on a SHARED filesystem (e.g. /scratch/$USER/...), or point $TMPDIR "
+            f"at shared scratch. If your $TMPDIR IS already a shared filesystem, set "
+            f"{_NODE_LOCAL_ACK_ENV}=1 to bypass at your own risk."
+        ),
+        config_path=config_yamls.get("--analysis-config"),
+    )

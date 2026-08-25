@@ -350,6 +350,12 @@ def test_dry_run_submit_workflow_leaves_no_orchestrator_sentinel(
     The builder is stubbed: the property under test is the sentinel lifecycle inside
     submit_workflow, so removing the Snakemake subprocess removes no code under test.
     """
+    # The OE-A node-local preflight refuses a slurm-locus submit whose configs sit
+    # under the system temp dir. This fixture is a tmp_path clone and the `batch_job`
+    # set below is a PRETEND detached mode, which is exactly the false-positive shape
+    # the acknowledgement exists for -- the sentinel lifecycle under test has nothing
+    # to do with cross-node path visibility.
+    monkeypatch.setenv("HHEMT_ALLOW_NODE_LOCAL_CONFIGS", "1")
     a = synthetic_multisim_completed_isolated
     analysis_dir = a.analysis_paths.analysis_dir
     orch_dir = osent.orchestrator_dir(analysis_dir)
