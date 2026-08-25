@@ -123,7 +123,7 @@ def test_from_doi_reconstituted_bundle_runs_locally(
     # -> report). dry_run defaults to False -- this is a real run.
     result = exp.analysis.test(execution_mode="local", verbose=False)
 
-    # "It ran" proof set (mirrors test_analysis_test_end_to_end.py):
+    # "It ran" proof set (mirrors test_synth_analysis_test_end_to_end.py):
     assert (exp.bundle_root / "_test").exists(), "no _test subtree materialized"
     assert result.subanalyses, "analysis.test() produced no _test sub-analyses"
     for sub_result in result.subanalyses:

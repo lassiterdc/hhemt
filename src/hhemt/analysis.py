@@ -2757,7 +2757,7 @@ class TRITONSWMM_analysis:
             functions and ``Test``-prefixed-class methods, so this instance
             method on ``TRITONSWMM_analysis`` is never collected as a test.
             Invoke it directly (``analysis.test()`` or via the
-            ``test_analysis_test_end_to_end.py`` real-data smoke).
+            ``test_synth_analysis_test_end_to_end.py`` synthetic smoke).
         """
         reps = self._select_test_representatives()
         # Truncation happens INSIDE _build_test_subanalyses: the sliced-weather path

@@ -1,4 +1,4 @@
-"""Synthetic-tier mirror of ``tests/test_analysis_test_end_to_end.py``.
+"""Synthetic-tier replacement for the RETIRED ``tests/test_analysis_test_end_to_end.py``.
 
 Covers the ``analysis.test()`` properties the real-Norfolk tier was the sole
 evaluator of: the multi-candidate branch of ``_select_test_representatives``
