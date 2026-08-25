@@ -1,6 +1,8 @@
 """The force-rerun `stage` axis must survive the config-to-actuator boundary.
 
-Every test here enters at ``_apply_force_rerun``, NOT at
+Entry point is chosen per boundary, and each choice is load-bearing.
+
+The STAGE-AXIS tests enter at ``_apply_force_rerun``, NOT at
 ``_delete_flags_for_force_rerun``. That choice is load-bearing: the actuator was
 always correct, so a test that hand-builds a ``ResolvedForceRerunSpec`` with
 ``stage="render"`` and calls the actuator directly PASSES on pre-fix code and
@@ -184,3 +186,96 @@ def test_legacy_string_form_still_coerces(synth_sensitivity_analysis):
 
     for name in flags:
         assert not (status_dir / name).exists(), f"{name} survived a legacy 'all' force"
+
+
+class _StopBeforeSnakemake(Exception):
+    """Sentinel: the sensitivity BUILDER was reached, so every pre-delete already ran."""
+
+
+def _seed_and_stop_at_builder(analysis, monkeypatch):
+    """Seed the tree, then make the sensitivity BUILDER raise.
+
+    The seam is ``sensitivity._workflow_builder.submit_workflow``
+    (sensitivity_analysis.py:491) and deliberately NOT
+    ``analysis.sensitivity.submit_workflow``. The dispatch chain applies the
+    force-rerun pre-delete TWICE -- once at analysis.py:3578 and again at
+    sensitivity_analysis.py:464 -- and patching the outer of the two would halt
+    between them, leaving the second invocation uncovered. A test written that way
+    passes on code that still deletes every figure on a dry run.
+    """
+    seeded = _seed_status_and_plots(analysis)
+
+    def _raise(*_a, **_k):
+        raise _StopBeforeSnakemake
+
+    monkeypatch.setattr(
+        analysis.sensitivity._workflow_builder, "submit_workflow", _raise
+    )
+    return seeded
+
+
+def test_render_floor_dry_run_preserves_figures(synth_sensitivity_analysis, monkeypatch):
+    """THE DISCRIMINATING ARM -- RED pre-fix, green post-fix.
+
+    Entry is ``Analysis.submit_workflow``, one layer outside this module's stage-axis
+    entry point. Both ``dry_run`` and ``override_force_rerun`` already exist in that
+    signature pre-fix and post-fix, so this assertion discriminates on BEHAVIOUR.
+    Entering at ``_apply_force_rerun(..., dry_run=True)`` would raise TypeError pre-fix
+    -- red on a missing signature rather than on the deletion, which proves nothing.
+
+    PRE-FIX RUN at 5acbe136: analysis.py:3578 calls the actuator with no dry_run term;
+    the render floor matches no flag and its figure branch unlinks every non-EDA file
+    under plots/; the sentinel then raises and the first assertion below FAILS on the
+    missing Snakemake figure. The EDA figure survives pre-fix too, so it is a companion
+    assertion and never the discriminator.
+    """
+    analysis = synth_sensitivity_analysis
+    _status_dir, _flags, snakemake_fig, eda_fig = _seed_and_stop_at_builder(
+        analysis, monkeypatch
+    )
+
+    with pytest.raises(_StopBeforeSnakemake):
+        analysis.submit_workflow(
+            override_force_rerun={"subject": "all", "stage": "render"},
+            dry_run=True,
+        )
+
+    assert snakemake_fig.exists(), (
+        "a dry run deleted a Snakemake-rendered figure -- the force-rerun pre-delete "
+        "ran unguarded on the submit path"
+    )
+    assert snakemake_fig.with_suffix(snakemake_fig.suffix + ".manifest.json").exists()
+    assert eda_fig.exists()
+
+
+def test_simulate_floor_dry_run_still_deletes_flags(synth_sensitivity_analysis, monkeypatch):
+    """GREEN BOTH SIDES -- the flag-carve-out arm, not a discriminator.
+
+    This does not fail pre-fix and is not claimed to. It exists so that a later
+    "simplification" of the dry-run gate into a bare ``if not dry_run:`` around the
+    whole pre-delete goes RED. The governing stipulation keeps completion-flag deletion
+    OUTSIDE the guard because it is the sole signal that makes the DAG preview
+    non-empty; suppressing it yields the "nothing to do" preview that stipulation
+    rejects by name.
+
+    Scope, stated because the arm deliberately stops short: a simulate floor ALSO
+    clears per-scenario processing-log records, which is a dry-run mutation the same
+    stipulation forbids and which no spec in this deliverable gates. This arm asserts
+    the FLAG property only and must not be read as blessing the log clear.
+    """
+    analysis = synth_sensitivity_analysis
+    status_dir, flags, _snakemake_fig, _eda_fig = _seed_and_stop_at_builder(
+        analysis, monkeypatch
+    )
+
+    with pytest.raises(_StopBeforeSnakemake):
+        analysis.submit_workflow(
+            override_force_rerun={"subject": "all", "stage": "simulate"},
+            dry_run=True,
+        )
+
+    for name in flags:
+        assert not (status_dir / name).exists(), (
+            f"{name} survived a simulate-floor dry run -- the dry-run gate was widened "
+            f"past the figure branch and the DAG preview is now empty"
+        )

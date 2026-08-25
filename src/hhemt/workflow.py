@@ -1701,6 +1701,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
     def _delete_flags_for_force_rerun(
         self,
         spec: ResolvedForceRerunSpec,
+        *,
+        dry_run: bool = False,
     ) -> None:
         """Pre-delete `_status/*.flag` markers so Snakemake's MTIME trigger
         re-fires the dependent rules on the next workflow invocation.
@@ -1794,7 +1796,18 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         #
         # The figure AND its .manifest.json sidecar go together: the sidecar is what the
         # bundle harvest reads, so a figure removed without it leaves a dangling declaration.
-        if stage == "render":
+        # `and not dry_run`: a dry run previews the DAG and must not destroy the deliverable
+        # it is previewing. This block is the ONLY member of the force-rerun pre-delete family
+        # that removes rendered CONTENT rather than a zero-byte trigger, and unlike the flag
+        # and report-artifact deletions the governing stipulation admits, nothing on a dry-run
+        # path regenerates it -- a measured serial report render is 63 minutes. Its preview
+        # yield is also zero: at a render floor `_FLOOR_FLAG_PREFIXES["render"]` is empty, so
+        # deleting the figures would only reveal "every plot rule re-fires", which restates the
+        # floor the caller just requested. Measured 2026-08-24: a `report --force-render
+        # --dry-run` took four masters from 70/40/70/40 figures to 2 each, the survivors being
+        # exactly the `plots/eda/` family this block exempts. Keyword-only with a False default,
+        # so every existing caller is byte-identical.
+        if stage == "render" and not dry_run:
             plots_dir = self.analysis_paths.analysis_dir / "plots"
             if plots_dir.exists():
                 for fig_path in sorted(plots_dir.rglob("*")):

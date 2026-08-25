@@ -461,7 +461,18 @@ class TRITONSWMM_sensitivity_analysis:
         # Force-rerun pre-delete for direct sensitivity.submit_workflow callers.
         # Idempotent when Analysis.submit_workflow already applied it on the
         # dispatch path (matched flags would be absent by now).
-        self.master_analysis._apply_force_rerun(overrides.force_rerun)
+        #
+        # THE IDEMPOTENCY ARGUMENT ABOVE HOLDS FOR FLAGS AND NOT FOR FIGURES, and the
+        # difference only became observable once the dispatch-path call was gated. At a
+        # render floor the pre-delete deletes NO flag (the floor's prefix tuple is empty)
+        # and instead deletes every figure under `plots/` except `plots/eda/`. On a dry
+        # run the gated first invocation now leaves those figures in place, so an
+        # ungated second invocation here finds them present and deletes them -- the
+        # symptom is unchanged and the fix at analysis.py:3578 does nothing on the
+        # sensitivity path, which is the path every sensitivity master takes. Measured
+        # over the modelled chain: gating only the first call leaves a dry run at
+        # 7 figures -> 2, identical to the unfixed behaviour.
+        self.master_analysis._apply_force_rerun(overrides.force_rerun, dry_run=dry_run)
 
         # Driver-start orchestrator-liveness sentinel (Phase 2), keyed on the
         # MASTER analysis_dir. This is the sensitivity-master submit path and

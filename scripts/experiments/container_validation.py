@@ -120,6 +120,24 @@ def build_case(
         toggle_triton_model=False,
         toggle_swmm_model=False,
         start_from_scratch=start_from_scratch,
+        # SHARED-FILESYSTEM STAGING. `run_and_verdict` reaches `analysis.run(execution_mode=
+        # _CLUSTER[cluster]["execution_mode"])`, which for uva is "slurm" -- an EXPLICIT
+        # override of the auto-resolution (analysis.py:2665-2666), so the `local` forcing of
+        # multi_sim_run_method does NOT make the run node-local; every rule is dispatched as
+        # its own sbatch. This call supplies no `system_directory`, so under
+        # `start_from_scratch=True` the builder redirects BOTH the config artifacts and the
+        # analysis tree to a `tempfile.mkdtemp()` root (test_case_builder.py:385-387) that
+        # those rules cannot see. That redirect became the default at bc044e89 (2026-08-23),
+        # three weeks after this experiment's last green run (cv_uva_dod7 r11, 35/35), so the
+        # breakage is real and simply unobserved. `share_scratch_root=True` is the opt-out the
+        # branch itself declares for the case where "a LATER reader must see the tree this
+        # build produces" -- a rule on another node is such a reader. It restores the
+        # pre-bc044e89 staging root, which is the shared slug cache, and re-enables the
+        # construction-time wipe against `container_validation_{cluster}` -- an analysis name
+        # no pytest fixture and no other campaign uses. `_software_root` is pinned outside
+        # this branch (test_case_builder.py:366), so the borrow and build-tier invariants are
+        # untouched.
+        share_scratch_root=True,
         hpc_system_config_yaml=cfg_path,
         additional_system_configs=(
             # PIN THE NATIVE ARM TO THE SIF'S SHA, not to the fixture default.

@@ -3575,7 +3575,15 @@ class TRITONSWMM_analysis:
             # Force-rerun pre-delete (login-node responsibility per master plan
             # Strategy). Resolve + validate + delete BEFORE Snakemake plans the DAG
             # so MTIME-input triggers cascade re-fire automatically.
-            self._apply_force_rerun(override_force_rerun)
+            # `dry_run=dry_run` is what makes this path honour the no-destructive-mutation
+            # contract that `reprocess` has carried since 2026-05-28. It is a NARROW
+            # pass-through, not `reprocess`'s `if not dry_run:` wrapper: this path has no
+            # `_invalidate_downstream_flags`, so suppressing the whole call would leave a
+            # simulate/process/consolidate-floor dry run with nothing invalidated and an empty
+            # "nothing to do" DAG -- the rejected D3-A shape the stipulation names. The
+            # argument gates only the render-stage FIGURE deletion, which is the member with
+            # zero preview yield and an unbounded cost.
+            self._apply_force_rerun(override_force_rerun, dry_run=dry_run)
 
             # Fold the five kept override_* kwargs into one carrier at this facade
             # boundary; the builder and sensitivity layers are overrides-only (D4).
@@ -4483,7 +4491,7 @@ class TRITONSWMM_analysis:
             ResolvedForceRerunSpec(scope="sa", tokens=tuple(restart_ids), stage="simulate")
         )
 
-    def _apply_force_rerun(self, override_force_rerun) -> None:
+    def _apply_force_rerun(self, override_force_rerun, *, dry_run: bool = False) -> None:
         """Resolve, validate, and pre-delete flags + per-scenario log records
         for the force-rerun override.
 
@@ -4535,7 +4543,13 @@ class TRITONSWMM_analysis:
                 ) from exc
         self._validate_force_rerun_targets(resolved)
         spec = self._build_force_rerun_spec(resolved)
-        self._workflow_builder._delete_flags_for_force_rerun(spec)
+        # `dry_run` reaches the render-stage FIGURE deletion inside this helper, which is the
+        # one member of the pre-delete family that removes rendered content nothing on a
+        # dry-run path regenerates. The FLAG deletion is deliberately NOT gated: at a
+        # simulate/process/consolidate floor it is the sole signal that makes the dry-run DAG
+        # preview non-empty, which is the same reason the governing stipulation keeps the
+        # completion-flag unlinks outside `reprocess`'s guard.
+        self._workflow_builder._delete_flags_for_force_rerun(spec, dry_run=dry_run)
         # STAGE-GATED. _invalidate_processing_log_for_force_rerun clears
         # processing_log.outputs AND resets both raw_*_outputs_cleared markers, so calling
         # it under a consolidate/render floor re-arms the clear-raw step and re-runs
