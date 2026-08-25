@@ -816,8 +816,15 @@ class TRITONSWMM_run:
             raise ValueError(f"model_type must be one of {valid_types}, got {model_type}")
 
         multi_sim_run_method = self._analysis.cfg_analysis.multi_sim_run_method
-        # using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
-        using_srun = self._analysis.in_slurm
+        # Execution locus is a CONFIG property, as at the analysis.py:2647 site. The
+        # commented-out predicate this replaces was NOT correct: it omits `batch_job`,
+        # where each sim runs inside its own per-rule sbatch and the INNER gres srun is
+        # what supplies per-rank GPU binding (Gotcha 32, --ntasks-per-gpu=1 ->
+        # tres_bind=gres/gpu:single:1). Dropping batch_job would strip that binding from
+        # every multi-GPU sim. Both allocation-resident modes are therefore included,
+        # and only ONE case changes: a `local`-configured analysis running inside an
+        # array element no longer srun-wraps its sims, which is the fix.
+        using_srun = multi_sim_run_method in {"1_job_many_srun_tasks", "batch_job"}
 
         # ----------------------------
         # Model-specific paths

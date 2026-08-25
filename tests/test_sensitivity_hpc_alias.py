@@ -10,19 +10,12 @@ D-A; only the column SPELLING gains an ``hpc.`` root). A direct
 import pytest
 
 import tests.fixtures.test_case_catalog as cases
-import tests.utils_for_testing as tst_ut
 from hhemt.exceptions import ConfigurationError
 from hhemt.sensitivity_analysis import (
     _HPC_ALIAS_TO_ANALYSIS_FIELD,
     _is_hpc_overlay_column,
     _resolve_hpc_alias_to_analysis_field,
 )
-
-pytestmark = [
-    pytest.mark.skipif(
-        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-    ),
-]
 
 
 def test_hpc_alias_recognizer_maps_partition_and_rejects_gpu_hardware():

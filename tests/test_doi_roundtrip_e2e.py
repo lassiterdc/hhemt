@@ -159,7 +159,7 @@ pytestmark = [
         ),
     ),
     pytest.mark.skipif(
-        tst_ut.is_scheduler_context(),
+        tst_ut.on_scheduler_node(),
         reason="live-deposit run-proof; do not launch on an HPC scheduler node.",
     ),
 ]

@@ -8,11 +8,6 @@ import pytest
 import tests.fixtures.test_case_catalog as cases
 import tests.utils_for_testing as tst_ut
 
-pytestmark = pytest.mark.skipif(
-    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-)
-
-
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_swmm_threads_updated_in_inp_files():
     """

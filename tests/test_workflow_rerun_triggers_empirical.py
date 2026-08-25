@@ -23,9 +23,6 @@ pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
     pytest.mark.slow,
     pytest.mark.skipif(
-        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-    ),
-    pytest.mark.skipif(
         tst_ut.compile_toolchain_unavailable(),
         reason=(
             "TRITON-SWMM CPU compile toolchain (cmake + mpic++) not on PATH. "

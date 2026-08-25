@@ -25,9 +25,11 @@ import tests.utils_for_testing as tst_ut
 # `system.py` carries zero `os.environ` / `SLURM_JOB_ID` / `in_slurm` references, so
 # these compiles produce the same artifact inside an allocation as outside one.
 #
-# Scoped to THIS module. The other scheduler gates in the suite are untouched: the
-# dead-rationale finding was established for this module's gate specifically and
-# says nothing about theirs.
+# Scoped to THIS module at the time of writing; the suite-wide removal superseded
+# that scoping. The dead-rationale finding was established for this module's gate
+# first, and was subsequently found to hold for the other tier-routing gates too,
+# which were removed with it. The safety guards on the two run-proof modules are a
+# DIFFERENT population and survive as `tst_ut.on_scheduler_node()`.
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")

@@ -5231,8 +5231,13 @@ class TRITONSWMM_analysis:
                     row["n_gpus"] = (self.cfg_analysis.n_gpus or 0) if self.cfg_analysis.run_mode == "gpu" else 0
                     row["backend_used"] = scen.log.triton_backend_used.get()
 
-                if self.in_slurm:
-                    row["n_nodes"] = 1 if model_type == "swmm" else self.cfg_analysis.n_nodes or 1
+                # Populated UNCONDITIONALLY: n_nodes is a CONFIG property, and gating the
+                # column on $SLURM_JOB_ID meant the same test saw a different df_status
+                # inside an allocation than outside one -- a silently different system
+                # under test, which is why the scheduler skip-gate could not be removed.
+                # No consumer depends on the column's absence; every other n_nodes read
+                # in the tree goes to cfg_analysis or a zarr attr, not this column.
+                row["n_nodes"] = 1 if model_type == "swmm" else self.cfg_analysis.n_nodes or 1
 
                 # Actual resources (model-dependent availability)
                 if model_type == "tritonswmm":

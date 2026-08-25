@@ -6,7 +6,6 @@ import tests.utils_for_testing as tst_ut
 
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
-    pytest.mark.skipif(tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."),
 ]
 
 

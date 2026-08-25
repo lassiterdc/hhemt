@@ -14,15 +14,6 @@ regression check previously gated on ``gpu_hardware_override`` and then on the
 ``system.gpu_hardware`` overlay column (both retired). See plan-Phase-6 DQ7.
 """
 
-import pytest
-
-import tests.utils_for_testing as tst_ut
-
-pytestmark = [
-    pytest.mark.skipif(
-        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-    ),
-]
 
 
 def _sim_rule_block(snakefile_text: str, sa_id: str) -> str:
