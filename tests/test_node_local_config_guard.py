@@ -139,3 +139,67 @@ def test_ack_env_bypasses_the_refusal(synth_sensitivity_analysis, monkeypatch):
 
     with pytest.raises(_ReachedFirstMutation):
         analysis.submit_workflow(mode="slurm", dry_run=True, verbose=False)
+
+
+def test_reprocess_refuses_node_local_configs(synth_sensitivity_analysis, monkeypatch):
+    """A6 -- discriminating, reprocess entry. RED pre-fix.
+
+    reprocess DESTROYS before it submits, so this arm also pins ORDERING: the probe
+    stands in for `stamp_new_target`, the first mutation the facade performs, and a
+    guard placed below it would surface here as `_ReachedFirstMutation` rather than
+    `ConfigurationError` -- the same failure signature as no guard at all, which is
+    exactly what makes the probe worth keeping.
+    """
+    analysis = synth_sensitivity_analysis
+    _point_tempdir_at(monkeypatch, _config_dir(analysis))
+    _probe_analysis_first_mutation(monkeypatch)
+
+    with pytest.raises(ConfigurationError):
+        analysis.reprocess(execution_mode="slurm", dry_run=True, verbose=False)
+
+
+def test_sensitivity_reprocess_refuses_node_local_configs(synth_sensitivity_analysis, monkeypatch):
+    """A7 -- discriminating, second reprocess entry. RED pre-fix.
+
+    `analysis.py`'s clear-raw refusal instructs operators to call this method by name,
+    so this entry is reached by following the toolkit's own printed remedy rather than
+    by an unusual caller.
+    """
+    analysis = synth_sensitivity_analysis
+    _point_tempdir_at(monkeypatch, _config_dir(analysis))
+    _probe_analysis_first_mutation(monkeypatch)
+
+    with pytest.raises(ConfigurationError):
+        analysis.sensitivity.reprocess(execution_mode="slurm", dry_run=True, verbose=False)
+
+
+def test_explicit_slurm_locus_on_local_family_still_refuses(synth_sensitivity_analysis, monkeypatch):
+    """A8 -- CHARACTERIZATION, not a discriminator. GREEN on both sides, deliberately.
+
+    The [Q8] shape: `multi_sim_run_method="local"` plus an explicit
+    `execution_mode="slurm"`. The guard handles it through the explicit-`mode` branch,
+    never through the `auto` arm, because `run()` folds the override into `mode` before
+    the guard sees it. That property is currently held by argument alone; this arm makes
+    it hold by test, so a later edit to the `auto` arm cannot silently remove it.
+    """
+    analysis = synth_sensitivity_analysis
+    monkeypatch.setattr(analysis.cfg_analysis, "multi_sim_run_method", "local")
+    _point_tempdir_at(monkeypatch, _config_dir(analysis))
+    _probe_analysis_first_mutation(monkeypatch)
+
+    with pytest.raises(ConfigurationError):
+        analysis.submit_workflow(mode="slurm", dry_run=True, verbose=False)
+
+
+def test_local_reprocess_does_not_refuse(synth_sensitivity_analysis, monkeypatch):
+    """A9 -- negative control proving the reprocess sites THREAD the locus.
+
+    Without this, a call site that passed a literal `mode="slurm"` instead of
+    `mode=execution_mode` would pass A6 and be wrong in the one way A6 cannot see.
+    """
+    analysis = synth_sensitivity_analysis
+    _point_tempdir_at(monkeypatch, _config_dir(analysis))
+    _probe_analysis_first_mutation(monkeypatch)
+
+    with pytest.raises(_ReachedFirstMutation):
+        analysis.reprocess(execution_mode="local", dry_run=True, verbose=False)

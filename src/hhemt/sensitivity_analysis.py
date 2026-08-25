@@ -644,6 +644,22 @@ class TRITONSWMM_sensitivity_analysis:
             Status dictionary from
             :meth:`SensitivityAnalysisWorkflowBuilder.submit_reprocess_workflow`.
         """
+        # OE-A login-node preflight, sensitivity reprocess entry. Reachable DIRECTLY --
+        # analysis.py's clear-raw refusal tells operators to call this method by name --
+        # so a guard only at the dispatch site would be bypassed by following the
+        # toolkit's own printed instruction. FIRST statement, above stamp_new_target and
+        # above every destructive step, for the same reason as the non-sensitivity twin.
+        _m = self.master_analysis
+        assert_configs_visible_cross_node(
+            _m._system.cfg_system,
+            _m.cfg_analysis,
+            {
+                "--system-config": _m._system.system_config_yaml,
+                "--analysis-config": _m.analysis_config_yaml,
+                "--hpc-system-config": _m.hpc_system_config_yaml,
+            },
+            mode=execution_mode,
+        )
         # Lazy-stamp _version.json at LAYOUT_VERSION (PI-1 pattern). Idempotent.
         from hhemt.version_migration import LAYOUT_VERSION
         from hhemt.version_migration.state import stamp_new_target

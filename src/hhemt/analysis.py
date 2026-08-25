@@ -3804,6 +3804,22 @@ class TRITONSWMM_analysis:
         ConfigurationError
             When the resolved ``clear_raw`` would clear and either guard fails.
         """
+        # OE-A login-node preflight, reprocess entry. FIRST statement by necessity:
+        # reprocess DESTROYS before it submits (flags and report artifacts on every
+        # invocation; the consolidated zarr under regenerate_existing), so a refusal
+        # below this point would refuse to rebuild a report it had already deleted --
+        # the same failure that hoisted the orchestrator-liveness claim. This facade
+        # spells the locus parameter `execution_mode`; submit_workflow spells it `mode`.
+        assert_configs_visible_cross_node(
+            self._system.cfg_system,
+            self.cfg_analysis,
+            {
+                "--system-config": self._system.system_config_yaml,
+                "--analysis-config": self.analysis_config_yaml,
+                "--hpc-system-config": self.hpc_system_config_yaml,
+            },
+            mode=execution_mode,
+        )
         resolved_clear_raw = override_clear_raw if override_clear_raw is not None else self.cfg_analysis.clear_raw
         # True iff the resolved value would trigger any cleanup for any model.
         would_clear = resolved_clear_raw != "none"

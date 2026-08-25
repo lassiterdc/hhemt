@@ -2020,8 +2020,24 @@ def assert_configs_visible_cross_node(
     bundle_root sits under the temp dir) and the same refuse-plus-acknowledge idiom as
     ``swmm_runoff_modeling.py``'s unvalidated-stack guard.
 
-    ``mode="auto"`` is resolved here by the SAME rule ``analysis.py``'s resolver
-    applies, because a direct ``submit_workflow`` caller never pre-resolves it.
+    Called from FOUR facades: ``Analysis.submit_workflow`` / ``reprocess`` and their
+    ``TRITONSWMM_sensitivity_analysis`` twins. Each dispatches to compute nodes and
+    each is separately reachable, so each calls this directly; the predicate is pure,
+    so the doubled call on a dispatch path costs nothing.
+
+    ``mode`` is the RESOLVED locus whenever the caller resolved one -- notably an
+    explicit ``execution_mode="slurm"`` on a ``multi_sim_run_method="local"`` analysis,
+    which arrives here as ``"slurm"`` and refuses correctly. The ``auto`` arm below
+    therefore needs only the config-family term, unlike ``workflow.py``'s report-tail
+    predicate, which needs a second ``_resolved_execution_locus`` term precisely because
+    by that point the override has been folded in and is no longer readable off the config.
+
+    FOUR resolvers of this rule now exist and this is the fifth: ``analysis.py``'s
+    ``run()`` resolver, the submit builder's ``auto`` fallthrough (reachable only for
+    ``local``), and the two reprocess builders'. Measured 2026-08-25 at HEAD 2352431f,
+    all five agree on all nine (family, mode) cells. That is a snapshot, not a
+    guarantee: if a future change gives a resolver a term this one lacks, re-run the
+    3x3 rather than assuming the mirror still holds.
     """
     import os
     import tempfile
@@ -2056,9 +2072,12 @@ def assert_configs_visible_cross_node(
             f"so the allocation is consumed and the rule dies on a bare FileNotFoundError. "
             f"Offending input(s):\n  "
             + "\n  ".join(offenders)
-            + f"\nStage on a SHARED filesystem (e.g. /scratch/$USER/...), or point $TMPDIR "
-            f"at shared scratch. If your $TMPDIR IS already a shared filesystem, set "
-            f"{_NODE_LOCAL_ACK_ENV}=1 to bypass at your own risk."
+            + f"\nRemedies, most durable first: (1) stage on a SHARED filesystem "
+            f"(e.g. /scratch/$USER/...), or point $TMPDIR at shared scratch; (2) if the "
+            f"tree already exists and cannot be re-staged -- the reprocess case -- re-run "
+            f"with execution_mode='local' so no rule leaves this node; (3) if your $TMPDIR "
+            f"IS already a shared filesystem, set {_NODE_LOCAL_ACK_ENV}=1 to bypass at "
+            f"your own risk."
         ),
         config_path=config_yamls.get("--analysis-config"),
     )
