@@ -4323,11 +4323,16 @@ class TRITONSWMM_analysis:
         # 1) Clear per-scenario per-model processing_log.outputs so the runner's
         #    _already_written gate returns False and write paths re-execute.
         #    Scope "all" — a process-stage reprocess rebuilds every scenario.
+        if dry_run:
+            # MOVED ABOVE THE LOG CLEAR. This return previously sat BELOW it, so a dry run
+            # rewrote every per-scenario per-model log, reset both raw-cleared markers, and
+            # mkdir-swept every scenario before returning with this comment attached. The
+            # guard was positioned for step 2 (the `processed/` fast_rmtree) and silently
+            # did not cover step 1.
+            return  # dry-run performs no destructive filesystem mutation
         self._invalidate_processing_log_for_force_rerun(
             ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
         )
-        if dry_run:
-            return  # dry-run performs no destructive filesystem mutation
 
         # 2) Delete the per-scenario PROCESSED artifacts on disk. ALL processed
         #    outputs (summaries + timeseries, every model family) live under one
@@ -4555,8 +4560,19 @@ class TRITONSWMM_analysis:
         # it under a consolidate/render floor re-arms the clear-raw step and re-runs
         # processing — the exact harm _FLOOR_FLAG_PREFIXES' comment says a render floor
         # must never cause. The flag floor closed the flag route; this closes the log route.
+        # `dry_run` is threaded, NOT used to skip the call, so the guard lives at the
+        # destructive site and holds for every caller. Two callers of that helper were
+        # measured ungated on a dry run -- this one and
+        # `_delete_processed_outputs_for_reprocess` -- and in both cases a call-site guard
+        # is what left the second one open. The clear costs ZERO dry-run preview yield: no
+        # Snakefile generator reads `processing_log` and no per-model log JSON is ever a
+        # rule input/output, so the planner cannot see it; its only readers are the runner
+        # subprocess's `_already_written` gate, consolidation, and status rollups, none of
+        # which a dry run reaches. The D3-A argument that keeps FLAG deletion outside the
+        # guard therefore does not transfer -- that argument turns on the planner reading
+        # the deleted thing.
         if spec.stage in ("simulate", "process"):
-            self._invalidate_processing_log_for_force_rerun(spec)
+            self._invalidate_processing_log_for_force_rerun(spec, dry_run=dry_run)
 
     def _invalidate_consolidate_flag_on_scenario_set_change(self) -> None:
         """Delete e_consolidate_complete.flag (and orphan per-event flags) when the
@@ -4819,7 +4835,9 @@ class TRITONSWMM_analysis:
                 config_path=str(self.analysis_config_yaml),
             )
 
-    def _invalidate_processing_log_for_force_rerun(self, spec: "ResolvedForceRerunSpec") -> None:
+    def _invalidate_processing_log_for_force_rerun(
+        self, spec: "ResolvedForceRerunSpec", *, dry_run: bool = False
+    ) -> None:
         """Invalidate per-scenario log ``processing_log.outputs`` entries
         that match the force-rerun spec.
 
@@ -4850,6 +4868,13 @@ class TRITONSWMM_analysis:
         overwrites the existing zarr on re-execution.
         """
         if spec.scope == "none":
+            return
+        if dry_run:
+            # A dry run previews the DAG and mutates nothing. This helper rewrites every
+            # matched per-model log JSON AND, via its `TRITONSWMM_scenario(...)` loop,
+            # mkdir-sweeps `processed/`, `swmm/` and `out_swmm/` for every scenario
+            # (scenario.py:138,140,157) -- two mutation classes, neither of them visible
+            # to the Snakemake planner.
             return
 
         if spec.scope == "sa":

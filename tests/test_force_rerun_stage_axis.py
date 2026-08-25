@@ -107,7 +107,13 @@ def test_render_floor_does_not_invalidate_processing_log(synth_sensitivity_analy
     monkeypatch.setattr(
         analysis,
         "_invalidate_processing_log_for_force_rerun",
-        lambda spec: calls.append(spec.stage),
+        # `**_k` is deliberate and is not defensive clutter. This lambda REPLACES the
+        # callee, so the arity that matters is the STUB's, not the call's -- a
+        # keyword-only parameter with a default is transparent to every caller and
+        # opaque to every fixed-arity replacement. Absorbing unknown keywords keeps this
+        # arm testing what it says it tests (stage-gating) across future signature
+        # widening instead of going red on a signature it does not care about.
+        lambda spec, **_k: calls.append(spec.stage),
     )
 
     analysis._apply_force_rerun(ForceRerunSpec(subject="all", stage="render"))
@@ -259,9 +265,12 @@ def test_simulate_floor_dry_run_still_deletes_flags(synth_sensitivity_analysis, 
     rejects by name.
 
     Scope, stated because the arm deliberately stops short: a simulate floor ALSO
-    clears per-scenario processing-log records, which is a dry-run mutation the same
-    stipulation forbids and which no spec in this deliverable gates. This arm asserts
-    the FLAG property only and must not be read as blessing the log clear.
+    clears per-scenario processing-log records. That clear IS now gated -- the guard
+    lives at the destructive site in `_invalidate_processing_log_for_force_rerun` --
+    and its own discriminating arm is `test_simulate_floor_dry_run_preserves_processing_log`
+    below. This arm asserts the FLAG property only; the two are deliberately separate
+    because a dry run must delete the flags AND preserve the log, and one assertion
+    covering both would not say which half regressed.
     """
     analysis = synth_sensitivity_analysis
     status_dir, flags, _snakemake_fig, _eda_fig = _seed_and_stop_at_builder(
@@ -278,4 +287,82 @@ def test_simulate_floor_dry_run_still_deletes_flags(synth_sensitivity_analysis, 
         assert not (status_dir / name).exists(), (
             f"{name} survived a simulate-floor dry run -- the dry-run gate was widened "
             f"past the figure branch and the DAG preview is now empty"
+        )
+
+
+def _seed_processing_log_record(analysis):
+    """Write one ProcessingEntry into every enabled per-model log, and return the
+    (model_log, key) pairs so a caller can assert on survival or clearance."""
+    from hhemt.log import ProcessingEntry
+    from hhemt.scenario import TRITONSWMM_scenario
+
+    seeded = []
+    for event_iloc in range(len(analysis.df_sims)):
+        scen = TRITONSWMM_scenario(event_iloc, analysis)
+        for model_type in scen.run.model_types_enabled:
+            scen.get_log(model_type).processing_log.update(
+                ProcessingEntry(
+                    filepath=scen.scen_paths.sim_folder / "processed" / "seeded.zarr",
+                    size_MiB=1.0,
+                    time_elapsed_s=1.0,
+                    success=True,
+                )
+            )
+            seeded.append((event_iloc, model_type))
+    assert seeded, "fixture produced no enabled model logs -- the arms below would be vacuous"
+    return seeded
+
+
+def _reread_has_key(analysis, event_iloc, model_type, key="seeded.zarr"):
+    """Re-READ the per-model log from disk. Asserting on the handle returned by the
+    seeder would be a FALSE GREEN: the actuator constructs its OWN scenario objects and
+    mutates THOSE log instances before writing, so a stale in-memory handle never
+    observes the clear no matter what the code under test does."""
+    from hhemt.scenario import TRITONSWMM_scenario
+
+    return key in TRITONSWMM_scenario(event_iloc, analysis).get_log(model_type).processing_log.outputs
+
+
+def test_simulate_floor_dry_run_preserves_processing_log(synth_sensitivity_analysis, monkeypatch):
+    """THE DISCRIMINATING ARM for the log clear -- RED pre-fix, green post-fix.
+
+    PRE-FIX RUN at f8c47ec3: `_apply_force_rerun` reaches its stage gate, calls
+    `_invalidate_processing_log_for_force_rerun(spec)` with no dry_run term, and the
+    helper clears `processing_log.outputs` on every enabled per-model log -- so the
+    assertion below fails on the first seeded record being gone. It discriminates on
+    BEHAVIOUR: both parameters used at the entry point exist pre-fix and post-fix.
+    """
+    analysis = synth_sensitivity_analysis
+    _seed_and_stop_at_builder(analysis, monkeypatch)
+    seeded = _seed_processing_log_record(analysis)
+
+    with pytest.raises(_StopBeforeSnakemake):
+        analysis.submit_workflow(
+            override_force_rerun={"subject": "all", "stage": "simulate"},
+            dry_run=True,
+        )
+
+    for event_iloc, model_type in seeded:
+        assert _reread_has_key(analysis, event_iloc, model_type), (
+            "a dry run cleared a per-scenario processing-log record -- the force-rerun "
+            "pre-delete ran its log-invalidation half unguarded"
+        )
+
+
+def test_simulate_floor_real_run_still_clears_processing_log(synth_sensitivity_analysis):
+    """GREEN BOTH SIDES -- the anti-over-fire arm, not a discriminator.
+
+    A REAL simulate-floor force-rerun MUST still clear the log, or `_already_written`
+    keeps returning True and the re-fired rule writes nothing (Gotcha 28). This arm
+    exists so the dry-run guard cannot be widened into "never clear".
+    """
+    analysis = synth_sensitivity_analysis
+    seeded = _seed_processing_log_record(analysis)
+
+    analysis._apply_force_rerun(ForceRerunSpec(subject="all", stage="simulate"))
+
+    for event_iloc, model_type in seeded:
+        assert not _reread_has_key(analysis, event_iloc, model_type), (
+            f"seeded.zarr survived a REAL simulate-floor force-rerun ({model_type}) -- the "
+            f"dry-run guard was widened past its input class and _already_written will skip"
         )
