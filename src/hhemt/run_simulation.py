@@ -793,6 +793,8 @@ class TRITONSWMM_run:
         pickup_where_leftoff: bool,
         verbose: bool = True,
         model_type: str = "tritonswmm",
+        *,
+        execution_locus: str | None = None,
     ):
         """
         Prepare simulation command for specified model type.
@@ -816,15 +818,28 @@ class TRITONSWMM_run:
             raise ValueError(f"model_type must be one of {valid_types}, got {model_type}")
 
         multi_sim_run_method = self._analysis.cfg_analysis.multi_sim_run_method
-        # Execution locus is a CONFIG property, as at the analysis.py:2647 site. The
-        # commented-out predicate this replaces was NOT correct: it omits `batch_job`,
-        # where each sim runs inside its own per-rule sbatch and the INNER gres srun is
-        # what supplies per-rank GPU binding (Gotcha 32, --ntasks-per-gpu=1 ->
-        # tres_bind=gres/gpu:single:1). Dropping batch_job would strip that binding from
-        # every multi-GPU sim. Both allocation-resident modes are therefore included,
-        # and only ONE case changes: a `local`-configured analysis running inside an
-        # array element no longer srun-wraps its sims, which is the fix.
-        using_srun = multi_sim_run_method in {"1_job_many_srun_tasks", "batch_job"}
+        # Execution locus is a TWO-AXIS property, exactly as workflow.py:2115 resolves
+        # it: the dispatch-family label OR the driver-resolved locus. A config-only
+        # predicate here CANNOT express it, because `multi_sim_run_method="local"` +
+        # `execution_mode="slurm"` (the doi_emitter/[Q8] path) routes every sim to a
+        # per-rule sbatch while keeping the `local` label. Keying on the label alone
+        # dropped the srun entirely for that path -- a 2-GPU sim ran as ONE rank with
+        # HIP_VISIBLE_DEVICES set to the full list (the 0%-util failure the GPU block
+        # below documents). Keying on `in_slurm` alone is equally wrong in the other
+        # direction: a synth fixture inside a pytest chunk would srun-wrap against a
+        # 1-task allocation. The driver knows the locus and now threads it; when it is
+        # absent (legacy CLI, _create_subprocess_sim_run_launcher) the label alone
+        # decides, which is correct for that path because it is always `local`.
+        # DISJUNCTION, not a flag-wins conditional: the one cell where they differ
+        # is an allocation-resident dispatch family carrying an explicit `local`
+        # locus, and there the disjunction keeps the srun. A silent srun loss is
+        # the failure this whole change exists to remove, so the fail-safe arm
+        # wins over the marginally-more-precise one. Same shape as workflow.py's
+        # own two-axis resolver, which is the authority cited above.
+        using_srun = (
+            multi_sim_run_method in {"1_job_many_srun_tasks", "batch_job"}
+            or execution_locus == "slurm"
+        )
 
         # ----------------------------
         # Model-specific paths

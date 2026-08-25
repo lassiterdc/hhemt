@@ -2946,7 +2946,7 @@ rule run_{model_type}:
             --model-type {model_type} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             --flag-output {{output}} \\
-            --rule-name run_{model_type} \\
+            --rule-name run_{model_type} {"--execution-locus " + self._resolved_execution_locus if self._resolved_execution_locus else ""}\\
             --event-id {{wildcards.event_id}} \\
             > {{log}} 2>&1
         """
@@ -6064,10 +6064,16 @@ exit $snakemake_status
             # removes only the in-allocation promotion (a locally-configured
             # analysis silently becoming a SLURM workflow because $SLURM_JOB_ID
             # happened to be set).
-            # Do NOT reintroduce a read of analysis.in_slurm here, and do NOT
-            # make in_slurm itself config-only: run_simulation.py:820 still
-            # derives `using_srun` from it, and narrowing that predicate would
-            # strip the inner srun supplying per-rank GPU binding (Gotcha 32).
+            # Do NOT reintroduce a read of analysis.in_slurm HERE. Promoting a
+            # `local`-family analysis to a slurm workflow because $SLURM_JOB_ID
+            # happened to be set is the defect this branch prevents (8249167f).
+            # Do NOT make in_slurm config-only either, but the REASON has CHANGED:
+            # run_simulation.py no longer reads it at all -- its `using_srun` now
+            # takes a driver-threaded --execution-locus, so per-rank GPU binding
+            # (Gotcha 32) follows the resolved locus rather than the environment.
+            # The live consumers are resource_management.py:139/:177 (SIZING) and
+            # workflow.py's _generate_submission_script assert (:3742) and tmux
+            # module-load gate (:5433).
             mode = "local"
 
         # [Q8] Defect 2: publish the resolved execution LOCUS to the report-tail
@@ -6222,9 +6228,19 @@ exit $snakemake_status
             # 1_job_many_srun_tasks both mean "use the scheduler", so a login-node
             # invocation submits rather than running consolidation/render compute
             # on a shared login node.
-            # Do NOT read analysis.in_slurm here and do NOT make in_slurm itself
-            # config-only: run_simulation.py:820 still derives `using_srun` from
-            # it (Gotcha 32 per-rank GPU binding).
+            # Do NOT read analysis.in_slurm HERE. Promoting a `local`-family
+            # analysis to a slurm workflow because $SLURM_JOB_ID happened to be
+            # set is the defect this branch exists to prevent (8249167f), and it
+            # is still a defect.
+            # Do NOT make in_slurm config-only either, but the REASON has CHANGED:
+            # run_simulation.py no longer reads it at all -- its `using_srun` now
+            # takes a driver-threaded --execution-locus. The live consumers are
+            # resource_management.py:139/:177 (allocation-derived SIZING) and
+            # workflow.py's own _generate_submission_script assert (:3742) and
+            # tmux module-load gate (:5433).
+            # No line number is pinned into run_simulation.py on purpose: the old
+            # form pinned :820, the predicate was already at :827, and nothing
+            # gates a line reference inside a comment.
             mode: Literal["local", "slurm"] = (
                 "local" if effective_method == "local" else "slurm"
             )
@@ -6493,9 +6509,19 @@ exit $snakemake_status
             # 1_job_many_srun_tasks both mean "use the scheduler", so a login-node
             # invocation submits rather than running consolidation/render compute
             # on a shared login node.
-            # Do NOT read analysis.in_slurm here and do NOT make in_slurm itself
-            # config-only: run_simulation.py:820 still derives `using_srun` from
-            # it (Gotcha 32 per-rank GPU binding).
+            # Do NOT read analysis.in_slurm HERE. Promoting a `local`-family
+            # analysis to a slurm workflow because $SLURM_JOB_ID happened to be
+            # set is the defect this branch exists to prevent (8249167f), and it
+            # is still a defect.
+            # Do NOT make in_slurm config-only either, but the REASON has CHANGED:
+            # run_simulation.py no longer reads it at all -- its `using_srun` now
+            # takes a driver-threaded --execution-locus. The live consumers are
+            # resource_management.py:139/:177 (allocation-derived SIZING) and
+            # workflow.py's own _generate_submission_script assert (:3742) and
+            # tmux module-load gate (:5433).
+            # No line number is pinned into run_simulation.py on purpose: the old
+            # form pinned :820, the predicate was already at :827, and nothing
+            # gates a line reference inside a comment.
             mode: Literal["local", "slurm"] = (
                 "local" if effective_method == "local" else "slurm"
             )
@@ -8395,7 +8421,7 @@ onerror:
             --sa-id {sa_id} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             --flag-output {{output}} \\
-            --rule-name {sim_rule_name} \\
+            --rule-name {sim_rule_name} {"--execution-locus " + self._base_builder._resolved_execution_locus if self._base_builder._resolved_execution_locus else ""}\\
             --event-id {event_id} \\
             > {{log}} 2>&1
         """
@@ -9984,9 +10010,19 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             # 1_job_many_srun_tasks both mean "use the scheduler", so a login-node
             # invocation submits rather than running consolidation/render compute
             # on a shared login node.
-            # Do NOT read analysis.in_slurm here and do NOT make in_slurm itself
-            # config-only: run_simulation.py:820 still derives `using_srun` from
-            # it (Gotcha 32 per-rank GPU binding).
+            # Do NOT read analysis.in_slurm HERE. Promoting a `local`-family
+            # analysis to a slurm workflow because $SLURM_JOB_ID happened to be
+            # set is the defect this branch exists to prevent (8249167f), and it
+            # is still a defect.
+            # Do NOT make in_slurm config-only either, but the REASON has CHANGED:
+            # run_simulation.py no longer reads it at all -- its `using_srun` now
+            # takes a driver-threaded --execution-locus. The live consumers are
+            # resource_management.py:139/:177 (allocation-derived SIZING) and
+            # workflow.py's own _generate_submission_script assert (:3742) and
+            # tmux module-load gate (:5433).
+            # No line number is pinned into run_simulation.py on purpose: the old
+            # form pinned :820, the predicate was already at :827, and nothing
+            # gates a line reference inside a comment.
             mode: Literal["local", "slurm"] = (
                 "local"
                 if self.master_analysis.cfg_analysis.multi_sim_run_method == "local"

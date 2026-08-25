@@ -325,6 +325,17 @@ def main():
         default=None,
         help="Event id slug for the flag sidecar payload",
     )
+    parser.add_argument(
+        "--execution-locus",
+        type=str,
+        choices=["local", "slurm"],
+        default=None,
+        help=(
+            "Resolved execution LOCUS of the emitted workflow, supplied by the driver "
+            "at Snakefile-generation time. Governs srun-wrapping. Absent => fall back "
+            "to the multi_sim_run_method dispatch-family label."
+        ),
+    )
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -567,6 +578,7 @@ def main():
             pickup_where_leftoff=args.pickup_where_leftoff,
             verbose=True,
             model_type=model_type,
+            execution_locus=args.execution_locus,
         )
 
         # Check if simulation already completed

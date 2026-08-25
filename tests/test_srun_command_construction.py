@@ -83,14 +83,16 @@ def _make_run(
     return run
 
 
-def _get_launch_cmd(run: TRITONSWMM_run) -> str:
+def _get_launch_cmd(run: TRITONSWMM_run, execution_locus: str | None = None) -> str:
     """Extract the launch command string from prepare_simulation_command."""
     # Patch out anything that touches the filesystem or logs
     with patch.object(run, "_analysis_level_model_logfile", return_value=Path("/fake/run.log")):
         with patch.object(
             run, "_retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation", return_value=None
         ):
-            result = run.prepare_simulation_command(pickup_where_leftoff=False, verbose=False)
+            result = run.prepare_simulation_command(
+                pickup_where_leftoff=False, verbose=False, execution_locus=execution_locus
+            )
     assert result is not None
     cmd, env, logfile, _ = result
     # The full command is passed to bash -lc; extract the srun portion
@@ -320,7 +322,8 @@ def test_gpu_preflight_skips_when_no_gpu_vars(capsys):
 
 def test_gres_mode_multi_gpu_local_uses_gpus_per_task(monkeypatch):
     """[Q8] Mode A (g2): gres-mode single-node MULTI-GPU (n_gpus>=2) under the
-    per-rule Snakemake slurm executor (multi_sim_run_method='local') must emit
+    per-rule Snakemake slurm executor (multi_sim_run_method='local' PLUS
+    execution_mode='slurm' -- the locus, not the dispatch label) must emit
     --gpus-per-task=1 + explicit --ntasks=N, NOT --ntasks-per-gpu=1. The outer
     per-rule sbatch is Gotcha-32-routed (mpi+tasks, tasks_per_gpu=0) -> SUPPRESSES
     --ntasks-per-gpu; an inner --ntasks-per-gpu=1 then fails
@@ -334,7 +337,7 @@ def test_gres_mode_multi_gpu_local_uses_gpus_per_task(monkeypatch):
         multi_sim_run_method="local",
         gpu_alloc_mode="gres",
     )
-    full_cmd = _get_launch_cmd(run)
+    full_cmd = _get_launch_cmd(run, execution_locus="slurm")
     assert "--gpus-per-task=1" in full_cmd
     assert "--ntasks=2" in full_cmd
     assert "--ntasks-per-gpu" not in full_cmd
@@ -344,7 +347,9 @@ def test_gres_mode_single_gpu_local_keeps_ntasks_per_gpu(monkeypatch):
     """[Q8] Mode A regression guard (FQ4): the 1-GPU (g1) gres case -- which
     SUCCEEDS on the live run -- must stay on --ntasks-per-gpu=1 with NO explicit
     --ntasks (its outer sbatch is single-GPU, NOT gres_multi_gpu, and carries
-    --ntasks-per-gpu=1). n_gpus<2 keeps it in the else branch."""
+    --ntasks-per-gpu=1). n_gpus<2 keeps it in the else branch. The locus is
+    supplied explicitly: multi_sim_run_method='local' is the dispatch label, and
+    execution_mode='slurm' is what makes the sim allocation-resident."""
     monkeypatch.delenv("SLURM_JOB_ID", raising=False)
     run = _make_run(
         "gpu",
@@ -354,7 +359,7 @@ def test_gres_mode_single_gpu_local_keeps_ntasks_per_gpu(monkeypatch):
         multi_sim_run_method="local",
         gpu_alloc_mode="gres",
     )
-    full_cmd = _get_launch_cmd(run)
+    full_cmd = _get_launch_cmd(run, execution_locus="slurm")
     assert "--ntasks-per-gpu=1" in full_cmd
     assert "--gpus-per-task" not in full_cmd
     assert "--ntasks=" not in full_cmd  # '--ntasks-per-gpu=1' is not a '--ntasks=' match
