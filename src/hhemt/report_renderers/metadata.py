@@ -2671,7 +2671,29 @@ def _enrich_efficiency_rows(
             except (ValueError, TypeError):
                 _q_map = {}
             if isinstance(_q_map, dict) and main_job_id in _q_map:
-                enriched["queue_seconds_this_job"] = _q_map[main_job_id]
+                # COERCE AT THE BOUNDARY. `_q_map` came out of `json.loads`, so its values are
+                # JSON NUMBERS: `read_queue_ledger_seconds` declares `dict[str, float]` and
+                # assigns `float(rec["queue_s"])`. Assigning one straight into this
+                # `dict[str, str]` put a float on the row, and the sole consumer
+                # (`_build_slurm_efficiency_html`) does `(src.get(...) or "").strip()` -- which
+                # raised `AttributeError: 'float' object has no attribute 'strip'` and failed the
+                # whole `plot_workflow_performance` rule on both arms of the campaign.
+                #
+                # This is the ONE place a non-str enters this dict; every other value on the row
+                # comes from `csv.reader`/`csv.DictReader` and is a str by construction. Coercing
+                # HERE rather than at the read site closes it for every future consumer and makes
+                # the declared `list[dict[str, str]]` return type true again. `_job_purpose_map`
+                # in this same module already does exactly this for its own json-sourced fields.
+                #
+                # `:.0f`, NOT `str()`: this column is whole seconds and its OTHER arm formats
+                # `f"{_slurm_seconds(_planned_raw):.0f}"`, so `str(42.0)` would render "42.0"
+                # beside the fallback arm's "42" in the same column. An unparseable value is
+                # dropped to "" rather than rendered, so that row falls back exactly as it does
+                # today.
+                try:
+                    enriched["queue_seconds_this_job"] = f"{float(_q_map[main_job_id]):.0f}"
+                except (TypeError, ValueError):
+                    enriched["queue_seconds_this_job"] = ""
         out.append(enriched)
 
     # Chronological by job id where it parses -- job ids increase monotonically on a

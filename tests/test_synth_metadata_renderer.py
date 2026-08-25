@@ -1522,8 +1522,10 @@ def test_queue_column_falls_back_to_slurm_planned_and_discloses_its_source():
     fail for the right reason -- `"54" in html` matches a memory figure, a percentage, or a job
     id -- so each arm extracts the Queue column's own cell and its provenance tooltip.
 
-    THREE ARMS, because a fallback has three outcomes and one assertion cannot tell a working
-    preference order from a fallback that always fires.
+    FOUR ARMS, because a two-source preference order has four outcomes and one assertion cannot
+    tell a working preference order from a fallback that always fires. The arm numbering ran 2/3/4
+    with no ARM 1 for as long as the toolkit-preferred branch was untested -- which is exactly the
+    branch that failed in production.
     """
     import re as _re
 
@@ -1542,6 +1544,23 @@ def test_queue_column_falls_back_to_slurm_planned_and_discloses_its_source():
         return _cell_text(raw), (title.group(1) if title else "")
 
     job = {"JobID": "777", "Elapsed": "00:01:40", "NCPUS": "1"}
+
+    # ARM 1: the toolkit map is PRESENT and WINS over Planned. This arm did not exist, and its
+    # absence is why `plot_workflow_performance` failed in production on both campaign arms:
+    # `queue_seconds_by_jobid` is a JSON object of NUMBERS (read_queue_ledger_seconds returns
+    # `dict[str, float]`), so the preferred branch put a float on a `dict[str, str]` row and the
+    # consumer's `(src.get(...) or "").strip()` raised AttributeError. Every other arm below
+    # leaves that map empty, so the whole preferred branch was untested.
+    #
+    # Two assertions, because one cannot separate "the branch runs" from "the branch is right":
+    # the value must be the toolkit's 33 rather than Planned's 54 (preference order), and it must
+    # read "33" rather than "33.0" (the column is whole seconds, matching the fallback's `:.0f`).
+    val_toolkit, why_toolkit = queue_cell(
+        {"777": {"job": {**job, "Planned": "00:00:54"}}},
+        {("", "", ""): {"queue_seconds_by_jobid": json.dumps({"777": 33.0})}},
+    )
+    assert val_toolkit == "33", f"the toolkit map must win and render whole seconds, got {val_toolkit!r}"
+    assert "own per-job queue record" in why_toolkit, f"provenance did not name the toolkit map: {why_toolkit!r}"
 
     # ARM 2 (the defect this fixes): no toolkit value, Planned present -> fallback fires.
     val, why = queue_cell({"777": {"job": {**job, "Planned": "00:00:54"}}}, {})
