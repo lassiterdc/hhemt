@@ -262,3 +262,10 @@ non_breaking_allowlist:
       _OUTPUT_EXT_BY_RENDERER, so the C-LAYOUT property this file is listed for
       (figure filenames) is untouched. Same class as the additive
       _OUTPUT_EXT_BY_RENDERER-key entry above.
+  - path: src/hhemt/config/loaders.py
+    justification: >-
+      oe-a-node-local-preflight-guard Option F — message-only diagnostic wrapper
+      around the missing-config FileNotFoundError in _load_config. The exception
+      TYPE is unchanged and no caller's behaviour changes; adds no on-disk
+      analysis-tree layout, no _version.json field and no consolidated-output
+      variable. Same class as the case_manifest.py / reprex_config.py entries.
