@@ -2939,6 +2939,7 @@ rule prepare_scenario:
                 model_resources = sim_resources
                 model_threads = snakemake_threads
 
+            _loc = self._resolved_execution_locus
             snakefile_content += f'''
 rule run_{model_type}:
     input: "{sim_input}"
@@ -2959,7 +2960,7 @@ rule run_{model_type}:
             --model-type {model_type} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             --flag-output {{output}} \\
-            --rule-name run_{model_type} {"--execution-locus " + self._resolved_execution_locus if self._resolved_execution_locus else ""}\\
+            --rule-name run_{model_type} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {{wildcards.event_id}} \\
             > {{log}} 2>&1
         """
@@ -8413,6 +8414,7 @@ onerror:
                         ),
                     )
                 else:
+                    _loc = self._base_builder._resolved_execution_locus
                     snakefile_content += f'''rule {sim_rule_name}:
     input:
         "{upstream_flag}",
@@ -8434,7 +8436,7 @@ onerror:
             --sa-id {sa_id} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             --flag-output {{output}} \\
-            --rule-name {sim_rule_name} {"--execution-locus " + self._base_builder._resolved_execution_locus if self._base_builder._resolved_execution_locus else ""}\\
+            --rule-name {sim_rule_name} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {event_id} \\
             > {{log}} 2>&1
         """
