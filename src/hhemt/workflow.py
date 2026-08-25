@@ -36,6 +36,7 @@ from hhemt.config.hpc_system import (
     system_directory_bind,
 )
 from hhemt.exceptions import ConfigurationError, WorkflowError
+from hhemt.orchestration import resolve_execution_locus
 from hhemt.report_plot_ids import (
     _OUTPUT_EXT_BY_RENDERER,
     LABEL_GLOBALS_BLOCK,
@@ -6070,25 +6071,11 @@ exit $snakemake_status
             return result
 
         # Standard workflow submission (existing logic)
-        if mode == "auto":
-            # Execution locus is a CONFIG property, not an environment property.
-            # `1_job_many_srun_tasks` and `batch_job` both return above, so this
-            # line is reachable ONLY with multi_sim_run_method == "local".
-            # Resolving to "local" preserves login-node behaviour exactly and
-            # removes only the in-allocation promotion (a locally-configured
-            # analysis silently becoming a SLURM workflow because $SLURM_JOB_ID
-            # happened to be set).
-            # Do NOT reintroduce a read of analysis.in_slurm HERE. Promoting a
-            # `local`-family analysis to a slurm workflow because $SLURM_JOB_ID
-            # happened to be set is the defect this branch prevents (8249167f).
-            # Do NOT make in_slurm config-only either, but the REASON has CHANGED:
-            # run_simulation.py no longer reads it at all -- its `using_srun` now
-            # takes a driver-threaded --execution-locus, so per-rank GPU binding
-            # (Gotcha 32) follows the resolved locus rather than the environment.
-            # The live consumers are resource_management.py:139/:177 (SIZING) and
-            # workflow.py's _generate_submission_script assert (:3742) and tmux
-            # module-load gate (:5433).
-            mode = "local"
+        # The two slurm families return above, so this line is reachable only with
+        # multi_sim_run_method == "local" and the call is equivalent to the former
+        # `mode = "local"` fallthrough. Delegating rather than restating removes the
+        # dependence on that reachability invariant holding forever.
+        mode = resolve_execution_locus(mode, self.cfg_analysis.multi_sim_run_method)
 
         # [Q8] Defect 2: publish the resolved execution LOCUS to the report-tail
         # partition predicate in _make_rule_emission_context, which runs inside
@@ -6234,32 +6221,7 @@ exit $snakemake_status
             if multi_sim_run_method_override is not None
             else self.cfg_analysis.multi_sim_run_method
         )
-        if execution_mode == "auto":
-            # Execution locus follows CONFIG, never the environment. Unlike
-            # submit_workflow, the batch_job / 1_job_many_srun_tasks branches do
-            # NOT return above this point, so effective_method can be any of the
-            # three and the mapping must be explicit. batch_job and
-            # 1_job_many_srun_tasks both mean "use the scheduler", so a login-node
-            # invocation submits rather than running consolidation/render compute
-            # on a shared login node.
-            # Do NOT read analysis.in_slurm HERE. Promoting a `local`-family
-            # analysis to a slurm workflow because $SLURM_JOB_ID happened to be
-            # set is the defect this branch exists to prevent (8249167f), and it
-            # is still a defect.
-            # Do NOT make in_slurm config-only either, but the REASON has CHANGED:
-            # run_simulation.py no longer reads it at all -- its `using_srun` now
-            # takes a driver-threaded --execution-locus. The live consumers are
-            # resource_management.py:139/:177 (allocation-derived SIZING) and
-            # workflow.py's own _generate_submission_script assert (:3742) and
-            # tmux module-load gate (:5433).
-            # No line number is pinned into run_simulation.py on purpose: the old
-            # form pinned :820, the predicate was already at :827, and nothing
-            # gates a line reference inside a comment.
-            mode: Literal["local", "slurm"] = (
-                "local" if effective_method == "local" else "slurm"
-            )
-        else:
-            mode = execution_mode  # type: ignore[assignment]
+        mode: Literal["local", "slurm"] = resolve_execution_locus(execution_mode, effective_method)
 
         if verbose:
             print(
@@ -6515,32 +6477,7 @@ exit $snakemake_status
         from hhemt.static_snakefile_generator import write_static_snakefile
 
         effective_method = self.cfg_analysis.multi_sim_run_method
-        if execution_mode == "auto":
-            # Execution locus follows CONFIG, never the environment. Unlike
-            # submit_workflow, the batch_job / 1_job_many_srun_tasks branches do
-            # NOT return above this point, so effective_method can be any of the
-            # three and the mapping must be explicit. batch_job and
-            # 1_job_many_srun_tasks both mean "use the scheduler", so a login-node
-            # invocation submits rather than running consolidation/render compute
-            # on a shared login node.
-            # Do NOT read analysis.in_slurm HERE. Promoting a `local`-family
-            # analysis to a slurm workflow because $SLURM_JOB_ID happened to be
-            # set is the defect this branch exists to prevent (8249167f), and it
-            # is still a defect.
-            # Do NOT make in_slurm config-only either, but the REASON has CHANGED:
-            # run_simulation.py no longer reads it at all -- its `using_srun` now
-            # takes a driver-threaded --execution-locus. The live consumers are
-            # resource_management.py:139/:177 (allocation-derived SIZING) and
-            # workflow.py's own _generate_submission_script assert (:3742) and
-            # tmux module-load gate (:5433).
-            # No line number is pinned into run_simulation.py on purpose: the old
-            # form pinned :820, the predicate was already at :827, and nothing
-            # gates a line reference inside a comment.
-            mode: Literal["local", "slurm"] = (
-                "local" if effective_method == "local" else "slurm"
-            )
-        else:
-            mode = execution_mode  # type: ignore[assignment]
+        mode: Literal["local", "slurm"] = resolve_execution_locus(execution_mode, effective_method)
 
         if verbose:
             print(
@@ -7478,19 +7415,14 @@ exit $snakemake_status
         """Map ``analysis_config.multi_sim_run_method`` (or None) to delete-executor mode.
 
         ``None`` or ``"local"`` → ``"local"``; ``"batch_job"`` or
-        ``"1_job_many_srun_tasks"`` → ``"slurm"``. The ``None`` branch covers
-        analyses whose ``cfg_analysis`` was loaded from a YAML that did not
-        explicitly set ``multi_sim_run_method`` — these are treated as
-        ``"local"`` by default, matching the pre-Phase-3 ``--cores 1`` behavior.
+        ``"1_job_many_srun_tasks"`` → ``"slurm"``. Thin delegation to
+        ``orchestration.resolve_execution_locus``, which states the rule once; this
+        method is KEPT rather than inlined so its callers and its V-P3.1 tests bind
+        to a stable name. The ``None`` branch covers the
+        ``override_multi_sim_run_method`` parameter's "no override" value — NOT an
+        unset config field, which Pydantic defaults to ``"local"``.
         """
-        if method is None or method == "local":
-            return "local"
-        if method in ("batch_job", "1_job_many_srun_tasks"):
-            return "slurm"
-        raise ConfigurationError(
-            field="multi_sim_run_method",
-            message=f"Unrecognized multi_sim_run_method={method!r} for delete-executor resolution",
-        )
+        return resolve_execution_locus(None, method)
 
     def _submit_delete_snakemake(
         self,
@@ -10017,34 +9949,9 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         """
         # Effective execution mode dispatch — mirror the analysis-level
         # reprocess auto-detect.
-        if execution_mode == "auto":
-            # Execution locus follows CONFIG, never the environment. Unlike
-            # submit_workflow, the batch_job / 1_job_many_srun_tasks branches do
-            # NOT return above this point, so effective_method can be any of the
-            # three and the mapping must be explicit. batch_job and
-            # 1_job_many_srun_tasks both mean "use the scheduler", so a login-node
-            # invocation submits rather than running consolidation/render compute
-            # on a shared login node.
-            # Do NOT read analysis.in_slurm HERE. Promoting a `local`-family
-            # analysis to a slurm workflow because $SLURM_JOB_ID happened to be
-            # set is the defect this branch exists to prevent (8249167f), and it
-            # is still a defect.
-            # Do NOT make in_slurm config-only either, but the REASON has CHANGED:
-            # run_simulation.py no longer reads it at all -- its `using_srun` now
-            # takes a driver-threaded --execution-locus. The live consumers are
-            # resource_management.py:139/:177 (allocation-derived SIZING) and
-            # workflow.py's own _generate_submission_script assert (:3742) and
-            # tmux module-load gate (:5433).
-            # No line number is pinned into run_simulation.py on purpose: the old
-            # form pinned :820, the predicate was already at :827, and nothing
-            # gates a line reference inside a comment.
-            mode: Literal["local", "slurm"] = (
-                "local"
-                if self.master_analysis.cfg_analysis.multi_sim_run_method == "local"
-                else "slurm"
-            )
-        else:
-            mode = execution_mode  # type: ignore[assignment]
+        mode: Literal["local", "slurm"] = resolve_execution_locus(
+            execution_mode, self.master_analysis.cfg_analysis.multi_sim_run_method
+        )
 
         if verbose:
             print(

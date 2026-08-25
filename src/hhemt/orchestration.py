@@ -16,6 +16,60 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Literal, Optional
 
+from hhemt.exceptions import ConfigurationError
+
+_SLURM_RUN_METHODS: tuple[str, ...] = ("1_job_many_srun_tasks", "batch_job")
+
+
+def resolve_execution_locus(
+    execution_mode: str | None,
+    multi_sim_run_method: str | None,
+) -> Literal["local", "slurm"]:
+    """THE resolver for execution locus. Every site needing a locus calls this.
+
+    An explicit ``execution_mode`` of ``"local"`` or ``"slurm"`` is an OVERRIDE and
+    passes through unchanged. That arm carries the ``[Q8]`` shape --
+    ``multi_sim_run_method="local"`` plus ``execution_mode="slurm"`` -- and is why a
+    caller handed an already-resolved mode needs no second term, unlike
+    ``workflow.py``'s report-tail predicate, which must reconstruct the override from
+    ``_resolved_execution_locus`` because by that point it is no longer readable off
+    the config. ``"auto"`` (or ``None``) falls back to the CONFIG family:
+    ``None``/``"local"`` -> ``"local"``; ``"batch_job"``/``"1_job_many_srun_tasks"``
+    -> ``"slurm"``. Any other value of either argument raises rather than defaulting.
+
+    Do NOT reintroduce a read of ``analysis.in_slurm`` here or at any caller.
+    Promoting a ``local``-family analysis to a slurm workflow because
+    ``$SLURM_JOB_ID`` happened to be set is the defect this rule exists to prevent
+    (``8249167f``): a synth fixture running inside an array element reached
+    ``generate_snakemake_config(mode="slurm")`` and tripped its max_concurrent_jobs
+    assert. ``in_slurm`` must ALSO not become config-only -- its live consumers are
+    ``resource_management.py`` (allocation-derived SIZING) and ``workflow.py``'s
+    ``_generate_submission_script`` assert and tmux module-load gate.
+    ``run_simulation.py``'s ``using_srun`` no longer reads it: that predicate CONSUMES
+    this function's result through a threaded ``--execution-locus`` and adds a
+    fail-safe family term, so it is a consumer, not another resolver.
+
+    A comment is not a gate. ``690cd765`` cited a PREVIOUS form of this text as
+    authority for making ``using_srun`` config-only, which stripped srun from the
+    local-family + ``execution_mode="slurm"`` path entirely. Verify against the
+    predicate, never against this docstring.
+    """
+    if execution_mode in ("local", "slurm"):
+        return execution_mode  # type: ignore[return-value]
+    if execution_mode not in (None, "auto"):
+        raise ConfigurationError(
+            field="execution_mode",
+            message=f"Unrecognized execution_mode={execution_mode!r}; expected 'auto', 'local' or 'slurm'.",
+        )
+    if multi_sim_run_method is None or multi_sim_run_method == "local":
+        return "local"
+    if multi_sim_run_method in _SLURM_RUN_METHODS:
+        return "slurm"
+    raise ConfigurationError(
+        field="multi_sim_run_method",
+        message=f"Unrecognized multi_sim_run_method={multi_sim_run_method!r} for execution-locus resolution",
+    )
+
 if TYPE_CHECKING:
     from hhemt.config.analysis import ClearRawValue, ForceRerunValue
 

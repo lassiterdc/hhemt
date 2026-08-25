@@ -29,6 +29,7 @@ from hhemt.execution import (
     SlurmExecutor,
 )
 from hhemt.log import TRITONSWMM_analysis_log
+from hhemt.orchestration import resolve_execution_locus
 from hhemt.paths import AnalysisPaths
 from hhemt.plot_analysis import TRITONSWMM_analysis_plotting
 from hhemt.plot_utils import print_json_file_tree
@@ -2642,39 +2643,14 @@ class TRITONSWMM_analysis:
             which = "TRITON"
 
         # Determine execution mode
-        if execution_mode == "auto":
-            # Execution locus is a CONFIG property, not an environment property.
-            # `self.in_slurm` was the first disjunct here and is deliberately GONE:
-            # it promoted a `local`-configured analysis to a slurm workflow merely
-            # because $SLURM_JOB_ID was set, which is how a synth fixture running
-            # inside an array element reached generate_snakemake_config(mode="slurm")
-            # and tripped its max_concurrent_jobs assert.
-            # THIS IS THE SINGLE resolver for execution locus. cli.py and toolkit.py
-            # previously carried their own copies; both now pass "auto" and delegate
-            # here, so the rule is stated once.
-            # Do NOT reintroduce a read of self.in_slurm HERE. Promoting a
-            # `local`-family analysis to a slurm workflow because $SLURM_JOB_ID
-            # happened to be set is the defect this branch prevents (8249167f).
-            # Do NOT make in_slurm config-only either, but the REASON has CHANGED:
-            # run_simulation.py no longer reads it at all -- its `using_srun` now
-            # takes a driver-threaded --execution-locus, so per-rank GPU binding
-            # (Gotcha 32) follows the resolved locus rather than the environment.
-            # The live consumers are resource_management.py:139/:177 (SIZING) and
-            # workflow.py's _generate_submission_script assert (:3742) and tmux
-            # module-load gate (:5433).
-            # NOTE for whoever reads this next: the PREVIOUS form of this comment
-            # was cited by 690cd765 as authority for making using_srun config-only,
-            # which stripped the srun from the local-family + execution_mode="slurm"
-            # path entirely. A comment is not a gate; verify against the predicate.
-            if (
-                self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
-                or self.cfg_analysis.multi_sim_run_method == "batch_job"
-            ):
-                exec_mode = "slurm"
-            else:
-                exec_mode = "local"
-        else:
-            exec_mode = execution_mode
+        # THE rule lives in orchestration.resolve_execution_locus and is stated
+        # ONCE. This site used to BE the single resolver and said so; it was one
+        # of seven, three of which were verbatim copies of each other. Everything
+        # that comment carried -- the in_slurm prohibition (8249167f), why
+        # in_slurm must not become config-only, and the 690cd765 warning that a
+        # comment is not a gate -- now lives in that function's docstring, which
+        # is where a reader looking for the rule will land.
+        exec_mode = resolve_execution_locus(execution_mode, self.cfg_analysis.multi_sim_run_method)
 
         if wait_for_job_completion is None:
             wait_for_job_completion = exec_mode != "slurm"

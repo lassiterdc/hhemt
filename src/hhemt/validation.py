@@ -1977,7 +1977,6 @@ def preflight_validate(
 
 
 _NODE_LOCAL_ACK_ENV = "HHEMT_ALLOW_NODE_LOCAL_CONFIGS"
-_SLURM_RUN_METHODS = ("1_job_many_srun_tasks", "batch_job")
 
 
 def _iter_config_paths(cfg) -> list[tuple[str, Path]]:
@@ -2032,23 +2031,21 @@ def assert_configs_visible_cross_node(
     predicate, which needs a second ``_resolved_execution_locus`` term precisely because
     by that point the override has been folded in and is no longer readable off the config.
 
-    FOUR resolvers of this rule now exist and this is the fifth: ``analysis.py``'s
-    ``run()`` resolver, the submit builder's ``auto`` fallthrough (reachable only for
-    ``local``), and the two reprocess builders'. Measured 2026-08-25 at HEAD 2352431f,
-    all five agree on all nine (family, mode) cells. That is a snapshot, not a
-    guarantee: if a future change gives a resolver a term this one lacks, re-run the
-    3x3 rather than assuming the mirror still holds.
+    The rule itself is NOT restated here. It lives in
+    ``orchestration.resolve_execution_locus``, which this function calls and which
+    every other locus-needing site calls too. It formerly stood in seven places,
+    three of them verbatim copies, and two of those seven disagreed at
+    ``(auto, None)`` -- unreachable only because the config field is a ``Literal``
+    with a default. Do not re-derive the mapping here.
     """
     import os
     import tempfile
 
+    from hhemt.orchestration import resolve_execution_locus
+
     if os.environ.get(_NODE_LOCAL_ACK_ENV) == "1":
         return
-    if mode == "auto":
-        locus = "slurm" if cfg_analysis.multi_sim_run_method in _SLURM_RUN_METHODS else "local"
-    else:
-        locus = mode
-    if locus != "slurm":
+    if resolve_execution_locus(mode, cfg_analysis.multi_sim_run_method) != "slurm":
         return
 
     sys_tmp = Path(tempfile.gettempdir()).resolve()
