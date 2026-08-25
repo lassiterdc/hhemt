@@ -17,8 +17,18 @@ def uses_slurm() -> bool:
     return "SLURM_JOB_ID" in os.environ
 
 
-def is_scheduler_context() -> bool:
-    """Return True when any known HPC scheduler env var is present."""
+def on_scheduler_node() -> bool:
+    """Return True when any known HPC scheduler env var is present.
+
+    SAFETY GUARD, not tier routing. Its 17 tier-routing callers -- the
+    `skipif(..., reason="Only runs on non-HPC systems.")` marks inherited from the
+    deleted `test_PC_*` / `test_UVA_*` / `test_frontier_*` / `test_PILOT_*` scheme --
+    were removed, because they routed traffic away from a tier that no longer
+    exists. What survives is a different population: the two run-proof modules whose
+    marks already read "do not launch on an HPC scheduler node", where the guard is
+    a deliberate choice about a live-deposit test and a local coupled run-proof.
+    The name now says which of the two it is.
+    """
     scheduler_vars = (
         "SLURM_JOB_ID",  # SLURM
         "PBS_JOBID",  # PBS

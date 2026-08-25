@@ -3,12 +3,6 @@
 import pytest
 import xarray as xr
 
-import tests.utils_for_testing as tst_ut
-
-pytestmark = pytest.mark.skipif(
-    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-)
-
 
 def test_to_datatree_skips_missing_modes(norfolk_all_models_analysis):
     """Absent consolidated outputs produce a tree with only the root node."""

@@ -6,9 +6,6 @@ import xarray as xr
 import tests.utils_for_testing as tst_ut
 
 pytestmark = [
-    pytest.mark.skipif(
-        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-    ),
     # Every test here drives a real single-sim pipeline against the compiled
     # TRITON binaries. `tritonswmm_cpu_compiled` skips when cmake+mpic++ are
     # absent and HARD-FAILS under HHEMT_REQUIRE_COMPILE_TIER=1.

@@ -14,13 +14,6 @@ This is the end-to-end check of the DQ7a per-row dedup generalization +
 DQ7b ``--target-partition`` threading. Snakefile generation only (no compile).
 """
 
-import pytest
-
-import tests.utils_for_testing as tst_ut
-
-pytestmark = [
-    pytest.mark.skipif(tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."),
-]
 
 
 def _setup_rule_block(snakefile_text: str, target_id: int) -> str:

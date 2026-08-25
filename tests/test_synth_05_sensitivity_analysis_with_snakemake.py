@@ -9,9 +9,6 @@ import tests.utils_for_testing as tst_ut
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
     pytest.mark.skipif(
-        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-    ),
-    pytest.mark.skipif(
         tst_ut.compile_toolchain_unavailable() and not tst_ut.require_compile_tier(),
         reason=(
             "TRITON-SWMM/SWMM compile toolchain (cmake + mpic++) absent; this "
@@ -333,9 +330,6 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
         assert figure.exists(), f"Expected benchmarking figure missing: {figure}"
 
 
-@pytest.mark.skipif(
-    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-)
 @pytest.mark.slow
 def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis):
     """Regression (reprocess-rebuild-divergence-fix).
@@ -518,7 +512,6 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
     )
 
 
-@pytest.mark.skipif(tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems.")
 @pytest.mark.slow
 def test_master_consolidation_tolerates_incomplete_subanalysis(synth_sensitivity_analysis):
     """Regression (sensitivity-consolidation-tolerate-incomplete).
@@ -1015,7 +1008,6 @@ def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
     )
 
 
-@pytest.mark.skipif(tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems.")
 @pytest.mark.slow
 def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analysis):
     """Behavioral regression (reprocess-render-report-snakefile-selection, R4).

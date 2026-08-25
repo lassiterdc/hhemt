@@ -13,9 +13,6 @@ import tests.utils_for_testing as tst_ut
 
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
-    pytest.mark.skipif(
-        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-    ),
     # Both tests execute real triton-only / swmm-only sensitivity workflows.
     # Skips without cmake+mpic++; HARD-FAILS under HHEMT_REQUIRE_COMPILE_TIER=1.
     pytest.mark.usefixtures("tritonswmm_cpu_compiled"),

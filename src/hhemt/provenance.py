@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import importlib.metadata
 import socket
+from pathlib import Path  # module-scope: the `"Path"` parameter annotations below are
+# type-only (this module sets `from __future__ import annotations`), but ruff resolves
+# annotation names against module scope and reported F821 -- which is inside CI's gating
+# `--select=E9,F63,F7,F82` set. Function bodies keep their local `_Path` alias unchanged.
 from types import SimpleNamespace
 
 from rocrate.model.contextentity import ContextEntity

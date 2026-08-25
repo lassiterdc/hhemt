@@ -38,7 +38,7 @@ pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
     pytest.mark.slow,
     pytest.mark.skipif(
-        tst_ut.is_scheduler_context(),
+        tst_ut.on_scheduler_node(),
         reason="Local coupled run-proof; do not launch on an HPC scheduler node.",
     ),
 ]

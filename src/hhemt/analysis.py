@@ -2652,9 +2652,20 @@ class TRITONSWMM_analysis:
             # THIS IS THE SINGLE resolver for execution locus. cli.py and toolkit.py
             # previously carried their own copies; both now pass "auto" and delegate
             # here, so the rule is stated once.
-            # Do NOT reintroduce a read of self.in_slurm, and do NOT make in_slurm
-            # itself config-only: run_simulation.py:820 still derives `using_srun`
-            # from it for Gotcha-32 per-rank GPU binding.
+            # Do NOT reintroduce a read of self.in_slurm HERE. Promoting a
+            # `local`-family analysis to a slurm workflow because $SLURM_JOB_ID
+            # happened to be set is the defect this branch prevents (8249167f).
+            # Do NOT make in_slurm config-only either, but the REASON has CHANGED:
+            # run_simulation.py no longer reads it at all -- its `using_srun` now
+            # takes a driver-threaded --execution-locus, so per-rank GPU binding
+            # (Gotcha 32) follows the resolved locus rather than the environment.
+            # The live consumers are resource_management.py:139/:177 (SIZING) and
+            # workflow.py's _generate_submission_script assert (:3742) and tmux
+            # module-load gate (:5433).
+            # NOTE for whoever reads this next: the PREVIOUS form of this comment
+            # was cited by 690cd765 as authority for making using_srun config-only,
+            # which stripped the srun from the local-family + execution_mode="slurm"
+            # path entirely. A comment is not a gate; verify against the predicate.
             if (
                 self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
                 or self.cfg_analysis.multi_sim_run_method == "batch_job"
@@ -5286,8 +5297,13 @@ class TRITONSWMM_analysis:
                     row["n_gpus"] = (self.cfg_analysis.n_gpus or 0) if self.cfg_analysis.run_mode == "gpu" else 0
                     row["backend_used"] = scen.log.triton_backend_used.get()
 
-                if self.in_slurm:
-                    row["n_nodes"] = 1 if model_type == "swmm" else self.cfg_analysis.n_nodes or 1
+                # Populated UNCONDITIONALLY: n_nodes is a CONFIG property, and gating the
+                # column on $SLURM_JOB_ID meant the same test saw a different df_status
+                # inside an allocation than outside one -- a silently different system
+                # under test, which is why the scheduler skip-gate could not be removed.
+                # No consumer depends on the column's absence; every other n_nodes read
+                # in the tree goes to cfg_analysis or a zarr attr, not this column.
+                row["n_nodes"] = 1 if model_type == "swmm" else self.cfg_analysis.n_nodes or 1
 
                 # Actual resources (model-dependent availability)
                 if model_type == "tritonswmm":

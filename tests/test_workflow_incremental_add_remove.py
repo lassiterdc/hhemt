@@ -14,13 +14,6 @@ import re
 
 import pytest
 
-import tests.utils_for_testing as tst_ut
-
-pytestmark = pytest.mark.skipif(
-    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-)
-
-
 _SIM_RULE_RE = re.compile(r"^rule (simulation_sa_[A-Za-z0-9_]+):", re.MULTILINE)
 
 
