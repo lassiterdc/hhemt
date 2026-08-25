@@ -53,20 +53,28 @@ from hhemt._filelock_compat import resolve_filelock
 #: Never record one without the other — record TRITON_SOURCE_DESCRIPTOR.
 TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 
-#: The commit the Norfolk experiments run. A STRICT ADVANCE over the previous ORNL pin
-#: 3a832f7d: `git merge-base --is-ancestor 3a832f7d5eed 5d2ad1e8adf9` exits 0 and
-#: `git rev-list --count 3a832f7d5eed..5d2ad1e8adf9` is 7, so the re-point is a
-#: fast-forward in content terms, not a codebase swap, and the previous pin stays
-#: reachable both as an ancestor and via its own refs/pins anchor. The seven carry the
-#: coupled-resume and extbc-ghost-ring fixes; `hhemt.model_defects` classifies 3a832f7d
-#: as CARRYING two registered defects (TRITON-RESUME-DEPTH-SCATTER and
-#: TRITON-RESUME-EXTBC-GHOST-RING, both via `also_present_set`) and this pin as carrying
-#: none. The suite was validating coupled-resume behaviour against a build the toolkit's
-#: own registry already called defective.
+#: `main` on the fork. NOT AN ANCESTRY ADVANCE over the previous pin 5d2ad1e8, and the
+#: distinction is load-bearing: `git merge-base --is-ancestor 5d2ad1e8adf9 21e666d6`
+#: exits 1, because 5d2ad1e8 sits on the branch `instrumented/extbc-ghost-probe` while
+#: this sha sits on `main`, which carries the SAME ghost-ring fix CHERRY-PICKED onto
+#: 9db367dd (probes excluded) plus the RUN INFO GPU-device-name emission. Ancestry cannot
+#: express a cherry-pick any more than it can express a revert, so DO NOT reintroduce an
+#: is-ancestor assertion here — it would fail on a correct pin. `hhemt.model_defects`
+#: already records this sha as SHA_MAIN_GHOST_RING_AND_GPU and content-verifies the
+#: equivalence (src/ghost_ring.h blob-identical to 5d2ad1e8; src/triton.h
+#: whitespace-normalised identical once the probe blocks are stripped), and lists it in
+#: the `known_absent_in` set of ALL THREE registered defects — so this pin carries none.
+#: WHAT THE SAFETY ARGUMENT NOW RESTS ON. The previous pin's comment justified the move by
+#: strict advance ("the fetch only ADDS objects"). That argument does not apply here. The
+#: property still holds, by a different mechanism, MEASURED rather than argued: a fetch
+#: never deletes objects, and `refs/pins/{sha}` anchors survive `fetch --prune` under the
+#: `refs/remotes/origin/*` destination (two-arm probe: pin ref intact after a real
+#: repoint+prune; the canonical's own refs/pins count went 4 -> 5 across the live repair).
+#: So 5d2ad1e8 stays reachable for any borrower still on it.
 #: THIS CONSTANT AND `test_case_builder.py`'s config write MUST MOVE TOGETHER: a
 #: provisioner pin that differs from the config pin raises ConfigurationError on every
 #: synth construction (`system.py::_verify_tritonswmm_pin`).
-TRITON_PIN = "5d2ad1e8adf9a85d7df14e885b76e59a10f9a98b"
+TRITON_PIN = "21e666d6e0efc3383344813853386aaba1474785"
 
 #: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
 #: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.
