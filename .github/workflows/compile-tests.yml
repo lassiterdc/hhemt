@@ -51,7 +51,7 @@ jobs:
         with:
           activate-environment: hhemt
           # environment.yaml (NOT environment-lock.yaml). The lock is NOT a fix:
-          # its own `pip:` block still carried `swmmio==0.8.5` with no pip-side
+          # its own `pip:` block still carried `swmmio==0.8.2` with no pip-side
           # pyswmm pin, so `conda env create -f environment-lock.yaml` re-ran the
           # identical downgrade (pyswmm 2.0.1 -> 1.5.1) — a conda-env-export lock
           # records observed state, not a solvable spec, and cannot even reproduce
@@ -66,14 +66,16 @@ jobs:
           auto-activate-base: false
 
       - name: Install swmmio (--no-deps — preserve conda pyswmm 2.x / numpy 1.x)
-        # swmmio 0.8.5 metadata caps `pyswmm<2.0` and `numpy<2.0`. A dependency-
-        # resolving install would DOWNGRADE the conda pyswmm 2.0.1 -> 1.5.1 (breaking
-        # prepare_scenario's SWMM-runoff step upstream of every render) and clobber a
-        # dozen conda packages with PyPI wheels. hhemt only uses `swmmio.Model` (.inp
-        # parsing) — swmmio imports pyswmm solely in its CLI wrapper and own tests — so
-        # the cap is not load-bearing and --no-deps is safe. swmmio's real runtime deps
-        # (geojson / pyshp / networkx / numpy / pandas / pyproj / ...) come from conda.
-        run: pip install --no-deps "swmmio==0.8.5"
+        # --no-deps prevents `pip install -U` from touching the conda graph at all.
+        # The HISTORICAL hazard was swmmio 0.8.5, whose metadata capped `pyswmm<2.0`
+        # and `numpy<2.0`, so a resolving install DOWNGRADED the conda pyswmm
+        # 2.0.1 -> 1.5.1 (breaking prepare_scenario's SWMM-runoff step upstream of
+        # every render). At the pinned 0.8.2 that risk is gone — it declares no
+        # `pyswmm` requirement and its numpy/pandas entries are floors, not caps — so
+        # --no-deps now guards only against PyPI wheels displacing conda's
+        # numpy/pandas. swmmio's real runtime deps (geojson / pyshp / networkx /
+        # numpy / pandas / pyproj / ...) come from conda.
+        run: pip install --no-deps "swmmio==0.8.2"
 
       - name: Install project (editable, test extras)
         # `--no-deps`: the conda env (environment.yaml) already provides the full

@@ -56,7 +56,7 @@ conda env create -f environment.yaml
 conda activate hhemt
 
 # Both post-create steps are REQUIRED (see docs/how-to/installation.md)
-pip install --no-deps "swmmio==0.8.5"
+pip install --no-deps "swmmio==0.8.2"
 pip install -e . --no-deps
 ```
 
@@ -71,7 +71,7 @@ conda env create -f environment.yaml
 # Activate
 conda activate hhemt
 
-pip install --no-deps "swmmio==0.8.5"
+pip install --no-deps "swmmio==0.8.2"
 pip install -e . --no-deps
 ```
 
@@ -87,7 +87,7 @@ conda activate hhemt
 conda env update -f environment.yaml --prune
 
 # Re-apply the two --no-deps post-create steps
-pip install --no-deps "swmmio==0.8.5"
+pip install --no-deps "swmmio==0.8.2"
 pip install -e . --no-deps
 ```
 
@@ -162,7 +162,7 @@ pip freeze > requirements-pinned.txt
 >
 > - `- hhemt==<version>` in the `pip:` block — the editable project install. It is
 >   un-findable on PyPI and aborts `conda env create`. **Delete it.**
-> - `- swmmio==0.8.5` in the `pip:` block — its `pyswmm<2.0` cap makes pip downgrade
+> - `- swmmio==0.8.2` in the `pip:` block — its `pyswmm<2.0` cap makes pip downgrade
 >   the conda `pyswmm 2.0.1`. **Delete it** (swmmio is installed post-create with
 >   `--no-deps`).
 > - `prefix: /home/...` — leaks a machine-local path. **Delete it.**
@@ -193,7 +193,7 @@ In your CI/CD configuration, provision from `environment.yaml` (never the lock) 
 
 - name: Install swmmio + project (both --no-deps)
   run: |
-    pip install --no-deps "swmmio==0.8.5"
+    pip install --no-deps "swmmio==0.8.2"
     pip install -e . --no-deps
 ```
 
@@ -201,7 +201,7 @@ Or for Docker:
 
 ```dockerfile
 RUN conda env create -f environment.yaml
-RUN conda run -n hhemt pip install --no-deps "swmmio==0.8.5"
+RUN conda run -n hhemt pip install --no-deps "swmmio==0.8.2"
 RUN conda run -n hhemt pip install -e . --no-deps
 RUN echo "conda activate hhemt" >> ~/.bashrc
 ```

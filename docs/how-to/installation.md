@@ -9,11 +9,11 @@ The repo ships an `environment.yaml` that pins every runtime dependency includin
 ```bash
 conda env create -n hhemt --file environment.yaml
 conda activate hhemt
-pip install --no-deps "swmmio==0.8.5"
+pip install --no-deps "swmmio==0.8.2"
 pip install -e . --no-deps
 ```
 
-Both `--no-deps` flags are required, not optional. `swmmio 0.8.5` declares `pyswmm<2.0` and `numpy<2.0` in its metadata; a dependency-resolving install downgrades the conda-installed `pyswmm 2.0.1` to `1.5.1`, which breaks `prepare_scenario`'s SWMM-runoff step upstream of every render. hhemt uses only `swmmio.Model` (`.inp` parsing), so the cap is not load-bearing and `--no-deps` is safe; swmmio's real runtime dependencies are declared in `environment.yaml`'s conda section. `pip install -e . --no-deps` for the same reason (`pyproject.toml` leaves `pyswmm` unpinned). `scripts/check_env_lock_consistency.py` enforces this invariant in CI.
+Both `--no-deps` flags are required, not optional. `--no-deps` prevents `pip install -U` from touching the conda graph at all. The historical hazard was specific to `swmmio 0.8.5`, which declared `pyswmm<2.0` and `numpy<2.0`, so a dependency-resolving install downgraded the conda-installed `pyswmm 2.0.1` to `1.5.1` and broke `prepare_scenario`'s SWMM-runoff step upstream of every render. At the pinned `0.8.2` that risk is gone — it declares no `pyswmm` requirement at all and its numpy/pandas entries are floors, not caps — so `--no-deps` now guards only against PyPI wheels displacing conda's numpy/pandas. swmmio's real runtime dependencies are declared in `environment.yaml`'s conda section. `pip install -e . --no-deps` for the same reason (`pyproject.toml` leaves `pyswmm` unpinned). `scripts/check_env_lock_consistency.py` enforces this invariant in CI.
 
 `environment-lock.yaml` is a `conda env export` snapshot, useful for *inspecting* the exact versions of a known-good env. It is **not** a portable lockfile: it is single-platform, and recreating an env from it still runs its `pip:` block. If you use it, apply the same two `--no-deps` post-create steps above. For genuine bit-level cross-machine reproducibility, generate a multi-platform `conda-lock.yml` instead.
 
