@@ -3586,6 +3586,11 @@ class TRITONSWMM_analysis:
             # "nothing to do" DAG -- the rejected D3-A shape the stipulation names. The
             # argument gates only the render-stage FIGURE deletion, which is the member with
             # zero preview yield and an unbounded cost.
+            # Build-stamp reconciliation MUST precede the pre-delete: it can replace the
+            # force-rerun value, and _apply_force_rerun is what acts on it.
+            override_force_rerun = self._reconcile_build_stamp_force(
+                override_force_rerun, dry_run=dry_run
+            )
             self._apply_force_rerun(override_force_rerun, dry_run=dry_run)
 
             # Fold the five kept override_* kwargs into one carrier at this facade
@@ -4033,6 +4038,11 @@ class TRITONSWMM_analysis:
         # both filesystem mutations that the dry-run no-destructive-mutation
         # contract forbids.
         if not dry_run:
+            # Same reconciliation as the submit_workflow site. `dry_run=False` is correct
+            # and not a shortcut: this statement is already inside `if not dry_run:`.
+            override_force_rerun = self._reconcile_build_stamp_force(
+                override_force_rerun, dry_run=False
+            )
             self._apply_force_rerun(override_force_rerun)
 
         # Processed-output deletion (Phase 3). The per-model PROCESSING-LOG
@@ -4514,6 +4524,130 @@ class TRITONSWMM_analysis:
         self._workflow_builder._delete_flags_for_force_rerun(
             ResolvedForceRerunSpec(scope="sa", tokens=tuple(restart_ids), stage="simulate")
         )
+
+    def _reconcile_build_stamp_force(self, override_force_rerun, *, dry_run: bool = False):
+        """Escalate the force-rerun STAGE to 'render' when the figure tier was built by
+        a different toolkit build than the one now running. Returns the (possibly
+        replaced) force-rerun value; callers MUST use the return value.
+
+        WHY THIS EXISTS. `provenance.assert_plots_match_running_build` asserts that every
+        figure sidecar carries the running build's sha, and NOTHING in the toolkit
+        maintained that invariant: `collect_plot_stamps` had exactly one consumer -- the
+        guard that raises. The fixture layer DOES detect the sha move
+        (`tests/conftest.py::_builder_provenance` embeds `toolkit_sha` and `_marker_state`
+        returns "stale"), but its remedy is `run(from_scratch=False)`, a RESUME -- and the
+        toolkit sha is not a Snakemake rerun trigger, so every plot rule whose output
+        already exists is skipped and the sidecars keep the old sha through a rebuild that
+        reports success. Measured 2026-08-25 on the laptop fixture cache: both completion
+        markers carried `toolkit_sha=20176303ebb1` while 10/10 `synth_multi_sim` sidecars
+        still carried the earlier `b62cc6d0ae86`.
+
+        WHERE IT IS CALLED, AND WHY BOTH. The reuse decision is the only place the
+        invariant can be established. There are exactly TWO force-rerun pre-delete sites in
+        this class -- `submit_workflow` and `reprocess` -- and `reprocess` does NOT route
+        through `submit_workflow`. Both call this. Wiring only the first leaves the
+        reprocess DAG's `rule render_report` raising `StalePlotsError` from inside a
+        Snakemake subprocess, which surfaces as an opaque "Snakemake reprocess failed".
+
+        BOUNDED BY CONSTRUCTION. `_FLOOR_FLAG_PREFIXES["render"]` is empty, so no completion
+        flag is deleted; and `_apply_force_rerun` gates
+        `_invalidate_processing_log_for_force_rerun` on `stage in ("simulate","process")`,
+        so a render floor cannot re-arm clear-raw or re-run processing. Blast radius is
+        exactly the figure tier, and `_delete_flags_for_force_rerun`'s render branch already
+        exempts `plots/eda/` (those come from the non-Snakemake in-process `eda()` facade
+        and no rule regenerates them). Measured cost on the synth multi_sim fixture: the
+        eight plot rules total 56 s against 378 s for the whole pipeline, paid once per sha
+        move rather than once per test.
+
+        NOT SILENT, AND THE MESSAGE MATCHES THE ACTION. A self-healing guard cannot detect
+        the mis-resolution it repairs, so EVERY detected mismatch logs at WARNING -- including
+        the branch that declines to act, because the mismatch is a fact about the tree either
+        way. The log is emitted AFTER the disposition is decided and names the disposition
+        actually taken; it never asserts an escalation that did not happen. The guard in
+        `render_report` stays UNCHANGED as the fail-closed backstop for paths that bypass both
+        call sites (`Bundle.regenerate_report`, `CombinedBundle.regenerate_report`, a direct
+        `render_report()`).
+        """
+        import logging  # function-local, matching this module's idiom (analysis.py:3128)
+
+        from hhemt.config.analysis import ForceRerunSpec
+        from hhemt.provenance import collect_plot_stamps, producing_stamp
+
+        if dry_run:
+            # A dry run previews the DAG and must not destroy the deliverable it is
+            # previewing -- the same argument that gates the figure deletion inside
+            # _delete_flags_for_force_rerun, which carries its own `and not dry_run`.
+            #
+            # KNOWN, DELIBERATE SILENCE: returning here is BEFORE the stamp read, so a
+            # dry run emits no mismatch warning at all. An operator previewing a run on a
+            # stale tree therefore gets no signal from this reconciler -- they get it from
+            # the guard, but only later, at the real render. Moving the stamp read above
+            # this return would fix that for the cost of one rglob over `plots/` on every
+            # preview, and is a defensible revision; it is NOT done here because a preview
+            # that warned about a mismatch it would not act on is the same
+            # message-exceeds-action shape this method was just corrected for.
+            return override_force_rerun
+
+        _keys, _n = collect_plot_stamps(self.analysis_paths.analysis_dir)
+        _run = producing_stamp()
+        _mine = (
+            str(_run.get("hhemt_sha") or "").strip(),
+            str(_run.get("hhemt_dirty") or "unknown"),
+        )
+        # Reconcile ONLY on a positive mismatch. `_n == 0` (nothing rendered yet) and
+        # `not _keys` (figures predate the capture site) are NOT mismatches this can repair
+        # by deleting -- there is nothing to delete -- and `not _mine[0]` means the running
+        # build is unidentifiable, in which case forcing a re-render would restamp figures
+        # with an empty sha. All three fall through to the guard, which reports them
+        # accurately at render time.
+        if not (_keys and _mine[0] and _keys != {_mine}):
+            return override_force_rerun
+
+        _resolved = (
+            override_force_rerun
+            if override_force_rerun is not None
+            else self.cfg_analysis.force_rerun
+        )
+        if not isinstance(_resolved, ForceRerunSpec):
+            _resolved = ForceRerunSpec.model_validate(_resolved)
+        # A render floor is the WEAKEST floor, so an existing simulate/process/consolidate
+        # force must NOT be relaxed to it. Escalate the SUBJECT to "all" only when the stage
+        # actually moves to render: a subject-scoped render is rejected by
+        # ForceRerunSpec._reject_subject_scoped_render, so a VALID stage=render spec is
+        # already subject="all" and this is a no-op rather than a widening.
+        _escalating = _resolved.stage == "render" or _resolved.subject == "none"
+        # DECIDE, THEN LOG. The mismatch is worth recording on BOTH branches -- it is a fact
+        # about the tree either way, and a reader chasing a stale-figure report wants to see
+        # it even when this call took no action. But the message must name the disposition
+        # ACTUALLY taken: an unconditional "escalating ..." emitted before the branch would
+        # assert an action the non-escalating path does not perform, which is the same
+        # class of defect as the "rebuild" that reports success while rebuilding nothing --
+        # the very failure this reconciler exists to close. One log line per mismatch, so a
+        # grep yields one event per call rather than a pair to correlate.
+        if _escalating:
+            _disposition = (
+                "escalating force_rerun to (subject=all, stage=render) so the figure tier "
+                "is rebuilt by the running code -- this is the remedy StalePlotsError "
+                "itself prescribes and would otherwise refuse at render time"
+            )
+        else:
+            _disposition = (
+                f"NOT escalating -- the caller already forced stage={_resolved.stage!r}, a "
+                "stronger floor this must not relax to a render floor. That floor's cascade "
+                "re-fires the plot rules through their consolidate-flag input; if it does "
+                "not, assert_plots_match_running_build still refuses at render time, so "
+                "declining here never weakens the fail-closed backstop"
+            )
+        logging.getLogger(__name__).warning(
+            "build-stamp mismatch: %d figure sidecar(s) carry %s but this build is %s -- %s.",
+            _n,
+            sorted(s[:12] for s, _ in _keys),
+            _mine[0][:12],
+            _disposition,
+        )
+        if _escalating:
+            return ForceRerunSpec(subject="all", stage="render")
+        return override_force_rerun
 
     def _apply_force_rerun(self, override_force_rerun, *, dry_run: bool = False) -> None:
         """Resolve, validate, and pre-delete flags + per-scenario log records
