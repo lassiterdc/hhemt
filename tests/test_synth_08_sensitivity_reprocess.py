@@ -407,12 +407,27 @@ def _stub_delete(sa, calls, *, success):
 
 def test_failed_scoped_delete_raises_instead_of_consolidating_stale(
     synthetic_sensitivity_completed_isolated,
+    monkeypatch,
 ):
     """A scoped reprocess-delete that reports failure must RAISE, not fall through.
 
     Before Edit 3 the returned dict was discarded entirely, so this call completed
     'successfully' while the consolidated trees survived untouched.
     """
+    # The node-local preflight (validation.assert_configs_visible_cross_node, extended
+    # to the reprocess facades at d2a9fc9d) refuses a slurm-resolving dispatch whose
+    # configs sit under tempfile.gettempdir(). This fixture is a tmp_path clone and
+    # _force_hpc's batch_job is a PRETEND detached mode -- the same false-positive shape
+    # 8779568a already acknowledged at tests/test_synth_07_reprocess.py:358. The property
+    # under test is the scoped-delete failure contract, which has nothing to do with
+    # cross-node path visibility.
+    #
+    # execution_mode stays "auto" because it IS the subject: sensitivity_analysis.py
+    # gates route_delete_via_slurm on `execution_mode != "local"`, so any other value
+    # takes the delete off the SLURM route and `assert calls` below would fail instead.
+    # If a THIRD test needs this acknowledgement, extract a named fixture rather than
+    # copying the literal a third time.
+    monkeypatch.setenv("HHEMT_ALLOW_NODE_LOCAL_CONFIGS", "1")
     sa = synthetic_sensitivity_completed_isolated
     _force_hpc(sa)
     calls = []
