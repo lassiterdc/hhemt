@@ -51,9 +51,10 @@ jobs:
         with:
           activate-environment: hhemt
           # environment.yaml (NOT environment-lock.yaml). The lock is NOT a fix:
-          # its own `pip:` block still carried `swmmio==0.8.2` with no pip-side
-          # pyswmm pin, so `conda env create -f environment-lock.yaml` re-ran the
-          # identical downgrade (pyswmm 2.0.1 -> 1.5.1) — a conda-env-export lock
+          # its own `pip:` block still carried swmmio 0.8.5 with no pip-side
+          # pyswmm pin, and that release DID cap `pyswmm<2.0`, so `conda env create
+          # -f environment-lock.yaml` re-ran the identical downgrade
+          # (pyswmm 2.0.1 -> 1.5.1) — a conda-env-export lock
           # records observed state, not a solvable spec, and cannot even reproduce
           # its own conda pyswmm=2.0.1 line. The root-cause fix lives in
           # environment.yaml: swmmio is out of the `pip:` block (installed

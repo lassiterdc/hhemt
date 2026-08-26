@@ -17,18 +17,6 @@ This directory contains versioned snapshots of the TRITON-SWMM_toolkit environme
 - Ensuring identical environments across different machines
 - Long-term version tracking and reproducibility
 
-### 2. `requirements-pinned.txt`
-**Purpose:** Python pip requirements with all packages pinned to exact versions
-
-**Contents:**
-- All pip-installed packages with specific version numbers
-- Can be used as a fallback or for pip-only installations
-
-**Best For:**
-- Quick pip installations
-- CI/CD pipelines
-- Docker containers with pip-based installations
-
 ## How to Use These Files
 
 ### Option 1: Recreate Environment from `environment.yaml` (RECOMMENDED)
@@ -91,21 +79,6 @@ pip install --no-deps "swmmio==0.8.2"
 pip install -e . --no-deps
 ```
 
-### Option 3: Pip-Only Installation
-
-If you prefer or need to use pip only:
-
-```bash
-# Create a Python 3.11 environment
-conda create -n hhemt python=3.11
-
-# Activate it
-conda activate hhemt
-
-# Install from requirements file
-pip install -r requirements-pinned.txt
-```
-
 ## Version Information
 
 **Environment Created:** January 23, 2026
@@ -151,9 +124,6 @@ When you install new packages or update existing ones in your environment, regen
 ```bash
 # With conda
 conda env export -n hhemt > environment-lock.yaml
-
-# With pip
-pip freeze > requirements-pinned.txt
 ```
 
 > [!IMPORTANT]
@@ -162,9 +132,12 @@ pip freeze > requirements-pinned.txt
 >
 > - `- hhemt==<version>` in the `pip:` block — the editable project install. It is
 >   un-findable on PyPI and aborts `conda env create`. **Delete it.**
-> - `- swmmio==0.8.2` in the `pip:` block — its `pyswmm<2.0` cap makes pip downgrade
->   the conda `pyswmm 2.0.1`. **Delete it** (swmmio is installed post-create with
->   `--no-deps`).
+> - `- swmmio==<version>` in the `pip:` block — conda installs the whole `pip:` block
+>   with a single `pip install -U -r`, so ANY swmmio spec there joins one resolve that
+>   can displace conda-installed packages. The guard refuses it at every version, not
+>   just the one currently installed. **Delete it** (swmmio is installed post-create
+>   with `--no-deps`). Historically the concrete harm was swmmio 0.8.5, whose
+>   `pyswmm<2.0` cap downgraded the conda `pyswmm 2.0.1` to `1.5.1`.
 > - `prefix: /home/...` — leaks a machine-local path. **Delete it.**
 >
 > Also drop the `defaults` channel if the export adds it; this project is conda-forge only.
