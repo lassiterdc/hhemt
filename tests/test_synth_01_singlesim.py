@@ -160,10 +160,69 @@ def test_swmm_cross_model_consistency(synth_all_models_analysis_cached):
                 f"TRITON-SWMM link_ids missing {len(missing_links)} SWMM-only links."
             )
 
-        if len(ds_swmm_nodes["date_time"]) != len(ds_tritonswmm_nodes["date_time"]):
-            pytest.fail("Node time series timestep counts do not match")
-        if len(ds_swmm_links["date_time"]) != len(ds_tritonswmm_links["date_time"]):
-            pytest.fail("Link time series timestep counts do not match")
+        # A coupled run's SWMM output carries 0 or 1 FEWER report periods than a
+        # standalone run of the same window -- NEVER more, and never a gap in the
+        # interior. saveResults() (external/swmm/src/solver/swmm5.c:588) emits a
+        # period on `NewRoutingTime >= ReportTime`, and NewRoutingTime is a pure
+        # accumulation (routing.c:324) that is never re-anchored to a boundary.
+        # Interior periods are safe because the step that crosses a boundary
+        # overshoots it and `>=` catches the overshoot. Only the TERMINAL period
+        # needs an exact landing on RoutingDuration, because no later step exists
+        # to overshoot with. The standalone driver reaches that landing
+        # structurally: `do { swmm_step } while (elapsedTime > 0.0)` keeps stepping
+        # until SWMM reports the duration consumed, and the overshoot step takes
+        # execRouting's clamp branch (swmm5.c:550-555), which ASSIGNS
+        # nextRoutingTime = RoutingDuration. TRITON's loop
+        # (`while (simtime < sim_duration)`, triton.h:2152) exits on its own clock
+        # and never consults elapsedTime, so the clamp is never entered and the
+        # terminal period is dropped whenever accumulation lands short of the
+        # 1e-8 msec tolerance. Measured on this fixture: coupled hydraulics.out
+        # NUM_PERIODS=1079 vs standalone hydro.out NUM_PERIODS=1080, identical
+        # report_step and start_date.
+        #
+        # So equality is NOT the invariant. What IS guaranteed -- and what this
+        # asserts -- is strictly stronger on everything except that terminal
+        # element: same start, exact elementwise prefix (hence identical cadence
+        # and identical shared timestamps), and a deficit of at most one period.
+        # The span itself is guarded earlier and fail-closed by
+        # scenario.py::_assert_scenario_forcing_window_agreement, which raises
+        # when TRITON's sim_duration disagrees with the SWMM .inp window.
+        for kind, ds_swmm, ds_coupled in (
+            ("Node", ds_swmm_nodes, ds_tritonswmm_nodes),
+            ("Link", ds_swmm_links, ds_tritonswmm_links),
+        ):
+            t_swmm = ds_swmm["date_time"].values.tolist()
+            t_coupled = ds_coupled["date_time"].values.tolist()
+            # A prefix relation is VACUOUSLY satisfiable on an empty axis:
+            # [] == [][:0] is True, and an empty coupled axis against a
+            # length-1 standalone axis even produces a legitimate-looking
+            # deficit of 1. Both would report green on a state that should
+            # fail, so emptiness is rejected explicitly before either check
+            # below is allowed to speak. Measured, not assumed.
+            if not t_swmm or not t_coupled:
+                pytest.fail(
+                    f"{kind} time series: an axis is EMPTY (standalone="
+                    f"{len(t_swmm)}, coupled={len(t_coupled)}). The prefix and "
+                    "deficit checks below are vacuously satisfiable on an empty "
+                    "axis, so this is failed explicitly rather than passed "
+                    "silently."
+                )
+            deficit = len(t_swmm) - len(t_coupled)
+            if deficit < 0 or deficit > 1:
+                pytest.fail(
+                    f"{kind} time series: coupled run has {len(t_coupled)} report "
+                    f"periods against standalone's {len(t_swmm)} (deficit "
+                    f"{deficit}). Only a deficit of 0 or 1 is structurally "
+                    "possible; see the comment above."
+                )
+            if t_coupled != t_swmm[: len(t_coupled)]:
+                pytest.fail(
+                    f"{kind} time series: the coupled date_time axis is not an "
+                    "exact prefix of the standalone axis -- the two runs disagree "
+                    "on start time or reporting cadence, which the shared SWMM "
+                    ".inp window makes impossible unless something upstream "
+                    "diverged."
+                )
 
         if set(ds_swmm_nodes.data_vars) != set(ds_tritonswmm_nodes.data_vars):
             pytest.fail("Node time series data variables do not match")
