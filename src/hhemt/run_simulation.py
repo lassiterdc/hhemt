@@ -1291,6 +1291,48 @@ class TRITONSWMM_run:
             elif run_mode in ("serial", "openmp"):
                 launch_cmd_str = f"{exe} {cfg}"
             elif run_mode in ("mpi", "hybrid"):
+                # PRRTE sizes its slot pool from SLURM_TASKS_PER_NODE, never from the
+                # CPUs the step holds. Under the pytest harness's
+                # `--ntasks=1 --cpus-per-task=8` that reads 1, so `mpirun -np 2` is
+                # refused ("There are not enough slots available in the system") while
+                # the identical command succeeds off-scheduler, where PRRTE falls back
+                # to core count. Neither a hostfile `slots=` clause nor `--host N` can
+                # override it: under an RM the allocation wins, and `--host` then fails
+                # one stage later in the mapper (rc=213). So correct the value PRRTE
+                # reads. Do NOT reach for `--map-by :OVERSUBSCRIBE` -- it also clears
+                # the refusal, but it leaves every rank UNBOUND, and because
+                # OMP_PROC_BIND/OMP_PLACES are set above for every mode, two unbound
+                # ranks each map their OpenMP master to place 0 and land on ONE shared
+                # core. Measured, OMPI 5.0.10, 2 ranks x 1 thread: OVERSUBSCRIBE gives
+                # both ranks affinity {0,1}; this form gives {0,1} and {2,3}, identical
+                # to off-scheduler. Adding `--bind-to none` changes NOTHING -- PRRTE
+                # already unbinds an oversubscribed job.
+                # The guard tests BOTH spellings deliberately: PRRTE's SLURM RAS
+                # activates on SLURM_JOBID and NOT on SLURM_JOB_ID (measured: the
+                # former alone reproduces the refusal, the latter alone does not), so
+                # keying on SLURM_JOB_ID alone would skip the fix in an environment
+                # where the problem is present.
+                if "SLURM_JOBID" in os.environ or "SLURM_JOB_ID" in os.environ:
+                    _cpu_budget = int(os.environ.get("SLURM_NTASKS", 0)) * int(
+                        os.environ.get("SLURM_CPUS_PER_TASK", 1)
+                    )
+                    _needed = n_mpi_procs * n_omp_threads
+                    # `0 <` mirrors the srun-arm guard above: under the slurm-jobstep
+                    # MPI branch SLURM_NTASKS can read 0 in a correctly-sized job, and
+                    # raising on that would block a sim whose allocation is fine.
+                    if 0 < _cpu_budget < _needed:
+                        raise RuntimeError(
+                            f"MPI launch refused: this SLURM step holds {_cpu_budget} CPU(s) "
+                            f"(SLURM_NTASKS x SLURM_CPUS_PER_TASK) but run_mode "
+                            f"'{run_mode}' requires {n_mpi_procs} rank(s) x "
+                            f"{n_omp_threads} thread(s) = {_needed}. Raise the allocation "
+                            "or lower the compute config; proceeding would oversubscribe "
+                            "and make any timing this run produces meaningless."
+                        )
+                    # Declare the real slot pool. `or n_mpi_procs` covers the
+                    # SLURM_NTASKS=0 case the guard above deliberately tolerates.
+                    # PRRTE keeps its own over-request refusal against this value.
+                    env["SLURM_TASKS_PER_NODE"] = str(_cpu_budget or n_mpi_procs)
                 launch_cmd_str = f"mpirun -np {str(n_mpi_procs)} {exe} {cfg}"
         elif run_mode == "gpu":
             if using_srun:

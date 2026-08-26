@@ -8,6 +8,7 @@ These tests verify:
 - GPU preflight raises RuntimeError on detectable under-allocation
 """
 
+import contextlib
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -363,3 +364,61 @@ def test_gres_mode_single_gpu_local_keeps_ntasks_per_gpu(monkeypatch):
     assert "--ntasks-per-gpu=1" in full_cmd
     assert "--gpus-per-task" not in full_cmd
     assert "--ntasks=" not in full_cmd  # '--ntasks-per-gpu=1' is not a '--ntasks=' match
+
+
+# ---------------------------------------------------------------------------
+# local-locus MPI slot-pool declaration (PRRTE SLURM RAS)
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _slurm_env(**overrides):
+    """Install a SLURM environment, removing BOTH job-id spellings unless supplied.
+
+    `SLURM_JOBID` and `SLURM_JOB_ID` are NOT interchangeable for PRRTE: its SLURM
+    RAS activates on the former and not the latter (measured, OMPI 5.0.10). A test
+    that leaves the unwanted spelling in place from the ambient environment would
+    pass for the wrong reason, so both are cleared unless explicitly set.
+    """
+    with patch.dict(os.environ, overrides, clear=False):
+        for spelling in ("SLURM_JOBID", "SLURM_JOB_ID"):
+            if spelling not in overrides:
+                os.environ.pop(spelling, None)
+        yield
+
+
+@pytest.mark.parametrize("jobid_spelling", ["SLURM_JOBID", "SLURM_JOB_ID"])
+def test_local_mpi_declares_slot_pool_from_cpu_budget(jobid_spelling):
+    """local-locus MPI must declare SLURM_TASKS_PER_NODE from the real CPU budget.
+
+    PRRTE sizes its slot pool from SLURM_TASKS_PER_NODE, so under the harness's
+    `--ntasks=1 --cpus-per-task=8` a bare `mpirun -np 2` is refused. Both job-id
+    spellings are exercised because the guard must fire in either environment.
+    """
+    run = _make_run("mpi", n_mpi_procs=2, n_omp_threads=1, in_slurm=False)
+    env = {jobid_spelling: "12345", "SLURM_NTASKS": "1", "SLURM_CPUS_PER_TASK": "8"}
+    with _slurm_env(**env):
+        full_cmd = _get_launch_cmd(run)
+    assert 'export SLURM_TASKS_PER_NODE="8"' in full_cmd
+    assert "mpirun -np 2" in full_cmd
+
+
+def test_local_mpi_refuses_when_cpu_budget_below_need():
+    """local-locus MPI must refuse rather than oversubscribe an under-allocated step."""
+    run = _make_run("hybrid", n_mpi_procs=2, n_omp_threads=2, in_slurm=False)
+    with _slurm_env(SLURM_JOBID="12345", SLURM_NTASKS="1", SLURM_CPUS_PER_TASK="2"):
+        with pytest.raises(RuntimeError, match="MPI launch refused"):
+            _get_launch_cmd(run)
+
+
+def test_local_mpi_off_scheduler_emission_unchanged():
+    """REGRESSION PIN (passes pre-fix by construction; not a fix-verifier).
+
+    Off-scheduler there is no SLURM RAS to correct, so the emission must stay
+    byte-identical to the historical bare-mpirun form.
+    """
+    run = _make_run("mpi", n_mpi_procs=2, n_omp_threads=1, in_slurm=False)
+    with _slurm_env():
+        full_cmd = _get_launch_cmd(run)
+    assert "SLURM_TASKS_PER_NODE" not in full_cmd
+    assert "mpirun -np 2" in full_cmd
