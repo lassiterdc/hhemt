@@ -2,7 +2,7 @@
 
 hhemt takes two user configs — a **system config** and an **analysis config** — plus an optional **HPC-system profile**. This page annotates the fields you will set for a typical analysis; it is not exhaustive, and the models carry more fields than are shown here — notably the `hpc_*` sizing and partition fields, the `process_*` output-budget fields, and `execution_environment`. The models themselves are the complete reference: both are Pydantic models with `extra="forbid"`, so an unrecognised key is an error and a mistyped one is caught at load. For the third config see [HPC-profile setup](../how-to/hpc-profile-setup.md); for a step-by-step path through filling them in, see [Fill in your configuration](../how-to/config-filling.md).
 
-Both configs are Pydantic models with `extra="forbid"`, so an unrecognised key is an error rather than a silently ignored one. Every `Path` field is checked for existence at load time, with one deliberate exception: the two software-directory fields are toolkit-owned **outputs** created by the clone/build gate, so they are exempt.
+Every `Path` field is checked for existence at load time, with one deliberate exception: the two software-directory fields are toolkit-owned **outputs** created by the clone/build gate, so they need not exist yet.
 
 Start from the in-repo templates — `test_data/norfolk_coastal_flooding/template_system_config.yaml` and `template_analysis_config.yaml`. The `${DATA_DIR}` / `${PACKAGE_DIR}` placeholders are filled automatically when you load a case study via `TRITON_SWMM_experiment`; if you author a config by hand, replace them with real paths.
 

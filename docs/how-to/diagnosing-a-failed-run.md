@@ -6,8 +6,19 @@ without re-running anything.
 **Prerequisites:** a completed or partially-completed analysis directory.
 
 This is the page for *"it said it ran and produced nothing"* and *"the job died
-at eleven hours."* It is a procedure for locating the failure, not a catalogue of
-every possible cause.
+at eleven hours."* Start from the symptom you actually have. If no entry in the
+symptom index matches, or you do not yet know enough to pick one, work through
+the numbered steps instead.
+
+## Symptom index
+
+| Symptom | What it usually means |
+|---|---|
+| [It ran but produced nothing](#it-ran-but-produced-nothing) | A phase never started — find which flag is missing |
+| [The job died at walltime](#the-job-died-at-walltime) | Expected; it resumes from its last checkpoint |
+| [The report is wrong but the results are fine](#the-report-is-wrong-but-the-results-are-fine) | The simulations are sound; the stages after them need rebuilding |
+| [A run I expected to be a no-op re-executed everything](#a-run-i-expected-to-be-a-no-op-re-executed-everything) | **Not a failure** — a re-run trigger fired |
+| [Results look wrong and I do not know if it is me](#results-look-wrong-and-i-do-not-know-if-it-is-me) | Possibly a known bug rather than your configuration |
 
 !!! warning "A green exit is not evidence of success"
     Two things about this toolkit make that specifically true, and both are
@@ -84,27 +95,37 @@ the scheduler reports is not the time the solver ran.
 
 ## 3. Match the symptom
 
-**"It ran but produced nothing."** Check step 1 first: if no `c_run_*` flag
-exists, the simulation never started, and the cause is upstream — setup,
-compilation, or dispatch. If `c_run_*` exists but `d_process_*` does not, the
-simulation ran and processing failed; the raw outputs are still on disk under
-`sims/{event_id}/out_*/`, so nothing is lost and `reprocess` can retry.
+### It ran but produced nothing
 
-**"The job died at walltime."** A killed simulation resumes from its most recent
+If no `c_run_*` flag exists in `analysis_dir/_status/`, the simulation never
+started, and the cause is upstream — setup, compilation, or dispatch. If
+`c_run_*` exists but `d_process_*` does not, the simulation ran and processing
+failed; the raw outputs are still on disk under `sims/{event_id}/out_*/`, so
+nothing is lost and `reprocess` can retry.
+
+### The job died at walltime
+
+A killed simulation resumes from its most recent
 checkpoint on the next attempt — it does not restart from zero. Raise the
 simulation retry count rather than the walltime if checkpoints are frequent
 enough. Note that `perf_*` columns on a resumed run are cumulative across
 allocations, so they will exceed what the scheduler reports for the final
 allocation; that is correct.
 
-**"The report is wrong but the results are fine."** Do not re-run. Use
+### The report is wrong but the results are fine
+
+Do not re-run. Use
 `reprocess`, which re-runs processing, consolidation and rendering against
 existing simulation outputs.
 
-**"A run I expected to be a no-op re-executed everything."** That is a re-run
-trigger, not a failure — see [When and why re-runs happen](../explanation/rerun-faq.md).
+### A run I expected to be a no-op re-executed everything
 
-**"Results look wrong and I do not know if it is me."** Run
+A re-run trigger fired; nothing failed — see
+[When and why re-runs happen](../explanation/rerun-faq.md).
+
+### Results look wrong and I do not know if it is me
+
+Run
 `hhemt check-invalidating-fixes` — it reports whether a known invalidating bug
 matches this analysis, i.e. whether its outputs are suspect for a reason that has
 already been identified and fixed. `hhemt recompute-plan` then shows what would

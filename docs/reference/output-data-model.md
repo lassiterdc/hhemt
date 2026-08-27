@@ -48,9 +48,8 @@ expected partial-completion state, not a corrupt store.
 
 ## Variables
 
-Twelve variables carry CF metadata. Those with no `standard_name` have no
-applicable CF standard name — the CF table does not cover them, and inventing one
-would be worse than leaving it unset.
+A variable with no `standard_name` has no applicable CF standard name — the CF
+table does not cover it, and inventing one would be worse than leaving it unset.
 
 ### 2D surface results (TRITON)
 
@@ -96,8 +95,7 @@ host, job id) live only in the sidecar.
 
 ## A caveat on performance columns
 
-The `performance.*` columns are timing records, not physical results, and two of
-their properties surprise people:
+The `performance.*` columns are timing records, not physical results:
 
 - Only `performance.Total`, `performance.Simulation` and `performance.Init` carry
   wallclock semantics. The category columns are slowest-rank cost.
