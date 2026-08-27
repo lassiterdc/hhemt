@@ -248,6 +248,10 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     export UCX_TLS=rc,sm,cuda_copy,cuda_ipc,self
 
 %labels
+    # Read by process_timeseries_runner's container-toolkit guard via
+    # /.singularity.d/labels.json: the rung refuses to process when the imported
+    # `hhemt` resolves outside this root. Must match the `%files ../ <dest>` target.
+    org.hhemt.toolkit_root /opt/hhemt-src
     org.hhemt.role        uva-cuda-production
     org.hhemt.status      pending-phase5-validation
     org.hhemt.base_digest sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80578d1c6a9

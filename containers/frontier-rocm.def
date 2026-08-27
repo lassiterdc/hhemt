@@ -166,6 +166,10 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     export LD_LIBRARY_PATH=/opt/rocm/lib:${LD_LIBRARY_PATH:-}
 
 %labels
+    # Read by process_timeseries_runner's container-toolkit guard via
+    # /.singularity.d/labels.json: the rung refuses to process when the imported
+    # `hhemt` resolves outside this root. Must match the `%files ../ <dest>` target.
+    org.hhemt.toolkit_root /opt/hhemt-src
     org.hhemt.role        frontier-rocm-production
     org.hhemt.base_digest sha256-recorded-in-SIF-lockfile-post-build
     org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
