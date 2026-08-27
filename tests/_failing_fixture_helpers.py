@@ -58,6 +58,35 @@ def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) ->
     # scenario's structure and is insensitive to whether the target currently exists.
     shutil.copytree(src_system_dir, dst_system_dir, symlinks=True)
 
+    # Drop inherited ORCHESTRATOR sentinels. A clone is a NEW run by definition, so it
+    # can never legitimately inherit another driver's claim -- orchestration state is
+    # per-run, and copying it in is what turns one leaked file into a whole-family
+    # failure.
+    #
+    # The failure this closes, measured on Rivanna run 20260827T043319Z: a suite array
+    # was `scancel`led, SIGKILL bypassed the `try/finally` in workflow.py that removes
+    # the driver sentinel, and ONE file leaked into the SHARED synth cache
+    # (`.../synth_multi_sim/_status/_orchestrator/310203-udc-ba05-24c0-004dab8b.json`,
+    # written 00:32:17, killed 00:32:41 -- 24 s later). Every subsequent clone copied
+    # it in, so the reprocess family failed with ONE byte-identical driver_id across
+    # many distinct tmp dirs -- which is the tell, since new_driver_id() embeds uuid4
+    # and cannot collide.
+    #
+    # The gate was RIGHT to refuse. It could not probe a `mode=local` pid whose
+    # recorded host was a DIFFERENT node from the one now running, so its tri-state
+    # logic held UNKNOWN rather than assuming dead -- correct, and bounded by a
+    # 7-DAY max-plausible-driver-lifetime cap that is sized for a real batch_job
+    # driver and is three orders of magnitude too long for a fixture. The same run
+    # passed locally precisely BECAUSE the probe could answer on the writing host.
+    #
+    # Fix at the FIXTURE boundary, not in the gate: the production gate exists to
+    # prevent an unarbitrated concurrent consolidate-zarr write and must stay
+    # conservative. No test relies on an inherited sentinel -- the one test that needs
+    # a live driver (`test_reprocess_refuses_fast_with_live_orchestrator`) constructs
+    # that condition itself, post-clone, via monkeypatch.
+    for _stale in dst_system_dir.rglob("_status/_orchestrator/*.json"):
+        _stale.unlink()
+
     # Write the modified master configs INSIDE dst_system_dir (NOT at tmp_path
     # root). The source layout has system_config.yaml + analysis_config.yaml
     # living inside system_directory; a sensitivity sub derives its analysis-level
