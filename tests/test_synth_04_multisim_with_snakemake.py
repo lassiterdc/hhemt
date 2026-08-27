@@ -605,8 +605,30 @@ def test_render_report_idempotent(synth_multi_sim_analysis_cached):
     assert second_html == first_html
     assert elapsed < 30  # generous bound for R11 design target
     plots_dir = analysis.analysis_paths.analysis_dir / "plots"
-    for plot in plots_dir.rglob("*.png"):
-        assert plot.stat().st_mtime <= t0 + 1  # 1s clock-skew grace
+    # R11's PROPERTY: a re-render must not re-execute the rules that produce the
+    # figures, so no figure-output mtime may move across the second render_report().
+    #
+    # This guard globbed "*.png" from 8a9410ae (2026-05-02) until 2026-08-27 and was
+    # VACUOUS for most of that span: report.interactive.static_backend defaults to
+    # "plotly", whose renderers emit .html/.svg, so the population was measured at
+    # 0 png / 10 html / 1 svg and the loop body never ran. A default flip in
+    # config/report.py silently emptied an assertion's population in this file, and
+    # nothing reported it -- the disclosed-denominator class (Gotcha 71(d)): a loop
+    # over an empty set is indistinguishable from one that checked everything.
+    #
+    # The non-emptiness assert is the load-bearing half. Without it this guard
+    # re-dies silently on the next extension change; with it, the same change fails
+    # LOUDLY here instead. Do not "simplify" it away, and do not narrow the suffix
+    # set to whichever backend is current -- both restore the original defect.
+    checked = [p for p in plots_dir.rglob("*") if p.suffix in {".png", ".svg", ".html"}]
+    assert checked, (
+        f"R11 mtime guard globbed an EMPTY population under {plots_dir}; the figure "
+        f"extension set has drifted and this assertion is no longer checking anything"
+    )
+    for plot in checked:
+        assert plot.stat().st_mtime <= t0 + 1, (  # 1s clock-skew grace
+            f"R11 VIOLATED: {plot.name} mtime moved during render_report()"
+        )
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
