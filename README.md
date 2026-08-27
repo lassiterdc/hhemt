@@ -31,24 +31,50 @@ pip install --no-deps "swmmio==0.8.2"
 pip install -e . --no-deps
 ```
 
-Both `--no-deps` steps are required. The validated SWMM engine (`swmm-toolkit`
-0.15.x + `pyswmm` 2.0.1) is only available from conda-forge and cannot be
-expressed as pip metadata, so a plain `pip install hhemt` installs an unvalidated
-SWMM stack: everything except SWMM *execution* works, and SWMM execution fails
-closed with an actionable error pointing here. See
+Both `--no-deps` steps are required *inside a conda environment*: they stop pip
+from displacing conda-resolved packages such as `numpy` and `pandas`. They are
+not a SWMM-engine requirement — `pyproject.toml` pins the validated engine
+(`swmm-toolkit` 0.15.x + `pyswmm` 2.x) directly, so a plain `pip install hhemt`
+resolves a stack that passes the runtime validation guard. Conda is recommended
+because `environment.yaml` pins the whole HPC stack, including the Snakemake
+SLURM executor plugins, not because pip cannot run SWMM. See
 [`docs/how-to/installation.md`](docs/how-to/installation.md) for details.
 
 ## Usage
 
 ```bash
-hhemt --help          # CLI entry point
+hhemt --help                                              # every command
+hhemt run --system-config CFG_SYS --analysis-config CFG_ANA --dry-run
 ```
 
-See the [documentation](https://hhemt.readthedocs.io) for the end-to-end
-analysis workflow.
+An analysis is driven by two YAML configs — a *system* config describing the
+modelled area and an *analysis* config describing the events and how to run them.
+`--dry-run` validates both and prints the workflow without executing anything,
+which is the cheapest way to check a configuration.
+
+Where to go next, depending on what you are doing:
+
+| You want to | Start at |
+|---|---|
+| Get something running | [Quickstart](https://hhemt.readthedocs.io/en/latest/tutorials/quickstart/) |
+| Follow a complete real example | [Norfolk end-to-end](https://hhemt.readthedocs.io/en/latest/tutorials/norfolk-end-to-end/) |
+| Look up a config field | [Configuration schema](https://hhemt.readthedocs.io/en/latest/reference/config-schema/) |
+| Look up a command | [CLI reference](https://hhemt.readthedocs.io/en/latest/reference/cli/) |
+| Know what the outputs contain | [Output data model](https://hhemt.readthedocs.io/en/latest/reference/output-data-model/) |
+| Work out why a run failed | [Diagnosing a failed run](https://hhemt.readthedocs.io/en/latest/how-to/diagnosing-a-failed-run/) |
+| Know what it does *not* do | [Limitations](https://hhemt.readthedocs.io/en/latest/explanation/limitations/) |
 
 ## How to cite
 
 If you use this software, please cite it via its Zenodo DOI. Citation metadata is
 maintained in [`CITATION.cff`](CITATION.cff), which GitHub's "Cite this
-repository" resolves. The DOI badge above always resolves to the latest version.
+repository" resolves.
+
+**Cite the version you actually ran, not the badge.** The DOI badge above is the
+*concept* DOI — it always resolves to the newest release, so a reader following
+it later may land on a version that behaves differently from the one that
+produced your results. Zenodo also mints a *version* DOI for each release; that
+is the one to put in a paper. Find it on the Zenodo record for your release, or
+read it back from your analysis's own provenance: a consolidated output records
+the toolkit version that produced it, so the run itself can tell you what to
+cite.

@@ -1,6 +1,6 @@
 # Operating on an analysis while jobs are in flight
 
-You do NOT need to cancel a running Snakemake/SLURM workflow to do these:
+You do not need to cancel a running Snakemake/SLURM workflow to do these:
 
 | Operation | Safe while sims are in flight? | What it does |
 |---|---|---|

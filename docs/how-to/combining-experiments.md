@@ -67,10 +67,10 @@ See the decision doc *"CompatibilitySeverity is orthogonal to ADR-17 severity"*.
 
 `hhemt combine` refuses to combine bundles from two different case studies: a
 `case_name` divergence (sourced from each bundle's `case.yaml`) is classified
-BLOCKING and aborts the combine. A compute-config divergence — a difference in the
+**blocking** and aborts the combine. A compute-config divergence — a difference in the
 `partitions` map or `gpu_allocation_flavor`, sourced from each bundle's scrubbed
-`hpc_system_config.identity.yaml` — is classified INFORMATIONAL: it is surfaced as a
-divergence row and does NOT abort, because comparing the same experiment across UVA
+`hpc_system_config.identity.yaml` — is classified **informational**: it is surfaced as a
+divergence row and does not abort, because comparing the same experiment across UVA
 and Frontier is a supported use. The combined report additionally carries a
 clean-vs-resume `cross_experiment_intercomparison` figure under the "Cross-Experiment
 Results" category, projected from the `combined_intercomparison.json` read-model, so
@@ -91,7 +91,7 @@ Each input experiment is preserved intact under `combined/child_crates/{experime
 run `Bundle.from_directory(...).eda()` on a child directory for a per-experiment
 EDA surface (a combined bundle has no aggregate EDA surface).
 
-The combined report is ONE cohesive Snakemake `--report`. Its sidebar has
+The combined report is one cohesive Snakemake `--report`. Its sidebar has
 **Cross-Experiment Compatibility**, **Cross-Experiment Results** (the clean-vs-resume
 intercomparison), then one native section **per experiment** (each experiment id is a
 top-level sidebar category whose figures are that experiment's own report content,

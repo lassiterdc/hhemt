@@ -2,7 +2,10 @@ site_name: "H&H Ensemble Modeling Toolkit"
 site_description: "Orchestrates coupled TRITON (2D hydrodynamic) and SWMM (stormwater management) simulations across local machines and HPC clusters"
 site_author: "Daniel Lassiter"
 repo_url: "https://github.com/lassiterdc/hhemt"
-edit_uri: "edit/develop/docs/"
+# `stable` (the default published build) tracks the latest tag on `main`, so an
+# "edit this page" link must resolve against `main` rather than `develop`.
+# Pointing it at `develop` sent every released-docs reader to unreleased content.
+edit_uri: "edit/main/docs/"
 
 theme:
   name: material
@@ -11,7 +14,23 @@ theme:
     - navigation.sections
     - toc.integrate
   palette:
+    # Dark is the DEFAULT, deliberately, and the ordering is what makes it so:
+    # Material uses the first entry unless a `media` query redirects it, so no
+    # `media` key appears here — an OS-preference query would hand light-mode
+    # readers the light palette on first visit, which is not "default to dark".
+    # Both entries are required: a one-entry palette renders with no toggle at all.
+    - scheme: slate
+      primary: blue grey
+      accent: light blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
     - scheme: default
+      primary: blue grey
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
 
 markdown_extensions:
   - admonition
@@ -62,6 +81,7 @@ nav:
       - Config filling: how-to/config-filling.md
       - Running an experiment bundle: how-to/running-an-experiment-bundle.md
       - In-flight operations: how-to/in-flight-operations.md
+      - Diagnosing a failed run: how-to/diagnosing-a-failed-run.md
       - Forcing re-runs: how-to/forcing-reruns.md
       - Combining experiments: how-to/combining-experiments.md
       - Synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md
@@ -71,11 +91,15 @@ nav:
   - Reference:
       - reference/index.md
       - API Reference: reference/api.md
+      - Configuration schema: reference/config-schema.md
+      - CLI reference: reference/cli.md
+      - Output data model: reference/output-data-model.md
       - FAIR scope table: reference/fair-scope-table.md
       - Example interactive report: reference/example-report.md
   - Explanation:
       - explanation/index.md
       - Capabilities: explanation/capabilities.md
+      - Limitations and constraints: explanation/limitations.md
       - Software availability: explanation/software-availability.md
       - Rerun FAQ: explanation/rerun-faq.md
       - Branching and release model: explanation/branching-and-release-model.md

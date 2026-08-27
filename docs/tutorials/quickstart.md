@@ -13,11 +13,16 @@ cd hhemt
 conda env create -n hhemt --file environment.yaml
 conda activate hhemt
 export PYTHONNOUSERSITE=1
-pip install -e .
+pip install --no-deps "swmmio==0.8.2"
+pip install -e . --no-deps
 ```
 
-!!! tip
-    Create the conda env FIRST and `pip install -e .` LAST — conda is blind to pip-installed packages, so any conda-resolvable dependency belongs in `environment.yaml`.
+!!! warning "Both `--no-deps` flags are required, not optional"
+    Inside a conda environment, a plain `pip install -e .` lets pip's resolver replace conda-resolved packages such as `numpy` and `pandas` with PyPI wheels, which is what breaks the environment you just built. `--no-deps` stops that.
+
+    This is not a SWMM-engine requirement: `pyproject.toml` pins `swmm-toolkit` and `pyswmm` directly, so a pip install resolves a stack that passes the toolkit's runtime validation guard. Create the conda env first and the two pip steps last — conda is blind to pip-installed packages, so any conda-resolvable dependency belongs in `environment.yaml`.
+
+    Full rationale, the historical `swmmio 0.8.5` hazard, and the pip-only alternative: [Installation](../how-to/installation.md).
 
 ## 2. Get the Norfolk example data
 
@@ -32,9 +37,6 @@ result = norfolk.analysis.run(from_scratch=False, execution_mode="auto")
 ```
 
 `NorfolkIreneExperiment.load()` downloads the case data (once), builds the system and analysis objects, and hands you back an experiment whose `.analysis` is the orchestrator. `run(from_scratch=False)` resumes any completed work rather than rebuilding from scratch, and `execution_mode="auto"` detects whether you are in a SLURM allocation or on a local machine.
-
-!!! warning "Use `analysis.run()` directly"
-    Call `norfolk.analysis.run(...)` — NOT `norfolk.run(...)`/`Toolkit.run(mode=...)`. The `Toolkit.run()` facade is not wired for the first release; `analysis.run()` is the working interactive entry point.
 
 For user-authored configs instead of the canned example:
 

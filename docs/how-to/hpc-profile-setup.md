@@ -14,7 +14,7 @@ Copy an example profile and fill exactly two fields:
 
 ## Choose a partition
 
-Pick a partition name on your analysis config (`hpc_ensemble_partition`, `hpc_setup_and_analysis_processing_partition`) that keys into `partitions:` in the profile. GPU hardware and compilation backend DERIVE from the partition — you do not set `gpu_hardware` directly. (UVA: `standard` / `gpu-a6000` / `gpu-a100-80`; Frontier: `batch`.)
+Pick a partition name on your analysis config (`hpc_ensemble_partition`, `hpc_setup_and_analysis_processing_partition`) that keys into `partitions:` in the profile. GPU hardware and compilation backend **derive** from the partition — you do not set `gpu_hardware` directly. (UVA: `standard` / `gpu-a6000` / `gpu-a100-80`; Frontier: `batch`.)
 
 ## See also
 - [Config-filling guide](config-filling.md)

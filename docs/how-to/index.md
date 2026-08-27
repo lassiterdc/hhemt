@@ -11,6 +11,8 @@ Task-oriented recipes for getting specific jobs done with the toolkit.
   self-describing `experiment.yaml` bundle with `hhemt run-experiment`.
 - [In-flight operations](in-flight-operations.md) — monitor, resume, and
   manage a running analysis.
+- [Diagnosing a failed run](diagnosing-a-failed-run.md) — find what went wrong,
+  in an order that narrows quickly, without re-running anything.
 - [Forcing and suppressing re-runs](forcing-reruns.md) — take control of what
   rebuilds.
 - [Combining experiments](combining-experiments.md) — combine two or more

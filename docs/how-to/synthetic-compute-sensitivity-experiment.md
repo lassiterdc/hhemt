@@ -35,7 +35,7 @@ masters are joined for reporting by `hhemt combine`; the cross-arm figures live 
 the combined report, not on either master's own report.
 
 To interrupt the sims for a resume study, set `resume_interruption_schedule` on the
-analysis config to a strictly increasing tuple of hotstart-checkpoint INDICES — not
+analysis config to a strictly increasing tuple of hotstart-checkpoint indices — not
 percentages, not seconds. One checkpoint is written per reporting interval, so on
 the 3.5 m / 24 h synthetic grid (10-minute reporting = 144 checkpoints) the
 25% / 50% / 75% markers are `[36, 72, 108]`, which produces three resumes at the
@@ -92,10 +92,10 @@ also emits the compute-sensitivity EDA family by default:
 magnitude) and `plots/eda/eda_cross_hardware_magnitude.html` (the ADR-4
 characterized-divergence panel: 1-GPU vs 1-rank serial CPU). A third member,
 `eda_resume_sensitivity` (clean-vs-resume identity + magnitude, paired per
-compute-config), is an OPT-IN figure: it renders only for a single master carrying
-BOTH a clean and a resume arm, so the compute-sensitivity experiment — run as two
-SEPARATE single-arm masters (a clean sweep and a resume sweep) — skips it and produces
-the clean-vs-resume comparison at COMBINE level via `hhemt combine` (the
+compute-config), is an **opt-in** figure: it renders only for a single master carrying
+both a clean and a resume arm, so the compute-sensitivity experiment — run as two
+separate single-arm masters (a clean sweep and a resume sweep) — skips it and produces
+the clean-vs-resume comparison at combine level via `hhemt combine` (the
 `cross_experiment_intercomparison` figure) instead; enable it explicitly via
 `enabled_plots` for a future both-arms master. Each rendered member writes a backing
 `eda/{plot_id}.zarr` provenance artifact and an `eda/{plot_id}.verdict.json` whose
@@ -124,7 +124,7 @@ verdict["summary"]   # e.g. "clean-identity: all raw rasters byte-identical acro
                      #       clean counterpart byte-for-byte"
 ```
 
-`passed` is `True` only when the clean configs are byte-identical to each other AND
+`passed` is `True` only when the clean configs are byte-identical to each other and
 every resume raster matches its clean counterpart; when it is `False`,
 `verdict["details"]` carries the per-`(config, raw-type, timestep)` differing-cell
 rows. The same verdict is folded into the report's Errors-and-Warnings section

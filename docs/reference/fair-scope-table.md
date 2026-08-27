@@ -1,8 +1,8 @@
 # FAIR scope of an HHEMT reproducibility dataset
 
-FAIR is applied as a continuum over the WHOLE recreation set — inputs, configs, captured
-environment, provenance, and outputs — not outputs alone. The DATASET license (below) is
-chosen SEPARATELY from the software license (the toolkit is PolyForm-NC source-available;
+FAIR is applied as a continuum over the whole recreation set — inputs, configs, captured
+environment, provenance, and outputs — not outputs alone. The **dataset** license (below) is
+chosen separately from the software license (the toolkit is PolyForm-NC source-available;
 the dataset defaults to CC0-1.0, an open public good — a recognized, coherent pattern).
 
 | Artifact class | Findable | Accessible | Interoperable | Reusable |

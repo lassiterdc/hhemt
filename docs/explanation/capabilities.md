@@ -1,6 +1,9 @@
 # Capabilities
 
-The H&H Ensemble Modeling Toolkit (hhemt) orchestrates coupled TRITON-SWMM flood simulations as embarrassingly-parallel ensembles across local workstations and HPC clusters, using configurable CPU or GPU resources per simulation on both NVIDIA and AMD hardware. It manages the full lifecycle — preprocessing, compilation, execution, and post-processing — producing analysis-ready datasets and an interactive report.
+What hhemt is for, and what it is not for. For the one-paragraph summary see the
+[home page](../index.md); this page is about the shape of the studies it supports
+and where each one is a good fit. For where the toolkit stops, see
+[Limitations and constraints](limitations.md).
 
 ## Three classes of study
 
