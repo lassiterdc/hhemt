@@ -1161,7 +1161,12 @@ def _validate_event_window_columns(cfg_analysis: analysis_config, result: Valida
 
     from hhemt.scenario import assert_window_columns_declared
 
-    csv = cfg_analysis.weather_event_windows_csv
+    # Same presence-guard rule as `_validate_selected_event_forcing_extent` above, and
+    # the same reason: this function is NEW at the `preflight_validate` level, so it is
+    # the second place the widened call graph reaches a stub config. Confirmed by
+    # measurement rather than assumed -- making only the sibling guard tolerant moved
+    # the AttributeError to exactly this line.
+    csv = getattr(cfg_analysis, "weather_event_windows_csv", None)
     if not csv or not Path(csv).exists():
         return
     try:
@@ -1208,12 +1213,21 @@ def _validate_selected_event_forcing_extent(
     from hhemt.scenario import _forcing_variables, resolve_event_window
 
     # FORCING-READ: preflight
-    if not cfg_analysis.weather_timeseries or not Path(cfg_analysis.weather_timeseries).exists():
+    # PRESENCE GUARDS use getattr; every SUBSTANTIVE read below does not. The rule is
+    # deliberate and narrow: this check is re-parented into `preflight_validate`, which
+    # widened the call graph under four test files that drive preflight with a
+    # SimpleNamespace stub. `getattr` here is behaviourally identical in production --
+    # a real `analysis_config` is a Pydantic model and ALWAYS carries both fields, so
+    # the default can never be taken -- and it differs only for a config object that
+    # never declared a weather file, which is exactly the case this early-return exists
+    # to skip. Blanket-getattr'ing the other reads would be a different and worse
+    # thing: it would turn a genuine misspelled attribute from a loud AttributeError
+    # into a silent skip of the whole completeness check, at every site it was applied.
+    weather_path = getattr(cfg_analysis, "weather_timeseries", None)
+    if not weather_path or not Path(weather_path).exists():
         return
-    if (
-        not cfg_analysis.weather_events_to_simulate
-        or not Path(cfg_analysis.weather_events_to_simulate).exists()
-    ):
+    events_csv = getattr(cfg_analysis, "weather_events_to_simulate", None)
+    if not events_csv or not Path(events_csv).exists():
         return
 
     time_dim = cfg_analysis.weather_time_series_timestep_dimension_name
@@ -1221,11 +1235,9 @@ def _validate_selected_event_forcing_extent(
     if not forcing_vars:
         return
     try:
-        df_sims = pd.read_csv(cfg_analysis.weather_events_to_simulate).loc[
-            :, cfg_analysis.weather_event_indices
-        ]
+        df_sims = pd.read_csv(events_csv).loc[:, cfg_analysis.weather_event_indices]
         # FORCING-READ: preflight
-        ds = xr.open_dataset(cfg_analysis.weather_timeseries, engine="h5netcdf")
+        ds = xr.open_dataset(weather_path, engine="h5netcdf")
     except Exception:
         return  # file-level failures are surfaced by the checks above
 
