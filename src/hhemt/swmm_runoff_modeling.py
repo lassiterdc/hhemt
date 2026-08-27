@@ -121,7 +121,6 @@ class SWMMRunoffModeler:
             ]
             .reset_coords(drop=True)
             .to_dataframe()
-            .dropna()
         )
         dic_rain_paths = dict()
 
@@ -169,7 +168,6 @@ class SWMMRunoffModeler:
             self.scenario.ds_event_ts[weather_time_series_storm_tide_datavar]
             .reset_coords(drop=True)
             .to_dataframe()
-            .dropna()
         )[weather_time_series_storm_tide_datavar]
 
         fname_wleveldat = "waterlevel.dat"

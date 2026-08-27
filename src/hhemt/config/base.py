@@ -43,6 +43,30 @@ def when(field: str, *values: Any) -> Dict[str, Any]:
     return {"field": field, "in": list(values)}
 
 
+def when_supplied(field: str) -> dict[str, Any]:
+    """One trigger clause: `field` holds any non-None value.
+
+    `when()` is a MEMBERSHIP test over an ENUMERATED set, which every clause in
+    this codebase has been able to use because every trigger so far is a boolean
+    toggle or a string Literal. A PATH trigger cannot be expressed that way: its
+    supplied state is an open set of arbitrary path strings, so "required when
+    this CSV is supplied" is INEXPRESSIBLE as `when(...)`. Without this the only
+    remaining home for such a requirement is a hand-written validator, which the
+    rendered Required cell cannot see -- the exact defect `field_meta` exists to
+    prevent, reintroduced through the gap in its own grammar.
+
+    This is the presence half of the SAME grammar, not a second mechanism: both
+    consumers dispatch on which key the clause carries, and every existing
+    `in`-clause takes its unchanged branch.
+
+    "Supplied" means NOT NONE, which is what the caller means and is also what
+    `_enforce_required_when`'s declared-default fallback already produces for an
+    omitted trigger -- so an absent key and an explicit `null` both read as
+    not-supplied without a second code path.
+    """
+    return {"field": field, "supplied": True}
+
+
 def field_meta(
     *,
     applies_when: Optional[List[Dict[str, Any]]] = None,
@@ -88,6 +112,9 @@ def render_clauses(clauses: List[Dict[str, Any]]) -> str:
     """
     parts: List[str] = []
     for clause in clauses:
+        if "supplied" in clause:
+            parts.append(f"{clause['field']} is supplied")
+            continue
         values = clause["in"]
         joined = (
             str(values[0])
@@ -271,7 +298,11 @@ class cfgBaseModel(BaseModel):
                         )
                     default = trigger_field.default
                     trigger = None if default is PydanticUndefined else default
-                if trigger in clause["in"] and values.get(name) is None:
+                if "supplied" in clause:
+                    fired = trigger is not None
+                else:
+                    fired = trigger in clause["in"]
+                if fired and values.get(name) is None:
                     errors.append(
                         f"{name} is required when {render_clauses([clause])}"
                     )

@@ -317,12 +317,15 @@ class ScenarioInputGenerator:
             ds_event_ts[weather_time_series_storm_tide_datavar]
             .reset_coords(drop=True)
             .to_dataframe()
-            .dropna()
         )[weather_time_series_storm_tide_datavar].to_frame()
 
         # .dt.seconds is the SECONDS COMPONENT (0-86399) and silently wraps on a
         # gap of >= 24 h; .dt.total_seconds() is the non-wrapping form. Contiguous
-        # steps are unaffected, but a .dropna()'d index is not guaranteed contiguous.
+        # steps are unaffected. The .dropna() that USED to justify this was removed by
+        # the [Q85] scrub, but the choice stands on a second ground: a non-uniform
+        # weather axis can still open a >= 24 h gap here, and the uniformity assertion
+        # in _weather_step_seconds fires from the post-write window-agreement guard,
+        # AFTER this writer has already run. Do not narrow this back to .dt.seconds.
         tseries_diff_hrs = (
             pd.Series(df_water_levels.index).diff().dt.total_seconds() / 60 / 60  # type: ignore
         )

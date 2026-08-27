@@ -93,13 +93,14 @@ def create_swmm_inp_from_template(
     mapping["RAINGAGES"] = "\n".join(rain_gages_section)
     template_keys = utils.find_all_keys_in_template(swmm_model_template)
 
-    # Get simulation time bounds
-    first_tstep = (
-        ds_event_ts[weather_time_series_timestep_dimension_name].to_series().min()
-    )
-    last_tstep = (
-        ds_event_ts[weather_time_series_timestep_dimension_name].to_series().max()
-    )
+    # The window is the USER'S, read back rather than derived. Taking min/max of the
+    # clipped coordinate would give the same answer today, and that is precisely why it
+    # is not done: it is a derivation whose agreement with the declared window is a
+    # coincidence of the clip rather than a property anyone stated. It also keeps this
+    # value INDEPENDENT of the forcing row count, which Spec 8's three-source guard
+    # requires -- an "optimisation" back to a coordinate reduction here silently
+    # collapses that guard into a tautology.
+    first_tstep, last_tstep = scenario._resolve_event_window()
 
     # Add timing parameters
     mapping["START_DATE"] = first_tstep.strftime("%m/%d/%Y")

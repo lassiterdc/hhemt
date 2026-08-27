@@ -85,6 +85,7 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "storm_tide_boundary_line_gis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "weather_event_summary_csv": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "sensitivity_analysis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "weather_event_windows_csv": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "weather_events_to_simulate": PathPolicy.BUNDLE_RELATIVE,
     "analysis_dir": PathPolicy.FORCED_DOT,
     "master_analysis_cfg_yaml": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
@@ -203,6 +204,13 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
     "sensitivity_analysis": ExcludableInput(
         description="Sensitivity-analysis specification (the SA design).",
         reproducibility_cost="Small; excluding it blocks a sensitivity re-run.",
+    ),
+    "weather_event_windows_csv": ExcludableInput(
+        description="Per-event simulation windows. Tiny; the run cannot start without it.",
+        reproducibility_cost=(
+            "Never a sensible exclusion. Without it a regenerated bundle has no declared "
+            "window, so every per-sim hydrology panel loses its clip."
+        ),
     ),
     "master_analysis_cfg_yaml": ExcludableInput(
         description="Master analysis config the per-analysis configs derive from.",

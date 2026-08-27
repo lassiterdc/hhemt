@@ -73,14 +73,29 @@ def _assert_scenario_forcing_window_agreement(scenario) -> None:
     start = pd.to_datetime(f"{opts.START_DATE} {opts.START_TIME}")
     end = pd.to_datetime(f"{opts.END_DATE} {opts.END_TIME}")
     window_s = int((end - start).total_seconds())
-    step_s = window_s / (n_steps - 1) if n_steps > 1 else 0
-    if n_steps > 1 and abs(step_s - round(step_s)) > 1e-6:
+    # EQUALITY over THREE INDEPENDENT SOURCES, not divisibility over two. The retired
+    # form asked whether the window divided evenly by the interval count, which any
+    # coincidentally-commensurate length satisfies -- measured at 45 of 2173 possible
+    # lengths (2.1%) passing while wrong. n_steps is the written forcing, window_s is
+    # the .inp, step_s is the weather coordinate; no two share a derivation, which is
+    # why this layer caught 67 of 67 when the preflight built to catch the same thing
+    # reported the file as unpadded. Do NOT re-derive either of the first two from the
+    # clipped coordinate: that collapses this guard into "a uniform axis is uniform".
+    with xr.open_dataset(
+        scenario.scen_paths.weather_timeseries, engine="h5netcdf"
+    ) as _wx:
+        step_s = _weather_step_seconds(
+            _wx,
+            scenario._analysis.cfg_analysis.weather_time_series_timestep_dimension_name,
+        )
+    expected_s = (n_steps - 1) * step_s
+    if n_steps > 1 and window_s != expected_s:
         raise ProcessingError(
             "scenario_forcing_window_agreement",
             filepath=inp,
             reason=(
-                f"SWMM window {window_s}s is not an integer multiple of "
-                f"{n_steps - 1} forcing intervals"
+                f"SWMM window {window_s}s disagrees with the written forcing: "
+                f"{n_steps} rows at a {step_s}s weather interval imply {expected_s}s"
             ),
         )
 
@@ -100,6 +115,177 @@ def _assert_scenario_forcing_window_agreement(scenario) -> None:
                     f"{window_s}s derived from {n_steps} forcing rows"
                 ),
             )
+
+
+def _forcing_variables(cfg_analysis, cfg_system) -> list[str]:
+    """The variables whose completeness the solvers actually require -- RULE (1).
+
+    The gage columns resolved through subcatchment_raingage_mapping, plus the storm-tide
+    datavar. NOT weather_time_series_spatial_mean_rainfall_datavar: no forcing writer
+    reads it (its only consumer is the hydrology panel), so checking it would fail a
+    simulation because a figure's input is short. NOT every timestep-carrying variable:
+    tide_m / surge_m are read by nothing and would false-fail a valid run.
+
+    Toggle-derived, because the set must match which writers actually run.
+    """
+    import pandas as pd
+
+    out: list[str] = []
+    if (
+        getattr(cfg_system, "toggle_use_swmm_for_hydrology", False)
+        and cfg_system.subcatchment_raingage_mapping
+    ):
+        col = cfg_system.subcatchment_raingage_mapping_gage_id_colname
+        df = pd.read_csv(cfg_system.subcatchment_raingage_mapping)
+        out.extend(str(g) for g in df[col].unique())
+    if (
+        cfg_analysis.toggle_storm_tide_boundary
+        and cfg_analysis.weather_time_series_storm_tide_datavar
+    ):
+        out.append(cfg_analysis.weather_time_series_storm_tide_datavar)
+    return out
+
+
+def _assert_forcing_complete(ds, time_dim, event_indexers, weather_path, forcing_vars) -> None:
+    """Fail fast when a simulated event's forcing carries missing values.
+
+    The toolkit runs what it is given. It does not pad, interpolate, extend, or
+    otherwise modify input weather, and it does not infer a window from which values
+    happen to be present -- so an incomplete event is a stop, not something to work
+    around. The remedy travels with the failure because "there are missing values" is
+    not actionable on its own.
+
+    Checks RULE (1) only. Variables without `time_dim` cannot be checked here anyway:
+    `Dataset.to_array()` broadcasts a dimensionless variable along the time axis where
+    it reads non-null at every step, which is exactly how the retired detector was
+    blinded on the observed-event file.
+    """
+    present = [v for v in forcing_vars if v in ds.data_vars and time_dim in ds[v].dims]
+    offenders = {}
+    for v in present:
+        n_missing = int(ds[v].isnull().sum().values)
+        if n_missing:
+            offenders[str(v)] = n_missing
+    if not offenders:
+        return
+    raise ConfigurationError(
+        field="analysis.weather_event_windows_csv",
+        message=(
+            f"event {event_indexers} carries MISSING VALUES in its forcing over the "
+            f"declared window ({int(ds.sizes[time_dim])} timesteps): "
+            + ", ".join(f"{k} missing {n}" for k, n in sorted(offenders.items()))
+            + f". Source: {weather_path}. The toolkit will not pad, interpolate, or "
+            "trim input weather to work around this."
+        ),
+        fix_hint=(
+            "Declare each event's window explicitly and make the forcing complete "
+            "inside it. In your analysis config set:\n"
+            "    weather_event_windows_csv: /path/to/event_windows.csv\n"
+            "    weather_event_start_column: window_start\n"
+            "    weather_event_end_column: window_end\n"
+            "One row per simulated event, with the columns named in "
+            "weather_event_indices identifying the event, plus the two datetime columns "
+            "named above carrying stamps on the weather file's OWN time axis. Every "
+            "timestep between start and end (inclusive) must be present for every "
+            "forcing variable."
+        ),
+    )
+
+
+def _weather_step_seconds(ds, time_dim) -> float:
+    """The weather axis interval, with a UNIFORMITY ASSERTION rather than a mode.
+
+    swmm_utils.py:55 takes `.mode()` of the coordinate diff, which silently tolerates a
+    non-uniform axis and misdescribes the interval to SWMM while the .dat rows carry
+    true stamps. Spec 8's equality guard consumes this quantity, so taking a mode here
+    would put that tolerance INSIDE the guard that is supposed to be the strong one.
+    hhemt's only uniformity gate today is the estate producer's, in another repo.
+    """
+    steps = np.unique(np.diff(ds[time_dim].values))
+    if steps.size != 1:
+        raise ConfigurationError(
+            field="analysis.weather_timeseries",
+            message=(
+                f"the weather time axis is NOT uniform over the clipped window: "
+                f"{steps.size} distinct intervals present."
+            ),
+            fix_hint="Emit a uniform axis, or declare a window over a uniform span.",
+        )
+    return float(steps[0] / np.timedelta64(1, "s"))
+
+
+def resolve_event_window(cfg_analysis, weather_event_indexers, cache=None):
+    """This event's (start, end): from the user CSV, or the full coordinate extent.
+
+    PATH-ONLY, in the sense `run_simulation.model_logfile_for` and `summary_paths.py`
+    already codify in this codebase: pure in its arguments, it NEVER instantiates a
+    `TRITONSWMM_scenario` (whose constructor mkdirs `processed/` / `swmm/` /
+    `out_swmm/` as a side effect) and creates no directory. A renderer runs under the
+    provenance audit, so an undeclared read there is fatal rather than cosmetic --
+    hence it creates nothing. It is NOT read-free, and the distinction is the whole
+    precondition: the CSV branch reads the memoized window CSV, and the NO-CSV branch
+    -- the one every config without the new field takes -- opens
+    `cfg_analysis.weather_timeseries` for the axis endpoints. A renderer calling this
+    MUST already declare that path in its own `source_paths`. Both per_sim callers do,
+    for the `load_event_hydrology_data` call beside it, so the read is a second read of
+    an already-declared path rather than an undeclared one.
+
+    NO-CSV PATH returns the axis endpoints exactly. That is not derivation-from-
+    missingness -- it never asks which values are present, it takes the axis as the
+    file declares it, which is "run what it's given". Spec 2's endpoint-equality
+    assertion is a tautology on this branch BECAUSE of that exactness, and would
+    become a real check if this ever returned anything else.
+
+    A CSV that is PRESENT but malformed raises: a stated intent that cannot be
+    honoured is a stop, not a fallback. `cache` is a mutable dict the caller owns, so
+    a 3,798-event run reads the file once rather than once per scenario per caller.
+    """
+    tdim = cfg_analysis.weather_time_series_timestep_dimension_name
+    csv = cfg_analysis.weather_event_windows_csv
+    idx = list(cfg_analysis.weather_event_indices)
+
+    if csv is None:
+        with xr.open_dataset(cfg_analysis.weather_timeseries, engine="h5netcdf") as ds:
+            coord = ds.sel(weather_event_indexers)[tdim].values
+        return (pd.Timestamp(coord[0]), pd.Timestamp(coord[-1]))
+
+    df = None if cache is None else cache.get("_event_windows_df")
+    if df is None:
+        df = pd.read_csv(csv)
+        if cache is not None:
+            cache["_event_windows_df"] = df
+
+    missing_cols = [c for c in idx if c not in df.columns]
+    for c in (cfg_analysis.weather_event_start_column, cfg_analysis.weather_event_end_column):
+        if c not in df.columns:
+            missing_cols.append(c)
+    if missing_cols:
+        raise ConfigurationError(
+            field="analysis.weather_event_windows_csv",
+            message=f"{csv} is missing required column(s): {sorted(set(missing_cols))}",
+            fix_hint=(
+                f"Required columns: "
+                f"{idx + [cfg_analysis.weather_event_start_column, cfg_analysis.weather_event_end_column]}"
+            ),
+        )
+    mask = pd.Series(True, index=df.index)
+    for c in idx:
+        mask &= df[c].astype(str) == str(weather_event_indexers[c])
+    rows = df[mask]
+    if len(rows) != 1:
+        raise ConfigurationError(
+            field="analysis.weather_event_windows_csv",
+            message=(
+                f"{csv} matched {len(rows)} rows for event "
+                f"{weather_event_indexers}; exactly one is required."
+            ),
+            fix_hint="One row per simulated event, keyed on weather_event_indices.",
+        )
+    row = rows.iloc[0]
+    return (
+        pd.to_datetime(row[cfg_analysis.weather_event_start_column]),
+        pd.to_datetime(row[cfg_analysis.weather_event_end_column]),
+    )
 
 
 def compute_event_id_slug(weather_event_indexers: dict) -> str:
@@ -853,6 +1039,16 @@ class TRITONSWMM_scenario:
                 f"  link:     {target_link}"
             )
 
+    def _resolve_event_window(self):
+        """Delegate to the module-level free function; see `resolve_event_window`."""
+        if not hasattr(self._analysis, "_event_window_cache"):
+            self._analysis._event_window_cache = {}
+        return resolve_event_window(
+            self._analysis.cfg_analysis,
+            self.weather_event_indexers,
+            cache=self._analysis._event_window_cache,
+        )
+
     def _write_sim_weather_nc(self):
         # FORCING-READ: choke-point
         weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
@@ -865,29 +1061,54 @@ class TRITONSWMM_scenario:
                 weather_timeseries, engine="h5netcdf"
             ) as ds_event_weather_series:
                 ds_event_ts = ds_event_weather_series.sel(weather_event_indexers).load()
-                # A rectangular weather NetCDF cannot store ragged events, so every
-                # event shorter than the longest one is NaN-padded on the SHARED
-                # timestep axis. Downstream consumers derive the simulation window
-                # from this coordinate (swmm_utils.py, START/END -> TRITON
-                # sim_duration), so an untrimmed selection runs every event for the
-                # longest event's duration with its boundary condition frozen at the
-                # last tabulated value. Trim once, here, upstream of every consumer.
-                finite = ds_event_ts.notnull().to_array().any("variable")
-                keep = finite.any(
-                    dim=[d for d in finite.dims if d != tdim]
-                ) if set(finite.dims) - {tdim} else finite
-                n_finite = int(keep.values.sum())
-                if n_finite == 0:
-                    raise ProcessingError(
-                        operation="_write_sim_weather_nc",
-                        filepath=weather_timeseries,
-                        reason=(
-                            f"event {weather_event_indexers} carries zero finite "
-                            "timesteps in the weather timeseries; it cannot be "
-                            "simulated. Remove it from weather_events_to_simulate."
+                # THE TOOLKIT DOES NOT DECIDE THIS WINDOW. It reads the one the user
+                # declared and clips to it. The retired code inferred a window from
+                # which values were missing -- an analysis of input weather, forbidden
+                # by [Q85]: it silently disagreed with the forcing actually written, it
+                # was maintained in triplicate, and its own preflight detector shared
+                # the defect and reported a 52.9%-padded file as 0.0% padded.
+                _axis = ds_event_ts[tdim].values
+                axis_first = pd.Timestamp(_axis[0])
+                axis_last = pd.Timestamp(_axis[-1])
+                start, end = self._resolve_event_window()
+                ds_event_ts = ds_event_ts.sel({tdim: slice(start, end)})
+                # .sel(slice) NEVER raises: off-grid endpoints snap inward and
+                # out-of-range endpoints yield an empty selection. Measured: a real-date
+                # window against this file's dummy 2025 axis gives n=0 with no exception
+                # and no offending variable, so the completeness check cannot see it.
+                n = int(ds_event_ts.sizes[tdim])
+                if n == 0:
+                    raise ConfigurationError(
+                        field="analysis.weather_event_windows_csv",
+                        message=(
+                            f"event {weather_event_indexers}: the declared window "
+                            f"{start} .. {end} selects ZERO timesteps from an axis "
+                            f"running {axis_first} .. {axis_last}."
+                        ),
+                        fix_hint=(
+                            "Window stamps must lie on the weather file's own time axis. "
+                            "A window copied from an event-summary CSV carries real "
+                            "calendar dates and will not intersect it."
                         ),
                     )
-                ds_event_ts = ds_event_ts.isel({tdim: keep.values})
+                # Endpoint equality is checked ONLY on the CSV path. On the no-CSV path
+                # _resolve_event_window returns the exact axis endpoints, so the
+                # comparison is a tautology there -- and it becomes a MEANINGFUL check
+                # that is silently absent if that branch is ever changed to return
+                # anything else. Do not "simplify" by dropping the guard.
+                if self._analysis.cfg_analysis.weather_event_windows_csv is not None:
+                    axis0 = pd.Timestamp(ds_event_ts[tdim].values[0])
+                    axisN = pd.Timestamp(ds_event_ts[tdim].values[-1])
+                    if axis0 != start or axisN != end:
+                        raise ConfigurationError(
+                            field="analysis.weather_event_windows_csv",
+                            message=(
+                                f"event {weather_event_indexers}: declared window "
+                                f"{start} .. {end} is not on the weather time axis; the "
+                                f"clip snapped to {axis0} .. {axisN}."
+                            ),
+                            fix_hint="Declare stamps that exist on the axis.",
+                        )
                 utils.write_netcdf(
                     ds_event_ts,
                     self.scen_paths.weather_timeseries,
@@ -899,7 +1120,30 @@ class TRITONSWMM_scenario:
     def ds_event_ts(self):
         if not self.scen_paths.weather_timeseries.exists():
             self._write_sim_weather_nc()
-        return xr.open_dataset(self.scen_paths.weather_timeseries, engine="h5netcdf")
+        ds = xr.open_dataset(self.scen_paths.weather_timeseries, engine="h5netcdf")
+        tdim = self._analysis.cfg_analysis.weather_time_series_timestep_dimension_name
+        # This property is a pure EXISTENCE gate: a per-scenario file written by
+        # pre-scrub code, or by a run whose prepare rule Snakemake later skipped, is
+        # returned as-is. So the completeness check lives HERE, not only in the write
+        # half -- it is the only placement that covers the skip-prepare path.
+        if int(ds.sizes[tdim]) == 0:
+            raise ConfigurationError(
+                field="analysis.weather_event_windows_csv",
+                message=(
+                    f"{self.scen_paths.weather_timeseries} contains ZERO timesteps. A "
+                    "zero-length file passes the completeness check vacuously, so it is "
+                    "rejected here instead."
+                ),
+                fix_hint="Re-prepare this scenario; the declared window selected nothing.",
+            )
+        _assert_forcing_complete(
+            ds,
+            tdim,
+            self.weather_event_indexers,
+            self._analysis.cfg_analysis.weather_timeseries,
+            _forcing_variables(self._analysis.cfg_analysis, self._system.cfg_system),
+        )
+        return ds
 
     def prepare_scenario(
         self,

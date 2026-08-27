@@ -164,6 +164,18 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     # one and Keep the other for the same CSV. Caught by
     # test_field_bucket_is_total / test_every_config_field_appears_exactly_once.
     "weather_event_label_column": "experiment",
+    # synthetic-event-window-padding: the two column-name fields of
+    # weather_event_windows_csv. "experiment" by the RULE above (non-Path, not an
+    # HPC-execution field), and independently by the SIBLING-CONSISTENCY argument
+    # written out for weather_event_label_column directly above -- these name columns
+    # of weather_event_windows_csv, whose own BUNDLE_RELATIVE_OR_NONE policy already
+    # resolves to "experiment". A path and its column names must share a bucket or the
+    # reproduction guide tells a reproducer to Keep the file and Supply its headers.
+    # Their absence was caught by test_field_bucket_is_total, which had been RED: the
+    # sibling Path field got its _PATH_FIELD_POLICY entry and these two got nothing,
+    # because the taxonomy is total over TWO composed tables and only one was updated.
+    "weather_event_start_column": "experiment",
+    "weather_event_end_column": "experiment",
 }
 
 

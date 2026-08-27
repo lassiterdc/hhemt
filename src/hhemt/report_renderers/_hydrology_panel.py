@@ -27,6 +27,8 @@ def load_event_hydrology_data(
     weather_path: str | Path,
     cfg_analysis: analysis_config,
     weather_event_indexers: dict,
+    *,
+    window: tuple | None = None,
 ) -> dict:
     """Open the master weather NetCDF, slice the event row, and return hydrology arrays.
 
@@ -46,14 +48,14 @@ def load_event_hydrology_data(
     time_var = cfg_analysis.weather_time_series_timestep_dimension_name
     with xr.open_dataset(weather_path, engine="h5netcdf") as master:
         ws = master.sel(**weather_event_indexers)
-        # A rectangular master file NaN-pads every event shorter than the longest
-        # one. Plotting the untrimmed axis renders the storm as a short trace on a
-        # multi-day axis; once the simulation window follows the forcing extent it
-        # also makes the panel's x-extent exceed the simulation's. Trim to the same
-        # union-of-finite extent the selection site applies.
-        _keep = ws.notnull().to_array().any("variable").values
-        if _keep.any() and not _keep.all():
-            ws = ws.isel({time_var: _keep})
+        # Clip to the SAME user-declared window the simulation runs, so the panel and
+        # the depth maps cannot disagree about how long the event was. Not a
+        # data-derived extent: the panel no longer asks which values are missing.
+        # window=None means "plot the event as given", which under the no-CSV path
+        # equals the axis, which equals the simulation window -- so the agreement
+        # holds in both branches.
+        if window is not None:
+            ws = ws.sel({time_var: slice(*window)})
         times = ws[time_var].values
         rainfall = ws[rain_var].values.astype(float)
         bc_water_level = (

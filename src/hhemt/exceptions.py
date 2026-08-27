@@ -59,14 +59,19 @@ class ConfigurationError(TRITONSWMMError):
         config_path: Optional path to the configuration file
     """
 
-    def __init__(self, field: str, message: str, config_path: Path | None = None):
+    def __init__(
+        self, field: str, message: str, config_path: Path | None = None, fix_hint: str = ""
+    ):
         self.field = field
         self.config_path = config_path
+        self.fix_hint = fix_hint
 
         lines = [f"Configuration error in field '{field}'"]
         if config_path:
             lines.append(f"  Config: {config_path}")
         lines.append(f"  {message}")
+        if fix_hint:
+            lines.append(f"  Fix: {fix_hint}")
 
         super().__init__("\n".join(lines))
 

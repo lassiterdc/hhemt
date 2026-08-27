@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from hhemt.config.base import cfgBaseModel, field_meta, when
+from hhemt.config.base import cfgBaseModel, field_meta, when, when_supplied
 from hhemt.config.eda import eda_config
 
 # One-way import: config/analysis.py imports report_config; config/report.py
@@ -558,6 +558,69 @@ class analysis_config(cfgBaseModel):
         ...,
         description="Path to a .csv file defining weather event index used for sensitivity. The columns must correspond to the sytem's weather_event_indices.",
     )
+    weather_event_windows_csv: Path | None = Field(
+        None,
+        description=(
+            "CSV declaring the simulation window for each weather event. Its index columns "
+            "must be exactly weather_event_indices, plus a start and an end column whose "
+            "names are given by weather_event_start_column / weather_event_end_column. The "
+            "toolkit CLIPS each event to the declared window and never inspects the weather "
+            "data to decide one. WHEN ABSENT, each event's window is the full extent of its "
+            "time coordinate -- the file as given. The toolkit still refuses to run an event "
+            "whose forcing is incomplete over that extent; supplying this CSV is how you "
+            "declare a shorter window that IS complete."
+        ),
+    )
+    weather_event_start_column: str | None = Field(
+        None,
+        description=(
+            "Column in weather_event_windows_csv carrying each event's window START, parsed "
+            "with pandas.to_datetime. The NAME is a config input so the toolkit binds no "
+            "column name of its own, and there is deliberately NO DEFAULT. A default IS a "
+            "name the toolkit assumes, and the name it would most plausibly assume is one "
+            "weather_event_summary_csv already carries. That file is index-keyed on the "
+            "same weather_event_indices but holds REAL calendar dates, while the weather "
+            "netCDF axis is a dummy calendar -- so ANY default lets an operator point "
+            "weather_event_windows_csv at the summary file and clip every event to zero "
+            "rows while validating perfectly. Requiring the name to be stated retires that "
+            "collision structurally instead of defending against it by picking a name that "
+            "happens not to collide."
+        ),
+        json_schema_extra=field_meta(
+            required_when=[when_supplied("weather_event_windows_csv")]
+        ),
+    )
+    weather_event_end_column: str | None = Field(
+        None,
+        description=(
+            "Column in weather_event_windows_csv carrying each event's window END, parsed "
+            "with pandas.to_datetime. Inclusive: the clipped slice contains the end stamp. "
+            "No default, for the reason stated on weather_event_start_column."
+        ),
+        json_schema_extra=field_meta(
+            required_when=[when_supplied("weather_event_windows_csv")]
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _windows_csv_is_not_the_summary_csv(self):
+        """Reject the single most probable misconfiguration.
+
+        A tripwire on the likeliest operator action, not a fix: a COPY of the summary
+        file under another name walks past it. The real protection is that the two
+        column-name fields above have NO DEFAULT -- the toolkit assumes no column name,
+        so the summary CSV's own headers can never be silently accepted -- together with
+        the endpoint-equality assertion at the clip.
+        """
+        w, s = self.weather_event_windows_csv, self.weather_event_summary_csv
+        if w is not None and s is not None and Path(w).resolve() == Path(s).resolve():
+            raise ValueError(
+                "weather_event_windows_csv and weather_event_summary_csv are the same "
+                "file. The summary CSV describes events in real calendar dates; the "
+                "window CSV must carry stamps on the weather file's own time axis."
+            )
+        return self
+
     weather_event_label_column: str | None = Field(
         None,
         description=(

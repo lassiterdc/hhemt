@@ -54,8 +54,26 @@ non_breaking_allowlist:
       an unpadded input. SIGNATURE-SCOPED as of this change: this entry was previously
       path-keyed with no layout_signature, which made the exemption PERMANENT — every
       later edit to this file passed Check B silently. Re-stamp layout_signature whenever
-      a genuinely non-breaking change lands; a breaking one must bump LAYOUT_VERSION.
-    layout_signature: "51f5daf83ed46b199976c32a20b3be45d7571eb9fe3321b5e7e446f4d50fcb8d"
+      a genuinely non-breaking change lands; a breaking one must bump LAYOUT_VERSION. AND synthetic-event-window-padding [Q85] scrub — the union-of-finite trim and its n_finite==0 raise are REMOVED; the event window is now read from a user-declared CSV (or, absent one, the full time-coordinate extent) and the selection is clipped to it, with a zero-length guard, a CSV-gated endpoint-equality assertion, a property-side zero-length guard, and a rule-(1) forcing-completeness check. _assert_scenario_forcing_window_agreement moves from divisibility to equality over three independent sources. Provably non-breaking: only the LENGTH of the per-scenario sim_weather.nc changes. No path, filename, zarr group, log field, Snakemake rule, fingerprint payload, or _version.json value is added, removed, or renamed, and the clip is the identity on an unpadded no-CSV input. Re-stamped again after a COMMENT-ONLY correction to resolve_event_window's docstring, which claimed the function reads nothing but the window CSV; its no-CSV branch also opens cfg_analysis.weather_timeseries for the axis endpoints. No executable line changed.
+    layout_signature: "0dd035df7f7d0892262354864f6eafc85a44cb17f55e55d7914f9bd2e212a53d"
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      synthetic-event-window-padding [Q85] scrub — ADDITIVE optional fields
+      weather_event_windows_csv (Path|None, default None) plus weather_event_start_column /
+      weather_event_end_column (str, defaults window_start / window_end), and a model
+      validator rejecting a config that names the same file for weather_event_windows_csv
+      and weather_event_summary_csv. Config-SCHEMA only: every pre-existing analysis_config
+      YAML loads unchanged because all three fields carry defaults, and no on-disk analysis
+      tree artifact, filename, zarr group, log field, or _version.json value changes. Same
+      change class as this file's already-allowlisted additive eda and dataset_license fields.
+  - path: src/hhemt/scenario_inputs.py
+    justification: >-
+      synthetic-event-window-padding [Q85] scrub — removes the .dropna() from the storm-tide
+      extbc writer. The toolkit must not modify input weather; after the rule-(1)
+      forcing-completeness fail-fast the clipped slice is complete by contract, so the call
+      was either a no-op or a silent modification with no third case. Provably non-breaking:
+      the written extbc/tseries.txt is byte-identical for any input that now reaches the
+      writer, and no path, filename, or on-disk layout changes.
   - path: src/hhemt/paths.py
     justification: >-
       resume-validity-and-cross-experiment-intercomparison Phase 3 — retire the

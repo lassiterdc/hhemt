@@ -1144,95 +1144,94 @@ def _validate_event_alignment(cfg: analysis_config, result: ValidationResult):
 
 
 def _validate_selected_event_forcing_extent(
-    cfg: analysis_config, result: ValidationResult
+    cfg_analysis: analysis_config, cfg_system: system_config, result: ValidationResult
 ) -> None:
-    """Assert the SOURCE weather file's selected events carry usable forcing.
+    """Fail fast, at submit time, on any selected event whose forcing is incomplete.
 
-    Deliberately NOT a window-vs-forcing check: after the selection-site trim the
-    window DERIVES from the forcing extent, so such a check is tautological. This
-    asserts three properties of the SOURCE file that the trim does not make true.
+    COMPLETENESS, not extent. Measuring how much of the axis is populated was itself
+    the toolkit deciding what an event's real extent is -- the thing [Q85] scrubs. What
+    preflight owes the user is one early answer: is this event's forcing complete over
+    the window they declared.
+
+    Takes BOTH configs and is called from `preflight_validate`, not from
+    `_validate_storm_tide_data`. It lived inside the latter only because that is where
+    the NetCDF happened to already be open, which is a coincidence of implementation
+    rather than a statement about what the check IS; threading `cfg_system` through a
+    storm-tide validator to reach a whole-analysis check would preserve that
+    coincidence in the type signature.
+
+    Checks RULE (1) -- the variables the forcing WRITERS consume -- via the same
+    `_forcing_variables` helper the choke point uses, so preflight and scenario prep
+    cannot disagree about what "complete" means.
     """
-    import numpy as np
     import pandas as pd
     import xarray as xr
 
+    from hhemt.scenario import _forcing_variables
+
     # FORCING-READ: preflight
-    if not cfg.weather_timeseries or not Path(cfg.weather_timeseries).exists():
+    if not cfg_analysis.weather_timeseries or not Path(cfg_analysis.weather_timeseries).exists():
         return
-    if not cfg.weather_events_to_simulate or not Path(cfg.weather_events_to_simulate).exists():
+    if (
+        not cfg_analysis.weather_events_to_simulate
+        or not Path(cfg_analysis.weather_events_to_simulate).exists()
+    ):
         return
 
-    time_dim = cfg.weather_time_series_timestep_dimension_name
+    time_dim = cfg_analysis.weather_time_series_timestep_dimension_name
+    forcing_vars = _forcing_variables(cfg_analysis, cfg_system)
+    if not forcing_vars:
+        return
     try:
-        df_sims = pd.read_csv(cfg.weather_events_to_simulate).loc[:, cfg.weather_event_indices]
+        df_sims = pd.read_csv(cfg_analysis.weather_events_to_simulate).loc[
+            :, cfg_analysis.weather_event_indices
+        ]
         # FORCING-READ: preflight
-        ds = xr.open_dataset(cfg.weather_timeseries, engine="h5netcdf")
+        ds = xr.open_dataset(cfg_analysis.weather_timeseries, engine="h5netcdf")
     except Exception:
         return  # file-level failures are surfaced by the checks above
 
-    empty: list[str] = []
-    ragged: list[str] = []
-    pad_fracs: list[float] = []
-    n_axis = int(ds.sizes[time_dim])
+    incomplete: list[tuple[str, int]] = []
     with ds:
         for _, row in df_sims.iterrows():
-            sel = {k: row[k] for k in cfg.weather_event_indices}
+            sel = {k: row[k] for k in cfg_analysis.weather_event_indices}
             label = ", ".join(f"{k}={v}" for k, v in sel.items())
             try:
                 sub = ds.sel(**sel)
             except Exception:
                 continue
-            finite = sub.notnull().to_array().any("variable").values
-            n_finite = int(finite.sum())
-            if n_finite == 0:
-                empty.append(label)
-                continue
-            where = np.flatnonzero(finite)
-            if int(where[-1] - where[0] + 1) != n_finite:
-                ragged.append(label)
-            pad_fracs.append(1.0 - n_finite / n_axis)
+            n_missing = sum(
+                int(sub[v].isnull().sum().values)
+                for v in forcing_vars
+                if v in sub.data_vars and time_dim in sub[v].dims
+            )
+            if n_missing:
+                incomplete.append((label, n_missing))
 
-    if empty:
+    if incomplete:
+        shown = ", ".join(f"{lab} ({n} missing)" for lab, n in incomplete[:5])
         result.add_error(
             field="analysis.weather_events_to_simulate",
             message=(
-                f"{len(empty)} selected event(s) carry ZERO finite forcing timesteps in "
-                # FORCING-READ: preflight
-                f"{cfg.weather_timeseries}: {empty[:5]}"
-                + (" ..." if len(empty) > 5 else "")
+                f"{len(incomplete)} of {len(df_sims)} selected event(s) carry MISSING "
+                f"VALUES in their forcing over the declared window: {shown}"
+                + (" ..." if len(incomplete) > 5 else "")
+                + f". Source: {cfg_analysis.weather_timeseries}. The toolkit will not "
+                "pad, interpolate, or trim input weather to work around this."
             ),
-            current_value=str(cfg.weather_events_to_simulate),
+            current_value=str(cfg_analysis.weather_events_to_simulate),
             fix_hint=(
-                "A rectangular weather NetCDF holds one slot per coordinate combination, "
-                "and most slots hold no event. Remove these rows, or regenerate the CSV "
-                "from the file's non-empty slots rather than from the coordinate product."
+                "Declare each event's window explicitly and make the forcing complete "
+                "inside it. In your analysis config set:\n"
+                "    weather_event_windows_csv: /path/to/event_windows.csv\n"
+                "    weather_event_start_column: window_start\n"
+                "    weather_event_end_column: window_end\n"
+                "One row per simulated event, with the columns named in "
+                "weather_event_indices identifying the event, plus the two datetime "
+                "columns named above carrying stamps on the weather file's OWN time "
+                "axis. Every timestep between start and end (inclusive) must be present "
+                "for every forcing variable."
             ),
-        )
-    if ragged:
-        result.add_warning(
-            field="analysis.weather_events_to_simulate",
-            message=(
-                f"{len(ragged)} selected event(s) have a NON-CONTIGUOUS finite forcing "
-                f"block: {ragged[:5]}. Both solvers interpolate linearly across an "
-                "interior gap rather than treating it as missing, so a hole becomes a "
-                "straight line through it."
-            ),
-            current_value=str(cfg.weather_events_to_simulate),
-            fix_hint="Fill or split the gap upstream, or accept the interpolation knowingly.",
-        )
-    if pad_fracs:
-        arr = np.asarray(pad_fracs, dtype=float)
-        result.add_warning(
-            field="analysis.weather_timeseries",
-            message=(
-                f"Selected-event forcing occupies a fraction of the {n_axis}-step shared "
-                f"axis: padding min={arr.min():.1%} median={np.median(arr):.1%} "
-                f"max={arr.max():.1%} over {arr.size} event(s). Each simulation runs only "
-                "its own forcing extent; this line discloses how much of the shared axis "
-                "is unused so the ratio can never again go unnoticed."
-            ),
-            current_value=f"{np.median(arr):.1%} median padding",
-            fix_hint="Informational. Store events raggedly upstream to eliminate the padding.",
         )
 
 
@@ -1291,8 +1290,6 @@ def _validate_storm_tide_data(cfg: analysis_config, result: ValidationResult):
         except Exception:
             # NetCDF open failures are caught by other checks; don't surface here.
             pass
-
-    _validate_selected_event_forcing_extent(cfg, result)
 
     if cfg.toggle_storm_tide_boundary:
         # Boundary GIS file already checked in toggle dependencies
@@ -1944,6 +1941,9 @@ def preflight_validate(
     # here at the preflight_validate level rather than from inside
     # _validate_toggle_dependencies_analysis (which lacks cfg_system).
     _validate_per_sa_system_configs(cfg_system, cfg_analysis, result)
+    # Re-parented here from _validate_storm_tide_data: this is a whole-analysis
+    # check and needs BOTH configs to resolve the rule-(1) forcing variable set.
+    _validate_selected_event_forcing_extent(cfg_analysis, cfg_system, result)
 
     # Per-(sa_id, resource-column) partition-cap scan (reproducibility C8, ADR-10).
     # No-op unless cfg_hpc_system is supplied AND the sensitivity CSV is readable, so

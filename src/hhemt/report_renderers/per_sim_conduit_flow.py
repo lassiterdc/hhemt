@@ -174,10 +174,25 @@ def render(
     weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
     # FORCING-READ: render-hydrology
     weather_path = Path(analysis.cfg_analysis.weather_timeseries)
+    # PATH-ONLY resolution: the free function never instantiates a
+    # TRITONSWMM_scenario (whose constructor mkdirs processed/ swmm/ out_swmm/) and
+    # creates no directory -- required because this render path runs under the
+    # provenance audit. It is NOT read-free: on the no-CSV branch it opens
+    # weather_path itself for the axis endpoints. That is audit-safe here ONLY because
+    # weather_path is already in this renderer's source_paths for the
+    # load_event_hydrology_data call below -- a caller that does not declare it would
+    # trip the audit's actual-reads-subset-declared assertion.
+    from hhemt.scenario import resolve_event_window
+
     hydro_data = load_event_hydrology_data(
         weather_path,
         analysis.cfg_analysis,
         weather_event_indexers,
+        window=resolve_event_window(
+            analysis.cfg_analysis,
+            weather_event_indexers,
+            cache=analysis.__dict__.setdefault("_event_window_cache", {}),
+        ),
     )
 
     # Subiteration 9.4 C7-parity-2 — load DEM bounds (same source peak_flood_depth
@@ -673,10 +688,25 @@ def _build_conduit_flow_figure(
     weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
     # FORCING-READ: render-hydrology
     weather_path = Path(analysis.cfg_analysis.weather_timeseries)
+    # PATH-ONLY resolution: the free function never instantiates a
+    # TRITONSWMM_scenario (whose constructor mkdirs processed/ swmm/ out_swmm/) and
+    # creates no directory -- required because this render path runs under the
+    # provenance audit. It is NOT read-free: on the no-CSV branch it opens
+    # weather_path itself for the axis endpoints. That is audit-safe here ONLY because
+    # weather_path is already in this renderer's source_paths for the
+    # load_event_hydrology_data call below -- a caller that does not declare it would
+    # trip the audit's actual-reads-subset-declared assertion.
+    from hhemt.scenario import resolve_event_window
+
     hydro_data = load_event_hydrology_data(
         weather_path,
         analysis.cfg_analysis,
         weather_event_indexers,
+        window=resolve_event_window(
+            analysis.cfg_analysis,
+            weather_event_indexers,
+            cache=analysis.__dict__.setdefault("_event_window_cache", {}),
+        ),
     )
     times_min = hydro_data["times_min"]
     # Phase 3 inheritance (F-I-7): hydrology x-axis in HOURS from event start.
