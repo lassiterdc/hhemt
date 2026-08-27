@@ -9,6 +9,7 @@ apply makes the transcript a stale copy of the tree.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -68,7 +69,11 @@ CLUSTER_TESTS = {
     ],
 }
 
-AW = "/home/dcl3nd/dev/agentic-workspace/.claude/worktrees/07-23_1017_pure-triton-arms-multi-resume-b4b-pwi"
+# Resolved from the environment rather than hardcoded: an absolute path under a
+# developer's home directory is a private identifier in a public repository, and
+# the anonymization guard blocks it. `$AW` occurrences in the spec paths below are
+# substituted with this value.
+AW = os.environ.get("AGENTIC_WORKSPACE", str(Path.home() / "dev" / "agentic-workspace"))
 
 
 def count(path: str, marker: str) -> int | None:

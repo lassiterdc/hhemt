@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
 from hhemt.model_defects import (
@@ -17,7 +18,12 @@ from hhemt.model_defects import (
 #: other test in this module is clone-free by construction -- that is the point of the cached
 #: sets, and it is why the registry works on a render bundle. Overridable so the live arm can
 #: run wherever a clone exists rather than only on the maintainer's box.
-_CLONE = os.environ.get("HHEMT_TRITON_CLONE", "/home/dcl3nd/dev/triton-workspace/triton")
+#: The default is derived from the running user's home rather than hardcoded — an
+#: absolute path under a named developer's home is a private identifier in a public
+#: repository, which the anonymization guard blocks. Set HHEMT_TRITON_CLONE to point
+#: the live arm at a clone anywhere; when neither resolves, the live-ancestry tests
+#: skip, which is their existing clone-absent behaviour.
+_CLONE = os.environ.get("HHEMT_TRITON_CLONE", str(Path.home() / "dev" / "triton-workspace" / "triton"))
 
 
 def _clone_has(sha: str) -> bool:

@@ -227,8 +227,13 @@ REGISTRY: tuple[ModelDefect, ...] = (
         ),
         trigger="resumed_any",
         remedy="Re-run resumed sims at 5d2ad1e8 or a descendant.",
+        # The report itself lives in a private deployment estate, so only its
+        # identifier is carried here — the estate's repository name is a private
+        # identifier that the anonymization guard blocks from this public tree.
+        # The dated slug is what makes the report findable to someone who has
+        # access; naming the repo adds nothing for a reader who does not.
         bug_report=(
-            "hhemt_projects/bug_reports/2026-08-04_triton-swmm_resume-extbc-boundary-perturbation-amplified-by-coupling"
+            "bug_reports/2026-08-04_triton-swmm_resume-extbc-boundary-perturbation-amplified-by-coupling"
         ),
         provenance_note=(
             "The fix sha 5d2ad1e8 sits on the fork branch `instrumented/extbc-ghost-probe`, whose "
