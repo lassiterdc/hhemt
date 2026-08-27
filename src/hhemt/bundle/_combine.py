@@ -714,6 +714,42 @@ class CombinedBundle:
 
     @classmethod
     def from_directory(cls, path: Path | str) -> CombinedBundle:
+        """Construct a :class:`CombinedBundle` from an unpacked combined-bundle directory.
+
+        The combined-bundle counterpart of :meth:`hhemt.bundle.Bundle.from_directory`,
+        for a bundle produced by ``hhemt combine`` rather than by a single
+        analysis.
+
+        Parameters
+        ----------
+        path : Path or str
+            An UNPACKED combined-bundle directory containing
+            ``bundle_manifest.json`` and a ``child_crates/`` directory holding
+            one intact crate per combined experiment.
+
+        Returns
+        -------
+        CombinedBundle
+            A handle exposing :meth:`regenerate_report`.
+
+        Raises
+        ------
+        FileNotFoundError
+            No ``bundle_manifest.json`` under ``path``.
+        BundleSchemaError
+            The manifest's ``bundle_schema_version`` does not EXACTLY equal the
+            local ``BUNDLE_SCHEMA_VERSION``. Note this is stricter than
+            :meth:`Bundle.from_directory`, which admits older bundles: a
+            combined bundle must match exactly, so one emitted by any other
+            toolkit version must be re-combined from its children rather than
+            read here.
+
+        Notes
+        -----
+        ``eda()`` is deliberately unavailable on a combined bundle — there is no
+        aggregate EDA surface across experiments. Run ``.eda()`` on each intact
+        child bundle instead.
+        """
         root = Path(path).resolve()
         manifest_path = root / BUNDLE_MANIFEST_FILENAME
         if not manifest_path.exists():
@@ -732,6 +768,12 @@ class CombinedBundle:
 
     @property
     def root(self) -> Path:
+        """Absolute path to the unpacked combined-bundle directory.
+
+        Its ``child_crates/{experiment_id}/`` subdirectories hold one intact
+        crate per combined experiment; the cross-experiment report is rendered
+        by harvesting their already-rendered figures in place.
+        """
         return self._root
 
     def regenerate_report(

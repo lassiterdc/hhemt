@@ -357,6 +357,27 @@ class TRITONSWMM_sensitivity_analysis:
         concurrent: bool = True,
         verbose: bool = False,
     ):
+        """Prepare every scenario across every sub-analysis (workflow phase 2a).
+
+        Generates per-event SWMM `.inp` files, boundary conditions and TRITON
+        `.cfg` files for each sub-analysis defined by the sensitivity table.
+
+        Scenario preparation always forks into subprocesses: PySwmm raises
+        ``MultiSimulationError`` if two SWMM simulations are instantiated in one
+        Python process, so ``concurrent`` controls how many subprocesses run at
+        once, never whether they are used.
+
+        Parameters
+        ----------
+        overwrite_scenario_if_already_set_up : bool
+            Re-prepare scenarios whose outputs already exist.
+        rerun_swmm_hydro_if_outputs_exist : bool
+            Re-run the SWMM hydrology step even when its outputs are present.
+        concurrent : bool
+            Prepare sub-analyses in parallel rather than serially.
+        verbose : bool
+            Emit per-scenario progress.
+        """
         if self.master_analysis.cfg_analysis.multi_sim_run_method in [
             "local",
             "1_job_many_srun_tasks",
@@ -1310,6 +1331,31 @@ class TRITONSWMM_sensitivity_analysis:
         override_clear_raw: ClearRawValue | None = None,
         verbose=False,
     ):
+        """Execute every simulation across every sub-analysis (workflow phase 2b).
+
+        Parameters
+        ----------
+        pickup_where_leftoff : bool
+            Resume from existing completion state instead of re-running
+            simulations already recorded as complete.
+        concurrent : bool
+            Run simulations in parallel. Concurrency is bounded by the resolved
+            execution strategy — CPU, GPU and memory limits on a workstation,
+            and the SLURM allocation's own limits on a cluster.
+        process_outputs_after_sim_completion : bool
+            Convert raw solver output to Zarr/NetCDF as each simulation
+            finishes, rather than in a separate later pass.
+        which : {"TRITON", "SWMM", "both"}
+            Restrict to one side of the coupled pair.
+        compression_level : int
+            Zarr/NetCDF compression level for any processing done here.
+
+        Notes
+        -----
+        Completion is detected from solver LOG MARKERS, not from exit codes — a
+        simulation can exit 0 having failed partway. A run that reports complete
+        with an implausibly short elapsed time is the signature to check.
+        """
         if concurrent:
             raise RuntimeError(
                 "Running sensitivity analyses concurrently requires"
@@ -1345,6 +1391,21 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        """Convert raw solver output to Zarr/NetCDF across all sub-analyses (phase 2c).
+
+        Parameters
+        ----------
+        which : {"TRITON", "SWMM", "both"}
+            Restrict to one side of the coupled pair.
+        override_clear_raw : ClearRawValue or None
+            Override ``analysis_config.clear_raw`` for this invocation only.
+            ``None`` reads the config. Per the override-prefix convention this
+            never falls through silently: if both are absent, it raises.
+        verbose : bool
+            Emit per-scenario progress.
+        compression_level : int
+            Zarr/NetCDF compression level.
+        """
         scenario_timeseries_processing_launchers = []
         for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             launchers = sub_analysis.retrieve_scenario_timeseries_processing_launchers(
@@ -1373,6 +1434,13 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def TRITON_subanalyses_outputs_consolidated(self):
+        """True when every sub-analysis has a completed TRITON-side summary.
+
+        Which flag is checked depends on the enabled model: the coupled
+        TRITON-SWMM summary when ``toggle_tritonswmm_model`` is set, otherwise
+        the TRITON-only summary. An aggregate over all sub-analyses — one
+        incomplete sub-analysis makes this False.
+        """
         cfg_sys = self.master_analysis._system.cfg_system
         success = True
         for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
@@ -1384,6 +1452,11 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def SWMM_subanalyses_outputs_consolidated(self):
+        """True when every sub-analysis has completed SWMM node AND link summaries.
+
+        Both must be present; a sub-analysis with nodes but not links reads
+        False. An aggregate over all sub-analyses.
+        """
         cfg_sys = self.master_analysis._system.cfg_system
         node_success = True
         link_success = True
@@ -1403,6 +1476,29 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = True,
         compression_level: int = 5,
     ):
+        """Consolidate per-scenario summaries into analysis-level datasets (phase 3).
+
+        Calls :meth:`create_subanalysis_summaries` for each sub-analysis, then
+        assembles the master ``sensitivity_datatree.zarr``.
+
+        Parameters
+        ----------
+        which : {"TRITON", "SWMM", "both"}
+            Restrict to one side of the coupled pair.
+        verbose : bool
+            Emit per-sub-analysis progress.
+        compression_level : int
+            Zarr/NetCDF compression level.
+
+        Notes
+        -----
+        Sub-analyses whose per-scenario summaries are absent are SKIPPED with a
+        warning rather than raising, so the master tree assembles over the
+        completed subset. The root ``parameters`` dataset still lists every
+        DEFINED sub-analysis (the experiment definition); only completed ones
+        appear as tree nodes (the realized results). A partial master tree is
+        therefore an expected state, not a defect.
+        """
         self.create_subanalysis_summaries(
             which=which,
             verbose=verbose,
@@ -1717,6 +1813,21 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        """Build each sub-analysis's own analysis-level summary datasets.
+
+        The per-sub-analysis half of :meth:`consolidate_outputs`, which calls
+        this before assembling the master tree. Useful on its own to
+        re-consolidate one tier without rebuilding the master.
+
+        Parameters
+        ----------
+        which : {"TRITON", "SWMM", "both"}
+            Restrict to one side of the coupled pair.
+        verbose : bool
+            Emit per-sub-analysis progress.
+        compression_level : int
+            Zarr/NetCDF compression level.
+        """
         if which in ["TRITON", "both"]:
             self._consolidate_outputs_in_each_subanalysis(
                 which="TRITON",
@@ -1733,14 +1844,29 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def tritonswmm_SWMM_node_summary(self):
+        """The master analysis's consolidated coupled-model SWMM NODE summary.
+
+        Node-level results (depths, flooding) across every event and
+        sub-analysis, from the coupled TRITON-SWMM run.
+        """
         return self.master_analysis._tritonswmm_SWMM_node_summary
 
     @property
     def tritonswmm_SWMM_link_summary(self):
+        """The master analysis's consolidated coupled-model SWMM LINK summary.
+
+        Conduit-level results (flow, capacity utilisation) across every event
+        and sub-analysis, from the coupled TRITON-SWMM run.
+        """
         return self.master_analysis._tritonswmm_SWMM_link_summary
 
     @property
     def tritonswmm_TRITON_summary(self):
+        """The master analysis's consolidated coupled-model TRITON summary.
+
+        The 2D surface results — peak depth and water-surface elevation with
+        their companion variables — across every event and sub-analysis.
+        """
         return self.master_analysis._tritonswmm_TRITON_summary
 
     # @property
@@ -2688,6 +2814,23 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         recompile_if_already_done_successfully: bool = False,
     ):
+        """Compile the solver once per unique system target (workflow phase 1).
+
+        Sub-analyses that agree on the compile-relevant tuple
+        ``(target_dem_resolution, gpu_hardware, gpu_compilation_backend)``
+        collapse into a single ``UniqueSystemTarget`` and share one build, so
+        this compiles once per DISTINCT target rather than once per row. A
+        sweep whose rows differ only in rank count therefore compiles once.
+
+        Parameters
+        ----------
+        verbose : bool
+            Stream compiler output.
+        recompile_if_already_done_successfully : bool
+            Rebuild even when the compilation log already records success.
+            Compilation success is detected by log markers rather than by exit
+            code, so a partially-failed build can exit 0 and be skipped.
+        """
         for target in self.unique_system_targets:
             target.system.compile_TRITON_SWMM(
                 recompile_if_already_done_successfully=recompile_if_already_done_successfully,
@@ -2698,6 +2841,21 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def scenarios_not_created(self):
+        """Scenario directories whose PREPARATION never completed.
+
+        Returns
+        -------
+        list of str
+            One directory path per scenario whose scenario-level log does not
+            record ``scenario_creation_complete``. Empty when preparation is
+            complete everywhere.
+
+        Notes
+        -----
+        Preparation only. A scenario can appear here having been prepared and
+        then had its outputs cleared; it says nothing about simulation state,
+        for which see :attr:`scenarios_not_run`.
+        """
         scenarios_not_created = []
         for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             for event_iloc in sub_analysis.df_sims.index:
@@ -2708,6 +2866,21 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def scenarios_not_run(self):
+        """Scenario directories where at least one ENABLED model has not completed.
+
+        Returns
+        -------
+        list of str
+            One directory path per scenario for which any enabled model type is
+            missing a completed run. Empty when every enabled model has
+            completed for every scenario.
+
+        Notes
+        -----
+        Checks every enabled model, so a scenario whose TRITON run finished but
+        whose SWMM run did not still appears here. Completion is read from the
+        per-model logs, which are separate from the scenario preparation log.
+        """
         scens_not_run = []
         for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             for event_iloc in sub_analysis.df_sims.index:
@@ -2880,6 +3053,20 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def TRITONSWMM_performance_time_series_not_processed(self):
+        """Scenarios whose coupled-model PERFORMANCE timeseries has not been processed.
+
+        Returns
+        -------
+        list
+            Per-scenario entries aggregated across all sub-analyses. Empty when
+            processing is complete everywhere.
+
+        Notes
+        -----
+        Performance timeseries are the per-rank timing records used for the
+        benchmarking figures; they are processed separately from the physical
+        results, so this can be non-empty while the flood results are complete.
+        """
         lst_scens = []
         for _key, sub_analysis in self.sub_analyses.items():
             lst_scens += sub_analysis._TRITONSWMM_performance_time_series_not_processed
@@ -2887,6 +3074,14 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def TRITON_time_series_not_processed(self):
+        """Scenarios whose TRITON result timeseries have not been processed.
+
+        Returns
+        -------
+        list
+            Per-scenario entries aggregated across all sub-analyses. Empty when
+            processing is complete everywhere.
+        """
         lst_scens = []
         for _key, sub_analysis in self.sub_analyses.items():
             lst_scens += sub_analysis._TRITON_time_series_not_processed
@@ -2894,6 +3089,14 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def SWMM_time_series_not_processed(self):
+        """Scenarios whose SWMM result timeseries have not been processed.
+
+        Returns
+        -------
+        list
+            Per-scenario entries aggregated across all sub-analyses. Empty when
+            processing is complete everywhere.
+        """
         lst_scens = []
         for _key, sub_analysis in self.sub_analyses.items():
             lst_scens += sub_analysis._SWMM_time_series_not_processed

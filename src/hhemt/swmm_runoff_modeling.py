@@ -25,12 +25,20 @@ def _assert_validated_swmm_stack() -> None:
     """Fail closed before executing SWMM unless the installed pyswmm / swmm-toolkit
     is the conda-forge-validated pairing (pyswmm 2.x + swmm-toolkit 0.15.x).
 
-    The validated SWMM engine is distributable only via conda-forge: swmmio 0.8.5
-    caps pyswmm<2.0 (unsatisfiable with the pyswmm 2.x prepare_scenario requires),
-    and pip metadata cannot express the ``--no-deps`` install environment.yaml uses,
-    so ``pip install hhemt`` resolves an UNVALIDATED SWMM stack whose C extension the
-    project cannot certify against the observed free()/SIGABRT teardown crash. Refuse
-    to run rather than risk silent heap corruption. Override at your own risk with
+    What this checks is a VERSION PREDICATE, not a provenance story: the installed
+    ``pyswmm`` must start ``2.`` and ``swmm-toolkit`` must start ``0.15.``. The
+    0.16+/0.17 lineage is the abi3 build carrying the observed free()/SIGABRT
+    teardown crash, which the project cannot certify, so the guard refuses rather
+    than risk silent heap corruption.
+
+    ``pyproject.toml`` pins ``pyswmm>=2,<3`` and ``swmm-toolkit>=0.15.3,<0.16``,
+    both strictly inside those prefixes, so a plain ``pip install hhemt`` resolves a
+    stack this guard ACCEPTS. Do not restate the retired claim that the engine ships
+    only from conda-forge -- it seeded that claim on five public documentation
+    surfaces before it was caught. Conda is recommended for the HPC stack
+    ``environment.yaml`` pins, not because pip cannot run SWMM. Note the predicate is
+    looser than the pairing named above: it admits any ``2.x`` pyswmm, and a pip
+    resolve currently lands 2.1.0. Override at your own risk with
     HHEMT_ALLOW_UNVALIDATED_SWMM_STACK=1.
     """
     import os

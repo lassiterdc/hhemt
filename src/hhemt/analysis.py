@@ -191,6 +191,60 @@ def _capture_binary_provenance(sub: "TRITONSWMM_analysis") -> dict | None:
 
 
 class TRITONSWMM_analysis:
+    """Orchestrates one ensemble of coupled TRITON-SWMM simulations.
+
+    This is the central object of the toolkit. It owns the lifecycle of an
+    *analysis* — a set of weather events simulated against one modelled system
+    — from scenario construction through execution, post-processing,
+    consolidation, and reporting.
+
+    An analysis belongs to a :class:`~hhemt.system.TRITONSWMM_system`, which
+    owns the system-level inputs (DEM, Manning's raster, compiled solver
+    binaries) that every analysis under it shares. One system may have many
+    analyses; each gets its own directory under the system directory.
+
+    Construction
+    ------------
+    Prefer :meth:`hhemt.toolkit.Toolkit.from_configs`, or load a packaged case
+    study via :mod:`hhemt.experiments`, rather than constructing this directly.
+
+    The main entry points
+    ---------------------
+    ``run()``
+        Execute the whole workflow — setup, scenario preparation, simulation,
+        processing, consolidation, and report render.
+    ``test()``
+        Run a strict, least-demanding subset of *this* analysis under
+        ``{analysis_dir}/_test/``, exercising the real
+        compile-run-process-consolidate-report path for one minimum-device
+        representative per unique compute configuration. This is the smoke test
+        to run before committing an allocation to a full run.
+    ``validate()``
+        Preflight the configuration without executing anything.
+    ``get_workflow_status()``
+        Report per-phase completion state.
+    ``reprocess()``
+        Re-run processing, consolidation, and reporting against simulation
+        outputs that already exist, without re-running the simulations.
+    ``render_report()``
+        Re-render ``analysis_report.html`` from completed outputs. Idempotent.
+
+    Sensitivity analyses
+    --------------------
+    When ``toggle_sensitivity_analysis`` is set, this object coordinates a set
+    of sub-analyses — each itself a full ``TRITONSWMM_analysis`` — defined by
+    the rows of a sensitivity spreadsheet. The ``sensitivity`` attribute
+    EXISTS ONLY in that case; guard on the toggle, or use
+    ``getattr(analysis, "sensitivity", None)``, rather than assuming it.
+
+    Notes
+    -----
+    Most members of this class are internal. The public surface is the entry
+    points above plus the informational accessors (``df_status``, ``n_sims``,
+    ``n_scenarios``, ``disk_utilization_bytes``); anything underscore-prefixed
+    is backend machinery and is not part of the supported API.
+    """
+
     @staticmethod
     def _project_events_table(events_df, weather_event_indices, label_column):
         """Project the events table to the indexers plus an optional display label.
@@ -1754,6 +1808,22 @@ class TRITONSWMM_analysis:
         return
 
     def print_logfile_for_scenario(self, event_iloc):
+        """Print one scenario's PREPARATION log to stdout, for interactive triage.
+
+        Parameters
+        ----------
+        event_iloc : int
+            Positional index of the event in ``df_sims`` — not an ``event_id``.
+
+        Notes
+        -----
+        This prints the scenario-level log, which tracks scenario PREPARATION
+        only (`.inp` creation, TRITON config copy, boundary conditions).
+        Per-model-type simulation and processing state lives in a separate
+        model log; reach it with ``scenario.get_log(model_type)`` instead.
+        Looking here for ``simulation_completed`` or a processing field will
+        not find it.
+        """
         scen = TRITONSWMM_scenario(event_iloc, self)
         scen.log.print()
 
@@ -3211,6 +3281,16 @@ class TRITONSWMM_analysis:
 
     @property
     def n_scenarios(self):
+        """Number of distinct scenarios this analysis defines.
+
+        A scenario is one weather event within one sub-analysis. The count is
+        the number of simulated events times the number of sensitivity rows
+        (1 when ``toggle_sensitivity_analysis`` is False).
+
+        This counts scenarios, NOT simulations: one scenario produces one
+        simulation per enabled model type. Use :attr:`n_sims` for the number of
+        model runs the workflow will actually dispatch.
+        """
         sensitivity_scenario = 1
         if self.cfg_analysis.toggle_sensitivity_analysis:
             sens = self.sensitivity
@@ -3221,6 +3301,15 @@ class TRITONSWMM_analysis:
 
     @property
     def n_sims(self):
+        """Number of individual model runs this analysis will dispatch.
+
+        :attr:`n_scenarios` multiplied by the number of enabled model types
+        (``toggle_tritonswmm_model`` / ``toggle_triton_model`` /
+        ``toggle_swmm_model``), so enabling a second model doubles this without
+        changing the scenario count.
+
+        This is the figure to reason about when sizing an allocation.
+        """
         sensitivity_scenario = 1
         if self.cfg_analysis.toggle_sensitivity_analysis:
             sens = self.sensitivity

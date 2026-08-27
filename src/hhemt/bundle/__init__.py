@@ -66,23 +66,48 @@ class Bundle:
 
     @classmethod
     def from_directory(cls, path: Path | str) -> Bundle:
-        # Construct a Bundle from a bundle directory on disk.
-        #
-        # The directory must contain bundle_manifest.json. All paths
-        # resolve via bundle.root at call time — no os.chdir, no
-        # persisted absolute paths.
-        #
-        # Schema version validation: the manifest's
-        # bundle_schema_version must be <= the locally-installed
-        # toolkit's BUNDLE_SCHEMA_VERSION. A higher version means the
-        # bundle was emitted by a newer toolkit; the local
-        # installation cannot guarantee correct read.
-        #
-        # Legacy-bundle backward compatibility: pre-Plan-Phase-3
-        # bundles lack the bundle_root_invariants manifest key; this
-        # is treated as {} (no enforced invariants — legacy bundles
-        # relied on consume-side cwd-based path resolution, which
-        # Plan Phases 1 + 3 supersede).
+        """Construct a :class:`Bundle` from an unpacked bundle directory on disk.
+
+        This is the entry point for consuming a render bundle locally — the call
+        the how-to guides instruct you to make after transferring a bundle off
+        an HPC system.
+
+        Parameters
+        ----------
+        path : Path or str
+            An UNPACKED bundle directory. It must contain
+            ``bundle_manifest.json``; if you have a `.zip`, extract it first.
+
+        Returns
+        -------
+        Bundle
+            A handle whose paths all resolve via :attr:`root` at call time —
+            no ``os.chdir``, no persisted absolute paths, so the directory is
+            relocatable.
+
+        Raises
+        ------
+        FileNotFoundError
+            No ``bundle_manifest.json`` under ``path``.
+        BundleSchemaError
+            The bundle's ``bundle_schema_version`` exceeds the locally
+            installed toolkit's ``BUNDLE_SCHEMA_VERSION``, meaning it was
+            emitted by a newer toolkit that this installation cannot guarantee
+            reading correctly.
+
+        Notes
+        -----
+        Pre-Plan-Phase-3 bundles lack the ``bundle_root_invariants`` manifest
+        key; that is treated as ``{}`` (no enforced invariants), since legacy
+        bundles relied on consume-side cwd-based path resolution which the
+        bundle-root-relative scheme supersedes.
+
+        Examples
+        --------
+        >>> from hhemt.bundle import Bundle
+        >>> b = Bundle.from_directory("path/to/bundle")
+        >>> b.regenerate_report()
+        """
         root = Path(path).resolve()
         manifest_path = root / BUNDLE_MANIFEST_FILENAME
         if not manifest_path.exists():
@@ -152,10 +177,22 @@ class Bundle:
 
     @property
     def root(self) -> Path:
+        """Absolute path to the unpacked bundle directory.
+
+        Every bundle-relative path resolves against this at call time, which is
+        what makes a bundle relocatable — move the directory and `root` moves
+        with it. Use :meth:`absolute` to resolve a relative path against it.
+        """
         return self._root
 
     @property
     def manifest(self) -> dict:
+        """The parsed ``bundle_manifest.json``.
+
+        Carries the bundle's ``bundle_schema_version``, the harvested file set,
+        and the root invariants. Read-only in practice — mutating it does not
+        write back to disk.
+        """
         return self._manifest
 
     def absolute(self, rel: str | Path) -> Path:
