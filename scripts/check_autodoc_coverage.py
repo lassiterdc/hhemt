@@ -14,8 +14,15 @@ signature without being a documented object). Only classes and functions are
 required to render an anchor; bare module-level constants (e.g. LAYOUT_VERSION)
 emit no heading anchor under the numpy-style default config and are excluded.
 
-Exit 0 = every expected class/function has an anchor. 1 = >=1 missing (enumerated).
-2 = usage/environment error (site dir absent, import failure). Pure stdlib.
+Two independent assertions, because an anchor and a docstring are different facts:
+  1. every expected class/function renders a doc-object anchor (the symbol reached
+     the page), and
+  2. every public symbol carries a non-empty docstring (something is under the
+     heading). Without (2) a symbol renders as a bare name and this gate is green.
+
+Exit 0 = both hold. 1 = >=1 failure of either (enumerated separately).
+2 = usage/environment error (site dir absent, import failure, api.md absent or
+declaring no directives). Pure stdlib.
 """
 from __future__ import annotations
 
@@ -26,23 +33,39 @@ import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-# Public modules whose __all__ defines the documented surface. Each MUST have a
-# corresponding ``::: {module}`` directive in docs/reference/api.md. (hhemt.toolkit
-# is intentionally omitted: its sole export Toolkit is re-exported at the top level
-# and rendered by ``::: hhemt`` as ``hhemt.Toolkit``.)
-PUBLIC_MODULES: tuple[str, ...] = (
-    "hhemt",
-    "hhemt.analysis",
-    "hhemt.sensitivity_analysis",
-    "hhemt.bundle",
-    "hhemt.eda",
-    "hhemt.version_migration",
-)
+# The documented surface is DERIVED from docs/reference/api.md's ``:::`` directives
+# rather than declared here. That is deliberate and it removes a defect class rather
+# than an instance of one: a hand-maintained tuple here mirrored a hand-maintained
+# rendering surface there, and the two silently diverged — measured 2026-08-26 at 6
+# entries here against 8 directives there, so `hhemt.experiment_bundle` and
+# `hhemt.synthetic_experiment` rendered on the public API page while this gate
+# certified a surface that excluded them.
+#
+# (`hhemt.toolkit` needs no directive: its sole export `Toolkit` is re-exported at
+# the top level and rendered by ``::: hhemt`` as ``hhemt.Toolkit``.)
+API_REFERENCE_PAGE = Path(__file__).resolve().parent.parent / "docs" / "reference" / "api.md"
+
+def public_modules(api_page: Path = API_REFERENCE_PAGE) -> tuple[str, ...]:
+    """Module names from the ``::: {module}`` directives on the API reference page.
+
+    Raises FileNotFoundError if the page is absent, and ValueError if it declares
+    no directives — both are environment errors rather than coverage misses, and
+    an empty derived set would otherwise make this gate pass vacuously.
+    """
+    text = api_page.read_text(encoding="utf-8")
+    mods = tuple(
+        line.split(":::", 1)[1].strip()
+        for line in text.splitlines()
+        if line.startswith(":::") and line.split(":::", 1)[1].strip()
+    )
+    if not mods:
+        raise ValueError(f"{api_page} declares no ``:::`` directives — nothing to check.")
+    return mods
 
 def expected_qualnames() -> set[str]:
     """{module}.{symbol} for every non-underscore class/function in each __all__."""
     out: set[str] = set()
-    for modname in PUBLIC_MODULES:
+    for modname in public_modules():
         mod = importlib.import_module(modname)
         for sym in getattr(mod, "__all__", ()):
             if sym.startswith("_"):
@@ -52,6 +75,48 @@ def expected_qualnames() -> set[str]:
                 out.add(f"{modname}.{sym}")
             # bare constants/data: no heading anchor under default config -> skip
     return out
+
+def undocumented_symbols() -> list[str]:
+    """Public symbols that render an anchor but carry NO docstring.
+
+    An anchor proves the symbol reached the page; it says nothing about whether
+    anything is under the heading. A symbol with an empty docstring renders as a
+    bare name — measured 2026-08-26 at 25 such symbols, including
+    ``TRITONSWMM_analysis``, the toolkit's central class, while this gate was
+    green. Checking anchor presence alone certifies the delivery mechanism
+    rather than the content.
+
+    Covers each ``__all__`` entry and, for classes, their public methods,
+    properties, classmethods and staticmethods. ``classmethod``/``staticmethod``
+    objects retrieved via ``vars()`` are NOT matched by ``inspect.isfunction``,
+    so they are tested explicitly — omitting them silently undercounts.
+    """
+    missing: list[str] = []
+    for modname in public_modules():
+        mod = importlib.import_module(modname)
+        for sym in getattr(mod, "__all__", ()):
+            if sym.startswith("_"):
+                continue
+            obj = getattr(mod, sym, None)
+            if obj is None:
+                continue
+            if (inspect.isclass(obj) or inspect.isroutine(obj)) and not (inspect.getdoc(obj) or "").strip():
+                missing.append(f"{modname}.{sym}")
+            if inspect.isclass(obj):
+                for attr, val in vars(obj).items():
+                    if attr.startswith("_"):
+                        continue
+                    if isinstance(val, property):
+                        doc = inspect.getdoc(val.fget) or ""
+                    elif isinstance(val, (classmethod, staticmethod)):
+                        doc = inspect.getdoc(val.__func__) or ""
+                    elif inspect.isfunction(val):
+                        doc = inspect.getdoc(val) or ""
+                    else:
+                        continue
+                    if not doc.strip():
+                        missing.append(f"{modname}.{sym}.{attr}")
+    return missing
 
 class _AnchorCollector(HTMLParser):
     def __init__(self) -> None:
@@ -101,7 +166,26 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"autodoc coverage OK — all {len(expected)} public class/function symbols rendered.")
+
+    undocumented = undocumented_symbols()
+    if undocumented:
+        print("autodoc coverage FAILED — public symbols that render with NO docstring:",
+              file=sys.stderr)
+        for qual in undocumented:
+            print(f"  - {qual}", file=sys.stderr)
+        print(
+            f"\n{len(undocumented)} public symbol(s) render as a bare name on the API "
+            f"reference. An anchor proves the symbol reached the page; it does not "
+            f"prove anything is under the heading. Add a docstring, or make the symbol "
+            f"private if it is not part of the supported API.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"autodoc coverage OK — all {len(expected)} public class/function symbols "
+        f"rendered, and every public symbol carries a docstring."
+    )
     return 0
 
 if __name__ == "__main__":

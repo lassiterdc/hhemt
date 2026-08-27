@@ -24,5 +24,15 @@ jobs:
           pip install -e ".[docs]"
       - name: Build docs (strict — includes htmlproofer internal-link-check)
         run: mkdocs build --strict
+      # Two independent assertions: every public symbol renders an anchor, AND
+      # every public symbol carries a docstring. The second was added after 25
+      # symbols — including the central `TRITONSWMM_analysis` class — were found
+      # rendering as bare names while this step was green, because an anchor
+      # proves the symbol reached the page and nothing more.
       - name: Assert public-API autodoc coverage
         run: python scripts/check_autodoc_coverage.py --site-dir site
+
+      # Placeholder leakage and bare `path:line` citations. Needs no built site
+      # and no environment, so it is cheap and cannot false-red on a build issue.
+      - name: Assert docs content hygiene
+        run: python scripts/check_docs_content.py

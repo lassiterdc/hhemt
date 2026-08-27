@@ -1,7 +1,17 @@
-# Documentation freshness check
-# Reminds developers when CLAUDE.md or agent docs might need updating
+# Documentation reminder
+#
+# Posts a checklist on PRs that touch core modules, naming the PUBLIC
+# documentation surfaces most likely to need an update alongside them.
+#
+# This is a REMINDER, not a check. It asserts nothing about whether the docs are
+# actually stale and it never fails the build. That is deliberate and is stated
+# here so the job's green is not read as a freshness verdict: the prior version
+# of this workflow ran `python scripts/check_doc_freshness.py || true` against a
+# script that does not exist in this repository, absorbed the resulting exit 127,
+# set `check_complete=true` unconditionally, and posted its comment regardless —
+# a green that certified nothing while looking like a passing check.
 
-name: Documentation Check
+name: Documentation Reminder
 
 on:
   pull_request:
@@ -26,33 +36,32 @@ permissions:
   pull-requests: write
 
 jobs:
-  check-docs:
+  remind:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # Need full history to compare
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-
-    - name: Check documentation freshness
-      id: doc-check
-      run: |
-        python scripts/check_doc_freshness.py || true
-        echo "check_complete=true" >> $GITHUB_OUTPUT
-
     - name: Comment on PR
-      if: steps.doc-check.outputs.check_complete == 'true'
       uses: actions/github-script@v7
       with:
+        # Paths are named as plain code spans rather than blob links. A blob URL
+        # built from `context.ref` is wrong on a `pull_request` event, where the
+        # ref is `refs/pull/N/merge` — not a branch a blob URL can address.
         script: |
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: '📝 **Documentation Reminder**\n\nYou\'ve modified core files that may require documentation updates. Please review:\n\n- [ ] `CLAUDE.md` - If architecture, commands, or critical patterns changed\n- [ ] `.claude/agents/*.md` - If domain-specific patterns changed\n\nSee [CLAUDE.md "Maintaining This Documentation"](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/blob/' + context.ref + '/CLAUDE.md#maintaining-this-documentation) for guidance.'
+            body: [
+              '📝 **Documentation reminder**',
+              '',
+              'This PR touches core modules. Please check whether the public documentation needs updating alongside it:',
+              '',
+              '- [ ] `docs/reference/config-schema.md` — if a config field was added, renamed, or had its requiredness change',
+              '- [ ] `docs/reference/api.md` — if a MODULE was added or removed. Symbols within a listed module render automatically; the docs-build job fails on any that carries no docstring.',
+              '- [ ] `docs/how-to/` — if the steps for an existing task changed',
+              '- [ ] `docs/explanation/capabilities.md` — if what the toolkit can or cannot do changed',
+              '- [ ] Docstrings on any new or changed public symbol — these ARE the API reference',
+              '',
+              'This is a reminder only. It runs no freshness check and never fails the build.'
+            ].join('\n')
           })
