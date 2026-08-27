@@ -14,6 +14,13 @@ import subprocess as _subprocess
 from pathlib import Path
 
 TRITON_SHA_LABEL = "org.hhemt.triton_sha"
+SWMM_VERSION_LABEL = "org.hhemt.swmm_version"
+HHEMT_SHA_LABEL = "org.hhemt.hhemt_sha"
+
+#: The literal the container recipes carry until ``build_sifs_uva.sh`` substitutes the
+#: real toolkit sha. It is deliberately not a plausible sha, so an unsubstituted label
+#: cannot be mistaken for a version — see ``ContainerLabelResult.hhemt_sha``.
+HHEMT_SHA_PLACEHOLDER = "HHEMT_SHA_UNSET"
 
 #: Git's own abbreviation floor. Below this, a prefix match is not evidence of identity.
 _MIN_SHA_PREFIX = 7
@@ -36,6 +43,24 @@ class ContainerLabelResult:
     def triton_sha(self) -> str | None:
         v = self.labels.get(TRITON_SHA_LABEL)
         return str(v) if v else None
+
+    @property
+    def swmm_version(self) -> str | None:
+        v = self.labels.get(SWMM_VERSION_LABEL)
+        return str(v) if v else None
+
+    @property
+    def hhemt_sha(self) -> str | None:
+        """The toolkit commit baked into /opt/hhemt-src by the recipe's ``%files ../``.
+
+        Reads the literal placeholder as a MISS rather than as a value: an
+        unsubstituted label names no commit, and treating it as one would compare a
+        real pin against a sentinel and report a plausible-looking mismatch instead
+        of the build defect it actually is.
+        """
+        v = self.labels.get(HHEMT_SHA_LABEL)
+        v = str(v).strip() if v else None
+        return None if (not v or v == HHEMT_SHA_PLACEHOLDER) else v
 
 
 def read_container_labels(container_path, apptainer_module=None, timeout=120):

@@ -1749,6 +1749,28 @@ def _validate_per_sa_row_caps(
                 )
 
 
+def _running_toolkit_sha() -> str | None:
+    """The commit the RUNNING toolkit is at, or None when that is not knowable.
+
+    Delegates to the established ``bundle._emit._get_toolkit_git_sha`` rather than
+    re-implementing the git read -- a second copy is the drift surface
+    ``container_labels.py`` was extracted to remove. Its ``strict=False`` arm returns
+    the sentinel ``"unknown"``; this maps that to ``None`` so the caller can tell
+    NOT-COMPARED apart from COMPARED-AND-EQUAL, which a sentinel string cannot.
+
+    A wheel install has no sha and is the intended fallback, not a failure -- so the
+    caller warns rather than erroring. NEVER raises: a preflight helper that can abort
+    a launch over its own unavailability is worse than one that reports it.
+    """
+    try:
+        from hhemt.bundle._emit import _get_toolkit_git_sha
+
+        sha = (_get_toolkit_git_sha(strict=False) or "").strip()
+    except Exception:  # pragma: no cover - defensive: never block preflight on provenance
+        return None
+    return None if (not sha or sha == "unknown") else sha
+
+
 def _validate_container_config(
     cfg_analysis, cfg_hpc_system, result: "ValidationResult", cfg_system=None
 ) -> None:
@@ -1855,6 +1877,9 @@ def _validate_container_config(
     if not _pin:
         return
     from hhemt.container_labels import (
+        HHEMT_SHA_PLACEHOLDER as _CONTAINER_HHEMT_PLACEHOLDER,
+    )
+    from hhemt.container_labels import (
         looks_like_sha,
         read_container_labels,
         sha_in_filename,
@@ -1900,6 +1925,93 @@ def _validate_container_config(
                 ),
             )
             continue
+        # SWMM and TOOLKIT are checked BEFORE the TRITON chain below, and the order is
+        # deliberate: that chain's `continue`s exist because each of its steps presupposes
+        # the previous one, so running these after it would let a TRITON mismatch HIDE a
+        # second divergence in the same image -- one with a different remedy. The three
+        # labels answer three independent questions and each is reported on its own.
+        _swmm_pin = getattr(cfg_system, "SWMM_tag_key", None) if cfg_system is not None else None
+        if _swmm_pin:
+            _img_swmm = _res.swmm_version
+            if not _img_swmm:
+                result.add_error(
+                    field=_field,
+                    message=(
+                        f"container at '{_p}' carries no org.hhemt.swmm_version label, so the "
+                        f"standalone SWMM inside it cannot be verified against SWMM_tag_key "
+                        f"({_swmm_pin}). Refused rather than trusted, for the same reason the "
+                        "TRITON label is: absence must not read as agreement."
+                    ),
+                    fix_hint=(
+                        "Rebuild via hpc/build_sifs_uva.sh against a recipe carrying the label. "
+                        "An image built before the label was added will not have it."
+                    ),
+                )
+            elif _img_swmm.strip() != str(_swmm_pin).strip():
+                result.add_error(
+                    field=_field,
+                    message=(
+                        f"container at '{_p}' was built with standalone SWMM {_img_swmm} but the "
+                        f"analysis pins SWMM_tag_key {_swmm_pin}. Note this governs the STANDALONE "
+                        "SWMM only -- the COUPLED model's SWMM is vendored inside TRITON and "
+                        "travels with the TRITON pin, so it is covered by the TRITON check."
+                    ),
+                    fix_hint=(
+                        "Point at the SIF built at the pinned SWMM tag, or re-pin SWMM_tag_key to "
+                        "the tag this image was built at."
+                    ),
+                )
+
+        # The toolkit check is what would have caught the mixed-version split: the three
+        # process_* rules run `python -m hhemt.…` INSIDE the image, so a driver at one
+        # commit and an image at another silently split one campaign across two toolkits.
+        _img_hhemt = _res.hhemt_sha
+        if not _img_hhemt:
+            result.add_error(
+                field=_field,
+                message=(
+                    f"container at '{_p}' carries no usable org.hhemt.hhemt_sha label, so the "
+                    "toolkit baked into it cannot be verified against the running one. The "
+                    "in-container processing rules would run an unknown hhemt."
+                ),
+                fix_hint=(
+                    "Rebuild via hpc/build_sifs_uva.sh, which derives the sha from $TOOLKIT and "
+                    f"fails the build if the {_CONTAINER_HHEMT_PLACEHOLDER} placeholder survives."
+                ),
+            )
+        else:
+            _local = _running_toolkit_sha()
+            if _local is None:
+                # A wheel install legitimately has no sha to compare against, so this is
+                # NOT an error -- but it is also not a pass, and saying so is the point.
+                result.add_warning(
+                    field=_field,
+                    message=(
+                        f"container at '{_p}' declares hhemt {_img_hhemt[:12]}, but the RUNNING "
+                        "toolkit's commit could not be determined (not a git checkout), so the "
+                        "two were not compared. This check went UNPERFORMED rather than passing."
+                    ),
+                    fix_hint=(
+                        "Run the driver from a git checkout to enable the comparison, or accept "
+                        "that a driver/container version split cannot be detected here."
+                    ),
+                )
+            elif not shas_match(_img_hhemt, _local):
+                result.add_error(
+                    field=_field,
+                    message=(
+                        f"container at '{_p}' bakes hhemt {_img_hhemt[:12]} but the RUNNING "
+                        f"toolkit is {_local[:12]}. The rules that execute inside the image "
+                        "would run a DIFFERENT toolkit than the one driving the workflow -- the "
+                        "mixed-version split, which no other check can see because a container "
+                        "skips the compile that _verify_tritonswmm_pin fires from."
+                    ),
+                    fix_hint=(
+                        "Rebuild the image from the running checkout, or run the driver from the "
+                        "commit the image was built at. hpc/build_sifs_uva.sh bakes $TOOLKIT."
+                    ),
+                )
+
         _img = _res.triton_sha
         if not _img:
             result.add_error(
