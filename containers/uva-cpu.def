@@ -133,6 +133,8 @@ From: ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc709
     # the CPU/no-arch carrier; its container_build block gets no target_arch so the ingest
     # guard skips it and the SIM rung routes CPU rows here via the sif_path fallback.
     org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
+    org.hhemt.swmm_version v5.2.4
+    org.hhemt.hhemt_sha   HHEMT_SHA_UNSET
     org.hhemt.openmpi     5.0.7-pmix5
     org.hhemt.gcc         14.2.0
 

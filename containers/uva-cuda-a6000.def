@@ -231,6 +231,8 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     org.hhemt.status      pending-phase5-validation
     org.hhemt.base_digest sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80578d1c6a9
     org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
+    org.hhemt.swmm_version v5.2.4
+    org.hhemt.hhemt_sha   HHEMT_SHA_UNSET
     org.hhemt.triton_url  https://code.ornl.gov/hydro/triton.git
     org.hhemt.cuda        12.8.0
     org.hhemt.openmpi     5.0.7-pmix5
