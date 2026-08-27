@@ -1205,7 +1205,7 @@ def _validate_selected_event_forcing_extent(
     import pandas as pd
     import xarray as xr
 
-    from hhemt.scenario import _forcing_variables
+    from hhemt.scenario import _forcing_variables, resolve_event_window
 
     # FORCING-READ: preflight
     if not cfg_analysis.weather_timeseries or not Path(cfg_analysis.weather_timeseries).exists():
@@ -1229,7 +1229,21 @@ def _validate_selected_event_forcing_extent(
     except Exception:
         return  # file-level failures are surfaced by the checks above
 
+    # CLIP BEFORE COUNTING. This is the whole point of the check and it was the defect:
+    # the count was taken over `ds.sel(**sel)` -- the full shared axis -- while this
+    # function's own message claimed it was taken "over the declared window". On a
+    # rectangular NaN-padded master that reports exactly
+    # (n_forcing_vars x steps_outside_the_window) for an event whose forcing is COMPLETE
+    # inside it, which rejected 70 of 71 real observed events at `8244914f`.
+    #
+    # The no-CSV branch is skipped deliberately rather than resolved-then-clipped. With
+    # no window CSV the declared window IS the full coordinate extent, so the clip is
+    # the identity -- and `resolve_event_window` would re-open the master NetCDF once
+    # per event to rediscover endpoints this loop already holds.
+    windows_csv = cfg_analysis.weather_event_windows_csv
+    window_cache: dict = {}
     incomplete: list[tuple[str, int]] = []
+    unresolved: list[tuple[str, str]] = []
     with ds:
         for _, row in df_sims.iterrows():
             sel = {k: row[k] for k in cfg_analysis.weather_event_indices}
@@ -1238,16 +1252,56 @@ def _validate_selected_event_forcing_extent(
                 sub = ds.sel(**sel)
             except Exception:
                 continue
+            n_window = int(sub.sizes.get(time_dim, 0))
+            if windows_csv is not None:
+                try:
+                    start, end = resolve_event_window(cfg_analysis, sel, cache=window_cache)
+                except ConfigurationError as exc:
+                    # A window that cannot be resolved is its own defect with its own
+                    # remedy; reporting it as "incomplete forcing" would name the wrong
+                    # cause. Accumulated rather than raised so preflight still returns
+                    # every other finding in one pass.
+                    unresolved.append((label, str(exc).strip().splitlines()[-1].strip()))
+                    continue
+                # .sel(slice) never raises: an off-grid endpoint snaps inward and an
+                # out-of-range one yields an empty selection, which the zero-length arm
+                # below reports rather than passing vacuously.
+                sub = sub.sel({time_dim: slice(start, end)})
+                n_window = int(sub.sizes.get(time_dim, 0))
+                if n_window == 0:
+                    unresolved.append((label, f"the declared window {start} .. {end} selects ZERO timesteps"))
+                    continue
+            # `time_dim in sub[v].dims` keeps a DIMENSIONLESS variable out of the count
+            # -- `first_obs_tstep_w_rainfall` is scalar on the real observed-event file,
+            # and it is a broadcast of exactly that variable that blinded the retired
+            # detector. Do not replace this with a whole-Dataset reduction.
             n_missing = sum(
                 int(sub[v].isnull().sum().values)
                 for v in forcing_vars
                 if v in sub.data_vars and time_dim in sub[v].dims
             )
             if n_missing:
-                incomplete.append((label, n_missing))
+                incomplete.append((label, n_missing, n_window))
+
+    if unresolved:
+        shown_u = "; ".join(f"{lab}: {why}" for lab, why in unresolved[:5])
+        result.add_error(
+            field="analysis.weather_event_windows_csv",
+            message=(
+                f"{len(unresolved)} of {len(df_sims)} selected event(s) have no usable "
+                f"declared window: {shown_u}" + (" ..." if len(unresolved) > 5 else "")
+            ),
+            current_value=str(cfg_analysis.weather_event_windows_csv),
+            fix_hint=(
+                "One row per simulated event, keyed on weather_event_indices, with start "
+                "and end stamps on the weather file's OWN time axis."
+            ),
+        )
 
     if incomplete:
-        shown = ", ".join(f"{lab} ({n} missing)" for lab, n in incomplete[:5])
+        # The window step count travels with every finding, so a future regression to a
+        # full-axis count is legible in the message itself rather than only by arithmetic.
+        shown = ", ".join(f"{lab} ({n} missing of {w} window steps)" for lab, n, w in incomplete[:5])
         result.add_error(
             field="analysis.weather_events_to_simulate",
             message=(

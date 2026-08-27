@@ -137,3 +137,106 @@ def test_non_uniform_axis_raises_rather_than_taking_a_mode():
     with pytest.raises(ConfigurationError, match="NOT uniform"):
         _weather_step_seconds(ragged, TDIM)
     assert _weather_step_seconds(ds, TDIM) == 120.0
+
+
+# --- preflight must COUNT over the declared window, not over the full axis -------
+
+
+def _padded_master(tmp_path):
+    """A 2-event master whose forcing is complete inside a window and NaN outside.
+
+    Mirrors the real `norfolk_observed_event` shape: a rectangular file where each
+    event occupies part of a shared axis, plus a DIMENSIONLESS variable
+    (`first_obs_tstep_w_rainfall`) whose `to_array()` broadcast blinded the original
+    detector. Nothing here may assume that variable carries the time dim.
+    """
+    n_axis, n_win = 40, 12
+    ts = pd.date_range("2025-08-31", periods=n_axis, freq="120s")
+    tide = np.full((2, n_axis), np.nan)
+    tide[:, :n_win] = 1.0
+    ds = xr.Dataset(
+        {
+            "waterlevel_m": (("year", TDIM), tide),
+            "first_obs_tstep_w_rainfall": ((), 0),
+        },
+        coords={"year": [0, 1], TDIM: ts},
+    )
+    nc = tmp_path / "weather.nc"
+    ds.to_netcdf(nc, engine="h5netcdf")
+
+    sims = tmp_path / "sims.csv"
+    pd.DataFrame({"year": [0, 1]}).to_csv(sims, index=False)
+
+    windows = tmp_path / "windows.csv"
+    pd.DataFrame(
+        {
+            "year": [0, 1],
+            "win_start": [str(ts[0])] * 2,
+            "win_end": [str(ts[n_win - 1])] * 2,
+        }
+    ).to_csv(windows, index=False)
+    return nc, sims, windows, n_axis, n_win
+
+
+class _PreflightCfgAnalysis:
+    weather_time_series_timestep_dimension_name = TDIM
+    weather_event_indices = ["year"]
+    weather_time_series_storm_tide_datavar = "waterlevel_m"
+    toggle_storm_tide_boundary = True
+    weather_event_start_column = "win_start"
+    weather_event_end_column = "win_end"
+
+
+class _PreflightCfgSystem:
+    toggle_use_swmm_for_hydrology = False
+    subcatchment_raingage_mapping = None
+    subcatchment_raingage_mapping_gage_id_colname = None
+
+
+def test_preflight_counts_missing_over_the_declared_window_not_the_full_axis(tmp_path):
+    """The regression test for the defect the local suite could not see.
+
+    Every event's forcing is COMPLETE inside its declared window and NaN outside it, so
+    preflight must report ZERO incomplete events. Before the fix it reported both,
+    because it counted over `ds.sel(**sel)` -- the full axis -- while its own message
+    claimed the count was taken "over the declared window". The existing contract tests
+    exercised `resolve_event_window` directly and never ran preflight against a real
+    window CSV over NaN-padded data, which is precisely the gap this closes.
+    """
+    from hhemt.validation import ValidationResult, _validate_selected_event_forcing_extent
+
+    nc, sims, windows, _, _ = _padded_master(tmp_path)
+    cfg_a, cfg_s = _PreflightCfgAnalysis(), _PreflightCfgSystem()
+    cfg_a.weather_timeseries = nc
+    cfg_a.weather_events_to_simulate = sims
+    cfg_a.weather_event_windows_csv = windows
+
+    result = ValidationResult()
+    _validate_selected_event_forcing_extent(cfg_a, cfg_s, result)
+    assert result.errors == [], (
+        "preflight flagged a complete-inside-its-window event; the count is being taken "
+        f"over the wrong span: {[e.message for e in result.errors]}"
+    )
+
+
+def test_preflight_still_catches_an_event_incomplete_INSIDE_its_window(tmp_path):
+    """The other side of the same edit: narrowing the span must not blind the check."""
+    from hhemt.validation import ValidationResult, _validate_selected_event_forcing_extent
+
+    nc, sims, windows, _, n_win = _padded_master(tmp_path)
+    ds = xr.open_dataset(nc, engine="h5netcdf").load()
+    ds["waterlevel_m"][1, n_win - 3] = np.nan  # a hole INSIDE event 1's window
+    nc2 = tmp_path / "weather_holed.nc"
+    ds.to_netcdf(nc2, engine="h5netcdf")
+
+    cfg_a, cfg_s = _PreflightCfgAnalysis(), _PreflightCfgSystem()
+    cfg_a.weather_timeseries = nc2
+    cfg_a.weather_events_to_simulate = sims
+    cfg_a.weather_event_windows_csv = windows
+
+    result = ValidationResult()
+    _validate_selected_event_forcing_extent(cfg_a, cfg_s, result)
+    assert len(result.errors) == 1
+    msg = result.errors[0].message
+    assert "year=1" in msg and "1 missing" in msg
+    assert "year=0" not in msg, "event 0 is complete inside its window and must not be flagged"
