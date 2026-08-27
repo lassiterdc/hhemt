@@ -98,6 +98,39 @@ def test_missing_window_column_raises_rather_than_falling_back(tmp_path):
         resolve_event_window(cfg, {"year": 0})
 
 
+def test_unnamed_window_columns_raise_before_any_column_is_read(tmp_path):
+    """The sentinel is rejected on its own terms, not by failing to exist."""
+    from hhemt.config.analysis import WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED as SENT
+
+    csv = tmp_path / "windows.csv"
+    pd.DataFrame({"year": [0], "win_start": ["2025-08-31"], "win_end": ["2025-09-01"]}).to_csv(csv, index=False)
+    cfg = _Cfg()
+    cfg.weather_event_windows_csv = csv
+    cfg.weather_event_start_column = SENT
+    cfg.weather_event_end_column = SENT
+    with pytest.raises(ConfigurationError, match="does not guess"):
+        resolve_event_window(cfg, {"year": 0})
+
+
+def test_a_csv_column_literally_named_unspecified_does_not_satisfy_the_sentinel(tmp_path):
+    """Ordering test: sentinel BEFORE existence.
+
+    Were existence checked first, this CSV would validate and the toolkit would read a
+    column called 'unspecified' as the window -- silently, and wrongly. That is the
+    accident the sentinel exists to prevent, so the ordering is the contract.
+    """
+    from hhemt.config.analysis import WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED as SENT
+
+    csv = tmp_path / "windows.csv"
+    pd.DataFrame({"year": [0], SENT: ["2025-08-31"]}).to_csv(csv, index=False)
+    cfg = _Cfg()
+    cfg.weather_event_windows_csv = csv
+    cfg.weather_event_start_column = SENT
+    cfg.weather_event_end_column = SENT
+    with pytest.raises(ConfigurationError, match="does not guess"):
+        resolve_event_window(cfg, {"year": 0})
+
+
 def test_non_uniform_axis_raises_rather_than_taking_a_mode():
     ds = _event(N_AXIS)
     ragged = ds.isel({TDIM: [0, 1, 2, 50, 51]})

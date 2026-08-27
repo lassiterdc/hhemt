@@ -1143,6 +1143,44 @@ def _validate_event_alignment(cfg: analysis_config, result: ValidationResult):
         )
 
 
+def _validate_event_window_columns(cfg_analysis: analysis_config, result: ValidationResult) -> None:
+    """Name the window CSV's two columns, and check they exist -- at SUBMIT time.
+
+    A no-op unless `weather_event_windows_csv` is set, so every config without the file
+    is untouched.
+
+    This duplicates no logic: it calls the same `assert_window_columns_declared` the
+    consumer calls, and converts its `ConfigurationError` into an accumulated preflight
+    error so the operator sees it beside every other config complaint instead of one at
+    a time. The consumer keeps its own raise as the runtime backstop, because preflight
+    is NOT on the production path -- `Toolkit.run` has no preflight call and
+    `run_experiment` ends at `tk.run(...)`. Preflight is what saves an allocation; the
+    consumer is what always fires.
+    """
+    import pandas as pd
+
+    from hhemt.scenario import assert_window_columns_declared
+
+    csv = cfg_analysis.weather_event_windows_csv
+    if not csv or not Path(csv).exists():
+        return
+    try:
+        # Header only -- the column NAMES are the whole question here, and a window CSV
+        # for a 3,798-event ensemble is not worth reading in full to answer it.
+        columns = list(pd.read_csv(csv, nrows=0).columns)
+    except Exception:
+        return  # unreadable-file failures are surfaced by the path checks above
+    try:
+        assert_window_columns_declared(cfg_analysis, columns, csv)
+    except ConfigurationError as exc:
+        result.add_error(
+            field="analysis.weather_event_windows_csv",
+            message=str(exc),
+            current_value=str(csv),
+            fix_hint=getattr(exc, "fix_hint", "") or "See the message above.",
+        )
+
+
 def _validate_selected_event_forcing_extent(
     cfg_analysis: analysis_config, cfg_system: system_config, result: ValidationResult
 ) -> None:
@@ -1944,6 +1982,9 @@ def preflight_validate(
     # Re-parented here from _validate_storm_tide_data: this is a whole-analysis
     # check and needs BOTH configs to resolve the rule-(1) forcing variable set.
     _validate_selected_event_forcing_extent(cfg_analysis, cfg_system, result)
+    # Same placement rationale: a whole-analysis config check that must be reachable
+    # from preflight, sharing its predicate with the consumer so the two cannot drift.
+    _validate_event_window_columns(cfg_analysis, result)
 
     # Per-(sa_id, resource-column) partition-cap scan (reproducibility C8, ADR-10).
     # No-op unless cfg_hpc_system is supplied AND the sensitivity CSV is readable, so

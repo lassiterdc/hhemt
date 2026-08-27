@@ -214,6 +214,68 @@ def _weather_step_seconds(ds, time_dim) -> float:
     return float(steps[0] / np.timedelta64(1, "s"))
 
 
+def assert_window_columns_declared(cfg_analysis, columns, csv) -> None:
+    """Two checks, in ORDER, on the window CSV's two column-name fields.
+
+    Shared by `resolve_event_window` (the consumer, which reaches it on every scenario)
+    and `validation._validate_event_window_columns` (preflight, which reaches it once at
+    submit time), for the same reason `_forcing_variables` is shared: preflight and the
+    choke point must not be able to disagree about what "declared" means. Preflight is
+    NOT on the production path -- `Toolkit.run` never calls it and `run_experiment` ends
+    at `tk.run(...)` -- so the consumer-side call is the one that always fires and the
+    preflight call is the one that fires early enough to save an allocation.
+
+    STAGE 1 -- still the sentinel. Reaching here with WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED
+    intact means a window CSV was supplied and the user never said which of its columns
+    to read.
+
+    Checking the sentinel BEFORE existence is load-bearing rather than cosmetic. Were the
+    order reversed, a CSV that happened to carry a column literally named "unspecified"
+    would pass the existence check and be READ as the window -- silently, and wrongly,
+    which is the whole accident class the sentinel exists to prevent. The sentinel is a
+    DISTINGUISHED VALUE, never merely a string chosen to be improbable.
+
+    STAGE 2 -- named but absent. A different cause (a typo, or a column that moved) and a
+    different remedy, so it gets its own message and lists what the CSV actually carries.
+    """
+    from hhemt.config.analysis import WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED
+
+    pairs = (
+        ("weather_event_start_column", cfg_analysis.weather_event_start_column),
+        ("weather_event_end_column", cfg_analysis.weather_event_end_column),
+    )
+
+    unnamed = [f for f, v in pairs if v == WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED]
+    if unnamed:
+        raise ConfigurationError(
+            field=f"analysis.{unnamed[0]}",
+            message=(
+                f"weather_event_windows_csv is set to {csv}, but "
+                + " and ".join(unnamed)
+                + f" {'is' if len(unnamed) == 1 else 'are'} still "
+                f"'{WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED}'. The toolkit does not guess "
+                "which column holds the window; it must be named."
+            ),
+            fix_hint=(
+                "Name the columns explicitly in your analysis config, e.g.\n"
+                "    weather_event_start_column: my_window_start\n"
+                "    weather_event_end_column: my_window_end\n"
+                "They must carry stamps on the weather file's OWN time axis. If your CSV "
+                "also has real-world date columns, do NOT name those -- the weather axis "
+                "is a separate calendar and clipping to real dates selects nothing."
+            ),
+        )
+
+    have = list(columns)
+    absent = [(f, v) for f, v in pairs if v not in have]
+    if absent:
+        raise ConfigurationError(
+            field=f"analysis.{absent[0][0]}",
+            message=(f"{csv} has no column(s) " + ", ".join(f"{v!r} (named by {f})" for f, v in absent) + "."),
+            fix_hint=f"That file's columns are: {have}.",
+        )
+
+
 def resolve_event_window(cfg_analysis, weather_event_indexers, cache=None):
     """This event's (start, end): from the user CSV, or the full coordinate extent.
 
@@ -255,18 +317,17 @@ def resolve_event_window(cfg_analysis, weather_event_indexers, cache=None):
         if cache is not None:
             cache["_event_windows_df"] = df
 
-    missing_cols = [c for c in idx if c not in df.columns]
-    for c in (cfg_analysis.weather_event_start_column, cfg_analysis.weather_event_end_column):
-        if c not in df.columns:
-            missing_cols.append(c)
-    if missing_cols:
+    # Window columns first (sentinel, then existence), because an unnamed column is a
+    # pure config defect that says nothing about the CSV's contents. Index columns keep
+    # their own check below: a different cause again, so a different message.
+    assert_window_columns_declared(cfg_analysis, list(df.columns), csv)
+
+    missing_idx = [c for c in idx if c not in df.columns]
+    if missing_idx:
         raise ConfigurationError(
             field="analysis.weather_event_windows_csv",
-            message=f"{csv} is missing required column(s): {sorted(set(missing_cols))}",
-            fix_hint=(
-                f"Required columns: "
-                f"{idx + [cfg_analysis.weather_event_start_column, cfg_analysis.weather_event_end_column]}"
-            ),
+            message=f"{csv} is missing event-index column(s): {sorted(set(missing_idx))}",
+            fix_hint=(f"weather_event_indices names {idx}; that file's columns are: {list(df.columns)}."),
         )
     mask = pd.Series(True, index=df.index)
     for c in idx:

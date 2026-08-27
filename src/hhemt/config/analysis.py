@@ -6,12 +6,26 @@ from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from hhemt.config.base import cfgBaseModel, field_meta, when, when_supplied
+from hhemt.config.base import cfgBaseModel, field_meta, when
 from hhemt.config.eda import eda_config
 
 # One-way import: config/analysis.py imports report_config; config/report.py
 # must not import from config/analysis.py to avoid circular import.
 from hhemt.config.report import report_config as _report_config_model
+
+# The DISTINGUISHED value the two weather_event_windows_csv column-name fields carry
+# until the user names their own columns. It is a real default rather than None so the
+# fields stay plainly Optional -- the window CSV itself is optional, so a config that
+# omits it must not be required to answer a question about its columns.
+#
+# It is a SENTINEL, not a name chosen to be improbable, and every consumer MUST test
+# for it BEFORE testing whether the named column exists. A CSV that happened to carry
+# a column literally named "unspecified" would otherwise pass an existence check and be
+# read as the window -- the exact silent-wrong-column accident the sentinel prevents.
+#
+# Declared once, here, so the Field default and every check share one source; a repeated
+# string literal is how the default and the check drift apart.
+WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED = "unspecified"
 
 ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "swmm"]]
 # Artifact-class vocabulary, ordered by REGENERATION COST rather than by filename.
@@ -571,34 +585,24 @@ class analysis_config(cfgBaseModel):
             "declare a shorter window that IS complete."
         ),
     )
-    weather_event_start_column: str | None = Field(
-        None,
+    weather_event_start_column: str = Field(
+        WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED,
         description=(
             "Column in weather_event_windows_csv carrying each event's window START, parsed "
             "with pandas.to_datetime. The NAME is a config input so the toolkit binds no "
-            "column name of its own, and there is deliberately NO DEFAULT. A default IS a "
-            "name the toolkit assumes, and the name it would most plausibly assume is one "
-            "weather_event_summary_csv already carries. That file is index-keyed on the "
-            "same weather_event_indices but holds REAL calendar dates, while the weather "
-            "netCDF axis is a dummy calendar -- so ANY default lets an operator point "
-            "weather_event_windows_csv at the summary file and clip every event to zero "
-            "rows while validating perfectly. Requiring the name to be stated retires that "
-            "collision structurally instead of defending against it by picking a name that "
-            "happens not to collide."
-        ),
-        json_schema_extra=field_meta(
-            required_when=[when_supplied("weather_event_windows_csv")]
+            "column name of its own: the default is the SENTINEL 'unspecified', which names "
+            "no real column and is rejected before any column is read. Only relevant when "
+            "weather_event_windows_csv is supplied -- without that file there is no CSV to "
+            "name a column in, and the sentinel simply goes unread. When the file IS "
+            "supplied, both column names must be stated and both must exist in it."
         ),
     )
-    weather_event_end_column: str | None = Field(
-        None,
+    weather_event_end_column: str = Field(
+        WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED,
         description=(
             "Column in weather_event_windows_csv carrying each event's window END, parsed "
             "with pandas.to_datetime. Inclusive: the clipped slice contains the end stamp. "
-            "No default, for the reason stated on weather_event_start_column."
-        ),
-        json_schema_extra=field_meta(
-            required_when=[when_supplied("weather_event_windows_csv")]
+            "Sentinel-defaulted and validated exactly as weather_event_start_column."
         ),
     )
 
@@ -608,9 +612,9 @@ class analysis_config(cfgBaseModel):
 
         A tripwire on the likeliest operator action, not a fix: a COPY of the summary
         file under another name walks past it. The real protection is that the two
-        column-name fields above have NO DEFAULT -- the toolkit assumes no column name,
-        so the summary CSV's own headers can never be silently accepted -- together with
-        the endpoint-equality assertion at the clip.
+        column-name fields above default to a SENTINEL rather than to a plausible column
+        name, so the summary CSV's own headers are never swept in by default -- together
+        with the endpoint-equality assertion at the clip.
         """
         w, s = self.weather_event_windows_csv, self.weather_event_summary_csv
         if w is not None and s is not None and Path(w).resolve() == Path(s).resolve():
