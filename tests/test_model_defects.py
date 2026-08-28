@@ -9,6 +9,7 @@ from hhemt.model_defects import (
     REGISTRY_BY_ID,
     SHA_DEPTH_SCATTER_FIX,
     SHA_EXTBC_GHOST_RING_FIX,
+    SHA_ORNL_GHOST_RING_AND_GPU,
     ModelDefect,
     resolve,
     resolve_for_tree_attrs,
@@ -80,6 +81,35 @@ def test_split_pin_resume_sha_is_clean_on_all_three():
         v = _v(did, SHA_EXTBC_GHOST_RING_FIX)
         assert v.status == "absent", (did, v)
         assert v.rule == "known_absent_set"
+
+
+def test_ornl_ghost_ring_sha_is_clean_on_all_three():
+    """a38338b0 (ORNL upstream `triton-swmm`) must resolve ABSENT on every defect, WITHOUT a clone.
+
+    Why this needs its own test rather than riding on the fork sha's: a38338b0 reaches `absent` on
+    two DIFFERENT bases -- cached ancestry for the coupled-resume and depth-scatter defects
+    (3a832f7d and 9db367dd really are its ancestors), and an explicit independent-implementation
+    override for the ghost-ring one, where 5d2ad1e8 is on the other remote and ancestry cannot
+    answer at all. All three must nonetheless report the SAME rule, because the read path has no
+    clone and `known_absent_set` is the only rule reachable there. A regression that dropped this
+    sha from one set would surface as `ancestry_unresolvable`, which is the exact abstention this
+    entry exists to remove -- and which is easy to mistake for a pass, since `indeterminate` never
+    fails a check.
+    """
+    for did in REGISTRY_BY_ID:
+        v = _v(did, SHA_ORNL_GHOST_RING_AND_GPU)
+        assert v.status == "absent", (did, v)
+        assert v.rule == "known_absent_set", (did, v)
+
+
+def test_ornl_entry_records_the_weaker_evidentiary_basis():
+    """The note must SAY the basis is not a content comparison, and must name the PARENT as where
+    the fix landed -- a38338b0 is the GPU-emission commit, not the ghost-ring one. A silent
+    certification is the failure mode the ghost-ring entry's existing note was written to prevent."""
+    note = REGISTRY_BY_ID["TRITON-RESUME-EXTBC-GHOST-RING"].provenance_note
+    assert "a38338b0" in note
+    assert "0cf5faff" in note
+    assert "weaker" in note
 
 
 def test_the_false_stamp_is_contradicted():

@@ -177,6 +177,42 @@ SHA_EXTBC_GHOST_RING_FIX = "5d2ad1e8adf9a85d7df14e885b76e59a10f9a98b"
 #: to 5d2ad1e8, and src/triton.h is whitespace-normalised identical once the probe blocks are
 #: stripped.
 SHA_MAIN_GHOST_RING_AND_GPU = "21e666d6e0efc3383344813853386aaba1474785"
+#: ORNL UPSTREAM (`code.ornl.gov/hydro/triton.git`), branch `triton-swmm`, NOT the fork -- and the
+#: remote is load-bearing rather than decorative, because the two repositories are both named
+#: `triton.git` and carry different histories (module docstring). The sha is stored bare, as every
+#: entry here is: `_sha_eq` compares 40-hex identifiers whose collision probability is the reason
+#: git uses them, so the SET needs no qualifier and the COMMENT is where a reader learns which
+#: clone resolves it.
+#:
+#: THE CLAIM IS ABOUT THE TREE, NOT ABOUT THIS COMMIT, and the distinction is the whole reason this
+#: comment is worded carefully. a38338b0 is `emit the GPU device name in the TRITON RUN INFO block`;
+#: the ghost-ring fix landed at its PARENT 0cf5faff (`TRITON: persist and restore the perimeter
+#: ghost ring at checkpoints`). The TREE at a38338b0 carries that fix, plus 9db367dd, b3820a44 and
+#: 3a832f7d among its ancestors. Evidence that the solver content is unchanged between parent and
+#: child: `git diff --stat 0cf5faff a38338b0` reports ONE file, `src/output.h`, +15/-0 -- a
+#: WHOLE-TREE diff, which is what makes it sound. (A path-targeted diff naming src/ghost_ring.h
+#: would be vacuous corroboration: ORNL implements the ring inline and that path does not exist
+#: upstream, so `git ls-tree` returns 0 entries for it at BOTH shas against a control needle of 1
+#: for src/triton.h. Cite the whole-tree diff.)
+#:
+#: Same structural position as 21e666d6 above -- ghost-ring fix PLUS the GPU-device-name emission,
+#: one repository each -- and ONE EVIDENTIARY STEP WEAKER: 21e666d6 is a cherry-pick that was
+#: content-verified blob-identical to 5d2ad1e8, while this is an INDEPENDENT upstream
+#: implementation of the same intent, attested by the parent commit's title and by ancestry rather
+#: than by a diff against the fork. That comparison cannot be performed on any single clone:
+#: 5d2ad1e8 is absent from ORNL history (`git cat-file -t 5d2ad1e8` fails in an ORNL clone), so
+#: `merge-base --is-ancestor 5d2ad1e8 a38338b0` cannot answer at all.
+#:
+#: APPLICABILITY, recorded from upstream's own commit message rather than inferred: the ghost-ring
+#: defect "only manifests when open_boundaries=1 and/or external BCs are active; with both inactive
+#: nothing writes the ring mid-step and resumes were already bit-exact (verified: the fix is inert
+#: there, byte-identical rasters)."
+#:
+#: WHAT WOULD FALSIFY THIS ENTRY: the four synthetic hydraulics_vs_compute_config experiments are
+#: the measurement. If the upstream implementation is subtly wrong, their clean-vs-resume b4b
+#: comparison disagrees while this set says `absent`. Content-verify against 5d2ad1e8 when a clone
+#: carrying both remotes exists, and downgrade this entry if the check fails.
+SHA_ORNL_GHOST_RING_AND_GPU = "a38338b09e62e57c936f51516bbdbe495d89a546"
 
 #: Historical PRODUCING shas whose ancestry was resolved ONCE here, at registry-authoring time,
 #: against a clone that had them — the read path has no clone (see module docstring) and would
@@ -198,6 +234,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_DEPTH_SCATTER_FIX,
                 SHA_EXTBC_GHOST_RING_FIX,
                 SHA_MAIN_GHOST_RING_AND_GPU,
+                # 3a832f7d is an ANCESTOR of a38338b0 -- cached ancestry, the ordinary basis.
+                SHA_ORNL_GHOST_RING_AND_GPU,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -209,7 +247,13 @@ REGISTRY: tuple[ModelDefect, ...] = (
         title="Replayed SWMM node depths are never scattered to the per-rank new_depth[]",
         fixed_in=SHA_DEPTH_SCATTER_FIX,
         known_absent_in=frozenset(
-            {SHA_DEPTH_SCATTER_FIX, SHA_EXTBC_GHOST_RING_FIX, SHA_MAIN_GHOST_RING_AND_GPU}
+            # 9db367dd is an ANCESTOR of a38338b0 -- cached ancestry, the ordinary basis.
+            {
+                SHA_DEPTH_SCATTER_FIX,
+                SHA_EXTBC_GHOST_RING_FIX,
+                SHA_MAIN_GHOST_RING_AND_GPU,
+                SHA_ORNL_GHOST_RING_AND_GPU,
+            }
         ),
         also_present_in=frozenset(
             {SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}
@@ -221,7 +265,12 @@ REGISTRY: tuple[ModelDefect, ...] = (
         defect_id="TRITON-RESUME-EXTBC-GHOST-RING",
         title="The extbc perimeter ghost ring is not restored across a hotstart resume",
         fixed_in=SHA_EXTBC_GHOST_RING_FIX,
-        known_absent_in=frozenset({SHA_EXTBC_GHOST_RING_FIX, SHA_MAIN_GHOST_RING_AND_GPU}),
+        known_absent_in=frozenset(
+            # a38338b0's TREE carries an INDEPENDENT upstream implementation of this fix, landed at
+            # its parent 0cf5faff; ancestry cannot reach it from 5d2ad1e8, which is on the other
+            # remote. See the constant's comment for the basis and for what would falsify it.
+            {SHA_EXTBC_GHOST_RING_FIX, SHA_MAIN_GHOST_RING_AND_GPU, SHA_ORNL_GHOST_RING_AND_GPU}
+        ),
         also_present_in=frozenset(
             {SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER, SHA_DEPTH_SCATTER_FIX}
         ),
@@ -242,7 +291,13 @@ REGISTRY: tuple[ModelDefect, ...] = (
             "#ifdef TRITON_EXTBC_PROBE, which defaults OFF, so a default build of this sha is "
             "production-equivalent rather than a diagnostic build. Stated explicitly rather than "
             "left silent, because a registry that certifies a build whose branch name reads "
-            "`instrumented/` should say on what basis."
+            "`instrumented/` should say on what basis. "
+            "A SECOND build is certified for this defect on a DIFFERENT basis: a38338b0 on ORNL "
+            "upstream carries the maintainers' own implementation of the same fix, landed at its "
+            "parent 0cf5faff. Its absence verdict rests on that parent's commit and on ancestry, "
+            "not on a content comparison with 5d2ad1e8 -- which no single clone can perform, since "
+            "the two shas live on repositories that share a name and not a history. That is one "
+            "step weaker than 21e666d6's blob-identical cherry-pick, and it is recorded as weaker."
         ),
     ),
 )
