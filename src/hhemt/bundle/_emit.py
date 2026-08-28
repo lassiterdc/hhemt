@@ -682,10 +682,18 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
     # artifact that gets deposited under a DOI. Measured on a real Norfolk emit: 213
     # entities carry `agent` -> {"@id": "#agent-{producer-host}"} and 213 carry
     # `startTime`, one distinct value each -- the largest single environment-sourced
-    # population in the bundle, and one that no config-derived detector can reach because
-    # its origin is socket.gethostname() rather than any config field. The `agent` refs
-    # are additionally DANGLING (no #agent-* entity exists in the @graph), so stripping
-    # them removes an unresolvable reference rather than breaking a resolvable one.
+    # population in the bundle, and one that no CONFIG-derived detector can reach: its
+    # origin is socket.gethostname(), not any config field. Reaching it requires the
+    # PERSISTED run record, NOT a live call at emit time -- provenance.py builds this
+    # `agent` from `alog.workflow_submission_node.get()`, a LogField set once at
+    # SUBMISSION time on the SUBMITTING host (workflow.py). emit_bundle runs wherever
+    # `hhemt bundle` was invoked, typically a login node, so a live gethostname() here
+    # would name a host that appears nowhere in the artifacts while missing every host
+    # that does.
+    #
+    # The `agent` refs are additionally DANGLING (no #agent-* entity exists in the
+    # @graph), so stripping them removes an unresolvable reference rather than
+    # breaking a resolvable one.
     # `mainEntity` -- which experiments.py's from_doi ingest and bundle/_reprex.py both
     # require -- is not a volatile key and is untouched.
     #
