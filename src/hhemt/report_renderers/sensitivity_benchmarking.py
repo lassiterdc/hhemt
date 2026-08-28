@@ -139,7 +139,7 @@ if TYPE_CHECKING:
 class FacetConfig:
     """Configuration for multi-facet sensitivity-benchmarking layouts.
 
-    Architectural scaffold (F4 of the kickoff figure-review) for future experiments
+    Architectural groundwork (F4 of the kickoff figure-review) for future experiments
     that compare benchmark metrics across an additional categorical axis — typically
     DEM resolution (e.g., 1m vs 3.5m vs 10m) or GPU hardware (a6000 vs a100 vs h100).
 

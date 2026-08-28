@@ -1183,7 +1183,7 @@ def synth_experiment_command(
             console.print(f"[green]Matrix CSV:[/green] {result['matrix_csv']}")
             console.print(f"[green]Synthetic model:[/green] {result['model_dir']}")
             console.print(
-                "[yellow]Note:[/yellow] this scaffolds the experiment inputs; the full ensemble "
+                "[yellow]Note:[/yellow] this prepares the experiment inputs; the full ensemble "
                 "run is via scripts/experiments/synth_compute_config.py (Phase 3)."
             )
         raise typer.Exit(0)

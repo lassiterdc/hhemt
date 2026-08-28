@@ -23,7 +23,7 @@ HARVESTS each ``child_crates/{eid}/``'s already-rendered ``plots/`` figures into
 combined Snakefile as native ``report()`` items under per-experiment sidebar categories
 (``category={eid}`` / ``subcategory={child category}``), so the ONE combined report carries
 every experiment's content natively — NO ``index.html`` front door, NO per-child report
-regen (Option B, superseding the earlier Option-A out-link scaffold). CR4 is unaffected:
+regen (Option B, superseding the earlier Option-A out-link design). CR4 is unaffected:
 the deterministic-emit test monkeypatches ``_render_combined_report`` to a no-op before the
 byte-identity check, and child figures are referenced in place (no new files under the root).
 
