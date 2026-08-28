@@ -177,6 +177,24 @@ SHA_EXTBC_GHOST_RING_FIX = "5d2ad1e8adf9a85d7df14e885b76e59a10f9a98b"
 #: to 5d2ad1e8, and src/triton.h is whitespace-normalised identical once the probe blocks are
 #: stripped.
 SHA_MAIN_GHOST_RING_AND_GPU = "21e666d6e0efc3383344813853386aaba1474785"
+#: ORNL UPSTREAM (`code.ornl.gov/hydro/triton.git`), NOT the fork -- and the remote is load-bearing
+#: rather than decorative, because the two repositories are both named `triton.git` and carry
+#: different histories (module docstring). The sha itself is stored bare, as every entry here is:
+#: `_sha_eq` compares 40-hex identifiers whose collision probability is the reason git uses them,
+#: so the SET needs no qualifier and the COMMENT is where a reader learns which clone resolves it.
+#: This commit IS the ghost-ring fix -- `TRITON: persist and restore the perimeter ghost ring at
+#: checkpoints` -- authored independently upstream, with 9db367dd, b3820a44 and 3a832f7d among its
+#: ancestors. Ancestry therefore vindicates it for the coupled-resume and depth-scatter defects but
+#: CANNOT for the ghost-ring one: 5d2ad1e8 is the fork's separate implementation and is absent from
+#: ORNL history, so `merge-base --is-ancestor 5d2ad1e8 0cf5faff` cannot answer on any single clone.
+#: Same structural position as 21e666d6 above, ONE EVIDENTIARY STEP WEAKER: 21e666d6 is a
+#: cherry-pick and was content-verified blob-identical, while this is an independent implementation
+#: of the same intent, attested here by commit title and ancestry rather than by a diff. The four
+#: synthetic hydraulics_vs_compute_config experiments are the measurement that would FALSIFY this
+#: entry -- if the upstream implementation is subtly wrong, their clean-vs-resume b4b comparison
+#: disagrees while this set says `absent`. Content-verify against 5d2ad1e8 when a clone carrying
+#: both remotes exists, and downgrade this entry if the check fails.
+SHA_ORNL_GHOST_RING = "0cf5faff2d7efeb687881262242af4ff2363251a"
 
 #: Historical PRODUCING shas whose ancestry was resolved ONCE here, at registry-authoring time,
 #: against a clone that had them — the read path has no clone (see module docstring) and would
@@ -198,6 +216,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_DEPTH_SCATTER_FIX,
                 SHA_EXTBC_GHOST_RING_FIX,
                 SHA_MAIN_GHOST_RING_AND_GPU,
+                # 3a832f7d is an ANCESTOR of 0cf5faff -- cached ancestry, the ordinary basis.
+                SHA_ORNL_GHOST_RING,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -209,7 +229,13 @@ REGISTRY: tuple[ModelDefect, ...] = (
         title="Replayed SWMM node depths are never scattered to the per-rank new_depth[]",
         fixed_in=SHA_DEPTH_SCATTER_FIX,
         known_absent_in=frozenset(
-            {SHA_DEPTH_SCATTER_FIX, SHA_EXTBC_GHOST_RING_FIX, SHA_MAIN_GHOST_RING_AND_GPU}
+            # 9db367dd is an ANCESTOR of 0cf5faff -- cached ancestry, the ordinary basis.
+            {
+                SHA_DEPTH_SCATTER_FIX,
+                SHA_EXTBC_GHOST_RING_FIX,
+                SHA_MAIN_GHOST_RING_AND_GPU,
+                SHA_ORNL_GHOST_RING,
+            }
         ),
         also_present_in=frozenset(
             {SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}
@@ -221,7 +247,12 @@ REGISTRY: tuple[ModelDefect, ...] = (
         defect_id="TRITON-RESUME-EXTBC-GHOST-RING",
         title="The extbc perimeter ghost ring is not restored across a hotstart resume",
         fixed_in=SHA_EXTBC_GHOST_RING_FIX,
-        known_absent_in=frozenset({SHA_EXTBC_GHOST_RING_FIX, SHA_MAIN_GHOST_RING_AND_GPU}),
+        known_absent_in=frozenset(
+            # 0cf5faff carries an INDEPENDENT upstream implementation of this fix; ancestry cannot
+            # reach it from 5d2ad1e8 (different remote). See the constant's comment for the basis
+            # and for what would falsify it.
+            {SHA_EXTBC_GHOST_RING_FIX, SHA_MAIN_GHOST_RING_AND_GPU, SHA_ORNL_GHOST_RING}
+        ),
         also_present_in=frozenset(
             {SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER, SHA_DEPTH_SCATTER_FIX}
         ),
@@ -242,7 +273,13 @@ REGISTRY: tuple[ModelDefect, ...] = (
             "#ifdef TRITON_EXTBC_PROBE, which defaults OFF, so a default build of this sha is "
             "production-equivalent rather than a diagnostic build. Stated explicitly rather than "
             "left silent, because a registry that certifies a build whose branch name reads "
-            "`instrumented/` should say on what basis."
+            "`instrumented/` should say on what basis. "
+            "A SECOND build is certified for this defect on a DIFFERENT basis: 0cf5faff on ORNL "
+            "upstream is the maintainers' own implementation of the same fix, and its absence "
+            "verdict rests on the commit title plus ancestry over the other two fixes rather than "
+            "on a content comparison with 5d2ad1e8 -- which no single clone can perform, since the "
+            "two shas live on repositories that share a name and not a history. That is one step "
+            "weaker than 21e666d6's blob-identical cherry-pick, and it is recorded as weaker."
         ),
     ),
 )
