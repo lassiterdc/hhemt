@@ -53,6 +53,9 @@ theme:
         icon: material/weather-night
         name: Switch to dark mode
 
+hooks:
+  - hooks/config_reference.py
+
 markdown_extensions:
   - abbr
   - admonition

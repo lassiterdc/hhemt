@@ -99,21 +99,57 @@ class PartitionSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # --- NATIVE (mirror snakemake-executor-plugin-slurm 2.0.3 PartitionLimits) ---
-    max_runtime: int | None = None  # minutes; per-partition wall-clock cap
-    max_mem_mb: int | None = None
-    max_mem_mb_per_cpu: int | None = None
-    max_cpus_per_task: int | None = None
-    max_nodes: int | None = None
-    max_gpu: int | None = None  # per-job GPU cap
-    available_gpu_models: list[str] | None = None
-    supports_mpi: bool = False
+    max_runtime: int | None = Field(
+        None,
+        description="Caps wall-clock for any job on this partition, in minutes; preflight rejects a longer request.",
+    )  # minutes; per-partition wall-clock cap
+    max_mem_mb: int | None = Field(
+        None,
+        description="Caps total memory one job may request here, in MB; preflight rejects a larger request.",
+    )
+    max_mem_mb_per_cpu: int | None = Field(
+        None,
+        description="Caps memory per CPU, in MB; with cpus_per_task it bounds what a single task may hold.",
+    )
+    max_cpus_per_task: int | None = Field(
+        None,
+        description="Caps CPUs one task may request; n_omp_threads must not exceed it.",
+    )
+    max_nodes: int | None = Field(
+        None,
+        description="Caps how many nodes one job may span; n_nodes must not exceed it.",
+    )
+    max_gpu: int | None = Field(
+        None,
+        description="Caps GPUs per job; n_gpus must not exceed it.",
+    )  # per-job GPU cap
+    available_gpu_models: list[str] | None = Field(
+        None,
+        description="Allowlist of GPU models schedulable here; a request naming a model outside it is rejected.",
+    )
+    supports_mpi: bool = Field(
+        False,
+        description="Whether multi-rank jobs may be dispatched here; a run_mode of mpi or hybrid requires it.",
+    )
     # --- EXTENSION (no native PartitionLimits field) ---
-    gpus_per_node: int | None = None  # node topology
-    cpus_per_node: int | None = None  # node topology
-    gpu_hardware: str | None = None  # D1 Option-A (VMS-4a): the specific arch string
+    gpus_per_node: int | None = Field(
+        None,
+        description="GPUs physically present per node; decides whether a multi-GPU request takes a whole node or a strict subset.",
+    )  # node topology
+    cpus_per_node: int | None = Field(
+        None,
+        description="CPUs physically present per node; bounds how many concurrent tasks one node can hold.",
+    )  # node topology
+    gpu_hardware: str | None = Field(
+        None,
+        description="Selects the GPU architecture flags the solver is compiled against, such as a6000 or a100.",
+    )  # D1 Option-A (VMS-4a): the specific arch string
     #                                  _resolve_cuda_arch_flags keys on (a6000/a100/h100/...),
     #                                  distinct from available_gpu_models (capability allowlist)
-    gpu_compilation_backend: Literal["HIP", "CUDA"] | None = None  # D1: per-partition GPU backend
+    gpu_compilation_backend: Literal["HIP", "CUDA"] | None = Field(
+        None,
+        description="Selects the GPU toolchain the solver is built with: HIP for AMD, CUDA for NVIDIA.",
+    )  # D1: per-partition GPU backend
 
 
 class hpc_system_config(BaseModel):
@@ -125,15 +161,39 @@ class hpc_system_config(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    system_name: str
-    default_account: str | None = None  # NATIVE value -> slurm_account default-resource
-    login_node: str | None = None  # EXTENSION (tmux orchestration; batch_job only)
-    default_execution_mode: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None
-    gpu_allocation_flavor: Literal["gres", "gpus"] | None = None  # EXTENSION (chooses native channel)
-    additional_modules: list[str] | None = None
-    max_concurrent_jobs: int | None = None  # EXTENSION (D-D): cluster-throughput cap; new home
+    system_name: str = Field(
+        ...,
+        description="Names the cluster this profile describes; carried into an emitted bundle as its cluster identity.",
+    )
+    default_account: str | None = Field(
+        None,
+        description="Charges every submitted job to this allocation unless a run overrides it.",
+    )  # NATIVE value -> slurm_account default-resource
+    login_node: str | None = Field(
+        None,
+        description="Host the batch_job tmux orchestrator runs on; unused by the other dispatch methods.",
+    )  # EXTENSION (tmux orchestration; batch_job only)
+    default_execution_mode: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = Field(
+        None,
+        description="Dispatch method used when a run does not name one; overridden by multi_sim_run_method.",
+    )
+    gpu_allocation_flavor: Literal["gres", "gpus"] | None = Field(
+        None,
+        description="Which SLURM channel requests GPUs here: gres emits --gres=gpu, gpus emits --gpus-per-node.",
+    )  # EXTENSION (chooses native channel)
+    additional_modules: list[str] | None = Field(
+        None,
+        description="Environment modules loaded before every compile and simulation on this cluster.",
+    )
+    max_concurrent_jobs: int | None = Field(
+        None,
+        description="Caps how many jobs the workflow keeps in flight at once, bounding queue pressure on a shared cluster.",
+    )  # EXTENSION (D-D): cluster-throughput cap; new home
     #                                          for the retired analysis_config.hpc_max_simultaneous_sims
-    partitions: dict[str, PartitionSpec]
+    partitions: dict[str, PartitionSpec] = Field(
+        ...,
+        description="The partitions a run may select by name, each with the caps preflight validates a request against.",
+    )
     executor_profile_extras: dict = Field(
         default_factory=dict,
         description=(
@@ -144,13 +204,16 @@ class hpc_system_config(BaseModel):
             "slurm-reservation, max-jobs-per-second). A reject-guard FORBIDS "
             "set-resources / default-resources entries that name toolkit-emitted "
             "resources (tasks, tasks_per_gpu, mpi, gres, slurm_extra, "
-            "slurm_partition, runtime, mem_mb, cpus_per_task, nodes) — those are "
+            "slurm_partition, runtime, mem_mb, cpus_per_task, nodes). Those are "
             "correctness-critical per-rule emissions (see Gotcha 32) and may not "
             "be overridden via the profile."
         ),
     )
 
-    container: ContainerSpec | None = None  # ADR-1/2/3: the per-cluster Apptainer
+    container: ContainerSpec | None = Field(
+        None,
+        description="Apptainer settings used when a run executes in a container; leave unset on a native-only cluster.",
+    )  # ADR-1/2/3: the per-cluster Apptainer
     #   exec parameters; None on a cluster with no container support (native-only).
 
     @model_validator(mode="after")

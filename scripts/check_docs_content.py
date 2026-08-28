@@ -128,6 +128,49 @@ ADVISORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (("deletable-clause
 COMMENT_LINE = re.compile(r"^\s*(?:#|//|--|;)\s")
 
 
+# ---- Authored-prose population ---------------------------------------------
+#
+# `rglob("*.md")` has never expressed this gate's actual population. It
+# expressed WHATEVER IS ON DISK, which was accidentally identical to AUTHORED
+# PROSE until a build-time generator began writing a page into `docs/`. That
+# page did not break an invariant; it revealed that the invariant was never
+# stated. It is stated here: the gate scans authored prose, and it says what it
+# skipped.
+#
+# A generated page's cells are Pydantic `description=` strings from `src/`, and
+# D22b rules `src/` prose out of GATE scope. It does not rule it out of
+# VISIBILITY, and the distinction is the whole design: a marker-carrying file is
+# skipped by `scan()` and INCLUDED by `scan_advisory()`, so the findings are
+# routed to the tier that prints and never gates, rather than dropped. Anyone
+# who wants the worklist runs `--advisory` and still gets it.
+#
+# The marker is a property of the FILE ("this is generated"), not of the lint
+# ("this is excused"), which is why it lives in the page rather than in a
+# skip-list here. A path-keyed skip would not generalize, and a second
+# generated page would silently re-open the gap.
+GENERATED_MARKER = "hhemt:generated-file"
+
+
+def _is_generated(text: str) -> bool:
+    """True when a page carries the generated-file marker."""
+    return GENERATED_MARKER in text
+
+
+def generated_files(docs_dir: Path) -> list[Path]:
+    """Every marker-carrying page under `docs_dir`, sorted.
+
+    Printed by `main()` in BOTH output branches. The count is what makes a
+    future generated page visible: it goes 1 to 2 on a line somebody reads,
+    with nobody having decided to grant an exemption. A source comment cannot
+    do that -- it is read once, by whoever writes it.
+    """
+    return [
+        md
+        for md in sorted(docs_dir.rglob("*.md"))
+        if _is_generated(md.read_text(encoding="utf-8", errors="ignore"))
+    ]
+
+
 def _prose_lines(text: str):
     """Yield (lineno, line) for lines we AUTHORED: unfenced prose, plus comment
     lines inside fences.
@@ -172,39 +215,64 @@ def _unfenced_lines(text: str):
             yield i, line
 
 
+def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
+    """The four FAILING tiers, for one file.
+
+    Factored out so `scan()` and `scan_advisory()` apply the SAME patterns to
+    the same bytes. Routing a generated page to the advisory tier only means
+    anything if the tier reports the findings the gate would have reported;
+    running a different pattern set there would silently drop them while
+    looking like routing.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    for lineno, line in _unfenced_lines(text):
+        for code, pat in PLACEHOLDER_PATTERNS:
+            if pat.search(line):
+                findings.append((code, md, lineno, line.strip()))
+        # Backticked spans are NOT excluded, and that is load-bearing rather
+        # than an oversight. A live line citation is normally WRITTEN in
+        # backticks — the one measured instance in this corpus was
+        # `workflow.py:2326` inside a sentence — so excluding inline code
+        # makes this check blind to the exact form the defect takes.
+        # Measured: with backtick-stripping the gate found 0 of 1 real
+        # citations while still reporting the placeholder findings, so it
+        # read as working. Fenced blocks are still skipped (see
+        # `_unfenced_lines`), which is where an illustrative citation lives.
+        m = LINE_CITATION.search(line)
+        if m:
+            findings.append(("bare-line-citation", md, lineno, m.group(0)))
+    for lineno, line in _prose_lines(text):
+        for code, pat in PUNCTUATION_PATTERNS:
+            if pat.search(line):
+                findings.append((code, md, lineno, line.strip()))
+    for lineno, line in _all_lines(text):
+        for code, pat in WORD_BAN_PATTERNS:
+            if pat.search(line):
+                findings.append((code, md, lineno, line.strip()))
+    return findings
+
+
 def scan(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
     findings: list[tuple[str, Path, int, str]] = []
     for md in sorted(docs_dir.rglob("*.md")):
         text = md.read_text(encoding="utf-8", errors="ignore")
-        for lineno, line in _unfenced_lines(text):
-            for code, pat in PLACEHOLDER_PATTERNS:
-                if pat.search(line):
-                    findings.append((code, md, lineno, line.strip()))
-            # Backticked spans are NOT excluded, and that is load-bearing rather
-            # than an oversight. A live line citation is normally WRITTEN in
-            # backticks — the one measured instance in this corpus was
-            # `workflow.py:2326` inside a sentence — so excluding inline code
-            # makes this check blind to the exact form the defect takes.
-            # Measured: with backtick-stripping the gate found 0 of 1 real
-            # citations while still reporting the placeholder findings, so it
-            # read as working. Fenced blocks are still skipped (see
-            # `_unfenced_lines`), which is where an illustrative citation lives.
-            m = LINE_CITATION.search(line)
-            if m:
-                findings.append(("bare-line-citation", md, lineno, m.group(0)))
-        for lineno, line in _prose_lines(text):
-            for code, pat in PUNCTUATION_PATTERNS:
-                if pat.search(line):
-                    findings.append((code, md, lineno, line.strip()))
-        for lineno, line in _all_lines(text):
-            for code, pat in WORD_BAN_PATTERNS:
-                if pat.search(line):
-                    findings.append((code, md, lineno, line.strip()))
+        if _is_generated(text):
+            # Skipped here and INCLUDED by `scan_advisory()`. The inversion is
+            # deliberate: the file leaves the gate and enters the advisory tier,
+            # it does not vanish. `main()` prints what was skipped either way.
+            continue
+        findings.extend(_gate_findings(md, text))
     return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
 
 
 def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
-    """Advisory findings — surfaced, never failing. See ADVISORY_PATTERNS."""
+    """Advisory findings — surfaced, never failing. See ADVISORY_PATTERNS.
+
+    Marker-carrying generated pages are deliberately NOT skipped here. `scan()`
+    skips them so nothing gates on `src/` prose (D22b); this tier keeps them
+    visible so the findings stay enumerable. Dropping them from both would
+    delete the worklist that a later prose sweep would otherwise start from.
+    """
     findings: list[tuple[str, Path, int, str]] = []
     for md in sorted(docs_dir.rglob("*.md")):
         text = md.read_text(encoding="utf-8", errors="ignore")
@@ -212,7 +280,10 @@ def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
             for code, pat in ADVISORY_PATTERNS:
                 if pat.search(line):
                     findings.append((code, md, lineno, line.strip()))
-    return findings
+        if _is_generated(text):
+            # The findings `scan()` skipped, reported here instead of nowhere.
+            findings.extend(_gate_findings(md, text))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -240,6 +311,20 @@ def main(argv: list[str] | None = None) -> int:
             rel = path.relative_to(args.docs_dir.parent)
             print(f"  {rel}:{lineno} [{code}] {excerpt[:110]}")
 
+    # Name every class checked, AND every file not checked. A success line that
+    # under-reports its own scope is the same defect this gate exists to catch,
+    # one level up -- and a skip absent from the output is exactly that
+    # under-reporting. Printed in BOTH branches: a red run that hides its
+    # population is worse than a green one, not better.
+    skipped = generated_files(args.docs_dir)
+    if skipped:
+        rels = ", ".join(str(m.relative_to(args.docs_dir.parent)) for m in skipped)
+        skip_line = (
+            f"skipped {len(skipped)} generated file(s), routed to --advisory: {rels}"
+        )
+    else:
+        skip_line = "skipped 0 generated file(s)"
+
     findings = scan(args.docs_dir)
     if findings:
         print("docs content check FAILED:", file=sys.stderr)
@@ -252,14 +337,14 @@ def main(argv: list[str] | None = None) -> int:
             f"moves. Replace a line citation with a symbol name, which does not decay.",
             file=sys.stderr,
         )
+        print(skip_line, file=sys.stderr)
         return 1
 
-    # Name every class checked. A success line that under-reports its own scope
-    # is the same defect this gate exists to catch, one level up.
     print(
         f"docs content OK under {args.docs_dir} — no placeholder leakage, bare line "
         f"citation, banned vocabulary, development provenance, or em dash."
     )
+    print(skip_line)
     return 0
 
 
