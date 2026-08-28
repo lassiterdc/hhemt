@@ -29,10 +29,14 @@ outputs.
 A compute-sensitivity experiment runs as **one sensitivity master per model arm**.
 Declare the arms in the experiment config's matrix block:
 `model_arms: [tritonswmm, triton]`. Each arm runs the identical compute-config
-matrix and differs only in its system model toggles, because the sensitivity
-Snakefile generator accepts exactly one enabled model type per master. The two
-masters are joined for reporting by `hhemt combine`; the cross-arm figures live on
-the combined report, not on either master's own report.
+matrix and differs only in its system model toggles. The two masters are joined for
+reporting by `hhemt combine`; the cross-arm figures live on the combined report, not
+on either master's own report.
+
+??? note "Why one master per arm rather than one master with both"
+    The sensitivity Snakefile generator accepts exactly one enabled model type per
+    master, so a two-arm experiment is two masters by construction rather than by
+    preference.
 
 To interrupt the sims for a resume study, set `resume_interruption_schedule` on the
 analysis config to a strictly increasing tuple of hotstart-checkpoint indices, not
@@ -130,8 +134,9 @@ every resume raster matches its clean counterpart; when it is `False`,
 rows. The same verdict is folded into the report's Errors-and-Warnings section
 automatically, so this direct read is for scripting a gate on resume validity.
 
-Select the `compute-sensitivity` reporting set via
-`report_config.reporting_set: compute-sensitivity` in your report config. The
+Select the `compute-sensitivity` reporting set by setting
+`report.reporting_set: compute-sensitivity` on the analysis config (see
+[Reporting sets](../reference/reporting-sets.md)). The
 rendered report then carries the compute-config EDA figures (config-diff maps plus
 the compute-sensitivity family described above: rank and cross-hardware by default,
 resume is opt-in) under **Key Results**, alongside the benchmarking figures.

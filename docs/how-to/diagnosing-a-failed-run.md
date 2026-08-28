@@ -105,12 +105,14 @@ nothing is lost and `reprocess` can retry.
 
 ### The job died at walltime
 
-A killed simulation resumes from its most recent
-checkpoint on the next attempt; it does not restart from zero. Raise the
-simulation retry count rather than the walltime if checkpoints are frequent
-enough. Note that `perf_*` columns on a resumed run are cumulative across
-allocations, so they will exceed what the scheduler reports for the final
-allocation; that is correct.
+A killed simulation resumes from its most recent checkpoint on the next attempt;
+it does not restart from zero. Raise the simulation retry count rather than the
+walltime if checkpoints are frequent enough.
+
+??? note "Why `perf_*` exceeds the scheduler's elapsed time on a resumed run"
+    The `perf_*` columns on a resumed run are cumulative across allocations, so
+    they will exceed what the scheduler reports for the final allocation. That is
+    correct, and not a sign that anything went wrong.
 
 ### The report is wrong but the results are fine
 

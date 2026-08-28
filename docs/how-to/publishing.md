@@ -47,9 +47,13 @@ export HHEMT_HYDROSHARE_PASSWORD=<your-hydroshare-password>
 
 ## Publish to Zenodo
 
-Zenodo mints the DOI on publish. The toolkit creates a draft, embeds the record metadata,
-uploads the deposit, publishes, and reads the minted, DataCite-registered DOI back from the
-published record (no DOI is reserved up front):
+Zenodo mints the DOI on publish:
+
+??? note "What the toolkit does behind `publish(target='zenodo')`"
+    It creates a draft, embeds the record metadata, uploads the deposit, publishes,
+    and reads the minted, DataCite-registered DOI back from the published record.
+    No DOI is reserved up front, so the identifier does not exist until the deposit
+    is published.
 
 ```python
 result = analysis.publish(

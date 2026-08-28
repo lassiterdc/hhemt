@@ -22,8 +22,9 @@ figure inlined. There is no size-based selection between them.
 
 ## Sidebar sections
 
-Which sections appear is driven by the active reporting set
-(`report_config.reporting_set`). The default set renders, in sidebar order:
+Which sections appear is driven by the active reporting set, selected with
+`report.reporting_set` (see [Reporting sets](reporting-sets.md)). The default
+set renders, in sidebar order:
 
 | Section | Contents |
 |---|---|

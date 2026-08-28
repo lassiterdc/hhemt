@@ -116,6 +116,7 @@ nav:
       - CLI reference: reference/cli.md
       - Output data model: reference/output-data-model.md
       - FAIR scope table: reference/fair-scope-table.md
+      - Reporting sets: reference/reporting-sets.md
       - The interactive analysis report: reference/example-report.md
   - Explanation:
       - explanation/index.md

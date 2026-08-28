@@ -63,11 +63,15 @@ two configs to the toolkit.
 ## `${VAR}` placeholders in configs
 
 The git-tracked system/analysis configs carry portable `${VAR}` placeholders (e.g.
-`${DATA_DIR}/dem.tif`, `${SCRATCH_DIR}/system`). `run-experiment` expands them against the
-environment before the run, materializing resolved copies to `$SCRATCH_DIR/resolved_configs/`
-(a shared filesystem, so `batch_job` rules dispatched to other compute nodes can read them). An
-**unset** variable fails fast with a `ConfigurationError` naming the placeholder. Export the
-referenced variables (typically from your submit script) before running.
+`${DATA_DIR}/dem.tif`, `${SCRATCH_DIR}/system`). Export the referenced variables
+(typically from your submit script) before running: an **unset** variable fails fast with
+a `ConfigurationError` naming the placeholder.
+
+??? note "Where the expanded configs are written, and why there"
+    `run-experiment` expands the placeholders against the environment before the run,
+    materializing resolved copies to `$SCRATCH_DIR/resolved_configs/`. That location is
+    a shared filesystem, so `batch_job` rules dispatched to other compute nodes can read
+    them.
 
 ## The override gate
 

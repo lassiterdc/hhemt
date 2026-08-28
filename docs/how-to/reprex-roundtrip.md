@@ -130,11 +130,15 @@ inputs you fetched into the bundle) with
 
 ## Zero-user-info status
 
-The reprex design goal is that a shared bundle carries **zero** producer-specific
-information, proven by a positive blocklist scan over the emitted tree. That gate
-currently runs **consume-side and informationally**: `reprex()` populates
-`result.zero_user_info_leaks` but does not fail. Hard emit-time enforcement is deferred
-to an emit-hardening pass (the producer's absolute paths still leak through
-`bundle_manifest.json`, harvested SWMM `.inp` `FILE` references, and
-`validation_report.json`, all surfaces the config-field scrub does not yet cover). Until
-that lands, treat a reprex bundle as not-yet-guaranteed-private before sharing it widely.
+**Treat a reprex bundle as not-yet-guaranteed-private before sharing it widely.**
+The design goal is that a shared bundle carries **zero** producer-specific
+information, but that is not yet enforced at emit time.
+
+??? note "What the zero-user-info gate does and does not currently catch"
+    The property is proven by a positive blocklist scan over the emitted tree, and
+    that gate currently runs **consume-side and informationally**: `reprex()`
+    populates `result.zero_user_info_leaks` but does not fail. Hard emit-time
+    enforcement is deferred to an emit-hardening pass. The producer's absolute paths
+    still leak through `bundle_manifest.json`, harvested SWMM `.inp` `FILE`
+    references, and `validation_report.json`, all surfaces the config-field scrub
+    does not yet cover.

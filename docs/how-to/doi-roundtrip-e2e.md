@@ -34,11 +34,13 @@ result = tk.analysis.publish_reprex_bundle(target="zenodo")
 print(result["data_doi"], result["record_url"])
 ```
 
-Before uploading, a size validator measures the bundle against the target's **documented**
-limits (Zenodo 50 GB/record; HydroShare 20 GB default account quota) and warns, with the
-exact overflow and a remediation menu, if it will not fit. It does not block: neither
-platform exposes a queryable quota, so the deposit is attempted and a live storage rejection
-is caught and reframed with the real numbers.
+??? note "What happens if the bundle is too large for the target"
+    Before uploading, a size validator measures the bundle against the target's
+    **documented** limits (Zenodo 50 GB/record; HydroShare 20 GB default account
+    quota) and warns, with the exact overflow and a remediation menu, if it will not
+    fit. It does not block: neither platform exposes a queryable quota, so the
+    deposit is attempted, and a live storage rejection is caught and reframed with
+    the real numbers.
 
 ## 2. Fetch and reconstitute on another machine
 

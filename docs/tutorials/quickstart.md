@@ -17,7 +17,7 @@ pip install --no-deps "swmmio==0.8.2"
 pip install -e . --no-deps
 ```
 
-!!! warning "Both `--no-deps` flags are required, not optional"
+??? warning "Why both `--no-deps` flags are required"
     Inside a conda environment, a plain `pip install -e .` lets pip's resolver replace conda-resolved packages such as `numpy` and `pandas` with PyPI wheels, which is what breaks the environment you just built. `--no-deps` stops that.
 
     This is not a SWMM-engine requirement: `pyproject.toml` pins `swmm-toolkit` and `pyswmm` directly, so a pip install resolves a stack that passes the toolkit's runtime validation guard. Create the conda env first and the two pip steps last, because conda is blind to pip-installed packages, so any conda-resolvable dependency belongs in `environment.yaml`.
