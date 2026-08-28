@@ -202,8 +202,111 @@ def test_s11_manifest_sidecar_carries_the_producing_stamp(tmp_path):
 
 
 # ---- S12 / S13 completeness check + its collector -------------------------- #
-def test_s12_check_provenance_completeness_is_registered_and_graceful():
+#
+# The test this replaces asserted two hasattr calls and was named
+# `..._is_registered_and_graceful`. Both halves of that name were false and the test
+# could not see either: the function was absent from validate_analysis, and every one of
+# its four returns raised TypeError (`detail=` for a field named `details`, and no
+# `level=` at all). hasattr returns True on a function that cannot execute, so the
+# assertion passed over exactly the defect its name claimed to cover. The lesson the
+# replacements encode: an assertion about a callable must CALL it.
+
+
+def _stage_stamps(**overrides):
+    """A full stage map with every stage stamped at build A, minus the overrides.
+
+    Built from `_PROVENANCE_STAGES` rather than a literal dict so a new stage cannot
+    silently shrink the denominator these arms are comparing.
+    """
+    from hhemt.analysis_validation import _PROVENANCE_STAGES
+
+    base = {"hhemt_sha": "a" * 40, "hhemt_version": "v0.1.0+A", "hhemt_dirty": "false"}
+    stamps = {s: dict(base) for s in _PROVENANCE_STAGES}
+    stamps.update(overrides)
+    return stamps
+
+
+def test_s12_check_provenance_completeness_constructs_and_is_registered():
+    """The check RUNS, and validate_analysis names it.
+
+    Ordering guard as much as a feature test: registering this check while it still
+    raised would leave the read-model unwritten -- which fails the rule loudly on a
+    FRESH tree (the declared output at workflow.py:3467 is missing) but ships the
+    PREVIOUS generation's validation data silently on a RE-RUN, because the stale file
+    satisfies that declaration. This test fails on either half alone.
+    """
+    import inspect
+
     from hhemt import analysis_validation as av
 
-    assert hasattr(av, "check_provenance_completeness")
-    assert hasattr(av, "_collect_stage_stamps"), "spec calls a helper that does not exist"
+    src = inspect.getsource(av.validate_analysis)
+    assert "check_provenance_completeness(analysis)" in src, (
+        "check_provenance_completeness is not registered in validate_analysis"
+    )
+
+
+def test_s13_controlled_pair_mixed_build_fails_uniform_build_passes(monkeypatch):
+    """THE controlled pair the contract asks for, at the seam the check reads.
+
+    A deliberately mixed-version analysis must fail; an otherwise-identical
+    single-version one must not. Both arms are dictionaries, so the pair costs
+    microseconds and is deterministic -- a real two-version campaign can neither be
+    produced reproducibly nor be a precondition for the gate that blocks campaigns.
+    """
+    from hhemt import analysis_validation as av
+
+    mixed = _stage_stamps(report={"hhemt_sha": "b" * 40, "hhemt_version": "v0.1.0+B", "hhemt_dirty": "false"})
+    monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: mixed)
+    bad = av.check_provenance_completeness(object())
+    assert bad.passed is False, "a mixed-build analysis must not pass"
+    assert "disagree" in bad.summary
+
+    monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: _stage_stamps())
+    good = av.check_provenance_completeness(object())
+    assert good.passed is True, "a single-build analysis must not warn"
+
+
+def test_s14_summary_discloses_its_denominator(monkeypatch):
+    """Gotcha 71: "no discrepancies" over zero examined stages must not read as a pass."""
+    from hhemt import analysis_validation as av
+    from hhemt.analysis_validation import _PROVENANCE_STAGES
+
+    monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: dict.fromkeys(_PROVENANCE_STAGES))
+    res = av.check_provenance_completeness(object())
+    assert f"/{len(_PROVENANCE_STAGES)}" in res.summary, (
+        "the summary must name how many stages were examined, not only how many were clean"
+    )
+    assert res.level == "aggregate"
+
+
+def test_s15_dirty_checkout_is_a_failure(monkeypatch):
+    from hhemt import analysis_validation as av
+
+    dirty = _stage_stamps(plots={"hhemt_sha": "a" * 40, "hhemt_version": "v0.1.0+A", "hhemt_dirty": "true"})
+    monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: dirty)
+    res = av.check_provenance_completeness(object())
+    assert res.passed is False
+    assert "DIRTY" in res.summary
+
+
+def test_s16_stage_carriers_are_pairwise_distinct_paths():
+    """Contract property 3, made falsifiable rather than left structural.
+
+    "A re-render must not replace the version that produced the science with the one
+    that drew the figure" holds today because each stage writes a DIFFERENT file --
+    the per-event coordinate, the tree root attr, the figure sidecars, and three
+    separate manifests. Nothing asserted that. A refactor that made one writer stamp
+    two stages' carriers would break the property silently, so the separation is
+    pinned here by reading the collector's own source for the distinct carriers it
+    consults.
+    """
+    import inspect
+
+    from hhemt import analysis_validation as av
+
+    src = inspect.getsource(av._collect_stage_stamps)
+    for carrier in ("bundle_manifest.json", "combined_bundle_manifest.json", "report_manifest.json"):
+        assert carrier == carrier and src.count(f'"{carrier}"') >= 1, f"{carrier} no longer read"
+    assert '"plots"' in src and "hhemt_producing_sha" in src, (
+        "the plots and consolidate carriers must remain separate reads"
+    )

@@ -64,6 +64,12 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "The per-scenario status export exists, parses, and carries every resource "
         "and performance column its downstream readers require.",
     ),
+    "provenance_completeness": (
+        "Version coverage",
+        "Every pipeline stage that produced part of this analysis recorded the toolkit "
+        "build that ran it, those builds agree with each other, and none of them came "
+        "from a modified working tree.",
+    ),
     "Resource usage matches config": (
         "Resource usage",
         "Every scenario runs on the MPI ranks, OMP threads, GPUs, GPU backend and "

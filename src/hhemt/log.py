@@ -704,6 +704,44 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     # `extra` policy, so pydantic's default `ignore` absorbs them on from_json.
     triton_head_sha: LogField[str] = Field(default_factory=LogField)
 
+    # PER-BUILD-TARGET TRITON provenance (contract item i). `triton_head_sha` above is
+    # RETAINED with its exact meaning and every one of its consumers is untouched --
+    # including model_defects.resolve_for_tree_attrs, which keys every registered defect
+    # verdict on it. The two below are ADDITIVE and answer a different question: not "what
+    # source did this analysis come from" but "were the two TRITON binaries built from the
+    # SAME source state". They are written ONLY by a compile invocation that actually built
+    # that target (the *_locked helpers now return a build-executed bool), so a target
+    # cached from an older clone state legitimately retains an OLDER sha than the clone --
+    # that divergence is the point, not a defect. Under the ordinary case of one clone and
+    # one run they are equal, and their equality is then a MEASUREMENT over two independent
+    # stamps rather than one value written twice under two names.
+    tritonswmm_producing_sha: LogField[str] = Field(default_factory=LogField)
+    triton_only_producing_sha: LogField[str] = Field(default_factory=LogField)
+
+    # Standalone-SWMM provenance capture. The FOURTH contract axis, and the only one that
+    # had no carrier at all: `swmm_version` appeared in exactly two files, both
+    # container-preflight, and in no writer. Captured in system.py at the tail of
+    # `_compile_SWMM_locked`'s SUCCESS branch -- deliberately NOT at compile entry the way
+    # `triton_head_sha` is, per `provenance.producing_stamp`'s corollary that a stage which
+    # did not execute must not stamp. The already-compiled gate returns early above the
+    # capture and the persisted log retains the earlier run's value, so a cached build
+    # keeps a true stamp rather than acquiring a false one.
+    #
+    # The `standalone_` prefix is load-bearing TWICE. It names the thing (the COUPLED
+    # model's SWMM is vendored inside TRITON and travels with the TRITON pin, so it is NOT
+    # this field), and it keeps the identifier from being a SUFFIX of the coupled sha
+    # declared above -- a bare `swmm_producing_sha` is a substring of it, so every future
+    # grep for one would silently match the other.
+    #
+    # TWO FIELDS, ONE KIND EACH. The version field is tag-shaped and available in BOTH
+    # modes (native: the built clone's CMakeLists `VERSION`; container: the
+    # org.hhemt.swmm_version label), normalized by stripping a leading "v" so the two modes
+    # cannot disagree on shape alone. The sha field is native-only and is left ABSENT in
+    # container mode -- a SIF label carries no sha, and inferring one from the tag would
+    # launder an assumption into an apparent measurement.
+    standalone_swmm_producing_version: LogField[str] = Field(default_factory=LogField)
+    standalone_swmm_producing_sha: LogField[str] = Field(default_factory=LogField)
+
     # System-level DataTree consolidation
     system_datatree_consolidation_complete: LogField[bool] = Field(
         default_factory=LogField
@@ -734,6 +772,10 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
 
     _validate_string_fields = field_validator(
         "triton_head_sha",
+        "tritonswmm_producing_sha",
+        "triton_only_producing_sha",
+        "standalone_swmm_producing_version",
+        "standalone_swmm_producing_sha",
         mode="before",
     )(_create_logfield_validator(str))
 
@@ -758,6 +800,10 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_swmm_successful",
         "system_datatree_consolidation_complete",
         "triton_head_sha",
+        "tritonswmm_producing_sha",
+        "triton_only_producing_sha",
+        "standalone_swmm_producing_version",
+        "standalone_swmm_producing_sha",
         "dem_crs_epsg",
         "vertical_crs_epsg",
     )(_logfield_serializer)

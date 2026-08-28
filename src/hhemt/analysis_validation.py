@@ -614,7 +614,22 @@ def _read_triton_provenance(analysis: TRITONSWMM_analysis) -> str | None:
     return str(sha) if sha is not None else None
 
 
-_PROVENANCE_STAGES = ("sim", "processing", "consolidate", "plots", "report", "bundle", "combine")
+#: The stage denominator, and the ONLY place it is defined. `setup` leads because it is
+#: the rung that compiles TRITON and standalone SWMM, so it is where the non-hhemt version
+#: axes are captured; omitting it made the coverage ratio unable to report on the very
+#: stage the version-provenance contract is mostly about. Any caller stating a COUNT must
+#: derive it from len() of this tuple -- a literal count in prose goes stale silently, and
+#: did (the docstring below said "six" while this tuple held seven).
+_PROVENANCE_STAGES = (
+    "setup",
+    "sim",
+    "processing",
+    "consolidate",
+    "plots",
+    "report",
+    "bundle",
+    "combine",
+)
 
 
 def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
@@ -705,7 +720,7 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
 
 
 def check_provenance_completeness(analysis) -> CheckResult:
-    """How many of the six named stages left a version stamp on this analysis (ADR-15 widening).
+    """How many of the `_PROVENANCE_STAGES` left a version stamp on this analysis (ADR-15 widening).
 
     Reports COVERAGE, never a back-filled value. A stage with no stamp is reported as
     "not captured", which is the honest state for any analysis produced before that
@@ -726,10 +741,18 @@ def check_provenance_completeness(analysis) -> CheckResult:
     dirty = sorted(s for s, v in stages.items() if v and v.get("hhemt_dirty") == "true")
     builds = {v.get("hhemt_version") for v in stages.values() if v and v.get("hhemt_version")}
 
-    detail = [{"stage": s, "captured": bool(stages[s]), **(stages[s] or {})} for s in sorted(stages)]
+    # `details`, not `detail`, and an explicit `level`. Both were wrong on all four
+    # returns, so EVERY path raised TypeError and the function could not execute -- which
+    # is why it was never registered, and why the test asserting it "is registered and
+    # graceful" could only reach for hasattr. `level="aggregate"` routes it to the
+    # per-scenario Stage table and, because tests/test_iter7_check_vocabulary.py scopes
+    # its exact-equality guard to {system, resource, aggregate}, obliges the matching
+    # _CHECK_VOCABULARY entry that lands in this same change.
+    details = [{"stage": s, "captured": bool(stages[s]), **(stages[s] or {})} for s in sorted(stages)]
     if dirty:
         return CheckResult(
             name="provenance_completeness",
+            level="aggregate",
             passed=False,
             summary=(
                 f"{len(captured)}/{len(stages)} stages stamped, but {len(dirty)} were produced "
@@ -737,35 +760,38 @@ def check_provenance_completeness(analysis) -> CheckResult:
                 "commit whose content is not what ran, so a re-run at that sha would NOT "
                 "reproduce this product."
             ),
-            detail=detail,
+            details=details,
         )
     if len(builds) > 1:
         return CheckResult(
             name="provenance_completeness",
+            level="aggregate",
             passed=False,
             summary=(
                 f"{len(captured)}/{len(stages)} stages stamped, but they disagree on the hhemt "
                 f"build ({', '.join(sorted(builds))}). Some stage was produced by different code "
                 "than the others; a single re-run cannot reproduce this mixture."
             ),
-            detail=detail,
+            details=details,
         )
     if missing:
         return CheckResult(
             name="provenance_completeness",
+            level="aggregate",
             passed=True,
             summary=(
                 f"{len(captured)}/{len(stages)} stages stamped; not captured: {', '.join(missing)}. "
                 "Informational, not a failure -- an analysis produced before a stage gained its "
                 "capture site legitimately has no stamp there, and no value is inferred for it."
             ),
-            detail=detail,
+            details=details,
         )
     return CheckResult(
         name="provenance_completeness",
+        level="aggregate",
         passed=True,
         summary=f"all {len(stages)} stages stamped at one clean hhemt build.",
-        detail=detail,
+        details=details,
     )
 
 
@@ -1955,6 +1981,20 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_eda_calc_ran(analysis),  # F4: enumerated EDA figures vs present eda/*.verdict.json
             check_data_availability(analysis),  # reclaim disclosure: which artifact classes were reclaimed
             check_forcing_tail_influence(analysis),  # regression detector: maxima set after the forcing ended
+            # Registered ONLY together with the kwarg repair above, never before it. This
+            # list is built eagerly and all four persist_validation_report call sites swallow
+            # exceptions non-fatally, so a wired-but-raising check leaves the read-model
+            # unwritten -- and what that produces FORKS on prior state. On a FRESH tree
+            # validation_report.json is missing, workflow.py declares it as an output: of
+            # rule export_scenario_status, and Snakemake fails that rule loudly. On a RE-RUN
+            # the previous generation's file satisfies the declaration, the rule succeeds,
+            # its mtime never advances so the E&W plot rule is classified up to date and
+            # skipped, and the report ships the PREVIOUS generation's validation figure.
+            # Nothing deletes that file and the one staleness guard
+            # (bundle/_emit.py::_assert_report_not_older_than_read_model) tests the opposite
+            # mtime direction, so the re-run case is the silent one. That is what this
+            # ordering protects against; the fresh case would report itself.
+            check_provenance_completeness(analysis),  # ADR-15: per-stage version coverage
         ]
         + _read_persisted_eda_verdicts(analysis)
     )

@@ -378,9 +378,28 @@ def main() -> int:
                             ) or {}
                             break
                 _sha = _labels.get("org.hhemt.triton_sha")
+                # Contract axis 4 in container mode. The labels dict is ALREADY parsed
+                # here, so reading the SWMM version off it costs one lookup and adds no
+                # failure mode. Normalized to the same KIND the native capture writes
+                # (leading "v" stripped) so a mixed-mode campaign cannot appear to
+                # disagree on shape alone. No sha is recorded: a SIF label carries none,
+                # and inferring one from the tag would fabricate a measurement.
+                #
+                # HONESTY NOTE, deliberately left visible rather than papered over: this
+                # label is DECLARED in the recipe (containers/*.def), hand-synced to the
+                # `git clone --branch` directive beside it. It is NOT a measurement of the
+                # built tree, so it does not satisfy the contract's measured-never-declared
+                # property. Recording it is strictly better than the prior silence, but the
+                # durable fix is a build-time-substituted label (the pattern
+                # org.hhemt.hhemt_sha already uses via HHEMT_SHA_UNSET).
+                _swmm_ver = _labels.get("org.hhemt.swmm_version")
+                if _swmm_ver:
+                    system.log.standalone_swmm_producing_version.set(str(_swmm_ver).lstrip("vV"))
                 if _sha:
                     system.log.triton_head_sha.set(str(_sha))
+                if _sha or _swmm_ver:
                     system.log.write()
+                if _sha:
                     logger.info(f"[Provenance] container TRITON producing sha {_sha}")
                 elif _inspect_ran:
                     # The image WAS read and carries no label — an image defect.

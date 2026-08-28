@@ -287,3 +287,26 @@ non_breaking_allowlist:
       TYPE is unchanged and no caller's behaviour changes; adds no on-disk
       analysis-tree layout, no _version.json field and no consolidated-output
       variable. Same class as the case_manifest.py / reprex_config.py entries.
+  - path: src/hhemt/log.py
+    justification: >-
+      version-provenance-four-axes — ADDITIVE LogField[str] quartet on
+      TRITONSWMM_system_log (tritonswmm_producing_sha, triton_only_producing_sha,
+      standalone_swmm_producing_version, standalone_swmm_producing_sha), each
+      default_factory=LogField so every pre-existing system_log.json deserialises
+      unchanged and an unset field reads as INDETERMINATE. triton_head_sha is RETAINED
+      with its exact meaning and all 13 of its consumers across 6 modules are untouched;
+      the new fields answer a DIFFERENT question (which source state produced THIS
+      binary) and are written only by a compile invocation that actually built that
+      target. Same change class as this file's already-allowlisted additive n_resumes
+      and raw_SWMM_binaries_reclaimed entries. No on-disk filename, zarr group, or
+      _version.json change.
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      version-provenance-four-axes — _stamp_triton_provenance additionally stamps the
+      four new per-target/standalone provenance values onto the consolidated-tree root.
+      They are PLAIN root attrs, deliberately kept out of metadata._EMBEDDED_PROV_KEYS,
+      so they never enter the Gotcha-63 byte-identity golden fixtures and cannot churn
+      them. Each is stamped independently and absence reads as INDETERMINATE downstream,
+      so an old tree lacking them classifies exactly as it does today and a new tree read
+      by an old toolkit shows them absent rather than wrong. Same class as the existing
+      triton_producing_sha stamp entry directly above.
