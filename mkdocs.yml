@@ -10,9 +10,30 @@ edit_uri: "edit/main/docs/"
 theme:
   name: material
   features:
-    - navigation.tabs
-    - navigation.sections
-    - toc.integrate
+    # NAVIGATION LIVES IN THE SIDEBAR AND NOWHERE ELSE. Three flags are absent
+    # deliberately and each absence answers a specific reader complaint; a
+    # future editor restoring any of them should read this block first.
+    #
+    # `navigation.tabs` — ABSENT. It renders the top-level sections as header
+    #   tabs, which made the home page a list of links that were already on
+    #   screen. With it gone the sections render in the sidebar, and the home
+    #   page is free to be a landing page rather than a second nav bar.
+    # `navigation.sections` — ABSENT. It renders top-level sections as flat
+    #   always-expanded groups. The API reference is long enough that a
+    #   non-collapsible sidebar stops working as navigation, so sections must
+    #   be expandable nodes instead.
+    # `toc.integrate` — ABSENT. It merges each page's own table of contents
+    #   into the LEFT sidebar, so on a long page the per-page headings and the
+    #   site nav compete in one column. The TOC belongs on the right.
+    #
+    # `navigation.indexes` is PRESENT and is the structural fix for two pages
+    # sharing one name: it attaches a section's `index.md` to the section NODE,
+    # so "How-To Guides" in the sidebar opens the index instead of expanding to
+    # reveal a child also called "How-To Guides". It requires each section's
+    # first nav entry to be a bare `{section}/index.md`, which this nav already
+    # satisfies for all four sections.
+    - navigation.indexes
+    - navigation.top
   palette:
     # Dark is the DEFAULT, deliberately, and the ordering is what makes it so:
     # Material uses the first entry unless a `media` query redirects it, so no
