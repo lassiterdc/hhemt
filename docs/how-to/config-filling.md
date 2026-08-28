@@ -6,7 +6,7 @@ area, and confirm they load before you spend any compute on them.
 **Prerequisites:** a working install ([Installation](installation.md)), a DEM for
 your watershed, a SWMM `.inp` model, and a weather NetCDF.
 
-**Field-by-field meanings are not on this page** — they are in the
+**Field-by-field meanings are not on this page.** They are in the
 [configuration schema reference](../reference/config-schema.md). This page is the
 order to do things in.
 
@@ -26,14 +26,14 @@ Replace every `/path/to/...` value in `my_system.yaml`, and set `crs.horizontal_
 to the projected CRS of your DEM. If you author by hand rather than loading a case
 study, also replace any `${DATA_DIR}` / `${PACKAGE_DIR}` placeholders.
 
-Set `target_dem_resolution` to the cell size you actually want to simulate at —
-this coarsens the full-resolution DEM, and it is the single field with the largest
+Set `target_dem_resolution` to the cell size you actually want to simulate at.
+This coarsens the full-resolution DEM, and it is the single field with the largest
 effect on runtime.
 
 ## 3. Resolve the toggles
 
 Each toggle you flip makes other fields required. Set the toggles first, then fill
-what they demand — the [toggle-dependency table](../reference/config-schema.md#toggle-dependent-required-fields)
+what they demand; the [toggle-dependency table](../reference/config-schema.md#toggle-dependent-required-fields)
 lists each pairing. The common ones:
 
 - Using a landuse raster for Manning's *n* rather than a constant? You owe the
@@ -51,7 +51,7 @@ your data.
 ## 5. Choose how it runs
 
 The default is `run_mode: serial` / `multi_sim_run_method: local`. To go beyond
-that, set `run_mode` and **add** the fields that mode requires —
+that, set `run_mode` and **add** the fields that mode requires:
 `n_mpi_procs` / `n_omp_threads` / `n_gpus` / `n_nodes`. They are cross-validated at
 config load, so a mismatch fails immediately rather than at dispatch.
 
@@ -67,12 +67,12 @@ hhemt run --system-config my_system.yaml --analysis-config my_analysis.yaml --dr
 ```
 
 **Verifiable end state:** the dry run exits 0 and prints the workflow it would
-execute. A non-zero exit names the offending field — preflight validation
+execute. A non-zero exit names the offending field. Preflight validation
 accumulates every error and reports them together, so you fix one round of
 problems rather than discovering them one at a time.
 
 For a stronger check that actually compiles and runs a minimal subset of your own
-analysis, use `analysis.test()` — see the
+analysis, use `analysis.test()`. See the
 [Norfolk end-to-end tutorial](../tutorials/norfolk-end-to-end.md).
 
 !!! warning "Sensitivity analyses: edit the XLSX, never the CSV"
@@ -84,6 +84,6 @@ analysis, use `analysis.test()` — see the
 
 ## See also
 
-- [Configuration schema reference](../reference/config-schema.md) — what each field means.
+- [Configuration schema reference](../reference/config-schema.md): what each field means.
 - [HPC-profile setup](hpc-profile-setup.md)
 - [Operating on an analysis while jobs are in flight](in-flight-operations.md)

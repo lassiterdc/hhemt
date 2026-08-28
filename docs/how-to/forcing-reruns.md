@@ -7,8 +7,8 @@ behavior is not what you want. For the *why* behind the default behavior, see
 ## Force a full re-run of specific scenarios
 
 Pass `override_force_rerun` to `analysis.run()`. This performs a two-layer
-invalidation — it deletes the `_status/*.flag` markers *and* clears the
-per-scenario processing-log records — so the targeted steps genuinely
+invalidation: it deletes the `_status/*.flag` markers *and* clears the
+per-scenario processing-log records, so the targeted steps genuinely
 re-execute rather than being skipped by a surviving completion record:
 
 ```python
@@ -30,7 +30,7 @@ single invocation without mutating the config.
 
 Re-run with `from_scratch=False` (the default). Under the toolkit's
 graceful-rerun semantics, `analysis.run()` picks up the newly added scenarios
-and resume-sweeps only the additions — completed scenarios are not re-run, and
+and resume-sweeps only the additions. Completed scenarios are not re-run, and
 any still-queued jobs from a previous submission are waited on rather than
 re-submitted:
 
@@ -38,14 +38,14 @@ re-submitted:
 analysis.run(from_scratch=False)
 ```
 
-Do **not** reach for `from_scratch=True` to add work — that wipes the analysis
+Do **not** reach for `from_scratch=True` to add work; that wipes the analysis
 directory and rebuilds everything from the beginning.
 
 ## See re-processed results without re-simulating
 
 When you have completed simulations and only want to regenerate the processed
-outputs, consolidation, or report — for example after fixing a renderer or to
-inspect partial results — use `analysis.reprocess()`. The `start_with`
+outputs, consolidation, or report (for example after fixing a renderer, or to
+inspect partial results), use `analysis.reprocess()`. The `start_with`
 argument controls how far back the re-processing begins:
 
 ```python
@@ -59,6 +59,6 @@ analysis.reprocess(start_with="render")
 analysis.reprocess(start_with="process")
 ```
 
-`reprocess()` never re-runs simulations — it operates on the raw outputs
+`reprocess()` never re-runs simulations; it operates on the raw outputs
 already on disk, so it is safe to run while queued or running simulation
 workers exist.

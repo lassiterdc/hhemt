@@ -4,8 +4,8 @@ This project uses a **gitflow-lite** model: a long-lived development branch (`de
 
 ## The two branches
 
-- **`develop`** — the GitHub **default branch** and the primary local checkout. All day-to-day work happens here. Feature/worktree branches are created *from* `develop` and merged *back* into it. Read-the-Docs "latest" builds `develop`.
-- **`main`** — **release-only**. `main` advances *only* via a `develop` → `main` release pull request that passes the release gate (all tests green, docs accurate and complete). Every release merge is tagged `vX.Y.Z`. Read-the-Docs "stable" builds the latest tag, so public visitors land on released docs.
+- **`develop`**: the GitHub **default branch** and the primary local checkout. All day-to-day work happens here. Feature/worktree branches are created *from* `develop` and merged *back* into it. Read-the-Docs "latest" builds `develop`.
+- **`main`**: **release-only**. `main` advances *only* via a `develop` → `main` release pull request that passes the release gate (all tests green, docs accurate and complete). Every release merge is tagged `vX.Y.Z`. Read-the-Docs "stable" builds the latest tag, so public visitors land on released docs.
 
 A GitHub **ruleset** on `main` enforces this: pull-request-required-before-merge, linear history, `squash`/`rebase` merges only, and blocked force-pushes/deletions. The required status checks that gate a release PR (full test suite, docs build, CITATION.cff validation, identifier-blocklist guard) are configured separately as part of the release gate. The LAYOUT_VERSION check is not a required status check: it runs only under pre-commit (against `HEAD~1`), so layout-version discipline is enforced at `develop`-commit time and inherited by the release (see "Two independent version axes").
 
@@ -19,7 +19,7 @@ contribution process.
 
 A release is a `develop` → `main` pull request that passes the release gate,
 merged and then tagged `vX.Y.Z`. **The tag, not `develop`'s tip, is what fires
-the PyPI publish and the Zenodo DOI mint** — which is why `develop` is never
+the PyPI publish and the Zenodo DOI mint**, which is why `develop` is never
 tagged directly: doing so would publish a commit the release gate never saw.
 
 This is the reason the two documentation versions differ. `latest` tracks
@@ -30,7 +30,7 @@ what a visitor arriving without a version in the URL should see.
 
 Do not conflate these:
 
-- **On-disk layout version** — `LAYOUT_VERSION` (`src/hhemt/version_migration/constants.py`), a monotonic integer governing on-disk analysis-tree/system-directory compatibility. Bumping it requires a migration module + golden fixtures (CI Check A/B, enforced at commit time via pre-commit, not in GitHub Actions).
-- **Software release version** — the SemVer in `pyproject.toml` and the `vX.Y.Z` git tag, governing the PyPI/release artifact.
+- **On-disk layout version**: `LAYOUT_VERSION` (`src/hhemt/version_migration/constants.py`), a monotonic integer governing on-disk analysis-tree/system-directory compatibility. Bumping it requires a migration module + golden fixtures (CI Check A/B, enforced at commit time via pre-commit, not in GitHub Actions).
+- **Software release version**: the SemVer in `pyproject.toml` and the `vX.Y.Z` git tag, governing the PyPI/release artifact.
 
-A release tag never touches `LAYOUT_VERSION`; a `LAYOUT_VERSION` bump never touches the SemVer. Because `check_layout_version.py` runs only under pre-commit (against `HEAD~1`) and is not wired into any GitHub Actions workflow, a release merge does not re-trigger the layout checks — the release inherits whatever `develop` already validated.
+A release tag never touches `LAYOUT_VERSION`; a `LAYOUT_VERSION` bump never touches the SemVer. Because `check_layout_version.py` runs only under pre-commit (against `HEAD~1`) and is not wired into any GitHub Actions workflow, a release merge does not re-trigger the layout checks; the release inherits whatever `develop` already validated.

@@ -94,11 +94,26 @@ WORD_BAN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 # ---- Punctuation rules ------------------------------------------------------
 #
-# Unfenced ONLY, and for a reason that does not apply to the word bans: a fence
-# may reproduce external text VERBATIM — real command output, a config file, a
-# log line — where normalizing punctuation would make the page misquote its own
-# source. A word we chose to use is ours to change anywhere; a character in
-# reproduced output is not.
+# OUR PROSE ONLY: every unfenced line, PLUS comment lines inside fences. The
+# discriminator is authorship, not fencing, and the first version of this rule
+# got that wrong.
+#
+# The reason to spare fenced content is that a fence may reproduce external text
+# VERBATIM — real command output, a config file, a log line — where normalizing
+# punctuation would make the page misquote its own source. That reason is sound
+# and still holds. But it does not reach a COMMENT inside a fence, which is our
+# own annotation and is read exactly as body text.
+#
+# Measured 2026-08-28, and the measurement is why this rule changed: the corpus
+# held 7 fenced em dashes and ALL SEVEN were in comments we wrote —
+# `# Plan only — build the DAG, write nothing:`, `# PyPI version — the durable,
+# installable identifier`, and five more of the same shape. Zero were reproduced
+# output. So the unfenced-only rule was justified by a case this corpus does not
+# contain, and it exempted seven sites it should have caught.
+#
+# COMMENT_LINE is deliberately narrow — a leading marker only. A `#` mid-line
+# inside a shell command is an argument or a fragment, not our prose, and a
+# looser pattern would start editing code.
 PUNCTUATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (("em-dash", re.compile(r"—")),)
 
 # ---- Advisory rules ---------------------------------------------------------
@@ -108,6 +123,25 @@ PUNCTUATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (("em-dash", re.
 # so each hit needs a human judgment and a hard gate on 23 sites would be a gate
 # that gets routed around. Surfaced by `--advisory`, excluded from the exit code.
 ADVISORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (("deletable-clause-candidate", re.compile(r",\s+not\b")),)
+
+
+COMMENT_LINE = re.compile(r"^\s*(?:#|//|--|;)\s")
+
+
+def _prose_lines(text: str):
+    """Yield (lineno, line) for lines we AUTHORED: unfenced prose, plus comment
+    lines inside fences.
+
+    Excludes non-comment fenced content, which may reproduce external text that
+    must not be normalized. See the PUNCTUATION_PATTERNS rationale.
+    """
+    in_fence = False
+    for i, line in enumerate(text.splitlines(), start=1):
+        if FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if not in_fence or COMMENT_LINE.match(line):
+            yield i, line
 
 
 def _all_lines(text: str):
@@ -158,6 +192,7 @@ def scan(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
             m = LINE_CITATION.search(line)
             if m:
                 findings.append(("bare-line-citation", md, lineno, m.group(0)))
+        for lineno, line in _prose_lines(text):
             for code, pat in PUNCTUATION_PATTERNS:
                 if pat.search(line):
                     findings.append((code, md, lineno, line.strip()))
@@ -219,7 +254,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    print(f"docs content OK — no placeholder leakage or bare line citations under {args.docs_dir}.")
+    # Name every class checked. A success line that under-reports its own scope
+    # is the same defect this gate exists to catch, one level up.
+    print(
+        f"docs content OK under {args.docs_dir} — no placeholder leakage, bare line "
+        f"citation, banned vocabulary, development provenance, or em dash."
+    )
     return 0
 
 

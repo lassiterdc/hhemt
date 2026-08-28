@@ -3,7 +3,7 @@
 Get from a fresh clone to a running coupled TRITON-SWMM simulation in a few minutes, entirely from an interactive Python session.
 
 !!! note "Prerequisites"
-    A machine with `conda` (Miniforge/Miniconda). No HPC, no CLI — the first release drives everything from an interactive Python session.
+    A machine with `conda` (Miniforge/Miniconda). No HPC, no CLI: the first release drives everything from an interactive Python session.
 
 ## 1. Clone and set up the environment
 
@@ -20,13 +20,13 @@ pip install -e . --no-deps
 !!! warning "Both `--no-deps` flags are required, not optional"
     Inside a conda environment, a plain `pip install -e .` lets pip's resolver replace conda-resolved packages such as `numpy` and `pandas` with PyPI wheels, which is what breaks the environment you just built. `--no-deps` stops that.
 
-    This is not a SWMM-engine requirement: `pyproject.toml` pins `swmm-toolkit` and `pyswmm` directly, so a pip install resolves a stack that passes the toolkit's runtime validation guard. Create the conda env first and the two pip steps last — conda is blind to pip-installed packages, so any conda-resolvable dependency belongs in `environment.yaml`.
+    This is not a SWMM-engine requirement: `pyproject.toml` pins `swmm-toolkit` and `pyswmm` directly, so a pip install resolves a stack that passes the toolkit's runtime validation guard. Create the conda env first and the two pip steps last, because conda is blind to pip-installed packages, so any conda-resolvable dependency belongs in `environment.yaml`.
 
     Full rationale, the historical `swmmio 0.8.5` hazard, and the pip-only alternative: [Installation](../how-to/installation.md).
 
 ## 2. Get the Norfolk example data
 
-The example uses the Norfolk, VA coastal-flooding case study. You do not download it by hand — the data is fetched automatically the first time you call `NorfolkIreneExperiment.load()` in the next step. The public Norfolk case study downloads anonymously — **no HydroShare account is needed** (the download tries anonymous retrieval first).
+The example uses the Norfolk, VA coastal-flooding case study. You do not download it by hand; the data is fetched automatically the first time you call `NorfolkIreneExperiment.load()` in the next step. The public Norfolk case study downloads anonymously, so **no HydroShare account is needed** (the download tries anonymous retrieval first).
 
 ## 3. Run from an interactive Python session
 
@@ -50,5 +50,5 @@ result = tk.analysis.run(from_scratch=False)   # tk.analysis.run(...), not tk.ru
 
 ## Next steps
 
-- [Norfolk end-to-end tutorial](norfolk-end-to-end.md) — a full case study across compute configs.
-- [Capabilities overview](../explanation/capabilities.md) — what the toolkit makes possible.
+- [Norfolk end-to-end tutorial](norfolk-end-to-end.md): a full case study across compute configs.
+- [Capabilities overview](../explanation/capabilities.md): what the toolkit makes possible.

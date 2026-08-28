@@ -1,9 +1,9 @@
 # FAIR scope of an HHEMT reproducibility dataset
 
-FAIR is applied as a continuum over the whole recreation set — inputs, configs, captured
-environment, provenance, and outputs — not outputs alone. The **dataset** license (below) is
+FAIR is applied as a continuum over the whole recreation set (inputs, configs, captured
+environment, provenance, and outputs), not outputs alone. The **dataset** license (below) is
 chosen separately from the software license (the toolkit is PolyForm-NC source-available;
-the dataset defaults to CC0-1.0, an open public good — a recognized, coherent pattern).
+the dataset defaults to CC0-1.0, an open public good, which is a recognized and coherent pattern).
 
 | Artifact class | Findable | Accessible | Interoperable | Reusable |
 |---|---|---|---|---|
@@ -13,6 +13,6 @@ the dataset defaults to CC0-1.0, an open public good — a recognized, coherent 
 | Provenance (RO-Crate + PROV) | embedded in the DataTree + co-located sidecar | deterministic JSON-LD | RO-Crate 1.2 + PROV-O + CodeMeta + DataCite + CF-1.13 | reusable metadata |
 | Consolidated outputs (zarr DataTree) | DataCite DOI (via `analysis.publish`) | published + version-pinned + DOI'd | hierarchical zarr + CF-1.13 | dataset license `rightsList` + `IsCompiledBy` → software |
 
-Dataset license: `CC0-1.0` (default; totally open — waives copyright + DB rights + attribution;
+Dataset license: `CC0-1.0` (default; totally open, waiving copyright + DB rights + attribution;
 citability carried by the DOI + DataCite + CITATION.cff) or `CC-BY-NC-4.0` (research/education-leaning;
 note CC NonCommercial is broader than "education only" and does not turn on user type).

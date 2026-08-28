@@ -1,6 +1,6 @@
 # Running an experiment bundle
 
-`hhemt run-experiment` runs a **self-describing experiment bundle** — a directory whose
+`hhemt run-experiment` runs a **self-describing experiment bundle**: a directory whose
 `experiment.yaml` declares everything the run needs: the system and analysis configs, the
 input datasets, the per-cluster HPC profile, the container, and a resolvable toolkit pin. The
 descriptor is the *single config*: there are no positional config arguments to line up, and any
@@ -8,7 +8,7 @@ CLI flag that would override a descriptor-declared value must be confirmed first
 
 ## The bundle layout
 
-A conformant bundle (validated against the `ExperimentBundle` descriptor model — see
+A conformant bundle (validated against the `ExperimentBundle` descriptor model; see
 [Verifying a bundle conforms](#verifying-a-bundle-conforms)) is a directory containing at least:
 
 ```
@@ -29,15 +29,15 @@ description: One-line description.
 system_config: configs/system_config_uva.yaml    # bundle-relative
 analysis_config: configs/analysis_config_uva.yaml # bundle-relative
 hpc_system_config:
-  uva: hpc/hpc_system_config_uva.yaml   # estate-relative (resolved against $HHEMT_DEPLOYMENT_CONFIG or the estate root)
+  uva: hpc/hpc_system_config_uva.yaml   # relative to $HHEMT_DEPLOYMENT_CONFIG, or to the directory two levels above this bundle
 inputs:
   - name: weather
-    local_path: "${HHEMT_DATA_ROOT}/weather/forcing.nc"   # ${VAR}-templated — never a literal operator path
+    local_path: "${HHEMT_DATA_ROOT}/weather/forcing.nc"   # ${VAR}-templated, never a literal operator path
     deposit: true                                          # these bytes are part of the publish payload
     destinations:
       uva: /scratch/$USER/my_experiment/weather/forcing.nc # where the provisioning stages it on-cluster
 toolkit_pin:
-  version: "0.1.0"                      # PyPI version — the durable, installable identifier
+  version: "0.1.0"                      # PyPI version: the durable, installable identifier
 container:
   def_recipe: containers/uva-cuda.def
   sha256_source: ro-crate              # the SIF digest's authoritative home is the RO-Crate
@@ -49,7 +49,7 @@ guides for the system/analysis and `hpc_system_config` contents.
 ## Run it
 
 ```bash
-# Plan only — build the DAG, write nothing:
+# Plan only: build the DAG, write nothing:
 hhemt run-experiment --bundle experiments/my_experiment --cluster uva --dry-run
 
 # Execute:
@@ -66,7 +66,7 @@ The git-tracked system/analysis configs carry portable `${VAR}` placeholders (e.
 `${DATA_DIR}/dem.tif`, `${SCRATCH_DIR}/system`). `run-experiment` expands them against the
 environment before the run, materializing resolved copies to `$SCRATCH_DIR/resolved_configs/`
 (a shared filesystem, so `batch_job` rules dispatched to other compute nodes can read them). An
-**unset** variable fails fast with a `ConfigurationError` naming the placeholder — export the
+**unset** variable fails fast with a `ConfigurationError` naming the placeholder. Export the
 referenced variables (typically from your submit script) before running.
 
 ## The override gate
@@ -82,7 +82,7 @@ hhemt run-experiment --bundle experiments/my_experiment --cluster uva --yes
 
 Without `--yes`, a non-interactive invocation that would override the descriptor **refuses**
 rather than silently preferring the CLI. When the CLI adds nothing the descriptor does not
-already say, no confirmation is needed — that is the common one-config path.
+already say, no confirmation is needed; that is the common one-config path.
 
 ## Exit codes
 

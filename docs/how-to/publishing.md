@@ -2,7 +2,7 @@
 
 This guide covers the two ends of the reproducibility loop: **publishing** a consolidated
 analysis to a DOI-minting repository (Zenodo or HydroShare), and **fetching** a case
-study's heavy inputs back by DOI/PID. Both are opt-in — publishing is never triggered by
+study's heavy inputs back by DOI/PID. Both are opt-in: publishing is never triggered by
 `analysis.run()` or `submit_workflow()`.
 
 ## Which deposit unit? data-DOI vs runnable-DOI
@@ -12,8 +12,8 @@ you want the DOI to *do*:
 
 | Deposit unit | Command | The DOI mints a… | Use when |
 |---|---|---|---|
-| **analysis-directory set** — consolidated zarr + `ro-crate-metadata.json` + the two configs | `analysis.publish(target=…)` | **data-DOI** — the archived, citable analysis outputs + provenance (reproducible from the configs and crate) | you're archiving results for citation / a data-availability statement |
-| **reprex bundle** — the round-trippable bundle that runs an experiment from scratch | `analysis.publish_reprex_bundle(target=…)` | **runnable-DOI** — `hhemt ingest --doi {DOI}` fetches, reconstitutes, and runs it | you want a one-command reproducible experiment (see [the DOI round-trip runbook](doi-roundtrip-e2e.md)) |
+| **analysis-directory set** (consolidated zarr + `ro-crate-metadata.json` + the two configs) | `analysis.publish(target=…)` | **data-DOI**: the archived, citable analysis outputs + provenance (reproducible from the configs and crate) | you're archiving results for citation / a data-availability statement |
+| **reprex bundle** (the round-trippable bundle that runs an experiment from scratch) | `analysis.publish_reprex_bundle(target=…)` | **runnable-DOI**: `hhemt ingest --doi {DOI}` fetches, reconstitutes, and runs it | you want a one-command reproducible experiment (see [the DOI round-trip runbook](doi-roundtrip-e2e.md)) |
 
 Both go through the same `target` seam and the same credentials below; they differ only in
 what bytes are deposited. The rest of this guide uses `analysis.publish()` (the data-DOI); the
@@ -21,13 +21,13 @@ runnable-DOI path is identical with `publish_reprex_bundle()` in place of `publi
 
 ## Before you publish
 
-`analysis.publish()` deposits the *analysis-directory set* — the consolidated
+`analysis.publish()` deposits the *analysis-directory set*: the consolidated
 `analysis_datatree.zarr`, the co-located `ro-crate-metadata.json` provenance sidecar, and
 the two configs (`cfg_analysis.yaml` + `cfg_system.yaml`). So the analysis must already be
 **consolidated** (run through `reprocess(start_with="consolidate")` or a full `run()`), or
 publish has nothing to deposit and no crate to read the license from.
 
-The dataset license is read back from the crate sidecar — it is baked in at consolidation
+The dataset license is read back from the crate sidecar; it is baked in at consolidation
 (default `CC0-1.0`; set `analysis_config.dataset_license: CC-BY-NC-4.0` before consolidating
 to choose the other vocab entry). Publishing does **not** re-stamp the archived license.
 
@@ -47,7 +47,7 @@ export HHEMT_HYDROSHARE_PASSWORD=<your-hydroshare-password>
 
 ## Publish to Zenodo
 
-Zenodo mints the DOI on publish — the toolkit creates a draft, embeds the record metadata,
+Zenodo mints the DOI on publish. The toolkit creates a draft, embeds the record metadata,
 uploads the deposit, publishes, and reads the minted, DataCite-registered DOI back from the
 published record (no DOI is reserved up front):
 
@@ -66,7 +66,7 @@ edge onto the software record.
 
 To assert (not re-stamp) the license you expect, pass `override_dataset_license`. If it
 disagrees with the license baked into the crate, publish raises `PublishError` and directs
-you to set `analysis_config.dataset_license` and re-consolidate — it will not silently
+you to set `analysis_config.dataset_license` and re-consolidate. It will not silently
 publish a mismatched license:
 
 ```python
@@ -75,7 +75,7 @@ analysis.publish(target="zenodo", override_dataset_license="CC0-1.0")
 
 ## Publish to HydroShare
 
-HydroShare is a two-step flow — hsclient (v1.1.6) has no programmatic DOI mint. `publish()`
+HydroShare is a two-step flow, because hsclient (v1.1.6) has no programmatic DOI mint. `publish()`
 creates the resource, uploads the deposit set, sets it public, then **stops and returns a
 manual instruction**:
 
@@ -108,7 +108,7 @@ host: zenodo                       # or: hydroshare
 doi: '10.5281/zenodo.1234567'      # host='zenodo' requires a doi OR pid
 ```
 
-Then load the case study — the toolkit dispatches on `host`, fetches over anonymous-first
+Then load the case study. The toolkit dispatches on `host`, fetches over anonymous-first
 HTTPS, and verifies every file against the `manifest` sha256 map:
 
 ```python

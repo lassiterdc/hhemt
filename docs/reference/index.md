@@ -3,15 +3,15 @@
 Information-oriented lookup material: the API surface, the configuration
 schema, and what the toolkit produces.
 
-- [API Reference](api.md) — the `hhemt` package API.
-- [Configuration schema](config-schema.md) — annotated system and analysis
+- [API Reference](api.md): the `hhemt` package API.
+- [Configuration schema](config-schema.md): annotated system and analysis
   configs, and the toggle-dependency table.
-- [CLI reference](cli.md) — every `hhemt` command and the structured exit codes.
-- [Output data model](output-data-model.md) — what a completed analysis writes,
+- [CLI reference](cli.md): every `hhemt` command and the structured exit codes.
+- [Output data model](output-data-model.md): what a completed analysis writes,
   the three output tiers, and the CF-1.13 variables.
-- [FAIR scope table](fair-scope-table.md) — item-by-item F/A/I/R posture over
+- [FAIR scope table](fair-scope-table.md): item-by-item F/A/I/R posture over
   the whole reproducibility dataset.
-- [The interactive analysis report](example-report.md) — what a rendered report
+- [The interactive analysis report](example-report.md): what a rendered report
   contains and how to open one.
 
 ## Example experiments

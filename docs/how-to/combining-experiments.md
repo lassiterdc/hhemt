@@ -2,11 +2,11 @@
 
 `hhemt combine` ingests **two or more** completed render bundles from different
 experiments, checks that they are compatible, and emits a single standalone
-**combined bundle** with one cross-experiment report — itself a valid RO-Crate
+**combined bundle** with one cross-experiment report, itself a valid RO-Crate
 containing each input bundle intact.
 
 Use this when you have run the same (or a compatible) analysis under different
-conditions — e.g. two compute configurations, or two clusters — and want one
+conditions (e.g. two compute configurations, or two clusters) and want one
 report that presents them side by side.
 
 ## Prerequisites
@@ -60,16 +60,16 @@ severity:
 | `blocking` | A different experiment entirely (e.g. differing weather events or enabled models). | **Aborts** the combine. |
 
 `CompatibilitySeverity` (combine-admissibility) is distinct from the ADR-17
-bug-registry `severity` (output-invalidation) — they answer different questions.
+bug-registry `severity` (output-invalidation); they answer different questions.
 See the decision doc *"CompatibilitySeverity is orthogonal to ADR-17 severity"*.
 
 ### Compatibility gates
 
 `hhemt combine` refuses to combine bundles from two different case studies: a
 `case_name` divergence (sourced from each bundle's `case.yaml`) is classified
-**blocking** and aborts the combine. A compute-config divergence — a difference in the
+**blocking** and aborts the combine. A compute-config divergence, a difference in the
 `partitions` map or `gpu_allocation_flavor`, sourced from each bundle's scrubbed
-`hpc_system_config.identity.yaml` — is classified **informational**: it is surfaced as a
+`hpc_system_config.identity.yaml`, is classified **informational**: it is surfaced as a
 divergence row and does not abort, because comparing the same experiment across UVA
 and Frontier is a supported use. The combined report additionally carries a
 clean-vs-resume `cross_experiment_intercomparison` figure under the "Cross-Experiment
@@ -95,7 +95,7 @@ The combined report is one cohesive Snakemake `--report`. Its sidebar has
 **Cross-Experiment Compatibility**, **Cross-Experiment Results** (the clean-vs-resume
 intercomparison), then one native section **per experiment** (each experiment id is a
 top-level sidebar category whose figures are that experiment's own report content,
-harvested in place from `child_crates/{experiment_id}/plots/` — no click-through to a
+harvested in place from `child_crates/{experiment_id}/plots/`, with no click-through to a
 separate document), and a bottom **Errors and Warnings** aggregate rolling up every
 child's validation status. There is no `index.html` front door: everything is
 navigable inside the single `analysis_report.html` (or the size-friendly
