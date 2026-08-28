@@ -45,6 +45,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Severity of the container-toolkit-mismatch guard in main(). True -> the rung
+# refuses to process (fail closed); False -> it logs the error and continues.
+# Ruled FATAL by the user ([Q105]). Deliberately a module constant rather than a
+# config field: it encodes a settled ruling, not an operator-facing bypass, and
+# making it settable would re-create the force path that was recommended against.
+_FAIL_CLOSED_ON_TOOLKIT_MISMATCH = True
+
 
 def get_memory_mb():
     """Get current process memory usage in MB."""
@@ -187,6 +194,82 @@ def main():
 
         # Log workflow context for traceability
         log_workflow_context(logger)
+
+        # Prove the container ran the container's OWN toolkit.
+        #
+        # Measured on norfolk_observed_event (2026-08-27): an apptainer-wrapped
+        # process rung wrote 40/40 summaries stamped with the HOST toolkit sha
+        # while loading container dependencies. Seven import-path mechanisms were
+        # refuted; the route is still unidentified. This guard is deliberately
+        # ROUTE-AGNOSTIC — it asks only whether the module about to write the
+        # provenance stamp is the one this image ships.
+        #
+        # BOTH OPERANDS COME FROM THE FILESYSTEM, NEITHER FROM THE ENVIRONMENT.
+        # An earlier draft keyed the container signal on an env marker; measured,
+        # a host `HHEMT_IMAGE_TOOLKIT_ROOT=/spoof` reads as `/spoof` INSIDE the
+        # container, because apptainer runs without --cleanenv (prohibited by
+        # NQ-11) and inherits wholesale. That let one host variable both fake the
+        # container signal and supply the root the guard validates against — a
+        # guard checking an operand its adversary controls. Host env inheritance
+        # is the very property under investigation here; it cannot also be the
+        # thing we trust. `/.singularity.d/` is created by the runtime and is not
+        # forgeable from the host environment.
+        _sing_dir = Path("/.singularity.d")
+        if _sing_dir.is_dir():
+            import hhemt as _hhemt
+
+            _declared = None
+            try:
+                _labels = json.loads((_sing_dir / "labels.json").read_text()) or {}
+                _declared = _labels.get("org.hhemt.toolkit_root")
+            except Exception:
+                _declared = None
+            if not _declared:
+                # Containerized but UN-GOVERNED. Distinguishable from the native
+                # case only because the signal and the root are now separate
+                # operands; this is exactly the state an ungoverned image would
+                # otherwise sail through, so it warns rather than passing silently.
+                logger.warning(
+                    "Container toolkit unverifiable: running under Apptainer but the "
+                    "image declares no org.hhemt.toolkit_root label, so the imported "
+                    "`hhemt` cannot be checked against the image's own source tree. "
+                    "Provenance stamps from this rung are unverified."
+                )
+            else:
+                _imported = Path(_hhemt.__file__).resolve()
+                _root = Path(_declared).resolve()
+                # .resolve() on BOTH sides deliberately: __file__ does NOT follow
+                # symlinks, so an unresolved compare passes through a symlinked
+                # source tree that redirects outside the image.
+                if not _imported.is_relative_to(_root):
+                    logger.error(
+                        f"Container toolkit mismatch: this image declares its toolkit at {_root}, but\n"
+                        f"`hhemt` imported from {_imported}. This rung would run host code inside the\n"
+                        f"container and stamp provenance naming the wrong tree, so it is refusing to\n"
+                        f"process.\n"
+                        f"\n"
+                        f"Likely causes, most common first:\n"
+                        f"  1. The image's org.hhemt.toolkit_root label is wrong (a recipe/label\n"
+                        f"     mistake, NOT a real shadow). Fix the label and re-run.\n"
+                        f"  2. PYTHONPATH is set in the environment the driver inherited; apptainer\n"
+                        f"     runs without --cleanenv, so it reaches this interpreter.\n"
+                        f"  3. A bind mount shadows the image's own source tree.\n"
+                        f"\n"
+                        f"Nothing is lost: simulations and raw outputs are complete on disk. Correct\n"
+                        f"the cause and re-run processing (analysis.reprocess()); no simulation\n"
+                        f"re-runs.\n"
+                        f"\n"
+                        f"There is deliberately no override flag. If the toolkit that ran cannot be\n"
+                        f"identified, the provenance of the results cannot be reconstructed later,\n"
+                        f"and that is not recoverable after the fact the way a re-processed summary is.\n"
+                    )
+                    # SEVERITY: the single point of change. Ruled FATAL by the user
+                    # ([Q105], "I agree with fatal"); no force-through path exists by
+                    # design (specialist concurrence, rounds 12-14).
+                    # True  -> refuse to process (fail closed).
+                    # False -> log the error above and continue.
+                    if _FAIL_CLOSED_ON_TOOLKIT_MISMATCH:
+                        return 1
 
         logger.info(f"Loading system configuration from {args.system_config}")
         system = TRITONSWMM_system(args.system_config)

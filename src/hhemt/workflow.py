@@ -1003,7 +1003,24 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # The interpreter must resolve INSIDE the image. self.python_executable
             # is the DRIVER's host interpreter (sys.executable at :813) and dies
             # `FATAL: stat …: no such file or directory` under apptainer exec.
-            self._container_process_python = _cspec.python_in_sif
+            # `-I` (isolated) on the CONTAINER token ONLY. It implies -E (ignore
+            # PYTHON* env), -s (no user site), and -P (no CWD/script dir), which
+            # states the invariant POSITIVELY — this interpreter is isolated from
+            # host configuration — instead of enumerating variables to delete.
+            # Deletion is not available: measured at apptainer 1.5.0, every
+            # APPTAINERENV/--env/--env-file/--no-eval form yields SET-but-empty,
+            # --unsetenv does not exist, and --cleanenv is prohibited by NQ-11.
+            #
+            # CONTAINER-ONLY IS LOAD-BEARING, NOT TIDINESS. -E would break a
+            # documented dependency on the NATIVE path: conftest.py:14-18 exports
+            # PYTHONPATH transitively to every subprocess, and cli.py:96 records
+            # that the runner __main__ blocks "inherit PYTHONPATH from the parent."
+            # Applying -I natively makes every worktree PWI and the pytest synth
+            # tier import the INSTALLED toolkit instead of the tree under test —
+            # Gotcha 68's exact failure, re-created while fixing its sibling.
+            # Baking it here rather than at the three `-m ...` emission sites keeps
+            # native emission byte-identical and touches no call list.
+            self._container_process_python = f"{_cspec.python_in_sif} -I"
         else:
             self._container_process_prefix = ""
             self._container_process_python = ""
