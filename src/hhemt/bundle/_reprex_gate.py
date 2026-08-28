@@ -23,6 +23,11 @@ from hhemt.exceptions import ProcessingError
 # carried `.py` files under hhemt_src/.
 _SNIFF_BYTES = 8192
 _MIN_EXPECTED_TOKENS = 4
+_ABSOLUTE_MIN_TOKENS = 1
+# A carrier may declare its own expected count in a `# min-tokens: N` header line, so the
+# floor travels WITH the list it describes rather than sitting in a different file (and,
+# after the carrier relocates, a different repository) from the list it counts.
+_MIN_TOKENS_HEADER = re.compile(r"^#\s*min-tokens:\s*(\d+)\s*$")
 _ENV_OVERRIDE = "HHEMT_REPREX_BLOCKLIST"
 
 
@@ -74,16 +79,25 @@ def _load_blocklist() -> list[str]:
                 "ground truth."
             ),
         )
-    tokens = [
-        line.strip() for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith("#")
-    ]
-    if len(tokens) < _MIN_EXPECTED_TOKENS:
+    tokens: list[str] = []
+    declared: int | None = None
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            m = _MIN_TOKENS_HEADER.match(line)
+            if m:
+                declared = int(m.group(1))
+            continue
+        if line:
+            tokens.append(line)
+    floor = max(declared, _ABSOLUTE_MIN_TOKENS) if declared is not None else _MIN_EXPECTED_TOKENS
+    if len(tokens) < floor:
         raise ProcessingError(
             operation="reprex zero-user-info gate",
             filepath=path,
             reason=(
                 f"carrier yielded {len(tokens)} token(s), below the floor of "
-                f"{_MIN_EXPECTED_TOKENS}. Refusing to certify a bundle on a truncated list."
+                f"{floor}. Refusing to certify a bundle on a truncated list."
             ),
         )
     return tokens

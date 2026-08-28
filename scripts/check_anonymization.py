@@ -49,7 +49,38 @@ class Hit:
         return f"{self.path}:{self.line}: blocklisted token {self.token!r}"
 
 _MIN_EXPECTED_TOKENS = 8
+_ABSOLUTE_MIN_TOKENS = 1
+# A carrier may declare its own expected count in a `# min-tokens: N` header line. The
+# header travels WITH the list it describes, so retiring an obsolete token is one edit to
+# one file that updates the list and its floor together; the module constant below cannot
+# do that, because it lives in a different file (and, after the carrier relocates, a
+# different repository) from the list it is counting.
+_MIN_TOKENS_HEADER = re.compile(r"^#\s*min-tokens:\s*(\d+)\s*$")
 _ENV_OVERRIDE = "HHEMT_ANONYMIZATION_BLOCKLIST"
+_GIT_CONFIG_KEY = "hhemt.blocklistPath"
+
+
+def _git_config_blocklist_path(root: Path) -> Path | None:
+    """Read the per-clone carrier path from git config, or None.
+
+    This tier exists for the LOCAL hook venue specifically. An env var must live in a
+    shell profile, and a pre-commit hook runs in a subprocess whose environment can be
+    minimal; a git config value is stored IN THE CLONE, so it survives every shell and is
+    visible to every hook. The guard already shells out to git for `git ls-files`, so this
+    adds no dependency and no import from src/ (ADR-14 independence invariant).
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "config", "--get", _GIT_CONFIG_KEY],
+            cwd=root,
+            capture_output=True,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    value = proc.stdout.decode("utf-8", "replace").strip()
+    return Path(value).expanduser() if value else None
 
 
 def _resolve_blocklist_path(root: Path) -> Path:
@@ -73,6 +104,11 @@ def _resolve_blocklist_path(root: Path) -> Path:
         checked.append(p)
         if p.is_file():
             return p
+    configured = _git_config_blocklist_path(root)
+    if configured is not None:
+        checked.append(configured)
+        if configured.is_file():
+            return configured
     default = root / "scripts" / "anonymization_blocklist.txt"
     checked.append(default)
     if default.is_file():
@@ -80,7 +116,8 @@ def _resolve_blocklist_path(root: Path) -> Path:
     raise SystemExit(
         "check_anonymization: no blocklist carrier is reachable. Checked: "
         + ", ".join(str(c) for c in checked)
-        + f". Set ${_ENV_OVERRIDE} to the carrier path."
+        + f". Set ${_ENV_OVERRIDE}, or run "
+        f"`git config --local {_GIT_CONFIG_KEY} PATH` in this clone."
     )
 
 
@@ -105,15 +142,22 @@ def load_blocklist(blocklist_path: Path) -> list[str]:
     if not blocklist_path.is_file():
         raise SystemExit(f"check_anonymization: blocklist not found at {blocklist_path}")
     tokens: list[str] = []
+    declared: int | None = None
     for raw in blocklist_path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
-        if not line or line.startswith("#"):
+        if line.startswith("#"):
+            m = _MIN_TOKENS_HEADER.match(line)
+            if m:
+                declared = int(m.group(1))
+            continue
+        if not line:
             continue
         tokens.append(line)
-    if len(tokens) < _MIN_EXPECTED_TOKENS:
+    floor = max(declared, _ABSOLUTE_MIN_TOKENS) if declared is not None else _MIN_EXPECTED_TOKENS
+    if len(tokens) < floor:
         raise SystemExit(
             f"check_anonymization: blocklist at {blocklist_path} yielded {len(tokens)} "
-            f"token(s), below the floor of {_MIN_EXPECTED_TOKENS}. Refusing to report a "
+            f"token(s), below the floor of {floor}. Refusing to report a "
             "pass that was not performed."
         )
     return tokens

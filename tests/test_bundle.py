@@ -294,6 +294,7 @@ def test_reprex_bundle_carries_runnable_set(
     + the Workflow-Run-Crate ro-crate-metadata.json), and the crate is typed as a WRC
     with the generated Snakefile as its mainEntity ComputationalWorkflow."""
     import json
+    import re
     import zipfile
 
     from hhemt.bundle._emit import HPC_TEMPLATE_FILENAME, REPREX_CONFIG_FILENAME
@@ -324,12 +325,38 @@ def test_reprex_bundle_carries_runnable_set(
     # extra-forbidden and is what made the old template unloadable.
     assert cfg_hpc.container is not None
     assert cfg_hpc.container.sif_path
-    # Zero-user-info (ADR-13/14): placeholders only, never the producer's real values.
+    # Zero-user-info (ADR-13/14), asserted POSITIVELY against the placeholder grammar the
+    # scrub emits, rather than negatively against the producer's blocklist. Two reasons the
+    # positive form is stronger, not merely carrier-free. (1) The negative form could only
+    # catch the eight identifiers WE know about; this catches ANY real value landing in a
+    # user-bucket field, including a future producer's, whose identifiers are on nobody's
+    # list. (2) The negative form needed the real blocklist reachable at test time, which
+    # made this module hard-depend on a carrier that is being relocated out of this repo.
     tpl_text = (bundle_dir / HPC_TEMPLATE_FILENAME).read_text()
-    _reprex_bl = Path(__file__).resolve().parents[1] / "scripts" / "reprex_blocklist.txt"
-    _producer_tokens = [t.strip() for t in _reprex_bl.read_text().splitlines() if t.strip() and not t.strip().startswith("#")]
-    for producer_token in _producer_tokens:
-        assert producer_token not in tpl_text
+    _placeholder = re.compile(r"^\{your-[a-z0-9-]+\}$")
+    for _field, _value in (
+        ("system_name", cfg_hpc.system_name),
+        ("default_account", cfg_hpc.default_account),
+        ("login_node", cfg_hpc.login_node),
+    ):
+        assert _placeholder.match(str(_value or "")), (
+            f"{_field} carries {_value!r}, not a {{your-...}} placeholder -- a producer "
+            "value survived the scrub"
+        )
+    for _partition_name in cfg_hpc.partitions:
+        assert _placeholder.match(_partition_name), (
+            f"partition key {_partition_name!r} is a real partition name, not a placeholder"
+        )
+    # sif_path EMBEDS a placeholder inside a path rather than being one outright.
+    assert "{your-allocation}" in str(cfg_hpc.container.sif_path), (
+        f"container.sif_path {cfg_hpc.container.sif_path!r} carries no placeholder"
+    )
+    # And no brace-token anywhere in the emitted template escapes the grammar, so a new
+    # scrubbed field cannot quietly adopt a different (or absent) placeholder convention.
+    for _brace_token in sorted(set(re.findall(r"\{[^{}\n]+\}", tpl_text))):
+        assert _brace_token.startswith("{your-"), (
+            f"template carries brace-token {_brace_token!r} outside the {{your-...}} grammar"
+        )
 
     doc = json.loads((bundle_dir / "ro-crate-metadata.json").read_text())
     root = next(e for e in doc["@graph"] if e.get("@id") == "./")
@@ -341,7 +368,7 @@ def test_reprex_bundle_carries_runnable_set(
     assert set(_WFRUN_ROOT_PROFILES) <= profile_ids
 
 
-def test_zero_user_info_gate(tmp_path: Path) -> None:
+def test_zero_user_info_gate(tmp_path: Path, monkeypatch) -> None:
     """R12: the zero-user-info gate PASSES a clean tree (placeholders only) and FAILS a
     seeded-leak tree (a YAML value carrying a blocklist token) with ProcessingError.
 
@@ -353,6 +380,20 @@ def test_zero_user_info_gate(tmp_path: Path) -> None:
     from hhemt.bundle._reprex_gate import _load_blocklist, assert_bundle_zero_user_info
     from hhemt.exceptions import ProcessingError
 
+    # Carrier-independent by construction: this test exercises the gate MECHANISM, and a
+    # mechanism test needs A token, not THE producer's tokens. Pointing the resolver at a
+    # synthetic carrier means the real ground truth need not be reachable here -- which is
+    # what lets this module run in an environment that has no carrier at all. Contrast
+    # test_reprex_bundle_carries_runnable_set, which asserts real producer values are
+    # ABSENT from an emitted artifact and is therefore vacuous against synthetic tokens.
+    synthetic_carrier = tmp_path / "synthetic_blocklist.txt"
+    synthetic_carrier.write_text(
+        "# min-tokens: 4\n"
+        "ZZTESTTOKENALPHA\nZZTESTTOKENBETA\nZZTESTTOKENGAMMA\nZZTESTTOKENDELTA\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HHEMT_REPREX_BLOCKLIST", str(synthetic_carrier))
+
     clean_dir = tmp_path / "clean"
     clean_dir.mkdir()
     (clean_dir / "cfg_system.yaml").write_text(
@@ -363,8 +404,8 @@ def test_zero_user_info_gate(tmp_path: Path) -> None:
     )
     assert_bundle_zero_user_info(clean_dir)  # clean tree: no raise
 
-    # Seed a leak with an actual blocklist token, resolved at runtime so no literal
-    # private identifier appears in this test's source (else check_anonymization flags it).
+    # Seed a leak with a token from the synthetic carrier above, resolved at runtime so no
+    # literal identifier is hardcoded here.
     leak_token = _load_blocklist()[0]
     leak_dir = tmp_path / "leak"
     leak_dir.mkdir()
