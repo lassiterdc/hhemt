@@ -673,11 +673,36 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
         VERSION_FILE_NAME,
         "scenario_status.csv",
         "sensitivity_analysis_definition.csv",
-        "ro-crate-metadata.json",
     ):
         src = analysis_dir / fname
         if src.exists():
             shutil.copy2(src, staging / fname)
+    # The crate is carried SCRUBBED, not copied. The producer's own analysis_dir sidecar
+    # legitimately holds full provenance; the BUNDLE copy must not, because it is the
+    # artifact that gets deposited under a DOI. Measured on a real Norfolk emit: 213
+    # entities carry `agent` -> {"@id": "#agent-{producer-host}"} and 213 carry
+    # `startTime`, one distinct value each -- the largest single environment-sourced
+    # population in the bundle, and one that no config-derived detector can reach because
+    # its origin is socket.gethostname() rather than any config field. The `agent` refs
+    # are additionally DANGLING (no #agent-* entity exists in the @graph), so stripping
+    # them removes an unresolvable reference rather than breaking a resolvable one.
+    # `mainEntity` -- which experiments.py's from_doi ingest and bundle/_reprex.py both
+    # require -- is not a volatile key and is untouched.
+    #
+    # NOT done via metadata._VOLATILE_GRAPH_KEYS: that set feeds _strip_volatile, whose
+    # ONLY consumer is the equality test inside write_rocrate_sidecar's compare-and-write.
+    # It governs which keys are ignored when deciding to SKIP a rewrite, never what is
+    # written -- so populating it would leave this leak untouched AND make a sidecar that
+    # differs only in agent/startTime compare equal, retaining a previous run's file.
+    crate_src = analysis_dir / "ro-crate-metadata.json"
+    if crate_src.exists():
+        from hhemt.metadata import _VOLATILE_PROV_KEYS, canonical_jsonld_from_doc
+
+        crate_doc = json.loads(crate_src.read_text())
+        for entity in crate_doc.get("@graph", []):
+            for volatile_key in _VOLATILE_PROV_KEYS:
+                entity.pop(volatile_key, None)
+        (staging / "ro-crate-metadata.json").write_text(canonical_jsonld_from_doc(crate_doc))
     # case.yaml — the case manifest carries case_name (BLOCKING experiment-identity
     # field, already in _compatibility._EXPERIMENT_IDENTITY_FIELDS). Resolved from the
     # case_manifest_yaml constructor arg (D6); None on paths that do not set it.
@@ -693,9 +718,21 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
     # (Path(src.name)) for out-of-tree CSVs, which disagreed with the cfg rewrite's
     # external/{name} — reconciled by routing every declared input through the one
     # policy-driven copy path.
+    # Carry ONLY the DU sentinel, not the whole _status/ tree. Measured on a real
+    # Norfolk emit: _status/ is 1,568 members of which exactly ONE (_du.json) has a
+    # consume-side reader -- report_renderers/disk_utilization.py, which resolves
+    # {analysis_dir}/_status/_du.json against the BUNDLE ROOT at regenerate time (and
+    # cross_experiment_disk_utilization.py reads the same file per child crate). The
+    # other 1,567 are completion flags and run-state sentinels whose payloads carry the
+    # producer's hostname, pid, SLURM jobids and wall-clock times, and which nothing
+    # consume-side reads: bundle/snakefile_generator._status_flags_for returns () and its
+    # docstring already asserts 'the bundle does not carry the flag files'. Copying the
+    # FILE rather than the TREE makes that standing assertion true.
     status_dir = analysis_dir / BUNDLE_STATUS_SUBDIR
-    if status_dir.exists():
-        shutil.copytree(status_dir, staging / BUNDLE_STATUS_SUBDIR, dirs_exist_ok=True)
+    du_sentinel = status_dir / "_du.json"
+    if du_sentinel.exists():
+        (staging / BUNDLE_STATUS_SUBDIR).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(du_sentinel, staging / BUNDLE_STATUS_SUBDIR / "_du.json")
     plots_dir = analysis_dir / BUNDLE_PLOTS_SUBDIR
     if plots_dir.exists():
         shutil.copytree(plots_dir, staging / BUNDLE_PLOTS_SUBDIR, dirs_exist_ok=True)

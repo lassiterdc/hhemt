@@ -15,7 +15,13 @@ from pathlib import Path
 
 from hhemt.exceptions import ProcessingError
 
-_TEXT_SUFFIXES = {".yaml", ".yml", ".json", ".txt", ".md", ".rst", ".cfg", ".inp"}
+# Text detection is a CONTENT sniff, never a suffix guess. A suffix allowlist reports
+# "clean in N extensions" while reading as "clean". Measured on a real Norfolk emit: a
+# NUL-byte sniff classifies 4,691 of 14,528 members as text; the prior eight-suffix
+# allowlist reached roughly 3,300. The ~1,400-member gap included `Snakefile.source`
+# (extensionless, and a TRUE positive carrying an absolute producer path) and all 438
+# carried `.py` files under hhemt_src/.
+_SNIFF_BYTES = 8192
 _MIN_EXPECTED_TOKENS = 4
 _ENV_OVERRIDE = "HHEMT_REPREX_BLOCKLIST"
 
@@ -83,13 +89,27 @@ def _load_blocklist() -> list[str]:
     return tokens
 
 
+def _is_text(path: Path) -> bool:
+    """Content sniff: a file is text iff its first _SNIFF_BYTES carry no NUL byte.
+
+    Replaces the retired _TEXT_SUFFIXES allowlist. An unreadable file is treated as
+    non-text rather than raising -- the gate must not crash on a permission or race
+    error in a tree it is only auditing.
+    """
+    try:
+        with path.open("rb") as fh:
+            return b"\x00" not in fh.read(_SNIFF_BYTES)
+    except OSError:
+        return False
+
+
 def assert_bundle_zero_user_info(bundle_root: Path) -> None:
     """Raise ProcessingError if any blocklist token appears in the emitted bundle tree."""
     tokens = _load_blocklist()
     patterns = [(t, re.compile(rf"\b{re.escape(t)}\b", re.IGNORECASE)) for t in tokens]
     leaks: list[str] = []
     for f in sorted(bundle_root.rglob("*")):
-        if not f.is_file() or f.suffix.lower() not in _TEXT_SUFFIXES:
+        if not f.is_file() or not _is_text(f):
             continue
         text = f.read_text(errors="ignore")
         for token, pat in patterns:
