@@ -44,7 +44,7 @@ conda env create -f environment.yaml
 conda activate hhemt
 
 # Both post-create steps are REQUIRED (see docs/how-to/installation.md)
-pip install --no-deps "swmmio==0.8.2"
+pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
 pip install -e . --no-deps
 ```
 
@@ -59,7 +59,7 @@ conda env create -f environment.yaml
 # Activate
 conda activate hhemt
 
-pip install --no-deps "swmmio==0.8.2"
+pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
 pip install -e . --no-deps
 ```
 
@@ -75,7 +75,7 @@ conda activate hhemt
 conda env update -f environment.yaml --prune
 
 # Re-apply the two --no-deps post-create steps
-pip install --no-deps "swmmio==0.8.2"
+pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
 pip install -e . --no-deps
 ```
 
@@ -166,7 +166,7 @@ In your CI/CD configuration, provision from `environment.yaml` (never the lock) 
 
 - name: Install swmmio + project (both --no-deps)
   run: |
-    pip install --no-deps "swmmio==0.8.2"
+    pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
     pip install -e . --no-deps
 ```
 
@@ -174,7 +174,7 @@ Or for Docker:
 
 ```dockerfile
 RUN conda env create -f environment.yaml
-RUN conda run -n hhemt pip install --no-deps "swmmio==0.8.2"
+RUN conda run -n hhemt pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
 RUN conda run -n hhemt pip install -e . --no-deps
 RUN echo "conda activate hhemt" >> ~/.bashrc
 ```

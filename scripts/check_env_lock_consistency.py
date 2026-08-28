@@ -67,7 +67,14 @@ PYPROJECT_FILE = REPO_ROOT / "pyproject.toml"
 # `swmmio` is the ONLY sanctioned omission: it must stay out of every `pip:` block
 # (its `pyswmm<2.0` cap downgrades the conda pyswmm), so it is installed post-create
 # with `pip install --no-deps "swmmio==0.8.2"`. Anything else missing is a real bug.
-CORE_DEP_EXEMPT = {"swmmio"}
+# All three are installed post-create with `pip install --no-deps` and must stay out of
+# every `pip:` block, so environment.yaml declares no spec for any of them. swmmio is the
+# original case (its 0.8.5 `pyswmm<2.0` cap downgraded the conda pyswmm during the block's
+# single joint resolve). swmm-toolkit/pyswmm joined it because conda-forge CANNOT satisfy
+# pyproject's `swmm-toolkit>=0.15.3,<0.16` floor -- its 0.15 line stops at 0.15.2 -- so no
+# conda spec for them is both solvable and conformant. Their versions are enforced instead
+# by the literal post-create pin check, assertion (g), which scans all three names.
+CORE_DEP_EXEMPT = {"swmmio", "swmm-toolkit", "pyswmm"}
 
 # --- (f)/(g) pyproject-containment machinery ---------------------------------
 # `packaging` is NOT declared in pyproject or environment.yaml, but it is a hard
@@ -90,6 +97,21 @@ except ModuleNotFoundError as _exc:  # pragma: no cover - env-shape failure
 # pyproject constraint. The value is the written reason and is MANDATORY — this is
 # a dict, not a set, so an exemption cannot be added without stating why.
 PYPROJECT_VERSION_EXEMPT: dict[str, str] = {
+    "swmm-toolkit": (
+        "installed post-create with `pip install --no-deps` so it never enters the conda "
+        "solve; environment.yaml therefore declares no swmm-toolkit spec at all (see "
+        "CORE_DEP_EXEMPT). It cannot be a conda dep: pyproject requires >=0.15.3,<0.16 and "
+        "conda-forge's 0.15 line stops at 0.15.2, so the intersection is empty. Its version "
+        "is enforced instead by assertion (g), which checks the literal post-create pin "
+        "in every file listed in NO_DEPS_PIN_FILES."
+    ),
+    "pyswmm": (
+        "installed post-create alongside swmm-toolkit in the same `pip install --no-deps` "
+        "invocation, because the two are an ABI-matched pairing and splitting them across "
+        "conda and pip is the half-migrated shape that still double-frees. environment.yaml "
+        "therefore declares no pyswmm spec (see CORE_DEP_EXEMPT); assertion (g) checks its "
+        "literal post-create pin."
+    ),
     "swmmio": (
         "installed post-create with `pip install --no-deps` so it never enters the "
         "conda solve; environment.yaml therefore declares no swmmio spec at all "
@@ -107,7 +129,11 @@ NO_DEPS_PIN_FILES: tuple[str, ...] = (
     "docs/how-to/installation.md",
     ".github/workflows/compile-tests.yml",
 )
-NO_DEPS_PIN_RE = re.compile(r"swmmio\s*==\s*([0-9][0-9A-Za-z.\-]*)")
+# All three post-create pins are checked, not just swmmio: after the engine moved out of the
+# conda block, swmm-toolkit/pyswmm live ONLY in these prose install blocks, so an unchecked
+# pin there is the same silent-drift class the conda pin had. Group 1 is the NAME, group 2
+# the version. The lookbehind stops `pyswmm` matching inside a longer identifier.
+NO_DEPS_PIN_RE = re.compile(r"(?<![\w-])(swmmio|swmm-toolkit|pyswmm)\s*==\s*([0-9][0-9A-Za-z.\-]*)")
 
 _SPEC_RE = re.compile(r'^\s*"?\s*([A-Za-z0-9_.\-]+)\s*(.*?)\s*"?\s*$')
 
@@ -206,11 +232,17 @@ def _env_yaml_swmm_toolkit_minor() -> str | None:
 def main() -> int:
     errors: list[str] = []
 
+    # environment.yaml declares NO conda swmm-toolkit pin BY DESIGN: conda-forge's 0.15 line
+    # stops at 0.15.2 and pyproject requires >=0.15.3, so the intersection is empty and the
+    # engine is a post-create `pip install --no-deps` step (see CORE_DEP_EXEMPT). A None here
+    # is therefore the CORRECT state, not a missing pin. The inverted assertion lives below,
+    # where a conda pin still PRESENT in the lock is the error.
     expected_minor = _env_yaml_swmm_toolkit_minor()
-    if expected_minor is None:
+    if expected_minor is not None:
         errors.append(
-            f"{ENV_FILE.name}: no conda `swmm-toolkit` pin found — cannot verify "
-            f"lock consistency (expected e.g. `- swmm-toolkit=0.15`)."
+            f"{ENV_FILE.name}: declares a conda `swmm-toolkit={expected_minor}.x` pin, but "
+            f"the engine is installed post-create with `pip install --no-deps` and must not "
+            f"enter the conda solve. Remove the conda spec."
         )
 
     lock = yaml.safe_load(LOCK_FILE.read_text())
@@ -266,7 +298,20 @@ def main() -> int:
         if name in GUARDED:
             conda_versions[name] = (spec, version)
 
+    # environment.yaml declares NO conda swmm-toolkit spec (see CORE_DEP_EXEMPT), so
+    # expected_minor is None by design and there is nothing to compare a lock pin AGAINST.
+    # Do not let that degrade into a silent skip: the correct assertion inverts. If the
+    # lock still carries a conda swmm-toolkit or pyswmm pin, the lock has drifted BACK to a
+    # shape environment.yaml abandoned, and a create-from-lock would install a conda engine
+    # that the post-create pip step then shadows -- the half-migrated pairing that still
+    # double-frees. Fail on PRESENCE, not on mismatch.
     st = conda_versions.get("swmm-toolkit")
+    if st is not None and expected_minor is None:
+        errors.append(
+            f"{LOCK_FILE.name}: conda `{st[0]}` pins swmm-toolkit, but {ENV_FILE.name} "
+            f"declares no conda swmm-toolkit spec (it is a post-create `pip install "
+            f"--no-deps` step). Remove the conda pin from the lock."
+        )
     if st is not None and expected_minor is not None:
         spec, version = st
         minor = ".".join((version or "").split(".")[:2])
@@ -358,14 +403,19 @@ def main() -> int:
                 f"pin inside it), or add `{name}` to PYPROJECT_VERSION_EXEMPT with a reason."
             )
 
-    # (g) `swmmio` is exempt from (e) and (f) because it is installed post-create with
-    #     --no-deps and appears in NO conda spec. Its version therefore lives ONLY as a
-    #     literal in the install commands, where nothing checked it — which is how
-    #     pyproject moved to `swmmio<0.8.3` on 2026-07-13 while CI, the README, the docs
-    #     and ENVIRONMENT_SNAPSHOT.md kept provisioning 0.8.5 for six weeks.
-    swmmio_constraint = pj_constraints.get("swmmio", ("", ""))[1]
-    if swmmio_constraint:
-        want_swmmio = SpecifierSet(swmmio_constraint)
+    # (g) swmmio, swmm-toolkit and pyswmm are ALL exempt from (e) and (f) because all three
+    #     are installed post-create with --no-deps and appear in NO conda spec. Their versions
+    #     therefore live ONLY as literals in the install commands, where nothing checked them —
+    #     which is how pyproject moved to `swmmio<0.8.3` on 2026-07-13 while CI, the README, the
+    #     docs and ENVIRONMENT_SNAPSHOT.md kept provisioning 0.8.5 for six weeks. swmm-toolkit
+    #     and pyswmm joined that exemption on 2026-08-28, when the engine left the conda block
+    #     (conda-forge's 0.15 line stops at 0.15.2, below pyproject's >=0.15.3 floor). Scanning
+    #     only swmmio would have re-opened the identical blind spot one package over.
+    for _pkg in GUARDED_PIP:
+        _pj_constraint = pj_constraints.get(_pkg, ("", ""))[1]
+        if not _pj_constraint:
+            continue
+        _want = SpecifierSet(_pj_constraint)
         seen_pins = 0
         for rel in NO_DEPS_PIN_FILES:
             path = REPO_ROOT / rel
@@ -373,12 +423,14 @@ def main() -> int:
                 continue
             for lineno, line in enumerate(path.read_text().splitlines(), 1):
                 for match in NO_DEPS_PIN_RE.finditer(line):
+                    if match.group(1) != _pkg:
+                        continue
                     seen_pins += 1
-                    found = match.group(1)
-                    if Version(found) not in want_swmmio:
+                    found = match.group(2)
+                    if Version(found) not in _want:
                         errors.append(
-                            f"{rel}:{lineno}: post-create pin `swmmio=={found}` is excluded "
-                            f"by pyproject's `swmmio{swmmio_constraint}`. swmmio is exempt "
+                            f"{rel}:{lineno}: post-create pin `{_pkg}=={found}` is excluded "
+                            f"by pyproject's `{_pkg}{_pj_constraint}`. {_pkg} is exempt "
                             f"from environment.yaml (installed --no-deps), so this literal is "
                             f"the ONLY declaration of the version CI and every documented "
                             f"install path provisions — a divergence here validates a stack "
@@ -386,7 +438,7 @@ def main() -> int:
                         )
         if seen_pins == 0:
             errors.append(
-                "no `swmmio==` post-create pin found in "
+                f"no `{_pkg}==` post-create pin found in "
                 + ", ".join(NO_DEPS_PIN_FILES)
                 + " — the scan is vacuous, which reads as a pass. Restore the pin or "
                 "update NO_DEPS_PIN_FILES."
