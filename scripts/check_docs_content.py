@@ -1,8 +1,17 @@
 #!/usr/bin/env python
-"""CI check: the published docs carry no self-declared placeholder and no bare
-``path:line`` citation into a live source file.
+"""CI check: the published docs carry no self-declared placeholder, no bare
+``path:line`` citation into a live source file, and no banned vocabulary.
 
-Two defect classes, both binary, both cheap, and both observed in this tree:
+FIVE defect classes across three tiers, and the TIERS are the design. A rule's
+tier is decided by what a finding COSTS a reader and by whether resolving it
+needs judgment — not by how confident the pattern is:
+
+  * FAILING, fence-skipping  — classes 1 and 2 below (placeholder, line citation)
+  * FAILING, fence-INCLUSIVE — class 3 (banned vocabulary); see WORD_BAN_PATTERNS
+  * FAILING, unfenced        — class 4 (punctuation); see PUNCTUATION_PATTERNS
+  * ADVISORY, never failing  — class 5; see ADVISORY_PATTERNS
+
+Classes 1 and 2, both binary, both cheap, and both observed in this tree:
 
 1. PLACEHOLDER LEAKAGE — a page that tells its own reader its content is
    unfinished. Measured 2026-08-26 at 2 sites: `docs/tutorials/index.md` said the
@@ -25,8 +34,10 @@ mentions of placeholder syntax. Content inside fenced code blocks is skipped for
 the same reason: a fence is where a legitimate ``TODO`` example lives.
 
 Exit 0 = clean. 1 = findings (enumerated with path:line). 2 = usage error.
+Advisory findings NEVER affect the exit code; pass ``--advisory`` to print them.
 Pure stdlib.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -50,6 +61,65 @@ PLACEHOLDER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 LINE_CITATION = re.compile(r"\b[\w./-]+\.(?:py|yaml|yml|toml|cfg|sh)\s*:\s*\d+\b")
 
 FENCE = re.compile(r"^\s*(?:```|~~~)")
+
+# ---- Vocabulary rules -------------------------------------------------------
+#
+# THESE SCAN EVERY LINE, FENCES INCLUDED, and that asymmetry with the rules
+# above is the whole design decision — do not "fix" it by routing them through
+# `_unfenced_lines`.
+#
+# The rules above skip fences because a fence is where a legitimate `TODO:`
+# example belongs. A banned WORD is different in kind: the sites that matter are
+# COMMENTS inside fences, which are our own prose and are read by the user
+# exactly as body text is. Both measured instances are of that shape:
+#   docs/how-to/synthetic-compute-sensitivity-experiment.md:57
+#       `# Scaffold: validate + build matrix + write the matrix CSV ...`
+#   docs/how-to/running-an-experiment-bundle.md:32
+#       `uva: hpc/... # estate-relative (resolved against ... or the estate root)`
+# A fence-skipping word ban reports 3 of 4 `scaffold` sites and 1 of 3 `estate`
+# occurrences while reading as complete, which is the failure mode this comment
+# exists to prevent.
+WORD_BAN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    # User ruling 2026-08-27: "I dont want to use the word 'Scaffold' anywhere in
+    # the docs." Prefer set up / prepare / create / generate.
+    ("banned-word-scaffold", re.compile(r"\bscaffold\w*\b", re.I)),
+    # User ruling: `estate` is undefined and names a private deployment concept a
+    # public reader cannot resolve.
+    ("banned-word-estate", re.compile(r"\bestate\b", re.I)),
+    # Development provenance. A public page must not date itself against the
+    # project's internal history: "under v2 graceful-rerun ..." tells a reader
+    # there was a v1 they cannot see and cannot need.
+    ("development-provenance", re.compile(r"\bunder v\d+\b|\bas of v\d+\b|\bsince v\d+\b", re.I)),
+)
+
+# ---- Punctuation rules ------------------------------------------------------
+#
+# Unfenced ONLY, and for a reason that does not apply to the word bans: a fence
+# may reproduce external text VERBATIM — real command output, a config file, a
+# log line — where normalizing punctuation would make the page misquote its own
+# source. A word we chose to use is ours to change anywhere; a character in
+# reproduced output is not.
+PUNCTUATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (("em-dash", re.compile(r"—")),)
+
+# ---- Advisory rules ---------------------------------------------------------
+#
+# Reported, never failing. The user's framing is explicitly probabilistic —
+# "any `, not` is a CANDIDATE for identifying a clause that could be deleted" —
+# so each hit needs a human judgment and a hard gate on 23 sites would be a gate
+# that gets routed around. Surfaced by `--advisory`, excluded from the exit code.
+ADVISORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (("deletable-clause-candidate", re.compile(r",\s+not\b")),)
+
+
+def _all_lines(text: str):
+    """Yield (lineno, line) for EVERY line, fences included.
+
+    The counterpart to `_unfenced_lines`, for rules whose defect class lives
+    inside fenced comments. See the WORD_BAN_PATTERNS rationale.
+    """
+    for i, line in enumerate(text.splitlines(), start=1):
+        if FENCE.match(line):
+            continue
+        yield i, line
 
 
 def _unfenced_lines(text: str):
@@ -88,19 +158,52 @@ def scan(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
             m = LINE_CITATION.search(line)
             if m:
                 findings.append(("bare-line-citation", md, lineno, m.group(0)))
+            for code, pat in PUNCTUATION_PATTERNS:
+                if pat.search(line):
+                    findings.append((code, md, lineno, line.strip()))
+        for lineno, line in _all_lines(text):
+            for code, pat in WORD_BAN_PATTERNS:
+                if pat.search(line):
+                    findings.append((code, md, lineno, line.strip()))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
+
+
+def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
+    """Advisory findings — surfaced, never failing. See ADVISORY_PATTERNS."""
+    findings: list[tuple[str, Path, int, str]] = []
+    for md in sorted(docs_dir.rglob("*.md")):
+        text = md.read_text(encoding="utf-8", errors="ignore")
+        for lineno, line in _unfenced_lines(text):
+            for code, pat in ADVISORY_PATTERNS:
+                if pat.search(line):
+                    findings.append((code, md, lineno, line.strip()))
     return findings
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
-        "--docs-dir", type=Path, default=Path(__file__).resolve().parent.parent / "docs",
+        "--docs-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "docs",
         help="documentation root to scan (default: ./docs)",
+    )
+    ap.add_argument(
+        "--advisory",
+        action="store_true",
+        help="also print advisory findings (never affects the exit code)",
     )
     args = ap.parse_args(argv)
     if not args.docs_dir.is_dir():
         print(f"ERROR: docs dir not found: {args.docs_dir}", file=sys.stderr)
         return 2
+
+    if args.advisory:
+        advisory = scan_advisory(args.docs_dir)
+        print(f"advisory: {len(advisory)} candidate(s) — judgment required, not a gate.")
+        for code, path, lineno, excerpt in advisory:
+            rel = path.relative_to(args.docs_dir.parent)
+            print(f"  {rel}:{lineno} [{code}] {excerpt[:110]}")
 
     findings = scan(args.docs_dir)
     if findings:
