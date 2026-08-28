@@ -50,9 +50,17 @@ repos:
 
   # Anonymization guard (scripts/check_anonymization.py)
   # Fails if any tracked file contains a genuinely-private identifier listed in
-  # scripts/anonymization_blocklist.txt (ADR-14). Dormant until the pre-commit
-  # framework is activated (`pre-commit install`) by the
-  # `install or remove pre-commit hooks` idea — no effect on commits until then.
+  # scripts/anonymization_blocklist.txt (ADR-14).
+  #
+  # The pre-commit FRAMEWORK is installed (environment.yaml:106) — what is not yet run in
+  # this clone is `pre-commit install`, so `.git/hooks/` is empty and no hook here fires.
+  # That is a per-clone activation step, not a missing dependency.
+  #
+  # Registered at BOTH pre-commit and pre-push. Pre-push is the load-bearing venue: CI runs
+  # this guard on `push` to main/develop, i.e. AFTER the objects are already on GitHub, so
+  # CI can only detect a leak that is by then permanent. Pre-push is the last venue that can
+  # PREVENT one. The empirical record shows the leak-then-clean cycle running at least twice
+  # (2026-07-26 and 2026-08-27), each cycle leaving a leaked blob in history forever.
   - repo: local
     hooks:
       - id: anonymization-guard
@@ -61,6 +69,20 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-commit, pre-push]
+
+  # Commit-MESSAGE anonymization guard (scripts/check_commit_message_anonymization.py)
+  # check_anonymization.py scans tracked file CONTENTS and is blind to commit messages.
+  # Three messages in this history carry blocklisted tokens, one of them a remediation
+  # commit that re-leaked into its own subject line. A message is rewritable only before
+  # the commit object exists, so commit-msg is the only venue that can prevent this.
+  - repo: local
+    hooks:
+      - id: anonymization-guard-commit-msg
+        name: anonymization blocklist guard (commit message)
+        entry: python scripts/check_commit_message_anonymization.py
+        language: system
+        stages: [commit-msg]
 
   # Retired-field overlay-column discipline (scripts/check_retired_field_overlay_columns.py)
   # Flags any sensitivity-xlsx overlay column system.{field} / analysis.{field}

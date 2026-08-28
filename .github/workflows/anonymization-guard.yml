@@ -12,6 +12,15 @@ on:
   pull_request:
     branches: [ "main", "develop" ]
 
+# NOTE: once the blocklist carrier leaves this repo, add to the job:
+#   if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+# Secrets are not passed to a workflow triggered from a fork (GitHub docs,
+# data/reusables/actions/forked-secrets.md), so on a fork PR the guard cannot obtain
+# ground truth. With a fail-closed loader it would fail; without one, it would pass
+# having checked nothing. Not running is the only honest third state -- and a fork PR's
+# commits live in the fork, not here, so nothing has entered this history until the push
+# trigger fires, where the guard still works with real ground truth.
+
 permissions:
   contents: read
 

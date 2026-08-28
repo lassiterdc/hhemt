@@ -15,16 +15,72 @@ from pathlib import Path
 
 from hhemt.exceptions import ProcessingError
 
-_BLOCKLIST_PATH = Path(__file__).resolve().parents[3] / "scripts" / "reprex_blocklist.txt"
 _TEXT_SUFFIXES = {".yaml", ".yml", ".json", ".txt", ".md", ".rst", ".cfg", ".inp"}
+_MIN_EXPECTED_TOKENS = 4
+_ENV_OVERRIDE = "HHEMT_REPREX_BLOCKLIST"
+
+
+def _resolve_blocklist_path() -> Path | None:
+    """Resolve the carrier, or None when no carrier is reachable.
+
+    parents[3] is the REPO ROOT for a source checkout and the python{X.Y} directory for
+    a wheel install -- so the historical single-path form could never resolve under a
+    wheel, and Bundle.reprex() has been raising FileNotFoundError for every PyPI-installed
+    consumer since it shipped. Resolution order: explicit env override, then the
+    source-checkout repo root.
+
+    There is deliberately NO packaged-data tier, and it must not be added. A packaged copy
+    could hold only the real tokens -- which would ship private values inside the wheel,
+    the carrier class that already put one on PyPI permanently -- or synthetic/hashed ones,
+    which would make this gate report a pass it never performed. Neither is acceptable, and
+    the gate is producer-local by design anyway (see _scan_zero_user_info: the scan is
+    "meaningful in a same-machine reprex ... and best-effort across machines"). A
+    third-party wheel consumer therefore has no ground truth and SHOULD NOT have one; the
+    honest outcome for that case is the diagnosed ProcessingError below, which
+    _scan_zero_user_info catches and records rather than crashing on.
+    """
+    import os
+
+    override = os.environ.get(_ENV_OVERRIDE)
+    if override:
+        p = Path(override)
+        return p if p.is_file() else None
+    repo = Path(__file__).resolve().parents[3] / "scripts" / "reprex_blocklist.txt"
+    return repo if repo.is_file() else None
 
 
 def _load_blocklist() -> list[str]:
-    return [
-        line.strip()
-        for line in _BLOCKLIST_PATH.read_text().splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
+    """FAIL-CLOSED, and raising the class the caller already catches.
+
+    _scan_zero_user_info wraps this in `except ProcessingError`, so a bare
+    FileNotFoundError PROPAGATES out of reprex() and turns a consume-side INFORMATIONAL
+    scan into a crash. An unreachable or short carrier must therefore be a diagnosed
+    ProcessingError naming the carrier, never a stray OSError.
+    """
+    path = _resolve_blocklist_path()
+    if path is None:
+        raise ProcessingError(
+            operation="reprex zero-user-info gate",
+            filepath=Path(__file__),
+            reason=(
+                f"no reprex blocklist carrier is reachable (checked ${_ENV_OVERRIDE} and the "
+                "source-checkout scripts/ path). The gate cannot certify a bundle without "
+                "ground truth."
+            ),
+        )
+    tokens = [
+        line.strip() for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith("#")
     ]
+    if len(tokens) < _MIN_EXPECTED_TOKENS:
+        raise ProcessingError(
+            operation="reprex zero-user-info gate",
+            filepath=path,
+            reason=(
+                f"carrier yielded {len(tokens)} token(s), below the floor of "
+                f"{_MIN_EXPECTED_TOKENS}. Refusing to certify a bundle on a truncated list."
+            ),
+        )
+    return tokens
 
 
 def assert_bundle_zero_user_info(bundle_root: Path) -> None:
