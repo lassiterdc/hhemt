@@ -140,6 +140,101 @@ def producing_stamp() -> dict[str, str]:
     }
 
 
+#: The append-only per-stage provenance history, relative to analysis_dir. Declared ONCE
+#: here and referenced by no other literal, so a rename is a single edit. Deliberately NOT
+#: one of the consolidated-tree names: this artifact is orthogonal to the zarr layout and
+#: must not acquire a dependency on a filename that is a live rename candidate.
+_HISTORY_FILENAME = "provenance_history.json"
+
+
+def append_stage_provenance(analysis_dir: Path, stage: str) -> bool:
+    """Append this stage's producing stamp to the analysis's append-only history.
+
+    Contract property 3 ("appends, never overwrites"). Returns True if an entry was
+    appended, False if the stage's latest entry already names this exact build.
+
+    WHY THIS IS NOT IN THE RO-CRATE SIDECAR, stated here because the sidecar is the
+    intuitive home and is the wrong one. Both `emit_provenance` call sites and both
+    `write_rocrate_sidecar` call sites are inside CONSOLIDATION. Every stage this history
+    is about -- plots, report, bundle, combine -- runs strictly AFTER consolidation, so a
+    history projected into the sidecar could not contain the render that has not happened
+    yet: on a single pass it would record zero render entries, and on the two-renders case
+    this exists for, neither. A standalone read-model written by each stage at its own
+    capture site is the same persist-then-read shape `validation_report.json` already uses,
+    and for the same ordering reason.
+
+    R4 (Gotcha 59) is preserved BY CONSTRUCTION rather than by keying: this function never
+    touches `ro-crate-metadata.json`, so the sidecar's compare-and-write, `_EMBEDDED_PROV_KEYS`,
+    and the byte-identity goldens are all untouched. The de-duplication below is what keeps
+    THIS file idempotent -- an unchanged build appends nothing and the file's bytes and mtime
+    are preserved, so the Gotcha-38 analysis-scope DU own-files walk is unperturbed too.
+
+    The key is `(hhemt_sha, hhemt_dirty)`, not the sha alone: two builds at one commit with
+    different working-tree states are different producers, which `producing_stamp` already
+    models. NO timestamp is recorded -- an emit-time clock read would make every invocation
+    append and would defeat the idempotence this contract depends on. Ordering IS the
+    history; wall-clock is not needed to read it.
+
+    Best-effort and never raises: a provenance write must not fail a stage that succeeded.
+
+    Annotations are UNQUOTED deliberately, unlike the two older `analysis_dir: "Path"`
+    signatures below. This module sets `from __future__ import annotations` (line 8) and
+    imports `Path` at module scope (line 12), so the quotes buy nothing and ruff flags them
+    UP037 -- the older pair are pre-existing findings, and matching their style would have
+    propagated the debt into new code rather than merely inheriting it.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    try:
+        target = _Path(analysis_dir) / _HISTORY_FILENAME
+        entries: list[dict] = []
+        if target.exists():
+            loaded = _json.loads(target.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                entries = loaded
+        stamp = producing_stamp()
+        key = (stamp.get("hhemt_sha"), stamp.get("hhemt_dirty"))
+        for prior in reversed(entries):
+            if prior.get("stage") == stage:
+                if (prior.get("hhemt_sha"), prior.get("hhemt_dirty")) == key:
+                    return False  # unchanged build for this stage -- no write, mtime preserved
+                break  # a DIFFERENT build superseded it; fall through and append
+        entries.append({"stage": stage, **stamp})
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_json.dumps(entries, indent=2) + "\n", encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def read_stage_provenance_history(analysis_dir: Path) -> dict[str, list[dict]]:
+    """Per-stage revision lists, oldest first. Graceful-absent: {} when the file is absent.
+
+    Absence is the honest reading for every analysis produced before this capture existed,
+    and is NOT distinguishable from "one revision" by design -- a stage with a single
+    recorded build has one entry, and a stage with none has no key.
+    """
+    import json as _json
+    from collections import defaultdict
+    from pathlib import Path as _Path
+
+    out: defaultdict[str, list[dict]] = defaultdict(list)
+    try:
+        target = _Path(analysis_dir) / _HISTORY_FILENAME
+        if not target.exists():
+            return {}
+        loaded = _json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(loaded, list):
+            return {}
+        for entry in loaded:
+            if isinstance(entry, dict) and entry.get("stage"):
+                out[str(entry["stage"])].append(entry)
+    except Exception:
+        return {}
+    return dict(out)
+
+
 def collect_plot_stamps(analysis_dir: "Path") -> tuple[set[tuple[str, str]], int]:
     """Distinct (sha, dirty) keys across every figure sidecar, and the sidecar count.
 

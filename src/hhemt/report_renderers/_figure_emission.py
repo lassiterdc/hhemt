@@ -463,6 +463,15 @@ def emit_plot_with_sources(
     if provenance is not None:
         manifest_payload["artists"] = provenance.serialize()
     _emit_manifest_sidecar(output_path, manifest_payload)
+    # Contract property 3, plots stage (matplotlib branch). Placed HERE rather than inside
+    # _emit_manifest_sidecar because that helper takes only (output_path, manifest_payload)
+    # and `analysis_dir` is not in its scope. Fires once per emitted figure; the appender
+    # de-duplicates on (sha, dirty), so the FIRST figure of a generation appends and every
+    # later figure at the same build returns early without a write. Function-local import
+    # matches this module's existing convention and keeps the acyclicity posture.
+    from hhemt.provenance import append_stage_provenance
+
+    append_stage_provenance(analysis_dir, "plots")
 
     plt.close(fig)
     return output_path
@@ -607,6 +616,13 @@ def _emit_html_with_sources(
     if provenance is not None:
         manifest_payload["artists"] = provenance.serialize()
     _emit_manifest_sidecar(output_path, manifest_payload)
+    # Contract property 3, plots stage (HTML branch) — the sibling of the matplotlib-branch
+    # append. emit_plot_with_sources RETURNS from this function on the isinstance(fig, str)
+    # dispatch, so an interactive-backend report would record NO plots history at all if
+    # only the matplotlib site were wired, and interactive is the default backend.
+    from hhemt.provenance import append_stage_provenance
+
+    append_stage_provenance(analysis_dir, "plots")
     return output_path
 
 

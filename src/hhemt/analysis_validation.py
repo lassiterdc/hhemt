@@ -748,7 +748,27 @@ def check_provenance_completeness(analysis) -> CheckResult:
     # per-scenario Stage table and, because tests/test_iter7_check_vocabulary.py scopes
     # its exact-equality guard to {system, resource, aggregate}, obliges the matching
     # _CHECK_VOCABULARY entry that lands in this same change.
-    details = [{"stage": s, "captured": bool(stages[s]), **(stages[s] or {})} for s in sorted(stages)]
+    # `revisions` is the deliverable-2 surface: how many DISTINCT builds have produced this
+    # stage over the analysis's life. The stamp columns beside it show the LATEST build
+    # (contract property 3's "the report shows the LATEST per step"); this column is what
+    # says an earlier one existed and was not silently replaced. Graceful-absent -- an
+    # analysis predating the history capture reports 0, which is honest rather than 1,
+    # because no revision was ever RECORDED even though one certainly occurred.
+    from hhemt.provenance import read_stage_provenance_history
+
+    try:
+        _history = read_stage_provenance_history(Path(analysis.analysis_paths.analysis_dir))
+    except Exception:
+        _history = {}
+    details = [
+        {
+            "stage": s,
+            "captured": bool(stages[s]),
+            "revisions": len(_history.get(s, [])),
+            **(stages[s] or {}),
+        }
+        for s in sorted(stages)
+    ]
     if dirty:
         return CheckResult(
             name="provenance_completeness",

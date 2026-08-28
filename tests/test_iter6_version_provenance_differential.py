@@ -310,3 +310,85 @@ def test_s16_stage_carriers_are_pairwise_distinct_paths():
     assert '"plots"' in src and "hhemt_producing_sha" in src, (
         "the plots and consolidate carriers must remain separate reads"
     )
+
+
+# ---- S17-S20 append-only stage provenance history (FQ3 deliverable 2) ------ #
+#
+# These four pin the properties the deliverable's design rests on. They are
+# differentials per this module's docstring: pre-VMS-4 neither function exists, so
+# collection errors rather than passing vacuously.
+
+
+def test_s17_append_is_idempotent_at_an_unchanged_build(tmp_path):
+    """A second append at the same (sha, dirty) writes NOTHING -- bytes and mtime intact.
+
+    This is the R4-equivalent property for this artifact and the one whose breakage is
+    SILENT: an unconditional append still produces a correct-looking history, still
+    passes S18, and only shows up as a file growing without bound on every re-run and a
+    perturbed analysis-scope DU total. Asserting the bytes as well as the mtime is
+    deliberate -- mtime alone would also be satisfied by a filesystem with coarse
+    timestamp granularity rewriting identical content within one tick.
+    """
+    from hhemt.provenance import _HISTORY_FILENAME, append_stage_provenance
+
+    assert append_stage_provenance(tmp_path, "report") is True
+    target = tmp_path / _HISTORY_FILENAME
+    first_bytes, first_mtime = target.read_bytes(), target.stat().st_mtime_ns
+
+    assert append_stage_provenance(tmp_path, "report") is False, "a second append at an unchanged build must be a no-op"
+    assert target.read_bytes() == first_bytes, "the history file was rewritten"
+    assert target.stat().st_mtime_ns == first_mtime, "mtime bumped on a no-op append"
+
+
+def test_s18_two_distinct_builds_both_survive_in_order(tmp_path, monkeypatch):
+    """Contract property 3 itself: appends, never overwrites.
+
+    The failure this excludes is the one the contract names -- a re-render replacing the
+    version that produced the science with the one that drew the figure. Order is asserted
+    because the history is only useful if it is readable as a sequence.
+    """
+    from hhemt import provenance as prov
+
+    assert prov.append_stage_provenance(tmp_path, "report") is True
+    first_sha = prov.producing_stamp()["hhemt_sha"]
+
+    monkeypatch.setattr(
+        prov,
+        "producing_stamp",
+        lambda: {"hhemt_sha": "b" * 40, "hhemt_version": "v0.1.0+B", "hhemt_dirty": "false"},
+    )
+    assert prov.append_stage_provenance(tmp_path, "report") is True
+
+    revisions = prov.read_stage_provenance_history(tmp_path)["report"]
+    assert len(revisions) == 2, "the earlier build was overwritten rather than appended to"
+    assert [r["hhemt_sha"] for r in revisions] == [first_sha, "b" * 40], "revisions are out of order"
+
+
+def test_s19_history_read_is_graceful_absent(tmp_path):
+    """An analysis produced before this capture existed reads {} rather than raising.
+
+    That is EVERY analysis currently on disk, so this is the default path, not an edge
+    case. A separate branch from S17's first call, which exercises the WRITE side's
+    absent case and never touches the reader.
+    """
+    from hhemt.provenance import read_stage_provenance_history
+
+    assert read_stage_provenance_history(tmp_path) == {}
+
+
+def test_s20_append_never_raises_when_the_stamp_fails(tmp_path, monkeypatch):
+    """Best-effort: a provenance write must never fail a stage that already succeeded.
+
+    Forced through `producing_stamp` rather than through an unwritable path: a filesystem
+    trick is platform-dependent and a chmod-based variant is silently defeated when the
+    suite runs as root, whereas this reaches the same `except Exception` branch
+    deterministically everywhere.
+    """
+    from hhemt import provenance as prov
+
+    def _boom():
+        raise RuntimeError("resolver unavailable")
+
+    monkeypatch.setattr(prov, "producing_stamp", _boom)
+    assert prov.append_stage_provenance(tmp_path, "report") is False
+    assert not (tmp_path / prov._HISTORY_FILENAME).exists(), "a failed append left a partial file"

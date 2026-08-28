@@ -3268,12 +3268,18 @@ class TRITONSWMM_analysis:
         try:
             import json as _json
 
-            from hhemt.provenance import producing_stamp
+            from hhemt.provenance import append_stage_provenance, producing_stamp
 
             (self.analysis_paths.analysis_dir / "report_manifest.json").write_text(
                 _json.dumps({"report_path": str(out_html), **producing_stamp()}, indent=2),
                 encoding="utf-8",
             )
+            # Contract property 3. The manifest above is OVERWRITTEN by every render and so
+            # holds only the LATEST build; this append is what keeps the earlier one, which
+            # is the whole point of "a re-render must not replace the version that produced
+            # the science with the one that drew the figure". De-duplicated, so re-rendering
+            # at an unchanged build appends nothing and rewrites nothing.
+            append_stage_provenance(self.analysis_paths.analysis_dir, "report")
         except Exception as _e:  # never fail a completed render on a provenance write
             print(f"[render_report] report_manifest.json stamp failed (non-fatal): {_e}", flush=True)
 

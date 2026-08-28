@@ -107,9 +107,23 @@ _VOLATILE_PROV_KEYS: frozenset[str] = frozenset(
         "identifier",
     }
 )
-# Volatile keys excluded from the sidecar compare-and-write. Empty by Option-B payload
-# discipline (the co-located sidecar carries the deterministic core only); keep in
-# lockstep with the graph schema if a timestamp is ever added to the sidecar.
+# Volatile keys excluded from the sidecar compare-and-write.
+#
+# CORRECTED: this previously read "the co-located sidecar carries the deterministic core
+# only". That is FALSE and the error is load-bearing, because it inverts the analysis of
+# whether a new graph key can perturb the sidecar. `emit_provenance` returns
+# `canonical_jsonld(crate)` -- the FULL graph -- as the sidecar, and the CreateAction
+# entities it builds carry `startTime` and `agent`, both members of _VOLATILE_PROV_KEYS.
+# The core-only document is the OTHER return value, produced by partition_core_vs_sidecar.
+#
+# So this set being EMPTY makes `_strip_volatile` a no-op and the compare-and-write below
+# run over the full document, volatile keys included. That is currently SAFE, and the
+# reason is worth stating because it is a property rather than an accident: every value in
+# the graph is a stable function of the RUN'S LOG, not of emit time -- `startTime` reads
+# the persisted `workflow_submission_time` LogField and `agent` reads
+# `workflow_submission_node`, so an idempotent re-consolidation regenerates byte-identical
+# content and Gotcha-59 R4 holds. Add ANY emit-time clock read to the graph and R4 breaks
+# immediately; the remedy then is to name that key here, which is what this set is for.
 _VOLATILE_GRAPH_KEYS: set[str] = set()
 
 
