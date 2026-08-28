@@ -42,7 +42,7 @@ sidebar order.
 
 ## Viewing a report you did not generate
 
-A rendered report is portable; it carries its own JavaScript and needs no
+A rendered report is portable: it carries its own JavaScript and needs no
 server. Open the HTML file directly in a browser, or unzip the `.zip` form and
 open `report.html` from the extracted directory.
 

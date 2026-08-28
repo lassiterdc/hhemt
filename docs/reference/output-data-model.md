@@ -48,7 +48,7 @@ expected partial-completion state, not a corrupt store.
 
 ## Variables
 
-A variable with no `standard_name` has no applicable CF standard name; the CF
+A variable with no `standard_name` has no applicable CF standard name: the CF
 table does not cover it, and inventing one would be worse than leaving it unset.
 
 ### 2D surface results (TRITON)

@@ -3,7 +3,7 @@
 Learning-oriented, end-to-end walkthroughs that take you from zero to a working
 coupled TRITON-SWMM run.
 
-Each tutorial is a fixed sequence with no decision points; follow it top to
+Each tutorial is a fixed sequence with no decision points. Follow it top to
 bottom and it is expected to succeed on your own machine. If you want to
 accomplish one specific task instead, start from the
 [How-To Guides](../how-to/index.md).

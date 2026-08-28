@@ -32,7 +32,7 @@ Three consequences follow, and they are the ones most likely to matter:
 ## Environment constraints
 
 **Python 3.11–3.12 only** (`requires-python = ">= 3.11, < 3.13"`). The upper
-bound is not a policy choice; it is forced by a transitive dependency that pins
+bound is not a policy choice: it is forced by a transitive dependency that pins
 an older pydantic with no wheel for 3.13. It lifts when that dependency relaxes.
 
 **The SWMM engine is version-gated at runtime.** Before executing SWMM the toolkit

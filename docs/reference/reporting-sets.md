@@ -40,7 +40,7 @@ them.
 | `b4b` | A clean-versus-resume study. The benchmarking selection plus the bit-for-bit identity check on whether a resumed simulation reproduces its clean run exactly. |
 | `combined` | The cross-experiment report emitted by `hhemt combine`. You do not select this one on an analysis: `combine` uses it to build one report over several finished experiments. |
 
-Two properties are worth knowing before you pick one.
+Two properties matter before you pick one.
 
 **The analysis-specific sets expect artifacts an ordinary run does not produce.**
 `compute-sensitivity`, `dem-resolution` and `b4b` each assume the analysis was

@@ -11,6 +11,7 @@ report that presents them side by side.
 
 ## Prerequisites
 
+--8<-- "prerequisites-base.md"
 - **Two or more emitted bundles on disk.** Produce each with
   `hhemt bundle` (or `Analysis.bundle_report_data()` / the sensitivity-master
   `TRITONSWMM_sensitivity_analysis.bundle_report_data()`) after a completed
@@ -61,7 +62,7 @@ severity:
 
 ??? note "How this severity differs from the bug-registry severity"
     `CompatibilitySeverity` (combine-admissibility) is distinct from the ADR-17
-    bug-registry `severity` (output-invalidation); they answer different questions.
+    bug-registry `severity` (output-invalidation). They answer different questions.
     See the decision doc *"CompatibilitySeverity is orthogonal to ADR-17 severity"*.
 
 ### Compatibility gates

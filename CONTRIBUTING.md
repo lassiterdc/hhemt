@@ -47,7 +47,7 @@ mkdocs serve
 
 ## Branching and releases
 
-`develop` is the default branch; all work branches from and merges back into `develop`. `main` is release-only and advances only via a validated `develop` → `main` release pull request (all tests green, docs complete), tagged `vX.Y.Z`. See [Branching and release model](docs/explanation/branching-and-release-model.md) for the full model, the release procedure, and the Read-the-Docs default-version runbook.
+`develop` is the default branch; all work branches from and merges back into `develop`. `main` is release-only and advances only via a validated `develop` → `main` release pull request (all tests green, docs complete), tagged `vX.Y.Z`. See [Branching and release model](docs/explanation/branching-and-release-model.md) for the two branches, how to branch as a contributor, what counts as a release, and the two independent version axes.
 
 ---
 

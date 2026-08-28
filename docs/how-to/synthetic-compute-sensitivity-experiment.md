@@ -12,6 +12,7 @@ outputs.
 
 ## Prerequisites
 
+--8<-- "prerequisites-base.md"
 - **An `hpc_system_config` for your cluster.** The experiment resolves each
   matrix row's GPU hardware/backend from the chosen partition's `PartitionSpec`,
   so the cluster profile must describe your partitions. Anonymized examples ship
@@ -167,7 +168,8 @@ doubling), so each coarse grid is a clean aggregation of the finest, which is th
 **reference** (never "truth": its own error is unquantified). Then select the
 DEM-resolution reporting set:
 
-- `report.reporting_set: dem-resolution` in the report config, and
+- `report.reporting_set: dem-resolution` on the analysis config (see
+  [Reporting sets](../reference/reporting-sets.md)), and
 - `eda_config.enabled_plots: [dem_resolution_cost_error, dem_resolution_diff_maps, dem_resolution_error_ecdf, dem_resolution_coupling_table]`.
 
 !!! warning "The two EDA families are mutually exclusive per experiment"

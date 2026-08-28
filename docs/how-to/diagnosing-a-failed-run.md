@@ -105,7 +105,7 @@ nothing is lost and `reprocess` can retry.
 
 ### The job died at walltime
 
-A killed simulation resumes from its most recent checkpoint on the next attempt;
+A killed simulation resumes from its most recent checkpoint on the next attempt:
 it does not restart from zero. Raise the simulation retry count rather than the
 walltime if checkpoints are frequent enough.
 

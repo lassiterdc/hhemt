@@ -12,8 +12,10 @@ Most commands take the same two arguments:
 hhemt {command} --system-config CFG_SYS --analysis-config CFG_ANA
 ```
 
-Cluster-bound work takes a third, `--hpc-system-config`, describing the machine.
-See [HPC-profile setup](../how-to/hpc-profile-setup.md).
+--8<-- "hpc-system-config-role.md"
+
+Pass it as `--hpc-system-config`. See
+[HPC-profile setup](../how-to/hpc-profile-setup.md) to author one.
 
 ## Running an analysis
 

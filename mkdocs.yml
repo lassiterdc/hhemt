@@ -54,8 +54,13 @@ theme:
         name: Switch to dark mode
 
 markdown_extensions:
+  - abbr
   - admonition
   - pymdownx.details
+  - pymdownx.snippets:
+      base_path:
+        - docs/_snippets
+      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -88,16 +93,17 @@ validation:
 exclude_docs: |
   running a simulation.ipynb
   processing_sim_outputs.ipynb
+  _snippets/
 
 nav:
   - Home: index.md
+  - Installation: how-to/installation.md
   - Tutorials:
       - tutorials/index.md
       - Quickstart: tutorials/quickstart.md
       - Norfolk end-to-end: tutorials/norfolk-end-to-end.md
   - How-To Guides:
       - how-to/index.md
-      - Installation: how-to/installation.md
       - HPC-profile setup: how-to/hpc-profile-setup.md
       - Config filling: how-to/config-filling.md
       - Running an experiment bundle: how-to/running-an-experiment-bundle.md

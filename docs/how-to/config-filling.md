@@ -33,7 +33,7 @@ effect on runtime.
 ## 3. Resolve the toggles
 
 Each toggle you flip makes other fields required. Set the toggles first, then fill
-what they demand; the [toggle-dependency table](../reference/config-schema.md#toggle-dependent-required-fields)
+what they demand. The [toggle-dependency table](../reference/config-schema.md#toggle-dependent-required-fields)
 lists each pairing. The common ones:
 
 - Using a landuse raster for Manning's *n* rather than a constant? You owe the
@@ -55,8 +55,9 @@ that, set `run_mode` and **add** the fields that mode requires:
 `n_mpi_procs` / `n_omp_threads` / `n_gpus` / `n_nodes`. They are cross-validated at
 config load, so a mismatch fails immediately rather than at dispatch.
 
-Running on a cluster also needs a third config: see
-[HPC-profile setup](hpc-profile-setup.md).
+--8<-- "hpc-system-config-role.md"
+
+See [HPC-profile setup](hpc-profile-setup.md) to author one.
 
 ## 6. Verify before you commit compute
 

@@ -9,6 +9,7 @@ cannot redistribute. See [Excluding an input](#excluding-an-input-the-governed-o
 
 ## Prerequisites
 
+--8<-- "prerequisites-base.md"
 - A completed analysis with a rendered report (`analysis.render_report()` must have run at
   least once, so the provenance sidecars the bundle is built from exist).
 - **Deposit credentials, under exactly these names.** These are the variables the code reads
@@ -71,7 +72,7 @@ is carried *by reference* instead: the bundle records where it came from, what i
 and how to obtain it.
 
 **This is a three-step sequence, and the order matters.** The excluded input must already
-have a durable record before you author the exclude-config; the toolkit has no per-file
+have a durable record before you author the exclude-config. The toolkit has no per-file
 deposit helper and cannot mint one for you.
 
 ### Step 1: give the input a durable record

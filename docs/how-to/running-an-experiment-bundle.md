@@ -8,7 +8,7 @@ CLI flag that would override a descriptor-declared value must be confirmed first
 
 ## The bundle layout
 
-A conformant bundle (validated against the `ExperimentBundle` descriptor model; see
+A conformant bundle (validated against the `ExperimentBundle` descriptor model, see
 [Verifying a bundle conforms](#verifying-a-bundle-conforms)) is a directory containing at least:
 
 ```
@@ -49,7 +49,7 @@ guides for the system/analysis and `hpc_system_config` contents.
 ## Run it
 
 ```bash
-# Plan only: build the DAG, write nothing:
+# Plan only, building the DAG and writing nothing:
 hhemt run-experiment --bundle experiments/my_experiment --cluster uva --dry-run
 
 # Execute:
@@ -86,7 +86,7 @@ hhemt run-experiment --bundle experiments/my_experiment --cluster uva --yes
 
 Without `--yes`, a non-interactive invocation that would override the descriptor **refuses**
 rather than silently preferring the CLI. When the CLI adds nothing the descriptor does not
-already say, no confirmation is needed; that is the common one-config path.
+already say, no confirmation is needed: that is the common one-config path.
 
 ## Exit codes
 

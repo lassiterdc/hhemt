@@ -31,7 +31,7 @@ re-run of `analysis.run()` resumes rather than rebuilds.
 ??? question "I edited the sensitivity XLSX. What re-runs?"
     The `sensitivity_analysis_definition.csv` is re-derived from the XLSX on
     **every** `analysis.run()`, and only the touched `sa_id` chains re-run.
-    Editing the CSV directly is a no-op; it is silently overwritten before
+    Editing the CSV directly is a no-op: it is silently overwritten before
     Snakemake plans, so the run reports "resuming, N/N complete" even though
     you expected a new row. Always edit the XLSX, not the derived CSV.
 

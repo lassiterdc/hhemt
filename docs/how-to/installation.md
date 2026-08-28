@@ -1,19 +1,33 @@
 # Installation
 
+## Before you start
+
+--8<-- "platform-support.md"
+
+You also need `conda` (Miniforge or Miniconda).
+
 ## Install
 
 ### Option A (recommended): full conda env from yaml
 
 The repo ships an `environment.yaml` that pins every runtime dependency including the Snakemake SLURM executor plugins required for HPC `batch_job` orchestration. Use this for production HPC installs.
 
-```bash
-conda env create -n hhemt --file environment.yaml
-conda activate hhemt
-pip install --no-deps "swmmio==0.8.2"
-pip install -e . --no-deps
-```
+--8<-- "install-commands.md"
 
 Both `--no-deps` flags are required, not optional.
+
+??? note "When `PYTHONNOUSERSITE=1` is needed, and why it is not above"
+    `environment.yaml` documents two ways to build the environment. The commands
+    above are its *direct-create* route, which does not set `PYTHONNOUSERSITE`. Its
+    other route builds a bare environment first
+    (`conda create --no-default-packages`) and updates into it, and that one does set
+    `export PYTHONNOUSERSITE=1` before the update.
+
+    The variable stops Python from adding your `~/.local` packages to `sys.path`. Set
+    it if you keep packages there and want to be certain the environment you just
+    built is the one being used. It is also load-bearing at run time on a cluster,
+    where a stray `~/.local` package can otherwise shadow the environment inside a
+    batch job.
 
 ??? note "Why `--no-deps` is required"
     `--no-deps` prevents `pip install -U` from touching the conda graph at all. It

@@ -15,7 +15,7 @@ Pass `override_force_rerun` to `analysis.run()`:
     with its flag gone.
 
 ```python
-# Re-run everything from scratch of the completion state:
+# Re-run everything, regardless of the recorded completion state:
 analysis.run(override_force_rerun="all")
 
 # Re-run only specific scenarios (by event index):
@@ -41,7 +41,7 @@ re-submitted:
 analysis.run(from_scratch=False)
 ```
 
-Do **not** reach for `from_scratch=True` to add work; that wipes the analysis
+Do **not** reach for `from_scratch=True` to add work: that wipes the analysis
 directory and rebuilds everything from the beginning.
 
 ## See re-processed results without re-simulating
@@ -62,6 +62,6 @@ analysis.reprocess(start_with="render")
 analysis.reprocess(start_with="process")
 ```
 
-`reprocess()` never re-runs simulations; it operates on the raw outputs
+`reprocess()` never re-runs simulations: it operates on the raw outputs
 already on disk, so it is safe to run while queued or running simulation
 workers exist.

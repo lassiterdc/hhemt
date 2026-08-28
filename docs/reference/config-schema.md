@@ -94,7 +94,7 @@ manhole_loss_coefficient: 0.1
 hydraulic_timestep_s: 0.01
 TRITON_reporting_timestep_s: 120
 open_boundaries: 1
-report: {}
+report: {}            # empty resolves to benchmarking if sensitivity, else default
 clear_raw: none       # none | all | [tritonswmm, triton, swmm]
 force_rerun: none      # none | all | [tritonswmm, triton, swmm]
 ```
@@ -116,6 +116,7 @@ The template ships a serial/local config. For a non-serial run, add the executio
 
 ## See also
 
+- [Reporting sets](reporting-sets.md): choosing which figures and tables a report contains.
 - [Fill in your configuration](../how-to/config-filling.md): the task-oriented path through these fields.
 - [HPC-profile setup](../how-to/hpc-profile-setup.md): the third config, describing your cluster.
 - [When and why re-runs happen](../explanation/rerun-faq.md): why editing the derived sensitivity CSV does not work.

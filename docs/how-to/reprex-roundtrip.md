@@ -82,8 +82,11 @@ The reproducer fills two things with *their own* system's values:
    )
    ```
 
-2. Their own `hpc_system_config` (the target profile: partition caps, container spec).
-   See [HPC-profile setup](hpc-profile-setup.md).
+2. Their own HPC-system config for the target machine.
+
+    --8<-- "hpc-system-config-role.md"
+
+    See [HPC-profile setup](hpc-profile-setup.md) to author one.
 
 ## Run the round-trip check
 
@@ -95,8 +98,9 @@ result = Bundle.from_directory(bundle_dir).reprex(my_reprex, my_hpc_profile)
 
 `reprex()` does three things, in order:
 
-1. **Verify the SIF.** If the crate references a SIF (a container run), the digest is a
-   **mandatory, fail-closed** `sha256` match against `reprex_config.sif_path`; a mismatch
+1. **Verify the SIF's identity.** If the crate references a SIF (a container run), the digest
+   is a **mandatory, fail-closed** `sha256` match against `reprex_config.sif_path`, establishing
+   that your image file is byte-identical to the producer's. A mismatch
    raises `ProcessingError` before any validation runs. A best-effort `apptainer verify`
    PGP check runs too (`result.sif_signature_ok` is `None` when `apptainer` or the
    producer key is unavailable, which is a warning rather than a failure). A **native run** records no
