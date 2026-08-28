@@ -474,7 +474,7 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
                 f"cell-wise and clusters them by byte-identity, both of which assume "
                 f"one grid. A mixed-resolution master needs the dem-resolution "
                 f"reporting set (which regrids), not config_diff_maps -- set "
-                f"report_config.reporting_set='dem-resolution' and "
+                f"report.reporting_set='dem-resolution' and "
                 f"eda.enabled_plots accordingly."
             ),
         )

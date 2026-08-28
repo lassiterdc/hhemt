@@ -674,9 +674,9 @@ class SensitivityReportConfig(cfgBaseModel):
 
             data = {k: v for k, v in data.items() if k != "mode"}
             warnings.warn(
-                "report_config.sensitivity.mode is retired (ADR-5 ReportingSet "
+                "report.sensitivity.mode is retired (ADR-5 ReportingSet "
                 "registry). Reporting-set selection now lives on "
-                "report_config.reporting_set (default 'benchmarking' for "
+                "report.reporting_set (default 'benchmarking' for "
                 "sensitivity analyses). The legacy `mode:` key is ignored this "
                 "cycle and will be rejected in a future release.",
                 DeprecationWarning,
@@ -1057,7 +1057,7 @@ def resolve_reporting_set_name(
         raise ConfigurationError(
             field="reporting_set",
             message=(
-                f"report_config.reporting_set='{requested}' resolves to "
+                f"report.reporting_set='{requested}' resolves to "
                 f"unknown set '{name}'. Registered sets: {sorted(REPORTING_SETS)}."
             ),
             config_path=None,
