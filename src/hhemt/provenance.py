@@ -281,7 +281,7 @@ def assert_plots_match_running_build(analysis_dir: "Path", *, declare_stale_plot
     if len(keys) > 1:
         why = (
             f"the {n} figure sidecar(s) carry {len(keys)} DIFFERENT build stamps "
-            f"({sorted(s[:12] for s, _ in keys)}) -- the figures are inconsistent with each "
+            f"({sorted(f'{s[:12]}(dirty={d})' for s, d in keys)}) -- the figures are inconsistent with each "
             "other, which a partial re-render produces. Force a full re-render with "
             'force_rerun {"subject": "all", "stage": "render"}'
         )

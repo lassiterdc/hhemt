@@ -4736,7 +4736,7 @@ class TRITONSWMM_analysis:
         logging.getLogger(__name__).warning(
             "build-stamp mismatch: %d figure sidecar(s) carry %s but this build is %s -- %s.",
             _n,
-            sorted(s[:12] for s, _ in _keys),
+            sorted(f"{s[:12]}(dirty={d})" for s, d in _keys),
             _mine[0][:12],
             _disposition,
         )
