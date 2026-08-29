@@ -1227,6 +1227,15 @@ def run_experiment_command(
             "scenarios without a full reset."
         ),
     ),
+    override_wipe_nonempty: bool = typer.Option(
+        False,
+        "--override-wipe-nonempty",
+        help=(
+            "Permit --mode fresh to delete an analysis directory that still holds "
+            "completed simulations, consolidated output, or in-flight sentinels. "
+            "DISTINCT from --yes, which only accepts the override table."
+        ),
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -1259,6 +1268,7 @@ def run_experiment_command(
             assume_yes=yes,
             wait=wait,
             mode=mode,
+            override_wipe_nonempty=override_wipe_nonempty,
         )
         message = getattr(result, "message", "") or ""
         if dry_run:

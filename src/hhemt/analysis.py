@@ -51,6 +51,7 @@ from hhemt.swmm_output_parser import (
 )
 from hhemt.utils import fast_rmtree, parse_triton_log_file
 from hhemt.validation import ValidationResult, assert_configs_visible_cross_node, preflight_validate
+from hhemt.wipe_guard import assert_wipe_is_deliberate
 from hhemt.workflow import (
     SnakemakeDiagnostics,
     SnakemakeWorkflowBuilder,
@@ -2254,6 +2255,7 @@ class TRITONSWMM_analysis:
         override_hpc_restart_times_other: int | None = None,
         override_pickup_where_leftoff: bool | None = None,
         override_clean_restart_sa_ids: list[str] | None = None,
+        override_wipe_nonempty: bool = False,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
         override_brand_theme: "Path | None" = None,
@@ -2593,6 +2595,18 @@ class TRITONSWMM_analysis:
             )
 
         if from_scratch and not dry_run:
+            # Refuse a fresh start that would destroy existing work. This site is the
+            # run path's full-tree delete -- a DIFFERENT door onto the same room as
+            # analysis.delete(), which has carried a confirm + --yes + --override-in-flight
+            # for as long as it has existed while this one carried nothing. The predicate
+            # is NOT _pre_delete_guards': that refuses on IN-FLIGHT work, and the
+            # 2026-08-29 incident destroyed a COMPLETED sim that had no live sentinel
+            # precisely because it was finished. See wipe_guard.py for why c_run_*.flag
+            # is the primary probe and why a datatree test alone is insufficient.
+            assert_wipe_is_deliberate(
+                self.analysis_paths.analysis_dir,
+                override_wipe_nonempty=override_wipe_nonempty,
+            )
             # remove analysis folder. Use the DERIVED analysis_paths.analysis_dir
             # (never None) — NOT the raw cfg_analysis.analysis_dir Optional field,
             # which defaults None and made fast_rmtree(None) crash here. Every

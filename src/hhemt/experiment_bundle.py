@@ -326,6 +326,7 @@ def run_experiment(
     assume_yes: bool = False,
     wait: bool | None = None,
     mode: str = "resume",
+    override_wipe_nonempty: bool = False,
     **cli_overrides: object,
 ):
     """Load -> validate -> gate overrides -> build -> run.
@@ -373,4 +374,9 @@ def run_experiment(
     # redo-completed-work flags, `pickup_where_leftoff` (whether an individual sim hotstarts from
     # config_NNNN.cfg), and the analysis_dir wipe. To decouple the sim-level half from the rest,
     # use analysis.run(override_pickup_where_leftoff=...), which exists for exactly that.
-    return tk.run(mode=mode, dry_run=dry_run, wait_for_completion=wait)
+    return tk.run(
+        mode=mode,
+        dry_run=dry_run,
+        wait_for_completion=wait,
+        override_wipe_nonempty=override_wipe_nonempty,
+    )
