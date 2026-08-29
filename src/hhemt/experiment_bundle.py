@@ -17,7 +17,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from hhemt.config.experiment_bundle import ExperimentBundle
+from hhemt.config.experiment_bundle import ExperimentConfig
 from hhemt.exceptions import ConfigurationError
 
 
@@ -34,7 +34,7 @@ def resolve_hpc_system_config(
     cluster: str,
     *,
     override: str | Path | None = None,
-    bundle: ExperimentBundle | None = None,
+    bundle: ExperimentConfig | None = None,
     bundle_dir: str | Path | None = None,
 ) -> Path:
     """Resolve the operator's REAL ``hpc_system_config`` path for ``cluster``.
@@ -104,7 +104,7 @@ def resolve_hpc_system_config(
     return path.resolve()
 
 
-def load_bundle(bundle_dir: str | Path) -> ExperimentBundle:
+def load_bundle(bundle_dir: str | Path) -> ExperimentConfig:
     """Load and validate `{bundle_dir}/experiment.yaml`.
 
     Raises ConfigurationError (CLI exit 2) on absence or schema violation.
@@ -123,7 +123,7 @@ def load_bundle(bundle_dir: str | Path) -> ExperimentBundle:
     except yaml.YAMLError as e:
         raise ConfigurationError(field="experiment.yaml", message=f"unparseable YAML: {e}", config_path=manifest) from e
     try:
-        return ExperimentBundle.model_validate(raw)
+        return ExperimentConfig.model_validate(raw)
     except Exception as e:
         raise ConfigurationError(field="experiment.yaml", message=f"schema violation: {e}", config_path=manifest) from e
 
@@ -171,7 +171,7 @@ def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = No
     return resolved
 
 
-def resolve_overrides(bundle: ExperimentBundle, cli_args: dict[str, object]) -> list[OverrideReport]:
+def resolve_overrides(bundle: ExperimentConfig, cli_args: dict[str, object]) -> list[OverrideReport]:
     """Return every field where a CLI argument differs from the descriptor.
 
     An empty list means the CLI adds nothing the descriptor does not already say —
@@ -259,7 +259,7 @@ def _confirm_override_gate(reports: list[OverrideReport], *, assume_yes: bool) -
 
 
 def build_case_from_bundle(
-    bundle: ExperimentBundle,
+    bundle: ExperimentConfig,
     bundle_dir: str | Path,
     cluster: str,
     *,

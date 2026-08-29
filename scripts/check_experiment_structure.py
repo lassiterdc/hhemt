@@ -8,7 +8,7 @@ Exit 0 = all conform. Exit 1 = one or more violations (enumerated on stderr).
 Exit 2 = usage/IO error.
 
 Checks:
-  1. experiment.yaml exists and validates against ExperimentBundle (extra="forbid").
+  1. experiment.yaml exists and validates against ExperimentConfig (extra="forbid").
   2. experiment_id equals the containing directory name.
   3. Every bundle-relative path the descriptor names exists on disk.
   4. README.md and rerun.sh exist (the shape both estate exemplars share).
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from hhemt.config.experiment_bundle import ExperimentBundle
+from hhemt.config.experiment_bundle import ExperimentConfig
 
 REQUIRED_FILES = ("README.md", "rerun.sh")
 
@@ -39,7 +39,7 @@ def check_bundle(bundle_dir: Path) -> list[str]:
         return [f"{manifest}: unparseable YAML: {e}"]
 
     try:
-        bundle = ExperimentBundle.model_validate(raw)
+        bundle = ExperimentConfig.model_validate(raw)
     except Exception as e:
         return [f"{manifest}: schema violation: {e}"]
 

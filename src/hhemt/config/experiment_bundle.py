@@ -126,7 +126,7 @@ class ContainerRef(BaseModel):
     )
 
 
-class ExperimentBundle(BaseModel):
+class ExperimentConfig(BaseModel):
     """Validated schema for an estate `experiments/{slug}/experiment.yaml`."""
 
     model_config = ConfigDict(extra="forbid")
@@ -144,7 +144,7 @@ class ExperimentBundle(BaseModel):
     container: ContainerRef | None = Field(default=None, description="None => native execution.")
 
     @model_validator(mode="after")
-    def _check_deposit_coverage(self) -> ExperimentBundle:
+    def _check_deposit_coverage(self) -> ExperimentConfig:
         undepositable = [i.name for i in self.inputs if not i.deposit and not (i.doi or i.pid)]
         if undepositable:
             raise ValueError(

@@ -8,12 +8,12 @@ CLI flag that would override a descriptor-declared value must be confirmed first
 
 ## The bundle layout
 
-A conformant bundle (validated against the `ExperimentBundle` descriptor model, see
+A conformant bundle (validated against the `ExperimentConfig` descriptor model, see
 [Verifying a bundle conforms](#verifying-a-bundle-conforms)) is a directory containing at least:
 
 ```
 experiments/my_experiment/
-├── experiment.yaml          # the descriptor (schema: hhemt.config.experiment_bundle.ExperimentBundle)
+├── experiment.yaml          # the descriptor (schema: hhemt.config.experiment_bundle.ExperimentConfig)
 ├── README.md                # runbook (required)
 ├── rerun.sh                 # re-run driver (required)
 └── configs/
@@ -104,8 +104,8 @@ The descriptor model ships in the wheel, so an installed copy can validate a bun
 ```bash
 python -c "
 import sys, yaml
-from hhemt.config.experiment_bundle import ExperimentBundle
-ExperimentBundle.model_validate(yaml.safe_load(open(sys.argv[1] + '/experiment.yaml')))
+from hhemt.config.experiment_bundle import ExperimentConfig
+ExperimentConfig.model_validate(yaml.safe_load(open(sys.argv[1] + '/experiment.yaml')))
 print('OK')" experiments/my_experiment
 ```
 

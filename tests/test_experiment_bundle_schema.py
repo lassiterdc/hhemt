@@ -6,7 +6,7 @@ Covers the five load-bearing behaviors of `hhemt.config.experiment_bundle`:
   (c) a literal operator `local_path` is rejected (`_check_resolvable`);
   (d) a `DatasetRef` with no resolver (no local_path, no doi/pid) is rejected;
   (e) an input that is neither deposited nor DOI-resolvable is rejected
-      (`ExperimentBundle._check_deposit_coverage`).
+      (`ExperimentConfig._check_deposit_coverage`).
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from hhemt.config.experiment_bundle import DatasetRef, ExperimentBundle
+from hhemt.config.experiment_bundle import DatasetRef, ExperimentConfig
 
 
 def _minimal_bundle_dict() -> dict:
@@ -36,7 +36,7 @@ def _minimal_bundle_dict() -> dict:
 
 
 def test_minimal_valid_descriptor_validates():
-    bundle = ExperimentBundle.model_validate(_minimal_bundle_dict())
+    bundle = ExperimentConfig.model_validate(_minimal_bundle_dict())
     assert bundle.experiment_id == "exp_demo"
     assert bundle.toolkit_pin.version == "0.1.0"
     assert bundle.inputs[0].deposit is True
@@ -47,7 +47,7 @@ def test_unknown_key_is_rejected():
     d = _minimal_bundle_dict()
     d["unexpected_key"] = "boom"
     with pytest.raises(ValidationError, match="extra_forbidden"):
-        ExperimentBundle.model_validate(d)
+        ExperimentConfig.model_validate(d)
 
 
 def test_literal_operator_local_path_is_rejected():
@@ -70,4 +70,4 @@ def test_undepositable_input_is_rejected():
         }
     ]
     with pytest.raises(ValidationError, match="neither deposited nor DOI-resolvable"):
-        ExperimentBundle.model_validate(d)
+        ExperimentConfig.model_validate(d)

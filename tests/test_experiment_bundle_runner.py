@@ -16,11 +16,11 @@ import pytest
 import yaml
 
 import hhemt.experiment_bundle as eb
-from hhemt.config.experiment_bundle import ExperimentBundle
+from hhemt.config.experiment_bundle import ExperimentConfig
 from hhemt.exceptions import ConfigurationError
 
 
-def _make_bundle(*, hpc: dict | None = None, container: dict | None = None) -> ExperimentBundle:
+def _make_bundle(*, hpc: dict | None = None, container: dict | None = None) -> ExperimentConfig:
     data: dict = {
         "experiment_id": "exp_test",
         "description": "test bundle",
@@ -32,7 +32,7 @@ def _make_bundle(*, hpc: dict | None = None, container: dict | None = None) -> E
         data["hpc_system_config"] = hpc
     if container is not None:
         data["container"] = container
-    return ExperimentBundle.model_validate(data)
+    return ExperimentConfig.model_validate(data)
 
 
 def _write_bundle_dir(tmp_path: Path, *, hpc: dict | None = None, container: dict | None = None) -> Path:
