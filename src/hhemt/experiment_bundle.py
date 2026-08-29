@@ -325,9 +325,14 @@ def run_experiment(
     hpc_system_config_yaml: str | Path | None = None,
     assume_yes: bool = False,
     wait: bool | None = None,
+    mode: str = "resume",
     **cli_overrides: object,
 ):
     """Load -> validate -> gate overrides -> build -> run.
+
+    mode: 'resume' (default) picks up where the last invocation left off; 'fresh' wipes the
+    analysis_dir first; 'overwrite' reruns existing scenarios without a full reset. The default
+    matches ``Toolkit.run``'s own default so the two layers state one value rather than two.
 
     The override gate is the R8 contract: if `resolve_overrides` returns a non-empty
     list, print the side-by-side table and require explicit confirmation. A non-TTY
@@ -356,4 +361,16 @@ def run_experiment(
     # independently, so fire-and-forget is correct. --wait/--no-wait overrides.
     if wait is None:
         wait = (not dry_run) and ("SLURM_JOB_ID" in os.environ)
-    return tk.run(mode="fresh", dry_run=dry_run, wait_for_completion=wait)
+    # RESUME IS THE DEFAULT ([Q144]). This previously hardcoded mode="fresh", which was not a
+    # considered choice -- it arrived with the runner in 34fd5904 and no message defends it -- and
+    # which is DESTRUCTIVE rather than merely non-resuming: toolkit.py:309 maps mode=="fresh" to
+    # from_scratch, and analysis.run() then fast_rmtree()s the whole analysis_dir. A requeue or a
+    # re-run therefore discarded completed sims, status flags, hotstart checkpoints and consolidated
+    # outputs, which is why experiments/norfolk/benchmarking/cpu_uva/submit_benchmarking_cpu_uva.sh
+    # grew a REQUEUE GUARD that refuses rather than re-running. This line retires that workaround.
+    #
+    # `mode` moves FIVE flags at once (orchestration.py:381/389 + toolkit.py:309): the three
+    # redo-completed-work flags, `pickup_where_leftoff` (whether an individual sim hotstarts from
+    # config_NNNN.cfg), and the analysis_dir wipe. To decouple the sim-level half from the rest,
+    # use analysis.run(override_pickup_where_leftoff=...), which exists for exactly that.
+    return tk.run(mode=mode, dry_run=dry_run, wait_for_completion=wait)

@@ -1218,6 +1218,15 @@ def run_experiment_command(
         help="Override the bundle's declared hpc_system_config for this cluster.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Plan only; write nothing."),
+    mode: str = typer.Option(
+        "resume",
+        "--mode",
+        help=(
+            "resume (default) picks up where the last invocation left off; "
+            "fresh WIPES the analysis directory first; overwrite reruns existing "
+            "scenarios without a full reset."
+        ),
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -1249,6 +1258,7 @@ def run_experiment_command(
             hpc_system_config_yaml=hpc_system_config,
             assume_yes=yes,
             wait=wait,
+            mode=mode,
         )
         message = getattr(result, "message", "") or ""
         if dry_run:
