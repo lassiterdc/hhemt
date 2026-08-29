@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
@@ -1416,7 +1416,18 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         if not pending_tokens:
             return []
         queued_dir = base_dir / "_status" / "_queued"
-        cap_min = _max_plausible_job_lifetime_min(self.cfg_analysis)
+        # NOT _max_plausible_job_lifetime_min. That helper is documented as an upper
+        # bound on how long a sim could RUN (hpc_total_job_duration_min + 30), and a
+        # _queued/ sentinel by definition names a job that has NOT started -- its age
+        # is QUEUE time, which is unrelated to and routinely far exceeds run time.
+        # Measured 2026-08-29: the Frontier benchmarking arm sets
+        # hpc_total_job_duration_min=360, giving a 390-min age-out against observed
+        # ~3-day queue waits, so every surviving queued job would have been dropped
+        # here and RE-SUBMITTED -- the double submission this mechanism exists to
+        # prevent, caused by this mechanism. The correct bound is the operator's own
+        # give-up ceiling, which is also the wait-rule's poll cap, so the reconcile
+        # and the rule it emits cannot disagree.
+        cap_min = self.cfg_analysis.hpc_max_wait_for_inflight_min
         max_plausible_s = cap_min * 60
 
         # Read each payload's allocation jobid (None = executor-owns / unreadable).
@@ -4638,6 +4649,8 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
         extra_sbatch_args: list[str] | None = None,
+        *,
+        on_launch: "Callable[[str | None], None] | None" = None,
     ) -> dict:
         """
         Submit workflow as a single SLURM batch job.
@@ -4757,6 +4770,16 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                 "script_path": script_path,
                 "message": f"Single-job workflow submitted (Job ID: {job_id})",
             }
+
+            # mechanism (b) PENDING-recovery record -- see the sibling note in
+            # _submit_tmux_workflow. Written at launch-success, before the optional
+            # blocking wait, because the caller's post-return site cannot distinguish
+            # submission-success from completion-success and is never reached at all
+            # when the driver dies mid-wait. toolkit-owns-sbatch => the allocation
+            # jobid is recorded so the wait-runner's in-loop liveness probe (R8) has
+            # a job to probe.
+            if on_launch is not None:
+                on_launch(job_id)
 
             # E2: persist orchestrator identity so a live single-job driver is
             # detectable by the reprocess orchestration-liveness gate (Phase 2).
@@ -5107,6 +5130,9 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
         snakefile_path: Path,
         wait_for_completion: bool = False,
         verbose: bool = True,
+        *,
+        on_launch: "Callable[[str | None], None] | None" = None,
+        adopted_token_count: int = 0,
     ) -> dict:
         """
         Submit Snakemake workflow in detached tmux session.
@@ -5425,12 +5451,27 @@ exit $snakemake_status
                 "message": f"Tmux workflow submitted (session: {session_name})",
             }
 
+            # mechanism (b) PENDING-recovery record, written HERE and not at the
+            # caller. The caller's post-return site cannot express "the launch
+            # succeeded": under wait_for_completion=True this method blocks for the
+            # WHOLE run and then overwrites success with COMPLETION-success below, so
+            # a caller-side `result.get("success")` guard reads a different predicate
+            # than the one it names, and a driver killed mid-wait (walltime, node
+            # fault, scancel, the queue-starvation guard) never returns here at all --
+            # leaving _status/_queued/ empty for exactly the window it exists to
+            # cover. This IS still write-after-launch: SLURM has accepted the
+            # submission by the time result_dict is built, so a pre-launch exception
+            # still leaves no orphan. executor-owns-sbatch => jobid None.
+            if on_launch is not None:
+                on_launch(None)
+
             if wait_for_completion:
                 if verbose:
                     print("[Snakemake] Waiting for workflow completion...", flush=True)
                 completion_info = self._wait_for_tmux_session_completion(
                     session_name=session_name,
                     verbose=verbose,
+                    adopted_token_count=adopted_token_count,
                 )
                 result_dict.update(completion_info)
                 result_dict["success"] = completion_info["completed"]
@@ -5597,7 +5638,40 @@ exit $snakemake_status
         matches = re.findall(r"SLURM run ID:\s*([0-9a-fA-F-]{36})", text)
         return matches[-1] if matches else None
 
-    def _workflow_has_live_slurm_jobs(self, *, timeout_s: float = 20.0) -> set[str]:
+    def _tmux_slurm_run_uuids(self) -> tuple[str, ...]:
+        """Every ``SLURM run ID`` uuid this analysis has run under, newest-first.
+
+        The plural form exists so the liveness query is correct BY CONSTRUCTION
+        rather than by read ordering. A resumed driver's adopted sims carry the
+        PREVIOUS driver's uuid as their sbatch ``--job-name``; sourcing that uuid at
+        the call site works only because the capture happens before the new tmux log
+        is created, and nothing in the code expresses that constraint. Reading the
+        whole log SET removes it: the prior driver's log is on disk either way, so no
+        read order produces a wrong answer.
+
+        Over-inclusion is inert, not merely tolerable. ``_workflow_has_live_slurm_jobs``
+        returns ``states - _SACCT_DEAD_STATES``, so a long-dead uuid contributes only
+        terminal rows and cannot inflate the live set. The list grows by one 36-byte
+        uuid per prior driver invocation, which is why no cap is imposed.
+        """
+        log_dir = self.analysis_paths.analysis_log_directory
+        try:
+            candidates = sorted(log_dir.glob("tmux_session_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        except OSError:
+            return ()
+        seen: dict[str, None] = {}
+        for path in candidates:
+            try:
+                text = path.read_text(errors="replace")
+            except OSError:
+                continue
+            for uuid in reversed(re.findall(r"SLURM run ID:\s*([0-9a-fA-F-]{36})", text)):
+                seen.setdefault(uuid, None)
+        return tuple(seen)
+
+    def _workflow_has_live_slurm_jobs(
+        self, *, timeout_s: float = 20.0, extra_run_uuids: tuple[str, ...] = ()
+    ) -> set[str]:
         """The set of non-terminal SLURM states this workflow run still owns.
 
         Liveness gate for the stall watchdog. On an executor-owns-sbatch site the
@@ -5612,15 +5686,39 @@ exit $snakemake_status
         only DELAY a stall kill, never cause one. Truthiness is preserved, so callers
         that only test liveness are unaffected by the widening.
         """
-        run_uuid = self._tmux_slurm_run_uuid()
-        if run_uuid is None:
+        run_uuids = self._tmux_slurm_run_uuids()
+        # A RESUMED driver's adopted sims were submitted by the PREVIOUS driver and
+        # carry ITS run_uuid as their sbatch --job-name, so a query naming only the
+        # current uuid returns zero rows and this method's fail-open turns that into
+        # {"PENDING"} -- the driver is blind to the very jobs it is waiting for.
+        # Measured 2026-08-29: the three surviving a100 PENDING jobs carry JobName
+        # cb4cc5fb-b338-409e-8a54-4aba886c3284, the dead driver's uuid. Per-token
+        # jobids cannot close this on an executor-owns-sbatch site -- the _queued/
+        # payload records null there by construction -- but the uuid SET can, because
+        # the plugin sets --job-name to the run_uuid precisely to make --name
+        # filtering work. Union-querying attributes no row to any token, so the
+        # Gotcha-47 srun-step aliasing hazard does not arise here.
+        #
+        # The uuid set is read from ALL tmux logs, NOT captured by the caller before
+        # the new log is created. A caller-side capture is correct only by read
+        # ORDERING -- an edit that moves the log creation earlier, or that adds a
+        # second call site after it, silently returns the current uuid alone and
+        # restores exactly the blindness described above. extra_run_uuids is retained
+        # as the seam for a future toolkit-minted identity (F1-O1); no production
+        # caller sets it.
+        _seen: dict[str, None] = {}
+        for _u in (*run_uuids, *extra_run_uuids):
+            if _u:
+                _seen.setdefault(_u, None)
+        _names = list(_seen)
+        if not _names:
             return {"PENDING"}
         starttime = (datetime.datetime.now() - datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:00")
         try:
             r = subprocess.run(
                 [
                     "sacct", "-X", "--parsable2", "--noheader", "--clusters", "all",
-                    "--name", run_uuid, "--starttime", starttime, "-o", "State",
+                    "--name", ",".join(_names), "--starttime", starttime, "-o", "State",
                 ],
                 capture_output=True,
                 text=True,
@@ -5665,6 +5763,9 @@ exit $snakemake_status
         verbose: bool = True,
         poll_interval_s: int = 5,
         no_progress_timeout_min: float | None = None,
+        *,
+        adopted_run_uuid: str | None = None,
+        adopted_token_count: int = 0,
     ) -> dict:
         """
         Wait for the tmux workflow session, with a no-progress watchdog.
@@ -5756,7 +5857,9 @@ exit $snakemake_status
                 if fp != last_fp:
                     last_fp = fp
                     last_progress_t = now
-                elif live_states := self._workflow_has_live_slurm_jobs():
+                elif live_states := self._workflow_has_live_slurm_jobs(
+                    extra_run_uuids=(adopted_run_uuid,) if adopted_run_uuid else ()
+                ):
                     # A queue wait is fingerprint-silent: _status/ is written by
                     # WORKERS at process start/finish, so a SLURM-accepted-but-
                     # PENDING job contributes no evidence of progress. Live SLURM
@@ -5769,7 +5872,36 @@ exit $snakemake_status
                     # timer indefinitely, so a partition that never schedules this
                     # work would wait forever. Track how long the live set has been
                     # continuously ALL-PENDING; any RUNNING observation resets it.
-                    if live_states == {"PENDING"}:
+                    # The queue-starvation clock must not run while this driver is
+                    # tracking ADOPTED work. Its two consumers read one value with
+                    # OPPOSITE safe directions: for the stall watchdog the fail-open
+                    # {"PENDING"} correctly means "assume live, do not kill", while
+                    # here the same value starts a countdown to a kill. On a resumed
+                    # driver whose sims are all wait-rules that inversion is fatal --
+                    # abandoning an adopted queue position is exactly what the cap is
+                    # now meant to prevent. Death detection for adopted jobs is not
+                    # lost by this: a terminal union-query result empties live_states
+                    # and control falls to the stall timer below.
+                    #
+                    # RESIDUAL, disclosed rather than fixed. _workflow_has_live_slurm_jobs
+                    # fails OPEN to {"PENDING"}, so a PERSISTENT sacct outage on a driver
+                    # tracking adopted work disarms BOTH watchdogs at once: live_states is
+                    # truthy every poll (resetting the stall timer) and this branch
+                    # suppresses the starvation cap. The loop still terminates on session
+                    # exit -- the first branch above -- so the driver is not stuck; what is
+                    # disarmed is the ability to KILL a genuinely hung session while sacct
+                    # is down. Do NOT price the driver's own walltime as the backstop: the
+                    # documented batch_job deployment runs this tmux orchestrator on a
+                    # LOGIN NODE, where no allocation walltime exists. The residual is
+                    # accepted because its failure direction is "waits too long", which
+                    # PRESERVES the adopted queue positions this whole mechanism exists to
+                    # protect. The durable fix is to make the fail-open {"PENDING"}
+                    # distinguishable from a real PENDING, so this arm can decline to
+                    # suppress on an outage while the stall watchdog keeps its assume-live
+                    # reading; that is a return-contract change and is tracked separately.
+                    if adopted_token_count:
+                        all_pending_since = None
+                    elif live_states == {"PENDING"}:
                         if all_pending_since is None:
                             all_pending_since = now
                         elif now - all_pending_since > queue_starved_seconds:
@@ -5784,10 +5916,16 @@ exit $snakemake_status
                                     f"PENDING (never RUNNING) for {(now - all_pending_since) / 60:.0f} min, "
                                     f"exceeding the {queue_starved_seconds / 60:.0f} min queue-wait cap. "
                                     f"This is partition contention, NOT a hung workflow — check partition "
-                                    f"load or re-target the partition. The session was killed, which "
-                                    f"cancels the queued jobs (the SLURM executor runs scancel on "
-                                    f"interrupt), so their queue positions are lost and the sweep must "
-                                    f"be RESUMED (from_scratch=False) rather than re-run from scratch."
+                                    f"load or re-target the partition. Last observed SLURM state set for "
+                                    f"this run: {sorted(live_states)}. Killing the tmux session does NOT "
+                                    f"cancel those jobs: tmux kill-session delivers SIGHUP, and Snakemake "
+                                    f"registers a handler only for SIGTERM (job_scheduler.py), so the "
+                                    f"executor's scancel path is never reached — measured 2026-08-29, "
+                                    f"three queued jobs survived with their original submit times. Their "
+                                    f"queue positions are INTACT and are recorded under "
+                                    f"_status/_queued/, so RESUME (from_scratch=False) and the driver "
+                                    f"will ADOPT them via wait-rules instead of re-submitting. Do NOT "
+                                    f"re-run from scratch — that double-submits every still-queued sim."
                                 ),
                             }
                     else:
@@ -5999,6 +6137,13 @@ exit $snakemake_status
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 extra_sbatch_args=extra_sbatch_args,
+                # mechanism (b) -- see the sibling note at the batch_job call site.
+                # 1_job_many_srun_tasks is toolkit-owns-sbatch, so the allocation
+                # jobid is recorded and the wait-runner's in-loop liveness probe
+                # (R8) has a job to probe.
+                on_launch=lambda jid: self._write_queued_sentinels(
+                    self._planned_sim_tokens(), jid, self.analysis_paths.analysis_dir
+                ),
             )
 
             # Sweep permanently-failed rules ONLY when we actually waited on the
@@ -6008,15 +6153,6 @@ exit $snakemake_status
             # false-clean (the detached-mode hazard — captured follow-up otherwise).
             if wait_for_completion:
                 result = self._augment_result_with_partial_failures(result)
-
-            # mechanism (b): record the planned sim-token set under _status/_queued/
-            # AFTER the submit returned success (write-after-launch). 1_job_many_srun_tasks
-            # is toolkit-owns-sbatch — the allocation jobid enables the wait-runner in-loop
-            # liveness probe (R8) for a PENDING-recovered wait-rule.
-            if isinstance(result, dict) and result.get("success", True):
-                self._write_queued_sentinels(
-                    self._planned_sim_tokens(), result.get("job_id"), self.analysis_paths.analysis_dir
-                )
 
             self.analysis._refresh_log()
             return result
@@ -6075,14 +6211,21 @@ exit $snakemake_status
                 snakefile_path=snakefile_path,
                 wait_for_completion=wait_for_completion,
                 verbose=verbose,
+                # mechanism (b): the _queued/ record is now written INSIDE the helper
+                # at launch-success, before the optional blocking wait. It cannot be
+                # written here: this call BLOCKS for the whole run under
+                # wait_for_completion=True and never returns at all when the driver
+                # is killed mid-wait. batch_job is executor-owns-sbatch, so the
+                # per-rule jobids are never visible and the payload jobid is null.
+                on_launch=lambda _jid: self._write_queued_sentinels(
+                    self._planned_sim_tokens(), None, self.analysis_paths.analysis_dir
+                ),
+                # The queue-starvation cap must not run against work this driver
+                # ADOPTED rather than submitted. alive_by_token is the same
+                # reconcile result that drove the run-vs-wait rule substitution
+                # above, so the cap and the DAG cannot disagree.
+                adopted_token_count=len(alive_by_token),
             )
-
-            # mechanism (b): record the planned sim-token set under _status/_queued/
-            # AFTER submit-success. batch_job is executor-owns-sbatch — the executor
-            # assigns per-rule ids the toolkit never sees, so jobid is null and the
-            # token is held on PRESENCE bounded by the mtime fail-safe (F1-O3, R12).
-            if isinstance(result, dict) and result.get("success", True):
-                self._write_queued_sentinels(self._planned_sim_tokens(), None, self.analysis_paths.analysis_dir)
 
             self.analysis._refresh_log()
             return result
@@ -9692,14 +9835,13 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 wait_for_completion=wait_for_completion,
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 extra_sbatch_args=extra_sbatch_args,
+                # mechanism (b): written at launch-success inside the helper, not
+                # here -- this call blocks for the whole run under
+                # wait_for_completion=True. _write_queued_sentinels_sensitivity
+                # already has the (str | None) -> None shape, so it is passed by
+                # reference with no lambda.
+                on_launch=self._write_queued_sentinels_sensitivity,
             )
-
-            # mechanism (b): record the planned per-sub sim-token set under each sub's
-            # _status/_queued/ AFTER submit-success. 1_job_many_srun_tasks is
-            # toolkit-owns-sbatch — the master allocation jobid enables the wait-runner
-            # in-loop probe (R8) for PENDING-recovered sensitivity wait-rules.
-            if isinstance(result, dict) and result.get("success", True):
-                self._write_queued_sentinels_sensitivity(result.get("job_id"))
 
             self.sensitivity_analysis._update_master_analysis_log()
             return result
@@ -9766,13 +9908,14 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
                 wait_for_completion=wait_for_completion,
+                # mechanism (b): written at launch-success inside the helper. The
+                # sensitivity writer records a null jobid on the executor-owns-sbatch
+                # path, so the argument the helper passes is ignored by design.
+                on_launch=self._write_queued_sentinels_sensitivity,
+                # Same contract as the multisim site: alive_by_token is the reconcile
+                # result that drove this Snakefile's wait-rule substitution.
+                adopted_token_count=len(alive_by_token),
             )
-
-            # mechanism (b): record the planned per-sub sim-token set under each sub's
-            # _status/_queued/ AFTER submit-success. batch_job is executor-owns-sbatch —
-            # jobid null, held on PRESENCE bounded by the mtime fail-safe (F1-O3, R12).
-            if isinstance(result, dict) and result.get("success", True):
-                self._write_queued_sentinels_sensitivity(None)
 
             self.sensitivity_analysis._update_master_analysis_log()
             return result
