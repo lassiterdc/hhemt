@@ -63,6 +63,7 @@ Where to go next, depending on what you are doing:
 | Know what the outputs contain | [Output data model](https://hhemt.readthedocs.io/en/latest/reference/output-data-model/) |
 | Work out why a run failed | [Diagnosing a failed run](https://hhemt.readthedocs.io/en/latest/how-to/diagnosing-a-failed-run/) |
 | Know what it does *not* do | [Limitations](https://hhemt.readthedocs.io/en/latest/explanation/limitations/) |
+| Contribute a change | [Contributing](https://hhemt.readthedocs.io/en/latest/contributing/) |
 
 ## How to cite
 

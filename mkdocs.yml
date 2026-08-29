@@ -134,3 +134,4 @@ nav:
       - Software availability: explanation/software-availability.md
       - Rerun FAQ: explanation/rerun-faq.md
       - Branching and release model: explanation/branching-and-release-model.md
+  - Contributing: contributing.md

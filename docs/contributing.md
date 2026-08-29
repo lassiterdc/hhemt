@@ -3,7 +3,7 @@
 ## Licensing of contributions
 
 This project is currently released under the
-[PolyForm Noncommercial License 1.0.0](LICENSE).
+[PolyForm Noncommercial License 1.0.0](https://github.com/lassiterdc/hhemt/blob/main/LICENSE).
 
 By submitting a contribution (a pull request, patch, or any other work)
 to this project, you agree that:
@@ -53,7 +53,7 @@ mkdocs serve
 
 ## Branching and releases
 
-`develop` is the default branch; all work branches from and merges back into `develop`. `main` is release-only and advances only via a validated `develop` → `main` release pull request (all tests green, docs complete), tagged `vX.Y.Z`. See [Branching and release model](docs/explanation/branching-and-release-model.md) for the two branches, how to branch as a contributor, what counts as a release, and the two independent version axes.
+`develop` is the default branch; all work branches from and merges back into `develop`. `main` is release-only and advances only via a validated `develop` → `main` release pull request (all tests green, docs complete), tagged `vX.Y.Z`. See [Branching and release model](explanation/branching-and-release-model.md) for the two branches, how to branch as a contributor, what counts as a release, and the two independent version axes.
 
 ---
 

@@ -12,8 +12,8 @@ A GitHub **ruleset** on `main` enforces this: pull-request-required-before-merge
 ## Branching for contributors
 
 Feature branches are created from `develop` and merged back into it; `main` is
-never a branch target for day-to-day work. See `CONTRIBUTING.md` for the
-contribution process.
+never a branch target for day-to-day work. See [Contributing](../contributing.md)
+for the contribution process.
 
 ## What a release is
 
