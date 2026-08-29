@@ -130,6 +130,7 @@ From: ubuntu:24.04
     # `hhemt` resolves outside this root. Must match the `%files ../ <dest>` target.
     org.hhemt.toolkit_root /opt/hhemt-src
     org.hhemt.role        dev-cpu-container-seam-test
+    org.hhemt.hhemt_sha   HHEMT_SHA_UNSET
     org.hhemt.backend     kokkos-openmp-serial
     org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
     org.hhemt.openmpi     5.0.7-pmix5
