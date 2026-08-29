@@ -78,6 +78,13 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+# Generated at build time by hooks/config_reference.py from the live Pydantic
+# models. Rewritten on every mkdocs build, so tracking it would dirty the tree
+# on every serve. Its CONTENT is still reviewable in a diff one layer up: the
+# page is derived entirely from description= strings in src/hhemt/config/, and
+# those are tracked.
+docs/reference/config-schema.md
+
 # PyBuilder
 .pybuilder/
 target/
