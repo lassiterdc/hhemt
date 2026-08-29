@@ -43,7 +43,7 @@ class TRITONSWMM_system_post_processing:
             return analyses
         analyses.append(self._system._analysis)
         sens = getattr(self._system._analysis, "sensitivity", None)
-        sub = getattr(sens, "sub_analyses", None) if sens is not None else None
+        sub = getattr(sens, "analyses", None) if sens is not None else None
         if sub:
             analyses.extend(sub.values())
         return analyses

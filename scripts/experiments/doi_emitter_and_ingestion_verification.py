@@ -592,7 +592,7 @@ def _adjudicate_per_arch_pass(exp, result) -> bool:
     (== cross-arch) comparison is NEVER made — CPU/a100/a6000 divergence is EXPECTED."""
     import tests.utils_for_testing as tst_ut
 
-    subs = getattr(result, "subanalyses", None) or []
+    subs = getattr(result, "analyses", None) or []
     if not subs:
         print("NO-DATA — analysis.test() produced no _test sub-analyses (run failed upstream)")
         return False

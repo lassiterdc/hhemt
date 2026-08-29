@@ -212,7 +212,7 @@ def run_and_verdict(cluster: str, *, start_from_scratch: bool = True, hpc_system
     tc.analysis.cfg_analysis.multi_sim_run_method = "local"
     sens = getattr(tc.analysis, "sensitivity", None)
     if sens is not None:
-        for sub in getattr(sens, "sub_analyses", {}).values():
+        for sub in getattr(sens, "analyses", {}).values():
             try:
                 sub.cfg_analysis.hpc_ensemble_partition = _CLUSTER[cluster]["gpu_partition"]
                 sub.cfg_analysis.multi_sim_run_method = "local"
