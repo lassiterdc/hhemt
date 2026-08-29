@@ -171,6 +171,46 @@ def generated_files(docs_dir: Path) -> list[Path]:
     ]
 
 
+# A SECOND population that is authored prose but is not PRODUCT prose. The
+# contributor guide is the maintainer's own writing in the maintainer's own
+# voice; its punctuation answers to personal preference, not to the vocabulary
+# and punctuation contract this gate enforces on pages written for a reader of
+# the software.
+#
+# It gets its own marker rather than reusing GENERATED_MARKER for one reason:
+# that marker asserts "this file is generated", and the contributor guide is
+# hand-written. Reusing it would put a false statement in the page to buy a
+# skip, which is the thing a marker-in-the-page design exists to prevent. The
+# rule the existing marker states holds for this one too -- it is a property of
+# the FILE ("this is personal-voice prose"), not of the lint ("this file is
+# excused") -- so it lives in the page and NOT in a path-keyed skip-list here,
+# and a second personal-voice page becomes visible as a count going 1 to 2.
+#
+# Routing is identical to the generated case: skipped by `scan()`, INCLUDED by
+# `scan_advisory()`, and named with a count in BOTH of `main()`'s branches.
+# Nothing is dropped; the findings move to the tier that prints and never gates.
+PERSONAL_VOICE_MARKER = "hhemt:personal-voice"
+
+
+def _is_personal_voice(text: str) -> bool:
+    """True when a page carries the personal-voice marker."""
+    return PERSONAL_VOICE_MARKER in text
+
+
+def personal_voice_files(docs_dir: Path) -> list[Path]:
+    """Every personal-voice page under `docs_dir`, sorted.
+
+    Printed by `main()` in BOTH output branches, for the same reason
+    `generated_files` is: a skip absent from the output under-reports the
+    gate's scope, which is the defect this script exists to catch.
+    """
+    return [
+        md
+        for md in sorted(docs_dir.rglob("*.md"))
+        if _is_personal_voice(md.read_text(encoding="utf-8", errors="ignore"))
+    ]
+
+
 def _prose_lines(text: str):
     """Yield (lineno, line) for lines we AUTHORED: unfenced prose, plus comment
     lines inside fences.
@@ -256,10 +296,12 @@ def scan(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
     findings: list[tuple[str, Path, int, str]] = []
     for md in sorted(docs_dir.rglob("*.md")):
         text = md.read_text(encoding="utf-8", errors="ignore")
-        if _is_generated(text):
+        if _is_generated(text) or _is_personal_voice(text):
             # Skipped here and INCLUDED by `scan_advisory()`. The inversion is
             # deliberate: the file leaves the gate and enters the advisory tier,
-            # it does not vanish. `main()` prints what was skipped either way.
+            # it does not vanish. `main()` prints what was skipped either way,
+            # and the two populations are counted separately so a reader can
+            # tell a generated page from a personal-voice one.
             continue
         findings.extend(_gate_findings(md, text))
     return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
@@ -268,10 +310,11 @@ def scan(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
 def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
     """Advisory findings — surfaced, never failing. See ADVISORY_PATTERNS.
 
-    Marker-carrying generated pages are deliberately NOT skipped here. `scan()`
-    skips them so nothing gates on `src/` prose (D22b); this tier keeps them
-    visible so the findings stay enumerable. Dropping them from both would
-    delete the worklist that a later prose sweep would otherwise start from.
+    Marker-carrying pages -- generated OR personal-voice -- are deliberately NOT
+    skipped here. `scan()` skips them so nothing gates on `src/` prose (D22b) or
+    on the maintainer's own voice; this tier keeps them visible so the findings
+    stay enumerable. Dropping them from both would delete the worklist that a
+    later prose sweep would otherwise start from.
     """
     findings: list[tuple[str, Path, int, str]] = []
     for md in sorted(docs_dir.rglob("*.md")):
@@ -280,7 +323,7 @@ def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
             for code, pat in ADVISORY_PATTERNS:
                 if pat.search(line):
                     findings.append((code, md, lineno, line.strip()))
-        if _is_generated(text):
+        if _is_generated(text) or _is_personal_voice(text):
             # The findings `scan()` skipped, reported here instead of nowhere.
             findings.extend(_gate_findings(md, text))
     return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
@@ -316,14 +359,16 @@ def main(argv: list[str] | None = None) -> int:
     # one level up -- and a skip absent from the output is exactly that
     # under-reporting. Printed in BOTH branches: a red run that hides its
     # population is worse than a green one, not better.
-    skipped = generated_files(args.docs_dir)
-    if skipped:
-        rels = ", ".join(str(m.relative_to(args.docs_dir.parent)) for m in skipped)
-        skip_line = (
-            f"skipped {len(skipped)} generated file(s), routed to --advisory: {rels}"
-        )
-    else:
-        skip_line = "skipped 0 generated file(s)"
+    def _skip_line(label: str, paths: list[Path]) -> str:
+        if not paths:
+            return f"skipped 0 {label} file(s)"
+        rels = ", ".join(str(m.relative_to(args.docs_dir.parent)) for m in paths)
+        return f"skipped {len(paths)} {label} file(s), routed to --advisory: {rels}"
+
+    skip_lines = [
+        _skip_line("generated", generated_files(args.docs_dir)),
+        _skip_line("personal-voice", personal_voice_files(args.docs_dir)),
+    ]
 
     findings = scan(args.docs_dir)
     if findings:
@@ -337,14 +382,16 @@ def main(argv: list[str] | None = None) -> int:
             f"moves. Replace a line citation with a symbol name, which does not decay.",
             file=sys.stderr,
         )
-        print(skip_line, file=sys.stderr)
+        for line in skip_lines:
+            print(line, file=sys.stderr)
         return 1
 
     print(
         f"docs content OK under {args.docs_dir} — no placeholder leakage, bare line "
         f"citation, banned vocabulary, development provenance, or em dash."
     )
-    print(skip_line)
+    for line in skip_lines:
+        print(line)
     return 0
 
 

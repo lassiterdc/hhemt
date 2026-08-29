@@ -1,3 +1,4 @@
+<!-- hhemt:personal-voice -->
 # Contributing
 
 ## Licensing of contributions
