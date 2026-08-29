@@ -62,6 +62,21 @@ repos:
         pass_filenames: false
         always_run: true
 
+  # Vocabulary freeze (scripts/check_vocabulary_freeze.py)
+  # INVERTED assertion: requires the OLD vocabulary to still be PRESENT in the
+  # forward-only migration modules, their legacy fixtures, and their tests. A
+  # rename sweep that reaches the frozen set turns this red; nothing else does.
+  # Without it, a renamed literal makes a historical migration find nothing,
+  # take its early return, and report success.
+  - repo: local
+    hooks:
+      - id: vocabulary-freeze
+        name: migration vocabulary freeze
+        entry: python scripts/check_vocabulary_freeze.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # Retired-field overlay-column discipline (scripts/check_retired_field_overlay_columns.py)
   # Flags any sensitivity-xlsx overlay column system.{field} / analysis.{field}
   # whose {field} is absent from the live system_config / analysis_config model_fields.
