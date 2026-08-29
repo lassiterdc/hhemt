@@ -1,0 +1,7 @@
+ # Declared exceptions for scripts/check_vocabulary_residue.py.
+ # Ships EMPTY on purpose: on a POST-rename tree every hit is undeclared until
+ # a maintainer justifies it here. Each entry:
+ #   - path: {path substring}
+ #     token: {retired token, or "*" for any}
+ #     reason: {why this site legitimately keeps the retired vocabulary}
+exceptions: []
