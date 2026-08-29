@@ -23,9 +23,15 @@ open an issue to discuss before submitting.
 
 ## Development setup
 
-1. Fork and clone the repository
-2. Create a conda environment or virtual environment
-3. Install in development mode: `pip install -e ".[docs]"`
+1. Fork and clone the repository.
+2. Create the supported conda environment — see the "Installation" section of
+   `README.md` for the four commands and for why both `--no-deps` flags are
+   required. A plain `pip install -e .` inside a conda environment displaces
+   conda-resolved packages such as `numpy` and `pandas`.
+3. To build the documentation, install its tooling by name. `environment.yaml`
+   does not ship it, and adding `--no-deps` to the `[docs]` extra would install
+   none of it:
+   `pip install mkdocs mkdocs-material "mkdocstrings[python]" mkdocs-htmlproofer-plugin`
 4. Install pre-commit hooks: `pre-commit install`
 
 ## Workflow
@@ -125,18 +131,11 @@ When writing utility functions that could plausibly belong in a shared library (
 
 ---
 
-## AI Workflow
+## Repository map
 
-This project uses Claude Code with structured workflow skills. When working with AI assistance:
-
-- `CONTRIBUTING.md` — development principles and working norms (this file)
-- `CLAUDE.md` — AI-specific working norms and project context (auto-loaded by Claude Code)
-- `architecture.md` — project structure and key modules
-
-Workflow skills (available globally, invoke by name):
-- `/implementation-plan` — design a complete plan before coding
-- `/proceed-with-implementation` — preflight check before implementing a plan
-- `/qaqc-and-commit` — post-implementation QA review and commit
+- `CONTRIBUTING.md` — this file: contribution process and working norms
+- `architecture.md` — project structure, key modules, and data flow
+- `docs/` — source for the published documentation site (built with MkDocs)
 
 ---
 
