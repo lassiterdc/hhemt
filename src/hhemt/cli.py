@@ -1266,7 +1266,11 @@ def run_experiment_command(
         else:
             success = getattr(result, "success", None)
             console.print(f"[green]run-experiment complete[/green] (success={success}). {message}")
-        raise typer.Exit(0)
+        # A refused submit must not read as success to the shell. tk.run RETURNS a WorkflowResult
+        # and does not raise, so exiting 0 unconditionally writes green over zero work -- measured
+        # on Irene job 18708464, and the reason the stochastic submit script hand-rolls this gate.
+        # dry_run has no success field to test, so it keeps the unconditional 0.
+        raise typer.Exit(0 if (dry_run or getattr(result, "success", None)) else 1)
     except typer.Exit:
         raise
     except ConfigurationError as e:
