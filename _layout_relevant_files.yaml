@@ -171,9 +171,14 @@ non_breaking_allowlist:
       directive in the same commit. The rename is a BREAKING input-config-schema change under
       extra="forbid" and is nonetheless recorded here rather than as a LAYOUT_VERSION bump:
       LAYOUT_VERSION governs the on-disk ANALYSIS TREE, and a V{NNNN} migration receives a
-      MigrationContext scoped to analysis_dir, so it cannot reach a user-authored input YAML.
-      The derived in-tree copies (_generated/target_{N}.yaml, subanalyses/sa_*/sa_*.yaml, the
-      platformdirs cache analysis_config.yaml) are re-materialized from the parent config on
+      MigrationContext scoped to analysis_dir, so it cannot reach the user's AUTHORED SOURCE
+      config, which lives outside analysis_dir. CORRECTED 2026-08-29 (S8a Round 2): the earlier
+      wording said "cannot reach a user-authored input YAML", which is OVERSTATED -- a migration
+      CAN reach the machine-written model_dump copy at {analysis_dir}/cfg_analysis.yaml, and
+      V0005__inline_report_config.py does exactly that. That copy is re-derived from the
+      in-memory model (analysis.py:1100 writes it via model_dump), so a migration over it buys
+      nothing. The derived in-tree copies (_generated/target_{N}.yaml, subanalyses/sa_*/sa_*.yaml,
+      the platformdirs cache analysis_config.yaml) are re-materialized from the parent config on
       every load and self-heal. The schema the rename DOES break is the render bundle, which
       carries cfg_analysis.yaml and loads it back through the model -- so BUNDLE_SCHEMA_VERSION
       is bumped 3 -> 4 instead. The on-disk log keys (*_reclaimed) are deliberately NOT renamed;
@@ -286,3 +291,14 @@ non_breaking_allowlist:
       TYPE is unchanged and no caller's behaviour changes; adds no on-disk
       analysis-tree layout, no _version.json field and no consolidated-output
       variable. Same class as the case_manifest.py / reprex_config.py entries.
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      S8a stage-4 Round 2 (vocabulary rename) -- is_subanalysis -> is_experiment_member and
+      master_analysis_cfg_yaml -> experiment_cfg_yaml. A BREAKING input-config-schema change
+      under extra="forbid", recorded here rather than as a LAYOUT_VERSION bump for exactly the
+      reason the reclaim_after_processing -> remove_after_processing entry above records:
+      LAYOUT_VERSION governs the on-disk ANALYSIS TREE, a migration cannot reach the user's
+      authored source config, and the derived in-tree copies self-heal. Nothing here renames a
+      log key, a flag name or a directory name -- those WOULD owe a migration. The schema this
+      DOES break is the render bundle, so BUNDLE_SCHEMA_VERSION is bumped 4 -> 5 and both
+      checked-in fixture bundles are regenerated in the same commit.

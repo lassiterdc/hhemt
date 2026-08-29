@@ -20,7 +20,6 @@ from hhemt.config.experiment_bundle import DatasetRef, ExperimentConfig
 def _minimal_bundle_dict() -> dict:
     """A minimal descriptor that validates: one depositable, ${VAR}-templated input."""
     return {
-        "experiment_id": "exp_demo",
         "description": "demo experiment",
         "system_config": "system.yaml",
         "analysis_config": "analysis.yaml",
@@ -37,7 +36,6 @@ def _minimal_bundle_dict() -> dict:
 
 def test_minimal_valid_descriptor_validates():
     bundle = ExperimentConfig.model_validate(_minimal_bundle_dict())
-    assert bundle.experiment_id == "exp_demo"
     assert bundle.toolkit_pin.version == "0.1.0"
     assert bundle.inputs[0].deposit is True
     assert bundle.container is None

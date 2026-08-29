@@ -27,7 +27,7 @@ MINIMUM_SUPPORTED_VERSION: int = 0
 #: The bump does not CREATE that break; it makes it legible, because the exact-match
 #: consume-side guard then raises BundleSchemaError (CLI exit 6, naming the version
 #: mismatch) instead of an opaque extra_forbidden traceback from deep in config load.
-BUNDLE_SCHEMA_VERSION: int = 4
+BUNDLE_SCHEMA_VERSION: int = 5
 
 #: Default _version.json filename (used by both analysis and system stamps).
 VERSION_FILE_NAME: str = "_version.json"

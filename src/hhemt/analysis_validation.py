@@ -280,7 +280,7 @@ def check_timeseries_processed(
     - ``"TRITON"``: TRITONSWMM + TRITON-only
     - ``"SWMM"``: TRITONSWMM + SWMM-only
 
-    Iterates ``_iter_subanalyses_or_self(analysis)`` so the sensitivity
+    Iterates ``_iter_analyses_or_self(analysis)`` so the sensitivity
     sub-analysis fan-out is preserved — iterating the master's own ``df_sims``
     would silently pass on a sensitivity analysis (also part of the R4 bug).
     """
@@ -1115,7 +1115,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
         from hhemt.run_simulation import model_logfile_for
 
         # Resolve the log through the PRODUCER's own convention — never hand-build it.
-        # `_iter_subanalyses_or_self` yields (sa_id, sub) for a sensitivity master and
+        # `_iter_analyses_or_self` yields (sa_id, sub) for a sensitivity master and
         # (None, analysis) otherwise, which is ALREADY keyed the way `row.get("sa_id")`
         # reads: a non-sensitivity df_status carries no sa_id column (only
         # sensitivity_analysis.df_status adds it), so `.get` returns None and hits the
@@ -1759,7 +1759,7 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
     examined = 0
     indeterminate = 0
 
-    # Iterate `_iter_subanalyses_or_self` like every other sensitivity-aware check in this
+    # Iterate `_iter_analyses_or_self` like every other sensitivity-aware check in this
     # module. A sensitivity MASTER carries `n_scenarios == n_events * n_subs` while its own
     # `df_sims` holds only the events, so the previous master-scoped `range(n_scenarios)` +
     # `analysis._retrieve_weather_indexer_using_integer_index(i)` raised `KeyError` on the

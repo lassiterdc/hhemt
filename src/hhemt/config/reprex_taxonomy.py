@@ -108,7 +108,7 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "eda": "experiment",
     "force_rerun": "experiment",
     "hydraulic_timestep_s": "experiment",
-    "is_subanalysis": "experiment",
+    "is_experiment_member": "experiment",
     "landuse_description_colname": "experiment",
     "landuse_lookup_class_id_colname": "experiment",
     "landuse_lookup_mannings_colname": "experiment",

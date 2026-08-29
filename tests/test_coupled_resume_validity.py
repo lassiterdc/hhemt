@@ -141,7 +141,7 @@ def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None)
         _system=SimpleNamespace(
             cfg_system=SimpleNamespace(toggle_tritonswmm_model=coupled),
         ),
-        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity, is_subanalysis=False),
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity, is_experiment_member=False),
         analysis_paths=SimpleNamespace(
             analysis_datatree_zarr=None,
             sensitivity_datatree_zarr=None,
@@ -395,7 +395,7 @@ def test_postfix_partial_checkpoint_read_is_indeterminate(monkeypatch, tmp_path)
 
 def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
     """The SENSITIVITY BRANCH. A master's df_status carries sa_id and its sub-analyses'
-    logs live under {master}/logs/sims via the is_subanalysis branch of the convention.
+    logs live under {master}/logs/sims via the is_experiment_member branch of the convention.
 
     FAILS PRE-FIX: today the check reads the decoy (marker PRESENT) -> passed=True, so
     `assert res.passed is False` fails.
@@ -405,9 +405,9 @@ def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
     master_dir = tmp_path / "master"
     sub = SimpleNamespace(
         cfg_analysis=SimpleNamespace(
-            is_subanalysis=True,
+            is_experiment_member=True,
             analysis_id="sa_0",
-            master_analysis_cfg_yaml=master_dir / "cfg_analysis.yaml",
+            experiment_cfg_yaml=master_dir / "cfg_analysis.yaml",
         ),
         # model_logfile_for now derives the master log dir from the sub's OWN analysis_dir
         # (`.parent.parent`), so the stub must carry the real two-level layout.
@@ -444,7 +444,7 @@ def test_model_logfile_method_delegates_to_free_function():
 
     a = SimpleNamespace(
         analysis_paths=SimpleNamespace(simlog_directory=_P("/x/logs/sims")),
-        cfg_analysis=SimpleNamespace(is_subanalysis=False),
+        cfg_analysis=SimpleNamespace(is_experiment_member=False),
     )
     run = SimpleNamespace(_analysis=a, _scenario=SimpleNamespace(event_iloc=7))
     assert TRITONSWMM_run._analysis_level_model_logfile(run, "tritonswmm") == model_logfile_for(a, 7, "tritonswmm")
@@ -456,7 +456,7 @@ def test_sub_model_log_lives_under_experiment_dir_not_config_dir(tmp_path):
     MASTER's analysis_dir, so `run(from_scratch=True)`'s fast_rmtree(analysis_dir) removes it
     along with the outputs it describes.
 
-    FAILS PRE-FIX: the old form derived the dir from master_analysis_cfg_yaml.parent, so with
+    FAILS PRE-FIX: the old form derived the dir from experiment_cfg_yaml.parent, so with
     the config placed outside analysis_dir (the synth case-builder's platformdirs layout, and
     the ordinary production layout where the user's config is not at the analysis root) the
     log landed outside the wipe. Empirically, that stranded 28/28 week-stale "Simulation ends"
@@ -468,9 +468,9 @@ def test_sub_model_log_lives_under_experiment_dir_not_config_dir(tmp_path):
     config_dir = tmp_path / "cache" / "exp"  # deliberately NOT under master_dir
     sub = SimpleNamespace(
         cfg_analysis=SimpleNamespace(
-            is_subanalysis=True,
+            is_experiment_member=True,
             analysis_id="sa_gpu_2_r1",
-            master_analysis_cfg_yaml=config_dir / "analysis_config.yaml",
+            experiment_cfg_yaml=config_dir / "analysis_config.yaml",
         ),
         analysis_paths=SimpleNamespace(
             simlog_directory=master_dir / "subanalyses" / "sa_gpu_2_r1" / "logs" / "sims",
@@ -721,7 +721,7 @@ def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
 
 
 def _triton_arm_b_stub(df):
-    """Pure-TRITON (Arm B) analysis stub: no sensitivity, so _iter_subanalyses_or_self
+    """Pure-TRITON (Arm B) analysis stub: no sensitivity, so _iter_analyses_or_self
     yields (None, analysis) and the schedule is read off analysis.cfg_analysis."""
     return SimpleNamespace(
         _system=SimpleNamespace(

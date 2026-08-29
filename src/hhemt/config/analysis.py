@@ -756,11 +756,11 @@ class analysis_config(cfgBaseModel):
         None,
         description="Optional path to analysis directory. If not specified, the analysis directory will be placed within the system directory named named with the analysis_id",
     )
-    is_subanalysis: bool = Field(
+    is_experiment_member: bool = Field(
         False,
         description="This is used in the backend to help route subanalyses to appropriate processes.",
     )
-    master_analysis_cfg_yaml: Path | None = Field(
+    experiment_cfg_yaml: Path | None = Field(
         None,
         description="Path to the configuration file of the master analysis.",
     )
@@ -1012,11 +1012,11 @@ class analysis_config(cfgBaseModel):
     @classmethod
     def validate_analysis_requirements(cls, values):
         errors = []
-        if values.get("is_subanalysis") is True:
-            if values.get("master_analysis_cfg_yaml") is None:
-                errors.append("master_analysis_cfg_yaml must be provided when is_subanalysis=True")
+        if values.get("is_experiment_member") is True:
+            if values.get("experiment_cfg_yaml") is None:
+                errors.append("experiment_cfg_yaml must be provided when is_experiment_member=True")
             if values.get("analysis_dir") is None:
-                errors.append("analysis_dir must be provided when is_subanalysis=True")
+                errors.append("analysis_dir must be provided when is_experiment_member=True")
 
         if errors:
             raise ValueError("; ".join(errors))

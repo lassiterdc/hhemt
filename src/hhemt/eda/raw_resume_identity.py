@@ -224,9 +224,9 @@ def read_sub_resume_context(
     constructing a ``TRITONSWMM_analysis`` (keeps the kernel plain-dirs / no mkdir side effect).
 
     The synth compute-config experiment writes sim DATA under a scratch ``analysis_dir`` but
-    routes model runtime logs to ``{master_analysis_cfg_yaml.parent}/logs/sims`` — and the master
+    routes model runtime logs to ``{experiment_cfg_yaml.parent}/logs/sims`` — and the master
     cfg lives in the platformdirs CACHE tree, so a scratch-arm log glob matches nothing. The sub
-    yaml carries the authoritative ``master_analysis_cfg_yaml`` pointer, ``TRITON_reporting_timestep_s``,
+    yaml carries the authoritative ``experiment_cfg_yaml`` pointer, ``TRITON_reporting_timestep_s``,
     AND ``resume_interruption_schedule``, so ONE read resolves the resume-marker log path (log dir
     + the ``model_logfile_for`` filename ``model_tritonswmm_{sa_id}_evt{event_iloc}.log``), the
     reporting interval that sets the ``timestep_min`` axis / vline scale (a wrong interval
@@ -246,11 +246,11 @@ def read_sub_resume_context(
     reporting_interval_s = float(interval) if interval is not None else None
     _sched = cfg.get("resume_interruption_schedule")
     schedule = tuple(int(n) for n in _sched) if _sched else None
-    master = cfg.get("master_analysis_cfg_yaml")
+    master = cfg.get("experiment_cfg_yaml")
     log_path: Path | None = None
     # Resolve the model-log dir the way model_logfile_for now does: structurally, from the
     # sub dir (`{master_analysis_dir}/subanalyses/sa_{sa_id}` -> .parent.parent). The
-    # `master_analysis_cfg_yaml` pointer is retained ONLY as a legacy fallback, because this
+    # `experiment_cfg_yaml` pointer is retained ONLY as a legacy fallback, because this
     # function reads arms that COMPLETED before the relocation and whose logs are still at
     # the config-adjacent path. New-location-first, legacy-second: on a post-fix arm the
     # first candidate exists and the legacy path is never consulted.

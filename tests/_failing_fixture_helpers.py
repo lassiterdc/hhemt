@@ -90,7 +90,7 @@ def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) ->
     # Write the modified master configs INSIDE dst_system_dir (NOT at tmp_path
     # root). The source layout has system_config.yaml + analysis_config.yaml
     # living inside system_directory; a sensitivity sub derives its analysis-level
-    # model-log dir as master_analysis_cfg_yaml.parent / "logs" / "sims"
+    # model-log dir as experiment_cfg_yaml.parent / "logs" / "sims"
     # (run_simulation.py:_analysis_level_model_logfile). Hoisting the master config
     # one level out of system_directory makes model_run_completed() look in
     # tmp_path/logs/sims/ while the cloned logs live in tmp_path/system/logs/sims/,

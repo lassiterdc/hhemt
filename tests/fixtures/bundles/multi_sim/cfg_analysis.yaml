@@ -40,8 +40,8 @@ hydraulic_timestep_s: 1.0
 TRITON_reporting_timestep_s: 10.0
 open_boundaries: 1
 analysis_dir: .
-is_subanalysis: false
-master_analysis_cfg_yaml: null
+is_experiment_member: false
+experiment_cfg_yaml: null
 static_plot_configs: []
 
 report: {}

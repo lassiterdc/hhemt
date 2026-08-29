@@ -44,7 +44,7 @@ def _minimum_valid_cfg_analysis_dict(stub_root: Path) -> dict:
         "TRITON_reporting_timestep_s": 10.0,
         "open_boundaries": 1,
         "analysis_dir": str(stub_root),
-        "is_subanalysis": False,
+        "is_experiment_member": False,
     }
 
 

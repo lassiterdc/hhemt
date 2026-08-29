@@ -308,7 +308,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     """
     name = "Cross-sim byte-identity"
     sub_items = list(_iter_analyses_or_self(analysis))
-    # Non-sensitivity: _iter_subanalyses_or_self yields a single (None, analysis).
+    # Non-sensitivity: _iter_analyses_or_self yields a single (None, analysis).
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return EdaResult(
             skipped=True,

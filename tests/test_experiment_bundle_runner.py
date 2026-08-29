@@ -22,7 +22,6 @@ from hhemt.exceptions import ConfigurationError
 
 def _make_bundle(*, hpc: dict | None = None, container: dict | None = None) -> ExperimentConfig:
     data: dict = {
-        "experiment_id": "exp_test",
         "description": "test bundle",
         "system_config": "system.yaml",
         "analysis_config": "analysis.yaml",
@@ -39,7 +38,6 @@ def _write_bundle_dir(tmp_path: Path, *, hpc: dict | None = None, container: dic
     bundle_dir = tmp_path / "exp_test"
     bundle_dir.mkdir()
     data: dict = {
-        "experiment_id": "exp_test",
         "description": "test bundle",
         "system_config": "system.yaml",
         "analysis_config": "analysis.yaml",

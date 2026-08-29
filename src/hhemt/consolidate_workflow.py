@@ -392,7 +392,7 @@ def main() -> int:
             logger.info("All simulations completed successfully")
 
         # Validate resource usage (skipped for subanalysis)
-        if not analysis.cfg_analysis.is_subanalysis:
+        if not analysis.cfg_analysis.is_experiment_member:
             validate_resource_usage(analysis, logger)
 
         # Check if all timeseries were processed. The all_*_timeseries_processed log fields are computed

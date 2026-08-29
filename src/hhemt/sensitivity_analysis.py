@@ -796,7 +796,7 @@ class TRITONSWMM_sensitivity_analysis:
             # (Gotcha 28) lets it write. No-op for any sub whose summaries are
             # all present (healthy). Sub-analyses are full Analysis instances
             # and own their scenarios (Gotcha 11); the helper resolves the
-            # per-sa flag-token shape from each sub's is_subanalysis context.
+            # per-sa flag-token shape from each sub's is_experiment_member context.
             if start_with == "process" and not dry_run:
                 for sa_id in targets:
                     analysis = self.analyses.get(sa_id)
@@ -2618,13 +2618,13 @@ class TRITONSWMM_sensitivity_analysis:
             analysis_directory = self.analyses_dir / str(cfg_snstvty_analysis.analysis_id)
             analysis_directory.mkdir(parents=True, exist_ok=True)
             cfg_snstvty_analysis.toggle_sensitivity_analysis = False
-            cfg_snstvty_analysis.is_subanalysis = True
+            cfg_snstvty_analysis.is_experiment_member = True
 
             cfg_anlysys_yaml = analysis_directory / f"{analysis_id}.yaml"
 
             cfg_snstvty_analysis.analysis_dir = analysis_directory
 
-            cfg_snstvty_analysis.master_analysis_cfg_yaml = self.experiment.analysis_config_yaml
+            cfg_snstvty_analysis.experiment_cfg_yaml = self.experiment.analysis_config_yaml
 
             # DRIVER-only write (see `_should_materialize_analysis_yaml`). The
             # renderer subprocesses that dominate the report tail construct with
@@ -2950,8 +2950,8 @@ class TRITONSWMM_sensitivity_analysis:
         status_frames = []
 
         for sa_id, analysis in self.analyses.items():
-            assert analysis.cfg_analysis.is_subanalysis, (
-                "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
+            assert analysis.cfg_analysis.is_experiment_member, (
+                "is_experiment_member attribute not true in sub_analysis.cfg_analysis.is_experiment_member"
             )
             sub_df_status = analysis.df_status.copy()
 

@@ -131,7 +131,6 @@ class ExperimentConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    experiment_id: str = Field(description="Stable slug; must equal the containing directory name.")
     description: str = Field(description="One-line description.")
     system_config: str = Field(description="Bundle-relative path to the system config YAML.")
     analysis_config: str = Field(description="Bundle-relative path to the analysis config YAML.")

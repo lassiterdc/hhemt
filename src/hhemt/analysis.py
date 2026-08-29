@@ -619,7 +619,7 @@ class TRITONSWMM_analysis:
             event_id = compute_event_id_slug(ev)
             orphans.append(f"plots/per_sim/{event_id}/peak_flood_depth.png")
             orphans.append(f"plots/per_sim/{event_id}/conduit_flow.png")
-        if self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_subanalysis:
+        if self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_experiment_member:
             for ind_var in self.sensitivity.independent_vars:
                 orphans.append(f"plots/sensitivity/benchmarking/{ind_var}_vs_total.svg")
         return orphans
@@ -2606,7 +2606,7 @@ class TRITONSWMM_analysis:
 
         # Orphan detection gate (sensitivity-only; non-sensitivity covered by
         # follow-up plan per D-EVENT-PARITY).
-        if not from_scratch and self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_subanalysis:
+        if not from_scratch and self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_experiment_member:
             from hhemt.exceptions import ConfigurationError as _CfgErr
 
             _dirs = self.sensitivity.find_orphan_analysis_dirs()
@@ -2946,7 +2946,7 @@ class TRITONSWMM_analysis:
         """Materialize one TRITONSWMM_analysis per representative under
         ``{analysis_dir}/_test/``, reusing the ``_create_sub_analyses`` overlay
         recipe (sensitivity_analysis.py:2021-2074): ``model_validate`` (never
-        ``model_copy``+``setattr``), atomic YAML write, ``is_subanalysis=True``,
+        ``model_copy``+``setattr``), atomic YAML write, ``is_experiment_member=True``,
         ``toggle_sensitivity_analysis=False``.
 
         Truncation (SE F-B Flag 1; the former ``_truncate_test_inputs`` is dissolved
@@ -2958,8 +2958,8 @@ class TRITONSWMM_analysis:
         in-memory setattr would be silently discarded at that reload, Gotcha 15).
         Scenario-prep regenerates the SWMM .inp window from the sliced weather
         (swmm_utils.py:105-110), so no .inp-edit pass is needed. ``analysis_dir``
-        and ``master_analysis_cfg_yaml`` are ALSO carried through the overlay: the
-        is_subanalysis model-validator (config/analysis.py:529-541) requires both,
+        and ``experiment_cfg_yaml`` are ALSO carried through the overlay: the
+        is_experiment_member model-validator (config/analysis.py:529-541) requires both,
         and ``analysis_dir`` is what keeps every test artifact under ``_test/`` (R2 --
         without it ``__init__`` derives ``system_directory/{analysis_id}``)."""
         import xarray as xr
@@ -3013,9 +3013,9 @@ class TRITONSWMM_analysis:
             overlay = {
                 "analysis_id": f"{self.cfg_analysis.analysis_id}_test_{group_id}",
                 "toggle_sensitivity_analysis": False,
-                "is_subanalysis": True,  # cfg field, NOT a constructor kwarg
+                "is_experiment_member": True,  # cfg field, NOT a constructor kwarg
                 "analysis_dir": str(sub_dir),  # keeps all artifacts under _test/ (R2)
-                "master_analysis_cfg_yaml": str(self.analysis_config_yaml),
+                "experiment_cfg_yaml": str(self.analysis_config_yaml),
                 "weather_timeseries": str(short_weather),  # short weather survives the YAML reload
                 "TRITON_reporting_timestep_s": reporting_timestep_s,
                 "report": scoped_report,
@@ -3028,7 +3028,7 @@ class TRITONSWMM_analysis:
             # the wipe of group_0/ cannot reach it; the sub's analysis_dir stays
             # group_0/ via the overlay. (analysis_id is group-unique, so no collision.)
             sub_yaml = self._atomic_write_analysis_yaml(cfg_a, test_root)
-            # TRITONSWMM_analysis.__init__ has NO is_subanalysis param; is_subanalysis
+            # TRITONSWMM_analysis.__init__ has NO is_experiment_member param; is_experiment_member
             # is set in the cfg overlay above (mirrors _create_sub_analyses,
             # sensitivity_analysis.py:2031). is_main_orchestrator=False -- a _test/
             # sub is not a main orchestrator. The representative's own _system carries
@@ -5565,7 +5565,7 @@ class TRITONSWMM_analysis:
                 rows.append(row)
 
         df_status = pd.DataFrame(rows)
-        if self.cfg_analysis.is_subanalysis:
+        if self.cfg_analysis.is_experiment_member:
             return self._reorder_df_status_columns(df_status)
         else:
             df_status_joined = df_status.merge(

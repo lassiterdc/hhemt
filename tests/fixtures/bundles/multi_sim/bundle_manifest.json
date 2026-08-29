@@ -10,15 +10,15 @@
         "storm_tide_boundary_line_gis",
         "weather_event_summary_csv",
         "sensitivity_analysis",
-        "master_analysis_cfg_yaml"
+        "weather_event_windows_csv",
+        "experiment_cfg_yaml",
+        "brand_theme"
       ],
       "forced_dot": [
         "analysis_dir"
       ],
       "helper_resolved": [],
-      "is_None_acceptable": [
-        "python_path"
-      ]
+      "is_None_acceptable": []
     },
     "cfg_system": {
       "bundle_relative": [
@@ -44,7 +44,7 @@
       ]
     }
   },
-  "bundle_schema_version": 4,
+  "bundle_schema_version": 5,
   "created_at_utc": "2026-05-11T00:00:00+00:00",
   "layout_version": 5,
   "source_paths_by_renderer": {},

@@ -56,7 +56,7 @@ def test_b4b_clean_identity_reason_distinguishes_no_clean_subs_from_raw_cleared(
     master = types.SimpleNamespace(analysis_paths=types.SimpleNamespace(analysis_dir=tmp_path))
 
     # One RESUME sub (n_resumes==3) whose raw IS present -> clean set empty, raw not cleared.
-    monkeypatch.setattr(av, "_iter_subanalyses_or_self", lambda m: [("gpu_0", sub)])
+    monkeypatch.setattr(av, "_iter_analyses_or_self", lambda m: [("gpu_0", sub)])
     monkeypatch.setattr(rri, "_b4b_enabled_model", lambda s: "triton")
     monkeypatch.setattr(rri, "_b4b_n_resumes", lambda m, sa_id: 3)
     monkeypatch.setattr(rri, "_b4b_config_identity", lambda s: "cfgA")
@@ -164,9 +164,9 @@ def test_read_sub_resume_context_cache_split(tmp_path):
     sub_dir.mkdir(parents=True)
     (sub_dir / f"{sa_id}.yaml").write_text(yaml.safe_dump({
         "analysis_id": sa_id,
-        "is_subanalysis": True,
+        "is_experiment_member": True,
         "TRITON_reporting_timestep_s": 600.0,
-        "master_analysis_cfg_yaml": str(master_root / "analysis_config.yaml"),
+        "experiment_cfg_yaml": str(master_root / "analysis_config.yaml"),
     }))
 
     log, interval, schedule = read_sub_resume_context(sub_dir, sa_id, iloc)

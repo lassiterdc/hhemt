@@ -9,9 +9,8 @@ Exit 2 = usage/IO error.
 
 Checks:
   1. experiment.yaml exists and validates against ExperimentConfig (extra="forbid").
-  2. experiment_id equals the containing directory name.
-  3. Every bundle-relative path the descriptor names exists on disk.
-  4. README.md and rerun.sh exist (the shape both estate exemplars share).
+  2. Every bundle-relative path the descriptor names exists on disk.
+  3. README.md and rerun.sh exist (the shape both estate exemplars share).
 """
 
 from __future__ import annotations
@@ -42,9 +41,6 @@ def check_bundle(bundle_dir: Path) -> list[str]:
         bundle = ExperimentConfig.model_validate(raw)
     except Exception as e:
         return [f"{manifest}: schema violation: {e}"]
-
-    if bundle.experiment_id != bundle_dir.name:
-        problems.append(f"{manifest}: experiment_id {bundle.experiment_id!r} != directory name {bundle_dir.name!r}")
 
     for rel in (bundle.system_config, bundle.analysis_config):
         if not (bundle_dir / rel).is_file():
