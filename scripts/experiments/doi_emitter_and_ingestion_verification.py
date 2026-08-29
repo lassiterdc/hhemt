@@ -601,7 +601,7 @@ def _adjudicate_per_arch_pass(exp, result) -> bool:
         try:
             tst_ut.assert_analysis_workflow_completed_successfully(sub.analysis)
         except AssertionError as e:
-            print(f"  sub {getattr(sub, 'name', '?')}: workflow INCOMPLETE — {e}")
+            print(f"  sub {sub.analysis_id}: workflow INCOMPLETE — {e}")
             all_ok = False
     # Layer-2 per-arch routing is asserted from the per-rule sim logs (apptainer exec line)
     # by the [Q8] operator runbook's log-scan (namespace-agnostic: it names the SIF file,
