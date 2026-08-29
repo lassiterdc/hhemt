@@ -68,7 +68,7 @@ def test_selection_covers_every_compute_config(synth_sensitivity_builder):
     reports the set difference directly.
     """
     analysis = synth_sensitivity_builder
-    candidates = list(analysis.sensitivity.sub_analyses.values())
+    candidates = list(analysis.sensitivity.analyses.values())
     assert len(candidates) >= 2, (
         f"fixture supplied {len(candidates)} sub-analysis/-es; this test needs "
         "a multi-candidate master to reach the grouping branch at all"
@@ -94,7 +94,7 @@ def test_selection_picks_a_real_candidate_per_group(synth_sensitivity_builder):
     anything the selector did not receive as a candidate.
     """
     analysis = synth_sensitivity_builder
-    candidate_ids = {id(sub) for sub in analysis.sensitivity.sub_analyses.values()}
+    candidate_ids = {id(sub) for sub in analysis.sensitivity.analyses.values()}
     reps = analysis._select_test_representatives()
     orphans = [rep.key for rep in reps if id(rep.source_analysis) not in candidate_ids]
     assert not orphans, f"representatives not drawn from the candidate set: {orphans}"

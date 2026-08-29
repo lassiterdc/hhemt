@@ -190,9 +190,9 @@ _ILOC_PATTERN = re.compile(r"^\d+-.+$")
 def _has_legacy_iloc_prefix(target_dir: Path) -> bool:
     """True if any sims/ entry matches ^\\d+-(.+)$ (pre-Phase-0 layout)."""
     candidate_sims: list[Path] = [target_dir / "sims"]
-    subanalyses = target_dir / "subanalyses"
-    if subanalyses.is_dir():
-        candidate_sims.extend(sa_dir / "sims" for sa_dir in subanalyses.glob("sa_*") if sa_dir.is_dir())
+    analyses = target_dir / "subanalyses"
+    if analyses.is_dir():
+        candidate_sims.extend(sa_dir / "sims" for sa_dir in analyses.glob("sa_*") if sa_dir.is_dir())
     for sims_dir in candidate_sims:
         if not sims_dir.is_dir():
             continue

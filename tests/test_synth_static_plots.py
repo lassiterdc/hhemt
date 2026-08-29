@@ -254,7 +254,7 @@ def test_static_plots_generates_sensitivity_benchmarking_figure(synthetic_sensit
     no-colorbar case; KEEP-no-hybrid — Plotly branch untouched). The benchmarking
     x-axis variable rides the plot_id's var.{name} selector → --independent-var.
     Uses the sensitivity synth fixture (master analysis carries .sensitivity)."""
-    analysis = synthetic_sensitivity_completed_isolated.master_analysis
+    analysis = synthetic_sensitivity_completed_isolated.experiment
     # n_devices is the synth benchmarking x-axis with data (see
     # test_synth_05_sensitivity_analysis_with_snakemake.py: benchmarking__n_devices.vs.total).
     plot_id = "sensitivity_benchmarking__var.n_devices"

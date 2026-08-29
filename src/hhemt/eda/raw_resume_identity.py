@@ -216,7 +216,7 @@ def resume_boundaries_from_schedule(schedule: Sequence[int] | None, reporting_in
 
 
 def read_sub_resume_context(
-    sub_analysis_dir: Path, sa_id: str, event_iloc: int
+    analysis_dir: Path, sa_id: str, event_iloc: int
 ) -> tuple[Path | None, float | None, tuple[int, ...] | None]:
     """Resolve (resume tritonswmm model-log path, TRITON reporting interval s, requested
     resume-interruption schedule) for one sub-analysis from its on-disk ``{sa_id}.yaml``,
@@ -235,7 +235,7 @@ def read_sub_resume_context(
     ``resume_boundaries_from_schedule``). Tolerant: missing yaml / key / log -> that element is
     None (no vline / caller falls back), never raising.
     """
-    sub_yaml = sub_analysis_dir / f"{sa_id}.yaml"
+    sub_yaml = analysis_dir / f"{sa_id}.yaml"
     try:
         cfg = yaml.safe_load(sub_yaml.read_text())
     except (OSError, yaml.YAMLError):
@@ -272,7 +272,7 @@ def read_sub_resume_context(
     # been re-run under a post-513d5e1 toolkit, the first candidate is total -- drop the
     # `if master:` branch, this comment, and the now-unused `master` read above.
     _filename = f"model_tritonswmm_{sa_id}_evt{event_iloc}.log"
-    _candidates = [Path(sub_analysis_dir).parent.parent / "logs" / "sims" / _filename]
+    _candidates = [Path(analysis_dir).parent.parent / "logs" / "sims" / _filename]
     if master:
         _candidates.append(Path(master).parent / "logs" / "sims" / _filename)
     log_path = next((c for c in _candidates if c.exists()), None)
@@ -651,7 +651,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     import dataclasses as _dc
     import json as _json
 
-    from hhemt.analysis_validation import CheckResult, _iter_subanalyses_or_self
+    from hhemt.analysis_validation import CheckResult, _iter_analyses_or_self
     from hhemt.eda._result import EdaResult
     from hhemt.report_plot_ids import canonical_plot_id
     from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
@@ -669,7 +669,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
 
     # gather: (sa_id, sub, model, raw_bin_dir, n_resumes)
     subs: list[tuple] = []
-    for sa_id, sub in _iter_subanalyses_or_self(master):
+    for sa_id, sub in _iter_analyses_or_self(master):
         model = _b4b_enabled_model(sub)
         if model not in ("tritonswmm", "triton"):
             continue

@@ -30,17 +30,17 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
     2. Master Snakefile is generated and written correctly
     3. Master Snakefile contains required rules and flags
     """
-    analysis = synth_sensitivity_analysis
+    experiment = synth_sensitivity_analysis
 
-    assert analysis.cfg_analysis.toggle_sensitivity_analysis is True
-    assert hasattr(analysis, "sensitivity")
+    assert experiment.cfg_analysis.toggle_sensitivity_analysis is True
+    assert hasattr(experiment, "sensitivity")
 
-    sensitivity = analysis.sensitivity
+    sensitivity = experiment.sensitivity
 
-    assert len(sensitivity.sub_analyses) > 0
+    assert len(sensitivity.analyses) > 0
 
-    for sub_analysis in sensitivity.sub_analyses.values():
-        snakefile_content = sub_analysis._workflow_builder.generate_snakefile_content(
+    for analysis in sensitivity.analyses.values():
+        snakefile_content = analysis._workflow_builder.generate_snakefile_content(
             process_system_level_inputs=False,
             compile_TRITON_SWMM=True,
             prepare_scenarios=True,
@@ -59,7 +59,7 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
             ],
         )
 
-        sub_snakefile_path = tst_ut.write_snakefile(sub_analysis, snakefile_content)
+        sub_snakefile_path = tst_ut.write_snakefile(analysis, snakefile_content)
         tst_ut.assert_file_exists(sub_snakefile_path, "Sub-analysis Snakefile")
         assert len(sub_snakefile_path.read_text()) > 100
 
@@ -96,11 +96,11 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
         ],
     )
 
-    num_sub_analyses = len(sensitivity.sub_analyses)
-    for sa_id in range(num_sub_analyses):
+    num_analyses = len(sensitivity.analyses)
+    for sa_id in range(num_analyses):
         assert f"rule consolidate_sa_{sa_id}:" in master_snakefile_content
 
-    master_snakefile_path = tst_ut.write_snakefile(analysis, master_snakefile_content)
+    master_snakefile_path = tst_ut.write_snakefile(experiment, master_snakefile_content)
     tst_ut.assert_file_exists(master_snakefile_path, "Master Snakefile")
     assert len(master_snakefile_path.read_text()) > 100
 
@@ -174,7 +174,7 @@ def test_phase3_master_snakefile_emits_per_target_setup_rules(
     assert "rule setup:\n" not in content
     assert "_status/a_setup_complete.flag" not in content
     # Per-SA prepare rules must depend on the new flag.
-    for sa_id in sensitivity.sub_analyses.keys():
+    for sa_id in sensitivity.analyses.keys():
         assert (
             f"rule prepare_sa_{str(sa_id).replace('.', '_').replace('-', '_')}_evt_"
             in content
@@ -355,7 +355,7 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
 
     import hhemt.analysis as _analysis_mod
     from hhemt.constants import (
-        consolidate_subanalysis_flag,
+        consolidate_analysis_flag,
         process_timeseries_flag_per_sa,
     )
     from hhemt.scenario import (
@@ -433,7 +433,7 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
     # TRITONSWMM_analysis delegates reprocess() to self.sensitivity.reprocess().
     # Iterate items() (keys may be int) and string-cast the chosen id for the
     # flag-token helpers, which validate a str sa_id fragment.
-    sa_items = list(analysis.sensitivity.sub_analyses.items())
+    sa_items = list(analysis.sensitivity.analyses.items())
     assert sa_items, "fixture produced no sub-analyses"
     target_sa_key, sub = sa_items[0]
     target_sa = str(target_sa_key)
@@ -482,7 +482,7 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
     assert summary_to_delete.exists(), (
         "self-heal must rebuild the deleted summary on the process path"
     )
-    consolidate_flag = master_dir / consolidate_subanalysis_flag(target_sa)
+    consolidate_flag = master_dir / consolidate_analysis_flag(target_sa)
     assert consolidate_flag.exists(), (
         f"per-sa consolidate flag must be present after reprocess: {consolidate_flag}"
     )
@@ -513,7 +513,7 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
 
 
 @pytest.mark.slow
-def test_master_consolidation_tolerates_incomplete_subanalysis(synth_sensitivity_analysis):
+def test_master_consolidation_tolerates_incomplete_analysis(synth_sensitivity_analysis):
     """Regression (sensitivity-consolidation-tolerate-incomplete).
 
     Reproduces the FUNCTION-LEVEL crash behind the live uva_sensitivity_suite
@@ -577,7 +577,7 @@ def test_master_consolidation_tolerates_incomplete_subanalysis(synth_sensitivity
     assert result["success"], f"Workflow submission failed: {result.get('message', '')}"
 
     sensitivity = analysis.sensitivity
-    sa_items = list(sensitivity.sub_analyses.items())
+    sa_items = list(sensitivity.analyses.items())
     assert len(sa_items) >= 2, "test needs >=2 sub-analyses (one incomplete, one complete)"
 
     master_zarr = sensitivity.analysis_paths.sensitivity_datatree_zarr
@@ -587,7 +587,7 @@ def test_master_consolidation_tolerates_incomplete_subanalysis(synth_sensitivity
     complete_key, _complete_sub = sa_items[-1]
     incomplete_id = str(incomplete_key)
     complete_id = str(complete_key)
-    prefix = sensitivity.sub_analyses_prefix  # e.g. "sa_"
+    prefix = sensitivity.analyses_prefix  # e.g. "sa_"
 
     # Induce the *never-consolidated* state for the incomplete sub:
     #   (a) delete one per-scenario summary  -> _retrieve_combined_output raises FileNotFoundError
@@ -707,13 +707,13 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
     out_html = analysis.sensitivity.render_report(format="html")
     assert out_html.exists() and out_html.stat().st_size > 0
 
-    master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
+    master_dir = analysis.sensitivity.experiment.analysis_paths.analysis_dir
     bench_dir = master_dir / "plots" / "sensitivity" / "benchmarking"
     assert bench_dir.exists()
     assert any(bench_dir.glob("benchmarking__*.vs.total.html"))
 
     # R13: no per-sub-analysis report
-    for sa_id, sub in analysis.sensitivity.sub_analyses.items():
+    for sa_id, sub in analysis.sensitivity.analyses.items():
         sub_html = sub.analysis_paths.analysis_dir / "analysis_report.html"
         assert not sub_html.exists(), (
             f"unexpected per-sub-analysis report at {sub_html} for sa_id={sa_id}"
@@ -730,7 +730,7 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
     import xarray as xr
 
     sensitivity = analysis.sensitivity
-    prefix = sensitivity.sub_analyses_prefix
+    prefix = sensitivity.analyses_prefix
     master_zarr = sensitivity.analysis_paths.sensitivity_datatree_zarr
     assert master_zarr is not None and master_zarr.exists(), (
         "master sensitivity_datatree.zarr must exist after a full clean run"
@@ -741,7 +741,7 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
     }
     on_disk_sa_ids = {
         str(sa_id)
-        for sa_id, sub in sensitivity.sub_analyses.items()
+        for sa_id, sub in sensitivity.analyses.items()
         if sub.analysis_paths.analysis_datatree_zarr is not None
         and sub.analysis_paths.analysis_datatree_zarr.exists()
     }
@@ -809,7 +809,7 @@ def test_plot_sources_attribution(synth_sensitivity_analysis_cached):
     )
     analysis.sensitivity.render_report(format="html")
 
-    master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
+    master_dir = analysis.sensitivity.experiment.analysis_paths.analysis_dir
     html = (master_dir / "analysis_report.html").read_text()
     assert "Sources:" in html
 
@@ -920,9 +920,9 @@ def test_fingerprint_payload_includes_system_overlay(
     synth_sensitivity_with_system_overlay,
 ):
     """Phase 1 R7 — fingerprint payload attaches system_overlay key + schema 3."""
-    analysis = synth_sensitivity_with_system_overlay
-    sub_analysis = analysis.sensitivity.sub_analyses["0"]
-    payload = analysis.sensitivity._compute_sa_id_fingerprint_payload(sub_analysis)
+    experiment = synth_sensitivity_with_system_overlay
+    analysis = experiment.sensitivity.analyses["0"]
+    payload = experiment.sensitivity._compute_sa_id_fingerprint_payload(analysis)
     assert payload["__schema_version__"] == 3
     assert "system_overlay" in payload
     assert payload["system_overlay"].get("target_dem_resolution") in {1.0, 2.0}
@@ -975,7 +975,7 @@ def test_analysis_dot_prefix_column_accepted_silently(synth_sensitivity_all_anal
     # for the all-prefixed fixture.
     with warnings.catch_warnings():
         warnings.simplefilter("error", DeprecationWarning)
-        _ = analysis.sensitivity._create_sub_analyses()
+        _ = analysis.sensitivity._create_analyses()
 
 
 def test_attributes_varied_for_analysis_split(synth_sensitivity_mixed_prefixed_columns):
@@ -1066,10 +1066,10 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     )
 
     sensitivity = analysis.sensitivity
-    sa_items = list(sensitivity.sub_analyses.items())
+    sa_items = list(sensitivity.analyses.items())
     assert len(sa_items) >= 2, "test needs >=2 sub-analyses (one incomplete, one complete)"
 
-    master_dir = sensitivity.master_analysis.analysis_paths.analysis_dir
+    master_dir = sensitivity.experiment.analysis_paths.analysis_dir
     report_zip = master_dir / "analysis_report.zip"
     assert report_zip.exists(), "master analysis_report.zip should exist after the full run"
 
@@ -1147,7 +1147,7 @@ def test_renderer_provenance_audit_passes_for_all_sensitivity_renderers(synth_se
     analysis = synth_sensitivity_analysis_cached
     analysis.run(from_scratch=False, report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7))
 
-    master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
+    master_dir = analysis.sensitivity.experiment.analysis_paths.analysis_dir
     plots_dir = master_dir / "plots"
     shutil.rmtree(plots_dir, ignore_errors=True)
     analysis.run(from_scratch=False, report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7))

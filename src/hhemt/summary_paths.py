@@ -69,7 +69,7 @@ def scenario_summaries_present(analysis, event_id: str, enabled_models: list[str
     return True
 
 
-def sub_analysis_summaries_complete(sub_analysis, enabled_models: list[str]) -> bool:
+def analysis_summaries_complete(analysis, enabled_models: list[str]) -> bool:
     """Whole-sub predicate: True iff EVERY scenario in the sub has all summaries.
 
     Whole-sub (not per-event) because ``consolidate_sensitivity_datatree``'s
@@ -83,9 +83,9 @@ def sub_analysis_summaries_complete(sub_analysis, enabled_models: list[str]) -> 
     """
     from hhemt.scenario import compute_event_id_slug
 
-    for event_iloc in sub_analysis.df_sims.index:
-        ev = sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+    for event_iloc in analysis.df_sims.index:
+        ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         event_id = compute_event_id_slug(ev)
-        if not scenario_summaries_present(sub_analysis, event_id, enabled_models):
+        if not scenario_summaries_present(analysis, event_id, enabled_models):
             return False
     return True

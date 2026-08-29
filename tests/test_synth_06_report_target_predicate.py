@@ -92,7 +92,7 @@ def test_report_target_predicate_excludes_summary_absent_sub(
       main's owner; this test conservatively pins the newer guard's behavior.
     """
     from hhemt.constants import (
-        consolidate_subanalysis_flag,
+        consolidate_analysis_flag,
         sim_run_flag_per_sa,
     )
     from hhemt.reprocess_snakefile_generator import (
@@ -128,7 +128,7 @@ def test_report_target_predicate_excludes_summary_absent_sub(
 
     master_dir = analysis.analysis_paths.analysis_dir
 
-    sa_items = list(analysis.sensitivity.sub_analyses.items())
+    sa_items = list(analysis.sensitivity.analyses.items())
     assert len(sa_items) >= 2, (
         f"parity test needs >=2 sub-analyses (one to break, one to keep); fixture produced {len(sa_items)}"
     )
@@ -168,8 +168,8 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     )
     # Consolidate-flag enumeration (completed_sa_ids -> rule all): the flag names
     # are literal strings in the generated content.
-    target_consolidate_flag = consolidate_subanalysis_flag(target_sa)
-    complete_consolidate_flag = consolidate_subanalysis_flag(complete_sa)
+    target_consolidate_flag = consolidate_analysis_flag(target_sa)
+    complete_consolidate_flag = consolidate_analysis_flag(complete_sa)
     assert target_consolidate_flag not in content, (
         "incomplete sub's consolidate flag must NOT be enumerated "
         "(completed_sa_ids / rule all / per-sa consolidate loop) — the ~6785 "

@@ -37,7 +37,7 @@ def test_hpc_partition_alias_resolves_on_each_sub(synth_sensitivity_multi_partit
     sensitivity = synth_sensitivity_multi_partition_fanout.sensitivity
     # CSV row order: gpu-a6000, gpu-a100, gpu-a6000, gpu-a100 (sa_id 0..3).
     expected = {"0": "gpu-a6000", "1": "gpu-a100", "2": "gpu-a6000", "3": "gpu-a100"}
-    for sa_id, sub in sensitivity.sub_analyses.items():
+    for sa_id, sub in sensitivity.analyses.items():
         assert sub.cfg_analysis.hpc_ensemble_partition == expected[str(sa_id)], (
             f"sa_id={sa_id}: hpc.partition alias did not resolve to the analysis "
             f"selector"

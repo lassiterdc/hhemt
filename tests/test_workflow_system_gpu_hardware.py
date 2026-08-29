@@ -41,14 +41,14 @@ def test_per_sub_partition_resolves_gres_hardware(synth_sensitivity_with_partiti
 
     # Force one GPU per sub so the GRES block renders (the synth CSV defaults
     # n_gpus=0; GPU directives only emit when n_gpus > 0).
-    for sub in sensitivity.sub_analyses.values():
+    for sub in sensitivity.analyses.values():
         sub.cfg_analysis.n_gpus = 1
 
     master = sensitivity._workflow_builder.generate_master_snakefile_content(
         which="both", compression_level=5
     )
 
-    for sa_id, sub in sensitivity.sub_analyses.items():
+    for sa_id, sub in sensitivity.analyses.items():
         partition = sub.cfg_analysis.hpc_ensemble_partition
         gpu_hw = resolve_gpu_target(sub.cfg_hpc_system, partition)[0]
         assert gpu_hw == "a6000", (

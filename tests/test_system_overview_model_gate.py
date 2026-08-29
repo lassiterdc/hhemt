@@ -15,7 +15,7 @@ def _mk(models, sensitivity=False, subs=None):
     a.cfg_analysis = types.SimpleNamespace(toggle_sensitivity_analysis=sensitivity)
     a._get_enabled_model_types = lambda: list(models)
     if subs is not None:
-        a.sensitivity = types.SimpleNamespace(sub_analyses=subs)
+        a.sensitivity = types.SimpleNamespace(analyses=subs)
     return a
 
 

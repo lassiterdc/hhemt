@@ -39,7 +39,7 @@ def _conduit_counts(snakefile: str) -> tuple[int, int]:
 def test_conduit_flow_emission_and_enumeration_agree(
     synth_sensitivity_analysis, monkeypatch, model_types, expect_present
 ):
-    master = synth_sensitivity_analysis.sensitivity._workflow_builder.master_analysis
+    master = synth_sensitivity_analysis.sensitivity._workflow_builder.experiment
     monkeypatch.setattr(master, "_get_enabled_model_types", lambda: list(model_types))
 
     builder = synth_sensitivity_analysis.sensitivity._workflow_builder

@@ -68,9 +68,9 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
       ``{simlog_directory}/model_{model_type}_evt{event_iloc}.log``
     """
     log_dir = analysis.analysis_paths.simlog_directory
-    subanalysis_id = ""
+    analysis_id = ""
     if getattr(analysis.cfg_analysis, "is_subanalysis", False):
-        subanalysis_id = str(analysis.cfg_analysis.analysis_id) + "_"
+        analysis_id = str(analysis.cfg_analysis.analysis_id) + "_"
         # Derive the MASTER analysis dir STRUCTURALLY, from this sub's own analysis_dir.
         # A sub's dir is always `{master_analysis_dir}/subanalyses/sa_{sa_id}` (single
         # writer: sensitivity_analysis.py:273 + _create_sub_analyses; the same two-level
@@ -80,7 +80,7 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
         #
         # DO NOT restore the previous `master_analysis_cfg_yaml.parent / "logs" / "sims"`
         # form. `master_analysis_cfg_yaml` is the USER'S config-file path
-        # (sensitivity_analysis.py:2417 assigns master_analysis.analysis_config_yaml), so
+        # (sensitivity_analysis.py:2417 assigns experiment.analysis_config_yaml), so
         # that form anchored the model logs to an arbitrary directory that
         # `run(from_scratch=True)`'s fast_rmtree(analysis_dir) does not cover. Empirically
         # (Rivanna, 2026-08-01, synth_cc_resume_triton): the wipe ran, out_triton/ was
@@ -95,7 +95,7 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
         # is eda/raw_resume_identity.py, which reads historical completed arms and gates
         # nothing.
         log_dir = analysis.analysis_paths.analysis_dir.parent.parent / "logs" / "sims"
-    return log_dir / f"model_{model_type}_{subanalysis_id}evt{event_iloc}.log"
+    return log_dir / f"model_{model_type}_{analysis_id}evt{event_iloc}.log"
 
 
 def read_walltime_ledger_total_s(model_logfile: Path) -> float | None:

@@ -421,7 +421,7 @@ def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
         df=_resumed_df(str(scen), sa_id="sa_0"),
         simlog_dir=tmp_path / "unused",
     )
-    master.sensitivity = SimpleNamespace(sub_analyses={"sa_0": sub})
+    master.sensitivity = SimpleNamespace(analyses={"sa_0": sub})
     master.cfg_analysis.toggle_sensitivity_analysis = True
     _write_real_log(sub, 0, _CKPT + _ENDS)  # resumed, complete, no replay marker -> WARN
     assert (master_dir / "logs" / "sims" / "model_tritonswmm_sa_0_evt0.log").exists()
@@ -451,7 +451,7 @@ def test_model_logfile_method_delegates_to_free_function():
     assert model_logfile_for(a, 7, "tritonswmm").name == "model_tritonswmm_evt7.log"
 
 
-def test_sub_model_log_lives_under_master_analysis_dir_not_config_dir(tmp_path):
+def test_sub_model_log_lives_under_experiment_dir_not_config_dir(tmp_path):
     """THE WIPE-COVERAGE INVARIANT. A sub-analysis's model runtime log MUST land inside the
     MASTER's analysis_dir, so `run(from_scratch=True)`'s fast_rmtree(analysis_dir) removes it
     along with the outputs it describes.

@@ -159,7 +159,7 @@ class TestResult:
     ``{analysis_dir}/_test`` root directory."""
 
     representatives: list
-    subanalyses: list
+    analyses: list
     root: Path
 
 
@@ -522,7 +522,7 @@ class TRITONSWMM_analysis:
                 incomplete_nodes: list[int] = []
                 incomplete_sa_ids = {re.search(r"sa-(.+?)_evt-", k).group(1) for k in failures}
                 for sa_id in incomplete_sa_ids:
-                    sa = self.sensitivity.sub_analyses[sa_id]
+                    sa = self.sensitivity.analyses[sa_id]
                     n_gpus = sa.cfg_analysis.n_gpus or 0
                     # Phase-4 (4d): per-node GPU topology resolves from the sub-analysis
                     # ensemble partition's PartitionSpec (retired off analysis_config).
@@ -1867,10 +1867,10 @@ class TRITONSWMM_analysis:
 
         if self.cfg_analysis.toggle_sensitivity_analysis:
             snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-            expected_sa_ids = sorted(self.sensitivity.sub_analyses.keys())
+            expected_sa_ids = sorted(self.sensitivity.analyses.keys())
             sa_allocations = parse_sensitivity_analysis_workflow_model_allocations(
                 snakefile_path=snakefile_path,
-                expected_subanalysis_ids=expected_sa_ids,
+                expected_analysis_ids=expected_sa_ids,
                 strict=False,
             )
             allocations = {
@@ -2609,7 +2609,7 @@ class TRITONSWMM_analysis:
         if not from_scratch and self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_subanalysis:
             from hhemt.exceptions import ConfigurationError as _CfgErr
 
-            _dirs = self.sensitivity.find_orphan_subanalysis_dirs()
+            _dirs = self.sensitivity.find_orphan_analysis_dirs()
             _flags = self.sensitivity.find_orphan_status_flags()
             _groups = self.sensitivity.find_orphan_datatree_groups()
             _fingerprints = self.sensitivity.find_orphan_input_fingerprints()
@@ -2837,7 +2837,7 @@ class TRITONSWMM_analysis:
         # setattr would be discarded at that reload (Gotcha 15). Scenario-prep
         # regenerates the SWMM .inp window from the sliced weather automatically
         # (swmm_utils.py:105-110), so no separate .inp-edit pass is needed.
-        test_subs = self._build_test_subanalyses(
+        test_subs = self._build_test_analyses(
             reps,
             n_reporting_timesteps=n_reporting_timesteps,
             reporting_timestep_s=reporting_timestep_s,
@@ -2864,7 +2864,7 @@ class TRITONSWMM_analysis:
             )
         return TestResult(
             representatives=reps,
-            subanalyses=results,
+            analyses=results,
             root=self.analysis_paths.analysis_dir / "_test",
         )
 
@@ -2879,7 +2879,7 @@ class TRITONSWMM_analysis:
         candidate."""
         sensitivity = getattr(self, "sensitivity", None)
         if self.cfg_analysis.toggle_sensitivity_analysis and sensitivity is not None:
-            candidates: list = list(sensitivity.sub_analyses.values())
+            candidates: list = list(sensitivity.analyses.values())
         else:
             candidates = [self]
 
@@ -2936,7 +2936,7 @@ class TRITONSWMM_analysis:
             )
         return reps
 
-    def _build_test_subanalyses(
+    def _build_test_analyses(
         self,
         representatives: "list[TestRepresentative]",
         *,
@@ -3027,7 +3027,7 @@ class TRITONSWMM_analysis:
             # config not found"). Write it to the _test/ root (sibling of group_0/) so
             # the wipe of group_0/ cannot reach it; the sub's analysis_dir stays
             # group_0/ via the overlay. (analysis_id is group-unique, so no collision.)
-            sub_yaml = self._atomic_write_subanalysis_yaml(cfg_a, test_root)
+            sub_yaml = self._atomic_write_analysis_yaml(cfg_a, test_root)
             # TRITONSWMM_analysis.__init__ has NO is_subanalysis param; is_subanalysis
             # is set in the cfg overlay above (mirrors _create_sub_analyses,
             # sensitivity_analysis.py:2031). is_main_orchestrator=False -- a _test/
@@ -3042,7 +3042,7 @@ class TRITONSWMM_analysis:
             subs.append(sub)
         return subs
 
-    def _atomic_write_subanalysis_yaml(self, cfg_a: "analysis_config", sub_dir: Path) -> Path:
+    def _atomic_write_analysis_yaml(self, cfg_a: "analysis_config", sub_dir: Path) -> Path:
         """Atomically write a sub-analysis overlay config to ``{sub_dir}/{id}.yaml``
         via a PID-keyed temp file + ``Path.replace`` (POSIX-atomic on one
         filesystem), so a concurrent reader never catches a truncated file.
@@ -5209,14 +5209,14 @@ class TRITONSWMM_analysis:
 
         if self.cfg_analysis.toggle_sensitivity_analysis:
             snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-            expected_sa_ids = sorted(self.sensitivity.sub_analyses.keys())
+            expected_sa_ids = sorted(self.sensitivity.analyses.keys())
             sa_allocations = parse_sensitivity_analysis_workflow_model_allocations(
                 snakefile_path=snakefile_path,
-                expected_subanalysis_ids=expected_sa_ids,
+                expected_analysis_ids=expected_sa_ids,
                 strict=False,
             )
             rows: list[dict] = []
-            for sa_id, sub_analysis in self.sensitivity.sub_analyses.items():
+            for sa_id, analysis in self.sensitivity.analyses.items():
                 if sa_id not in sa_allocations:
                     # Sub-analysis set up on disk but absent from the Snakefile's
                     # simulation_sa_* rules (expected — see bug plan D-b). Emit no
@@ -5224,8 +5224,8 @@ class TRITONSWMM_analysis:
                     # columns which df_status annotates with the parse-error string (R5).
                     continue
                 alloc = sa_allocations[sa_id]
-                for event_iloc in sub_analysis.df_sims.index:
-                    scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
+                for event_iloc in analysis.df_sims.index:
+                    scen = TRITONSWMM_scenario(event_iloc, analysis)
                     scen.log.refresh()
                     scenario_dir = str(scen.log.logfile.parent)
                     for model_type in enabled_models:

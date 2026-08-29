@@ -535,7 +535,7 @@ def test_record_applied_records_op(tmp_path: Path) -> None:
 # ---- Helper: collect_sims_dirs ----
 
 
-def test_collect_sims_dirs_finds_top_and_subanalyses(tmp_path: Path) -> None:
+def test_collect_sims_dirs_finds_top_and_analyses(tmp_path: Path) -> None:
     (tmp_path / "sims").mkdir()
     (tmp_path / "subanalyses" / "sa_0" / "sims").mkdir(parents=True)
     (tmp_path / "subanalyses" / "sa_1" / "sims").mkdir(parents=True)

@@ -32,7 +32,7 @@ def test_remove_middle_sa_id_does_not_shift_other_rules(norfolk_sensitivity_anal
     analysis = norfolk_sensitivity_analysis
     sensitivity = analysis.sensitivity
 
-    sa_ids = list(sensitivity.sub_analyses.keys())
+    sa_ids = list(sensitivity.analyses.keys())
     if len(sa_ids) < 3:
         pytest.skip("Need at least 3 sub-analyses to remove a middle one.")
 
@@ -46,7 +46,7 @@ def test_remove_middle_sa_id_does_not_shift_other_rules(norfolk_sensitivity_anal
     victim_rules = {n for n in before if f"sa_{victim_rule_seg}_" in n}
     assert victim_rules, f"no pre-removal rules matched sa_{victim_rule_seg}_"
 
-    del sensitivity.sub_analyses[victim]
+    del sensitivity.analyses[victim]
     after = _sim_rule_names(_regenerate_master(sensitivity))
 
     removed = before - after
@@ -66,7 +66,7 @@ def test_add_new_sa_id_adds_only_its_rules(norfolk_sensitivity_analysis):
     analysis = norfolk_sensitivity_analysis
     sensitivity = analysis.sensitivity
 
-    sa_ids = list(sensitivity.sub_analyses.keys())
+    sa_ids = list(sensitivity.analyses.keys())
     if not sa_ids:
         pytest.skip("Fixture has no sub-analyses.")
 
@@ -74,17 +74,17 @@ def test_add_new_sa_id_adds_only_its_rules(norfolk_sensitivity_analysis):
 
     # Clone an existing sub-analysis instance under a fresh sa_id.
     donor_id = sa_ids[0]
-    donor = sensitivity.sub_analyses[donor_id]
+    donor = sensitivity.analyses[donor_id]
     new_id = "newrow"
-    assert new_id not in sensitivity.sub_analyses
-    sensitivity.sub_analyses[new_id] = donor
+    assert new_id not in sensitivity.analyses
+    sensitivity.analyses[new_id] = donor
     # The cached unique_system_targets (built once at __init__) does not know the
     # aliased sa_id; register it on the donor's target so sa_id_to_target_id
     # (workflow.py:6737-6739) resolves it. Source is correct — this is a fixture-
     # manipulation gap, not a generator bug.
     for _t in sensitivity.unique_system_targets:
-        if donor_id in _t.sub_analysis_ids:
-            _t.sub_analysis_ids.append(new_id)
+        if donor_id in _t.analysis_ids:
+            _t.analysis_ids.append(new_id)
             break
 
     after = _sim_rule_names(_regenerate_master(sensitivity))

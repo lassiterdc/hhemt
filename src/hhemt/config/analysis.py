@@ -1010,7 +1010,7 @@ class analysis_config(cfgBaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_subanalysis_requirements(cls, values):
+    def validate_analysis_requirements(cls, values):
         errors = []
         if values.get("is_subanalysis") is True:
             if values.get("master_analysis_cfg_yaml") is None:

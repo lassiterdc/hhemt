@@ -164,11 +164,11 @@ def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivit
     from hhemt.scenario import TRITONSWMM_scenario
 
     sensitivity = synthetic_sensitivity_completed_isolated
-    analysis = sensitivity.master_analysis
+    analysis = sensitivity.experiment
 
     # Identify the first sa_id and capture pre-invalidation log state.
-    first_sa_id = next(iter(sensitivity.sub_analyses.keys()))
-    sub = sensitivity.sub_analyses[first_sa_id]
+    first_sa_id = next(iter(sensitivity.analyses.keys()))
+    sub = sensitivity.analyses[first_sa_id]
     scen = TRITONSWMM_scenario(0, sub)
     model_type = scen.run.model_types_enabled[0]
     log_before = scen.get_log(model_type)
@@ -193,14 +193,14 @@ def test_override_force_rerun_does_not_clear_other_sa_processing_log(synthetic_s
     from hhemt.scenario import TRITONSWMM_scenario
 
     sensitivity = synthetic_sensitivity_completed_isolated
-    analysis = sensitivity.master_analysis
-    sa_ids = list(sensitivity.sub_analyses.keys())
+    analysis = sensitivity.experiment
+    sa_ids = list(sensitivity.analyses.keys())
     if len(sa_ids) < 2:
         import pytest as _pytest
         _pytest.skip("requires >= 2 sub-analyses for cross-sa isolation check")
 
     target_sa, other_sa = sa_ids[0], sa_ids[1]
-    other_sub = sensitivity.sub_analyses[other_sa]
+    other_sub = sensitivity.analyses[other_sa]
     other_scen = TRITONSWMM_scenario(0, other_sub)
     other_model_type = other_scen.run.model_types_enabled[0]
     other_log_before = dict(other_scen.get_log(other_model_type).processing_log.outputs)

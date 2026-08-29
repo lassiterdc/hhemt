@@ -904,7 +904,7 @@ def render(
         _hw_values = set()
         _sens = getattr(analysis, "sensitivity", None)
         if _sens is not None:
-            for _sub in _sens.sub_analyses.values():
+            for _sub in _sens.analyses.values():
                 _hw = resolve_gpu_target(_sub.cfg_hpc_system, _sub.cfg_analysis.hpc_ensemble_partition)[0]
                 if _hw:
                     _hw_values.add(_hw)
@@ -1706,7 +1706,7 @@ def _draw_panel(
                 )
 
 
-def _collect_rows(analysis: TRITONSWMM_analysis, dependent_var: str) -> tuple[list[dict[str, Any]], list[Path]]:
+def _collect_rows(experiment: TRITONSWMM_analysis, dependent_var: str) -> tuple[list[dict[str, Any]], list[Path]]:
     """Collect (sa_id, event_iloc, value) rows + source paths for the dependent_var."""
     if not dependent_var.startswith("performance."):
         raise ValueError(
@@ -1714,7 +1714,7 @@ def _collect_rows(analysis: TRITONSWMM_analysis, dependent_var: str) -> tuple[li
             f"(only performance metrics are supported in v1)"
         )
     col = dependent_var.split(".", 1)[1]
-    sensitivity = analysis.sensitivity
+    sensitivity = experiment.sensitivity
     rows: list[dict[str, Any]] = []
     source_paths: list[Path] = []
 
@@ -1769,17 +1769,17 @@ def _collect_rows(analysis: TRITONSWMM_analysis, dependent_var: str) -> tuple[li
     # first-class quantity, add it as its OWN series -- do not substitute it into a
     # decomposition.
 
-    datatree_path = analysis.analysis_paths.sensitivity_datatree_zarr
+    datatree_path = experiment.analysis_paths.sensitivity_datatree_zarr
     tree: xr.DataTree | None = None
     if datatree_path is not None and datatree_path.exists():
         tree = xr.open_datatree(str(datatree_path), engine="zarr", consolidated=False)
         source_paths.append(datatree_path)
 
-    for sa_id, sub_analysis in sensitivity.sub_analyses.items():
+    for sa_id, analysis in sensitivity.analyses.items():
         node_ds = _find_perf_node(tree, sa_id) if tree is not None else None
         if node_ds is not None and col in node_ds.data_vars:
             _emitted_for_sa = False
-            for event_iloc in sub_analysis.df_sims.index:
+            for event_iloc in analysis.df_sims.index:
                 # SINGLE SOURCE + FAIL LOUD. The ledger substitution that used to preempt
                 # this read existed because the datatree `Total` was wrong on resume -- a
                 # missed reset boundary subtracted a whole segment (measured 0.527 of the
@@ -1826,15 +1826,15 @@ def _collect_rows(analysis: TRITONSWMM_analysis, dependent_var: str) -> tuple[li
                 raise ValueError(
                     f"Benchmarking produced no rows for sa_id={sa_id!r} on column={col!r} "
                     f"despite a resolvable performance node. df_sims index was "
-                    f"{list(sub_analysis.df_sims.index)}. A sub-analysis that silently "
+                    f"{list(analysis.df_sims.index)}. A sub-analysis that silently "
                     "contributes zero bars is indistinguishable in the rendered figure from "
                     "one that was never configured; refuse rather than render a gap."
                 )
             continue
-        enabled = sub_analysis._get_enabled_model_types()
+        enabled = analysis._get_enabled_model_types()
         if "swmm" in enabled and len(enabled) == 1:
-            for event_iloc in sub_analysis.df_sims.index:
-                proc = sub_analysis._retrieve_sim_run_processing_object(int(event_iloc))
+            for event_iloc in analysis.df_sims.index:
+                proc = analysis._retrieve_sim_run_processing_object(int(event_iloc))
                 rpt = proc.scen_paths.swmm_full_rpt_file
                 if not rpt or not rpt.exists():
                     continue
@@ -1874,7 +1874,7 @@ def _resolve_model_arm(analysis) -> str | None:
     if sens is None:
         return None
     enabled: set[str] = set()
-    for sub in sens.sub_analyses.values():
+    for sub in sens.analyses.values():
         enabled.update(sub._get_enabled_model_types())
     if "tritonswmm" in enabled:
         return "coupled"

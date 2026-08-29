@@ -146,7 +146,7 @@ def process_timeseries_flag_per_sa(model_type: str, sa_id: str, event_id: str) -
     return f"{STATUS_DIR_NAME}/d_process_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
 
 
-def consolidate_subanalysis_flag(sa_id: str) -> str:
+def consolidate_analysis_flag(sa_id: str) -> str:
     """Per-sa consolidate completion flag (sensitivity workflow)."""
     _validate_id_fragment("sa_id", sa_id)
     return f"{STATUS_DIR_NAME}/e_consolidate_sa-{sa_id}_complete.flag"

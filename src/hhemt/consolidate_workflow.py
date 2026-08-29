@@ -459,15 +459,15 @@ def main() -> int:
                         compute_and_write_scope_sentinel,
                     )
 
-                    sub_analysis_dir = analysis.analysis_paths.analysis_dir
+                    analysis_dir = analysis.analysis_paths.analysis_dir
                     compute_and_write_scope_sentinel(
-                        sub_analysis_dir,
+                        analysis_dir,
                         scope="sub_analysis",
                         include_breakdown=True,
                     )
                     logger.info(
                         f"Sub-analysis DU sentinel written at "
-                        f"{sub_analysis_dir}/_status/_du.json"
+                        f"{analysis_dir}/_status/_du.json"
                     )
             except Exception as e:
                 logger.error(f"Failed to consolidate to DataTree: {e}")

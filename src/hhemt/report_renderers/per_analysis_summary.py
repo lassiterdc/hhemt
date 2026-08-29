@@ -49,7 +49,7 @@ def render(
     is_sensitivity_master = (
         getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
         and getattr(analysis, "sensitivity", None) is not None
-        and len(analysis.sensitivity.sub_analyses) > 0
+        and len(analysis.sensitivity.analyses) > 0
     )
 
     metrics = report_cfg.per_analysis_summary.metrics
@@ -94,7 +94,7 @@ def render(
             master_simlogs = analysis.analysis_paths.simlog_directory
             log_source_files.extend(sorted(master_simlogs.glob("model_*.log")))
         per_sa_rows = []
-        for sa_id, sub in analysis.sensitivity.sub_analyses.items():
+        for sa_id, sub in analysis.sensitivity.analyses.items():
             n = len(sub.df_sims.index)
             if use_csv:
                 sa_rows = status_df[status_df["sa_id"].astype(str) == str(sa_id)]

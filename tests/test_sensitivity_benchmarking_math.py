@@ -617,7 +617,7 @@ def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=2
         _get_enabled_model_types=lambda: {"tritonswmm"},
     )
     return SimpleNamespace(
-        sensitivity=SimpleNamespace(sub_analyses={"serial_6_r1": sub}),
+        sensitivity=SimpleNamespace(analyses={"serial_6_r1": sub}),
         analysis_paths=SimpleNamespace(
             sensitivity_datatree_zarr=tree_path,
             analysis_dir=tmp_path,
@@ -696,7 +696,7 @@ def test_collect_rows_reads_simulation_from_datatree_like_every_other_column(tmp
         _get_enabled_model_types=lambda: {"tritonswmm"},
     )
     analysis = SimpleNamespace(
-        sensitivity=SimpleNamespace(sub_analyses={"serial_6_r1": sub}),
+        sensitivity=SimpleNamespace(analyses={"serial_6_r1": sub}),
         analysis_paths=SimpleNamespace(sensitivity_datatree_zarr=tree_path, analysis_dir=tmp_path),
     )
     rows, _ = _collect_rows(analysis, "performance.Simulation")

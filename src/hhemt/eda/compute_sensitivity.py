@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import xarray as xr
 
-from hhemt.analysis_validation import CheckResult, _iter_subanalyses_or_self
+from hhemt.analysis_validation import CheckResult, _iter_analyses_or_self
 from hhemt.eda._result import EdaResult
 from hhemt.eda.cross_sim_identity import TRACKED_VARS, _enabled_modes, compare_variable_exact
 from hhemt.report_plot_ids import canonical_plot_id
@@ -458,7 +458,7 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
     magnitude metrics characterize any divergence.
     """
     name = "Rank sensitivity"
-    sub_items = list(_iter_subanalyses_or_self(master))
+    sub_items = list(_iter_analyses_or_self(master))
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
 
@@ -559,7 +559,7 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
     sensitivity analysis, or when no clean/resume pair exists in the master.
     """
     name = "Resume sensitivity"
-    sub_items = list(_iter_subanalyses_or_self(master))
+    sub_items = list(_iter_analyses_or_self(master))
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
 
@@ -667,7 +667,7 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
     Returns a skipped ``EdaResult`` when either endpoint is absent.
     """
     name = "Cross-hardware magnitude"
-    sub_items = list(_iter_subanalyses_or_self(master))
+    sub_items = list(_iter_analyses_or_self(master))
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
 

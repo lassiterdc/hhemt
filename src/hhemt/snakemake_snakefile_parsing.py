@@ -111,7 +111,7 @@ def parse_regular_workflow_model_allocations(
 
 def parse_sensitivity_analysis_workflow_model_allocations(
     snakefile_path: Path,
-    expected_subanalysis_ids: list[str] | None = None,
+    expected_analysis_ids: list[str] | None = None,
     *,
     strict: bool = True,
 ) -> dict[str, dict[str, int]]:
@@ -150,8 +150,8 @@ def parse_sensitivity_analysis_workflow_model_allocations(
             "No sensitivity simulation rules found. Expected rules matching 'simulation_sa-{sa_id}_evt-{event_id}'."
         )
 
-    if expected_subanalysis_ids is not None and strict:
-        missing = sorted(set(expected_subanalysis_ids) - set(allocations_by_sa.keys()))
+    if expected_analysis_ids is not None and strict:
+        missing = sorted(set(expected_analysis_ids) - set(allocations_by_sa.keys()))
         if missing:
             raise SnakefileParsingError(
                 f"Missing expected sensitivity simulation allocations for subanalysis ids: {missing}"

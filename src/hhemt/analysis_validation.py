@@ -195,12 +195,12 @@ def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
     return CheckResult(name="System setup", level="system", passed=passed, summary=summary, details=issues)
 
 
-def _iter_subanalyses_or_self(analysis: TRITONSWMM_analysis):
+def _iter_analyses_or_self(analysis: TRITONSWMM_analysis):
     """Yield (sa_id, sub_analysis) for sensitivity master, else (None, analysis)."""
     sensitivity_on = getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
     sens = getattr(analysis, "sensitivity", None)
     if sensitivity_on and sens is not None:
-        yield from sens.sub_analyses.items()
+        yield from sens.analyses.items()
     else:
         yield None, analysis
 
@@ -215,7 +215,7 @@ def check_scenarios_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
     details: list[dict] = []
     total = 0
     failed_count = 0
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for sa_id, sub in _iter_analyses_or_self(analysis):
         n = int(sub.n_scenarios)
         total += n
         if not sub._all_scenarios_created:
@@ -238,7 +238,7 @@ def check_scenarios_run(analysis: TRITONSWMM_analysis) -> CheckResult:
     details: list[dict] = []
     total = 0
     failed_count = 0
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for sa_id, sub in _iter_analyses_or_self(analysis):
         try:
             n = len(sub.df_sims)
         except Exception:
@@ -289,7 +289,7 @@ def check_timeseries_processed(
 
     details: list[dict] = []
     total = 0
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for sa_id, sub in _iter_analyses_or_self(analysis):
         enabled = sub._get_enabled_model_types()
         if which == "TRITON":
             enabled = [m for m in enabled if m in ("tritonswmm", "triton")]
@@ -332,7 +332,7 @@ def check_analysis_summaries_created(analysis: TRITONSWMM_analysis) -> CheckResu
         sens_zarr = analysis.analysis_paths.sensitivity_datatree_zarr
         if sens_zarr is None or not sens_zarr.exists():
             missing.append({"detail": f"Sensitivity DataTree zarr missing at {sens_zarr}"})
-        for sa_id, sub in analysis.sensitivity.sub_analyses.items():
+        for sa_id, sub in analysis.sensitivity.analyses.items():
             _check_one(sub, label_prefix=f"sa_{sa_id}: ")
     else:
         _check_one(analysis)
@@ -1121,7 +1121,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
         # sensitivity_analysis.df_status adds it), so `.get` returns None and hits the
         # None key. str-normalized per the sa_id-cast-to-string stipulation, mirroring
         # per_analysis_summary.py's `astype(str) == str(sa_id)` precedent.
-        subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+        subs = {(str(k) if k is not None else None): v for k, v in _iter_analyses_or_self(analysis)}
         # DURABLE FALLBACK (Q4): the model log is opened "w" per exec and can be purged/cleared,
         # so when read_text() below raises we consult the per-sub replay evidence stamped onto the
         # consolidated tree ROOT at consolidation time (_stamp_coupled_resume_evidence). Read once,
@@ -1438,7 +1438,7 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis) -> CheckResult:
         if df is not None and {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
             n_res = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
             triton_resumed = df[(df["model_type"] == "triton") & (n_res >= 1)]
-            subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+            subs = {(str(k) if k is not None else None): v for k, v in _iter_analyses_or_self(analysis)}
             for _, row in triton_resumed.iterrows():
                 _sa = row.get("sa_id")
                 sub = subs.get(str(_sa) if _sa is not None else None)
@@ -1771,7 +1771,7 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
     # while every sub wrote its own. The master scope was also the wrong sims root: a
     # master's `sims/` is empty (scenarios live under `subanalyses/sa_N/sims/`), so even
     # without the raise this check examined zero scenarios on every sensitivity run.
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for sa_id, sub in _iter_analyses_or_self(analysis):
         sims_dir = Path(sub.analysis_paths.simulation_directory)
         for i in range(int(sub.n_scenarios)):
             evt = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(i))
@@ -1862,7 +1862,7 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
     indeterminate = 0
     reclaimed_counts: dict[str, int] = {label: 0 for label in _RECLAIM_LOG_FIELDS.values()}
 
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for sa_id, sub in _iter_analyses_or_self(analysis):
         try:
             enabled = sub._get_enabled_model_types()
             sim_dir = Path(sub.analysis_paths.simulation_directory)

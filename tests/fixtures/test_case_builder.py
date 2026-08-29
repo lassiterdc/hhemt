@@ -576,7 +576,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         self.analysis_yaml.write_text(yaml.safe_dump(analysis_cfg, sort_keys=False))
 
 
-def induce_incomplete_subanalysis(sensitivity, sa_id, *, delete_master_tree=True):
+def induce_incomplete_analysis(sensitivity, sa_id, *, delete_master_tree=True):
     """Induce the flag-present / summary-absent (or summary-absent generally)
     partial-completion state for ONE sub-analysis of a completed sensitivity
     analysis, for reprocess regression coverage.
@@ -605,7 +605,7 @@ def induce_incomplete_subanalysis(sensitivity, sa_id, *, delete_master_tree=True
         "triton": ("output_triton_only_summary", "output_triton_only_performance_summary"),
         "swmm": ("output_swmm_only_node_summary", "output_swmm_only_link_summary"),
     }
-    sub = sensitivity.sub_analyses[sa_id]
+    sub = sensitivity.analyses[sa_id]
     deleted = []
     enabled_models = sub._get_enabled_model_types()
     for event_iloc in sub.df_sims.index:
@@ -625,7 +625,7 @@ def induce_incomplete_subanalysis(sensitivity, sa_id, *, delete_master_tree=True
     if hasattr(sub.log, "datatree_consolidation_complete"):
         sub.log.datatree_consolidation_complete.set(False)
     if delete_master_tree:
-        master = sensitivity.master_analysis
+        master = sensitivity.experiment
         mtree = master.analysis_paths.sensitivity_datatree_zarr
         if mtree is not None and mtree.exists():
             fast_rmtree(mtree)

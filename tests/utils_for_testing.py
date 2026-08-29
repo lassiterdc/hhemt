@@ -1157,7 +1157,7 @@ def snapshot_scenario_output_mtimes(analysis, *, kind: str) -> dict[tuple[str | 
             slug, sim_folder = _slug_and_sim_folder(analysis, iloc)
             snapshot[(None, slug)] = _walk(sim_folder)
     elif kind == "sensitivity":
-        for sa_id, sub in analysis.sensitivity.sub_analyses.items():
+        for sa_id, sub in analysis.sensitivity.analyses.items():
             sa_id_str = str(sa_id)
             for iloc in sub.df_sims.index:
                 slug, sim_folder = _slug_and_sim_folder(sub, iloc)

@@ -13,7 +13,7 @@ analysis.py). Construction-only: no compile, no snakemake subprocess.
 
 def test_clean_restart_wipe_preserves_sub_config(synth_sensitivity_analysis):
     analysis = synth_sensitivity_analysis
-    sa = next(iter(analysis.sensitivity.sub_analyses.keys()))  # bare sa_id, e.g. "1"
+    sa = next(iter(analysis.sensitivity.analyses.keys()))  # bare sa_id, e.g. "1"
     sub_dir = analysis.analysis_paths.analysis_dir / "subanalyses" / f"sa_{sa}"
     cfg = sub_dir / f"sa_{sa}.yaml"
     assert cfg.exists()  # precondition: _create_sub_analyses wrote it at __init__

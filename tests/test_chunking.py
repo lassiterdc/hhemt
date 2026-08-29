@@ -69,7 +69,7 @@ def create_spatial_dataset_2d(n_events=10, nx=512, ny=512, n_vars=1, dtype=np.fl
 
 
 def create_sensitivity_dataset(
-    n_sub_analysis=6,
+    n_analysis=6,
     n_run_modes=5,
     n_gpus=3,
     n_mpi=2,
@@ -108,12 +108,12 @@ def create_sensitivity_dataset(
         n_omp,
         n_mpi,
         n_run_modes,
-        n_sub_analysis,
+        n_analysis,
         n_events,
         nx,
         ny,
     )
-    nonspatial_shape = (n_gpus, n_omp, n_mpi, n_run_modes, n_sub_analysis, n_events)
+    nonspatial_shape = (n_gpus, n_omp, n_mpi, n_run_modes, n_analysis, n_events)
     spatial_chunks = (1, 1, 1, 1, 1, 1, nx, ny)
     nonspatial_chunks = (1, 1, 1, 1, 1, 1)
 
@@ -150,10 +150,10 @@ def create_sensitivity_dataset(
     ds = xr.Dataset(
         data_vars=data_vars,
         coords={
-            "sub_analysis_iloc": np.arange(n_sub_analysis),
+            "sub_analysis_iloc": np.arange(n_analysis),
             "sa_id": (
                 "sub_analysis_iloc",
-                np.array([f"sa{i}" for i in range(n_sub_analysis)]),
+                np.array([f"sa{i}" for i in range(n_analysis)]),
             ),
             "run_mode": run_mode_labels,
             "n_gpus": np.arange(n_gpus),

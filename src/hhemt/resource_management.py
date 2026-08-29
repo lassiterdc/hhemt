@@ -80,15 +80,15 @@ class ResourceManager:
 
         # For sensitivity analysis, find max demands across sub-analyses
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            for sub_analysis in self.analysis.sensitivity.sub_analyses.values():
-                mpi_ranks = sub_analysis.cfg_analysis.n_mpi_procs or 1
-                omp_threads = sub_analysis.cfg_analysis.n_omp_threads or 1
-                n_gpus = sub_analysis.cfg_analysis.n_gpus or 0
-                n_nodes = sub_analysis.cfg_analysis.n_nodes or 1
+            for analysis in self.analysis.sensitivity.analyses.values():
+                mpi_ranks = analysis.cfg_analysis.n_mpi_procs or 1
+                omp_threads = analysis.cfg_analysis.n_omp_threads or 1
+                n_gpus = analysis.cfg_analysis.n_gpus or 0
+                n_nodes = analysis.cfg_analysis.n_nodes or 1
 
                 cpus_per_sim = mpi_ranks * omp_threads
                 mem_mb_per_sim = (
-                    sub_analysis.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
+                    analysis.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
                 )
 
                 max_nodes = max(max_nodes, n_nodes)

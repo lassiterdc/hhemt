@@ -12,18 +12,18 @@ gate without standing up a full sensitivity-analysis construction (same pattern
 as `_unlink_dprocess_flags_for_regenerate`).
 """
 
-from hhemt.sensitivity_analysis import _should_materialize_sub_analysis_yaml
+from hhemt.sensitivity_analysis import _should_materialize_analysis_yaml
 
 
 def test_orchestrator_writes_when_target_absent(tmp_path):
-    assert _should_materialize_sub_analysis_yaml(tmp_path / "sa_0.yaml", True) is True
+    assert _should_materialize_analysis_yaml(tmp_path / "sa_0.yaml", True) is True
 
 
 def test_orchestrator_rewrites_when_target_present(tmp_path):
     """The driver stays authoritative: it rewrites even an existing target."""
     target = tmp_path / "sa_0.yaml"
     target.write_text("stale: true\n")
-    assert _should_materialize_sub_analysis_yaml(target, True) is True
+    assert _should_materialize_analysis_yaml(target, True) is True
 
 
 def test_non_orchestrator_does_not_rewrite_existing_target(tmp_path):
@@ -33,7 +33,7 @@ def test_non_orchestrator_does_not_rewrite_existing_target(tmp_path):
     """
     target = tmp_path / "sa_0.yaml"
     target.write_text("present: true\n")
-    assert _should_materialize_sub_analysis_yaml(target, False) is False
+    assert _should_materialize_analysis_yaml(target, False) is False
 
 
 def test_non_orchestrator_still_writes_absent_target(tmp_path):
@@ -42,4 +42,4 @@ def test_non_orchestrator_still_writes_absent_target(tmp_path):
     Keeps the gate safe on any first-to-materialize path, so no consumer can
     encounter a missing sub-analysis config.
     """
-    assert _should_materialize_sub_analysis_yaml(tmp_path / "sa_0.yaml", False) is True
+    assert _should_materialize_analysis_yaml(tmp_path / "sa_0.yaml", False) is True

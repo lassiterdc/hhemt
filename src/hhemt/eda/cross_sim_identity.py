@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import xarray as xr
 
-from hhemt.analysis_validation import CheckResult, _iter_subanalyses_or_self
+from hhemt.analysis_validation import CheckResult, _iter_analyses_or_self
 from hhemt.eda._result import EdaResult
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
@@ -307,7 +307,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     ``details`` semantics branch on ``within_family``.
     """
     name = "Cross-sim byte-identity"
-    sub_items = list(_iter_subanalyses_or_self(analysis))
+    sub_items = list(_iter_analyses_or_self(analysis))
     # Non-sensitivity: _iter_subanalyses_or_self yields a single (None, analysis).
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return EdaResult(

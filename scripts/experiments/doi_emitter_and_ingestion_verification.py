@@ -499,7 +499,7 @@ def _read_combined_by_mode(analysis_obj, sim_dir: Path) -> dict:
         analysis_obj.__dict__.pop("_eda_mode_cache", None)
 
 
-def _compare_group_against_reference(sub_analysis, ref_sim_dir: Path) -> tuple[list, int, int]:
+def _compare_group_against_reference(analysis, ref_sim_dir: Path) -> tuple[list, int, int]:
     """REQ-1: per (mode, tracked-var, event) EXACT equality of the reproducer's fresh
     summaries vs the carried producer reference for the SAME group (== same arch/compute
     config). Reuses cross_sim_identity.compare_variable_exact + TRACKED_VARS. Perf modes
@@ -507,7 +507,7 @@ def _compare_group_against_reference(sub_analysis, ref_sim_dir: Path) -> tuple[l
     a list of human-readable mismatch strings (empty == bit-identical PASS)."""
     from hhemt.eda.cross_sim_identity import TRACKED_VARS, compare_variable_exact
 
-    ref = _read_combined_by_mode(sub_analysis, ref_sim_dir)
+    ref = _read_combined_by_mode(analysis, ref_sim_dir)
     if not ref:
         # NOTE: returns the full 3-tuple — the caller unpacks (problems, n_cmp, n_signal).
         # A bare-list early return here would raise ValueError at the call site and turn a
@@ -515,7 +515,7 @@ def _compare_group_against_reference(sub_analysis, ref_sim_dir: Path) -> tuple[l
         return ([f"reference_outputs summaries ABSENT under {ref_sim_dir} — nothing to compare "
                  f"(did the producer run analysis.test() before emit so _copy_reference_outputs "
                  f"could carry them?)"], 0, 0)
-    repro = _read_combined_by_mode(sub_analysis, sub_analysis.analysis_paths.simulation_directory)
+    repro = _read_combined_by_mode(analysis, analysis.analysis_paths.simulation_directory)
     import numpy as np
 
     problems: list = []

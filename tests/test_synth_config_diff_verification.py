@@ -102,7 +102,7 @@ def test_synth_master_compliant_equals_positional(synthetic_sensitivity_complete
     Agreement, NOT identity: the synth solver need not be bit-reproducible across the compute
     modes; what R3 guards is that the two predicates never DISAGREE on aligned data (a
     disagreement is what _config_diff.py's positional read would misreport)."""
-    master = Path(synthetic_sensitivity_completed.master_analysis.analysis_paths.analysis_dir)
+    master = Path(synthetic_sensitivity_completed.experiment.analysis_paths.analysis_dir)
     out_type = _detect_out_type(master)
     subs = sorted(d for d in (master / "subanalyses").glob("sa_*") if d.is_dir())
     assert len(subs) >= 2, "a sensitivity master must have >=2 sub-analyses"

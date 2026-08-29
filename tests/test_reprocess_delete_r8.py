@@ -149,7 +149,7 @@ def test_delete_reprocess_zarr_runner_noop_on_absent_zarr(tmp_path, slurm_env):
 # ---------------------------------------------------------------------------
 
 
-def _seed_subanalysis(sub_dir: Path) -> None:
+def _seed_analysis(sub_dir: Path) -> None:
     for eid in ("evt_1", "evt_2"):
         (sub_dir / "sims" / eid / "processed").mkdir(parents=True)
         (sub_dir / "sims" / eid / "out_triton").mkdir(parents=True)
@@ -157,11 +157,11 @@ def _seed_subanalysis(sub_dir: Path) -> None:
     (sub_dir / "analysis_datatree.zarr").mkdir()
 
 
-def test_subanalysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm_env):
+def test_analysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm_env):
     from hhemt import delete_subanalysis_reprocess_runner as runner
 
     sub_dir = tmp_path / "subanalyses" / "sa_3"
-    _seed_subanalysis(sub_dir)
+    _seed_analysis(sub_dir)
 
     rc = runner.main(
         ["--sa-id", "3", "--analysis-dir", str(sub_dir), "--delete-processed"]
@@ -178,13 +178,13 @@ def test_subanalysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm
     assert not sentinel.exists()
 
 
-def test_subanalysis_reprocess_runner_preserves_processed_without_flag(tmp_path, slurm_env):
+def test_analysis_reprocess_runner_preserves_processed_without_flag(tmp_path, slurm_env):
     """Without --delete-processed (start_with != 'process'), processed/ survives;
     only the sub's consolidated zarr is removed."""
     from hhemt import delete_subanalysis_reprocess_runner as runner
 
     sub_dir = tmp_path / "subanalyses" / "sa_3"
-    _seed_subanalysis(sub_dir)
+    _seed_analysis(sub_dir)
 
     rc = runner.main(["--sa-id", "3", "--analysis-dir", str(sub_dir)])
     assert rc == 0
@@ -192,11 +192,11 @@ def test_subanalysis_reprocess_runner_preserves_processed_without_flag(tmp_path,
     assert not (sub_dir / "analysis_datatree.zarr").exists(), "sub zarr removed"
 
 
-def test_subanalysis_reprocess_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
+def test_analysis_reprocess_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
     from hhemt import delete_subanalysis_reprocess_runner as runner
 
     sub_dir = tmp_path / "subanalyses" / "sa_3"
-    _seed_subanalysis(sub_dir)
+    _seed_analysis(sub_dir)
 
     with patch.object(runner, "fast_rmtree", side_effect=RuntimeError("boom")):
         with pytest.raises(RuntimeError, match="boom"):
@@ -306,7 +306,7 @@ def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivi
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_sensitivity_analysis
-    sub_ids = [str(k) for k in analysis.sensitivity.sub_analyses.keys()]
+    sub_ids = [str(k) for k in analysis.sensitivity.analyses.keys()]
     assert len(sub_ids) >= 1, "fixture must construct >=1 sub-analysis"
 
     builder = SnakemakeWorkflowBuilder(analysis)

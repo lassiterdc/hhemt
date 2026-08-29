@@ -94,7 +94,7 @@ def test_helper_returns_false_on_unchanged_repeat_call(synth_sa_two_row):
     case = synth_sa_two_row
     case.analysis.submit_workflow(mode="local", dry_run=True)
 
-    sub = case.analysis.sensitivity.sub_analyses["0"]
+    sub = case.analysis.sensitivity.analyses["0"]
     fp_path = _fingerprint_path(case, "0")
     result = case.analysis.sensitivity._write_sa_id_fingerprint(sub, fp_path)
     assert result is False, (

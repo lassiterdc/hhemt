@@ -139,7 +139,7 @@ def test_delete_scenario_runner_no_op_without_slurm_job_id(tmp_path, monkeypatch
     )
 
 
-def test_delete_subanalysis_runner_writes_and_cleans_sentinel_on_success(
+def test_delete_analysis_runner_writes_and_cleans_sentinel_on_success(
     tmp_path, slurm_env
 ):
     from hhemt import delete_subanalysis_runner as runner
@@ -158,7 +158,7 @@ def test_delete_subanalysis_runner_writes_and_cleans_sentinel_on_success(
     _assert_sentinel_written_and_cleaned(sentinel)
 
 
-def test_delete_subanalysis_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
+def test_delete_analysis_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
     from hhemt import delete_subanalysis_runner as runner
 
     analysis_dir = tmp_path / "analysis"

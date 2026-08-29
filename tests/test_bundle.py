@@ -180,7 +180,7 @@ def test_sensitivity_master_delegates_bundleable_identity_attrs(
     sens = synth_sensitivity_analysis.sensitivity  # the TRITONSWMM_sensitivity_analysis wrapper
     for attr in ("cfg_hpc_system", "case_manifest_yaml", "_case_manifest"):
         assert hasattr(sens, attr), f"sensitivity wrapper missing BundleableAnalysis attr {attr!r}"
-        assert getattr(sens, attr) is getattr(sens.master_analysis, attr), (
+        assert getattr(sens, attr) is getattr(sens.experiment, attr), (
             f"{attr!r} must delegate to the wrapped master analysis"
         )
     assert isinstance(sens, BundleableAnalysis)  # runtime_checkable — full attribute surface

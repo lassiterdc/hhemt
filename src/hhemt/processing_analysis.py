@@ -670,7 +670,7 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
         _TRITON_CHECKPOINT_READ_MARKER,
         _TRITON_COMPLETION_MARKER,
         _TRITON_REPLAY_MARKER,
-        _iter_subanalyses_or_self,
+        _iter_analyses_or_self,
     )
     from hhemt.run_simulation import model_logfile_for
 
@@ -684,7 +684,7 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
         cands = df[(df["model_type"] == "tritonswmm") & (n_res >= 1)]
         if len(cands) == 0:
             return
-        subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+        subs = {(str(k) if k is not None else None): v for k, v in _iter_analyses_or_self(analysis)}
         evidence: dict[str, dict[str, bool]] = {}
         for _, row in cands.iterrows():
             _sa = row.get("sa_id")

@@ -64,7 +64,7 @@ def test_parser_strict_true_raises_on_missing(tmp_path: Path) -> None:
     with pytest.raises(SnakefileParsingError):
         parse_sensitivity_analysis_workflow_model_allocations(
             snakefile_path=sf,
-            expected_subanalysis_ids=["0", "1", "2"],
+            expected_analysis_ids=["0", "1", "2"],
             strict=True,
         )
 
@@ -74,7 +74,7 @@ def test_parser_strict_false_tolerates_missing(tmp_path: Path) -> None:
     _write_minimal_sensitivity_snakefile(sf, ["0", "1"])
     allocs = parse_sensitivity_analysis_workflow_model_allocations(
         snakefile_path=sf,
-        expected_subanalysis_ids=["0", "1", "2"],
+        expected_analysis_ids=["0", "1", "2"],
         strict=False,
     )
     assert set(allocs.keys()) == {"0", "1"}  # missing "2" tolerated, not raised
@@ -84,7 +84,7 @@ def test_parser_strict_defaults_true(tmp_path: Path) -> None:
     sf = tmp_path / "Snakefile"
     _write_minimal_sensitivity_snakefile(sf, ["0"])
     with pytest.raises(SnakefileParsingError):
-        parse_sensitivity_analysis_workflow_model_allocations(snakefile_path=sf, expected_subanalysis_ids=["0", "1"])
+        parse_sensitivity_analysis_workflow_model_allocations(snakefile_path=sf, expected_analysis_ids=["0", "1"])
 
 
 # --- property-level tests (synth sensitivity builder fixture) --------------
@@ -114,7 +114,7 @@ def _generate_and_write_master_snakefile(analysis) -> Path:
 def test_df_snakemake_allocations_tolerates_missing_sa(synth_sensitivity_builder) -> None:
     analysis = synth_sensitivity_builder
     sf = _generate_and_write_master_snakefile(analysis)
-    all_sa_ids = sorted(analysis.sensitivity.sub_analyses.keys())
+    all_sa_ids = sorted(analysis.sensitivity.analyses.keys())
     drop = {all_sa_ids[-1]}  # remove the last sub-analysis's sim-rule block
     _delete_sim_rule_blocks(sf, drop)
 
@@ -127,7 +127,7 @@ def test_df_snakemake_allocations_tolerates_missing_sa(synth_sensitivity_builder
 def test_df_status_tolerates_and_annotates_missing_sa(synth_sensitivity_builder) -> None:
     analysis = synth_sensitivity_builder
     sf = _generate_and_write_master_snakefile(analysis)
-    all_sa_ids = sorted(analysis.sensitivity.sub_analyses.keys())
+    all_sa_ids = sorted(analysis.sensitivity.analyses.keys())
     drop = {all_sa_ids[-1]}
     _delete_sim_rule_blocks(sf, drop)
 

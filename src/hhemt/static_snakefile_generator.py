@@ -105,16 +105,16 @@ def _scope_analysis_for_sa(analysis: TRITONSWMM_analysis, sa_id: str) -> TRITONS
     """
     from hhemt.exceptions import ConfigurationError
 
-    sub_analyses = analysis.sensitivity.sub_analyses
-    if sa_id not in sub_analyses:
+    analyses = analysis.sensitivity.analyses
+    if sa_id not in analyses:
         raise ConfigurationError(
             field="static_config_id",
             message=(
                 f"plot_id carries sa.{sa_id} but it is not in the master's sub_analyses "
-                f"(available: {sorted(sub_analyses)})."
+                f"(available: {sorted(analyses)})."
             ),
         )
-    return sub_analyses[sa_id]
+    return analyses[sa_id]
 
 
 def _harvest_static_rule_specs(

@@ -780,7 +780,7 @@ def test_sensitivity_pending_recovery_per_sub_dir(synth_sensitivity_builder):
 
     # Every sub got per-(sa_id, event) _queued/ sentinels with the literal evt- token.
     any_written = False
-    for sa_id, sub in sens.sub_analyses.items():
+    for sa_id, sub in sens.analyses.items():
         qdir = sub.analysis_paths.analysis_dir / "_status" / "_queued"
         for q in qdir.glob("*.json"):
             any_written = True

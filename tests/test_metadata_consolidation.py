@@ -72,11 +72,11 @@ def test_sensitivity_consolidation_emits_master_and_sub_provenance(synth_sensiti
     master_tree = xr.open_datatree(master_zarr, engine="zarr", consolidated=False)
     assert "ro_crate_metadata" in master_tree.attrs
     json.loads(master_tree.attrs["ro_crate_metadata"])  # valid JSON-LD
-    master_sidecar = sensitivity.master_analysis.analysis_paths.analysis_dir / "ro-crate-metadata.json"
+    master_sidecar = sensitivity.experiment.analysis_paths.analysis_dir / "ro-crate-metadata.json"
     assert master_sidecar.exists()
 
     consolidated_subs = 0
-    for _sa_id, sub in sensitivity.sub_analyses.items():
+    for _sa_id, sub in sensitivity.analyses.items():
         sub_zarr = sub.analysis_paths.analysis_datatree_zarr
         if sub_zarr is not None and sub_zarr.exists():
             consolidated_subs += 1

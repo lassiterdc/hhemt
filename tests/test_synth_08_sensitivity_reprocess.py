@@ -55,7 +55,7 @@ def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sens
     reprocess(consolidate) PRESERVES the master datatree zarr (mtime unchanged —
     no rebuild, no DU restamp) and re-fires the report."""
     sa = synthetic_sensitivity_completed_isolated
-    mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
+    mdt = sa.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture should have materialized sensitivity_datatree.zarr"
     mtime_target = _zarr_mtime_target(mdt)
     mtime0 = mtime_target.stat().st_mtime
@@ -66,7 +66,7 @@ def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sens
         f"datatree zarr (mtime unchanged). target={mtime_target!r}."
     )
     # Report re-rendered against the preserved zarr.
-    master_dir = sa.master_analysis.analysis_paths.analysis_dir
+    master_dir = sa.experiment.analysis_paths.analysis_dir
     html = master_dir / "analysis_report.html"
     zf = master_dir / "analysis_report.zip"
     assert html.exists() or zf.exists(), (
@@ -78,7 +78,7 @@ def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(syn
     """Phase 2 regenerate_existing=True: sensitivity master reprocess(consolidate)
     deletes and rebuilds the master datatree zarr (mtime advances)."""
     sa = synthetic_sensitivity_completed_isolated
-    mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
+    mdt = sa.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture precondition: master zarr present"
     mtime_target = _zarr_mtime_target(mdt)
     mtime0 = mtime_target.stat().st_mtime
@@ -99,8 +99,8 @@ def test_sensitivity_reprocess_consolidate_subset_sa_ids(synthetic_sensitivity_c
     proves Snakemake completed the consolidate + master_consolidation chain).
     """
     sa = synthetic_sensitivity_completed_isolated
-    status_dir = sa.master_analysis.analysis_paths.analysis_dir / "_status"
-    all_sa_ids = [str(sid) for sid in sa.sub_analyses.keys()]
+    status_dir = sa.experiment.analysis_paths.analysis_dir / "_status"
+    all_sa_ids = [str(sid) for sid in sa.analyses.keys()]
     # Subset: first sub-analysis only.
     subset = all_sa_ids[:1]
     result = sa.reprocess(
@@ -124,7 +124,7 @@ def test_sensitivity_reprocess_proceeds_with_submitted_workers_no_orchestrator(
     sentinels are present in the master dir but no live ``_orchestrator/``
     DRIVER sentinel exists."""
     sa = synthetic_sensitivity_completed_isolated
-    master_dir = sa.master_analysis.analysis_paths.analysis_dir
+    master_dir = sa.experiment.analysis_paths.analysis_dir
     submitted = master_dir / "_status" / "_submitted"
     submitted.mkdir(parents=True, exist_ok=True)
     worker = submitted / "run_tritonswmm_evt-gatecheck.json"
@@ -152,7 +152,7 @@ def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(
     """
     sa = synthetic_sensitivity_completed_isolated
     builder = sa._workflow_builder
-    master_dir = sa.master_analysis.analysis_paths.analysis_dir
+    master_dir = sa.experiment.analysis_paths.analysis_dir
     osent.write_orchestrator_sentinel(master_dir, driver_id="live-driver", workflow_submission_mode="local", pid=4242)
     monkeypatch.setattr("subprocess.run", _fake_ps_run({4242}))
     try:
@@ -181,7 +181,7 @@ def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(
     the sensitivity reprocess path's ``skip_lock_check=True`` returns before
     the interactive prompt (``builtins.input`` raises if reached)."""
     sa = synthetic_sensitivity_completed_isolated
-    master_dir = sa.master_analysis.analysis_paths.analysis_dir
+    master_dir = sa.experiment.analysis_paths.analysis_dir
     monkeypatch.delenv(_NON_INTERACTIVE_LOCK_CLEAR_ENV, raising=False)
     locks_dir = master_dir / ".snakemake" / "locks"
     locks_dir.mkdir(parents=True, exist_ok=True)
@@ -213,16 +213,16 @@ def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensiti
     assert master_zarr is not None and master_zarr.exists(), "fixture precondition: master zarr present"
     sub_zarrs = [
         s.analysis_paths.analysis_datatree_zarr
-        for s in sa.sub_analyses.values()
+        for s in sa.analyses.values()
         if s.analysis_paths.analysis_datatree_zarr is not None
         and s.analysis_paths.analysis_datatree_zarr.exists()
     ]
     assert sub_zarrs, "fixture precondition: at least one sub-analysis zarr present"
     # Establish a known master-scope _du.json so the no-restamp assertion is
     # unconditional (R4): without this, an absent sentinel skips the mtime check.
-    master_analysis_dir = sa.master_analysis.analysis_paths.analysis_dir
-    compute_and_write_scope_sentinel(master_analysis_dir, scope="analysis")
-    master_du = master_analysis_dir / "_status" / "_du.json"
+    experiment_dir = sa.experiment.analysis_paths.analysis_dir
+    compute_and_write_scope_sentinel(experiment_dir, scope="analysis")
+    master_du = experiment_dir / "_status" / "_du.json"
     assert master_du.exists(), "precondition: master-scope _du.json materialized"
     master_du_mtime0 = master_du.stat().st_mtime_ns
 
@@ -252,7 +252,7 @@ def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed_isol
     mtime advances and ``result["success"]`` is True.
     """
     sa = synthetic_sensitivity_completed_isolated
-    mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
+    mdt = sa.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture precondition: master sensitivity_datatree.zarr present"
     mtime_target = _zarr_mtime_target(mdt)
     mtime0 = mtime_target.stat().st_mtime
@@ -309,11 +309,11 @@ def synth_partial_state_analysis(synthetic_sensitivity_completed_isolated):
     """A completed synth sensitivity analysis with ONE sub-analysis induced into
     the summary-absent partial state (its d_process/c_run flags left intact),
     for conditional-process-emit regression coverage (R5)."""
-    from tests.fixtures.test_case_builder import induce_incomplete_subanalysis
+    from tests.fixtures.test_case_builder import induce_incomplete_analysis
 
     sa = synthetic_sensitivity_completed_isolated
-    target_sa_id = sorted(sa.sub_analyses)[0]
-    induce_incomplete_subanalysis(sa, target_sa_id, delete_master_tree=True)
+    target_sa_id = sorted(sa.analyses)[0]
+    induce_incomplete_analysis(sa, target_sa_id, delete_master_tree=True)
     return sa, target_sa_id
 
 
@@ -329,7 +329,7 @@ def test_reprocess_conditional_emit_over_partial_state(synth_partial_state_analy
     assert result["success"], (
         f"conditional-emit reprocess over partial state must succeed; got {result.get('message')!r}"
     )
-    mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
+    mdt = sa.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "master sensitivity_datatree.zarr must be rebuilt after partial-state reprocess"
 
 
@@ -380,8 +380,8 @@ def _force_hpc(sa):
         "hpc_ensemble_partition": "standard",
         "hpc_setup_and_analysis_processing_partition": "standard",
     }
-    cfgs = [sa.master_analysis.cfg_analysis]
-    cfgs += [sub.cfg_analysis for sub in sa.sub_analyses.values()]
+    cfgs = [sa.experiment.cfg_analysis]
+    cfgs += [sub.cfg_analysis for sub in sa.analyses.values()]
     for cfg in cfgs:
         for field, value in forced.items():
             try:

@@ -83,12 +83,12 @@ def main() -> None:
                 f"--sa-id={args.sa_id} requires the analysis to be a sensitivity master, "
                 f"but toggle_sensitivity_analysis is False on {args.analysis_config}."
             )
-        sub_analyses = analysis.sensitivity.sub_analyses
-        if args.sa_id not in sub_analyses:
+        analyses = analysis.sensitivity.analyses
+        if args.sa_id not in analyses:
             raise ValueError(
-                f"--sa-id={args.sa_id!r} not found in master's sub_analyses; available: {sorted(sub_analyses.keys())}"
+                f"--sa-id={args.sa_id!r} not found in master's sub_analyses; available: {sorted(analyses.keys())}"
             )
-        target_analysis = sub_analyses[args.sa_id]
+        target_analysis = analyses[args.sa_id]
 
     module = importlib.import_module(f"hhemt.report_renderers.{args.renderer}")
     kwargs: dict = {}

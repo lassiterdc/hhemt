@@ -622,9 +622,9 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     from tests.fixtures.test_case_catalog import Local_TestCases
 
     case = Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(start_from_scratch=False)
-    master_analysis = case.analysis
-    sensitivity = master_analysis.sensitivity
-    analysis_dir = master_analysis.analysis_paths.analysis_dir
+    experiment = case.analysis
+    sensitivity = experiment.sensitivity
+    analysis_dir = experiment.analysis_paths.analysis_dir
 
     # Clear stale lock + incomplete subtrees on both the run and reprocess
     # working dirs so a leftover state from an interrupted prior run does
@@ -675,7 +675,7 @@ def synthetic_sensitivity_completed_isolated(synthetic_sensitivity_completed, tm
     reprocess paths re-derive under tmp_path."""
     from tests._failing_fixture_helpers import clone_analysis_to_tmp
 
-    master_clone = clone_analysis_to_tmp(synthetic_sensitivity_completed.master_analysis, tmp_path)
+    master_clone = clone_analysis_to_tmp(synthetic_sensitivity_completed.experiment, tmp_path)
     return master_clone.sensitivity
 
 

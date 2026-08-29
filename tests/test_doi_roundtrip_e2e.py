@@ -238,8 +238,8 @@ def _assert_reconstituted_run(exp, prebuilt_software_dir: Path) -> None:
     )
     result = exp.analysis.test(execution_mode="local", verbose=False)
     assert (exp.bundle_root / "_test").exists(), "no _test subtree materialized"
-    assert result.subanalyses, "analysis.test() produced no _test sub-analyses"
-    for sub in result.subanalyses:
+    assert result.analyses, "analysis.test() produced no _test sub-analyses"
+    for sub in result.analyses:
         tst_ut.assert_analysis_workflow_completed_successfully(sub.analysis)
 
 

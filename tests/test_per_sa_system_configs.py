@@ -70,7 +70,7 @@ def _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, tuple
         # provable no-op, so the dedup assertions below are unchanged in meaning.
         execution_environment="native",
     )
-    instance.master_analysis = SimpleNamespace(
+    instance.experiment = SimpleNamespace(
         cfg_analysis=master_cfg,
         analysis_paths=SimpleNamespace(analysis_dir=tmp_path),
         # hpc-system-config layer: passed to resolve_gpu_target / threaded to subs.
@@ -140,7 +140,7 @@ def test_build_unique_system_targets_dedups_by_compile_tuple(monkeypatch, tmp_pa
 
     assert len(targets) == 2
     # Find the target containing sa_ids 0+1
-    by_ids = {tuple(t.sub_analysis_ids): t for t in targets}
+    by_ids = {tuple(t.analysis_ids): t for t in targets}
     assert ("0", "1") in by_ids
     assert ("2",) in by_ids
     collapsed = by_ids[("0", "1")]
@@ -176,7 +176,7 @@ def test_build_unique_system_targets_falls_back_to_master_on_null(monkeypatch, t
     targets = instance._build_unique_system_targets(df)
 
     assert len(targets) == 1
-    assert targets[0].sub_analysis_ids == ["0", "1"]
+    assert targets[0].analysis_ids == ["0", "1"]
 
 
 def test_build_unique_system_targets_raises_on_missing_yaml(monkeypatch, tmp_path):
@@ -218,15 +218,15 @@ def test_backward_compat_no_system_config_yaml_column(monkeypatch):
             target_id=0,
             system_config_yaml=master_system.system_config_yaml,
             system=master_system,
-            sub_analysis_ids=list(df_setup_full.index.astype(str)),
+            analysis_ids=list(df_setup_full.index.astype(str)),
         )
     ]
     assert len(fallback_targets) == 1
-    assert fallback_targets[0].sub_analysis_ids == ["0", "1", "2"]
+    assert fallback_targets[0].analysis_ids == ["0", "1", "2"]
     assert fallback_targets[0].system is master_system
 
 
-def test_create_sub_analyses_assigns_system_per_target(monkeypatch, tmp_path):
+def test_create_analyses_assigns_system_per_target(monkeypatch, tmp_path):
     """sub_analyses with shared target share `_system`; different target has its own."""
     yaml_a = (tmp_path / "system_A.yaml").resolve()
     yaml_c = (tmp_path / "system_C.yaml").resolve()
@@ -244,7 +244,7 @@ def test_create_sub_analyses_assigns_system_per_target(monkeypatch, tmp_path):
 
     sa_id_to_system: dict = {}
     for t in targets:
-        for sa_id in t.sub_analysis_ids:
+        for sa_id in t.analysis_ids:
             sa_id_to_system[sa_id] = t.system
 
     assert sa_id_to_system["0"] is sa_id_to_system["1"]
@@ -262,7 +262,7 @@ def test_compile_and_preprocess_all_targets_iterates_unique_targets():
         UniqueSystemTarget(0, Path("/fake/A.yaml"), sys_a, ["0", "1"]),
         UniqueSystemTarget(1, Path("/fake/C.yaml"), sys_c, ["2"]),
     ]
-    instance._update_master_analysis_log = MagicMock()
+    instance._update_experiment_log = MagicMock()
 
     instance.compile_and_preprocess_all_targets(
         overwrite_system_inputs=True,
@@ -282,7 +282,7 @@ def test_compile_and_preprocess_all_targets_iterates_unique_targets():
     sys_c.compile_TRITON_SWMM.assert_called_once_with(
         recompile_if_already_done_successfully=False, verbose=False
     )
-    instance._update_master_analysis_log.assert_called_once()
+    instance._update_experiment_log.assert_called_once()
 
 
 def test_compile_TRITON_SWMM_for_sensitivity_analysis_iterates_unique_targets():
@@ -295,7 +295,7 @@ def test_compile_TRITON_SWMM_for_sensitivity_analysis_iterates_unique_targets():
         UniqueSystemTarget(0, Path("/fake/A.yaml"), sys_a, ["0", "1"]),
         UniqueSystemTarget(1, Path("/fake/C.yaml"), sys_c, ["2"]),
     ]
-    instance._update_master_analysis_log = MagicMock()
+    instance._update_experiment_log = MagicMock()
 
     instance.compile_TRITON_SWMM_for_sensitivity_analysis(
         verbose=False, recompile_if_already_done_successfully=True
@@ -308,7 +308,7 @@ def test_compile_TRITON_SWMM_for_sensitivity_analysis_iterates_unique_targets():
         recompile_if_already_done_successfully=True, verbose=False
     )
     instance._system.compile_TRITON_SWMM.assert_not_called()
-    instance._update_master_analysis_log.assert_called_once()
+    instance._update_experiment_log.assert_called_once()
 
 
 def test_attributes_varied_filters_system_config_yaml():
@@ -388,7 +388,7 @@ def test_phase3_sa_id_to_target_id_map_reverses_target_membership():
     sa_id_to_target_id = {
         str(sa_id): target.target_id
         for target in targets
-        for sa_id in target.sub_analysis_ids
+        for sa_id in target.analysis_ids
     }
     assert sa_id_to_target_id == {"0": 0, "1": 0, "2": 1}
 

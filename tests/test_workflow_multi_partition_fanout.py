@@ -52,7 +52,7 @@ def test_multi_partition_fanout_two_targets_distinct_emission(
 
     # Force one GPU per sub so the GPU directive renders (the synth CSV defaults
     # n_gpus=0; set post-construction to bypass the MPI-only-mode validator).
-    for sub in sensitivity.sub_analyses.values():
+    for sub in sensitivity.analyses.values():
         sub.cfg_analysis.n_gpus = 1
 
     master = sensitivity._workflow_builder.generate_master_snakefile_content(which="both", compression_level=5)
@@ -69,7 +69,7 @@ def test_multi_partition_fanout_two_targets_distinct_emission(
 
     # (c) Each sub's sim rule emits its partition-derived GPU hardware.
     seen_hw = set()
-    for sa_id, sub in sensitivity.sub_analyses.items():
+    for sa_id, sub in sensitivity.analyses.items():
         partition = sub.cfg_analysis.hpc_ensemble_partition
         gpu_hw = resolve_gpu_target(sub.cfg_hpc_system, partition)[0]
         assert gpu_hw in {"a6000", "a100"}, (sa_id, partition, gpu_hw)

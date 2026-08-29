@@ -157,7 +157,7 @@ def _capture_reads() -> Iterator[set[str]]:
         _capture_buffer.reset(token)
 
 
-def _declared_set_from_manifest(output_path: Path, master_analysis_dir: Path) -> set[Path]:
+def _declared_set_from_manifest(output_path: Path, experiment_dir: Path) -> set[Path]:
     """Reconstruct the declared source set for ONE rendered figure.
 
     Mirrors harvest_source_paths' rebasing (_figure_emission.py:639-668) for a
@@ -169,7 +169,7 @@ def _declared_set_from_manifest(output_path: Path, master_analysis_dir: Path) ->
     """
     manifest_path = output_path.parent / f"{output_path.stem}.manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    master_root = master_analysis_dir.resolve()
+    master_root = experiment_dir.resolve()
     # Detect the sensitivity per-sub position to pick the emit-time root.
     emit_dir = master_root
     try:

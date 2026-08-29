@@ -1517,11 +1517,11 @@ def _print_delete_dry_run_summary(analysis) -> None:
     console.print(f"[bold]Delete preview for[/bold] {analysis_dir}")
     total = 0
     if analysis.cfg_analysis.toggle_sensitivity_analysis:
-        subanalyses_dir = analysis_dir / "subanalyses"
+        analyses_dir = analysis_dir / "subanalyses"
         sa_ids = list(analysis.sensitivity.df_setup.index.astype(str))
         console.print(f"  Sensitivity master with {len(sa_ids)} sub-analyses:")
         for sa_id in sa_ids:
-            sa_dir = subanalyses_dir / f"sa_{sa_id}"
+            sa_dir = analyses_dir / f"sa_{sa_id}"
             size = _du_via_sentinel(sa_dir)[0]
             total += size
             console.print(f"    sa_{sa_id}: {_fmt(size)}  ({sa_dir})")
@@ -2142,7 +2142,7 @@ def bundle_command(
     from hhemt.bundle import emit_bundle
 
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        target = analysis.sensitivity.master_analysis
+        target = analysis.sensitivity.experiment
     else:
         target = analysis
     bundle_path = emit_bundle(

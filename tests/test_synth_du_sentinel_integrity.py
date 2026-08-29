@@ -38,7 +38,7 @@ def test_all_du_sentinels_walk_errors_zero(synthetic_sensitivity_completed):
     # scenario-scope sentinels (no per-event consolidate rule on the sensitivity
     # path), so the expected set is {sub_analysis, analysis}, not all three.
     sensitivity = synthetic_sensitivity_completed
-    analysis_dir = sensitivity.master_analysis.analysis_paths.analysis_dir
+    analysis_dir = sensitivity.experiment.analysis_paths.analysis_dir
     sentinels = list(analysis_dir.rglob("_du.json"))
     assert sentinels, "no _du.json sentinels found on a completed sensitivity run"
     scopes_seen = set()
@@ -66,7 +66,7 @@ def test_delete_dry_run_no_fallback_walk_warning(synthetic_sensitivity_completed
     from hhemt.cli import _print_delete_dry_run_summary
 
     sensitivity = synthetic_sensitivity_completed
-    _print_delete_dry_run_summary(sensitivity.master_analysis)
+    _print_delete_dry_run_summary(sensitivity.experiment)
     captured = capsys.readouterr()
     assert "DU sentinel absent" not in captured.err, (
         "delete dry-run fell back to a tree walk -> a parent _du.json is missing/stale"

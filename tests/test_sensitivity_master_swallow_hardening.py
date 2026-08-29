@@ -29,7 +29,7 @@ def _break_indexer(monkeypatch, builder) -> None:
     def _boom(*_args, **_kwargs):
         raise RuntimeError("injected indexer failure")
 
-    for sub in builder.sensitivity_analysis.sub_analyses.values():
+    for sub in builder.sensitivity_analysis.analyses.values():
         monkeypatch.setattr(sub, "_retrieve_weather_indexer_using_integer_index", _boom)
 
 
@@ -37,7 +37,7 @@ def test_enumerate_sa_event_pairs_happy_path(synth_sensitivity_builder) -> None:
     """No failure, no filter: every sub-analysis/event pair is enumerated (the
     byte-identical behavior the two generators relied on before extraction)."""
     builder = _builder(synth_sensitivity_builder)
-    n_events = sum(len(sub.df_sims.index) for sub in builder.sensitivity_analysis.sub_analyses.values())
+    n_events = sum(len(sub.df_sims.index) for sub in builder.sensitivity_analysis.analyses.values())
     sa, evt = builder._enumerate_sa_event_pairs(context_label="sensitivity master")
     assert n_events > 0  # fixture sanity
     assert len(sa) == len(evt) == n_events

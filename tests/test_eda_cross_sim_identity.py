@@ -136,7 +136,7 @@ def test_sensitivity_master_identical_passes(synthetic_sensitivity_completed):
     empirical precondition, if the synth solver is NOT bit-reproducible across
     the 4 compute modes this assertion is re-scoped to 'check ran + well-formed
     verdict/artifact' (plan Empirical Testing decision rule)."""
-    analysis = synthetic_sensitivity_completed.master_analysis
+    analysis = synthetic_sensitivity_completed.experiment
     result = check_cross_sim_identity(analysis)
     assert result.skipped is False
     assert result.verdict is not None
@@ -177,7 +177,7 @@ def test_sensitivity_master_across_family_characterizes(synthetic_sensitivity_co
     the contribution). The persisted artifact + verdict JSON are still written
     under {analysis_dir}/eda/, and the verdict's name/contract is unchanged — only
     passed/summary/details semantics branch on within_family."""
-    analysis = synthetic_sensitivity_completed.master_analysis
+    analysis = synthetic_sensitivity_completed.experiment
     result = check_cross_sim_identity(analysis, within_family=False)
     assert result.skipped is False
     assert result.verdict is not None
@@ -199,7 +199,7 @@ def test_verdict_surfaces_in_validate_analysis(synthetic_sensitivity_completed):
     """A persisted EDA verdict is merged into validate_analysis()'s ValidationReport."""
     from hhemt.analysis_validation import validate_analysis
 
-    analysis = synthetic_sensitivity_completed.master_analysis
+    analysis = synthetic_sensitivity_completed.experiment
     check_cross_sim_identity(analysis)
     report = validate_analysis(analysis)
     eda_checks = [c for c in report.checks if c.name == "Cross-sim byte-identity"]
@@ -218,7 +218,7 @@ def test_identity_group_partition_persisted(synthetic_sensitivity_completed):
     reference_group attr. Two subs share a label iff byte-identical on the config-diff
     variables at every event -- so on a bit-identical master (verdict passed) every sub +
     the reference collapse to ONE group."""
-    analysis = synthetic_sensitivity_completed.master_analysis
+    analysis = synthetic_sensitivity_completed.experiment
     result = check_cross_sim_identity(analysis)
     ds = xr.open_zarr(result.artifact_path, consolidated=False)
 
@@ -438,7 +438,7 @@ class _MasterCfg:
 
 class _Sens:
     def __init__(self, subs):
-        self.sub_analyses = subs
+        self.analyses = subs
 
 
 class _Master:
