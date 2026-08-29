@@ -24,7 +24,7 @@ open an issue to discuss before submitting.
 ## Development setup
 
 1. Fork and clone the repository.
-2. Create the supported conda environment — see the "Installation" section of
+2. Create the supported conda environment. See the "Installation" section of
    `README.md` for the four commands and for why both `--no-deps` flags are
    required. A plain `pip install -e .` inside a conda environment displaces
    conda-resolved packages such as `numpy` and `pandas`.
@@ -60,10 +60,10 @@ mkdocs serve
 ## Development Principles
 
 ### Raise questions rather than make assumptions
-When you encounter uncertainty or discrepancies — especially when implementing a pre-written plan that may have stale components — err on the side of caution and ask the developer how to proceed.
+When you encounter uncertainty or discrepancies (especially when implementing a pre-written plan that may have stale components), err on the side of caution and ask the developer how to proceed.
 
 ### Plan, then implement
-Follow a plan-then-implement strategy. If implementing a plan uncovers a need to change it or its success criteria — including deviations from the planned approach, scope changes, or new risks — raise the discrepancy before continuing rather than adapting silently.
+Follow a plan-then-implement strategy. If implementing a plan uncovers a need to change it or its success criteria (including deviations from the planned approach, scope changes, or new risks), raise the discrepancy before continuing rather than adapting silently.
 
 ### Let's do things right, even if it takes more effort
 - Always be on the lookout for better ways of achieving development goals and raise these ideas
@@ -83,11 +83,11 @@ When refactoring:
 
 ### Most function arguments should not have defaults
 
-Default function arguments can lead to difficult-to-debug unexpected behavior. Avoid default values unless a default is almost always the correct choice (e.g., `verbose=True`). This is especially true for configuration fields that users populate — the user should make an intentional choice about every input.
+Default function arguments can lead to difficult-to-debug unexpected behavior. Avoid default values unless a default is almost always the correct choice (e.g., `verbose=True`). This is especially true for configuration fields that users populate. The user should make an intentional choice about every input.
 
 ### Avoid aliases
 
-Do not create aliases for functions, classes, or variables. An alias is a second name for the same thing — it creates confusion about which name is authoritative and is a form of backward-compatibility shim. If something needs renaming, rename it and update all call sites.
+Do not create aliases for functions, classes, or variables. An alias is a second name for the same thing. It creates confusion about which name is authoritative and is a form of backward-compatibility shim. If something needs renaming, rename it and update all call sites.
 
 ### No cruft/all variables, imports, and function arguments must be used
 
@@ -105,7 +105,7 @@ After investigation and with approval from the developer, remove unused code, de
 
 ### Functions have docstrings, type hints, and type checking
 
-Apply this standard to code you write or modify. For existing code in touched scripts, apply organically — accumulate adherence naturally as scripts are touched rather than doing a global retrofit pass.
+Apply this standard to code you write or modify. For existing code in touched scripts, apply organically (accumulate adherence naturally as scripts are touched rather than doing a global retrofit pass).
 
 ### Fail-fast
 
@@ -127,15 +127,16 @@ System-specific information belongs in user-defined configuration files. Avoid h
 
 ### Track project-agnostic utility candidates
 
-When writing utility functions that could plausibly belong in a shared library (e.g., general-purpose file I/O helpers, generic array operations), note them in a dedicated tracking document. Do not extract them immediately — track them so they can be evaluated together.
+When writing utility functions that could plausibly belong in a shared library (e.g., general-purpose file I/O helpers, generic array operations), note them in a dedicated tracking document. Do not extract them immediately. Track them so they can be evaluated together.
 
 ---
 
 ## Repository map
 
-- `CONTRIBUTING.md` — this file: contribution process and working norms
-- `architecture.md` — project structure, key modules, and data flow
-- `docs/` — source for the published documentation site (built with MkDocs)
+- `docs/contributing.md`: this file, the contributor guide.
+- `CONTRIBUTING.md`: a short stub at the repository root that points here.
+- `architecture.md`: project structure, key modules, and data flow.
+- `docs/`: source for the published documentation site, built with MkDocs.
 
 ---
 
