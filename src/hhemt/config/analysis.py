@@ -388,6 +388,25 @@ class analysis_config(cfgBaseModel):
             "slower nodes."
         ),
     )
+
+    hpc_runtime_min_for_sim_output_processing: int = Field(
+        default=240,
+        gt=0,
+        description=(
+            "Time allocation (in minutes) for the per-scenario output-processing SLURM "
+            "rule — the one whose MEMORY is set by "
+            "hpc_mem_allocation_for_sim_output_processing_mb. Default 240 is the value "
+            "the sensitivity paths already used; the multisim path previously hardcoded "
+            "120 and this field retires that 2x self-disagreement. Raise it for "
+            "fine-grid or long simulations: processing time scales with output VOLUME "
+            "(timesteps x grid cells x model count), which is why this is a plain "
+            "number rather than a value derived from the memory allocation — no "
+            "physical relation ties walltime to job RAM, and inventing one would state "
+            "an assumption as a computed value. NOT hpc_runtime_min_for_setup (a "
+            "DIFFERENT rule — DEM processing and compilation) and NOT any process_* "
+            "knob (those are in-runner byte/count budgets, not SLURM allocations)."
+        ),
+    )
     hpc_max_wait_for_inflight_min: int = Field(
         10080,
         ge=60,

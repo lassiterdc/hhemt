@@ -2754,7 +2754,7 @@ rule consolidate_scenario:
         # Output processing: I/O bound (1-2 CPUs for compression)
         process_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-            runtime_min=120,
+            runtime_min=self.cfg_analysis.hpc_runtime_min_for_sim_output_processing,
             mem_mb=self.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
             nodes=1,
             tasks=1,
@@ -8435,7 +8435,7 @@ onerror:
 
             process_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=240,
+                runtime_min=sub_analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing,
                 mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                 nodes=1,
                 tasks=1,
@@ -9076,7 +9076,7 @@ onerror:
             # column convention.
             process_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=240,
+                runtime_min=sub_analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing,
                 mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                 nodes=1,
                 tasks=1,
