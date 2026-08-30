@@ -138,7 +138,7 @@ class Bundle:
                 f"BUNDLE_SCHEMA_VERSION={BUNDLE_SCHEMA_VERSION}. "
                 f"An older bundle fails against a newer toolkit in one of exactly "
                 f"two ways, and WHICH one depends on the bump. Either the cfg "
-                f"CARRIES a key the model has since retired, which extra=\"forbid\" "
+                f'CARRIES a key the model has since retired, which extra="forbid" '
                 f"rejects; or it LACKS a key that has since become required. "
                 f"Additive OPTIONAL fields break nothing -- a cfg missing them "
                 f"takes their defaults -- so a version mismatch is not by itself "
@@ -304,9 +304,7 @@ class Bundle:
         # so test code can monkey-patch for backend-override coverage.
         return self._cfg_analysis.report.interactive.static_backend
 
-    def regenerate_report(
-        self, *, format: Literal["html", "zip"] = "zip", declare_stale_plots: bool = False
-    ) -> Path:
+    def regenerate_report(self, *, format: Literal["html", "zip"] = "zip", declare_stale_plots: bool = False) -> Path:
         """Regenerate the analysis report from bundled data.
 
         Phase 2 wires (a) the regeneration-scoped Snakefile generator
