@@ -128,6 +128,53 @@ def load_bundle(bundle_dir: str | Path) -> ExperimentBundle:
         raise ConfigurationError(field="experiment.yaml", message=f"schema violation: {e}", config_path=manifest) from e
 
 
+def resolve_def_recipe(bundle: ExperimentBundle, bundle_dir: str | Path) -> Path:
+    """Resolve ``bundle.container.def_recipe`` to a concrete path, or raise.
+
+    [Q161] ruled BUNDLE-relative the default and asked for a shared-container arm.
+    Both live in ONE field because the VALUE declares its own root: a ``${VAR}``
+    prefix means explicitly-rooted, anything else means bundle-relative. There is
+    therefore no resolution ORDER and no cwd fallback -- the two arms cannot
+    disagree about a value, because each value selects exactly one of them.
+
+    Raises ConfigurationError when the bundle declares no container, when a
+    ``${VAR}`` does not resolve, or when the resolved recipe is not on disk.
+    """
+    if bundle.container is None:
+        raise ConfigurationError(
+            field="container",
+            message="bundle declares no container; there is no def_recipe to resolve.",
+            config_path=Path(bundle_dir) / "experiment.yaml",
+        )
+    raw = bundle.container.def_recipe
+    if raw.startswith("${"):
+        expanded = os.path.expandvars(raw)
+        if "${" in expanded:
+            unresolved = sorted({"${" + tok.split("}")[0] + "}" for tok in expanded.split("${")[1:]})
+            raise ConfigurationError(
+                field="container.def_recipe",
+                message=(
+                    f"unresolved placeholder(s) {unresolved} in def_recipe {raw!r}. Export the "
+                    "referenced environment variable(s) before running."
+                ),
+                config_path=Path(bundle_dir) / "experiment.yaml",
+            )
+        resolved = Path(expanded)
+    else:
+        resolved = Path(bundle_dir) / raw
+    if not resolved.is_file():
+        raise ConfigurationError(
+            field="container.def_recipe",
+            message=(
+                f"def_recipe {raw!r} resolves to {resolved}, which does not exist. A bare "
+                "relative value is BUNDLE-relative; use a ${VAR}-rooted value for a recipe "
+                "shared across experiments."
+            ),
+            config_path=Path(bundle_dir) / "experiment.yaml",
+        )
+    return resolved
+
+
 def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = None) -> Path:
     """Expand ``${VAR}`` env references in a config file, materialize a resolved copy, return its path.
 

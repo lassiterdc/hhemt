@@ -119,11 +119,39 @@ class ContainerRef(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    def_recipe: str = Field(description="Repo-relative .def path, e.g. 'containers/uva-cuda.def'.")
+    def_recipe: str = Field(
+        description=(
+            "BUNDLE-relative .def path (e.g. 'containers/uva-cuda.def'), or a "
+            "${VAR}-rooted path (e.g. '${HHEMT_CONTAINERS}/uva-cuda.def') when several "
+            "experiments share one recipe. The VALUE declares its own root, so there is "
+            "no resolution order and no cwd fallback. An operator-rooted value -- "
+            "absolute, ~-rooted, or unbraced $VAR -- declares neither and is rejected."
+        )
+    )
     sha256_source: Literal["ro-crate"] = Field(
         default="ro-crate",
         description="Where the authoritative SIF digest lives. Only 'ro-crate' is valid.",
     )
+
+    # The two roots a value may declare. `${` is checked FIRST and exempts the shared
+    # arm from the `$` rejection below -- that exemption is what makes the first clause
+    # of the guard load-bearing rather than dead.
+    _OPERATOR_ROOTED_SIGILS = ("/", "~", "$")
+
+    @model_validator(mode="after")
+    def _check_def_recipe_rooting(self) -> ContainerRef:
+        # STRICTER than DatasetRef._check_resolvable, which rejects only a "/home/"
+        # prefix: a "/scratch/..." value passes there and fails here. Same zero-user-info
+        # ground, wider net. SHAPE only -- existence needs a bundle_dir this model does
+        # not have, and is checked by resolve_def_recipe.
+        if not self.def_recipe.startswith("${") and self.def_recipe.startswith(self._OPERATOR_ROOTED_SIGILS):
+            raise ValueError(
+                f"ContainerRef: def_recipe must declare its own root -- BUNDLE-relative "
+                f"(e.g. 'containers/uva-cuda.def') or ${{VAR}}-rooted (e.g. "
+                f"'${{HHEMT_CONTAINERS}}/uva-cuda.def'). Got {self.def_recipe!r}, which is "
+                "operator-rooted and therefore unreproducible for a third party."
+            )
+        return self
 
 
 class ExperimentBundle(BaseModel):
