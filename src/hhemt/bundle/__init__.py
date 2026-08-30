@@ -157,6 +157,32 @@ class Bundle:
             raise ValueError(
                 f"bundle_root_invariants in {manifest_path} must be a dict, got {type(invariants).__name__}."
             )
+        # Consume-side toolkit-identity comparison. The producing sha is already in the
+        # manifest (emit writes it at bundle/_emit.py:1413); before this, nothing on the
+        # consume side read it back, so a re-render months later on a drifted checkout
+        # was silent. WARN, never raise: a drifted reader is a caveat on the output, not
+        # a reason to refuse a bundle that opens fine -- and the in-repo fixtures carry
+        # the literal non-sha sentinel "fixture", which the looks_like_sha guard skips.
+        # Compare by PREFIX in BOTH directions: a manifest abbreviation of a different
+        # length is the same commit, and a bare != reports that as divergence.
+        import warnings
+
+        from hhemt.container_labels import looks_like_sha
+
+        _bundle_sha = manifest.get("toolkit_git_sha")
+        _reader_sha = _get_toolkit_git_sha(strict=False)
+        if (
+            looks_like_sha(_bundle_sha)
+            and looks_like_sha(_reader_sha)
+            and not _reader_sha.startswith(_bundle_sha)
+            and not _bundle_sha.startswith(_reader_sha)
+        ):
+            warnings.warn(
+                f"Bundle {root} was produced by hhemt {_bundle_sha}, but the toolkit "
+                f"reading it is {_reader_sha}. A re-render may differ from the bundled "
+                f"figures. This is a provenance caveat, not a failure.",
+                stacklevel=2,
+            )
         # Load and Pydantic-validate the bundle's cfg_analysis.yaml at
         # construction time so downstream attribute access
         # (_read_static_backend reading
