@@ -175,6 +175,58 @@ def resolve_def_recipe(bundle: ExperimentBundle, bundle_dir: str | Path) -> Path
     return resolved
 
 
+def resolve_container_defs(
+    experiment_config: str | Path | None,
+    explicit_defs: list[Path] | None,
+) -> list[Path]:
+    """Reconcile the descriptor's container recipe against an explicit ``--container-defs``.
+
+    Sibling of ``resolve_overrides``/``_confirm_override_gate``, which already reconcile a
+    CLI argument against the descriptor in this module and REFUSE rather than silently
+    prefer either source. Same contract here, for the same reason: silently preferring one
+    side is how a bundle ends up carrying a recipe nobody chose, and a bundle is the
+    ten-year reproducibility artifact.
+
+    - No descriptor -> the explicit list passes through UNCHANGED, so ``emit_bundle``'s
+      hard refusal on a container-mode analysis with no recipe is preserved verbatim.
+    - Descriptor, no flag -> the descriptor supplies.
+    - Descriptor + agreeing flag -> accepted.
+    - Descriptor + disagreeing flag -> ``ConfigurationError`` naming BOTH values.
+
+    SINGLE-ARCH BY CONSTRUCTION, and deliberately so. ``ContainerRef.def_recipe`` is
+    scalar, so a descriptor-driven bundle carries exactly one recipe. That matches the
+    estate's own design -- every live hpc_system_config records `sif_paths_by_arch
+    intentionally EMPTY: this bundle pins ONE partition and therefore one gpu_hardware`
+    -- and all nine live descriptors declare exactly one def_recipe. ADR-19 multi-SIF
+    (one .def per arch) remains available on the FLAG path: omit ``--experiment-config``
+    and pass ``--container-defs`` per arch. The remedy below branches on that, because a
+    multi-def operator cannot `correct the descriptor` -- the schema cannot express them.
+    """
+    if experiment_config is None:
+        return list(explicit_defs or [])
+    resolved = resolve_def_recipe(load_bundle(experiment_config), experiment_config)
+    if explicit_defs and [Path(p).resolve() for p in explicit_defs] != [resolved.resolve()]:
+        if len(explicit_defs) > 1:
+            _remedy = (
+                "This looks like an ADR-19 multi-SIF (one .def per arch) emit, which a "
+                "descriptor cannot express: container.def_recipe is scalar. Omit "
+                "--experiment-config and pass --container-defs per arch."
+            )
+        else:
+            _remedy = "Drop the flag to use the descriptor, or correct the descriptor."
+        raise ConfigurationError(
+            field="container_defs",
+            message=(
+                f"--container-defs {[str(p) for p in explicit_defs]} disagrees with the "
+                f"experiment descriptor's container.def_recipe, which resolves to "
+                f"{resolved}. Refusing rather than silently preferring either source. "
+                f"{_remedy}"
+            ),
+            config_path=Path(experiment_config) / "experiment.yaml",
+        )
+    return [resolved]
+
+
 def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = None) -> Path:
     """Expand ``${VAR}`` env references in a config file, materialize a resolved copy, return its path.
 

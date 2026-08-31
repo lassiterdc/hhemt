@@ -2141,6 +2141,20 @@ def bundle_command(
         is_eager=True,
         help="Print the excludable-input catalog and exit (no configs required).",
     ),
+    experiment_config: Path = typer.Option(
+        None,
+        "--experiment-config",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help=(
+            "Optional experiment bundle DIRECTORY (containing experiment.yaml). When "
+            "given, container.def_recipe supplies --container-defs; supplying both is "
+            "refused unless they agree. Single-arch: for ADR-19 multi-SIF, omit this "
+            "and pass --container-defs per arch."
+        ),
+    ),
 ) -> None:
     """Emit a portable render bundle for local renderer iteration.
 
@@ -2169,6 +2183,9 @@ def bundle_command(
         target = analysis.sensitivity.master_analysis
     else:
         target = analysis
+    from hhemt.experiment_bundle import resolve_container_defs
+
+    container_defs = resolve_container_defs(experiment_config, container_defs)
     bundle_path = emit_bundle(
         target, output, exclude_config=exclude_config, container_defs=container_defs
     )
