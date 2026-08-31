@@ -760,6 +760,25 @@ def renderer_active(builder_key: str, disabled: list[str] | None) -> bool:
     """
     return builder_key not in (disabled or ())
 
+
+def set_carries(reporting_set: ReportingSet, builder_key: str) -> bool:
+    """Return True when ``reporting_set`` carries a selection for ``builder_key``.
+
+    The membership half of the parity contract ``renderer_active`` states above: a
+    ``rule all`` entry gated only on ``renderer_active`` asks whether a renderer was
+    DISABLED and never whether the active set carries it at all, so a set that omits
+    the renderer still has its output enumerated and no rule produces it. Emission
+    already consults membership by construction -- the dispatcher iterates
+    ``renderer_selection`` -- so this is what lets an enumeration site ask the same
+    question the emission site answers implicitly.
+
+    Membership is by ``builder_key`` and not by rule_name, matching the dispatcher's
+    own loop; a selection whose per-template predicates all fail still counts as
+    carried, because emission and enumeration then agree via the predicate rather
+    than via membership.
+    """
+    return any(sel.builder_key == builder_key for sel in reporting_set.renderer_selection)
+
 def eda_rule_spec_templates(reporting_set: ReportingSet) -> tuple[RuleSpecTemplate, ...]:
     """Return ``reporting_set``'s ``eda_compute_sensitivity`` rule_spec_templates, or ().
 

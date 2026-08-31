@@ -518,6 +518,7 @@ def _per_sim_per_member_rule_all_inputs(
     disabled: "list[str] | None",
     ext: "dict[str, str]",
     has_swmm_link_outputs: bool = True,
+    set_carries_renderer: bool,
 ) -> list[str]:
     """Return the per-member `rule all` input entries, or [] when not applicable.
 
@@ -539,7 +540,7 @@ def _per_sim_per_member_rule_all_inputs(
     # must not make.
     from hhemt.report_renderers._reporting_sets import renderer_active
 
-    if not (member_event_pairs_member and renderer_active("per_sim_per_member", disabled)):
+    if not (set_carries_renderer and member_event_pairs_member and renderer_active("per_sim_per_member", disabled)):
         return []
     _e_pfd = ext["per_sim_per_member_peak_flood_depth"]
     _e_cf = ext["per_sim_per_member_conduit_flow"]
@@ -8084,7 +8085,7 @@ onerror:
         # renderer_active so a disabled key drops from rule all AND the derived
         # render_report subset (render_rule_input_items below); _disabled resolves
         # to [] for an unconfigured run, preserving byte-identity.
-        from hhemt.report_renderers._reporting_sets import renderer_active
+        from hhemt.report_renderers._reporting_sets import renderer_active, set_carries
 
         _disabled = self._resolve_disabled_renderers(self.experiment)
         if renderer_active("system_overview", _disabled):
@@ -8104,6 +8105,11 @@ onerror:
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
 
+        # ONE resolution of the active set, consumed by BOTH the enumeration below and
+        # the dispatcher call later in this method. Two independent resolutions would be
+        # two readers of one fact with nothing binding them -- the emission/enumeration
+        # parity defect this gate exists to close, one level up.
+        _active_set = self._resolve_active_reporting_set(self.experiment)
         rule_all_inputs.extend(
             _per_sim_per_member_rule_all_inputs(
                 member_event_pairs_member=member_event_pairs_member,
@@ -8112,9 +8118,14 @@ onerror:
                 has_swmm_link_outputs=bool(
                     {"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())
                 ),
+                set_carries_renderer=set_carries(_active_set, "per_sim_per_member"),
             )
         )
-        if _independent_vars and renderer_active("sensitivity_benchmarking", _disabled):
+        if (
+            _independent_vars
+            and set_carries(_active_set, "sensitivity_benchmarking")
+            and renderer_active("sensitivity_benchmarking", _disabled)
+        ):
             _e_bench = _ext["sensitivity_benchmarking"]
             # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
             # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
@@ -8525,7 +8536,7 @@ onerror:
         # Master uses f_consolidate_master_complete.flag (NOT the multisim
         # e_consolidate_complete flag).
         snakefile_content += self._emit_active_set_plot_rules(
-            self._resolve_active_reporting_set(self.experiment),
+            _active_set,
             input_flag="_status/f_consolidate_master_complete.flag",
             predicate_inputs={
                 "independent_vars": _independent_vars,
@@ -8824,7 +8835,7 @@ onerror:
         # site: each common-renderer append gated by renderer_active so a disabled
         # key drops from rule all AND the derived render_report subset; _disabled
         # resolves to [] for an unconfigured run, preserving byte-identity.
-        from hhemt.report_renderers._reporting_sets import renderer_active
+        from hhemt.report_renderers._reporting_sets import renderer_active, set_carries
 
         _disabled = self._resolve_disabled_renderers(self.experiment)
         if renderer_active("system_overview", _disabled):
@@ -8843,6 +8854,9 @@ onerror:
             rule_all_inputs.append(f'"plots/workflow_performance{_ext["workflow_performance"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
+        # ONE resolution of the active set, consumed by BOTH the enumeration below and
+        # the dispatcher call later in this method -- see the master generator's twin.
+        _active_set = self._resolve_active_reporting_set(self.experiment)
         rule_all_inputs.extend(
             _per_sim_per_member_rule_all_inputs(
                 member_event_pairs_member=member_event_pairs_member,
@@ -8851,9 +8865,14 @@ onerror:
                 has_swmm_link_outputs=bool(
                     {"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())
                 ),
+                set_carries_renderer=set_carries(_active_set, "per_sim_per_member"),
             )
         )
-        if _independent_vars and renderer_active("sensitivity_benchmarking", _disabled):
+        if (
+            _independent_vars
+            and set_carries(_active_set, "sensitivity_benchmarking")
+            and renderer_active("sensitivity_benchmarking", _disabled)
+        ):
             _e_bench = _ext["sensitivity_benchmarking"]
             # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
             # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
@@ -9139,7 +9158,7 @@ onerror:
         # dispatcher running the SAME set on both surfaces makes the
         # historically hand-maintained "byte-equivalent" guarantee structural.
         snakefile_content += self._emit_active_set_plot_rules(
-            self._resolve_active_reporting_set(self.experiment),
+            _active_set,
             input_flag="_status/f_consolidate_master_complete.flag",
             predicate_inputs={
                 "independent_vars": _independent_vars,
