@@ -2287,6 +2287,7 @@ class TRITONSWMM_analysis:
         override_pickup_where_leftoff: bool | None = None,
         override_clean_restart_sa_ids: list[str] | None = None,
         override_wipe_nonempty: bool = False,
+        override_live_driver: str | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
         override_brand_theme: "Path | None" = None,
@@ -2788,6 +2789,7 @@ class TRITONSWMM_analysis:
             "report_formats": report_formats,
             "extra_sbatch_args": extra_sbatch_args,
             "snakemake_diagnostics": snakemake_diagnostics,
+            "override_live_driver": override_live_driver,
         }
         # override_pickup_where_leftoff decouples resume-on-retry from the mode:
         # translate_mode("fresh") (from_scratch=True) sets pickup_where_leftoff=False,
@@ -3593,6 +3595,7 @@ class TRITONSWMM_analysis:
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
+        override_live_driver: str | None = None,
     ) -> dict:
         """
         Submit workflow using Snakemake (replaces submit_SLURM_job_array).
@@ -3704,14 +3707,23 @@ class TRITONSWMM_analysis:
         # "this frame owns no sentinel". Mirrors the pre-existing `if not
         # dry_run` gates in submit_reprocess_workflow and
         # submit_static_plots_workflow.
+        # GATE-AND-CLAIM, not claim-alone. The write below used to be
+        # unconditional: this path recorded a driver and never consulted the
+        # record, so a second run() stacked silently on a live one (measured
+        # 2026-08-31 -- three drivers, one clobbered Snakefile). The sensitivity
+        # guard is unchanged: a sensitivity run() delegates to
+        # sensitivity.submit_workflow, which owns the master-keyed claim, so
+        # gating here too would refuse against our OWN about-to-be-written
+        # sentinel. Dry-run suppression is unchanged and now lives inside the
+        # helper, matching _acquire_reprocess_driver_claim.
         _driver_id = None
         _eff_mode = self.cfg_analysis.multi_sim_run_method
-        if not self.cfg_analysis.toggle_sensitivity_analysis and not dry_run:
-            _driver_id = _osent.new_driver_id()
-            _osent.write_orchestrator_sentinel(
+        if not self.cfg_analysis.toggle_sensitivity_analysis:
+            _driver_id = self._workflow_builder._acquire_submit_driver_claim(
                 self.analysis_paths.analysis_dir,
-                driver_id=_driver_id,
                 workflow_submission_mode=_eff_mode,
+                dry_run=dry_run,
+                override_live_driver=override_live_driver,
             )
 
         try:
@@ -3738,6 +3750,7 @@ class TRITONSWMM_analysis:
             from .orchestration import RunOverrides
 
             overrides = RunOverrides(
+                live_driver=override_live_driver,
                 clear_raw=override_clear_raw,
                 force_rerun=override_force_rerun,
                 hpc_total_nodes=override_hpc_total_nodes,

@@ -121,7 +121,15 @@ non_breaking_allowlist:
       thread) + run-honesty-orphan-dryrun-reportconfig Phase 1 (find_orphan_input_fingerprints
       + 4th cleanup class). Signature/read-delete behavior over the existing
       sa-{sa_id}_inputs.json fingerprint format; no on-disk fingerprint schema/path/
-      _version.json/datatree change.
+      _version.json/datatree change. AND driver-liveness-gate-on-submit — the
+      sensitivity-master submit path's bespoke orchestrator-sentinel WRITE is replaced
+      by a gate-and-claim call to SnakemakeWorkflowBuilder._acquire_submit_driver_claim
+      (the submit-path sibling of _acquire_reprocess_driver_claim), closing the
+      double-launch in which the submit path recorded a driver and never consulted the
+      record. Provably non-breaking: the _status/_orchestrator/{driver_id}.json payload
+      schema, its path, and its write/enrich/remove lifecycle are byte-unchanged — only
+      the decision to write it is now gated. No fingerprint, zarr group, log field,
+      Snakemake rule, figure stem, or _version.json change.
   - path: src/hhemt/config/viz_vocabulary.py
     justification: >-
       reporting-system frozen-viz-vocabulary — new frozen plotting-vocabulary module

@@ -165,6 +165,18 @@ def run_command(
         ),
         callback=lambda value: _parse_override_force_rerun(value),
     ),
+    override_live_driver: str = typer.Option(
+        None,
+        "--override-live-driver",
+        help=(
+            "Assert that ONE recorded orchestration driver is dead, naming its exact "
+            "driver_id. Not a force flag: any other live-or-indeterminate driver still "
+            "refuses. Read the id from a *.json under "
+            "{analysis_dir}/_status/_orchestrator/, or from "
+            "hpc/sentinel_ops/report_sentinel_state.py. Prefer re-running from the "
+            "sentinel's origin host, which yields a measurement instead of a belief."
+        ),
+    ),
     resume: bool = typer.Option(
         True,
         "--resume",
@@ -414,6 +426,7 @@ def run_command(
             verbose=verbose,
             override_clear_raw=override_clear_raw,
             override_force_rerun=override_force_rerun,
+            override_live_driver=override_live_driver,
         )
 
         # Check workflow result

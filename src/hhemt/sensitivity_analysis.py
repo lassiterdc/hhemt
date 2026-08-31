@@ -528,13 +528,17 @@ class TRITONSWMM_sensitivity_analysis:
         # premise a dry run never satisfies.
         _master_dir = self.master_analysis.analysis_paths.analysis_dir
         _eff_mode = self.master_analysis.cfg_analysis.multi_sim_run_method
-        _driver_id = None if dry_run else _osent.new_driver_id()
-        if _driver_id is not None:
-            _osent.write_orchestrator_sentinel(
-                _master_dir,
-                driver_id=_driver_id,
-                workflow_submission_mode=_eff_mode,
-            )
+        # GATE-AND-CLAIM (see the twin in analysis.py::submit_workflow). The
+        # claim is keyed on the MASTER analysis_dir and routed through the
+        # master's own base builder, whose cfg_analysis is what
+        # _max_plausible_job_lifetime_min must read. Dry-run suppression now
+        # lives inside the helper, so the shape is equivalent for a rehearsal.
+        _driver_id = self.master_analysis._workflow_builder._acquire_submit_driver_claim(
+            _master_dir,
+            workflow_submission_mode=_eff_mode,
+            dry_run=dry_run,
+            override_live_driver=overrides.live_driver,
+        )
         try:
             result = self._workflow_builder.submit_workflow(
                 mode=mode,

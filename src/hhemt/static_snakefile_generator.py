@@ -278,6 +278,11 @@ def write_static_snakefile(
         static_backend=static_backend,
         static_config_ids=static_config_ids,
     )
+    from hhemt.workflow import _write_snakefile_atomic
+
     out = analysis.analysis_paths.analysis_dir / "Snakefile.static"
-    out.write_text(text)
+    # Atomic + one-deep archive; the unconditional-overwrite discipline this
+    # generator is stipulated to keep is unchanged -- only the WRITE is made
+    # non-partial and the displaced generation recoverable.
+    _write_snakefile_atomic(out, text)
     return out

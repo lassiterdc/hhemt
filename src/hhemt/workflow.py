@@ -701,6 +701,106 @@ _COMMENT_RULE_PREFIXES: tuple[str, ...] = ("rule_run_", "rule_simulation_sa_")
 # importing this Snakemake-builder surface.
 
 
+def _write_snakefile_atomic(path: Path, content: str) -> Path:
+    """Write a generated Snakefile atomically, preserving the displaced one.
+
+    Two properties, each answering a measured 2026-08-31 failure, and NEITHER
+    depending on an orchestrator-liveness verdict.
+
+    ATOMIC -- temp + ``os.replace``, so a concurrent reader (another driver's
+    DAG construction, a ``snakemake --report``, an operator) never observes a
+    half-written Snakefile. The same idiom
+    ``orchestrator_sentinels.write_orchestrator_sentinel`` and
+    ``status_flags.write_status_flag`` already use, for the same stated reason.
+
+    ARCHIVING -- the displaced file is renamed to ``{name}.prev`` first, so the
+    previous generation survives exactly one overwrite. On 2026-08-31 a second
+    driver overwrote a live driver's Snakefile with an 11,394-wait-rule variant.
+    The running process had already parsed its own copy and was unaffected, but
+    the artifact the tree's NEXT reader parses no longer matched the running
+    DAG, and reconstructing what had been displaced cost a diagnosis turn.
+    ``diff Snakefile Snakefile.prev`` answers it. One deep, deliberately: an
+    N-deep rotation accumulates in a DU-counted tree and would need a retention
+    policy, while ``.prev`` answers the question that was actually asked.
+
+    NOT gated on the liveness verdict, and the redundancy argument is recorded
+    so it is not re-added. A REFUSED submit never reaches a write, and a
+    PERMITTED-or-OVERRIDDEN submit carries a verdict a second gate would honour
+    identically -- so a verdict-gated write changes no outcome in either branch,
+    while leaving the actual harm (an artifact that disagrees with the running
+    DAG) intact in every case it permits.
+
+    Used by EVERY generated-Snakefile writer in the toolkit -- the production
+    ``Snakefile`` (three multisim + three sensitivity-master branches), the
+    ``Snakefile.reprocess`` pair, the three ``Snakefile.delete`` /
+    ``Snakefile.reprocess_delete`` writers, and ``Snakefile.static``. The
+    reprocess pair matters most after the production file: per Gotcha 39,
+    ``render_report(reprocess=True)`` runs ``snakemake --report`` against
+    ``Snakefile.reprocess``, so a clobber there reaches a RENDERED REPORT rather
+    than only an operator's diagnosis.
+    """
+    import os
+    import tempfile
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            path.replace(path.with_name(path.name + ".prev"))
+        except OSError:
+            pass  # archiving is best-effort and must never block a submit
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(content)
+        os.replace(tmp_name, path)
+    except BaseException:
+        # EXEMPT-DU: transient-intermediate
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+    return path
+
+
+def _resolve_snakefile_path(analysis_dir: Path, *, dry_run: bool) -> Path:
+    """Resolve the production-Snakefile destination for one submit.
+
+    THE INVARIANT: **a dry run never DISPLACES a Snakefile; it may CREATE one.**
+
+    Why displacement is the harm and not merely the overwrite. The production
+    Snakefile's content is NOT invariant -- ``generate_snakefile_content`` takes
+    ``alive_by_token`` from a live ``_reconcile_inflight_submissions``, so the
+    same call executed while an arm is in flight generates the WAIT-RULE form.
+    Measured 2026-08-31: 11,394 wait rules in place of three wildcarded run
+    rules. A bare ``--dry-run`` against a live arm therefore installs that form
+    over the good one with NO second driver and NO override involved, and the
+    ``.prev`` archive recovers it only if someone thinks to look -- which an
+    operator running a diagnostic is the least likely person to do. Routing the
+    rehearsal to ``Snakefile.dryrun`` removes the question instead of answering
+    it, and costs no parameter threading: every dry-run branch already returns
+    before submission, so the local variable is the only consumer.
+
+    Why the ``exists()`` condition, which is a rule and not a special case.
+    Displacement is only possible where there is something to displace. On a
+    fresh tree the legacy behaviour is strictly BETTER than a redirect: it
+    leaves the operator, ``Analysis.df_status``, ``df_snakemake_allocations``
+    (both parse ``analysis_dir/"Snakefile"`` by literal name) and
+    ``tests/test_workflow_1job_dry_run.py``'s explicit "Snakefile should be
+    generated even in dry-run" assertion with a file to read. So the redirect
+    fires only when the production file already exists.
+
+    Scoped to the production ``Snakefile`` deliberately. The reprocess, delete
+    and static generators consume no reconcile state and emit no wait rules, so
+    their content IS stable across a dry run and the ``.prev`` archive in
+    ``_write_snakefile_atomic`` is sufficient for them. Widening this redirect
+    to those writers would require threading ``dry_run`` into
+    ``write_reprocess_snakefile`` and friends to buy nothing.
+    """
+    production = Path(analysis_dir) / "Snakefile"
+    if dry_run and production.exists():
+        return production.with_name("Snakefile.dryrun")
+    return production
+
+
 def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int:
     """Upper bound on how long a sim job could plausibly run: its own SLURM
     walltime + slack (queue/startup/accounting lag). Single source of truth for
@@ -6111,8 +6211,8 @@ exit $snakemake_status
             )
 
             # Write Snakefile to disk
-            snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-            snakefile_path.write_text(snakefile_content)
+            snakefile_path = _resolve_snakefile_path(self.analysis_paths.analysis_dir, dry_run=dry_run)
+            _write_snakefile_atomic(snakefile_path, snakefile_content)
 
             if verbose:
                 print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
@@ -6183,8 +6283,8 @@ exit $snakemake_status
                 alive_by_token=alive_by_token,
             )
 
-            snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-            snakefile_path.write_text(snakefile_content)
+            snakefile_path = _resolve_snakefile_path(self.analysis_paths.analysis_dir, dry_run=dry_run)
+            _write_snakefile_atomic(snakefile_path, snakefile_content)
 
             if verbose:
                 print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
@@ -6270,8 +6370,8 @@ exit $snakemake_status
         )
 
         # Write Snakefile to disk
-        snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-        snakefile_path.write_text(snakefile_content)
+        snakefile_path = _resolve_snakefile_path(self.analysis_paths.analysis_dir, dry_run=dry_run)
+        _write_snakefile_atomic(snakefile_path, snakefile_content)
 
         if verbose:
             print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
@@ -7099,11 +7199,130 @@ exit $snakemake_status
         self._reprocess_claim_driver_id = driver_id
         return driver_id
 
+    def _acquire_submit_driver_claim(
+        self,
+        analysis_dir: Path | None = None,
+        *,
+        workflow_submission_mode: str,
+        dry_run: bool,
+        override_live_driver: str | None = None,
+    ) -> str | None:
+        """Gate, then CLAIM, before run()/submit_workflow() launches a driver.
+
+        The submit path has WRITTEN an orchestrator sentinel since Phase 2 of
+        the reprocess concurrency gate and has never READ one. Writing is not
+        gating: every ``_orchestrator_liveness_gate`` call site was a reprocess
+        or static-plots entry, so two ``run()`` drivers stacked on one analysis
+        tree with nothing refusing. Measured 2026-08-31 on the
+        ``norfolk_stochastic`` arm: three drivers stacked. The at-most-once SIM
+        guard HELD -- the second driver's reconcile emitted 11,394 ``wait_for_``
+        rules instead of run rules and zero duplicate simulations were
+        dispatched -- but the second driver OVERWROTE the shared ``Snakefile``,
+        and a healthy driver was twice diagnosed dead by an operator with no
+        instrument to consult.
+
+        Gate and claim are ONE step, for the reason
+        ``_acquire_reprocess_driver_claim`` states directly above: a read-only
+        gate hoisted apart from its claim leaves a window in which a second
+        driver appears between the check and the write. This is that method's
+        sibling. Two differences, both deliberate: the submit path records its
+        REAL ``workflow_submission_mode`` (so the gate's sacct/tmux arms can
+        probe it once enriched) rather than a synthetic ``local``; and it
+        accepts a per-invocation operator assertion.
+
+        ``override_live_driver`` is an ASSERTION, not a force flag. The operator
+        names the exact ``driver_id`` they determined is dead; that one sentinel
+        is reclaimed, and any OTHER live-or-indeterminate driver still refuses.
+        A bare boolean was rejected because the failure mode this gate exists to
+        prevent IS an operator who believes a live driver is dead, and a flag
+        requiring no evidence is passed by exactly that operator. The decisive
+        property is that the id CANNOT BE TYPED WITHOUT READING A SENTINEL,
+        which makes it a positive identification rather than an assertion --
+        the same discipline this project imposes on ``scancel`` and on ``kill``
+        (name the thing you are acting on; never filter around it). A typo'd id
+        RAISES rather than no-ops: an unmatched assertion that silently
+        proceeded would read to the operator as an override that was honoured,
+        the same class of false signal as the defect.
+
+        Returns ``None`` on ``dry_run`` -- a dry run submits nothing, allocates
+        nothing and writes no zarr, mirroring the ``if not dry_run`` sentinel
+        suppression already at both facades and the carve-out
+        ``_acquire_reprocess_driver_claim`` makes. A dry run DOES still write a
+        Snakefile; that is handled by ``_resolve_snakefile_path`` (which routes
+        a rehearsal to ``Snakefile.dryrun`` rather than displacing the live
+        one) and ``_write_snakefile_atomic``, NOT by this gate.
+
+        Raises ``WorkflowError`` when a live-or-indeterminate driver exists.
+        """
+        from hhemt import orchestrator_sentinels as _osent
+
+        if dry_run:
+            return None
+        base = analysis_dir if analysis_dir is not None else self.analysis_paths.analysis_dir
+        if override_live_driver:
+            # Reclaim the named sentinel BEFORE gating, rather than passing it to
+            # exclude_driver_id. exclude_driver_id would leave the file on disk to be
+            # re-encountered by the NEXT submit, so the assertion would have to be
+            # repeated indefinitely; unlinking records the assertion as an act.
+            target = _osent.orchestrator_dir(base) / f"{override_live_driver}.json"
+            if not target.exists():
+                raise WorkflowError(
+                    phase="submit pre-submission orchestrator-liveness gate",
+                    return_code=1,
+                    stderr=(
+                        f"override_live_driver={override_live_driver!r} names no sentinel under "
+                        f"{_osent.orchestrator_dir(base)}. The assertion must name an existing "
+                        "driver_id exactly -- read it from the `driver_id` field of a *.json "
+                        "there, or run hpc/sentinel_ops/report_sentinel_state.py. Refusing "
+                        "rather than proceeding: a typo'd assertion that silently no-opped "
+                        "would read as an override that was honoured."
+                    ),
+                )
+            # EXEMPT-DU: status-flag
+            target.unlink(missing_ok=True)
+            print(
+                f"[orchestrator-gate] operator asserted driver {override_live_driver} dead; reclaimed {target}",
+                file=sys.stderr,
+                flush=True,
+            )
+        driver_id = _osent.new_driver_id()
+        gate_err = self._orchestrator_liveness_gate(
+            analysis_dir=base, exclude_driver_id=driver_id, phase_label="submit"
+        )
+        if gate_err is not None:
+            raise WorkflowError(
+                phase=gate_err.phase,
+                return_code=1,
+                stderr=(
+                    f"{gate_err.stderr}\n\n"
+                    "NEXT STEPS, in order of preference:\n"
+                    "  1. Run hpc/sentinel_ops/report_sentinel_state.py --analysis-dir <dir>. "
+                    "It names each sentinel's ORIGIN HOST.\n"
+                    "  2. For an entry reported UNKNOWN: ssh to that origin host (ssh to the "
+                    "cluster load-balances, so retry until `hostname` matches) and re-run "
+                    "there. The probe is host-local; from the origin host it returns a real "
+                    "answer and NO assertion is needed. This is strictly better than step 3 "
+                    "because it produces a measurement instead of a belief.\n"
+                    "  3. Only if that host is unreachable, and only after determining the "
+                    "driver is gone, pass override_live_driver='<driver_id>' "
+                    "(CLI: --override-live-driver) naming that exact driver.\n"
+                    "An unresolved driver is NOT a dead driver. On 2026-08-31 that inference "
+                    "was made twice about a healthy driver holding 1,004 real simulations."
+                ),
+            )
+        _osent.write_orchestrator_sentinel(
+            base,
+            driver_id=driver_id,
+            workflow_submission_mode=workflow_submission_mode,
+        )
+        return driver_id
+
     def _orchestrator_liveness_gate(
         self,
         analysis_dir: Path | None = None,
         *,
         exclude_driver_id: str | None = None,
+        phase_label: str = "reprocess",
     ) -> "WorkflowError | None":
         """Return a WorkflowError if a LIVE-or-INDETERMINATE orchestration driver
         exists for this analysis, else None. Reclaims dead/stale sentinels in
@@ -7245,12 +7464,12 @@ exit $snakemake_status
 
         if live:
             return WorkflowError(
-                phase="reprocess pre-submission orchestrator-liveness gate",
+                phase=f"{phase_label} pre-submission orchestrator-liveness gate",
                 return_code=1,
                 stderr=(
-                    "Refusing reprocess: a live-or-indeterminate orchestration driver for "
-                    f"this analysis exists ({'; '.join(live)}). reprocess coexists with "
-                    "queued/running SLURM sim workers but must not run concurrently with a "
+                    f"Refusing {phase_label}: a live-or-indeterminate orchestration driver "
+                    f"for this analysis exists ({'; '.join(live)}). A {phase_label} coexists "
+                    "with queued/running SLURM sim workers but must not run concurrently with a "
                     "live run()/reprocess DRIVER (unarbitrated concurrent consolidate-zarr "
                     "write). Entries marked liveness=UNKNOWN/held could NOT be probed from "
                     "this host — the sentinel's origin host differs from this one, its "
@@ -7670,7 +7889,7 @@ exit $snakemake_status
         self._pre_delete_guards(override_in_flight=override_in_flight)
 
         snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
-        snakefile_path.write_text(self._build_delete_snakefile_content())
+        _write_snakefile_atomic(snakefile_path, self._build_delete_snakefile_content())
         return self._submit_delete_snakemake(
             snakefile_path,
             override_multi_sim_run_method=override_multi_sim_run_method,
@@ -7812,7 +8031,7 @@ exit $snakemake_status
             # EXEMPT-DU: status-dir-cleanup
             fast_rmtree(stale)
         snakefile = self.analysis_paths.analysis_dir / "Snakefile.reprocess_delete"
-        snakefile.write_text(self._build_reprocess_delete_snakefile_content(start_with=start_with))
+        _write_snakefile_atomic(snakefile, self._build_reprocess_delete_snakefile_content(start_with=start_with))
         return self._submit_delete_snakemake(
             snakefile,
             override_multi_sim_run_method=override_multi_sim_run_method,
@@ -7835,7 +8054,7 @@ exit $snakemake_status
         self._pre_delete_guards(override_in_flight=override_in_flight)
 
         snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
-        snakefile_path.write_text(self._build_delete_sensitivity_snakefile_content(sa_ids))
+        _write_snakefile_atomic(snakefile_path, self._build_delete_sensitivity_snakefile_content(sa_ids))
         return self._submit_delete_snakemake(
             snakefile_path,
             override_multi_sim_run_method=override_multi_sim_run_method,
@@ -9800,8 +10019,10 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 alive_token_to_dir=alive_token_to_dir,
             )
 
-            master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
-            master_snakefile_path.write_text(master_snakefile_content)
+            master_snakefile_path = _resolve_snakefile_path(
+                self.master_analysis.analysis_paths.analysis_dir, dry_run=dry_run
+            )
+            _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
 
             if verbose:
                 print(
@@ -9873,8 +10094,10 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 alive_token_to_dir=alive_token_to_dir,
             )
 
-            master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
-            master_snakefile_path.write_text(master_snakefile_content)
+            master_snakefile_path = _resolve_snakefile_path(
+                self.master_analysis.analysis_paths.analysis_dir, dry_run=dry_run
+            )
+            _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
 
             if verbose:
                 print(
@@ -9967,8 +10190,10 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             alive_token_to_dir=alive_token_to_dir,
         )
 
-        master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
-        master_snakefile_path.write_text(master_snakefile_content)
+        master_snakefile_path = _resolve_snakefile_path(
+            self.master_analysis.analysis_paths.analysis_dir, dry_run=dry_run
+        )
+        _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
 
         if verbose:
             print(
@@ -10132,7 +10357,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
         self.analysis_paths.analysis_log_directory.mkdir(parents=True, exist_ok=True)
         (self.analysis_paths.analysis_log_directory / "sims").mkdir(parents=True, exist_ok=True)
-        snakefile_path.write_text(snakefile_content)
+        _write_snakefile_atomic(snakefile_path, snakefile_content)
         if verbose:
             print(
                 f"[Snakemake] Reprocess master Snakefile generated: {snakefile_path}",
