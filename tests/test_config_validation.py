@@ -272,6 +272,7 @@ def test_reporting_sets_registry_imports_cleanly():
     assert set(REPORTING_SETS) == {
         "default",
         "benchmarking",
+        "sensitivity",
         "combined",
         "compute-sensitivity",
         "dem-resolution",

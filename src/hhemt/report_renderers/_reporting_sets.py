@@ -668,6 +668,14 @@ REPORTING_SETS: dict[str, ReportingSet] = {
         shape="sensitivity",
         required_axes=(_COMPUTE_CONFIG_AXES,),
     ),
+    "sensitivity": ReportingSet(
+        name="sensitivity",
+        category_order=_STANDARD_CATEGORY_ORDER,
+        renderer_selection=_SWEEP_SELECTION,
+        validator_key="none",
+        shape="sensitivity",
+        required_axes=(),
+    ),
     "combined": ReportingSet(
         name="combined",
         # Option B: the per-experiment categories are DYNAMIC (one per child_crates/{eid},

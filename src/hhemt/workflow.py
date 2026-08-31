@@ -297,7 +297,10 @@ def _registry_report_kwargs(rule_name: str) -> dict[str, str]:
     the stable cross-reference (the same key `test_reporting_set_cosourcing` uses).
 
     Scans every registered set and requires UNANIMITY. Measured 2026-08-23: 0 of 22 distinct
-    rule_names carry differing report_kwargs across the 6 registered sets, so this is a
+    rule_names carry differing report_kwargs across the 7 registered sets (re-measured
+    2026-08-31 after the `sensitivity` set was registered: 22 distinct rule_names, 0
+    disagreements, unchanged because that set reuses the shared template objects
+    `benchmarking` already contributes), so this is a
     well-defined lookup today; the assertion is what makes it fail loudly if that stops
     being true rather than silently picking whichever set was iterated first.
 
