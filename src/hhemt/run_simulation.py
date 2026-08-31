@@ -365,8 +365,32 @@ class TRITONSWMM_run:
         bad coupled output into a RETRIABLE failure, so the existing ``retries:`` +
         ``--pickup-where-leftoff`` machinery re-runs (and resumes) the sim.
         """
-        if model_type != "tritonswmm":
-            return True
+        if model_type == "swmm":
+            # A standalone SWMM run's own artifact, and BOTH conjuncts are load-bearing.
+            # The terminal marker alone is NOT sufficient: SWMM writes `Analysis ended
+            # on` at swmm_report() whether or not the analysis produced anything, so the
+            # measured 813-byte damaged rpt -- seven fatal `ERROR 361: could not open
+            # external file` and `Total elapsed time: < 1 sec` -- CARRIES it. Both facts
+            # come from ONE pass in rpt_status, which owns the trailer literal and the
+            # anchored error match; see its docstring for why the anchoring is safe.
+            rpt = self._scenario.scen_paths.swmm_full_rpt_file
+            if rpt is None:
+                return False
+            from hhemt.swmm_output_parser import rpt_status
+
+            _st = rpt_status(rpt)
+            return _st.finalized and not _st.has_errors
+        if model_type == "triton":
+            # TRITON-only writes no rpt, so its terminal artifact is the run log's
+            # `Simulation ends` marker -- the same evidence the fallback scan below
+            # uses. Checking it HERE is what stops a stale True certifying a LATER
+            # failure: a scenario that ran successfully once and then crashed on a
+            # hotstart resume, a retry, or a force-rerun would otherwise return True
+            # from the cached field forever, with no dishonest marker involved.
+            _log = self._analysis_level_model_logfile(model_type)
+            if not _log.exists():
+                return False
+            return "Simulation ends" in _log.read_text()
         rpt = self._scenario.scen_paths.swmm_hydraulics_rpt
         if rpt is None or not rpt.exists():
             return False
@@ -426,7 +450,21 @@ class TRITONSWMM_run:
         if model_type in ("triton", "tritonswmm"):
             success = "Simulation ends" in log_content
         else:  # swmm
-            success = "EPA SWMM completed" in log_content
+            # `... EPA SWMM completed in %.2f seconds.` is printed UNCONDITIONALLY by
+            # EPA SWMM's main.c:91 AFTER swmm_run returns -- it marks the BINARY
+            # reaching the end of main(), not the ANALYSIS succeeding. main.c:92 then
+            # appends ` There are errors.` on the SAME LINE when swmm_getError() > 0.
+            # Matching only the first clause therefore marks a run that aborted in
+            # under a second with fatal ERROR 361s as COMPLETE, which is how a
+            # false c_run_swmm flag was written for 123 scenarios and only surfaced
+            # days later as a segfault in the process rung. The discriminating text
+            # was always present in the captured output; the predicate stopped short
+            # of it. WARNINGS are NOT failures (main.c:93 is a separate branch), so
+            # only the errors clause disqualifies.
+            success = (
+                "EPA SWMM completed" in log_content
+                and "There are errors." not in log_content
+            )
 
         # Divergence check — WARN, but deliberately NOT load-bearing.
         #

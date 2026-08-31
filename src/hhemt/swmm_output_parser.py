@@ -4,7 +4,7 @@ import io
 import warnings
 from collections import Counter
 from functools import lru_cache
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 from datetime import datetime
 from pathlib import Path
 import numpy as np
@@ -615,9 +615,57 @@ def rpt_is_complete(f_rpt: Path) -> bool:
     f_rpt = Path(f_rpt)
     if not f_rpt.exists() or f_rpt.stat().st_size == 0:
         return False
-    # Match the trailer string the summary parser already keys on (analysis_end_line).
+    return rpt_status(f_rpt).finalized
+
+
+class RptStatus(NamedTuple):
+    """Both facts a SWMM `.rpt` can testify to, read in ONE pass.
+
+    `finalized` is the terminal `Analysis ended on` trailer -- the engine reached
+    `swmm_report()`. `has_errors` is an `  ERROR {n}:` block -- the run reported a
+    fatal input or runtime error.
+
+    THEY ARE INDEPENDENT, and that is the whole reason this returns a pair rather
+    than a bool. A run that aborts during input validation writes the trailer AND
+    an error block: the measured 813-byte damaged rpt carries `Analysis ended on`
+    beside seven `ERROR 361: could not open external file`. So `finalized` alone
+    cannot distinguish a clean run from a failed one, which is why a caller
+    adjudicating COMPLETION must require `finalized and not has_errors`.
+
+    Errors are matched anchored (`\\s*ERROR \\d+`) because SWMM writes warnings
+    under a separate WARNING token and the continuity tables say
+    `Continuity Error (%)` in mixed case -- an unanchored `ERROR` search would
+    match neither, but an anchored one cannot match either by accident.
+    """
+
+    finalized: bool
+    has_errors: bool
+
+
+def rpt_status(f_rpt: Path) -> RptStatus:
+    """Read a SWMM `.rpt` ONCE and report both the trailer and the error block.
+
+    Single owner of the `Analysis ended on` literal, which was previously stated
+    here and in the summary parser's `analysis_end_line`. A missing or empty file
+    testifies to nothing: `RptStatus(False, False)`.
+
+    Reads to EOF rather than short-circuiting on the first error, because the
+    trailer is at the END and both facts are wanted. That costs nothing on the
+    population that matters: an errored rpt is ~800 bytes (the run aborted before
+    writing a body), while a valid one is ~1 MB and has no error line to exit on.
+    """
+    f_rpt = Path(f_rpt)
+    if not f_rpt.exists() or f_rpt.stat().st_size == 0:
+        return RptStatus(False, False)
+    finalized = False
+    has_errors = False
     with open(f_rpt, "r", encoding="latin-1") as fh:
-        return any("Analysis ended on" in line for line in fh)
+        for line in fh:
+            if not finalized and "Analysis ended on" in line:
+                finalized = True
+            elif not has_errors and re.match(r"\s*ERROR \d+", line):
+                has_errors = True
+    return RptStatus(finalized, has_errors)
 
 
 def _build_system_results(
