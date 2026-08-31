@@ -1093,6 +1093,7 @@ def validate_active_reporting_set(
     *,
     is_sensitivity: bool,
     sensitivity_csv_path: Path | None,
+    varied_axes: frozenset[str] | None = None,
 ) -> str:
     """Resolve and validate the active reporting set at analysis.run() entry.
 
@@ -1126,6 +1127,58 @@ def validate_active_reporting_set(
             ),
             config_path=None,
         )
+    # S16 (D51): membership is not suitability. A set declares the analysis SHAPE it
+    # applies to and the sensitivity AXES its figures plot against; a set fitting
+    # neither is refused here, on the login node, before compute is committed.
+    _analysis_shape = "sensitivity" if is_sensitivity else "event_ensemble"
+    if active.shape != _analysis_shape:
+        _fits = sorted(n for n, s in REPORTING_SETS.items() if s.shape == _analysis_shape)
+        if active.shape == "cross_experiment":
+            # Not selectable from an analysis config at all: the combine path reaches
+            # this set through hardcoded get_reporting_set("combined") literals, never
+            # through config resolution. Without this branch the message would name a
+            # "cross_experiment analysis", which is not a thing a user can create.
+            _why = "a set the `hhemt combine` verb selects for you, not one you set on an analysis"
+        elif active.shape == "sensitivity":
+            # The literal below is pinned by tests/test_config_validation.py's
+            # test_test_reference_report_scoping_passes_and_guard_intact, whose match=
+            # string bound validate_sensitivity_independent_vars before this check
+            # pre-empted it. Rewording this branch reds that test.
+            _why = "not a sensitivity analysis"
+        else:
+            _why = "not an event-ensemble analysis"
+        raise ConfigurationError(
+            field="reporting_set",
+            message=(
+                f"report.reporting_set='{name}' declares shape '{active.shape}', but this is "
+                f"{_why}. Sets that fit this analysis: {_fits}."
+            ),
+            config_path=None,
+        )
+    if active.required_axes:
+        if varied_axes is None:
+            raise ValueError(
+                f"validate_active_reporting_set: reporting set '{name}' declares required_axes, "
+                "so the caller must supply varied_axes. Passing None here would silently skip "
+                "the compatibility check."
+            )
+        _unmet = [fam for fam in active.required_axes if not (set(fam) & varied_axes)]
+        if _unmet:
+            _fits = sorted(
+                n
+                for n, s in REPORTING_SETS.items()
+                if s.shape == _analysis_shape
+                and not [f for f in s.required_axes if not (set(f) & varied_axes)]
+            )
+            raise ConfigurationError(
+                field="reporting_set",
+                message=(
+                    f"report.reporting_set='{name}' plots against axes this sweep does not vary. "
+                    f"It requires at least one of each of {[sorted(f) for f in _unmet]}; the sweep "
+                    f"varies {sorted(varied_axes)}. Sets that fit this sweep: {_fits}."
+                ),
+                config_path=None,
+            )
     if active.validator_key == "benchmarking":
         validate_sensitivity_independent_vars(cfg, sensitivity_csv_path)
     return name

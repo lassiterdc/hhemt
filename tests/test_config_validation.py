@@ -239,6 +239,12 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
         reporting_set="benchmarking",
         sensitivity=SensitivityReportConfig(independent_vars=["n_devices"]),
     )
+    # MOVED REFERENT (S16): this match= string was written against
+    # validate_sensitivity_independent_vars. The S16 shape check in
+    # validate_active_reporting_set now PRE-EMPTS that call, so the literal is
+    # produced by the shape branch instead. The bytes are unchanged and the
+    # function under assertion is not -- recorded so the guard is not read as
+    # still testing what it originally tested.
     with pytest.raises(ConfigurationError, match="not a sensitivity analysis"):
         validate_active_reporting_set(unscoped, is_sensitivity=False, sensitivity_csv_path=None)
 
@@ -447,7 +453,12 @@ def test_validate_active_reporting_set_benchmarking_delegates_csv(tmp_path: Path
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"]))
     # reporting_set "default" + is_sensitivity True -> "benchmarking" -> CSV check.
     with pytest.raises(ConfigurationError, match="missing_col"):
-        validate_active_reporting_set(cfg, is_sensitivity=True, sensitivity_csv_path=csv_path)
+        validate_active_reporting_set(
+            cfg,
+            is_sensitivity=True,
+            sensitivity_csv_path=csv_path,
+            varied_axes=frozenset({"n_omp_threads"}),
+        )
 
 
 def test_validate_active_reporting_set_returns_resolved_name(tmp_path: Path):
@@ -464,8 +475,52 @@ def test_validate_active_reporting_set_returns_resolved_name(tmp_path: Path):
     csv_path = tmp_path / "member.csv"
     pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads"]))
-    name = validate_active_reporting_set(cfg, is_sensitivity=True, sensitivity_csv_path=csv_path)
+    name = validate_active_reporting_set(
+        cfg,
+        is_sensitivity=True,
+        sensitivity_csv_path=csv_path,
+        varied_axes=frozenset({"n_omp_threads"}),
+    )
     assert name == "benchmarking"
+
+
+def test_required_axes_derivation_matches_template_wildcards():
+    """Every set's `required_axes` is EMPTY iff its selection carries no axis-wildcarded
+    template. `required_axes` is derivable from the registry's own templates but stored
+    by hand, so nothing else checks the two agree.
+
+    SCOPE LIMIT, measured and recorded rather than implied: this is a biconditional on
+    EMPTINESS only. It catches an `()` that silently becomes false when a set gains an
+    axis-plotting figure. It catches NOTHING about a wrong NON-empty value -- swap
+    `dem-resolution`'s `(("target_dem_resolution",),)` for the compute-config tuple and
+    this test still passes, because both are non-empty. `dem-resolution` is in fact the
+    set that proves the limit: its only axis wildcard is `independent_var`, inherited
+    with `sensitivity_benchmarking`, while the axis it requires is a system-config field
+    that no template is wildcarded on.
+
+    The failing direction is verified, not assumed: three violating registries built with
+    `dataclasses.replace` (a frozen dataclass blocks mutation, not derivation) each drive
+    this assertion to raise -- including a `sensitivity` set given the benchmarking axis
+    figure while keeping its `()`, which is the exact regression this test exists to catch.
+    """
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS
+
+    # member_id / event_id index the (member, event) product, not a sensitivity axis.
+    non_axis = {"member_id", "event_id"}
+    for name, rset in REPORTING_SETS.items():
+        wildcards = {
+            w
+            for sel in rset.renderer_selection
+            for tmpl in sel.rule_spec_template
+            for w in tmpl.wildcards
+        }
+        has_axis_figure = bool(wildcards - non_axis)
+        assert bool(rset.required_axes) == has_axis_figure, (
+            f"reporting set {name!r}: required_axes={rset.required_axes!r} but its templates "
+            f"carry axis wildcards {sorted(wildcards - non_axis)!r}. A set with an "
+            f"axis-plotted figure must declare an axis requirement, and a set without one "
+            f"must declare the empty tuple."
+        )
 
 
 # ---------------------------------------------------------------------------

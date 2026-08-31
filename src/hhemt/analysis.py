@@ -2459,10 +2459,20 @@ class TRITONSWMM_analysis:
             cfg_report = self.cfg_analysis.report
 
         member_csv = self.cfg_analysis.sensitivity_analysis if self.cfg_analysis.toggle_sensitivity_analysis else None
+        # S16: the sweep's varied-axis set, from the two single-source properties that
+        # already canonicalize overlay columns to config field names (including the
+        # hpc.partition alias). Re-deriving this from the CSV inside config/report.py
+        # would be a second implementation of that classification.
+        _varied_axes: frozenset[str] = frozenset()
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            _varied_axes = frozenset(self.sensitivity.analysis_independent_vars) | frozenset(
+                self.sensitivity.system_independent_vars
+            )
         _resolved_set_name = validate_active_reporting_set(
             cfg_report,
             is_sensitivity=self.cfg_analysis.toggle_sensitivity_analysis,
             sensitivity_csv_path=member_csv,
+            varied_axes=_varied_axes,
         )
         self._active_reporting_set_name = _resolved_set_name
         self._active_reporting_set = get_reporting_set(_resolved_set_name)

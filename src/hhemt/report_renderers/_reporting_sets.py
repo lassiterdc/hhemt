@@ -649,6 +649,16 @@ _COMPUTE_CONFIG_AXES: tuple[str, ...] = (
     "n_gpus",
     "n_nodes",
     "hpc_ensemble_partition",
+    # `mem_gb_per_cpu` is included as a JUDGEMENT, not a measurement: memory per CPU
+    # changes node packing and bandwidth contention and therefore wall clock, which is
+    # what the benchmarking figures plot. Do NOT cite synthetic_experiment.py's config
+    # tuple as the ground -- it names this field because every row needs a memory
+    # request, and across the whole default matrix the value is a function of
+    # run_mode (8 on every gpu row, 2 on every cpu row) with no memory-only contrast.
+    "mem_gb_per_cpu",
+    # DELIBERATELY EXCLUDED: `hpc_time_min_per_sim`. A walltime REQUEST changes nothing
+    # about how the computation runs, so a sweep varying only it has no performance
+    # axis to plot.
 )
 
 REPORTING_SETS: dict[str, ReportingSet] = {
