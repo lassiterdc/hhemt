@@ -3109,7 +3109,7 @@ rule run_{model_type}:
             compression_level=compression_level,
         )
         # Registry-driven plot-rule dispatch (P1b / TO-8): the active set's
-        # renderer_selection (default → the six common renderers in order) is the
+        # renderer_selection (default → its eight renderers in order) is the
         # single source of which renderers fire. Replaces the hardcoded call list.
         snakefile_content += self._emit_active_set_plot_rules(
             self._resolve_active_reporting_set(self.analysis),
@@ -8515,7 +8515,7 @@ onerror:
 '''
 
         # Registry-driven plot-rule dispatch at master scope (P1b / TO-8). The
-        # benchmarking set drives the five common renderers + the two conditional
+        # benchmarking set drives the seven unconditional renderers + the two conditional
         # sensitivity renderers (per_sim_per_member, sensitivity_benchmarking), gated
         # by predicate_key against the method-local member_event_pairs_member /
         # _independent_vars threaded in via predicate_inputs. The export rule is a

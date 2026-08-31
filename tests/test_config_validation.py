@@ -293,8 +293,18 @@ def test_legacy_mode_key_rewritten_with_deprecation_warning():
     legacy `mode` key dropped (no extra_forbidden), independent_vars retained."""
     from hhemt.config.report import report_config
 
-    with pytest.warns(DeprecationWarning, match="report_config.sensitivity.mode is retired"):
+    # Anchored on the behaviour both wordings share, NOT on the model-vs-YAML naming:
+    # 5ada991b deliberately renamed `report_config.` -> `report.` in user-facing
+    # messages, and pinning that naming here is what made this assertion stale. The
+    # naming itself is guarded separately below, where a rename fails loudly instead
+    # of failing as a missing DeprecationWarning.
+    with pytest.warns(DeprecationWarning, match=r"sensitivity\.mode is retired") as rec:
         cfg = report_config.model_validate({"sensitivity": {"mode": "benchmarking", "independent_vars": ["x"]}})
+    # The message must name the YAML key a user edits, not the model's qualified name.
+    # `any(...)` rather than `rec[0]`: pytest.warns(match=) searches every recorded
+    # warning, but `rec` is ordered by EMISSION across all categories, so indexing [0]
+    # would make this assertion depend on an ordering nothing in the code guarantees.
+    assert any("report.sensitivity.mode is retired" in str(w.message) for w in rec)
     assert cfg.sensitivity is not None
     assert cfg.sensitivity.independent_vars == ["x"]
     assert not hasattr(cfg.sensitivity, "mode")

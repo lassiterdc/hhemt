@@ -93,6 +93,27 @@ class ReportingSet:
     # Run-entry validator selector: "benchmarking" delegates to
     # validate_sensitivity_independent_vars; "none" is a no-op (the default set).
     validator_key: str = "none"
+    #: The analysis SHAPE this set applies to, read at analysis.run() entry by the
+    #: compatibility check: "event_ensemble" iff toggle_sensitivity_analysis is
+    #: False, "sensitivity" iff True, "cross_experiment" never selectable from an
+    #: analysis config (it is reached only by hhemt combine, which looks the set up
+    #: by name). Also the homogeneity key for a LIST of sets: every named set must
+    #: declare the same shape. The default is None -- UNDECLARED, not a shape -- so
+    #: an undeclared set is refused by the run-entry check rather than silently
+    #: admitted; a str default would make every sweep set read as an event ensemble
+    #: until its declaration landed, which is fail-OPEN on the exact predicate this
+    #: field exists to close.
+    shape: str | None = None
+    #: Sensitivity AXES this set's figures plot against, as ALL-of over the outer
+    #: tuple and ANY-of within each inner tuple. Compared at run entry against the
+    #: sweep's varied-axis set (sensitivity.analysis_independent_vars union
+    #: system_independent_vars, both already canonical stripped field names). An
+    #: empty tuple means the set imposes no axis requirement -- a real declaration.
+    #: None means UNDECLARED and is refused by the run-entry check, exactly as an
+    #: undeclared shape is: without that distinction, holding a set at the default
+    #: would positively declare "no axis requirement" for a set that has one, which
+    #: is the S16 claim this field exists to encode.
+    required_axes: tuple[tuple[str, ...], ...] | None = None
 
 
 # Historical sidebar category order (the pre-ADR-5 _CATEGORY_ORDER, now a per-set
@@ -409,8 +430,11 @@ _TMPL_DEM_RESOLUTION_COUPLING_TABLE = RuleSpecTemplate(
     log_path_template="_logs/plots/dem_resolution_coupling_table.log",
 )
 
-# The standard multisim set: the six common renderers, in emission order
-# (matches workflow.py:1913-1918 today). per_sim expands to two bundle figures.
+# The standard multisim set: its eight renderers, in emission order. The count is
+# len(_STANDARD_SELECTION) below, not the intersection with _BENCHMARKING_SELECTION.
+# Emitted by the `_emit_active_set_plot_rules` dispatch in `generate_snakefile_content`
+# (workflow.py), which replaced the hardcoded `_build_plot_rule_block_*` call list this
+# comment used to cite by line number. per_sim expands to two bundle figures.
 _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("system_overview", rule_spec_template=(_TMPL_SYSTEM_OVERVIEW,)),
     RendererSelection(
@@ -442,11 +466,15 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("workflow_performance", rule_spec_template=(_TMPL_WORKFLOW_PERFORMANCE,)),
 )
 
-# The benchmarking (sensitivity-master) set: the five common renderers shared by
-# the master/reprocess generators (workflow.py:6391-6415), plus the two
-# conditional sensitivity renderers gated by predicate. per_sim_per_member expands to
-# two bundle figures.
-_BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
+# The SWEEP set: the seven unconditional renderers the master and reprocess-master
+# generators share, plus ONE conditional renderer (per_sim_per_member). This tuple is
+# the sensitivity-shaped bundle WITHOUT the benchmarking figure; _BENCHMARKING_SELECTION
+# below extends it with that figure and is the tuple carrying two conditionals. Emitted
+# by the `_emit_active_set_plot_rules` dispatch in `generate_master_snakefile_content`
+# and in `generate_reprocess_master_snakefile_content` (workflow.py), which replaced the
+# hardcoded call lists this comment used to cite by line number. per_sim_per_member
+# expands to two bundle figures.
+_SWEEP_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("system_overview", rule_spec_template=(_TMPL_SYSTEM_OVERVIEW,)),
     RendererSelection("per_analysis_summary", rule_spec_template=(_TMPL_PER_ANALYSIS_SUMMARY,)),
     RendererSelection("scenario_status_appendix", rule_spec_template=(_TMPL_SCENARIO_STATUS_APPENDIX,)),
@@ -503,6 +531,13 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
             ),
         ),
     ),
+)
+
+# The benchmarking set is the sweep-shaped bundle plus the benchmarking figure,
+# which plots against a compute-configuration axis. Split out so the `default`
+# sentinel can resolve a sweep to _SWEEP_SELECTION, whose per_sim_per_member
+# figures carry the (member_id, event_id) axis a master-scope report needs.
+_BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = _SWEEP_SELECTION + (
     RendererSelection(
         "sensitivity_benchmarking",
         predicate_key="has_independent_vars",
@@ -602,18 +637,36 @@ _B4B_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
     ),
 )
 
+#: The compute-configuration sensitivity axes, as canonical stripped analysis_config
+#: field names. A benchmarking-family figure plots against one of these, so a sweep
+#: that varies none of them has no x-axis for it -- which is the S16 compatibility
+#: claim. Compared at run entry against sensitivity.analysis_independent_vars, whose
+#: entries are already stripped of the `analysis.` column prefix.
+_COMPUTE_CONFIG_AXES: tuple[str, ...] = (
+    "run_mode",
+    "n_mpi_procs",
+    "n_omp_threads",
+    "n_gpus",
+    "n_nodes",
+    "hpc_ensemble_partition",
+)
+
 REPORTING_SETS: dict[str, ReportingSet] = {
     "default": ReportingSet(
         name="default",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_STANDARD_SELECTION,
         validator_key="none",
+        shape="event_ensemble",
+        required_axes=(),
     ),
     "benchmarking": ReportingSet(
         name="benchmarking",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_BENCHMARKING_SELECTION,
         validator_key="benchmarking",
+        shape="sensitivity",
+        required_axes=(_COMPUTE_CONFIG_AXES,),
     ),
     "combined": ReportingSet(
         name="combined",
@@ -653,24 +706,32 @@ REPORTING_SETS: dict[str, ReportingSet] = {
             ),
         ),
         validator_key="none",
+        shape="cross_experiment",
+        required_axes=(),
     ),
     "compute-sensitivity": ReportingSet(
         name="compute-sensitivity",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_COMPUTE_SENSITIVITY_SELECTION,
         validator_key="benchmarking",
+        shape="sensitivity",
+        required_axes=(_COMPUTE_CONFIG_AXES,),
     ),
     "dem-resolution": ReportingSet(
         name="dem-resolution",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_DEM_RESOLUTION_SELECTION,
         validator_key="benchmarking",
+        shape="sensitivity",
+        required_axes=(("target_dem_resolution",),),
     ),
     "b4b": ReportingSet(
         name="b4b",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_B4B_SELECTION,
         validator_key="benchmarking",
+        shape="sensitivity",
+        required_axes=(_COMPUTE_CONFIG_AXES,),
     ),
 }
 
