@@ -1,4 +1,4 @@
-from hhemt.utils import write_json
+from hhemt.utils import write_json, write_json_exclusive
 from hhemt.exceptions import ProcessingError
 from hhemt._filelock_compat import resolve_filelock
 from filelock import Timeout
@@ -241,36 +241,71 @@ class TRITONSWMM_log(BaseModel):
         # to a ProcessingError naming this log file.
         try:
             with resolve_filelock(str(lock_path), timeout=30):
+                # A read has THREE outcomes and this block must not collapse them
+                # to two. Only a read that ESTABLISHES the on-disk state may serve
+                # as the overlay baseline below; "I could not read it" is NOT
+                # "there is nothing there". Conflating those is what let a single
+                # transient read failure persist an information-free document over
+                # a populated log -- and because that document PARSES, every later
+                # reader propagated it faithfully, so the loss sustained itself
+                # through the healthy path and no read-side hardening could undo it.
+                # One read, one answer: the .exists()-then-open() pair is gone,
+                # because its two syscalls can disagree about one name.
                 disk: dict = {}
-                if self.logfile.exists():
+                _disk_established = False
+                _raw: bytes | None = None
+                try:
+                    _raw = self.logfile.read_bytes()
+                except FileNotFoundError:
+                    # The name did not resolve. That is NOT proof of absence: this
+                    # deployment has been measured answering inconsistently about
+                    # this exact name. Absence is settled below by an EXCLUSIVE
+                    # create, which asks the filesystem instead of inferring from
+                    # a failed read.
+                    _raw = None
+                except OSError as exc:
+                    raise ProcessingError(
+                        "log write (read-modify-write)",
+                        filepath=self.logfile,
+                        reason=(
+                            f"could not read {self.logfile} "
+                            f"({type(exc).__name__}: {exc}); refusing to write, because "
+                            "this instance's unchanged fields would be persisted over "
+                            "on-disk state it never read. Nothing is lost: this "
+                            "instance's state is still in memory and the workflow "
+                            "engine's own retries own transient failures."
+                        ),
+                    ) from exc
+                if _raw is not None:
                     try:
-                        with self.logfile.open() as f:
-                            disk = json.load(f)
-                    except (json.JSONDecodeError, OSError) as exc:
-                        # An EXISTING log that will not parse/read is NOT the same as
-                        # an absent log. Degrading to {} here silently discards every
-                        # field this instance did not change, which is how a
-                        # reconstruction can emit an all-defaults document over a log
-                        # that carried irreplaceable provenance. Preserve the bytes
-                        # beside the log and say so, then proceed (write() must never
-                        # abort a run over a diagnostic).
+                        disk = json.loads(_raw)
+                        _disk_established = True
+                    except json.JSONDecodeError as exc:
+                        # Preserve the bytes that ACTUALLY failed -- these, not a
+                        # SECOND read of the same path. The old code re-read here,
+                        # so under concurrency the quarantine captured a different
+                        # document than the one that failed, and the diagnostic lied
+                        # about the only thing it exists to record.
                         _quarantine = self.logfile.with_suffix(
                             f"{self.logfile.suffix}.unreadable"
                         )
                         try:
-                            _quarantine.write_bytes(self.logfile.read_bytes())
+                            _quarantine.write_bytes(_raw)
                         except OSError:
                             _quarantine = None
-                        logging.getLogger(__name__).warning(
-                            "Log file %s exists but could not be read (%s: %s); "
-                            "this write will NOT preserve its unchanged fields. "
-                            "Original bytes preserved at %s.",
-                            self.logfile,
-                            type(exc).__name__,
-                            exc,
-                            _quarantine if _quarantine is not None else "<preserve failed>",
-                        )
-                        disk = {}
+                        raise ProcessingError(
+                            "log write (read-modify-write)",
+                            filepath=self.logfile,
+                            reason=(
+                                f"{self.logfile} exists but does not parse "
+                                f"({exc}); refusing to write, because this instance's "
+                                "unchanged fields would be persisted over state it "
+                                "never read. The bytes that failed are preserved at "
+                                f"{_quarantine if _quarantine is not None else '<preserve failed>'}"
+                                " -- inspect and repair that file, or remove the log "
+                                "to start a new one."
+                            ),
+                        ) from exc
                 mine = self.as_dict()
                 changed_keys = {
                     k for k, v in mine.items() if v != self._baseline.get(k)
@@ -311,7 +346,26 @@ class TRITONSWMM_log(BaseModel):
                         len(_dropped),
                         ", ".join(_dropped),
                     )
-                write_json(merged, self.logfile)
+                if _disk_established:
+                    write_json(merged, self.logfile)
+                else:
+                    # The read said the name did not resolve, and `merged` is
+                    # therefore `mine` alone. Persisting that with `write_json`
+                    # would use `os.replace`, which cannot tell creating a log
+                    # from destroying one. Ask the filesystem instead.
+                    try:
+                        write_json_exclusive(merged, self.logfile)
+                    except FileExistsError as exc:
+                        raise ProcessingError(
+                            "log write (read-modify-write)",
+                            filepath=self.logfile,
+                            reason=(
+                                f"{self.logfile} could not be read but DOES exist: the "
+                                "read that reported it absent was wrong. Refusing to "
+                                "write, because this instance's unchanged fields would "
+                                "have replaced a log whose contents it never saw."
+                            ),
+                        ) from exc
                 self._baseline = merged
         except Timeout as exc:
             raise ProcessingError(

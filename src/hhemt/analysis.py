@@ -429,15 +429,33 @@ class TRITONSWMM_analysis:
                 self, is_main_orchestrator=is_main_orchestrator, skip_log_update=skip_log_update
             )
             self.nsims *= len(self.sensitivity.df_setup)
-        # Always LOAD the log from disk (read-only safe; _refresh_log creates a
-        # default when the log file is absent). Only the WRITE-BACK side is gated
-        # on skip_log_update, so a read-only consumer (renderer) gets self.log
-        # populated WITHOUT mutating the shared log.
-        self._refresh_log()
+        # LOAD ON FIRST ACCESS, not here. `skip_log_update` already gates the
+        # WRITE-back below; the READ had no gate, so every read-only consumer
+        # opened the shared master log at construction. On an ensemble that is
+        # hundreds of concurrent workers opening one file none of them reads --
+        # the sim/prepare/process runners all pass skip_log_update=True and use
+        # scenario.log / scenario.get_log(model_type) instead.
+        # THIS MOVES NO READ: a consumer that genuinely needs the log takes the
+        # `not skip_log_update` branch below and touches self.log on the next
+        # line, still at construction. Only the never-reads population changes.
+        self._log = None
         if not skip_log_update:
-            # Record available backends at analysis creation time
-            self.log.cpu_backend_available.set(self._system.compilation_cpu_successful)
-            self.log.gpu_backend_available.set(self._system.compilation_gpu_successful)
+            # Record available backends at analysis creation time.
+            # COMPARE BEFORE SET. `LogField.set()` performs a full read-modify-write
+            # of the SHARED master log, so an unconditional set here made every
+            # analysis construction two writes of two immutable booleans -- on an
+            # ensemble, thousands of writers churning one file to restate what it
+            # already says. Writing only on a real change is the compare-and-write
+            # discipline this codebase already applies to DU sentinels, per-sa
+            # fingerprints and status flags. A DEGRADED instance still writes,
+            # because its fields read None: that is the case the write-side guard
+            # in `log.write()` exists to refuse, and it must stay reachable.
+            _cpu = self._system.compilation_cpu_successful
+            _gpu = self._system.compilation_gpu_successful
+            if self.log.cpu_backend_available.get() != _cpu:
+                self.log.cpu_backend_available.set(_cpu)
+            if self.log.gpu_backend_available.get() != _gpu:
+                self.log.gpu_backend_available.set(_gpu)
 
             self._update_log()
         self._resource_manager = ResourceManager(self)
@@ -732,6 +750,19 @@ class TRITONSWMM_analysis:
             cfg_analysis=self.cfg_analysis,
             cfg_hpc_system=self.cfg_hpc_system,
         )
+
+    @property
+    def log(self):
+        """The analysis log, loaded from disk on FIRST ACCESS rather than at
+        construction. The setter is kept so `_refresh_log`'s `self.log = ...`
+        assignments and any external assignment behave exactly as before."""
+        if self._log is None:
+            self._refresh_log()
+        return self._log
+
+    @log.setter
+    def log(self, value) -> None:
+        self._log = value
 
     def _refresh_log(self):
         if self.analysis_paths.f_log.exists():

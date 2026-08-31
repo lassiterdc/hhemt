@@ -336,6 +336,25 @@ def write_json(data: dict, file: Path):
     tmp_path.replace(file)
 
 
+def write_json_exclusive(data: dict, file: Path):
+    """Create `file` with `data`, refusing if the name already exists.
+
+    The counterpart to `write_json` for the ONE case where a caller believes the
+    target is absent. `write_json` uses `os.replace`, which is unconditional and
+    therefore cannot distinguish creating a file from destroying one; this asks
+    the filesystem, via `O_CREAT | O_EXCL`, and raises `FileExistsError` when the
+    belief is wrong. A caller that inferred absence from a failed read has no
+    other way to check that inference -- a second read is the same instrument
+    that already gave the wrong answer.
+    """
+    file.parent.mkdir(exist_ok=True, parents=True)
+    fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2, default=str)
+        f.flush()
+        os.fsync(f.fileno())
+
+
 def replace_substring_in_file(file_path, old_substring, new_substring, verbose=False):
     """
     Replace all occurrences of old_substring with new_substring in a text file.
