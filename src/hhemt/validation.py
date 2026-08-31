@@ -587,12 +587,12 @@ def _validate_toggle_dependencies_analysis(
             )
 
 
-def _validate_per_sa_system_configs(
+def _validate_per_member_system_configs(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
     result: ValidationResult,
 ):
-    """Validate per-sub-analysis system configs declared in the sensitivity CSV.
+    """Validate per-member system configs declared in the sensitivity CSV.
 
     Runs only when ``toggle_sensitivity_analysis=True`` AND the sensitivity CSV
     contains a ``system_config_yaml`` column. Implements the four Phase 4 checks:
@@ -600,7 +600,7 @@ def _validate_per_sa_system_configs(
     1. **Existence** — each non-null cell points to a YAML file on disk.
     2. **Validity** — each unique YAML loads cleanly through
        :func:`load_system_config` (Pydantic validation runs).
-    3. **Model-toggle consistency** — every sub-analysis system config enables
+    3. **Model-toggle consistency** — every member system config enables
        the same model-type toggles as the master ``cfg_system``. The Snakefile
        is generated against the master's enabled model; a mismatch would
        silently route the wrong runner script.
@@ -646,8 +646,8 @@ def _validate_per_sa_system_configs(
         c for c in df.columns
         if c.startswith("system.") and _is_system_overlay_column(c)
     )
-    for sa_id, row in df.iterrows():
-        sa_id_str = str(sa_id)
+    for member_id, row in df.iterrows():
+        member_id_str = str(member_id)
         yaml_cell = row.get("system_config_yaml") if "system_config_yaml" in df.columns else None
         yaml_specified = (
             "system_config_yaml" in df.columns
@@ -661,9 +661,9 @@ def _validate_per_sa_system_configs(
         }
         if overlay_cells and yaml_specified:
             result.add_error(
-                field=f"sensitivity_analysis.row[{sa_id_str}]",
+                field=f"sensitivity_analysis.row[{member_id_str}]",
                 message=(
-                    f"sa_id={sa_id_str}: row specifies both system_config_yaml "
+                    f"member_id={member_id_str}: row specifies both system_config_yaml "
                     f"({yaml_cell}) and system.* overlay column(s) {sorted(overlay_cells)}; "
                     f"mutually exclusive — choose one mechanism per row."
                 ),
@@ -680,9 +680,9 @@ def _validate_per_sa_system_configs(
                 })
             except pydantic.ValidationError as exc:
                 result.add_error(
-                    field=f"sensitivity_analysis.row[{sa_id_str}]",
+                    field=f"sensitivity_analysis.row[{member_id_str}]",
                     message=(
-                        f"sa_id={sa_id_str}: system.* overlay-column values failed "
+                        f"member_id={member_id_str}: system.* overlay-column values failed "
                         f"SystemConfig validation: {exc}"
                     ),
                     current_value=None,
@@ -759,7 +759,7 @@ def _validate_per_sa_system_configs(
                     f"(triton={sub_toggles[0]}, tritonswmm={sub_toggles[1]}, "
                     f"swmm={sub_toggles[2]}) do not match master "
                     f"(triton={master_toggles[0]}, tritonswmm={master_toggles[1]}, "
-                    f"swmm={master_toggles[2]}). Sub-analysis system configs "
+                    f"swmm={master_toggles[2]}). Member system configs "
                     "must enable the same model type as the master."
                 ),
                 current_value=str(yaml_path),
@@ -803,14 +803,14 @@ def _validate_per_sa_system_configs(
                             f"on non-compile-relevant field {field_name!r}: "
                             f"{base_path} has {base_dump[field_name]!r}, "
                             f"{other_path} has {other_dump[field_name]!r}. "
-                            "Reconcile the YAMLs or split the sub-analyses into "
+                            "Reconcile the YAMLs or split the members into "
                             "different compile targets."
                         ),
                         current_value=None,
                         fix_hint=(
                             "Either align the divergent field across the collapsing "
                             "YAMLs, or differentiate the dedup-key fields so the "
-                            "sub-analyses no longer collapse."
+                            "members no longer collapse."
                         ),
                     )
                     break  # First divergence per pair is enough.
@@ -1568,7 +1568,7 @@ def _validate_setup_mem_sizing(
     result: ValidationResult,
 ):
     """Warn when hpc_mem_allocation_for_setup_mb is under-sized for the smallest
-    target_dem_resolution across master + sensitivity overlays + per-sub-analysis
+    target_dem_resolution across master + sensitivity overlays + per-member
     YAMLs. Empirical peak parent-process RSS at 0.35 m DEM is ~5.15 GB; an 8 GB
     threshold gives a guard band without preventing user override.
     """
@@ -1582,14 +1582,14 @@ def _validate_setup_mem_sizing(
         candidate_resolutions.append(float(master_res))
 
     if cfg_analysis.toggle_sensitivity_analysis and cfg_analysis.sensitivity_analysis:
-        sa_csv = Path(cfg_analysis.sensitivity_analysis)
-        if sa_csv.is_file():
+        member_csv = Path(cfg_analysis.sensitivity_analysis)
+        if member_csv.is_file():
             try:
                 import pandas as pd
-                if sa_csv.suffix.lower() in {".xlsx", ".xls"}:
-                    df = pd.read_excel(sa_csv)
+                if member_csv.suffix.lower() in {".xlsx", ".xls"}:
+                    df = pd.read_excel(member_csv)
                 else:
-                    df = pd.read_csv(sa_csv)
+                    df = pd.read_csv(member_csv)
             except Exception:
                 df = None
             if df is not None:
@@ -1632,12 +1632,12 @@ def _validate_setup_mem_sizing(
         )
 
 
-def _validate_per_sa_row_caps(
+def _validate_per_member_row_caps(
     cfg_analysis: analysis_config,
     cfg_hpc_system: Any | None,
     result: ValidationResult,
 ) -> None:
-    """Per-``(sa_id, resource-column)`` partition-cap scanner (reproducibility C8, ADR-10).
+    """Per-``(member_id, resource-column)`` partition-cap scanner (reproducibility C8, ADR-10).
 
     Generalizes the master-level per-partition runtime cap check (the batch_job /
     1_job_many_srun_tasks bounds in ``validate_analysis_config``) to EACH sensitivity
@@ -1645,12 +1645,12 @@ def _validate_per_sa_row_caps(
     ``analysis.hpc_ensemble_partition`` overlay column when present, else
     ``cfg_analysis.hpc_ensemble_partition``), then check each requested resource
     column in the row against THAT partition's ``PartitionSpec`` caps. Emits one
-    ``ValidationIssue`` per ``(sa_id, column)`` that exceeds its cap — the reprex
+    ``ValidationIssue`` per ``(member_id, column)`` that exceeds its cap — the reprex
     "problem pair" surface consumed by ``hhemt.bundle._reprex.reprex`` when a bundle
     is re-aimed at a target HPC profile.
 
     No-op unless sensitivity analysis is on AND a ``cfg_hpc_system`` is supplied AND
-    the sensitivity CSV is readable (mirrors ``_validate_per_sa_system_configs``
+    the sensitivity CSV is readable (mirrors ``_validate_per_member_system_configs``
     gating; a relative/absent/unreadable CSV path silently returns — the reprex
     caller rebases the CSV onto the bundle root before invoking preflight).
     """
@@ -1694,8 +1694,8 @@ def _validate_per_sa_row_caps(
         c for c in df.columns if c in ("hpc.partition", "analysis.hpc_ensemble_partition")
     ]
 
-    for sa_id, row in df.iterrows():
-        sa_id_str = str(sa_id)
+    for member_id, row in df.iterrows():
+        member_id_str = str(member_id)
         # Resolve the row's target partition: an overlay column wins, else the
         # analysis-config default ensemble partition (the re-aimed target profile).
         partition_name = None
@@ -1711,9 +1711,9 @@ def _validate_per_sa_row_caps(
         spec = cfg_hpc_system.partitions.get(partition_name)
         if spec is None:
             result.add_error(
-                field=f"sensitivity_analysis.row[{sa_id_str}].hpc.partition",
+                field=f"sensitivity_analysis.row[{member_id_str}].hpc.partition",
                 message=(
-                    f"sa_id={sa_id_str}: target partition '{partition_name}' is not "
+                    f"member_id={member_id_str}: target partition '{partition_name}' is not "
                     f"declared in the target hpc_system_config partitions block."
                 ),
                 current_value=partition_name,
@@ -1736,9 +1736,9 @@ def _validate_per_sa_row_caps(
             cap = getattr(spec, cap_attr, None)
             if cap is not None and requested > cap:
                 result.add_error(
-                    field=f"sensitivity_analysis.row[{sa_id_str}].{col}",
+                    field=f"sensitivity_analysis.row[{member_id_str}].{col}",
                     message=(
-                        f"sa_id={sa_id_str}: requests {label}={requested:g} on partition "
+                        f"member_id={member_id_str}: requests {label}={requested:g} on partition "
                         f"'{partition_name}', exceeding its cap of {cap}."
                     ),
                     current_value=requested,
@@ -2079,7 +2079,7 @@ def _validate_resume_interruption_schedule(cfg: analysis_config, result: Validat
     """
     # getattr, not direct access: a real analysis_config always carries the field
     # (default None), but preflight_validate is also called with partial/stub configs
-    # (e.g. the Phase-4 per-sa-validator test's SimpleNamespace). Absent field == None
+    # (e.g. the Phase-4 per-member-validator test's SimpleNamespace). Absent field == None
     # == harness disabled, so the R6 check is correctly skipped. Mirrors the runner's
     # arming gate, which reads the same field via getattr.
     schedule = getattr(cfg, "resume_interruption_schedule", None)
@@ -2149,14 +2149,14 @@ def preflight_validate(
     data_result = validate_data_consistency(cfg_system, cfg_analysis)
     result.merge(data_result)
 
-    # Per-sub-analysis system config validation (Phase 4): runs only when the
+    # Per-member system config validation (Phase 4): runs only when the
     # sensitivity CSV declares a `system_config_yaml` column. Surfaces existence,
     # validity, model-toggle-consistency, and canonical-YAML-correctness errors
     # before TRITONSWMM_sensitivity_analysis.__init__ would otherwise raise them
     # at instantiation time. Needs cfg_system (for master toggles) — invoked
     # here at the preflight_validate level rather than from inside
     # _validate_toggle_dependencies_analysis (which lacks cfg_system).
-    _validate_per_sa_system_configs(cfg_system, cfg_analysis, result)
+    _validate_per_member_system_configs(cfg_system, cfg_analysis, result)
     # Re-parented here from _validate_storm_tide_data: this is a whole-analysis
     # check and needs BOTH configs to resolve the rule-(1) forcing variable set.
     _validate_selected_event_forcing_extent(cfg_analysis, cfg_system, result)
@@ -2164,11 +2164,11 @@ def preflight_validate(
     # from preflight, sharing its predicate with the consumer so the two cannot drift.
     _validate_event_window_columns(cfg_analysis, result)
 
-    # Per-(sa_id, resource-column) partition-cap scan (reproducibility C8, ADR-10).
+    # Per-(member_id, resource-column) partition-cap scan (reproducibility C8, ADR-10).
     # No-op unless cfg_hpc_system is supplied AND the sensitivity CSV is readable, so
     # native / non-reprex preflight is byte-identical. Emits the reprex problem pairs
     # when validation.py is re-aimed at a target HPC profile via bundle._reprex.reprex.
-    _validate_per_sa_row_caps(cfg_analysis, cfg_hpc_system, result)
+    _validate_per_member_row_caps(cfg_analysis, cfg_hpc_system, result)
 
     # Per-row partition variation requires batch_job mode (DQ6). Runs only when
     # the sensitivity CSV varies the ensemble partition across rows.

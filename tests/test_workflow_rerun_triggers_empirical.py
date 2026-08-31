@@ -104,6 +104,6 @@ def test_rerun_triggers_multi_sim_add_remove(norfolk_multi_sim_analysis):
 
 
 def test_rerun_triggers_sensitivity_add_remove(norfolk_sensitivity_analysis):
-    """Sensitivity: add+remove a sub-analysis row in the sensitivity CSV, re-run,
-    assert untouched sub-analyses' scenarios were not re-executed."""
+    """Sensitivity: add+remove a member row in the sensitivity CSV, re-run,
+    assert untouched members' scenarios were not re-executed."""
     _exercise_add_remove_rerun(norfolk_sensitivity_analysis, kind="sensitivity")

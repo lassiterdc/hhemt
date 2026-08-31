@@ -27,28 +27,28 @@ import xarray as xr
 import hhemt.eda._config_diff as cd
 
 _CONFIGS = [
-    ("sa_serial_1", "serial", {"run_mode": "serial", "n_mpi_procs": 1, "n_omp_threads": 1, "n_gpus": 0}),
-    ("sa_openmp_2", "openmp", {"run_mode": "openmp", "n_mpi_procs": 1, "n_omp_threads": 2, "n_gpus": 0}),
-    ("sa_openmp_8", "openmp", {"run_mode": "openmp", "n_mpi_procs": 1, "n_omp_threads": 8, "n_gpus": 0}),
-    ("sa_mpi_2", "mpi", {"run_mode": "mpi", "n_mpi_procs": 2, "n_omp_threads": 1, "n_gpus": 0}),
-    ("sa_mpi_8", "mpi", {"run_mode": "mpi", "n_mpi_procs": 8, "n_omp_threads": 1, "n_gpus": 0}),
-    ("sa_hybrid_4", "hybrid", {"run_mode": "hybrid", "n_mpi_procs": 2, "n_omp_threads": 2, "n_gpus": 0}),
-    ("sa_gpu_a6000_1", "gpu", {"run_mode": "gpu", "n_gpus": 1, "hpc.partition": "gpu-a6000"}),
-    ("sa_gpu_a6000_2", "gpu", {"run_mode": "gpu", "n_gpus": 2, "hpc.partition": "gpu-a6000"}),
-    ("sa_gpu_a100_1", "gpu", {"run_mode": "gpu", "n_gpus": 1, "hpc.partition": "gpu-a100-80"}),
+    ("member_serial_1", "serial", {"run_mode": "serial", "n_mpi_procs": 1, "n_omp_threads": 1, "n_gpus": 0}),
+    ("member_openmp_2", "openmp", {"run_mode": "openmp", "n_mpi_procs": 1, "n_omp_threads": 2, "n_gpus": 0}),
+    ("member_openmp_8", "openmp", {"run_mode": "openmp", "n_mpi_procs": 1, "n_omp_threads": 8, "n_gpus": 0}),
+    ("member_mpi_2", "mpi", {"run_mode": "mpi", "n_mpi_procs": 2, "n_omp_threads": 1, "n_gpus": 0}),
+    ("member_mpi_8", "mpi", {"run_mode": "mpi", "n_mpi_procs": 8, "n_omp_threads": 1, "n_gpus": 0}),
+    ("member_hybrid_4", "hybrid", {"run_mode": "hybrid", "n_mpi_procs": 2, "n_omp_threads": 2, "n_gpus": 0}),
+    ("member_gpu_a6000_1", "gpu", {"run_mode": "gpu", "n_gpus": 1, "hpc.partition": "gpu-a6000"}),
+    ("member_gpu_a6000_2", "gpu", {"run_mode": "gpu", "n_gpus": 2, "hpc.partition": "gpu-a6000"}),
+    ("member_gpu_a100_1", "gpu", {"run_mode": "gpu", "n_gpus": 1, "hpc.partition": "gpu-a100-80"}),
 ]
 
 # The two measured arm shapes. Coupled: GPU configs mutually identical, each CPU config
 # distinct. Pure-TRITON: one group straddling every run mode.
-_COUPLED = {sa: ("G" if "gpu" in sa else sa) for sa, _, _ in _CONFIGS}
-_PURE = dict.fromkeys((sa for sa, _, _ in _CONFIGS), "ALL")
+_COUPLED = {member: ("G" if "gpu" in member else member) for member, _, _ in _CONFIGS}
+_PURE = dict.fromkeys((member for member, _, _ in _CONFIGS), "ALL")
 
 
 def _subs():
     out = {}
-    for sa_id, run_mode, attrs in _CONFIGS:
+    for member_id, run_mode, attrs in _CONFIGS:
         da = xr.DataArray(np.zeros((4, 4)), dims=("y", "x"))
-        out[sa_id] = {
+        out[member_id] = {
             "attrs": attrs,
             "label": cd._derive_config_label(attrs),
             "run_mode": run_mode,
@@ -121,6 +121,6 @@ def test_uniform_grid_guard_survives(monkeypatch):
     """The cell-wise-subtraction precondition is independent of the grouping axis."""
     monkeypatch.setattr(cd, "_identity_labels", lambda root: _COUPLED)
     subs = _subs()
-    subs["sa_mpi_8"]["wlevel"] = xr.DataArray(np.zeros((5, 5)), dims=("y", "x"))
+    subs["member_mpi_8"]["wlevel"] = xr.DataArray(np.zeros((5, 5)), dims=("y", "x"))
     with pytest.raises(Exception, match="UNIFORM grid"):
         cd._group_by_identity(subs, None)

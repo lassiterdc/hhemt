@@ -164,8 +164,8 @@ def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> No
     # per-spec assertions below are cross-spec claims and a one-plot-id fixture cannot
     # discriminate: the retired homogeneity clause compared paired[0] against itself and was
     # true for ANY implementation. `metadata` carries no segment (facets: models only); the
-    # per-sim id carries sa. + evt. (facets: sub-analysis, event, models).
-    plot_ids = ("metadata", "peak_flood_depth__sa.gpu_0_r1__evt.event_index.0")
+    # per-sim id carries member. + evt. (facets: member, event, models).
+    plot_ids = ("metadata", "peak_flood_depth__member.gpu_0_r1__evt.event_index.0")
     for pid in plot_ids:
         _write_child(bundle_root, "expA_tritonswmm", pid, _TS_HTML)
         _write_child(bundle_root, "expA_triton", pid, _TRI_HTML)

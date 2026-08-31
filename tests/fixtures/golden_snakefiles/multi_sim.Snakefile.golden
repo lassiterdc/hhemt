@@ -27,11 +27,11 @@ ILOC_BY_EVENT_ID = {'event_id.0': 0, 'event_id.1': 1}
 from hhemt.report_plot_ids import (
     event_labels_from_status as _event_labels_from_status,
     report_label_value as _report_label_value,
-    sa_labels_from_status as _sa_labels_from_status,
+    member_labels_from_status as _member_labels_from_status,
 )
 
 _EVENT_LABELS = _event_labels_from_status(workflow.basedir)
-_SA_LABELS = _sa_labels_from_status(workflow.basedir)
+_MEMBER_LABELS = _member_labels_from_status(workflow.basedir)
 
 
 rule all:

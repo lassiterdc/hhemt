@@ -40,7 +40,7 @@ TRITONSWMM_scenario (scenario.py)
 | `workflow.py` | Dynamic Snakefile generation for parallel execution |
 | `execution.py` | Execution strategies: SerialExecutor, LocalConcurrentExecutor, SlurmExecutor |
 | `resource_management.py` | CPU/GPU/memory allocation for HPC |
-| `sensitivity_analysis.py` | Parameter sweep orchestration with sub-analyses |
+| `sensitivity_analysis.py` | Parameter sweep orchestration with members |
 | `paths.py` | Dataclasses: SysPaths, AnalysisPaths, ScenarioPaths |
 | `log.py` | JSON-persisted logging with LogField[T] pattern |
 

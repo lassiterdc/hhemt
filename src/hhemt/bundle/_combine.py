@@ -380,7 +380,7 @@ def _load_intercomparison_subs(root: Path) -> dict:
     ``sensitivity_datatree.zarr``.
 
     Walks the same tree convention as ``eda._config_diff._load_subs`` (top-level groups
-    ``/sa_{id}``; the key-result arrays live under ``/sa_{id}/tritonswmm/{triton,swmm_link}``).
+    ``/member_{id}``; the key-result arrays live under ``/member_{id}/tritonswmm/{triton,swmm_link}``).
     One representative sub per compute-config (sorted-first, deterministic).
 
     CORRECTED 2026-07-21 — the collapse is NO LONGER silent. This docstring previously
@@ -388,17 +388,17 @@ def _load_intercomparison_subs(root: Path) -> dict:
     That premise is FALSE on a resume arm: measured, it holds 14/14 on the clean sweep but
     FAILS on 6 of 14 resume configs (gpu_1, gpu_3, gpu_4, hybrid_12, hybrid_13, mpi_10;
     max |delta| 5.9e-7 .. 1.2e-6 m). Because sorting puts ``_r1`` before ``_r2``, every
-    ``_r2`` was discarded — so 10 of the 14 truncation-asymmetric sub-analyses never
+    ``_r2`` was discarded — so 10 of the 14 truncation-asymmetric members never
     reached the read-model, and nothing recorded that they had been dropped.
 
     The representative collapse is RETAINED (the pairing is per-config by construction),
-    but the discarded ``sa_id``s are now returned alongside the payload so a consumer can
-    DISCLOSE the collapse rather than silently under-report. Keying on ``sa_id`` and
+    but the discarded ``member_id``s are now returned alongside the payload so a consumer can
+    DISCLOSE the collapse rather than silently under-report. Keying on ``member_id`` and
     reporting replicate spread as a first-class column is the fuller fix and is tracked
     separately — it changes the read-model schema and every consumer of it.
 
     Returns ``(subs, collapsed)`` where ``collapsed`` maps ``{config_identity_str:
-    [discarded sa_id, ...]}``, empty when no replicate was dropped.
+    [discarded member_id, ...]}``, empty when no replicate was dropped.
     """
     import xarray as xr
 
@@ -411,7 +411,7 @@ def _load_intercomparison_subs(root: Path) -> dict:
         return out, collapsed
     dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
     for g in sorted(dt.groups):
-        if g.count("/") != 1 or not g.startswith("/sa_"):
+        if g.count("/") != 1 or not g.startswith("/member_"):
             continue
         cfg_key = config_identity_from_node_attrs(dict(dt[g].attrs))
         if cfg_key in out:

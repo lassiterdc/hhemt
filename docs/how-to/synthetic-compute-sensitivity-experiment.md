@@ -154,14 +154,14 @@ does **not** dispatch on a resolution axis. A DEM-resolution sweep is instead
 expressed by giving the sensitivity CSV a `system.target_dem_resolution` overlay
 column, one row per resolution rung:
 
-| `sa_id` | ... | `system.target_dem_resolution` |
+| `member_id` | ... | `system.target_dem_resolution` |
 |---------|-----|--------------------------------|
 | `res_3p5` | ... | 3.5 |
 | `res_7p0` | ... | 7.0 |
 | `res_14p0` | ... | 14.0 |
 
 Each row overlays `target_dem_resolution` onto the master system config
-(`system_config.model_validate({**master, **overlay})`), so the sub-analyses share
+(`system_config.model_validate({**master, **overlay})`), so the members share
 everything but the DEM cell size. Choose a **constant-ratio** ladder, each coarser
 rung an integer multiple of the finest (e.g. 3.5 / 7.0 / 14.0 m, successive
 doubling), so each coarse grid is a clean aggregation of the finest, which is the
@@ -174,7 +174,7 @@ DEM-resolution reporting set:
 
 !!! warning "The two EDA families are mutually exclusive per experiment"
     The `compute-sensitivity` family's `config_diff_maps` requires a **uniform**
-    grid across sub-analyses and raises a named `ProcessingError` on a
+    grid across members and raises a named `ProcessingError` on a
     mixed-resolution master; the `dem-resolution` family requires the varying grid.
     Pick one reporting set per experiment: do not mix `config_diff_maps` with the
     `dem_resolution_*` renderers.

@@ -28,7 +28,7 @@ def _fmt_bytes(size_bytes: int) -> str:
 
 
 def _child_model(child: Path) -> str:
-    """'TRITON-SWMM' when a coupled tier exists on any /sa_* node, else 'TRITON'."""
+    """'TRITON-SWMM' when a coupled tier exists on any /member_* node, else 'TRITON'."""
     store = child / "sensitivity_datatree.zarr"
     if not store.exists():
         return "TRITON"
@@ -37,7 +37,7 @@ def _child_model(child: Path) -> str:
 
         dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
         grps = set(dt.groups)
-        for g in sorted(g for g in grps if g.count("/") == 1 and g.startswith("/sa_")):
+        for g in sorted(g for g in grps if g.count("/") == 1 and g.startswith("/member_")):
             if f"{g}/tritonswmm/triton" in grps:
                 return "TRITON-SWMM"
             if f"{g}/triton_only/triton" in grps:

@@ -125,8 +125,8 @@ def test_from_doi_reconstituted_bundle_runs_locally(
 
     # "It ran" proof set (mirrors test_synth_analysis_test_end_to_end.py):
     assert (exp.bundle_root / "_test").exists(), "no _test subtree materialized"
-    assert result.analyses, "analysis.test() produced no _test sub-analyses"
-    for sub_result in result.analyses:
+    assert result.members, "analysis.test() produced no _test members"
+    for sub_result in result.members:
         # validate_analysis's 7 checks inspect REAL consolidated outputs -- a
         # Snakemake --dry-run could never satisfy them.
         tst_ut.assert_analysis_workflow_completed_successfully(sub_result.analysis)

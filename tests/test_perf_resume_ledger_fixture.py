@@ -7,7 +7,7 @@ defect shipped to production while the entire behavioural suite was green, becau
 the raw ``performance{N}.txt`` file index. The production exporter is the only caller
 that passes a non-1.0 value (``TRITON_reporting_timestep_s / 60 = 600 / 60 = 10.0``), so
 the one value where the two index spaces coincide was the only value under test.
-Measured on ``sa_serial_6_r1``: 89.51 s (the pure telescope to ``performance144.txt``)
+Measured on ``member_serial_6_r1``: 89.51 s (the pure telescope to ``performance144.txt``)
 against a correct 409.30 s, with a correct ledger and correct raw input.
 
 The scale parametrization is therefore the point of this module, not a flourish. The
@@ -16,7 +16,7 @@ invariant is that the reporting-interval scaling must not change the aggregate a
 about how much time the run consumed.
 
 Fixture provenance: ``tests/fixtures/perf_resume_ledger/`` holds the full 144-file
-``performance{N}.txt`` set captured from ``sa_serial_6_r1`` on both
+``performance{N}.txt`` set captured from ``member_serial_6_r1`` on both
 ``synth_cc_clean_triton`` and ``synth_cc_resume_triton``, plus each sim's
 ``_walltime`` oracle. The resumed arm's oracle records four attempts (three
 interruptions), independently corroborating the ledger's
@@ -37,7 +37,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "perf_resume_ledger"
 RESUME_PERF = FIXTURE / "resume_triton" / "performance"
 CLEAN_PERF = FIXTURE / "clean_triton" / "performance"
 
-# The ledger for sa_serial_6_r1, verbatim from log_triton.json on the cluster.
+# The ledger for member_serial_6_r1, verbatim from log_triton.json on the cluster.
 RESUME_STEPS = [36, 72, 108]
 
 # Production reporting interval is 600 s, so min_per_tstep = 600/60. 1.0 is the default

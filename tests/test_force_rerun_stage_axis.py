@@ -27,9 +27,9 @@ def _seed_status_and_plots(analysis):
     status_dir = root / "_status"
     status_dir.mkdir(parents=True, exist_ok=True)
     flags = [
-        "c_run_tritonswmm_sa-0_evt-x_complete.flag",
-        "d_process_tritonswmm_sa-0_evt-x_complete.flag",
-        "e_consolidate_sa-0_complete.flag",
+        "c_run_tritonswmm_member-0_evt-x_complete.flag",
+        "d_process_tritonswmm_member-0_evt-x_complete.flag",
+        "e_consolidate_member-0_complete.flag",
     ]
     for name in flags:
         (status_dir / name).touch()

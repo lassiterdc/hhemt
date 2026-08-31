@@ -151,7 +151,7 @@ def _get_endpoint_uuids(system: str) -> tuple[str, str, bool, str | None]:
 # These match anywhere in the tree — e.g. "out_triton" excludes any directory
 # named out_triton at any depth.
 DEFAULT_EXCLUDE_PATTERNS = [
-    "subanalyses",
+    "members",
     "out_triton",
     "out_tritonswmm",
     "out_swmm",

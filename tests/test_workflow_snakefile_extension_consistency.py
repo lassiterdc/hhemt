@@ -199,9 +199,9 @@ def _generate_multisim_snakefile_text(analysis, static_backend: Literal["matplot
 
 
 def _generate_sensitivity_master_snakefile_text(
-    sa, static_backend: Literal["matplotlib", "plotly"], monkeypatch
+    member, static_backend: Literal["matplotlib", "plotly"], monkeypatch
 ) -> str:
-    builder = sa.sensitivity._workflow_builder  # type: ignore[attr-defined]
+    builder = member.sensitivity._workflow_builder  # type: ignore[attr-defined]
     base = builder._base_builder
     monkeypatch.setattr(base, "_get_report_cfg_static_backend", lambda: static_backend)
     return builder.generate_master_snakefile_content(

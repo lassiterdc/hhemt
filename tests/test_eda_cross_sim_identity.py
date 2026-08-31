@@ -82,7 +82,7 @@ def test_compare_variable_exact_coord_mismatch_fails_closed():
 
 def test_combine_cells_single_and_multi():
     """Regression for the artifact-assembly helper _combine_cells (the stitch the
-    operator 2-row validation run tripped on Rivanna). A single 1x1 (sa_id, event_iloc)
+    operator 2-row validation run tripped on Rivanna). A single 1x1 (member_id, event_iloc)
     cell — the minimal native+container suite, one non-reference sub + one event — is the
     DEGENERATE combine_by_coords case (raises "Could not find any dimension coordinates"
     on the Rivanna py3.11 xarray). The helper returns the lone cell directly there and
@@ -93,31 +93,31 @@ def test_combine_cells_single_and_multi():
     cell = xr.DataArray(0.0).expand_dims({"sa_id": ["container"], "event_iloc": [0]})
     # Single cell: must return the lone array intact (no combine_by_coords degeneracy).
     single = _combine_cells([cell])
-    assert single.sel(sa_id="container", event_iloc=0).item() == 0.0
+    assert single.sel(member_id="container", event_iloc=0).item() == 0.0
     assert list(single["sa_id"].values) == ["container"]
 
-    # N>=2 across sa_id: assembled into the (sa_id, event_iloc) grid (manual build, no
+    # N>=2 across member_id: assembled into the (member_id, event_iloc) grid (manual build, no
     # combine_by_coords) with values placed at the right coords.
     cell2 = xr.DataArray(1.0).expand_dims({"sa_id": ["native_dup"], "event_iloc": [0]})
     multi = _combine_cells([cell, cell2])
     assert set(multi["sa_id"].values) == {"container", "native_dup"}
-    assert multi.sel(sa_id="container", event_iloc=0).item() == 0.0
-    assert multi.sel(sa_id="native_dup", event_iloc=0).item() == 1.0
+    assert multi.sel(member_id="container", event_iloc=0).item() == 0.0
+    assert multi.sel(member_id="native_dup", event_iloc=0).item() == 1.0
 
     # N>=2 across event_iloc for one sub: grid spans both events.
     ev0 = xr.DataArray(0.0).expand_dims({"sa_id": ["c"], "event_iloc": [0]})
     ev1 = xr.DataArray(2.5).expand_dims({"sa_id": ["c"], "event_iloc": [1]})
     grid = _combine_cells([ev0, ev1])
     assert list(grid["event_iloc"].values) == [0, 1]
-    assert grid.sel(sa_id="c", event_iloc=1).item() == 2.5
+    assert grid.sel(member_id="c", event_iloc=1).item() == 2.5
 
     # Bool dtype (the `identical__{var}` artifact) is preserved through the manual build.
     b0 = xr.DataArray(True).expand_dims({"sa_id": ["c"], "event_iloc": [0]})
     b1 = xr.DataArray(False).expand_dims({"sa_id": ["c"], "event_iloc": [1]})
     bgrid = _combine_cells([b0, b1])
     assert bgrid.dtype == bool
-    assert bool(bgrid.sel(sa_id="c", event_iloc=0)) is True
-    assert bool(bgrid.sel(sa_id="c", event_iloc=1)) is False
+    assert bool(bgrid.sel(member_id="c", event_iloc=0)) is True
+    assert bool(bgrid.sel(member_id="c", event_iloc=1)) is False
 
 
 # ---- Slow tier (one real build, session-cached): summaries-present sensitivity ----
@@ -132,7 +132,7 @@ def test_sensitivity_master_identical_passes(synthetic_sensitivity_completed):
 
     Substrate: synthetic_sensitivity_completed (conftest.py) runs the synth
     sensitivity master once per session to the f_consolidate_master_complete
-    state, materializing per-sa summaries on disk. Per the plan's bit-repro
+    state, materializing per-member summaries on disk. Per the plan's bit-repro
     empirical precondition, if the synth solver is NOT bit-reproducible across
     the 4 compute modes this assertion is re-scoped to 'check ran + well-formed
     verdict/artifact' (plan Empirical Testing decision rule)."""
@@ -212,9 +212,9 @@ def test_verdict_surfaces_in_validate_analysis(synthetic_sensitivity_completed):
 def test_identity_group_partition_persisted(synthetic_sensitivity_completed):
     """The additive byte-identity PARTITION (identity_group) is persisted into the artifact.
 
-    Contract (plan R1 producer): identity_group is int32, dims (sa_id,), computed from the
+    Contract (plan R1 producer): identity_group is int32, dims (member_id,), computed from the
     FLAT summaries via compare_variable_exact (NOT the consolidated tree), emitted over the
-    NON-reference sa_id coord (purely additive), with the reference's own label carried in the
+    NON-reference member_id coord (purely additive), with the reference's own label carried in the
     reference_group attr. Two subs share a label iff byte-identical on the config-diff
     variables at every event -- so on a bit-identical master (verdict passed) every sub +
     the reference collapse to ONE group."""
@@ -227,10 +227,10 @@ def test_identity_group_partition_persisted(synthetic_sensitivity_completed):
     assert ds["identity_group"].dtype == np.int32
     assert ds["identity_group"].dims == ("sa_id",)
     assert (ds["identity_group"].values >= 0).all()
-    # Purely additive: identity_group shares the existing artifact vars' (non-reference) sa_id
+    # Purely additive: identity_group shares the existing artifact vars' (non-reference) member_id
     # coord; the reference is carried separately as an attr, not in the label array.
-    assert "reference_sa_id" in ds.attrs
-    ref_id = str(ds.attrs["reference_sa_id"])
+    assert "reference_member_id" in ds.attrs
+    ref_id = str(ds.attrs["reference_member_id"])
     assert ref_id not in {str(s) for s in ds["sa_id"].values}
     assert "reference_group" in ds.attrs
     assert int(ds.attrs["reference_group"]) >= 0
@@ -311,12 +311,12 @@ class _StubSub:
 
 
 def test_reference_rank_selects_serial_over_lexicographically_earlier_gpu():
-    """N1: the reference is the SERIAL-CPU sub, not the lexicographically-first sa_id.
+    """N1: the reference is the SERIAL-CPU sub, not the lexicographically-first member_id.
 
-    The retired rule sorted on sa_id alone, which on the real compute-config sweep selected
+    The retired rule sorted on member_id alone, which on the real compute-config sweep selected
     `gpu_0_r1` — making every reported difference a difference-from-a-GPU-run rather than
     from the serial oracle. This fixture reproduces that adversarial shape deliberately:
-    the GPU sa_id sorts FIRST lexicographically and the serial sa_id sorts LAST, so the
+    the GPU member_id sorts FIRST lexicographically and the serial member_id sorts LAST, so the
     assertion discriminates the new rule from the old one rather than passing under both.
     """
     items = [
@@ -326,17 +326,17 @@ def test_reference_rank_selects_serial_over_lexicographically_earlier_gpu():
     ]
     ordered = sorted(items, key=_ref_rank)
     assert ordered[0][0] == "z_serial_0_r1", (
-        "reference must be the serial-CPU sub even when its sa_id sorts last; "
+        "reference must be the serial-CPU sub even when its member_id sorts last; "
         f"got {ordered[0][0]}"
     )
-    # Pre-fix control: sa_id-only ordering picks the GPU sub, so the two rules disagree on
+    # Pre-fix control: member_id-only ordering picks the GPU sub, so the two rules disagree on
     # this fixture. Without this the test could not distinguish "serial won" from "serial
     # happened to sort first anyway".
     assert sorted(items, key=lambda kv: kv[0])[0][0] == "a_gpu_0_r1"
 
 
 def test_reference_rank_tiebreaks_are_ordered_as_documented():
-    """Among non-serial subs: ascending nodes, then GPUs, then MPI x OMP, then sa_id.
+    """Among non-serial subs: ascending nodes, then GPUs, then MPI x OMP, then member_id.
 
     Pins the rule's LATER terms. Without this only the leading serial term is covered, and
     a regression in the tiebreak would move the starred reference between renders of the
@@ -347,21 +347,21 @@ def test_reference_rank_tiebreaks_are_ordered_as_documented():
         ("a_gpu_1", _StubSub(_StubCfg("gpu", n_gpus=1))),
         ("c_gpu_2", _StubSub(_StubCfg("gpu", n_gpus=2))),
     ]
-    assert [sa for sa, _ in sorted(items, key=_ref_rank)] == ["a_gpu_1", "c_gpu_2", "b_gpu_3"]
+    assert [member for member, _ in sorted(items, key=_ref_rank)] == ["a_gpu_1", "c_gpu_2", "b_gpu_3"]
 
-    # sa_id is the FINAL tiebreak, reached only when every compute term ties.
+    # member_id is the FINAL tiebreak, reached only when every compute term ties.
     tied = [
         ("z_gpu_1", _StubSub(_StubCfg("gpu", n_gpus=1))),
         ("a_gpu_1", _StubSub(_StubCfg("gpu", n_gpus=1))),
     ]
-    assert [sa for sa, _ in sorted(tied, key=_ref_rank)] == ["a_gpu_1", "z_gpu_1"]
+    assert [member for member, _ in sorted(tied, key=_ref_rank)] == ["a_gpu_1", "z_gpu_1"]
 
 # ---- EW-4: per-family reference selection (strict path) ----
 #
 # Fast tier, no solver build and no HPC: the harness stubs the three surfaces
 # check_cross_sim_identity touches on a sub (`cfg_analysis`, `process._MODE_CONFIG` +
 # `process._retrieve_combined_output`, `analysis_paths.analysis_dir`) and the two it touches on the
-# master (`cfg_analysis.toggle_sensitivity_analysis`, `sensitivity.sub_analyses`). Divergence has to
+# master (`cfg_analysis.toggle_sensitivity_analysis`, `sensitivity.members`). Divergence has to
 # be synthetic for these arms either way — no real solver emits a controlled one-ULP difference on
 # demand — so a fast stub is strictly better than a slow fixture here: it runs on every change, and
 # CI is CPU-only so a GPU family cannot be materialized any other way.
@@ -438,7 +438,7 @@ class _MasterCfg:
 
 class _Sens:
     def __init__(self, subs):
-        self.analyses = subs
+        self.members = subs
 
 
 class _Master:
@@ -449,17 +449,17 @@ class _Master:
 
 
 def _master(tmp_path, spec):
-    """Build a stub sensitivity master from {sa_id: (cfg, depth_bump)}.
+    """Build a stub sensitivity master from {member_id: (cfg, depth_bump)}.
 
     Each sub gets a real on-disk analysis_dir because the emitted provenance source path is
-    `{sub analysis_dir}/analysis_datatree.zarr`; that file need not exist (_validate_source_path
+    `{member_dir}/analysis_datatree.zarr`; that file need not exist (_validate_source_path
     accepts a non-existent path, and the `.zarr` suffix clears the directory-as-source gate anyway).
     """
     subs = {}
-    for sa_id, (cfg, bump) in spec.items():
-        d = tmp_path / sa_id
+    for member_id, (cfg, bump) in spec.items():
+        d = tmp_path / member_id
         d.mkdir(parents=True, exist_ok=True)
-        subs[sa_id] = _Sub(cfg, _summaries(bump), d)
+        subs[member_id] = _Sub(cfg, _summaries(bump), d)
     root = tmp_path / "master"
     root.mkdir(parents=True, exist_ok=True)
     return _Master(subs, root)
@@ -468,8 +468,8 @@ def _master(tmp_path, spec):
 def test_references_by_family_partitions_cpu_and_gpu():
     """Each hardware family gets its OWN _ref_rank winner (the CPU one is not the GPU one).
 
-    Adversarial by construction, in the same style as the _ref_rank tests above: the GPU sa_id sorts
-    FIRST lexicographically and the serial sa_id sorts LAST, so a rule that merely returned the
+    Adversarial by construction, in the same style as the _ref_rank tests above: the GPU member_id sorts
+    FIRST lexicographically and the serial member_id sorts LAST, so a rule that merely returned the
     global winner would produce {'cpu': 'z_serial_0_r1'} alone and fail the equality. The trailing
     control pins that the global winner is still serial, so the two rules are visibly different
     on this fixture rather than coincidentally equal.
@@ -540,22 +540,22 @@ def test_within_family_cpu_divergence_still_fails(tmp_path):
     rows = [d for d in result.verdict.details if d.get("variable") == "max_wlevel_m"]
     assert rows, result.verdict.details
     assert {r["sa_id"] for r in rows} == {"mpi_8_r1"}
-    # The divergent row names the family reference it was measured against, not just an sa_id.
-    assert {r["ref_sa_id"] for r in rows} == {"serial_0_r1"}
+    # The divergent row names the family reference it was measured against, not just a member_id.
+    assert {r["ref_member_id"] for r in rows} == {"serial_0_r1"}
     ds = xr.open_zarr(result.artifact_path, consolidated=False)
-    mad = float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(sa_id="mpi_8_r1").values))
+    mad = float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(member_id="mpi_8_r1").values))
     assert mad == pytest.approx(_ULP32)
 
 
 def test_cross_family_gpu_divergence_no_longer_fails(tmp_path):
     """A GPU sub diverging from serial-CPU by one float32 ULP no longer fails — and KEEPS its row.
 
-    Pre-EW-4 this verdict was `passed=False` with '1 (sa, event, variable) tuple(s) diverged from
-    reference sa_id=serial_0_r1' — the two false FAIL cells on the combined report's
+    Pre-EW-4 this verdict was `passed=False` with '1 (member, event, variable) tuple(s) diverged from
+    reference member_id=serial_0_r1' — the two false FAIL cells on the combined report's
     errors-and-warnings page, in miniature.
 
     The second half is the part that matters structurally. The lone GPU sub is its own family's
-    reference, so it self-compares and stays in the artifact's sa_id coord with identical=True /
+    reference, so it self-compares and stays in the artifact's member_id coord with identical=True /
     max_abs_diff=0.0. Had the change excluded EVERY family reference from the loop instead of only
     the primary one, this sub would vanish from the coord, _config_diff._identity_labels would have
     no label for the 1-GPU group, and — because _config_diff re-references every GPU group to that
@@ -573,20 +573,20 @@ def test_cross_family_gpu_divergence_no_longer_fails(tmp_path):
     result = check_cross_sim_identity(master)
     assert result.verdict.passed is True, result.verdict.summary
     ds = xr.open_zarr(result.artifact_path, consolidated=False)
-    sa_ids = {str(s) for s in np.atleast_1d(ds["sa_id"].values)}
-    assert "gpu_0_r1" in sa_ids
-    assert bool(np.all(ds["identical__max_wlevel_m"].sel(sa_id="gpu_0_r1").values))
-    assert float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(sa_id="gpu_0_r1").values)) == 0.0
+    member_ids = {str(s) for s in np.atleast_1d(ds["sa_id"].values)}
+    assert "gpu_0_r1" in member_ids
+    assert bool(np.all(ds["identical__max_wlevel_m"].sel(member_id="gpu_0_r1").values))
+    assert float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(member_id="gpu_0_r1").values)) == 0.0
 
 
-def test_artifact_sa_id_coord_excludes_only_the_primary_reference(tmp_path):
-    """EXACTLY ONE sub is excluded from the artifact's sa_id coord, whatever the family count.
+def test_artifact_member_id_coord_excludes_only_the_primary_reference(tmp_path):
+    """EXACTLY ONE sub is excluded from the artifact's member_id coord, whatever the family count.
 
     Stated as a coord-membership invariant on purpose. The downstream symptom of breaking it is a
     false 'differs' in a renderer two modules away (_config_diff), which nobody would trace back to
     this loop; the invariant is checkable right here. The companion assertion pins VMS 8's
     per-family reference map, which is pure disclosure — _config_diff still folds back only the
-    single scalar `reference_sa_id`, and that contract is deliberately unchanged.
+    single scalar `reference_member_id`, and that contract is deliberately unchanged.
     """
     master = _master(
         tmp_path,
@@ -599,10 +599,10 @@ def test_artifact_sa_id_coord_excludes_only_the_primary_reference(tmp_path):
     )
     result = check_cross_sim_identity(master)
     ds = xr.open_zarr(result.artifact_path, consolidated=False)
-    sa_ids = {str(s) for s in np.atleast_1d(ds["sa_id"].values)}
+    member_ids = {str(s) for s in np.atleast_1d(ds["sa_id"].values)}
     all_ids = {"serial_0_r1", "mpi_8_r1", "gpu_0_r1", "gpu_1_r1"}
-    assert sa_ids == all_ids - {str(ds.attrs["reference_sa_id"])}
-    assert json.loads(ds.attrs["reference_sa_id_by_family"]) == {
+    assert member_ids == all_ids - {str(ds.attrs["reference_member_id"])}
+    assert json.loads(ds.attrs["reference_member_id_by_family"]) == {
         "cpu": "serial_0_r1",
         "gpu": "gpu_0_r1",
     }
@@ -629,6 +629,6 @@ def test_across_family_path_keeps_one_global_reference(tmp_path):
     assert result.verdict.passed is True
     assert "haracterized divergence" in result.verdict.summary
     ds = xr.open_zarr(result.artifact_path, consolidated=False)
-    assert json.loads(ds.attrs["reference_sa_id_by_family"]) == {"all": "serial_0_r1"}
+    assert json.loads(ds.attrs["reference_member_id_by_family"]) == {"all": "serial_0_r1"}
     bounds = [d for d in result.verdict.details if d.get("variable") == "max_wlevel_m"]
     assert bounds and bounds[0]["max_abs_diff"] > 0.0

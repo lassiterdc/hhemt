@@ -1331,7 +1331,7 @@ class TRITONSWMM_sim_post_processing:
 
         (the log call is per-TRITON-step, ``triton.h:2408``, NOT per print interval) — so at
         the double-precision default (``sizeof(value_t)``=8) a fine-grid 100-node 1e6-step
-        coupled sim writes ~808 MB PER SIM. Retained across every sub-analysis in an ensemble
+        coupled sim writes ~808 MB PER SIM. Retained across every member in an ensemble
         and counted against the analysis-scope DU sentinels, that is unbounded permanent
         disk. The side-file is dead weight once the sim can no longer resume: after the FINAL
         allocation ``checkpoint_id`` never regresses, and a force-rerun restarts at
@@ -2142,7 +2142,7 @@ def _aggregate_perf_tseries(
             # reporting step, which the per-rank diff/reset logic below already
             # tolerates) rather than let pandas.read_csv raise EmptyDataError and
             # fail the whole process rule. Empirically: synth_cc_resume_triton
-            # sa_gpu_1_r1 left performance110.txt at 0 bytes of 144 perf files.
+            # member_gpu_1_r1 left performance110.txt at 0 bytes of 144 perf files.
             empty_perfs.append(str(f))
             continue
         tstep_iloc = int(m.group(1))
@@ -2161,7 +2161,7 @@ def _aggregate_perf_tseries(
             # the per-rank `groupby(level='Rank').diff()` below telescopes across a gap,
             # so omitting one reporting step of ~1081 leaves the cumulative sum intact.
             # Measured incidence 10/1080 and 3/1080 across two synth_sensitivity trees.
-            # Raising instead would cost the sub-analysis its `d_process` flag and, with
+            # Raising instead would cost the member its `d_process` flag and, with
             # it, the whole fixture tree.
             malformed_perfs.append((str(f), exc.reason or str(exc)))
             continue
@@ -2254,7 +2254,7 @@ def _aggregate_perf_tseries(
     # perf data itself is foreclosed, because the inferred predicate
     # `(deltas <= 0).all(axis=1)` requires EVERY column to decrease and `Init` INCREASES
     # at a real boundary (the restarted process re-pays init: measured 0.05694 -> 0.07816
-    # on sa_serial_6_r1). One positive column defeated `.all()` and a whole segment was
+    # on member_serial_6_r1). One positive column defeated `.all()` and a whole segment was
     # subtracted instead of added -- 56 of 112 sims on the synth_cc campaign, every
     # resumed sim on both models.
     #
@@ -2285,7 +2285,7 @@ def _aggregate_perf_tseries(
     # comparing `int(t)` against a file index silently matches NOTHING whenever
     # min_per_tstep != 1.0 -- and production always passes 600/60 = 10.0 while every test
     # and the V0018 migration use the 1.0 default, which is the one value where the two
-    # spaces coincide. Measured: sa_serial_6_r1 produced 89.51 s (the pure telescope to
+    # spaces coincide. Measured: member_serial_6_r1 produced 89.51 s (the pure telescope to
     # performance144.txt) instead of 409.30 s, with a correct ledger and correct raw.
     # Deriving the coords by the identical multiplication keeps float equality exact even
     # when min_per_tstep is not representable, because both sides are the same product of
@@ -2386,7 +2386,7 @@ def parse_performance_file(filepath):
     # Both are the fingerprint of TWO PROCESSES writing one performance/ directory
     # concurrently, each from offset 0 with a slightly different formatted length.
     # The proof is not the junk token, it is that in
-    # synth_sensitivity.setaside-20260824T0000Z sa_2 performance911.txt the rank
+    # synth_sensitivity.setaside-20260824T0000Z member_2 performance911.txt the rank
     # row and the Average row carry DIFFERENT numbers (0.5636 vs 0.5606, 3.466 vs
     # 3.464) -- a single 1-rank TRITON process computes Average as the mean over
     # one element, so those lines are byte-identical in all healthy files.

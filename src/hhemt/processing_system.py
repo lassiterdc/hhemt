@@ -35,7 +35,7 @@ class TRITONSWMM_system_post_processing:
     def _analyses(self) -> list["TRITONSWMM_analysis"]:
         """Collect all analyses owned by the system.
 
-        Returns the single active analysis plus any sensitivity sub-analyses if
+        Returns the single active analysis plus any sensitivity members if
         a sensitivity analysis is configured. Empty if no analysis is bound.
         """
         analyses: list[TRITONSWMM_analysis] = []

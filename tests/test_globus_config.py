@@ -77,7 +77,7 @@ class TestPostRunTransferConfig:
             destination_root="/mnt/d/results",
             system="frontier",
         )
-        assert "subanalyses" in config.exclude_patterns
+        assert "members" in config.exclude_patterns
         assert "out_triton" in config.exclude_patterns
 
     def test_custom_exclude_patterns(self):

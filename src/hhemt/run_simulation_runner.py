@@ -292,12 +292,12 @@ def main():
         help="Model type to run (default: tritonswmm)",
     )
     parser.add_argument(
-        "--sa-id",
+        "--member-id",
         type=str,
         default=None,
         help=(
-            "Sensitivity sub-analysis id (omitted for multisim runs). When set, "
-            "the at-most-once submission sentinel is keyed on simulation_sa_{sa_id}; "
+            "Sensitivity member id (omitted for multisim runs). When set, "
+            "the at-most-once submission sentinel is keyed on simulation_member_{member_id}; "
             "otherwise it is keyed on run_{model_type}."
         ),
     )
@@ -358,7 +358,7 @@ def main():
     # At-most-once-execution sentinel handle. Initialized to None so the
     # finally cleanup below is safe even if an exception fires before the
     # sentinel write (e.g., scenario instantiation failure). Charset note:
-    # event_id (and sa_id for sensitivity) flow into the sentinel filename
+    # event_id (and member_id for sensitivity) flow into the sentinel filename
     # but have already been validated at config load against
     # ^[A-Za-z0-9_.]+$, so no re-validation is needed here.
     _sentinel: Path | None = None
@@ -418,9 +418,9 @@ def main():
             analysis_dir = analysis.analysis_paths.analysis_dir
             _subdir = Path(analysis_dir) / "_status" / "_submitted"
             _subdir.mkdir(parents=True, exist_ok=True)
-            if args.sa_id:
-                _sentinel = _subdir / f"simulation_sa_{args.sa_id}_evt-{event_id}.json"
-                _rule_token = f"simulation_sa_{args.sa_id}_evt-{event_id}"
+            if args.member_id:
+                _sentinel = _subdir / f"simulation_member_{args.member_id}_evt-{event_id}.json"
+                _rule_token = f"simulation_member_{args.member_id}_evt-{event_id}"
             else:
                 _sentinel = _subdir / f"run_{model_type}_evt-{event_id}.json"
                 _rule_token = f"run_{model_type}_evt-{event_id}"
@@ -430,7 +430,7 @@ def main():
                     {
                         "slurm_jobid": _jobid,
                         "run_uuid": os.environ.get("SLURM_JOB_NAME"),
-                        "sa_id": args.sa_id,
+                        "sa_id": args.member_id,
                         "model_type": model_type,
                         "event_id": event_id,
                         "submitted_at": datetime.datetime.now().isoformat(),
@@ -469,7 +469,7 @@ def main():
             _marker_payload_base = {
                 "slurm_jobid": _jobid,
                 "run_uuid": os.environ.get("SLURM_JOB_NAME"),
-                "sa_id": args.sa_id,
+                "sa_id": args.member_id,
                 "model_type": model_type,
                 "event_id": event_id,
             }
@@ -667,7 +667,7 @@ def main():
         # performanceN.txt) and the model log's sim_run_time_minutes are OVERWRITE-PRONE — a
         # resume re-runs from the checkpoint and overwrites the perf files for the re-run
         # steps, and sim_run_time_minutes is last-exec-only — so a resumed sim's total
-        # UNDER-counts (empirically 372.3 s reported vs 489 s actual on sa_serial_6_r1, 3
+        # UNDER-counts (empirically 372.3 s reported vs 489 s actual on member_serial_6_r1, 3
         # resumes). This ledger appends THIS attempt's wall (completed OR harness-killed) BEFORE
         # the next resume can overwrite anything; df_status sums it (fallback to the perf path
         # when absent, so non-resumed + legacy trees are byte-unchanged). Best-effort / non-fatal.

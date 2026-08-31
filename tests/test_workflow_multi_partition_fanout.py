@@ -24,9 +24,9 @@ def _setup_rule_block(snakefile_text: str, target_id: int) -> str:
     return snakefile_text[idx:nxt] if nxt >= 0 else snakefile_text[idx:]
 
 
-def _sim_rule_block(snakefile_text: str, sa_id: str) -> str:
-    sa_id_rule = str(sa_id).replace(".", "_").replace("-", "_")
-    needle = f"rule simulation_sa_{sa_id_rule}_evt_"
+def _sim_rule_block(snakefile_text: str, member_id: str) -> str:
+    member_id_rule = str(member_id).replace(".", "_").replace("-", "_")
+    needle = f"rule simulation_member_{member_id_rule}_evt_"
     idx = snakefile_text.find(needle)
     assert idx >= 0, f"No rule starting with {needle!r} found."
     nxt = snakefile_text.find("\nrule ", idx + 1)
@@ -52,7 +52,7 @@ def test_multi_partition_fanout_two_targets_distinct_emission(
 
     # Force one GPU per sub so the GPU directive renders (the synth CSV defaults
     # n_gpus=0; set post-construction to bypass the MPI-only-mode validator).
-    for sub in sensitivity.analyses.values():
+    for sub in sensitivity.members.values():
         sub.cfg_analysis.n_gpus = 1
 
     master = sensitivity._workflow_builder.generate_master_snakefile_content(which="both", compression_level=5)
@@ -69,16 +69,16 @@ def test_multi_partition_fanout_two_targets_distinct_emission(
 
     # (c) Each sub's sim rule emits its partition-derived GPU hardware.
     seen_hw = set()
-    for sa_id, sub in sensitivity.analyses.items():
+    for member_id, sub in sensitivity.members.items():
         partition = sub.cfg_analysis.hpc_ensemble_partition
         gpu_hw = resolve_gpu_target(sub.cfg_hpc_system, partition)[0]
-        assert gpu_hw in {"a6000", "a100"}, (sa_id, partition, gpu_hw)
-        block = _sim_rule_block(master, sa_id)
+        assert gpu_hw in {"a6000", "a100"}, (member_id, partition, gpu_hw)
+        block = _sim_rule_block(master, member_id)
         assert (f"gpu:{gpu_hw}" in block) or (f'gpu_model="{gpu_hw}"' in block), (
-            f"sa_id={sa_id}: partition-derived hardware {gpu_hw!r} not found in the sim rule GPU directive."
+            f"member_id={member_id}: partition-derived hardware {gpu_hw!r} not found in the sim rule GPU directive."
         )
         seen_hw.add(gpu_hw)
-    # Both hardwares appear across the sub-analyses (genuine cross-hardware fan-out).
+    # Both hardwares appear across the members (genuine cross-hardware fan-out).
     assert seen_hw == {"a6000", "a100"}, seen_hw
 
 

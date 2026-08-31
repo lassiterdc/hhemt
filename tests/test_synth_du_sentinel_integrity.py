@@ -2,13 +2,13 @@
 
 Asserts, on a completed SENSITIVITY tree: (1) every `_du.json` reports
 `walk_errors == 0` (no silent partial DU totals); (2) the scopes Phase 2 makes
-the sensitivity path produce are present — `{sub_analysis, analysis}`; and (3) the
+the sensitivity path produce are present — `{member, analysis}`; and (3) the
 `delete` CLI dry-run emits zero "DU sentinel absent — walking tree" stderr lines
 (the fallback-walk-fired regression).
 
 Scope note — why the sensitivity tree, and why two scopes (not three): no single
 workflow tree carries all three DU scopes. The sensitivity tree carries
-`sub_analysis` (per-sub `--sa-id` fold, D6) and `analysis` (the master-consolidate
+`member` (per-sub `--member-id` fold, D6) and `analysis` (the master-consolidate
 fold in `consolidate_sensitivity_datatree`, this Phase). It carries NO
 scenario-scope sentinels — the sensitivity master Snakefile emits no per-event
 `consolidate_scenario` rule, so scenario-scope on sensitivity sub-events is a
@@ -33,10 +33,10 @@ from hhemt.du_sentinels import read_du_sentinel
 
 
 def test_all_du_sentinels_walk_errors_zero(synthetic_sensitivity_completed):
-    # The materialized sensitivity tree carries sub_analysis (per-sub --sa-id
+    # The materialized sensitivity tree carries member (per-sub --member-id
     # fold, D6) and analysis (master-consolidate fold). It does NOT carry
     # scenario-scope sentinels (no per-event consolidate rule on the sensitivity
-    # path), so the expected set is {sub_analysis, analysis}, not all three.
+    # path), so the expected set is {member, analysis}, not all three.
     sensitivity = synthetic_sensitivity_completed
     analysis_dir = sensitivity.experiment.analysis_paths.analysis_dir
     sentinels = list(analysis_dir.rglob("_du.json"))
@@ -50,8 +50,8 @@ def test_all_du_sentinels_walk_errors_zero(synthetic_sensitivity_completed):
             f"disk_utilization_bytes is a PARTIAL total"
         )
         scopes_seen.add(payload["scope"])
-    assert {"sub_analysis", "analysis"} <= scopes_seen, (
-        f"expected sub_analysis + analysis scopes present, saw {scopes_seen}"
+    assert {"member", "analysis"} <= scopes_seen, (
+        f"expected member + analysis scopes present, saw {scopes_seen}"
     )
 
 

@@ -86,7 +86,7 @@ def test_labels_are_model_fungible():
 
 
 def test_event_arm_uses_a_supplied_label():
-    """R2-4: the evt. segment mirrors the sa. segment — a supplied map wins."""
+    """R2-4: the evt. segment mirrors the member. segment — a supplied map wins."""
     from hhemt.report_plot_ids import humanize_plot_id
 
     stem = "peak_flood_depth__evt.year.9"

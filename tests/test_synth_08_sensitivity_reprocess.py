@@ -1,4 +1,4 @@
-"""Phase 3: sensitivity master reprocess refreshes per-sa + master datatree.
+"""Phase 3: sensitivity master reprocess refreshes per-member + master datatree.
 
 The Phase 3 reprocess contract (R12 in the master plan): a sensitivity
 master analysis at the post-master-consolidate state can be reprocessed
@@ -54,19 +54,19 @@ def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sens
     """Phase 2 FQ1 default (regenerate_existing=False): sensitivity master
     reprocess(consolidate) PRESERVES the master datatree zarr (mtime unchanged —
     no rebuild, no DU restamp) and re-fires the report."""
-    sa = synthetic_sensitivity_completed_isolated
-    mdt = sa.experiment.analysis_paths.sensitivity_datatree_zarr
+    member = synthetic_sensitivity_completed_isolated
+    mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture should have materialized sensitivity_datatree.zarr"
     mtime_target = _zarr_mtime_target(mdt)
     mtime0 = mtime_target.stat().st_mtime
-    result = sa.reprocess(start_with="consolidate", execution_mode="local")
+    result = member.reprocess(start_with="consolidate", execution_mode="local")
     assert result["success"], f"reprocess failed: {result.get('message')!r}"
     assert mtime_target.stat().st_mtime == mtime0, (
         "Default sensitivity reprocess(consolidate) must PRESERVE the master "
         f"datatree zarr (mtime unchanged). target={mtime_target!r}."
     )
     # Report re-rendered against the preserved zarr.
-    master_dir = sa.experiment.analysis_paths.analysis_dir
+    master_dir = member.experiment.analysis_paths.analysis_dir
     html = master_dir / "analysis_report.html"
     zf = master_dir / "analysis_report.zip"
     assert html.exists() or zf.exists(), (
@@ -77,12 +77,12 @@ def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sens
 def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_sensitivity_completed_isolated):
     """Phase 2 regenerate_existing=True: sensitivity master reprocess(consolidate)
     deletes and rebuilds the master datatree zarr (mtime advances)."""
-    sa = synthetic_sensitivity_completed_isolated
-    mdt = sa.experiment.analysis_paths.sensitivity_datatree_zarr
+    member = synthetic_sensitivity_completed_isolated
+    mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture precondition: master zarr present"
     mtime_target = _zarr_mtime_target(mdt)
     mtime0 = mtime_target.stat().st_mtime
-    result = sa.reprocess(start_with="consolidate", execution_mode="local", regenerate_existing=True)
+    result = member.reprocess(start_with="consolidate", execution_mode="local", regenerate_existing=True)
     assert result["success"], f"reprocess(regenerate_existing=True) failed: {result.get('message')!r}"
     assert mtime_target.stat().st_mtime > mtime0, (
         "regenerate_existing=True sensitivity reprocess(consolidate) must REBUILD the "
@@ -90,31 +90,31 @@ def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(syn
     )
 
 
-def test_sensitivity_reprocess_consolidate_subset_sa_ids(synthetic_sensitivity_completed_isolated):
-    """sensitivity.reprocess(sa_ids=[...]) restricts per-sa invalidation to the subset.
+def test_sensitivity_reprocess_consolidate_subset_member_ids(synthetic_sensitivity_completed_isolated):
+    """sensitivity.reprocess(member_ids=[...]) restricts per-member invalidation to the subset.
 
-    The invalidation step only deletes the named per-sa consolidate flags; the
+    The invalidation step only deletes the named per-member consolidate flags; the
     master consolidate flag is invalidated regardless. After reprocess, both the
-    subset's per-sa flags and the master flag must be re-created (success exit
+    subset's per-member flags and the master flag must be re-created (success exit
     proves Snakemake completed the consolidate + master_consolidation chain).
     """
-    sa = synthetic_sensitivity_completed_isolated
-    status_dir = sa.experiment.analysis_paths.analysis_dir / "_status"
-    all_sa_ids = [str(sid) for sid in sa.analyses.keys()]
-    # Subset: first sub-analysis only.
-    subset = all_sa_ids[:1]
-    result = sa.reprocess(
+    member = synthetic_sensitivity_completed_isolated
+    status_dir = member.experiment.analysis_paths.analysis_dir / "_status"
+    all_member_ids = [str(sid) for sid in member.members.keys()]
+    # Subset: first member only.
+    subset = all_member_ids[:1]
+    result = member.reprocess(
         start_with="consolidate",
-        sa_ids=subset,
+        member_ids=subset,
         execution_mode="local",
     )
     assert result["success"], f"reprocess(subset) failed: {result.get('message')!r}"
     # Master flag re-created after reprocess.
     assert (status_dir / "f_consolidate_master_complete.flag").exists()
-    # Every per-sa flag exists post-reprocess (the subset ones re-created, the
+    # Every per-member flag exists post-reprocess (the subset ones re-created, the
     # others were never invalidated).
-    for sid in all_sa_ids:
-        assert (status_dir / f"e_consolidate_sa-{sid}_complete.flag").exists()
+    for sid in all_member_ids:
+        assert (status_dir / f"e_consolidate_member-{sid}_complete.flag").exists()
 
 
 def test_sensitivity_reprocess_proceeds_with_submitted_workers_no_orchestrator(
@@ -123,14 +123,14 @@ def test_sensitivity_reprocess_proceeds_with_submitted_workers_no_orchestrator(
     """(a) R2: sensitivity reprocess PROCEEDS when ``_submitted/`` sim-WORKER
     sentinels are present in the master dir but no live ``_orchestrator/``
     DRIVER sentinel exists."""
-    sa = synthetic_sensitivity_completed_isolated
-    master_dir = sa.experiment.analysis_paths.analysis_dir
+    member = synthetic_sensitivity_completed_isolated
+    master_dir = member.experiment.analysis_paths.analysis_dir
     submitted = master_dir / "_status" / "_submitted"
     submitted.mkdir(parents=True, exist_ok=True)
     worker = submitted / "run_tritonswmm_evt-gatecheck.json"
     worker.write_text(json.dumps({"slurm_jobid": "999999"}))
     try:
-        result = sa.reprocess(start_with="consolidate", execution_mode="local", verbose=False)
+        result = member.reprocess(start_with="consolidate", execution_mode="local", verbose=False)
         assert result.get("success"), (
             "Sensitivity reprocess must proceed with _submitted/ workers present and no "
             f"live _orchestrator/ sentinel; got {result.get('message', '(no message)')!r}. "
@@ -146,13 +146,13 @@ def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(
     """(b) R3: a live master ``_orchestrator/`` DRIVER sentinel makes the
     sensitivity reprocess refuse fast with a ``WorkflowError``.
 
-    Tested at the ``submit_reprocess_workflow`` builder level so no per-sa or
+    Tested at the ``submit_reprocess_workflow`` builder level so no per-member or
     master flags are invalidated (the facade's pre-invalidation is irrelevant —
     the gate fires first in submit).
     """
-    sa = synthetic_sensitivity_completed_isolated
-    builder = sa._workflow_builder
-    master_dir = sa.experiment.analysis_paths.analysis_dir
+    member = synthetic_sensitivity_completed_isolated
+    builder = member._workflow_builder
+    master_dir = member.experiment.analysis_paths.analysis_dir
     osent.write_orchestrator_sentinel(master_dir, driver_id="live-driver", workflow_submission_mode="local", pid=4242)
     monkeypatch.setattr("subprocess.run", _fake_ps_run({4242}))
     try:
@@ -180,8 +180,8 @@ def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(
     UNSET and a stale ``.snakemake/locks/*.lock`` planted on the master dir,
     the sensitivity reprocess path's ``skip_lock_check=True`` returns before
     the interactive prompt (``builtins.input`` raises if reached)."""
-    sa = synthetic_sensitivity_completed_isolated
-    master_dir = sa.experiment.analysis_paths.analysis_dir
+    member = synthetic_sensitivity_completed_isolated
+    master_dir = member.experiment.analysis_paths.analysis_dir
     monkeypatch.delenv(_NON_INTERACTIVE_LOCK_CLEAR_ENV, raising=False)
     locks_dir = master_dir / ".snakemake" / "locks"
     locks_dir.mkdir(parents=True, exist_ok=True)
@@ -193,7 +193,7 @@ def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(
 
     monkeypatch.setattr("builtins.input", _boom)
     try:
-        result = sa.reprocess(start_with="consolidate", execution_mode="local", verbose=False)
+        result = member.reprocess(start_with="consolidate", execution_mode="local", verbose=False)
         assert result.get("success"), (
             "Sensitivity reprocess must complete without prompting; got "
             f"{result.get('message', '(no message)')!r}. "
@@ -205,39 +205,39 @@ def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(
 
 def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensitivity_completed_isolated):
     """R3/R4: sensitivity.reprocess(dry_run=True, start_with='consolidate') must NOT
-    delete the master or any sub-analysis datatree zarr, nor re-stamp _du.json sentinels."""
+    delete the master or any member datatree zarr, nor re-stamp _du.json sentinels."""
     from hhemt.du_sentinels import compute_and_write_scope_sentinel
 
-    sa = synthetic_sensitivity_completed_isolated
-    master_zarr = sa.analysis_paths.sensitivity_datatree_zarr
+    member = synthetic_sensitivity_completed_isolated
+    master_zarr = member.analysis_paths.sensitivity_datatree_zarr
     assert master_zarr is not None and master_zarr.exists(), "fixture precondition: master zarr present"
     sub_zarrs = [
         s.analysis_paths.analysis_datatree_zarr
-        for s in sa.analyses.values()
+        for s in member.members.values()
         if s.analysis_paths.analysis_datatree_zarr is not None
         and s.analysis_paths.analysis_datatree_zarr.exists()
     ]
-    assert sub_zarrs, "fixture precondition: at least one sub-analysis zarr present"
+    assert sub_zarrs, "fixture precondition: at least one member zarr present"
     # Establish a known master-scope _du.json so the no-restamp assertion is
     # unconditional (R4): without this, an absent sentinel skips the mtime check.
-    experiment_dir = sa.experiment.analysis_paths.analysis_dir
+    experiment_dir = member.experiment.analysis_paths.analysis_dir
     compute_and_write_scope_sentinel(experiment_dir, scope="analysis")
     master_du = experiment_dir / "_status" / "_du.json"
     assert master_du.exists(), "precondition: master-scope _du.json materialized"
     master_du_mtime0 = master_du.stat().st_mtime_ns
 
-    result = sa.reprocess(start_with="consolidate", execution_mode="local", dry_run=True, verbose=False)
+    result = member.reprocess(start_with="consolidate", execution_mode="local", dry_run=True, verbose=False)
     assert result.get("success"), f"dry-run sensitivity reprocess failed: {result.get('message')!r}"
 
     assert master_zarr.exists(), "dry-run must NOT delete the master sensitivity_datatree.zarr"
     for z in sub_zarrs:
-        assert z.exists(), f"dry-run must NOT delete sub-analysis zarr {z}"
+        assert z.exists(), f"dry-run must NOT delete member zarr {z}"
     assert master_du.stat().st_mtime_ns == master_du_mtime0, "dry-run must NOT re-stamp master _du.json"
 
 
 def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed_isolated):
     """FIX 1 end-to-end: sensitivity ``reprocess(start_with='process',
-    regenerate_existing=True)`` re-fires the per-sa ``process_*`` rebuild rules
+    regenerate_existing=True)`` re-fires the per-member ``process_*`` rebuild rules
     AND clears the per-model processing log so the runner actually re-writes the
     per-scenario summaries — then the consolidate + master_consolidation chain
     rebuilds ``sensitivity_datatree.zarr`` against the freshly-written summaries
@@ -248,16 +248,16 @@ def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed_isol
     ``processed/`` dir but never cleared ``processing_log.outputs``, so the
     rebuilt process rule's runner skipped every ``_export_*`` write
     (``_already_written`` gate, Gotcha #28) and master consolidation then failed
-    to find the per-sa summary it expected. Asserts the master datatree zarr's
+    to find the per-member summary it expected. Asserts the master datatree zarr's
     mtime advances and ``result["success"]`` is True.
     """
-    sa = synthetic_sensitivity_completed_isolated
-    mdt = sa.experiment.analysis_paths.sensitivity_datatree_zarr
+    member = synthetic_sensitivity_completed_isolated
+    mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture precondition: master sensitivity_datatree.zarr present"
     mtime_target = _zarr_mtime_target(mdt)
     mtime0 = mtime_target.stat().st_mtime
 
-    result = sa.reprocess(
+    result = member.reprocess(
         start_with="process",
         regenerate_existing=True,
         execution_mode="local",
@@ -276,7 +276,7 @@ def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed_isol
 
 def test_unlink_dprocess_flags_for_regenerate_clears_only_matching_flags(tmp_path):
     """R2/R5 fast guard (no compile, no fixture mutation): the extracted FIX-2b
-    free function unlinks every per-sa d_process_* flag for the named targets and
+    free function unlinks every per-member d_process_* flag for the named targets and
     leaves non-target / non-d_process flags intact. This is the seconds-scale
     tripwire for the d5d0084 re-removal class — it exercises EXACTLY the loop that
     commit dropped, with zero coupling to reprocess()'s destructive body (D1
@@ -287,34 +287,34 @@ def test_unlink_dprocess_flags_for_regenerate_clears_only_matching_flags(tmp_pat
 
     status_dir = tmp_path / "_status"
     status_dir.mkdir()
-    # Two target sa_ids with d_process flags, plus decoys that MUST survive.
-    (status_dir / "d_process_tritonswmm_sa-0_evt-a_complete.flag").touch()
-    (status_dir / "d_process_tritonswmm_sa-1_evt-b_complete.flag").touch()
-    (status_dir / "d_process_tritonswmm_sa-2_evt-c_complete.flag").touch()  # not a target
-    (status_dir / "c_run_tritonswmm_sa-0_evt-a_complete.flag").touch()  # not d_process
-    (status_dir / "e_consolidate_sa-0_complete.flag").touch()  # not d_process
+    # Two target member_ids with d_process flags, plus decoys that MUST survive.
+    (status_dir / "d_process_tritonswmm_member-0_evt-a_complete.flag").touch()
+    (status_dir / "d_process_tritonswmm_member-1_evt-b_complete.flag").touch()
+    (status_dir / "d_process_tritonswmm_member-2_evt-c_complete.flag").touch()  # not a target
+    (status_dir / "c_run_tritonswmm_member-0_evt-a_complete.flag").touch()  # not d_process
+    (status_dir / "e_consolidate_member-0_complete.flag").touch()  # not d_process
 
     _unlink_dprocess_flags_for_regenerate(["0", "1"], status_dir)
 
     survivors = sorted(p.name for p in status_dir.glob("*.flag"))
     assert survivors == [
-        "c_run_tritonswmm_sa-0_evt-a_complete.flag",
-        "d_process_tritonswmm_sa-2_evt-c_complete.flag",
-        "e_consolidate_sa-0_complete.flag",
+        "c_run_tritonswmm_member-0_evt-a_complete.flag",
+        "d_process_tritonswmm_member-2_evt-c_complete.flag",
+        "e_consolidate_member-0_complete.flag",
     ], f"free function must unlink only target d_process flags; survivors={survivors}"
 
 
 @pytest.fixture
 def synth_partial_state_analysis(synthetic_sensitivity_completed_isolated):
-    """A completed synth sensitivity analysis with ONE sub-analysis induced into
+    """A completed synth sensitivity analysis with ONE member induced into
     the summary-absent partial state (its d_process/c_run flags left intact),
     for conditional-process-emit regression coverage (R5)."""
     from tests.fixtures.test_case_builder import induce_incomplete_analysis
 
-    sa = synthetic_sensitivity_completed_isolated
-    target_sa_id = sorted(sa.analyses)[0]
-    induce_incomplete_analysis(sa, target_sa_id, delete_master_tree=True)
-    return sa, target_sa_id
+    member = synthetic_sensitivity_completed_isolated
+    target_member_id = sorted(member.members)[0]
+    induce_incomplete_analysis(member, target_member_id, delete_master_tree=True)
+    return member, target_member_id
 
 
 @pytest.mark.requires_snakemake_subprocess
@@ -324,12 +324,12 @@ def test_reprocess_conditional_emit_over_partial_state(synth_partial_state_analy
     above): a process-stage reprocess over a partial-state sensitivity analysis
     rebuilds the induced-incomplete sub and succeeds (the conditional process-emit
     path fires only for the incomplete sub; complete subs are untouched)."""
-    sa, target_sa_id = synth_partial_state_analysis
-    result = sa.reprocess(start_with="process", regenerate_existing=True, execution_mode="local")
+    member, target_member_id = synth_partial_state_analysis
+    result = member.reprocess(start_with="process", regenerate_existing=True, execution_mode="local")
     assert result["success"], (
         f"conditional-emit reprocess over partial state must succeed; got {result.get('message')!r}"
     )
-    mdt = sa.experiment.analysis_paths.sensitivity_datatree_zarr
+    mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "master sensitivity_datatree.zarr must be rebuilt after partial-state reprocess"
 
 
@@ -346,8 +346,8 @@ def test_reprocess_conditional_emit_over_partial_state(synth_partial_state_analy
 # ---------------------------------------------------------------------------
 
 
-def _force_hpc(sa):
-    """Make master AND every sub-analysis config a COHERENT HPC run.
+def _force_hpc(member):
+    """Make master AND every member config a COHERENT HPC run.
 
     Forcing the MASTER alone is not enough, and the reason is a MIXED-OBJECT
     read worth recording. ``workflow.py::_build_resource_block`` (:1525) raises
@@ -360,7 +360,7 @@ def _force_hpc(sa):
       which ``SnakemakeWorkflowBuilder.__init__`` ALIASES to
       ``master_analysis.cfg_analysis`` (:767) — so forcing the master DOES
       reach it;
-    * the partition VALUE is ``sub_analysis.cfg_analysis.
+    * the partition VALUE is ``member.cfg_analysis.
       hpc_setup_and_analysis_processing_partition`` — a DISTINCT per-sub model
       built by ``model_validate({**master.model_dump(), **overlay})``, which a
       master mutation never touches (probed: all 4 subs report
@@ -371,7 +371,7 @@ def _force_hpc(sa):
     own assertion. Both tiers must be forced.
 
     If a THIRD config object ever appears on this path (a per-target
-    synthesized system YAML, or a persisted per-sub ``sa_{id}.yaml`` re-read
+    synthesized system YAML, or a persisted per-sub ``member_{id}.yaml`` re-read
     in-process), do NOT add a third tier here — rebuild the fixture from a
     config that already carries these fields instead.
     """
@@ -380,8 +380,8 @@ def _force_hpc(sa):
         "hpc_ensemble_partition": "standard",
         "hpc_setup_and_analysis_processing_partition": "standard",
     }
-    cfgs = [sa.experiment.cfg_analysis]
-    cfgs += [sub.cfg_analysis for sub in sa.analyses.values()]
+    cfgs = [member.experiment.cfg_analysis]
+    cfgs += [sub.cfg_analysis for sub in member.members.values()]
     for cfg in cfgs:
         for field, value in forced.items():
             try:
@@ -390,9 +390,9 @@ def _force_hpc(sa):
                 object.__setattr__(cfg, field, value)
 
 
-def _stub_delete(sa, calls, *, success):
+def _stub_delete(member, calls, *, success):
     """Replace the scoped-delete submission with a recording stub."""
-    builder = sa._workflow_builder._base_builder
+    builder = member._workflow_builder._base_builder
 
     def _fake(*args, **kwargs):
         calls.append(kwargs)
@@ -428,13 +428,13 @@ def test_failed_scoped_delete_raises_instead_of_consolidating_stale(
     # If a THIRD test needs this acknowledgement, extract a named fixture rather than
     # copying the literal a third time.
     monkeypatch.setenv("HHEMT_ALLOW_NODE_LOCAL_CONFIGS", "1")
-    sa = synthetic_sensitivity_completed_isolated
-    _force_hpc(sa)
+    member = synthetic_sensitivity_completed_isolated
+    _force_hpc(member)
     calls = []
-    _stub_delete(sa, calls, success=False)
+    _stub_delete(member, calls, success=False)
 
     with pytest.raises(WorkflowError) as excinfo:
-        sa.reprocess(
+        member.reprocess(
             start_with="consolidate",
             execution_mode="auto",
             regenerate_existing=True,
@@ -460,14 +460,14 @@ def test_explicit_local_execution_mode_is_not_overridden_by_run_method(
     Edit 3 the config won silently, so a caller forcing local execution still had
     the deletion offloaded to SLURM.
     """
-    sa = synthetic_sensitivity_completed_isolated
-    _force_hpc(sa)
+    member = synthetic_sensitivity_completed_isolated
+    _force_hpc(member)
     calls = []
     # success=False so that IF the SLURM route were taken, the raise would fire
     # and fail this test loudly rather than passing for the wrong reason.
-    _stub_delete(sa, calls, success=False)
+    _stub_delete(member, calls, success=False)
 
-    result = sa.reprocess(
+    result = member.reprocess(
         start_with="consolidate",
         execution_mode="local",
         regenerate_existing=True,

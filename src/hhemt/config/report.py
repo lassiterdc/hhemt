@@ -689,7 +689,7 @@ class SensitivityReportConfig(cfgBaseModel):
         description=(
             "Path into the per-scenario performance summary. Default "
             "'performance.Total' uses the Total column of the restart-safe "
-            "per-scenario summary. For SWMM-only sub-analyses, the renderer "
+            "per-scenario summary. For SWMM-only members, the renderer "
             "routes to the .rpt 'Total elapsed time' value."
         ),
     )

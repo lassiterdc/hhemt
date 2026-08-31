@@ -60,9 +60,9 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
     the ``Resuming ... from hotstart`` notice go to the RUNNER's stderr, not here; the
     file carries only the model subprocess's own stdout/stderr.
 
-    Naming convention (empirically ``model_tritonswmm_sa_gpu_0_r1_evt0.log`` on
-    synth_cc_resume -- note the segment is the full ``analysis_id``, NOT ``sa{N}``):
-    - Sensitivity sub-analysis:
+    Naming convention (empirically ``model_tritonswmm_member_gpu_0_r1_evt0.log`` on
+    synth_cc_resume -- note the segment is the full ``analysis_id``, NOT ``member{N}``):
+    - Sensitivity member:
       ``{master_analysis_dir}/logs/sims/model_{model_type}_{analysis_id}_evt{event_iloc}.log``
     - Regular analysis:
       ``{simlog_directory}/model_{model_type}_evt{event_iloc}.log``
@@ -72,9 +72,9 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
     if getattr(analysis.cfg_analysis, "is_experiment_member", False):
         analysis_id = str(analysis.cfg_analysis.analysis_id) + "_"
         # Derive the MASTER analysis dir STRUCTURALLY, from this sub's own analysis_dir.
-        # A sub's dir is always `{master_analysis_dir}/subanalyses/sa_{sa_id}` (single
-        # writer: sensitivity_analysis.py:273 + _create_sub_analyses; the same two-level
-        # convention du_sentinels.py:406 detects via parent.name == "subanalyses"), so
+        # A sub's dir is always `{master_analysis_dir}/members/member_{member_id}` (single
+        # writer: sensitivity_analysis.py:273 + _create_members; the same two-level
+        # convention du_sentinels.py:406 detects via parent.name == "members"), so
         # `.parent.parent` IS the master analysis_dir and this expression equals the
         # master's `analysis_paths.simlog_directory` (analysis.py:273-274) by construction.
         #
@@ -878,7 +878,7 @@ class TRITONSWMM_run:
         if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
             exe_in_sif = cspec.exe_in_sif.get(model_type) or f"/opt/hhemt/bin/{_DEFAULT_EXE_NAME[model_type]}"
             # Per-arch SIF resolution (multi-SIF cross-hardware, Option A): resolve THIS
-            # row's arch (gpu_hardware) from its (sub-analysis) partition and pick the
+            # row's arch (gpu_hardware) from its (member) partition and pick the
             # matching SIF; fall back to sif_path when no map entry (single-SIF/CPU,
             # byte-identical to before). Key is gpu_hardware ("a100"/"a6000") — the same
             # namespace resolve_gpu_target[0] returns and sif_paths_by_arch is keyed on.
@@ -1005,10 +1005,10 @@ class TRITONSWMM_run:
             # first-touched on the original NUMA node become cross-socket fetches,
             # which on Cascade Lake-SP (Rivanna 'standard' partition) adds ~3-5x
             # latency to every DRAM access on TRITON's memory-bandwidth-bound
-            # flux kernels. Empirically: missing the binding inflated sa_32's
+            # flux kernels. Empirically: missing the binding inflated member_32's
             # serial wallclock relative to a properly-bound baseline (see
             # `library/docs/decisions/hhemt/LAYOUT_VERSION 8 fix per rank diff in performance aggregation.md`
-            # for the empirically-verified sa_32 cumulative).
+            # for the empirically-verified member_32 cumulative).
             env["OMP_NUM_THREADS"] = "1"
             env["OMP_PROC_BIND"] = "true"
             env["OMP_PLACES"] = "cores"

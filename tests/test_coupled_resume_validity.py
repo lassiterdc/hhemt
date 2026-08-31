@@ -151,15 +151,15 @@ def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None)
     )
 
 
-def _resumed_df(scenario_directory="", event_iloc=0, sa_id=None, model_type="tritonswmm"):
+def _resumed_df(scenario_directory="", event_iloc=0, member_id=None, model_type="tritonswmm"):
     row = {
         "model_type": model_type,
         "n_resumes": 2,
         "scenario_directory": scenario_directory,
         "event_iloc": event_iloc,
     }
-    if sa_id is not None:
-        row["sa_id"] = sa_id
+    if member_id is not None:
+        row["sa_id"] = member_id
     return pd.DataFrame([row])
 
 
@@ -394,7 +394,7 @@ def test_postfix_partial_checkpoint_read_is_indeterminate(monkeypatch, tmp_path)
 
 
 def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
-    """The SENSITIVITY BRANCH. A master's df_status carries sa_id and its sub-analyses'
+    """The SENSITIVITY BRANCH. A master's df_status carries member_id and its members'
     logs live under {master}/logs/sims via the is_experiment_member branch of the convention.
 
     FAILS PRE-FIX: today the check reads the decoy (marker PRESENT) -> passed=True, so
@@ -406,25 +406,25 @@ def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
     sub = SimpleNamespace(
         cfg_analysis=SimpleNamespace(
             is_experiment_member=True,
-            analysis_id="sa_0",
+            analysis_id="member_0",
             experiment_cfg_yaml=master_dir / "cfg_analysis.yaml",
         ),
         # model_logfile_for now derives the master log dir from the sub's OWN analysis_dir
         # (`.parent.parent`), so the stub must carry the real two-level layout.
         analysis_paths=SimpleNamespace(
             simlog_directory=tmp_path / "unused",
-            analysis_dir=master_dir / "subanalyses" / "sa_0",
+            analysis_dir=master_dir / "members" / "member_0",
         ),
     )
     master = _analysis_stub(
         sensitivity=True,
-        df=_resumed_df(str(scen), sa_id="sa_0"),
+        df=_resumed_df(str(scen), member_id="member_0"),
         simlog_dir=tmp_path / "unused",
     )
-    master.sensitivity = SimpleNamespace(analyses={"sa_0": sub})
+    master.sensitivity = SimpleNamespace(analyses={"member_0": sub})
     master.cfg_analysis.toggle_sensitivity_analysis = True
     _write_real_log(sub, 0, _CKPT + _ENDS)  # resumed, complete, no replay marker -> WARN
-    assert (master_dir / "logs" / "sims" / "model_tritonswmm_sa_0_evt0.log").exists()
+    assert (master_dir / "logs" / "sims" / "model_tritonswmm_member_0_evt0.log").exists()
     _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)  # inverse verdict
     res = check_coupled_resume_validity(master)
     assert res.passed is False
@@ -452,7 +452,7 @@ def test_model_logfile_method_delegates_to_free_function():
 
 
 def test_sub_model_log_lives_under_experiment_dir_not_config_dir(tmp_path):
-    """THE WIPE-COVERAGE INVARIANT. A sub-analysis's model runtime log MUST land inside the
+    """THE WIPE-COVERAGE INVARIANT. A member's model runtime log MUST land inside the
     MASTER's analysis_dir, so `run(from_scratch=True)`'s fast_rmtree(analysis_dir) removes it
     along with the outputs it describes.
 
@@ -469,16 +469,16 @@ def test_sub_model_log_lives_under_experiment_dir_not_config_dir(tmp_path):
     sub = SimpleNamespace(
         cfg_analysis=SimpleNamespace(
             is_experiment_member=True,
-            analysis_id="sa_gpu_2_r1",
+            analysis_id="member_gpu_2_r1",
             experiment_cfg_yaml=config_dir / "analysis_config.yaml",
         ),
         analysis_paths=SimpleNamespace(
-            simlog_directory=master_dir / "subanalyses" / "sa_gpu_2_r1" / "logs" / "sims",
-            analysis_dir=master_dir / "subanalyses" / "sa_gpu_2_r1",
+            simlog_directory=master_dir / "members" / "member_gpu_2_r1" / "logs" / "sims",
+            analysis_dir=master_dir / "members" / "member_gpu_2_r1",
         ),
     )
     p = model_logfile_for(sub, 0, "triton")
-    assert p == master_dir / "logs" / "sims" / "model_triton_sa_gpu_2_r1_evt0.log"
+    assert p == master_dir / "logs" / "sims" / "model_triton_member_gpu_2_r1_evt0.log"
     assert config_dir not in p.parents, "model log must not be anchored to the config dir"
 
 
@@ -695,7 +695,7 @@ def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
 
     zpath = tmp_path / "analysis_datatree.zarr"
     ev = {
-        "sa_0": {
+        "member_0": {
             "resumed": True,
             "completed": True,
             "replayed": True,
@@ -721,7 +721,7 @@ def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
 
 
 def _triton_arm_b_stub(df):
-    """Pure-TRITON (Arm B) analysis stub: no sensitivity, so _iter_analyses_or_self
+    """Pure-TRITON (Arm B) analysis stub: no sensitivity, so _iter_members_or_self
     yields (None, analysis) and the schedule is read off analysis.cfg_analysis."""
     return SimpleNamespace(
         _system=SimpleNamespace(

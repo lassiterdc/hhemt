@@ -30,13 +30,13 @@ re-run of `analysis.run()` resumes rather than rebuilds.
 
 ??? question "I edited the sensitivity XLSX. What re-runs?"
     The `sensitivity_analysis_definition.csv` is re-derived from the XLSX on
-    **every** `analysis.run()`, and only the touched `sa_id` chains re-run.
+    **every** `analysis.run()`, and only the touched `member_id` chains re-run.
     Editing the CSV directly is a no-op: it is silently overwritten before
     Snakemake plans, so the run reports "resuming, N/N complete" even though
     you expected a new row. Always edit the XLSX, not the derived CSV.
 
-??? question "I removed a row (sa_id) from the XLSX. Why did it abort?"
-    Removing an `sa_id` leaves an orphan `subanalyses/sa_*/` directory on disk.
+??? question "I removed a row (member_id) from the XLSX. Why did it abort?"
+    Removing a `member_id` leaves an orphan `members/member_*/` directory on disk.
     The toolkit detects the orphan and `analysis.run()` **aborts** with a
     `ConfigurationError` rather than silently deleting data. Re-invoke with
     `cleanup_orphans=True` (or run `hhemt cleanup-orphans --apply --force`) to

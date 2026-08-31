@@ -59,7 +59,7 @@ def _load_config(cfg_yaml: Path, model_cls: type[_M]) -> _M:
         raise ValueError(
             f"YAML config at {cfg_yaml} parsed to None (file empty or top-level null). "
             "Under high parallel I/O this can indicate a concurrent-write race; "
-            "see sensitivity_analysis.py::_create_sub_analyses."
+            "see sensitivity_analysis.py::_create_members."
         )
     return model_cls.model_validate(raw)
 

@@ -113,7 +113,7 @@ def test_sim_requirements_multi_node_config():
     assert sim_reqs["mem_mb_per_sim"] == 16000  # 1 × 16 × 1000
 
 
-# Note: Sensitivity analysis tests would require setting up sub-analyses,
+# Note: Sensitivity analysis tests would require setting up members,
 # which is more complex. The basic mechanism (finding MAX per-sim requirements)
 # is tested implicitly through the workflow integration tests.
 

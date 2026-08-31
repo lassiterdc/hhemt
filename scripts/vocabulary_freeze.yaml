@@ -102,6 +102,17 @@ frozen:
       - subanalyses/sa_*/sims/*/processed/
       - '== "subanalyses"'
 
+  src/hhemt/version_migration/versions/V0019__member_vocabulary.py:
+    reason: >-
+      Carries every retired token by construction: its docstring documents the
+      subanalyses/sa_* to members/member_* move, its _FLAG_REWRITES table matches
+      the sa- flag dialect, and _OLD_CONTAINER is the literal "subanalyses". This
+      is the migration that RETIRES the vocabulary, so it is the last module that
+      must still be able to read it.
+    tokens:
+      - subanalyses
+      - "sa-"
+
   tests/test_version_migration_golden.py:
     reason: >-
       Asserts on legacy on-disk shapes by literal. A v18 tree HAS subanalyses/sa_0/;
@@ -124,6 +135,16 @@ frozen:
       inputs must stay in the vocabulary those primitives were written against.
     tokens:
       - subanalyses
+
+  tests/test_version_migration_V0008.py:
+    reason: >-
+      Line 39 builds the v7-era fixture path Path("subanalyses") / "sa_22" / "sims" /
+      as the input V0008 migrates. Sweeping it makes the test assert a tree shape that
+      never existed, and pass. Declared here because the undeclared-file check is
+      scoped to versions/ and cannot see a test file.
+    tokens:
+      - subanalyses
+      - sa_22
 
 # Fixture trees. A vN fixture is a RECORD of what a vN tree looked like, so renaming
 # a directory inside one makes the vN-1 -> vN golden pair assert a shape that never

@@ -390,7 +390,7 @@ def test_matrix_required_arches_cross_hardware_sensitivity(tmp_path):
         },
     )
     setup = tmp_path / "setup.csv"
-    setup.write_text("sa_id,hpc.partition\n0,gpu-a100\n1,gpu-a6000\n2,standard\n")
+    setup.write_text("member_id,hpc.partition\n0,gpu-a100\n1,gpu-a6000\n2,standard\n")
     analysis = SimpleNamespace(
         cfg_hpc_system=cfg_hpc,
         cfg_analysis=SimpleNamespace(

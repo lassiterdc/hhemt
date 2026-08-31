@@ -77,7 +77,7 @@ class ForceRerunSpec(cfgBaseModel):
     """WHICH simulations to force, and from WHICH stage down.
 
     Two ORTHOGONAL axes as separate fields rather than keys in one dict. The subject keys
-    are mutually exclusive by construction -- `sa_id` requires `toggle_sensitivity_analysis`
+    are mutually exclusive by construction -- `member_id` requires `toggle_sensitivity_analysis`
     True and `event_iloc` requires it False -- which is why the shipped validator's
     `next(iter(...))` is correct. A `stage` key added to that same dict would make the
     first-key read insertion-order-dependent and silently skip subject validation.
@@ -136,7 +136,7 @@ class ForceRerunSpec(cfgBaseModel):
         a malformed subject reports its own shape error rather than the render error.
         """
         v = self.subject
-        _SA_ID_RE = re.compile(r"^[A-Za-z0-9_.]+$")
+        MEMBER_ID_RE = re.compile(r"^[A-Za-z0-9_.]+$")
         if isinstance(v, dict):
             if len(v) != 1:
                 raise ValueError(
@@ -152,10 +152,10 @@ class ForceRerunSpec(cfgBaseModel):
             if len(values) != len(set(map(str, values))):
                 raise ValueError(f"force_rerun.{key} list contains duplicates: {values}")
             if key == "sa_id":
-                bad = [str(x) for x in values if not _SA_ID_RE.match(str(x))]
+                bad = [str(x) for x in values if not MEMBER_ID_RE.match(str(x))]
                 if bad:
                     raise ValueError(
-                        f"force_rerun.sa_id values must match ^[A-Za-z0-9_.]+$ "
+                        f"force_rerun.member_id values must match ^[A-Za-z0-9_.]+$ "
                         f"(per accepted decision 'All user-provided identifiers that "
                         f"become Snakemake wildcards must match ^[A-Za-z0-9_.]+$'); "
                         f"got invalid: {bad}"
@@ -167,9 +167,9 @@ class ForceRerunSpec(cfgBaseModel):
         """A subject-scoped ``render`` floor is not a capability of this design.
 
         `plots/` is not partitioned by subject: alongside the per-sim figures that carry
-        `__sa.{sa_id}__` it holds CROSS-SUB aggregates (`b4b_clean_identity`,
+        `__member.{member_id}__` it holds CROSS-SUB aggregates (`b4b_clean_identity`,
         `config_diff_maps`, `eda_cross_hardware_magnitude`) whose inputs span every
-        sub-analysis and which carry no subject token at all. Honouring a subject-scoped
+        member and which carry no subject token at all. Honouring a subject-scoped
         render would refresh some figures and leave the aggregates stale -- an artifact
         inconsistent with its own inputs, which is the defect class the stage axis exists
         to remove. So the render floor is subject-blind, and asking for a subset must FAIL
@@ -481,7 +481,7 @@ class analysis_config(cfgBaseModel):
         ge=0,
         description=(
             "Per-rule Snakemake `retries:` for the simulation rules "
-            "(run_triton/run_tritonswmm/run_swmm/simulation_sa_*). A walltime "
+            "(run_triton/run_tritonswmm/run_swmm/simulation_member_*). A walltime "
             "kill is a SLURM TIMEOUT (retriable); raise this high (e.g. 20) for a "
             "hotstart-resume sweep so a killed sim re-dispatches from its latest "
             "config_NNNN.cfg checkpoint within ONE analysis.run(). Default 2."
@@ -758,7 +758,7 @@ class analysis_config(cfgBaseModel):
     )
     is_experiment_member: bool = Field(
         False,
-        description="This is used in the backend to help route subanalyses to appropriate processes.",
+        description="This is used in the backend to help route members to appropriate processes.",
     )
     experiment_cfg_yaml: Path | None = Field(
         None,
@@ -798,7 +798,7 @@ class analysis_config(cfgBaseModel):
             "precedent. Callers may pass an explicit `override_brand_theme=` Path "
             "to `analysis.run()` to override for one invocation, mirroring the "
             "`report_config=` runtime-override precedent. Automatically "
-            "per-sub-analysis overlayable via an `analysis.brand_theme` "
+            "per-member overlayable via an `analysis.brand_theme` "
             "sensitivity column."
         ),
     )
@@ -906,7 +906,7 @@ class analysis_config(cfgBaseModel):
             'Force-rerun policy. "all" re-runs everything. "none" runs no '
             'forced re-runs. A dict with exactly one key — "sa_id" (sensitivity '
             'only) or "event_iloc" (non-sensitivity only) — and a list of int '
-            "or string identifiers re-runs only the named sub-analyses or "
+            "or string identifiers re-runs only the named members or "
             'events. Defaults to "none" — yamls written before this field '
             "was introduced load cleanly with the strict-safe (re-run-nothing) "
             "default."
@@ -1167,11 +1167,11 @@ class analysis_config(cfgBaseModel):
         if isinstance(subject, dict):
             key = next(iter(subject))
             if key == "sa_id" and not self.toggle_sensitivity_analysis:
-                raise ValueError("force_rerun.sa_id requires toggle_sensitivity_analysis=True")
+                raise ValueError("force_rerun.member_id requires toggle_sensitivity_analysis=True")
             if key == "event_iloc" and self.toggle_sensitivity_analysis:
                 raise ValueError(
                     "force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
-                    "sensitivity-toggled analyses must use force_rerun.sa_id instead"
+                    "sensitivity-toggled analyses must use force_rerun.member_id instead"
                 )
         return self
 

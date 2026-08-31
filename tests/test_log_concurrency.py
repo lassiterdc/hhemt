@@ -122,7 +122,7 @@ def test_log_single_writer_invariant():
     import hhemt
 
     src = Path(hhemt.__file__).parent
-    assert "sub_analysis._update_log()" not in (src / "sensitivity_analysis.py").read_text()
+    assert "member._update_log()" not in (src / "sensitivity_analysis.py").read_text()
     assert "skip_log_update=True" in (src / "report_renderers" / "_cli.py").read_text()
 
 

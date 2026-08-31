@@ -268,7 +268,7 @@ def main() -> int:
         "--consolidate-sensitivity-analysis-outputs",
         action="store_true",
         default=False,
-        help="If True, consolidate subanalysis-level outputs into master analysis outputs (for sensitivity analysis)",
+        help="If True, consolidate member-level outputs into master analysis outputs (for sensitivity analysis)",
     )
     parser.add_argument(
         "--allow-incomplete",
@@ -294,10 +294,10 @@ def main() -> int:
         help="Snakemake rule name for the flag sidecar payload",
     )
     parser.add_argument(
-        "--sa-id",
+        "--member-id",
         type=str,
         default=None,
-        help="Sub-analysis id for the flag sidecar payload (sensitivity per-sa consolidate)",
+        help="Member id for the flag sidecar payload (sensitivity per-member consolidate)",
     )
     parser.add_argument(
         "--event-id",
@@ -391,7 +391,7 @@ def main() -> int:
         else:
             logger.info("All simulations completed successfully")
 
-        # Validate resource usage (skipped for subanalysis)
+        # Validate resource usage (skipped for member)
         if not analysis.cfg_analysis.is_experiment_member:
             validate_resource_usage(analysis, logger)
 
@@ -424,7 +424,7 @@ def main() -> int:
 
         # Phase 3b: Consolidate outputs
         if args.consolidate_sensitivity_analysis_outputs:
-            logger.info("Consolidating subanalysis-level outputs into master sensitivity DataTree...")
+            logger.info("Consolidating member-level outputs into master sensitivity DataTree...")
             try:
                 analysis.sensitivity.consolidate_sensitivity_datatree(
                     verbose=True,
@@ -443,18 +443,18 @@ def main() -> int:
                     compression_level=args.compression_level,
                 )
                 logger.info("DataTree consolidation completed successfully")
-                # D6 — when this is a per-sub-analysis consolidate (--sa-id is passed
-                # by the sensitivity-master `consolidate_{prefix}{sa_id}` rule, which
+                # D6 — when this is a per-member consolidate (--member-id is passed
+                # by the sensitivity-master `consolidate_{prefix}{member_id}` rule, which
                 # relies on fall-through to this branch), write a correctly-labeled
-                # scope="sub_analysis" DU sentinel at the sub-analysis root. The
+                # scope="member" DU sentinel at the member root. The
                 # runner's `analysis` is built from the sub's config, so
-                # `analysis.analysis_paths.analysis_dir` IS the sub-analysis dir.
+                # `analysis.analysis_paths.analysis_dir` IS the member dir.
                 # Without this, the sub root carries a mislabeled scope="analysis"
                 # sentinel written by consolidate_to_datatree
-                # (processing_analysis.py:184). No separate `rule consolidate_subanalysis`
+                # (processing_analysis.py:184). No separate `rule consolidate_member`
                 # is needed — folding the write into the existing per-sub rule's
                 # invocation avoids the NEW_RULE first-run rerun cost.
-                if args.sa_id is not None:
+                if args.member_id is not None:
                     from hhemt.du_sentinels import (
                         compute_and_write_scope_sentinel,
                     )
@@ -462,11 +462,11 @@ def main() -> int:
                     analysis_dir = analysis.analysis_paths.analysis_dir
                     compute_and_write_scope_sentinel(
                         analysis_dir,
-                        scope="sub_analysis",
+                        scope="member",
                         include_breakdown=True,
                     )
                     logger.info(
-                        f"Sub-analysis DU sentinel written at "
+                        f"Member DU sentinel written at "
                         f"{analysis_dir}/_status/_du.json"
                     )
             except Exception as e:
@@ -480,7 +480,7 @@ def main() -> int:
         # ({analysis_dir}/validation_report.json) so errors_and_warnings.render() (and
         # the bundle re-render) reads ONE file instead of re-inspecting the tree at
         # render time. Runs at every analysis-level consolidation (sensitivity-master,
-        # regular, and per-sa); the per-scenario --event-id path returned early above,
+        # regular, and per-member); the per-scenario --event-id path returned early above,
         # so no scenario-level report is written. Non-fatal: a persist failure must
         # never block an otherwise-successful consolidation.
         try:

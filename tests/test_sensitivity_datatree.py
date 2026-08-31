@@ -1,10 +1,10 @@
 """Unit tests for sensitivity DataTree assembly (Phase 3).
 
 Validates that ``build_sensitivity_datatree()`` produces an ``xr.DataTree`` with:
-- ``parameters`` Dataset at the root, indexed by ``sa_id``
-- Per-sub-analysis child nodes named ``sa_{sa_id}`` carrying sensitivity
+- ``parameters`` Dataset at the root, indexed by ``member_id``
+- Per-member child nodes named ``member_{member_id}`` carrying sensitivity
   parameters as ``.attrs``
-- Each sub-analysis subtree reproduces the per-analysis tree structure
+- Each member subtree reproduces the per-analysis tree structure
 """
 
 from pathlib import Path
@@ -71,18 +71,18 @@ def test_build_sensitivity_datatree_structure(tmp_path):
 
     sens = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
     sens.experiment = master
-    sens.analyses = analyses
+    sens.members = analyses
     sens.df_setup = df_setup
-    sens.analyses_prefix = "sa_"
+    sens.member_prefix = "member_"
 
     tree = sens.build_sensitivity_datatree()
 
     assert "parameters" in tree
-    assert "sa_0" in tree
-    assert "sa_1" in tree
-    assert tree["sa_0/tritonswmm/triton"].dataset["max_wlevel_m"].shape == (1, 2, 2)
-    assert tree["sa_0"].attrs["run_mode"] == "gpu"
-    assert tree["sa_1"].attrs["n_mpi_procs"] == 2
+    assert "member_0" in tree
+    assert "member_1" in tree
+    assert tree["member_0/tritonswmm/triton"].dataset["max_wlevel_m"].shape == (1, 2, 2)
+    assert tree["member_0"].attrs["run_mode"] == "gpu"
+    assert tree["member_1"].attrs["n_mpi_procs"] == 2
     df = tree["parameters"].dataset.to_dataframe()
     assert list(df.index) == ["0", "1"]
     assert df.loc["0", "run_mode"] == "gpu"

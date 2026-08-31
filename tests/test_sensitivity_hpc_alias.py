@@ -35,11 +35,11 @@ def test_hpc_alias_recognizer_maps_partition_and_rejects_gpu_hardware():
 def test_hpc_partition_alias_resolves_on_each_sub(synth_sensitivity_multi_partition_fanout):
     """The `hpc.partition` column lands on each sub's `cfg_analysis.hpc_ensemble_partition`."""
     sensitivity = synth_sensitivity_multi_partition_fanout.sensitivity
-    # CSV row order: gpu-a6000, gpu-a100, gpu-a6000, gpu-a100 (sa_id 0..3).
+    # CSV row order: gpu-a6000, gpu-a100, gpu-a6000, gpu-a100 (member_id 0..3).
     expected = {"0": "gpu-a6000", "1": "gpu-a100", "2": "gpu-a6000", "3": "gpu-a100"}
-    for sa_id, sub in sensitivity.analyses.items():
-        assert sub.cfg_analysis.hpc_ensemble_partition == expected[str(sa_id)], (
-            f"sa_id={sa_id}: hpc.partition alias did not resolve to the analysis "
+    for member_id, sub in sensitivity.members.items():
+        assert sub.cfg_analysis.hpc_ensemble_partition == expected[str(member_id)], (
+            f"member_id={member_id}: hpc.partition alias did not resolve to the analysis "
             f"selector"
         )
 

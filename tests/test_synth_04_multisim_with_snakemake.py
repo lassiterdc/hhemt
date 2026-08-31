@@ -577,7 +577,7 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
         # in-process and writes exactly ONE output. Asserting their ABSENCE pins the
         # retirement itself, so a partial revert that re-emits them fails here
         # instead of silently restoring a two-manifest shape the rule_all / bundle
-        # enumeration no longer knows about. (The per-sa sensitivity path still
+        # enumeration no longer knows about. (The per-member sensitivity path still
         # emits both files; that path is exercised in test_synth_05.)
         for _retired in ("peak_flood_depth", "conduit_flow"):
             assert not list(ep_dir.glob(f"{_retired}__evt.*")), (

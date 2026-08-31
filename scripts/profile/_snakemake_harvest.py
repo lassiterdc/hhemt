@@ -24,7 +24,7 @@ MAX_VALIDATED_VERSION = 6
 _ZERO_DURATION_THRESHOLD = 1e-6
 
 _NORMALIZE = [
-    (re.compile(r"_sa_\d+"), "_sa_N"),
+    (re.compile(r"_member_\d+"), "_member_N"),
     (re.compile(r"_evt_\d+"), "_evt_N"),
 ]
 
@@ -32,7 +32,7 @@ _NORMALIZE = [
 def normalize_rule(name: str) -> str:
     r"""Collapse sensitivity-rule wildcards into a normalized form.
 
-    Currently collapses ``_sa_\d+`` -> ``_sa_N`` and ``_evt_\d+`` -> ``_evt_N``
+    Currently collapses ``_member_\d+`` -> ``_member_N`` and ``_evt_\d+`` -> ``_evt_N``
     to match the toolkit's ``SnakemakeWorkflowBuilder`` rule-naming conventions.
 
     NOTE: If ``workflow.py`` ever adds a third wildcard (e.g., ``_year_\d+``,

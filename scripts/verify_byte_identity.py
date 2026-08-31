@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Byte-identity verification for a compute-config sensitivity master (D5 ground truth).
 
-Compares each sub-analysis's FLAT per-scenario summaries (max_wlevel_m over (y,x);
+Compares each member's FLAT per-scenario summaries (max_wlevel_m over (y,x);
 max_flow_cms over (link_id,)) against a reference sub, for one shared event, using:
   * COMPLIANT  = xr.align(join="exact") + transpose + dtype gate + np.array_equal(equal_nan=True)
   * POSITIONAL = bare np.array_equal on raw .values (mimics eda/_config_diff.py)
@@ -10,7 +10,7 @@ If COMPLIANT says identical but POSITIONAL says differs -> reporting-calc ARTIFA
 
 Read-only; never constructs TRITONSWMM_scenario. Usage:
   python verify_byte_identity.py /path/to/sensitivity_master \
-      [--serial-sa sa_0] [--event-id <sims-subdir-name>] [--out-type zarr|nc]
+      [--serial-member member_0] [--event-id <sims-subdir-name>] [--out-type zarr|nc]
 """
 
 from __future__ import annotations
@@ -58,8 +58,8 @@ def _at_event(da: xr.DataArray, e) -> xr.DataArray:
 
 
 def _label(sub_dir: Path) -> str:
-    """Best-effort compute-config label from a materialized cfg_analysis.yaml; else sa_id."""
-    sa = sub_dir.name
+    """Best-effort compute-config label from a materialized cfg_analysis.yaml; else member_id."""
+    member = sub_dir.name
     try:
         import yaml
 
@@ -67,14 +67,14 @@ def _label(sub_dir: Path) -> str:
             if cand.exists():
                 c = yaml.safe_load(cand.read_text()) or {}
                 rm, nm, no = c.get("run_mode", "?"), c.get("n_mpi_procs", 1), c.get("n_omp_threads", 1)
-                return f"{sa} [{rm} {nm}r x {no}t]"
+                return f"{member} [{rm} {nm}r x {no}t]"
     except Exception:
         pass
-    return sa
+    return member
 
 
 def _detect_out_type(master: Path) -> str:
-    if next(master.glob("subanalyses/*/sims/*/processed/TRITONSWMM_TRITON_summary.zarr"), None):
+    if next(master.glob("members/*/sims/*/processed/TRITONSWMM_TRITON_summary.zarr"), None):
         return "zarr"
     return "nc"
 
@@ -111,19 +111,19 @@ def _positional(a: xr.DataArray, b: xr.DataArray) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("master", type=Path)
-    ap.add_argument("--serial-sa", default=None, help="reference sa_id dir name (default: first)")
+    ap.add_argument("--serial-member", default=None, help="reference member_id dir name (default: first)")
     ap.add_argument("--event-id", default=None, help="sims/ subdir name (default: first shared)")
     ap.add_argument("--out-type", default=None, choices=["zarr", "nc"])
     args = ap.parse_args()
 
     master = args.master
     out_type = args.out_type or _detect_out_type(master)
-    subs = sorted(d for d in (master / "subanalyses").glob("sa_*") if d.is_dir())
+    subs = sorted(d for d in (master / "members").glob("member_*") if d.is_dir())
     if not subs:
-        print(f"No subanalyses/sa_* under {master}", file=sys.stderr)
+        print(f"No members/member_* under {master}", file=sys.stderr)
         return 2
 
-    ref_dir = next((d for d in subs if d.name == args.serial_sa), subs[0])
+    ref_dir = next((d for d in subs if d.name == args.serial_member), subs[0])
     if args.event_id:
         event_id = args.event_id
     else:

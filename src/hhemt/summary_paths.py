@@ -73,13 +73,13 @@ def analysis_summaries_complete(analysis, enabled_models: list[str]) -> bool:
     """Whole-sub predicate: True iff EVERY scenario in the sub has all summaries.
 
     Whole-sub (not per-event) because ``consolidate_sensitivity_datatree``'s
-    skip is all-or-nothing per sub-analysis (Gotcha 36 stipulation:
+    skip is all-or-nothing per member (Gotcha 36 stipulation:
     ``_retrieve_combined_output`` concatenates per-scenario summaries along
     ``event_iloc`` and is all-or-nothing per sub). Filtering per-event here
     would be MORE permissive than consolidation and re-introduce a mismatch.
     Path-only via ``compute_event_id_slug`` — no ``TRITONSWMM_scenario``
-    instantiation (Note A). A sub-analysis is a full Analysis instance
-    (Gotcha 11), so ``sub_analysis`` is passed directly as ``analysis``.
+    instantiation (Note A). A member is a full Analysis instance
+    (Gotcha 11), so ``member`` is passed directly as ``analysis``.
     """
     from hhemt.scenario import compute_event_id_slug
 

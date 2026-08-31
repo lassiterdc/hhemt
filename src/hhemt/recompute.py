@@ -45,7 +45,7 @@ class RecomputeAction(str, Enum):  # noqa: UP042 -- (str, Enum) is deliberate; s
     """The four recompute tiers, each a thin dispatch into existing machinery.
 
     * ``RE_RUN``              -> scoped ``run(override_force_rerun=...)`` per affected
-                                 ``sa_id`` / ``event_iloc`` (surgical; NOT a
+                                 ``member_id`` / ``event_iloc`` (surgical; NOT a
                                  ``from_scratch`` whole-tree wipe).
     * ``REPROCESS_SCENARIO``  -> ``reprocess(start_with="process", regenerate_existing=True)``.
     * ``RE_CONSOLIDATE``      -> ``reprocess(start_with="consolidate")``.
@@ -230,12 +230,12 @@ def _emit_re_run_instruction(
 ) -> dict:
     """Map ``RecomputeAction.RE_RUN`` -> a scoped ``run(override_force_rerun=...)`` plan.
 
-    ``prefix_scopes`` is the set of (sa_id | event_iloc) identifiers whose ADR-15
+    ``prefix_scopes`` is the set of (member_id | event_iloc) identifiers whose ADR-15
     stamp is a pre-fix ancestor of the bug-fix commit. Uses the surgical scoped
     force-rerun (``analysis.py`` ``_apply_force_rerun``), NEVER
     ``run(from_scratch=True)``: from_scratch wipes the whole ``analysis_dir`` and
     destroys correct post-fix scenarios, defeating ADR-15's per-scope drift
-    capture. The key is ``sa_id`` for a sensitivity master, ``event_iloc`` otherwise
+    capture. The key is ``member_id`` for a sensitivity master, ``event_iloc`` otherwise
     (an off-by-one key raises ``ConfigurationError`` at the API boundary -- a loud,
     safe failure, not silent).
     """
@@ -327,7 +327,7 @@ def _iter_scope_stamps(analysis: TRITONSWMM_analysis):
 
     The four ADR-15 stamp-carrier locations (hhemt Q4 confirmed set) are:
       1. per-scenario ``sims/{event_id}/processed/*.zarr``
-      2. per-sub ``subanalyses/sa_{id}/analysis_datatree.zarr``
+      2. per-sub ``members/member_{id}/analysis_datatree.zarr``
       3. the regular ``analysis_datatree.zarr`` (non-sensitivity consolidated tree)
       4. the master ``sensitivity_datatree.zarr`` (sensitivity master tree)
     with the asymmetry that a non-sensitivity analysis has scopes {1,3} and a

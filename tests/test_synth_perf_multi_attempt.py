@@ -3,7 +3,7 @@
 Tests `read_walltime_ledger_total_s`: it sums the append-only per-attempt ledger the runner
 writes at each sim-finalize, and returns None when the ledger is absent (so non-resumed +
 legacy trees fall back to the perf-summary total, byte-unchanged). Grounded by the confirmed
-Rivanna under-count (sa_serial_6_r1: perf_Total 372.3 s vs Σ per-attempt 489 s, ~24%).
+Rivanna under-count (member_serial_6_r1: perf_Total 372.3 s vs Σ per-attempt 489 s, ~24%).
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ def _write_ledger(model_logfile, records):
 
 
 def test_walltime_ledger_total_sums_all_attempts(tmp_path):
-    mlf = tmp_path / "logs" / "sims" / "model_triton_sa_serial_6_r1_evt0.log"
+    mlf = tmp_path / "logs" / "sims" / "model_triton_member_serial_6_r1_evt0.log"
     mlf.parent.mkdir(parents=True, exist_ok=True)
-    # Three kill-truncated attempts + a completing attempt (the sa_serial_6_r1 shape).
+    # Three kill-truncated attempts + a completing attempt (the member_serial_6_r1 shape).
     _write_ledger(
         mlf,
         [
@@ -41,14 +41,14 @@ def test_walltime_ledger_total_sums_all_attempts(tmp_path):
 
 
 def test_walltime_ledger_absent_returns_none(tmp_path):
-    mlf = tmp_path / "logs" / "sims" / "model_triton_sa_serial_6_r1_evt0.log"
+    mlf = tmp_path / "logs" / "sims" / "model_triton_member_serial_6_r1_evt0.log"
     mlf.parent.mkdir(parents=True, exist_ok=True)
     # No _walltime dir written -> None (fallback signal; non-resumed + legacy byte-unchanged).
     assert read_walltime_ledger_total_s(mlf) is None
 
 
 def test_walltime_ledger_single_attempt(tmp_path):
-    mlf = tmp_path / "logs" / "sims" / "model_triton_sa_serial_0_r1_evt0.log"
+    mlf = tmp_path / "logs" / "sims" / "model_triton_member_serial_0_r1_evt0.log"
     mlf.parent.mkdir(parents=True, exist_ok=True)
     _write_ledger(mlf, [{"attempt": 0, "wall_s": 61.5, "completed": True}])
     assert read_walltime_ledger_total_s(mlf) == 61.5

@@ -168,7 +168,7 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
         # from `hhemt_producing_sha` on the consolidated tree -- the build that
         # PRODUCED the data. On the delivered generation they were 17 commits apart
         # (ad70cd3b416f vs 01655abb60c2) and a reader had no way to see that.
-        "<th># sub-analyses</th><th>hhemt bundle sha</th><th>hhemt build (data-producing)</th>"
+        "<th># members</th><th>hhemt bundle sha</th><th>hhemt build (data-producing)</th>"
         "<th>Solver sha</th></tr></thead><tbody>" + body + "</tbody></table>" + _caption
     )
 
@@ -223,7 +223,7 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
     """One deterministic provenance row per combined child crate. Each field is derived from
     a bundled, deterministic source (no HPC re-run): experiment_id from the dir name; role
     from scenario_status.csv n_resumes (the _bundle_role_from_status convention); model from the
-    sensitivity_datatree tier; n_subs from the /sa_* group count; toolkit sha from
+    sensitivity_datatree tier; n_subs from the /member_* group count; toolkit sha from
     bundle_manifest.json. `_source_rel` is the declared audit source (relative to analysis_dir)."""
     import csv as _csv
     import json as _cjson
@@ -281,9 +281,9 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
                     if derived:
                         toolkit_version = derived
                 grps = set(dt.groups)
-                sa = sorted(g for g in grps if g.count("/") == 1 and g.startswith("/sa_"))
-                n_subs = len(sa)
-                for g in sa:
+                member = sorted(g for g in grps if g.count("/") == 1 and g.startswith("/member_"))
+                n_subs = len(member)
+                for g in member:
                     if f"{g}/tritonswmm/triton" in grps:
                         model = "TRITON-SWMM"
                         break

@@ -36,6 +36,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: check-caption-vocabulary
+        name: retired-vocabulary guard over the report template tree
+        entry: python scripts/check_caption_vocabulary.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # DU-sentinel mutation-site restamp discipline (scripts/check_du_sentinel_sites.py)
   # Flags fast_rmtree(...) missing analysis_dir= and .unlink() not adjacent-followed
   # by restamp_parent_sentinels(...), unless the site carries # EXEMPT-DU: {category}.

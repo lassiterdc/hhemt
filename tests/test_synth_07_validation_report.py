@@ -69,21 +69,21 @@ def _synthetic_report() -> ValidationReport:
             level="aggregate",
             passed=False,
             summary="Scenario setup failed for 1 of 3 scenarios",
-            details=[{"sa_id": "sa_0", "scenario": "event_index.0", "scenario_dir": "/path", "detail": "scenario not created"}],
+            details=[{"sa_id": "member_0", "scenario": "event_index.0", "scenario_dir": "/path", "detail": "scenario not created"}],
         ),
         CheckResult(
             name="Scenarios ran",
             level="aggregate",
             passed=False,
             summary="Simulation failed for 1 of 3 scenarios",
-            details=[{"sa_id": "sa_1", "scenario": "event_index.0", "scenario_dir": "/path", "detail": "simulation did not complete"}],
+            details=[{"sa_id": "member_1", "scenario": "event_index.0", "scenario_dir": "/path", "detail": "simulation did not complete"}],
         ),
         CheckResult(
             name="Timeseries processed",
             level="aggregate",
             passed=False,
             summary="Timeseries processing failed for 1 entries",
-            details=[{"sa_id": "sa_2", "scenario": "event_index.0", "scenario_dir": "/path", "detail": "TRITON ts not processed"}],
+            details=[{"sa_id": "member_2", "scenario": "event_index.0", "scenario_dir": "/path", "detail": "TRITON ts not processed"}],
         ),
         CheckResult(
             name="Analysis summaries created",
@@ -103,7 +103,7 @@ def _synthetic_report() -> ValidationReport:
             level="resource",
             passed=False,
             summary="Resource mismatches in 1 scenario(s)",
-            details=[{"scenario": "sa_3 / event_index.0", "scenario_dir": "/path", "resource": "OMP threads", "expected": 4, "actual": 1, "detail": "OMP threads: expected 4, actual 1"}],
+            details=[{"scenario": "member_3 / event_index.0", "scenario_dir": "/path", "resource": "OMP threads", "expected": 4, "actual": 1, "detail": "OMP threads: expected 4, actual 1"}],
         ),
     ])
 
@@ -118,9 +118,9 @@ def test_synthetic_report_granular_failures_aggregated():
     """granular_failures collects per-scenario rows from aggregate-level checks."""
     report = _synthetic_report()
     rows = report.granular_failures
-    sa_ids = {r.get("sa_id") for r in rows}
+    member_ids = {r.get("sa_id") for r in rows}
     stages = {r.get("stage") for r in rows}
-    assert {"sa_0", "sa_1", "sa_2"} == sa_ids
+    assert {"member_0", "member_1", "member_2"} == member_ids
     assert {"Scenarios setup", "Scenarios ran", "Timeseries processed"} == stages
 
 
@@ -195,14 +195,14 @@ def test_renders_aggregate_table_has_three_failed_rows():
     assert html.count('class="fail"') == 3
 
 
-def test_renders_granular_failures_table_groups_by_sa_id():
+def test_renders_granular_failures_table_groups_by_member_id():
     report = _synthetic_report()
     html = _render_granular_failures_table(report.granular_failures)
     assert "Granular Per-Scenario Failures" in html
-    for sa_id in ["sa_0", "sa_1", "sa_2"]:
-        assert sa_id in html
-    # Each scenario label uses "sa_X / scenario_name" format
-    assert "sa_0 / event_index.0" in html
+    for member_id in ["member_0", "member_1", "member_2"]:
+        assert member_id in html
+    # Each scenario label uses "member_X / scenario_name" format
+    assert "member_0 / event_index.0" in html
 
 
 def test_renders_resource_mismatches_table_has_omp_row():

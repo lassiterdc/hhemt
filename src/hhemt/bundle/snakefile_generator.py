@@ -223,7 +223,7 @@ def _harvest_rule_specs(
     # toggle_*_model fields, which are REQUIRED, so absence is impossible.
     #
     # Every other predicate reads an OPTIONAL cfg_analysis key — eda.enabled_plots,
-    # clear_raw, independent_vars, n_sub_analyses — and for those, absence is
+    # clear_raw, independent_vars, n_members — and for those, absence is
     # indistinguishable from false. Reading an absent field as false converts a missing
     # RECORD into a positive gating DECISION, which silently drops a figure family that is
     # present on disk. Measured: the checked-in sensitivity_master fixture carries no `eda`
@@ -324,9 +324,9 @@ def _build_config_block(*, cfg_analysis: dict, is_sensitivity: bool) -> str:
         'config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}',
     ]
     if is_sensitivity:
-        n_sub = int(cfg_analysis.get("n_sub_analyses", 0))
+        n_sub = int(cfg_analysis.get("n_members", 0))
         independent_vars = cfg_analysis.get("independent_vars", [])
-        lines.append(f'config["n_sub_analyses"] = {n_sub}')
+        lines.append(f'config["n_members"] = {n_sub}')
         lines.append(f'config["independent_vars"] = {independent_vars!r}')
         group_by = cfg_analysis.get("group_by_var")
         if group_by:

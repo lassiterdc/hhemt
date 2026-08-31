@@ -1109,7 +1109,7 @@ def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[
 
 
 def snapshot_scenario_output_mtimes(analysis, *, kind: str) -> dict[tuple[str | None, str], dict[Path, float]]:
-    """Return {(sa_id, event_id): {output_file: mtime_float}} for every per-scenario output.
+    """Return {(member_id, event_id): {output_file: mtime_float}} for every per-scenario output.
 
     Scenario id is the stable event-slug computed by scenario.compute_event_id_slug
     (e.g., "year.9_event_type.compound_event_id.1") — NOT the row label of df_sims.
@@ -1132,11 +1132,11 @@ def snapshot_scenario_output_mtimes(analysis, *, kind: str) -> dict[tuple[str | 
     only change when Snakemake's simulation/process/consolidate rules actually run.
 
     Keys are typed tuples to avoid substring-collision pitfalls with string-concat
-    namespacing (e.g., sa_id="sa_1" vs sa_id="extra_sa_1" both endswith "::sa_1"):
+    namespacing (e.g., member_id="member_1" vs member_id="extra_member_1" both endswith "::member_1"):
 
       - kind='multi_sim': key is (None, event_id).
-      - kind='sensitivity': key is (str(sa_id), event_id), disambiguating identical
-        event_ids across sub-analyses.
+      - kind='sensitivity': key is (str(member_id), event_id), disambiguating identical
+        event_ids across members.
     """
     from hhemt.scenario import compute_event_id_slug
 
@@ -1157,11 +1157,11 @@ def snapshot_scenario_output_mtimes(analysis, *, kind: str) -> dict[tuple[str | 
             slug, sim_folder = _slug_and_sim_folder(analysis, iloc)
             snapshot[(None, slug)] = _walk(sim_folder)
     elif kind == "sensitivity":
-        for sa_id, sub in analysis.sensitivity.analyses.items():
-            sa_id_str = str(sa_id)
+        for member_id, sub in analysis.sensitivity.members.items():
+            member_id_str = str(member_id)
             for iloc in sub.df_sims.index:
                 slug, sim_folder = _slug_and_sim_folder(sub, iloc)
-                snapshot[(sa_id_str, slug)] = _walk(sim_folder)
+                snapshot[(member_id_str, slug)] = _walk(sim_folder)
     else:
         raise ValueError(f"unknown kind: {kind!r}")
 
@@ -1178,8 +1178,8 @@ def mutate_scenario_csv(
     """Copy the source scenario CSV to a tmp path, drop the row whose scenario
     identifier == remove_key, append a fresh row cloned from donor_key with a
     synthetic identifier guaranteed not to collide. Return (tmp_csv_path, new_key).
-    Keys are typed (sa_id, event_id) tuples matching snapshot_scenario_output_mtimes;
-    sa_id=None for multi_sim, sa_id=str for sensitivity.
+    Keys are typed (member_id, event_id) tuples matching snapshot_scenario_output_mtimes;
+    member_id=None for multi_sim, member_id=str for sensitivity.
 
     multi_sim:
       - Source CSV: analysis.cfg_analysis.weather_events_to_simulate (analysis.py:164-166).
@@ -1194,15 +1194,15 @@ def mutate_scenario_csv(
 
     sensitivity:
       - Source CSV (or XLSX): analysis.cfg_analysis.sensitivity_analysis.
-      - The `sa_id` column is required by stipulation
-        `library/docs/stipulations/hhemt/sensitivity csvs require sa_id column.md`.
-      - Mutation: drop the row whose sa_id == remove_id; clone donor row with a
-        new synthetic sa_id matching `^[A-Za-z0-9_.]+$`.
+      - The `member_id` column is required by stipulation
+        `library/docs/stipulations/hhemt/sensitivity csvs require member_id column.md`.
+      - Mutation: drop the row whose member_id == remove_id; clone donor row with a
+        new synthetic member_id matching `^[A-Za-z0-9_.]+$`.
     """
     if kind == "multi_sim":
         from hhemt.scenario import compute_event_id_slug
 
-        donor_event_id = donor_key[1]  # sa_id is None for multi_sim
+        donor_event_id = donor_key[1]  # member_id is None for multi_sim
         remove_event_id = remove_key[1]
         src = Path(analysis.cfg_analysis.weather_events_to_simulate)
         df = pd.read_csv(src)
@@ -1257,24 +1257,24 @@ def mutate_scenario_csv(
                 stale_log = simlog_dir / f"model_{model_type}_evt{vic_iloc}.log"
                 stale_log.unlink(missing_ok=True)
     elif kind == "sensitivity":
-        donor_sa_id = donor_key[0]
-        remove_sa_id = remove_key[0]
+        donor_member_id = donor_key[0]
+        remove_member_id = remove_key[0]
         src = Path(analysis.cfg_analysis.sensitivity_analysis)
         if src.suffix.lower() in (".xlsx", ".xls"):
             df = pd.read_excel(src)
         else:
             df = pd.read_csv(src)
-        donor_row = df[df["sa_id"].astype(str) == str(donor_sa_id)].iloc[0].copy()
-        used_sa_ids = set(df["sa_id"].astype(str).tolist())
+        donor_row = df[df["member_id"].astype(str) == str(donor_member_id)].iloc[0].copy()
+        used_member_ids = set(df["member_id"].astype(str).tolist())
         n = 9000
-        while f"rerun_test_{n}" in used_sa_ids:
+        while f"rerun_test_{n}" in used_member_ids:
             n += 1
-        new_sa_id = f"rerun_test_{n}"
-        donor_row["sa_id"] = new_sa_id
-        df = df[df["sa_id"].astype(str) != str(remove_sa_id)].copy()
+        new_member_id = f"rerun_test_{n}"
+        donor_row["member_id"] = new_member_id
+        df = df[df["member_id"].astype(str) != str(remove_member_id)].copy()
         df = pd.concat([df, donor_row.to_frame().T], ignore_index=True)
-        # Cloned-row event_id slug is identical to the donor row's event_id (only sa_id changed).
-        new_key = (new_sa_id, donor_key[1])
+        # Cloned-row event_id slug is identical to the donor row's event_id (only member_id changed).
+        new_key = (new_member_id, donor_key[1])
     else:
         raise ValueError(f"unknown kind: {kind!r}")
 
@@ -1344,8 +1344,8 @@ def assert_rerun_trigger_correctness(
 ) -> None:
     """Validate the four-part rerun-trigger contract.
 
-    Keys are typed (sa_id, event_id) tuples matching snapshot_scenario_output_mtimes;
-    sa_id=None for multi_sim, sa_id=str for sensitivity. Tuple-equality eliminates
+    Keys are typed (member_id, event_id) tuples matching snapshot_scenario_output_mtimes;
+    member_id=None for multi_sim, member_id=str for sensitivity. Tuple-equality eliminates
     the substring-suffix collision class that string-concat namespacing would carry.
     """
     # (a) added scenario has outputs in 'after' with at least one file

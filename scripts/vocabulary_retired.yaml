@@ -1,0 +1,115 @@
+  # The retired member-vocabulary alternation, versioned.
+  #
+  # WHY A DATA FILE AND NOT A MODULE. scripts/ has no __init__.py and no checker
+  # imports a sibling; anonymization_blocklist.txt, reprex_blocklist.txt,
+  # vocabulary_freeze.yaml and vocabulary_residue_exceptions.yaml are all read and
+  # none is imported. A cross-repo consumer (the plan-anchor gate lives in a
+  # different repository) can read a file and can never import a module here.
+  #
+  # WHY VERSIONED. The enumeration widened three times in three review rounds, each
+  # time because a form shared a separator or a context with one already in the set.
+  # A spec that declares `Class extent: N against RETIRED_V3` states WHICH set it was
+  # measured under; an inlined regex states only what the author happened to type.
+  #
+  # HOW TO WIDEN. Add the form, bump `version`, and record the axis it varies. Do NOT
+  # edit an existing form in place: a spec measured under V3 must stay checkable
+  # against V3 even after V4 exists.
+version: 5
+
+  # Each form names the AXIS along which it varies from the stem, because that axis
+  # is what the previous enumeration was blind to.
+forms:
+  - pattern: 'sa_id'
+    axis: identity, exact
+  - pattern: 'sa-'
+    axis: separator -- flag and fingerprint dialect
+  - pattern: '__sa\.'
+    axis: separator -- plot-ID segment tag
+  - pattern: 'sa\.\{'
+    axis: separator -- plot-ID segment in a template
+  - pattern: 'subanalys'
+    axis: container, unseparated
+  - pattern: 'sub_analys'
+    axis: container, underscore
+  - pattern: '[Ss]ub-analys'
+    axis: separator + case -- hyphenated prose
+  - pattern: 'sub analys'
+    axis: separator -- space-separated prose
+  - pattern: '[A-Za-z0-9]_sa_[A-Za-z0-9_]*'
+    axis: left context -- embedded infix, invisible to a word boundary
+  - pattern: '\b_?(?:SA|Sa)_[A-Za-z0-9_]*'
+    axis: case -- uppercase constants
+  - pattern: '\bsa_[A-Za-z0-9_]*'
+    axis: identity, prefix
+  - pattern: '(?<![A-Za-z0-9_])[Ss][Aa](?![A-Za-z0-9_])'
+    axis: token degeneracy -- the stem is itself a whole token
+  - pattern: '\.analyses\b|_create_analyses|_iter_analyses_or_self|analyses_prefix|analyses_dir|find_orphan_analysis_dirs'
+    axis: DIFFERENT STEM -- analys-stem identifiers denoting a MEMBER rather than the
+      enclosing analysis. `.analyses` in particular was created BY this rename, when an
+      earlier round renamed `sub_analyses` to `analyses` and stopped there.
+  - pattern: '(?<![A-Za-z0-9])_sa_'
+    axis: LEFT BOUNDARY -- `_sa_` after a quote, backtick, paren or line start. Invisible
+      to `[A-Za-z0-9]_sa_` (needs an alphanumeric left), to `\bsa_` (the leading `_`
+      destroys the boundary), and to the degeneracy form (excludes `_` on both sides).
+      Its sites are REGEX LITERALS parsing the rule-name grammar workflow.py emits.
+  - pattern: '(?<=[A-Za-z0-9])_(?:sa|SA)(?![A-Za-z0-9_])'
+    axis: RIGHT BOUNDARY -- a trailing `_sa`/`_SA` with NO following underscore, at the
+      END of a longer identifier or string (`per_sim_per_sa`, `ILOC_BY_EVENT_ID_BY_SA`,
+      `sim_run_flag_per_sa`, `e_consolidate_sa`). The mirror of form 14's LEFT boundary.
+      Invisible to forms 9 and 11 (both require a TRAILING underscore this shape lacks
+      by construction) and to form 12 (whose negative lookbehind excludes an
+      underscore-preceded occurrence, which every site here is). Its sites are `_status`
+      flag-name builders and generated-Snakefile globals, so they reach EMITTED
+      ARTIFACTS rather than only source. KNOWN RESIDUAL, accepted deliberately -- a bare
+      `_sa` at a NON-alphanumeric left boundary (`for _sa in ...`) stays unmatched,
+      because broadening the left context here would re-claim spans forms 2 and 9
+      already own.
+  - pattern: '(?<=[A-Za-z0-9])_(?:SA|Sa)_(?=[A-Za-z0-9])'
+    axis: CASE + LEFT BOUNDARY -- embedded uppercase `_SA_` mid-identifier, the
+      uppercase analogue of form 9, which is lowercase-only. Form 10 cannot reach it
+      because its `\b` fails mid-identifier (`E_S` in `_RULE_SA_ID_RE` is no boundary).
+
+  # Axes ASKED and returning zero. Recorded so the next reader can tell which
+  # blind spots were interrogated rather than merely not found.
+closed_axes:
+  - uppercase container spellings (SUBANALYS, SUB_ANALYS)
+  - unicode-hyphen prose (en dash, non-breaking hyphen)
+  - base64 or otherwise encoded payloads
+  - hyphenated identity `sa-id` as prose -- 39 occurrences, all covered by `sa-`
+
+  # WHY THIS BLOCK EXISTS. `closed_axes` above records blind spots someone thought to
+  # ask about. It cannot say whether the QUESTION SET is complete, so this alternation
+  # widened five times, each time because a delegate tripped over a site rather than
+  # because anyone enumerated where sites could hide.
+  #
+  # THE BOUND. Every form here discriminates the stem by its LEFT and RIGHT character
+  # context, and every lookaround uses exactly two classes. So the context space is a
+  # 3x3 partition -- A (alphanumeric), U (underscore), O (anything else, INCLUDING line
+  # edges) -- which is FINITE and EXHAUSTIVE. Enumerate every literal `sa`/`SA`/`Sa`,
+  # bucket by (left class, right class), and read off which cells the alternation
+  # claims. That converts "we keep finding forms" into "here is the whole space, and
+  # here is the decision for each cell."
+  #
+  # READ THE CAVEAT BEFORE THE TABLE. The partition is exhaustive; the raw COUNTS are
+  # not the signal. The two largest cells are ordinary English words containing the
+  # letters "sa" and are correctly unclaimed -- a naive reading sends the next person
+  # chasing 5,589 phantom sites. Only the token-bounded cells are informative, and they
+  # are small enough to read by hand.
+  #
+  # Measured 2026-08-30 at version 5. Recount at the next bump; do not trust these
+  # integers as current.
+closed_cells:
+  - cell: O_sa_A / A_sa_A -- UNCLAIMED BY DESIGN. ~5,589 sites, all ordinary English
+      ("same", "sample", "satisfy", "usage", "necessary"). No form should ever claim
+      these; a form that does is over-reaching by construction.
+  - cell: O_sa_U / O_sa_O -- fully claimed by forms 1-14. Residual 0.
+  - cell: U_sa_U -- was the residual that mattered. Form 16 closes it; its 2 sites are
+      both `_RULE_SA_ID_RE` in report_renderers/metadata.py, already spec'd by E4.3.
+  - cell: U_sa_O -- form 15 closes the bulk of it. Residual is the bare `_sa` at a
+      non-alphanumeric left boundary named in form 15's own axis note.
+  - cell: U_sa_A -- UNCLAIMED DELIBERATELY. `_sacct_states_batched` and siblings are
+      SLURM vocabulary, not this rename's stem. Correct to skip.
+  - cell: A_sa_O -- UNCLAIMED DELIBERATELY. `alsa-lib` and `hsa-runtime64` are vendor
+      and platform names already carried as declared exceptions.
+  - cell: A_sa_U -- UNCLAIMED DELIBERATELY. This file's own pattern strings. A form
+      claiming them would make the vocabulary match itself.

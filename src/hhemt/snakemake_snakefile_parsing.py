@@ -5,7 +5,7 @@ This module intentionally follows a fail-fast strategy:
 - Missing expected run/simulation rules => error
 - Missing required resource keys (tasks/cpus_per_task) => error
 - When ``strict=False`` (sensitivity tolerance path), missing expected
-  sub-analysis ids are NOT raised — the caller reconciles the partial set.
+  member ids are NOT raised — the caller reconciles the partial set.
 
 The parsed outputs are used for workflow diagnostics (intended vs allocated vs actual).
 """
@@ -24,7 +24,7 @@ _RULE_RE = re.compile(r"^\s*rule\s+([A-Za-z0-9_]+)\s*:\s*$")
 _TASKS_RE = re.compile(r"\btasks\s*=\s*(\d+)\b")
 _CPUS_RE = re.compile(r"\bcpus_per_task\s*=\s*(\d+)\b")
 _GPU_RE = re.compile(r"\bgpu\s*=\s*(\d+)\b")
-_SA_SIM_RE = re.compile(r"^simulation_sa_(.+?)_evt_(.+)$")
+_MEMBER_SIM_RE = re.compile(r"^simulation_member_(.+?)_evt_(.+)$")
 
 
 def _read_snakefile_text(snakefile_path: Path) -> str:
@@ -115,46 +115,46 @@ def parse_sensitivity_analysis_workflow_model_allocations(
     *,
     strict: bool = True,
 ) -> dict[str, dict[str, int]]:
-    """Parse per-subanalysis allocations from flattened sensitivity Snakefile.
+    """Parse per-member allocations from flattened sensitivity Snakefile.
 
     The flattened sensitivity Snakefile contains rules named like:
-    ``simulation_sa-{sa_id}_evt-{event_id}``.
+    ``simulation_member-{member_id}_evt-{event_id}``.
 
     This parser extracts Snakemake resources from those simulation rules and
-    returns one allocation per subanalysis. If multiple event rules for the
-    same subanalysis disagree on resources, it raises ``SnakefileParsingError``.
+    returns one allocation per member. If multiple event rules for the
+    same member disagree on resources, it raises ``SnakefileParsingError``.
     """
     snakefile_text = _read_snakefile_text(snakefile_path)
     rule_blocks = _extract_rule_blocks(snakefile_text)
 
-    allocations_by_sa: dict[str, dict[str, int]] = {}
+    allocations_by_member: dict[str, dict[str, int]] = {}
 
     for rule_name, rule_block in rule_blocks.items():
-        match = _SA_SIM_RE.match(rule_name)
+        match = _MEMBER_SIM_RE.match(rule_name)
         if match is None:
             continue
 
-        sa_id = match.group(1)
+        member_id = match.group(1)
         parsed_alloc = _parse_rule_resources(rule_name=rule_name, rule_block=rule_block)
 
-        if sa_id in allocations_by_sa and allocations_by_sa[sa_id] != parsed_alloc:
+        if member_id in allocations_by_member and allocations_by_member[member_id] != parsed_alloc:
             raise SnakefileParsingError(
                 "Inconsistent Snakemake resources found across sensitivity simulation "
-                f"rules for subanalysis sa_{sa_id}."
+                f"rules for member member_{member_id}."
             )
 
-        allocations_by_sa[sa_id] = parsed_alloc
+        allocations_by_member[member_id] = parsed_alloc
 
-    if not allocations_by_sa:
+    if not allocations_by_member:
         raise SnakefileParsingError(
-            "No sensitivity simulation rules found. Expected rules matching 'simulation_sa-{sa_id}_evt-{event_id}'."
+            "No sensitivity simulation rules found. Expected rules matching 'simulation_member-{member_id}_evt-{event_id}'."
         )
 
     if expected_analysis_ids is not None and strict:
-        missing = sorted(set(expected_analysis_ids) - set(allocations_by_sa.keys()))
+        missing = sorted(set(expected_analysis_ids) - set(allocations_by_member.keys()))
         if missing:
             raise SnakefileParsingError(
-                f"Missing expected sensitivity simulation allocations for subanalysis ids: {missing}"
+                f"Missing expected sensitivity simulation allocations for member ids: {missing}"
             )
 
-    return allocations_by_sa
+    return allocations_by_member

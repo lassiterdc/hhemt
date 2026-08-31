@@ -19,8 +19,8 @@ from scripts.profile.profile_routine_tests import _collect_corpus
 @pytest.mark.parametrize(
     "name,expected",
     [
-        ("simulate_sa_1_evt_2", "simulate_sa_N_evt_N"),
-        ("simulate_sa_999", "simulate_sa_N"),
+        ("simulate_member_1_evt_2", "simulate_member_N_evt_N"),
+        ("simulate_member_999", "simulate_member_N"),
         ("simulate_evt_42", "simulate_evt_N"),
         ("run_triton", "run_triton"),  # no wildcards — pass-through
         ("", ""),  # empty input — defensive

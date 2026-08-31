@@ -74,7 +74,7 @@ _EDA_SUBDIR = EDA_PLOTS_SUBDIR
 def _figure_stem(name: str) -> str:
     """Figure identity: the canonical plot ID's leading segment, or the bare stem.
 
-    ADR-2 stems are `{renderer_kind}[__{descriptor}][__sa.{id}][__evt.{id}]`, so the part
+    ADR-2 stems are `{renderer_kind}[__{descriptor}][__member.{id}][__evt.{id}]`, so the part
     before the first `__` identifies the figure family. Keying on this rather than on the
     full path is what lets BOTH extension siblings of a live figure survive: a rule declares
     one `output:` with a literal extension, and matplotlib emits .html AND .svg.

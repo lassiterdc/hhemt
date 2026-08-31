@@ -73,7 +73,7 @@ def test_status_sidecars_are_declared_when_they_exist(tmp_path):
     (analysis_dir / "_status").mkdir(parents=True)
     for name, payload in (
         ("a_setup_target_0_complete.flag.json", {"rule_name": "setup_target_0", "slurm_job_id": "1"}),
-        ("c_run_complete.flag.json", {"rule_name": "simulation_sa_x_evt_0", "slurm_job_id": "2"}),
+        ("c_run_complete.flag.json", {"rule_name": "simulation_member_x_evt_0", "slurm_job_id": "2"}),
     ):
         (analysis_dir / "_status" / name).write_text(json.dumps(payload))
 
@@ -104,7 +104,7 @@ def test_timeline_heading_and_table_ids_do_not_collide(tmp_path):
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "_status").mkdir(parents=True)
     (analysis_dir / "_status" / "c_run_complete.flag.json").write_text(
-        json.dumps({"rule_name": "simulation_sa_x_evt_0", "slurm_job_id": "2"})
+        json.dumps({"rule_name": "simulation_member_x_evt_0", "slurm_job_id": "2"})
     )
     html, _ = _render(analysis_dir)
 

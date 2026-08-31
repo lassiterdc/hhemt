@@ -170,7 +170,7 @@ class retrieve_TRITON_SWMM_test_case:
 
         # Materialize the synthetic weather timeseries BEFORE constructing
         # TRITONSWMM_analysis: for sensitivity cases the analysis eagerly builds
-        # sub-analyses, each validated from a dict via analysis_config.model_validate,
+        # members, each validated from a dict via analysis_config.model_validate,
         # which runs the `_check_paths_exist` field validator and requires
         # weather_timeseries to exist on disk. Creating the .nc after analysis
         # construction left sensitivity fixtures unbuildable.
@@ -576,12 +576,12 @@ class retrieve_synth_TRITON_SWMM_test_case:
         self.analysis_yaml.write_text(yaml.safe_dump(analysis_cfg, sort_keys=False))
 
 
-def induce_incomplete_analysis(sensitivity, sa_id, *, delete_master_tree=True):
+def induce_incomplete_analysis(sensitivity, member_id, *, delete_master_tree=True):
     """Induce the flag-present / summary-absent (or summary-absent generally)
-    partial-completion state for ONE sub-analysis of a completed sensitivity
+    partial-completion state for ONE member of a completed sensitivity
     analysis, for reprocess regression coverage.
 
-    Deletes, for the named ``sa_id``:
+    Deletes, for the named ``member_id``:
       * every per-enabled-model per-scenario summary file (the set the self-heal
         keys on — TRITONSWMM_*_summary.zarr etc.),
       * the sub's ``analysis_datatree.zarr``,
@@ -605,7 +605,7 @@ def induce_incomplete_analysis(sensitivity, sa_id, *, delete_master_tree=True):
         "triton": ("output_triton_only_summary", "output_triton_only_performance_summary"),
         "swmm": ("output_swmm_only_node_summary", "output_swmm_only_link_summary"),
     }
-    sub = sensitivity.analyses[sa_id]
+    sub = sensitivity.members[member_id]
     deleted = []
     enabled_models = sub._get_enabled_model_types()
     for event_iloc in sub.df_sims.index:

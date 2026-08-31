@@ -85,8 +85,8 @@ def test_static_snakefile_is_bare_output_and_threads_selectors(synth_multi_sim_a
 
 
 # Phase 2 — a system_overview (system-level, not per-sim) config harvests a
-# bare-output rule with NO --event-iloc/--sa-id (its plot_id carries no
-# __evt./__sa. segment), proving the registry + generator handle the new kind.
+# bare-output rule with NO --event-iloc/--member-id (its plot_id carries no
+# __evt./__member. segment), proving the registry + generator handle the new kind.
 def test_system_overview_static_snakefile_no_per_sim_selectors(synth_multi_sim_analysis, tmp_path):
     analysis = synth_multi_sim_analysis
     plot_id = "system_overview"
@@ -112,7 +112,7 @@ def test_system_overview_static_snakefile_no_per_sim_selectors(synth_multi_sim_a
     assert f"--static-config-id {plot_id}" in text
     # System-level plot: no per-sim / sensitivity selector threading.
     assert "--event-iloc" not in text
-    assert "--sa-id" not in text
+    assert "--member-id" not in text
 
 
 # Phase 4 — a sensitivity_benchmarking config carries a `var.{independent_var}`
@@ -143,10 +143,10 @@ def test_sensitivity_benchmarking_static_snakefile_threads_independent_var(synth
     assert f"rule static_plot_{plot_id.replace('.', '_')}:" in text
     assert f"static_plots/{plot_id}.pdf" in text
     assert f"--static-config-id {plot_id}" in text
-    # The var.{name} selector is threaded as --independent-var; no per-sim/sa selector.
+    # The var.{name} selector is threaded as --independent-var; no per-sim/member selector.
     assert "--independent-var n_devices" in text
     assert "--event-iloc" not in text
-    assert "--sa-id" not in text
+    assert "--member-id" not in text
 
 
 # R5 — static_config_ids filters the harvested rule set to the named subset.

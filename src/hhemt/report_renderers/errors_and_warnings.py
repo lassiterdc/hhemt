@@ -57,7 +57,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "Analysis summaries",
         "Every consolidated DataTree the analysis owes is present on disk — the "
         "analysis tree, and on a sensitivity master the master tree plus each "
-        "sub-analysis tree.",
+        "member tree.",
     ),
     "scenario_status.csv created": (
         "Scenario status export",
@@ -118,7 +118,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "Cross-sim byte-identity": (
         "Cross-sim byte-identity",
-        "Sub-analyses differing only in compute configuration produce bit-identical tracked "
+        "Members differing only in compute configuration produce bit-identical tracked "
         "variables within each hardware family.",
     ),
     "Raw byte-for-byte identity": (
@@ -409,9 +409,9 @@ def _render_granular_failures_table(granular: list[dict]) -> str:
         return ""
     rows = []
     for d in granular:
-        sa_id = d.get("sa_id", "")
+        member_id = d.get("sa_id", "")
         scenario = d.get("scenario", d.get("scenario_dir", ""))
-        scenario_label = f"{sa_id} / {scenario}" if sa_id else scenario
+        scenario_label = f"{member_id} / {scenario}" if member_id else scenario
         stage = d.get("stage", "")
         detail = d.get("detail", "")
         rows.append(f"<tr><td>{scenario_label}</td><td>{stage}</td><td>{detail}</td></tr>")

@@ -33,7 +33,7 @@ def _assert_analysis_test_completes(analysis, *, min_groups: int = 1):
     """
     result = analysis.test(execution_mode="local", verbose=False)
     assert (analysis.analysis_paths.analysis_dir / "_test").exists()
-    assert result.analyses, "analysis.test() produced no _test sub-analyses"
+    assert result.members, "analysis.test() produced no _test members"
     assert len(result.representatives) >= min_groups, (
         f"expected >= {min_groups} representative group(s), got "
         f"{len(result.representatives)}; a grouping-key regression collapses "
@@ -41,7 +41,7 @@ def _assert_analysis_test_completes(analysis, *, min_groups: int = 1):
     )
     keys = [r.key for r in result.representatives]
     assert len(set(keys)) == len(keys), f"duplicate representative keys: {keys}"
-    for sub_result in result.analyses:
+    for sub_result in result.members:
         tst_ut.assert_analysis_workflow_completed_successfully(sub_result.analysis)
 
 

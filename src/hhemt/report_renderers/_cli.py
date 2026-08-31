@@ -39,12 +39,12 @@ def main() -> None:
     parser.add_argument("--event-iloc", type=int, default=None, help="for per-sim renderers")
     parser.add_argument("--independent-var", type=str, default=None, help="for sensitivity renderers")
     parser.add_argument(
-        "--sa-id",
+        "--member-id",
         type=str,
         default=None,
-        help="sub-analysis id (sensitivity master scope only); when present, the renderer "
-        "receives the resolved sub-analysis instead of the master analysis, so per-sim "
-        "renderers can operate on per-sa-scoped scenario data.",
+        help="member id (sensitivity master scope only); when present, the renderer "
+        "receives the resolved member instead of the master analysis, so per-sim "
+        "renderers can operate on per-member-scoped scenario data.",
     )
     parser.add_argument(
         "--static-config-id",
@@ -72,23 +72,23 @@ def main() -> None:
     # Post-F2: report cfg lives inline on cfg_analysis (R1, load-time-required).
     report_cfg = analysis.cfg_analysis.report
 
-    # Sub-analysis routing: when --sa-id is present, resolve the sub-analysis from
+    # Member routing: when --member-id is present, resolve the member from
     # the master and pass it as the `analysis` argument to the renderer. Per-sim
-    # renderers then read per-sa-scoped scenario data (sims/, processed/, etc.)
+    # renderers then read per-member-scoped scenario data (sims/, processed/, etc.)
     # without needing to know they were dispatched from the master scope.
     target_analysis = analysis
-    if args.sa_id is not None:
+    if args.member_id is not None:
         if not getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
             raise ValueError(
-                f"--sa-id={args.sa_id} requires the analysis to be a sensitivity master, "
+                f"--member-id={args.member_id} requires the analysis to be a sensitivity master, "
                 f"but toggle_sensitivity_analysis is False on {args.analysis_config}."
             )
-        analyses = analysis.sensitivity.analyses
-        if args.sa_id not in analyses:
+        analyses = analysis.sensitivity.members
+        if args.member_id not in analyses:
             raise ValueError(
-                f"--sa-id={args.sa_id!r} not found in master's sub_analyses; available: {sorted(analyses.keys())}"
+                f"--member-id={args.member_id!r} not found in master's members; available: {sorted(analyses.keys())}"
             )
-        target_analysis = analyses[args.sa_id]
+        target_analysis = analyses[args.member_id]
 
     module = importlib.import_module(f"hhemt.report_renderers.{args.renderer}")
     kwargs: dict = {}

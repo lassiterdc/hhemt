@@ -14,7 +14,7 @@
 # consolidation's `check_cross_sim_identity(within_family=True)` compares the
 # container row against the native reference at IDENTICAL compute — yielding a
 # clean native ≡ container verdict. (check_cross_sim_identity anchors on the
-# lexicographically-first sa_id; "container" < "native", so the native row is
+# lexicographically-first member_id; "container" < "native", so the native row is
 # compared against the container reference. Same physics either way.)
 #
 # Compute = GPU single-rank (run_mode=gpu, n_gpus=1, n_mpi_procs=1) on an a100 node.

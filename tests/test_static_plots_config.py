@@ -38,12 +38,12 @@ def test_plot_id_required():
 # R3 — plot_id charset
 def test_plot_id_rejects_hyphen():
     with pytest.raises(ValidationError):
-        StaticPlotBaseConfig(plot_id="per_sim_peak_flood_depth__sa-0", renderer_kind=_RENDERER_KIND)
+        StaticPlotBaseConfig(plot_id="per_sim_peak_flood_depth__member-0", renderer_kind=_RENDERER_KIND)
 
 
 def test_plot_id_accepts_adr2_dot_form():
-    cfg = StaticPlotBaseConfig(plot_id="per_sim_peak_flood_depth__sa.0__evt.year.9", renderer_kind=_RENDERER_KIND)
-    assert cfg.plot_id == "per_sim_peak_flood_depth__sa.0__evt.year.9"
+    cfg = StaticPlotBaseConfig(plot_id="per_sim_peak_flood_depth__member.0__evt.year.9", renderer_kind=_RENDERER_KIND)
+    assert cfg.plot_id == "per_sim_peak_flood_depth__member.0__evt.year.9"
 
 
 # R7 (renderer plan) — renderer_kind strict-required + registry

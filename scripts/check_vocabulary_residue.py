@@ -41,17 +41,33 @@ from __future__ import annotations
 
 import argparse
 import ast
+import re
 import sys
 from pathlib import Path
 
-DEFAULT_TOKENS = ("sa_id", "sa-", "sa_", "subanalys", "sub_analys")
+def _load_retired_tokens() -> tuple[str, ...]:
+    """The retired-vocabulary forms, read from the versioned single source.
+
+    Hard-coding them here is what let this gate ship five forms against a
+    twelve-form census: a green run then certified a narrower scope than the
+    rename, and nothing in the exit code said so.
+    """
+    import yaml
+
+    doc = yaml.safe_load(
+        (Path(__file__).resolve().parent / "vocabulary_retired.yaml").read_text(encoding="utf-8")
+    )
+    return tuple(f["pattern"] for f in doc["forms"])
+
+
+DEFAULT_TOKENS = _load_retired_tokens()
 
 
 def _tainted_const(node: ast.AST, tokens: tuple[str, ...]) -> str | None:
     """Return the first retired token carried by a str Constant, else None."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         for tok in tokens:
-            if tok in node.value:
+            if re.search(tok, node.value):
                 return tok
     return None
 

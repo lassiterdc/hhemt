@@ -60,7 +60,7 @@ def test_consolidation_emits_core_and_sidecar(synth_multi_sim_analysis):
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_sensitivity_consolidation_emits_master_and_sub_provenance(synth_sensitivity_analysis):
     # R2: sensitivity master carries the embedded core + co-located sidecar, and each
-    # consolidated sub-analysis independently carries its own sidecar (produced by the
+    # consolidated member independently carries its own sidecar (produced by the
     # per-sub consolidate_to_datatree wiring — no sub-loop in the master path).
     a = synth_sensitivity_analysis
     result = a.submit_workflow(**_WORKFLOW_KWARGS)
@@ -76,7 +76,7 @@ def test_sensitivity_consolidation_emits_master_and_sub_provenance(synth_sensiti
     assert master_sidecar.exists()
 
     consolidated_subs = 0
-    for _sa_id, sub in sensitivity.analyses.items():
+    for _member_id, sub in sensitivity.members.items():
         sub_zarr = sub.analysis_paths.analysis_datatree_zarr
         if sub_zarr is not None and sub_zarr.exists():
             consolidated_subs += 1

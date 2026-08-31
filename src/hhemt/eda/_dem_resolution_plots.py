@@ -245,7 +245,7 @@ def dem_resolution_diff_source_paths(root: Path) -> list[Path]:
     """fig-3 declares: the datatree + ONE conduit inp (shared geometry) + the watershed
     geojson when present (Gotcha-53 renderer-IO audit: actual reads must be a subset)."""
     srcs: list[Path] = [root / "sensitivity_datatree.zarr"]
-    inps = sorted(root.glob("subanalyses/*/sims/*/swmm/hydraulics.inp"))
+    inps = sorted(root.glob("members/*/sims/*/swmm/hydraulics.inp"))
     if inps:
         srcs.append(inps[0])
     wpath = root / "external" / "watershed.geojson"
@@ -259,7 +259,7 @@ def dem_resolution_coupling_source_paths(root: Path) -> list[Path]:
     `Coupling junctions` count is read per resolution from each sub's processed [INFLOWS]
     junctions; a universal, DATA-derived count decoupled from any generator constant)."""
     srcs: list[Path] = [root / "sensitivity_datatree.zarr"]
-    srcs += sorted(root.glob("subanalyses/*/sims/*/swmm/hydraulics.inp"))
+    srcs += sorted(root.glob("members/*/sims/*/swmm/hydraulics.inp"))
     return srcs
 
 
@@ -330,12 +330,12 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     dt = xr.open_datatree(str(root / "sensitivity_datatree.zarr"), engine="zarr", consolidated=False)
 
     def _res_m(node_name: str) -> float:
-        # "sa_dem_3p5_r1" -> 3.5 ; the resolution is encoded in the sa node name.
+        # "member_dem_3p5_r1" -> 3.5 ; the resolution is encoded in the member node name.
         return float(node_name.split("dem_")[1].split("_r")[0].replace("p", "."))
 
     recs = []
     for node_name in dt.children:
-        if not node_name.startswith("sa_dem_"):
+        if not node_name.startswith("member_dem_"):
             continue
         tri = dt[f"/{node_name}/tritonswmm/triton"].ds
         perf = dt[f"/{node_name}/tritonswmm/performance"].ds
@@ -585,7 +585,7 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
 
     recs: dict[float, dict] = {}
     for node_name in dt.children:
-        if not node_name.startswith("sa_dem_"):
+        if not node_name.startswith("member_dem_"):
             continue
         res = _res_m(node_name)
         if res in recs:
@@ -1121,7 +1121,7 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
 
     recs: list[dict] = []
     for node_name in dt.children:
-        if not node_name.startswith("sa_dem_"):
+        if not node_name.startswith("member_dem_"):
             continue
         res = _res_m(node_name)
         if any(r["res_m"] == res for r in recs):
@@ -1363,7 +1363,7 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
     node_by_res: dict[float, str] = {}
     recs: dict[float, dict] = {}
     for node_name in dt.children:
-        if not node_name.startswith("sa_dem_"):
+        if not node_name.startswith("member_dem_"):
             continue
         res = _res_m(node_name)
         if res in recs:
@@ -1404,10 +1404,10 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
         point). Data-derived; imports no generator rank-cap/deadlock constant.
         """
         node_name = node_by_res[res]
-        sa_id = str(dt[f"/{node_name}"].attrs.get("sa_id", node_name))
-        inps = sorted(root.glob(f"subanalyses/*{sa_id}*/sims/*/swmm/hydraulics.inp"))
+        member_id = str(dt[f"/{node_name}"].attrs.get("sa_id", node_name))
+        inps = sorted(root.glob(f"members/*{member_id}*/sims/*/swmm/hydraulics.inp"))
         if not inps:
-            inps = sorted(root.glob(f"subanalyses/*{node_name}*/sims/*/swmm/hydraulics.inp"))
+            inps = sorted(root.glob(f"members/*{node_name}*/sims/*/swmm/hydraulics.inp"))
         if not inps:
             return None, None
         m = swmmio.Model(str(inps[0]))

@@ -27,7 +27,7 @@ def write_status_flag(
     *,
     rule_name: str,
     model_type: str | None = None,
-    sa_id: str | None = None,
+    member_id: str | None = None,
     event_id: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
@@ -44,8 +44,8 @@ def write_status_flag(
         if it does not exist.
     rule_name : str
         The Snakemake rule that produced this flag (e.g., `run_tritonswmm`,
-        `process_sa_42_evt_3`, `delete_subanalysis_5`).
-    model_type, sa_id, event_id : str | None
+        `process_member_42_evt_3`, `delete_member_5`).
+    model_type, member_id, event_id : str | None
         Per-rule diagnostic provenance; included in the sidecar payload when
         provided. None values are omitted from the JSON.
     extra : dict[str, Any] | None
@@ -91,8 +91,8 @@ def write_status_flag(
     }
     if model_type is not None:
         payload["model_type"] = model_type
-    if sa_id is not None:
-        payload["sa_id"] = sa_id
+    if member_id is not None:
+        payload["sa_id"] = member_id
     if event_id is not None:
         payload["event_id"] = event_id
     if extra:
@@ -152,7 +152,7 @@ def emit_runner_flag(args: Any) -> None:
     """Conditional flag-write helper for runner scripts.
 
     Reads `--flag-output`, `--rule-name`, and optional `--model-type` /
-    `--sa-id` / `--event-id` from the parsed argparse namespace and calls
+    `--member-id` / `--event-id` from the parsed argparse namespace and calls
     `write_status_flag`. No-op when `--flag-output` is not supplied (legacy
     CLI invocations outside the toolkit-managed Snakemake workflow).
     """
@@ -163,6 +163,6 @@ def emit_runner_flag(args: Any) -> None:
         flag_path=Path(flag_output),
         rule_name=getattr(args, "rule_name", None) or "(unknown)",
         model_type=getattr(args, "model_type", None),
-        sa_id=getattr(args, "sa_id", None),
+        member_id=getattr(args, "sa_id", None),
         event_id=getattr(args, "event_id", None),
     )

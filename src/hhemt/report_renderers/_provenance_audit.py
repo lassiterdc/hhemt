@@ -163,7 +163,7 @@ def _declared_set_from_manifest(output_path: Path, experiment_dir: Path) -> set[
     Mirrors harvest_source_paths' rebasing (_figure_emission.py:639-668) for a
     single <output>.manifest.json: source_paths_relative resolved against the
     emit-time analysis-dir, where a per-sub manifest at
-    plots/sensitivity/per_sim/sa-{N}/... rebases onto master/subanalyses/sa_{N}.
+    plots/sensitivity/per_sim/member-{N}/... rebases onto master/members/member_{N}.
     Unions in artists[].channels[].ref.source_path (the provenance-log channel
     carrying renderer-internal sources not in the top-level list).
     """
@@ -178,10 +178,10 @@ def _declared_set_from_manifest(output_path: Path, experiment_dir: Path) -> set[
             len(rel_parts) >= 3
             and rel_parts[0] == "sensitivity"
             and rel_parts[1] == "per_sim"
-            and rel_parts[2].startswith("sa-")
+            and rel_parts[2].startswith("member-")
         ):
-            sa_id_rule = rel_parts[2][len("sa-") :].replace(".", "_").replace("-", "_")
-            emit_dir = master_root / "subanalyses" / f"sa_{sa_id_rule}"
+            member_id_rule = rel_parts[2][len("member-") :].replace(".", "_").replace("-", "_")
+            emit_dir = master_root / "members" / f"member_{member_id_rule}"
     except ValueError:
         pass  # output not under master/plots (bundle/test layout) -- use master root
     declared: set[Path] = set()

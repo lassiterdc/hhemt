@@ -22,7 +22,7 @@ from hhemt.report_renderers.per_sim_conduit_flow import (
 def test_skip_placeholder_html_output_is_valid_html(tmp_path):
     """.html target emits a self-contained HTML doc carrying the message
     (pre-fix: ValueError: Format 'html' is not supported)."""
-    out = tmp_path / "sub" / "conduit_flow__sa.serial_0_r1__evt.0.html"
+    out = tmp_path / "sub" / "conduit_flow__member.serial_0_r1__evt.0.html"
     result = _emit_model_type_skip_placeholder(
         out, "conduit_flow not applicable for triton-only analyses", dpi=150
     )
@@ -35,7 +35,7 @@ def test_skip_placeholder_html_output_is_valid_html(tmp_path):
 
 def test_skip_placeholder_png_output_still_matplotlib(tmp_path):
     """Non-.html target keeps the matplotlib image (no regression)."""
-    out = tmp_path / "conduit_flow__sa.x__evt.0.png"
+    out = tmp_path / "conduit_flow__member.x__evt.0.png"
     result = _emit_model_type_skip_placeholder(out, "skip message", dpi=100)
     assert result == out
     assert out.exists() and out.stat().st_size > 0

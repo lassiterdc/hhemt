@@ -11,7 +11,7 @@
    runs are first-class (the primary sensitivity fixture is native).
 2. Re-aim ``validation.preflight_validate(cfg_hpc_system=target)`` at the target HPC
    profile, overlaying the target partition selectors from ``reprex_config``.
-3. Emit per-``(sa_id, resource-column)`` problem pairs (``ValidationIssue`` shape) for
+3. Emit per-``(member_id, resource-column)`` problem pairs (``ValidationIssue`` shape) for
    sensitivity rows whose requested resources exceed the target partition caps.
 4. Emit per-field graduated experiment amendments: **validated** where a deterministic
    ``PartitionSpec`` lookup pins the target value (the partition selectors resolve to a
@@ -40,7 +40,7 @@ from typing import Any, Literal
 from hhemt.exceptions import ProcessingError
 from hhemt.validation import ValidationIssue
 
-#: ``ValidationIssue.field`` prefix stamped by ``validation._validate_per_sa_row_caps``.
+#: ``ValidationIssue.field`` prefix stamped by ``validation._validate_per_member_row_caps``.
 _ROW_ISSUE_PREFIX = "sensitivity_analysis.row["
 
 
@@ -68,7 +68,7 @@ class ReprexResult:
     sif_verified: bool  # digest match, or vacuously True for a native bundle
     sif_signature_ok: bool | None  # None => apptainer/key unavailable, or native
     runnable: bool  # True => no sensitivity row exceeds a target partition cap
-    problem_pairs: list[ValidationIssue] = field(default_factory=list)  # (sa_id, column)
+    problem_pairs: list[ValidationIssue] = field(default_factory=list)  # (member_id, column)
     amendments: list[Amendment] = field(default_factory=list)
     zero_user_info_leaks: list[str] = field(default_factory=list)  # informational (ADR-9)
 
@@ -209,7 +209,7 @@ def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
     }
     cfg_analysis_target = cfg_analysis.model_copy(update=overlay)
 
-    # 3. Re-aim preflight at the target profile; extract the per-(sa_id, column) pairs.
+    # 3. Re-aim preflight at the target profile; extract the per-(member_id, column) pairs.
     try:
         result = preflight_validate(
             cfg_system, cfg_analysis_target, cfg_hpc_system=target_hpc_profile
@@ -219,10 +219,10 @@ def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
         # Full preflight can trip on the reprex cfg's target-supplied (not-yet-fetched)
         # paths; fall back to the isolated per-row cap scan so problem-pair emission
         # stays robust — the cap scan is the reprex-specific signal that matters here.
-        from hhemt.validation import _validate_per_sa_row_caps
+        from hhemt.validation import _validate_per_member_row_caps
 
         result = ValidationResult(context="reprex")
-        _validate_per_sa_row_caps(cfg_analysis_target, target_hpc_profile, result)
+        _validate_per_member_row_caps(cfg_analysis_target, target_hpc_profile, result)
         all_issues = result.errors + result.warnings
 
     problem_pairs = [i for i in all_issues if i.field.startswith(_ROW_ISSUE_PREFIX)]

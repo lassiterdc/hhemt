@@ -13,9 +13,9 @@ from hhemt.report_renderers import metadata
 _SENTINEL_MARK = "×"  # the multiplier glyph in `{stem…} × N`
 
 
-def _relpaths(sa_ids: list[str]) -> list[str]:
+def _relpaths(member_ids: list[str]) -> list[str]:
     """The shape `sensitivity_analysis.py` writes into the master crate's hasPart."""
-    return ["sensitivity_datatree.zarr"] + [f"subanalyses/sa_{i}/analysis_datatree.zarr" for i in sa_ids]
+    return ["sensitivity_datatree.zarr"] + [f"members/member_{i}/analysis_datatree.zarr" for i in member_ids]
 
 
 def _tree(html: str) -> str:
@@ -37,7 +37,7 @@ def test_identical_sibling_run_collapses_to_one_exemplar():
     # And the roster must still carry every collapsed name -- the collapse hides noise,
     # never information that was in the crate.
     for n in range(28):
-        assert f"sa_gpu_{n}_r1" in html
+        assert f"member_gpu_{n}_r1" in html
 
 
 def test_a_divergent_sibling_breaks_the_run_and_renders_under_its_own_name():
@@ -48,9 +48,9 @@ def test_a_divergent_sibling_breaks_the_run_and_renders_under_its_own_name():
     exemplar, the page would assert a structure that member does not have.
     """
     paths = _relpaths([f"gpu_{n}_r1" for n in range(27)])
-    paths.append("subanalyses/sa_odd_one/partial_datatree.zarr")
+    paths.append("members/member_odd_one/partial_datatree.zarr")
     html = metadata._path_tree_html(paths)
-    assert "sa_odd_one" in _tree(html)
+    assert "member_odd_one" in _tree(html)
     assert "partial_datatree.zarr" in _tree(html)
     assert _tree(html).count(_SENTINEL_MARK) == 1, "the 27 identical siblings collapse; the outlier does not"
     assert "× 27" in _tree(html)
@@ -68,5 +68,5 @@ def test_two_identical_siblings_stay_expanded():
     """Below the threshold the collapse costs a line rather than saving one."""
     html = metadata._path_tree_html(_relpaths(["gpu_0_r1", "gpu_1_r1"]))
     assert _SENTINEL_MARK not in html
-    assert "sa_gpu_0_r1" in html
-    assert "sa_gpu_1_r1" in html
+    assert "member_gpu_0_r1" in html
+    assert "member_gpu_1_r1" in html

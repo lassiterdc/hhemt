@@ -10,7 +10,7 @@ Overview
 This report summarizes the {{ snakemake.config['analysis_id'] }} analysis,
 comprising {{ snakemake.config['n_sims'] }} scenarios.
 {% if snakemake.config['is_sensitivity'] %}
-The analysis includes {{ snakemake.config['n_sub_analyses'] }} sub-analyses
+The analysis includes {{ snakemake.config['n_members'] }} members
 exploring sensitivity to: {{ snakemake.config['independent_vars'] | join(', ') }}{% if snakemake.config.get('group_by_var') %} (grouped by {{ snakemake.config['group_by_var'] }}){% endif %}.
 {% endif %}
 
@@ -28,7 +28,7 @@ Errors and Warnings
 -------------------
 
 {% for issue in snakemake.config['critical_health_issues'] %}
-- {{ issue.message }}{% if issue.event_id %} (sub-analysis/event: {{ issue.event_id }}){% endif %}
+- {{ issue.message }}{% if issue.event_id %} (member/event: {{ issue.event_id }}){% endif %}
 {% endfor %}
 {% endif %}
 
@@ -70,7 +70,7 @@ Per-Simulation Results
 
 {% if snakemake.config['is_sensitivity'] %}
 Per-simulation hydraulic and inundation results are surfaced under the
-**Per-Simulation** sidebar category, grouped by sub-analysis.
+**Per-Simulation** sidebar category, grouped by member.
 {% else %}
 Browse the **Per-Simulation** sidebar category for per-event hydraulic and
 inundation results (peak flood depth raster + SWMM conduit flow panels).

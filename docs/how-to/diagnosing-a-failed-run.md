@@ -55,12 +55,12 @@ The leading letter encodes phase order, so a sorted listing reads as progress:
 | `b_prepare_*` | Scenario preparation: SWMM `.inp` generation, boundary conditions. Emitted only when preparation runs as its own rule; on a run where it does not, the ladder reads `a_` then `c_` with no gap. |
 | `c_run_*` | Simulation |
 | `d_process_*` | Per-scenario output processing |
-| `e_consolidate_sa-*` | Per-sub-analysis consolidation |
+| `e_consolidate_member-*` | Per-member consolidation |
 | `f_consolidate_master_*` | Master consolidation |
 
 **The last prefix present is the phase that completed; the failure is in the next
 one.** Each flag has a `.flag.json` sidecar naming the rule, model type,
-sub-analysis and event it belongs to.
+member and event it belongs to.
 
 ## 2. Read the log for the phase that did not complete
 
@@ -70,7 +70,7 @@ Per-simulation logs are written at the analysis level, one per
 ```bash
 ls analysis_dir/logs/sims/
 # model_{model_type}_evt{N}.log                      (regular analysis)
-# model_{model_type}_{analysis_id}_evt{N}.log        (sensitivity sub-analysis)
+# model_{model_type}_{analysis_id}_evt{N}.log        (sensitivity member)
 ```
 
 Look for the completion marker. TRITON writes `Simulation ends`; the runner

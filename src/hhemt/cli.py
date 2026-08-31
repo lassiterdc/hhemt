@@ -73,7 +73,7 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(
             f"--override-force-rerun expects 'all', 'none', a JSON subject dict like "
-            f"'{{\"sa_id\":[0,5]}}', or a JSON stage form like "
+            f"'{{\"member_id\":[0,5]}}', or a JSON stage form like "
             f"'{{\"subject\":\"all\",\"stage\":\"render\"}}'; got: {value!r} ({exc})"
         ) from exc
 
@@ -160,7 +160,7 @@ def run_command(
         "--override-force-rerun",
         help=(
             'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
-            "or a JSON dict: '{\"sa_id\":[0,5,22]}' (sensitivity) or "
+            "or a JSON dict: '{\"member_id\":[0,5,22]}' (sensitivity) or "
             "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
@@ -515,9 +515,9 @@ def cleanup_orphans_command(
         help="Print each orphan path and deletion",
     ),
 ):
-    """List or delete sub-analysis directories orphaned by sensitivity CSV edits.
+    """List or delete member directories orphaned by sensitivity CSV edits.
 
-    When sensitivity sub-analyses are removed from the CSV and the workflow is
+    When sensitivity members are removed from the CSV and the workflow is
     re-run, their output directories remain on disk. This command identifies
     those orphans and optionally removes them.
 
@@ -562,7 +562,7 @@ def cleanup_orphans_command(
         total = n_dirs + n_flags + n_groups + n_fingerprints
 
         if total == 0:
-            console.print("[green]No orphan sub-analysis artifacts found.[/green]")
+            console.print("[green]No orphan member artifacts found.[/green]")
         elif dry_run:
             console.print(
                 f"[yellow]Found orphans (dry-run; nothing deleted): "
@@ -573,8 +573,8 @@ def cleanup_orphans_command(
                 console.print(f"  dir: {p}")
             for p in result["status_flags"]:
                 console.print(f"  flag: {p}")
-            for sa_id in result["datatree_groups"]:
-                console.print(f"  datatree-group: sa_{sa_id}")
+            for member_id in result["datatree_groups"]:
+                console.print(f"  datatree-group: member_{member_id}")
             for p in result["input_fingerprints"]:
                 console.print(f"  input-fingerprint: {p}")
         else:
@@ -687,7 +687,7 @@ def reprocess_command(
         "--override-force-rerun",
         help=(
             'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
-            "or a JSON dict: '{\"sa_id\":[0,5,22]}' (sensitivity) or "
+            "or a JSON dict: '{\"member_id\":[0,5,22]}' (sensitivity) or "
             "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
@@ -1370,14 +1370,14 @@ def delete_command(
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
-        help="Print what would be deleted (count of scenarios / sub-analyses + "
+        help="Print what would be deleted (count of scenarios / members + "
         "disk size estimate) without deleting anything.",
     ),
     skip_preview: bool = typer.Option(
         False,
         "--skip-preview",
-        help="Skip the per-sub-analysis disk-utilization preview before "
-        "deletion. Useful when the preview's per-sub-analysis `du -sh` "
+        help="Skip the per-member disk-utilization preview before "
+        "deletion. Useful when the preview's per-member `du -sh` "
         "walks dominate runtime on large Lustre trees (~minutes per TiB). "
         "Without the preview the user has no size context at the "
         "confirmation prompt; typically combined with --yes.",
@@ -1386,7 +1386,7 @@ def delete_command(
     """Delete an entire analysis tree via distributed Snakemake workflow.
 
     Generates a Snakefile.delete with per-scenario (regular analysis) or
-    per-sub-analysis (sensitivity) delete rules plus an analysis-level
+    per-member (sensitivity) delete rules plus an analysis-level
     consolidation rule, then submits the workflow. On full success, the
     orchestrator removes ``analysis_dir/`` atomically; if any per-rule
     sentinel is missing, ``analysis_dir/`` is preserved for debugging.
@@ -1460,7 +1460,7 @@ def delete_command(
 
 
 def _print_delete_dry_run_summary(analysis) -> None:
-    """Print a per-scenario / per-sub-analysis breakdown of what
+    """Print a per-scenario / per-member breakdown of what
     ``analysis.delete()`` would remove from disk, plus a total size estimate.
 
     Per cleanup-rerun-delete-redesign Phase 2.
@@ -1517,14 +1517,14 @@ def _print_delete_dry_run_summary(analysis) -> None:
     console.print(f"[bold]Delete preview for[/bold] {analysis_dir}")
     total = 0
     if analysis.cfg_analysis.toggle_sensitivity_analysis:
-        analyses_dir = analysis_dir / "subanalyses"
-        sa_ids = list(analysis.sensitivity.df_setup.index.astype(str))
-        console.print(f"  Sensitivity master with {len(sa_ids)} sub-analyses:")
-        for sa_id in sa_ids:
-            sa_dir = analyses_dir / f"sa_{sa_id}"
-            size = _du_via_sentinel(sa_dir)[0]
+        members_dir = analysis_dir / "members"
+        member_ids = list(analysis.sensitivity.df_setup.index.astype(str))
+        console.print(f"  Sensitivity master with {len(member_ids)} members:")
+        for member_id in member_ids:
+            member_dir = members_dir / f"member_{member_id}"
+            size = _du_via_sentinel(member_dir)[0]
             total += size
-            console.print(f"    sa_{sa_id}: {_fmt(size)}  ({sa_dir})")
+            console.print(f"    member_{member_id}: {_fmt(size)}  ({member_dir})")
     else:
         sims_dir = analysis_dir / "sims"
         scen_dirs = sorted(sims_dir.glob("*")) if sims_dir.exists() else []

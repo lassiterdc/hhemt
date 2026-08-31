@@ -69,7 +69,7 @@ def _build_sensitivity_tree(analysis_dir: Path) -> None:
     ::
 
         analysis_dir/
-          subanalyses/sa_{k}/
+          members/member_{k}/
             sims/event_{e}/            scenario: payload + non-empty _status/
             analysis_datatree.zarr     sub-level own file (not under sims/)
             _status/                   sub-scope: non-empty flags
@@ -79,7 +79,7 @@ def _build_sensitivity_tree(analysis_dir: Path) -> None:
           _status/                     master own _status (excluded by walk + sum)
     """
     for k in range(N_SUBS):
-        sub = analysis_dir / "subanalyses" / f"sa_{k}"
+        sub = analysis_dir / "members" / f"member_{k}"
         for e in range(N_EVENTS):
             scen = sub / "sims" / f"event_{e}"
             scen.mkdir(parents=True, exist_ok=True)
@@ -98,15 +98,15 @@ def _build_sensitivity_tree(analysis_dir: Path) -> None:
 
 
 def _seed_child_sentinels(analysis_dir: Path) -> None:
-    """Bring the tree to steady state: each scenario and each sub-analysis carries
+    """Bring the tree to steady state: each scenario and each member carries
     an accurate ``_du.json``, exactly as a completed run's per-scope consolidation
     would have written (scenario via ``compute_and_write_scope_sentinel``; sub via
     ``sum_child_sentinels`` over its ``sims/`` — the production sub rollup)."""
     for k in range(N_SUBS):
-        sub = analysis_dir / "subanalyses" / f"sa_{k}"
+        sub = analysis_dir / "members" / f"member_{k}"
         for e in range(N_EVENTS):
             compute_and_write_scope_sentinel(sub / "sims" / f"event_{e}", scope="scenario")
-        sum_child_sentinels(sub, scope="sub_analysis", child_scope_dirs=["sims"])
+        sum_child_sentinels(sub, scope="member", child_scope_dirs=["sims"])
 
 
 def _make_steady_state(tmp_path: Path) -> Path:
@@ -123,7 +123,7 @@ def test_summation_total_and_breakdown_parity(tmp_path: Path) -> None:
     oracle_total, oracle_breakdown, oracle_errors = du_sentinels._walk_root_and_breakdown(analysis_dir)
     assert oracle_errors == 0
 
-    rewrote = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
+    rewrote = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["members", "sims"])
     assert rewrote is True
 
     payload = read_du_sentinel(analysis_dir / "_status" / "_du.json")
@@ -135,8 +135,8 @@ def test_summation_total_and_breakdown_parity(tmp_path: Path) -> None:
     assert payload["sub_path_breakdown"] == oracle_breakdown
     # (c) Σ breakdown.values() == disk_utilization_bytes.
     assert sum(payload["sub_path_breakdown"].values()) == payload["disk_utilization_bytes"]
-    # The subanalyses aggregate must be present and non-trivial (sanity on the fixture).
-    assert payload["sub_path_breakdown"]["subanalyses"] > 0
+    # The members aggregate must be present and non-trivial (sanity on the fixture).
+    assert payload["sub_path_breakdown"]["members"] > 0
     assert payload["sub_path_breakdown"]["analysis_report.html"] == 500
     assert payload["sub_path_breakdown"]["plots"] == 450
 
@@ -145,11 +145,11 @@ def test_summation_omits_absent_sims_child(tmp_path: Path) -> None:
     """A sensitivity master has no top-level ``sims/``; the summation must skip the
     absent child (not raise, not invent a key) and still match the oracle keys."""
     analysis_dir = _make_steady_state(tmp_path)
-    sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
+    sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["members", "sims"])
     payload = read_du_sentinel(analysis_dir / "_status" / "_du.json")
     assert payload is not None
     assert "sims" not in payload["sub_path_breakdown"]
-    assert "subanalyses" in payload["sub_path_breakdown"]
+    assert "members" in payload["sub_path_breakdown"]
 
 
 def test_summation_mtime_invariant(tmp_path: Path) -> None:
@@ -157,13 +157,13 @@ def test_summation_mtime_invariant(tmp_path: Path) -> None:
     analysis_dir = _make_steady_state(tmp_path)
     sentinel = analysis_dir / "_status" / "_du.json"
 
-    first = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
+    first = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["members", "sims"])
     assert first is True
     first_mtime = sentinel.stat().st_mtime
 
     time.sleep(1.1)
 
-    second = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
+    second = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["members", "sims"])
     assert second is False, "sum_child_sentinels rewrote an unchanged tree (mtime invariant violated)"
     assert sentinel.stat().st_mtime == first_mtime
 
@@ -178,7 +178,7 @@ def test_decrement_reduces_total_and_child_without_walk(tmp_path: Path, monkeypa
     # Establish the analysis sentinel (carries the analysis_report.html breakdown
     # child) so the decrement produces a DIFFERENT payload and actually rewrites —
     # a 0-delta no-op would return False and the reduction would be unobservable.
-    sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
+    sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["members", "sims"])
     before = read_du_sentinel(sentinel)
     assert before is not None
     html_bytes = before["sub_path_breakdown"]["analysis_report.html"]

@@ -34,7 +34,7 @@ ARM_GROUPS: dict[str, dict[str, str]] = {
 #: display order, which is PAGE_MODEL_ORDER below. `resolve_arm_group` with
 #: `model_type=None` returns the first applicable arm in this tuple, so
 #: "tritonswmm" MUST stay first: that is what reproduces the historical
-#: coupled-wins choice byte-for-byte for the sensitivity per-sa per-sim rules,
+#: coupled-wins choice byte-for-byte for the sensitivity per-member per-sim rules,
 #: which carry no model axis. This tuple ALSO fixes the list order of
 #: `arms_for` and `groups_for`, which the cross-arm colour-scale tests in
 #: tests/test_synth_reclaim_capture_and_arms.py assert by list equality --

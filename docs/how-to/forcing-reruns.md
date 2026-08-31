@@ -21,8 +21,8 @@ analysis.run(override_force_rerun="all")
 # Re-run only specific scenarios (by event index):
 analysis.run(override_force_rerun={"event_iloc": [0, 2]})
 
-# For a sensitivity analysis, target specific sub-analyses:
-analysis.run(override_force_rerun={"sa_id": ["sa_3", "sa_7"]})
+# For a sensitivity analysis, target specific members:
+analysis.run(override_force_rerun={"sa_id": ["member_3", "member_7"]})
 ```
 
 `override_force_rerun` accepts `"all"`, `"none"`, or a dict keyed by

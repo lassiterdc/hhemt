@@ -205,7 +205,7 @@ def run_and_verdict(cluster: str, *, start_from_scratch: bool = True, hpc_system
         multi_sim_run_method="local",
         hpc_system_config_yaml=hpc_system_config_yaml,
     )
-    # DI parity with the proven validate_* runners: ensure master + every sub-analysis carry
+    # DI parity with the proven validate_* runners: ensure master + every member carry
     # the GPU partition selector (n_gpus>0 + the GPU-sensitivity validation resolve) and the
     # local orchestration (the subs re-load configs from disk).
     tc.analysis.cfg_analysis.hpc_ensemble_partition = _CLUSTER[cluster]["gpu_partition"]
@@ -239,7 +239,7 @@ def run_and_verdict(cluster: str, *, start_from_scratch: bool = True, hpc_system
     no_data = (
         bool(getattr(result, "skipped", False))
         or ("N/A" in (v.summary or ""))
-        or ("no sub-analysis" in (v.summary or ""))
+        or ("no member" in (v.summary or ""))
         or summaries_absent
     )
     if no_data:

@@ -1,4 +1,4 @@
-# Raw performance capture — clean and resumed, `sa_serial_6_r1`
+# Raw performance capture — clean and resumed, `member_serial_6_r1`
 
 Real solver output, captured from Rivanna, for testing that **every tracked
 performance metric** aggregates correctly under **both clean and resume**
@@ -12,10 +12,10 @@ shipped.
 ```
 clean_triton/
   performance/performance{1..144}.txt   144 files, 26,806 bytes
-  walltime_model_triton_sa_serial_6_r1_evt0.jsonl      113 bytes
+  walltime_model_triton_member_serial_6_r1_evt0.jsonl      113 bytes
 resume_triton/
   performance/performance{1..144}.txt   144 files, 27,300 bytes
-  walltime_model_triton_sa_serial_6_r1_evt0.jsonl      454 bytes
+  walltime_model_triton_member_serial_6_r1_evt0.jsonl      454 bytes
 ```
 
 Serial holds the rank count at 1, which is why the full 144-step set is small
@@ -27,8 +27,8 @@ Captured 2026-08-15 from `/scratch/$USER/hhemt_experiments/` on Rivanna:
 
 | Arm | Source |
 |---|---|
-| clean | `synth_cc_clean_triton/synth_cc_clean_triton/subanalyses/sa_serial_6_r1/sims/event_index.0/out_triton/performance` |
-| resume | `synth_cc_resume_triton/synth_cc_resume_triton/subanalyses/sa_serial_6_r1/sims/event_index.0/out_triton/performance` |
+| clean | `synth_cc_clean_triton/synth_cc_clean_triton/members/member_serial_6_r1/sims/event_index.0/out_triton/performance` |
+| resume | `synth_cc_resume_triton/synth_cc_resume_triton/members/member_serial_6_r1/sims/event_index.0/out_triton/performance` |
 
 Oracles come from each arm's `logs/sims/_walltime/`.
 

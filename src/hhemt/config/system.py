@@ -62,10 +62,10 @@ class CRSConfig(cfgBaseModel):
 class system_config(cfgBaseModel):
     """Pydantic model for TRITON-SWMM system configuration.
 
-    Per-sub-analysis variation via prefixed sensitivity-CSV columns
+    Per-member variation via prefixed sensitivity-CSV columns
     ----------------------------------------------------------------
     When used with hhemt's sensitivity-analysis workflow,
-    every field of this SystemConfig may be varied per sub-analysis via
+    every field of this SystemConfig may be varied per member via
     sensitivity-CSV/XLSX columns of the form ``system.{field}``. The
     column is mutually exclusive with the ``system_config_yaml`` full-file
     column on a per-row basis. Overlay cells are synthesized into a

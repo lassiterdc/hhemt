@@ -91,12 +91,12 @@ def test_print_resume_status_first_run_silent(capsys, tmp_path):
 
 
 def test_print_resume_status_sensitivity_count_and_attempt_budget(capsys, tmp_path):
-    """Sensitivity path counts sa completion flags; prints aligned N/M + budget."""
+    """Sensitivity path counts member completion flags; prints aligned N/M + budget."""
     stub, status_dir = _resume_stub(
         tmp_path, sensitivity=True, nsims=3, hpc_restart_times_simulate=2
     )
-    (status_dir / "c_run_tritonswmm_sa-0_evt-0_complete.flag").write_text("")
-    (status_dir / "c_run_tritonswmm_sa-1_evt-0_complete.flag").write_text("")
+    (status_dir / "c_run_tritonswmm_member-0_evt-0_complete.flag").write_text("")
+    (status_dir / "c_run_tritonswmm_member-1_evt-0_complete.flag").write_text("")
     TRITONSWMM_analysis._print_resume_status(stub)  # type: ignore[arg-type]
     out = capsys.readouterr().out
     assert "Resuming testA — 2/3 sims complete." in out

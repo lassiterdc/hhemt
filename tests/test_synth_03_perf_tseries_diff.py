@@ -52,7 +52,7 @@ def test_zero_byte_perf_file_is_skipped(synthetic_perf_dir):
 
     Pre-fix behavior (the failure this guards): ``parse_performance_file`` ->
     ``pandas.read_csv`` raises ``EmptyDataError`` on the empty file and the whole
-    process rule fails (observed 2026-07-28: ``synth_cc_resume_triton`` ``sa_gpu_1_r1``
+    process rule fails (observed 2026-07-28: ``synth_cc_resume_triton`` ``member_gpu_1_r1``
     left ``performance110.txt`` at 0 bytes of 144). The FIRST
     ``_aggregate_perf_tseries`` call below therefore RAISES against pre-fix code — the
     assertion anchors on the raise/return behavior (true in both pre- and post-fix
@@ -89,15 +89,15 @@ def test_malformed_perf_file_is_skipped(synthetic_perf_dir):
     corpus (2026-08-23):
 
       (a) a trailing numeric fragment after the ``Average`` row -- 10 of 1080 files in
-          ``sa_0``, e.g. ``performance201.txt`` ending in a bare ``.6453`` line.
+          ``member_0``, e.g. ``performance201.txt`` ending in a bare ``.6453`` line.
           ``read_csv`` NaN-pads it into a row and ``df_ranks["Rank"].astype(int)``
           raises ``ValueError: invalid literal for int() with base 10: '.6453'``.
-      (b) a mangled ``Average`` row -- ``performance911.txt`` in the ``sa_2`` set-aside
+      (b) a mangled ``Average`` row -- ``performance911.txt`` in the ``member_2`` set-aside
           tree reads ``AAverage``, leaving no ``Average`` sentinel, so
           ``df[df["Rank"] == "Average"].iloc[0]`` raises
           ``IndexError: single positional indexer is out-of-bounds``.
 
-    Pre-fix, EITHER shape fails the whole process rule, which costs the sub-analysis
+    Pre-fix, EITHER shape fails the whole process rule, which costs the member
     its ``d_process`` flag. The assertions below anchor on raise/return behavior, not
     on warning wording, so they discriminate on behavior in both pre- and post-fix
     worlds.
@@ -197,7 +197,7 @@ def _write_resume_boundary(perf_dir):
     `(deltas <= 0).all(axis=1)` detected this boundary. That is precisely the degeneracy
     that made the old test pass while production failed: at a REAL boundary the restarted
     process re-pays initialization and Init INCREASES (measured 0.05694 -> 0.07816 s on
-    sa_serial_6_r1), one positive column defeats `.all()`, and the reset is missed.
+    member_serial_6_r1), one positive column defeats `.all()`, and the reset is missed.
 
     Giving checkpoint 9 a nonzero Init and checkpoint 10 a LARGER one reproduces that
     shape, so the retired predicate and the ledger join now DISAGREE on this data. That

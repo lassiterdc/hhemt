@@ -115,7 +115,7 @@ def test_enumerated_config_diff_maps_emits_when_backing_artifact_absent(tmp_path
 
     Measured pre-fix failure (Rivanna smoke job 17609295): the b4b ReportingSet enumerates
     plots/eda/config_diff_maps.html unconditionally, check_cross_sim_identity skips at one
-    sub-analysis, render_eda_plots' absence gate skipped the kind, nothing was written, and
+    member, render_eda_plots' absence gate skipped the kind, nothing was written, and
     Snakemake raised MissingOutputException -> workflow FAILED.
 
     Entry is the ADAPTER (not render_eda_plots directly), because the adapter's `output_path`

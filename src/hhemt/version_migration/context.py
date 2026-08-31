@@ -84,10 +84,17 @@ class MigrationContext:
         top = Path(self.target_dir) / "sims"
         if top.is_dir():
             out.append(top)
-        sa_root = Path(self.target_dir) / "subanalyses"
-        if sa_root.is_dir():
-            for sa in sorted(sa_root.glob("sa_*")):
-                sims = sa / "sims"
+        # WIDENED, never substituted: this helper is shared across every
+        # migration, so it must read a legacy tree (subanalyses/sa_*) and a
+        # current one (members/member_*) alike. vocabulary_freeze.yaml declines
+        # to freeze this file for exactly this reason, so no checker would catch
+        # a substitution here; it would simply return [] on every legacy tree.
+        for _container, _glob in (("subanalyses", "sa_*"), ("members", "member_*")):
+            container_root = Path(self.target_dir) / _container
+            if not container_root.is_dir():
+                continue
+            for member_dir in sorted(container_root.glob(_glob)):
+                sims = member_dir / "sims"
                 if sims.is_dir():
                     out.append(sims)
         return out

@@ -289,7 +289,7 @@ class synthetic_experiment_config(cfgBaseModel):
                 raise ConfigurationError(
                     field="hpc.partition",
                     message=(
-                        f"matrix row '{row['sa_id']}' targets undeclared partition "
+                        f"matrix row '{row['member_id']}' targets undeclared partition "
                         f"'{part_name}'; declared: {sorted(hpc.partitions)}."
                     ),
                     config_path=None,
@@ -371,7 +371,7 @@ def _raise_cap(row, part_name, req_field, req_val, cap_field, cap_val) -> None:
     raise ConfigurationError(
         field="rank_sweep/partition caps",
         message=(
-            f"matrix row '{row['sa_id']}' requests {req_field}={req_val} on partition "
+            f"matrix row '{row['member_id']}' requests {req_field}={req_val} on partition "
             f"'{part_name}', exceeding its {cap_field}={cap_val}."
         ),
         config_path=None,

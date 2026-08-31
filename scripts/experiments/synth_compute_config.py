@@ -209,7 +209,7 @@ def _build_case(
             # moved to hpc_system_config_synth_uva.yaml (default_account / login_node /
             # max_concurrent_jobs / partitions.*.gpus_per_node).
             "hpc_total_job_duration_min": 60,  # SBATCH --time; Phase 3 tunes from observed runtimes
-            # base-level per-sim walltime (the sensitivity CSV overrides it per sub-analysis;
+            # base-level per-sim walltime (the sensitivity CSV overrides it per member;
             # 30 matches the clean-experiment walltime in write_clean_matrix_csv):
             "hpc_time_min_per_sim": 30,
             # Snakemake retries: a K-entry resume_interruption_schedule needs K+1
@@ -318,7 +318,7 @@ def resume_case(
     start_from_scratch: bool = False,
     system_directory: str | None = None,
     cell_size_m: float = 3.5,
-    runtime_min_by_sa: dict[str, float] | None = None,
+    runtime_min_by_member: dict[str, float] | None = None,
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
     tritonswmm_git_url: str | None = None,
@@ -335,7 +335,7 @@ def resume_case(
     resolution / longer runtime is needed to make the kill fire — it works even
     for a ~1.6-min GPU sim (DoD #3 is satisfied by the deterministic kill).
 
-    ``runtime_min_by_sa`` is IGNORED under Option D (the resume walltime is the
+    ``runtime_min_by_member`` is IGNORED under Option D (the resume walltime is the
     generous clean walltime, not a T/3 short window); it is retained only for
     signature stability with ``build_resume_from_clean_runtimes`` and is a
     candidate for removal in a follow-up cleanup.
@@ -377,7 +377,7 @@ def smoke_case(
     tritonswmm_software_directory: str | None = None,
 ) -> _Case:
     """Phase-2 Empirical-Testing cheap confirmation of the multi-resume interruption
-    harness. ONE serial-CPU sub-analysis on ``standard`` (pure-TRITON / uncoupled
+    harness. ONE serial-CPU member on ``standard`` (pure-TRITON / uncoupled
     arm), PRODUCTION sim sizing (1440 min / 600 s -> 144 checkpoints), a 2-entry
     ``_SMOKE_SCHEDULE``. Runs STANDALONE (no clean-sweep prerequisite — Option D
     ignores the clean-derived walltime). ``ensemble_partition="standard"`` keeps the
@@ -417,11 +417,11 @@ def build_resume_from_clean_runtimes(
     tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
 ) -> _Case:
-    """Two-pass (FQ3): read each completed clean-sweep sa_id's full-completion
+    """Two-pass (FQ3): read each completed clean-sweep member_id's full-completion
     wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
     materialize the resume case. Run AFTER the clean sweep has completed.
 
-    Delegates the per-sa runtime read to
+    Delegates the per-member runtime read to
     ``hhemt.synthetic_experiment.size_resume_walltimes`` (df_status['perf_Total'];
     on the clean run this equals SLURM Elapsed because clean is never resumed).
     ``cell_size_m`` MUST match the clean sweep's for a valid byte-identity compare.
@@ -437,11 +437,11 @@ def build_resume_from_clean_runtimes(
         tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
     )
-    runtime_min_by_sa = size_resume_walltimes(clean.analysis)
+    runtime_min_by_member = size_resume_walltimes(clean.analysis)
     return resume_case(
         system_directory=system_directory,
         cell_size_m=cell_size_m,
-        runtime_min_by_sa=runtime_min_by_sa,
+        runtime_min_by_member=runtime_min_by_member,
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
         tritonswmm_git_url=tritonswmm_git_url,

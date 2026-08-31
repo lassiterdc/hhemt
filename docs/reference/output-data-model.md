@@ -19,7 +19,7 @@ hhemt writes results at three levels, and they differ in both shape and format.
 | Per-system | `system_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 
 A sensitivity analysis additionally writes `sensitivity_datatree.zarr` at the
-master level, with one node per completed sub-analysis.
+master level, with one node per completed member.
 
 **The per-scenario tier is flat and the consolidated tiers are hierarchical.**
 That distinction matters when you open them: the flat tier is a plain `Dataset`,
@@ -42,8 +42,8 @@ tree = xr.open_datatree(
 consolidated metadata.
 
 For a sensitivity master, the root carries a `parameters` dataset describing
-**every defined** sub-analysis, while only **completed** sub-analyses appear as
-`sa_*` nodes. A tree with fewer nodes than parameter rows is therefore an
+**every defined** member, while only **completed** members appear as
+`member_*` nodes. A tree with fewer nodes than parameter rows is therefore an
 expected partial-completion state, not a corrupt store.
 
 ## Variables

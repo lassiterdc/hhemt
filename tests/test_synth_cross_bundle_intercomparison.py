@@ -21,16 +21,16 @@ from hhemt.bundle import _combine
 from tests._figure_invariant_helpers import assert_figure_invariants
 
 
-def _sub_nodes(sa_id: str, attrs: dict, wlevel: np.ndarray, flow: np.ndarray) -> dict:
-    """One /sa_{id} node (carrying compute-config attrs) + its triton/swmm_link children,
+def _sub_nodes(member_id: str, attrs: dict, wlevel: np.ndarray, flow: np.ndarray) -> dict:
+    """One /member_{id} node (carrying compute-config attrs) + its triton/swmm_link children,
     mirroring the as-built sensitivity_datatree.zarr shape read by _config_diff._load_subs."""
     return {
-        sa_id: xr.Dataset(attrs=attrs),
-        f"{sa_id}/tritonswmm/triton": xr.Dataset(
+        member_id: xr.Dataset(attrs=attrs),
+        f"{member_id}/tritonswmm/triton": xr.Dataset(
             {"max_wlevel_m": (("event_iloc", "y", "x"), wlevel)},
             coords={"event_iloc": [0], "y": [0, 1], "x": [0, 1]},
         ),
-        f"{sa_id}/tritonswmm/swmm_link": xr.Dataset(
+        f"{member_id}/tritonswmm/swmm_link": xr.Dataset(
             {"max_flow_cms": (("event_iloc", "link_id"), flow)},
             coords={"event_iloc": [0], "link_id": ["L0", "L1"]},
         ),
@@ -39,14 +39,14 @@ def _sub_nodes(sa_id: str, attrs: dict, wlevel: np.ndarray, flow: np.ndarray) ->
 
 def _write_bundle(root, *, n_resumes: int, sa1_wlevel: np.ndarray, sa1_flow: np.ndarray) -> None:
     """Build a minimal single-arm bundle dir: scenario_status.csv (n_resumes) +
-    sensitivity_datatree.zarr with two compute-configs (sa_0 serial, sa_1 mpi-8)."""
+    sensitivity_datatree.zarr with two compute-configs (member_0 serial, member_1 mpi-8)."""
     root.mkdir(parents=True, exist_ok=True)
     # scenario_status.csv — the role source (clean iff every n_resumes == 0).
-    lines = ["sa_id,n_resumes", f"sa_0,{n_resumes}", f"sa_1,{n_resumes}"]
+    lines = ["member_id,n_resumes", f"member_0,{n_resumes}", f"member_1,{n_resumes}"]
     (root / "scenario_status.csv").write_text("\n".join(lines) + "\n")
 
     serial_attrs = {
-        "sa_id": "sa_0",
+        "sa_id": "member_0",
         "run_mode": "serial",
         "n_mpi_procs": 1,
         "n_omp_threads": 1,
@@ -55,7 +55,7 @@ def _write_bundle(root, *, n_resumes: int, sa1_wlevel: np.ndarray, sa1_flow: np.
         "hpc.partition": "standard",
     }
     mpi_attrs = {
-        "sa_id": "sa_1",
+        "sa_id": "member_1",
         "run_mode": "mpi",
         "n_mpi_procs": 8,
         "n_omp_threads": 1,
@@ -63,12 +63,12 @@ def _write_bundle(root, *, n_resumes: int, sa1_wlevel: np.ndarray, sa1_flow: np.
         "n_nodes": 1,
         "hpc.partition": "standard",
     }
-    # sa_0 is BYTE-IDENTICAL clean-vs-resume; sa_1 differs by the caller-supplied arrays.
+    # member_0 is BYTE-IDENTICAL clean-vs-resume; member_1 differs by the caller-supplied arrays.
     sa0_wlevel = np.array([[[1.0, 2.0], [3.0, 4.0]]])
     sa0_flow = np.array([[10.0, 20.0]])
     nodes: dict = {}
-    nodes.update(_sub_nodes("sa_0", serial_attrs, sa0_wlevel, sa0_flow))
-    nodes.update(_sub_nodes("sa_1", mpi_attrs, sa1_wlevel, sa1_flow))
+    nodes.update(_sub_nodes("member_0", serial_attrs, sa0_wlevel, sa0_flow))
+    nodes.update(_sub_nodes("member_1", mpi_attrs, sa1_wlevel, sa1_flow))
     dt = xr.DataTree.from_dict(nodes)
     dt.to_zarr(root / "sensitivity_datatree.zarr", consolidated=False)
 
@@ -96,7 +96,7 @@ def test_bundle_role_from_status(tmp_path):
 def test_cross_bundle_intercomparison_pairs(tmp_path, _stub_experiment_ids):
     clean, resume, out = tmp_path / "clean", tmp_path / "resume", tmp_path / "combined"
     out.mkdir()
-    # clean sa_1 vs resume sa_1: max_wlevel_m differs by 0.5 at one cell; flow identical.
+    # clean member_1 vs resume member_1: max_wlevel_m differs by 0.5 at one cell; flow identical.
     clean_w = np.array([[[5.0, 6.0], [7.0, 8.0]]])
     resume_w = np.array([[[5.0, 6.0], [7.0, 8.5]]])  # +0.5 at [1,1]
     flow = np.array([[30.0, 40.0]])
@@ -113,27 +113,27 @@ def test_cross_bundle_intercomparison_pairs(tmp_path, _stub_experiment_ids):
     pairs = payload["pairs"]
     assert pairs, "cross-bundle pairing must find matching compute-configs in BOTH bundles"
     by_key = {(p["config"], p["variable"]): p for p in pairs}
-    # Both compute-configs (serial sa_0, mpi-8 sa_1) pair on identity; both key-result vars present.
+    # Both compute-configs (serial member_0, mpi-8 member_1) pair on identity; both key-result vars present.
     serial_key = "run_mode=serial|n_mpi=1|n_omp=1|n_gpus=0|n_nodes=1|partition=standard"
     mpi_key = "run_mode=mpi|n_mpi=8|n_omp=1|n_gpus=0|n_nodes=1|partition=standard"
     assert (serial_key, "max_wlevel_m") in by_key
     assert (mpi_key, "max_wlevel_m") in by_key
-    # sa_0 (serial) is byte-identical across arms.
+    # member_0 (serial) is byte-identical across arms.
     assert by_key[(serial_key, "max_wlevel_m")]["identical"] is True
     assert by_key[(serial_key, "max_wlevel_m")]["max_abs_diff"] == 0.0
-    # sa_1 (mpi-8) depth differs by 0.5; flow identical.
+    # member_1 (mpi-8) depth differs by 0.5; flow identical.
     assert by_key[(mpi_key, "max_wlevel_m")]["identical"] is False
     assert by_key[(mpi_key, "max_wlevel_m")]["max_abs_diff"] == pytest.approx(0.5)
     assert by_key[(mpi_key, "max_flow_cms")]["identical"] is True
 
 
-def _sub_nodes_triton_only(sa_id: str, attrs: dict, wlevel: np.ndarray) -> dict:
-    """One /sa_{id} node for a PURE-TRITON master: max_wlevel_m under triton_only/triton and
+def _sub_nodes_triton_only(member_id: str, attrs: dict, wlevel: np.ndarray) -> dict:
+    """One /member_{id} node for a PURE-TRITON master: max_wlevel_m under triton_only/triton and
     NO swmm_link tier (max_flow_cms is coupled-only) — the second candidate node-path in
     _INTERCOMPARISON_VARS."""
     return {
-        sa_id: xr.Dataset(attrs=attrs),
-        f"{sa_id}/triton_only/triton": xr.Dataset(
+        member_id: xr.Dataset(attrs=attrs),
+        f"{member_id}/triton_only/triton": xr.Dataset(
             {"max_wlevel_m": (("event_iloc", "y", "x"), wlevel)},
             coords={"event_iloc": [0], "y": [0, 1], "x": [0, 1]},
         ),
@@ -144,10 +144,10 @@ def _write_triton_only_bundle(root, *, n_resumes: int, sa1_wlevel: np.ndarray) -
     """Minimal single-arm PURE-TRITON bundle (triton_only/triton tier, no SWMM link)."""
     root.mkdir(parents=True, exist_ok=True)
     (root / "scenario_status.csv").write_text(
-        "\n".join(["sa_id,n_resumes", f"sa_0,{n_resumes}", f"sa_1,{n_resumes}"]) + "\n"
+        "\n".join(["member_id,n_resumes", f"member_0,{n_resumes}", f"member_1,{n_resumes}"]) + "\n"
     )
     serial_attrs = {
-        "sa_id": "sa_0",
+        "sa_id": "member_0",
         "run_mode": "serial",
         "n_mpi_procs": 1,
         "n_omp_threads": 1,
@@ -156,7 +156,7 @@ def _write_triton_only_bundle(root, *, n_resumes: int, sa1_wlevel: np.ndarray) -
         "hpc.partition": "standard",
     }
     mpi_attrs = {
-        "sa_id": "sa_1",
+        "sa_id": "member_1",
         "run_mode": "mpi",
         "n_mpi_procs": 8,
         "n_omp_threads": 1,
@@ -165,8 +165,8 @@ def _write_triton_only_bundle(root, *, n_resumes: int, sa1_wlevel: np.ndarray) -
         "hpc.partition": "standard",
     }
     nodes: dict = {}
-    nodes.update(_sub_nodes_triton_only("sa_0", serial_attrs, np.array([[[1.0, 2.0], [3.0, 4.0]]])))
-    nodes.update(_sub_nodes_triton_only("sa_1", mpi_attrs, sa1_wlevel))
+    nodes.update(_sub_nodes_triton_only("member_0", serial_attrs, np.array([[[1.0, 2.0], [3.0, 4.0]]])))
+    nodes.update(_sub_nodes_triton_only("member_1", mpi_attrs, sa1_wlevel))
     xr.DataTree.from_dict(nodes).to_zarr(root / "sensitivity_datatree.zarr", consolidated=False)
 
 
@@ -185,11 +185,11 @@ def test_cross_bundle_intercomparison_pairs_within_each_model(tmp_path, _stub_ex
     clean_sw, resume_sw = tmp_path / "clean_tritonswmm", tmp_path / "resume_tritonswmm"
     clean_tri, resume_tri = tmp_path / "clean_triton", tmp_path / "resume_triton"
 
-    # Coupled arm: sa_1 depth differs by 0.5 across clean/resume; flow identical.
+    # Coupled arm: member_1 depth differs by 0.5 across clean/resume; flow identical.
     flow = np.array([[30.0, 40.0]])
     _write_bundle(clean_sw, n_resumes=0, sa1_wlevel=np.array([[[5.0, 6.0], [7.0, 8.0]]]), sa1_flow=flow)
     _write_bundle(resume_sw, n_resumes=1, sa1_wlevel=np.array([[[5.0, 6.0], [7.0, 8.5]]]), sa1_flow=flow)
-    # Pure-TRITON arm: sa_1 depth differs by 0.25 across clean/resume.
+    # Pure-TRITON arm: member_1 depth differs by 0.25 across clean/resume.
     _write_triton_only_bundle(clean_tri, n_resumes=0, sa1_wlevel=np.array([[[5.0, 6.0], [7.0, 8.0]]]))
     _write_triton_only_bundle(resume_tri, n_resumes=1, sa1_wlevel=np.array([[[5.0, 6.0], [7.0, 8.25]]]))
 

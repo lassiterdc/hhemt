@@ -8,10 +8,10 @@ static_backend via _OUTPUT_EXT_BY_RENDERER, which has no static renderer kind),
 so the RuleSpec.output_path_template is already a literal path.
 
 The per-sim event selector is resolved at GENERATION time: the canonical ADR-2
-plot ID carries the event-id slug (and optional sa-id) as `__evt.{slug}` /
-`__sa.{id}` segments. The generator maps the slug to the positional integer
+plot ID carries the event-id slug (and optional member-id) as `__evt.{slug}` /
+`__member.{id}` segments. The generator maps the slug to the positional integer
 event_iloc the renderer CLI expects (the same `range(n_sims)` convention as
-workflow.py's ILOC_BY_EVENT_ID) and threads `--event-iloc` / `--sa-id` onto the
+workflow.py's ILOC_BY_EVENT_ID) and threads `--event-iloc` / `--member-id` onto the
 rule's shell, so the renderer's static branch receives the selector exactly as
 the report path does.
 """
@@ -55,10 +55,10 @@ def _load_static_config(path: Path) -> StaticPlotBaseConfig:
 
 
 def _parse_plot_id_selectors(plot_id: str) -> tuple[str | None, str | None, str | None]:
-    """Extract (event_id_slug, sa_id, independent_var) from an ADR-2 canonical plot ID.
+    """Extract (event_id_slug, member_id, independent_var) from an ADR-2 canonical plot ID.
 
     Segments are joined by ``__``; the per-sim selector is ``evt.{slug}`` (the
-    slug itself may contain ``.``), the sensitivity selector is ``sa.{id}``, and
+    slug itself may contain ``.``), the sensitivity selector is ``member.{id}``, and
     the sensitivity-benchmarking selector is ``var.{independent_var}`` (the
     benchmarking chart's x-axis variable, e.g. ``var.n_devices`` — the renderer's
     required ``--independent-var``; report-mode supplies this via a Snakefile
@@ -67,16 +67,16 @@ def _parse_plot_id_selectors(plot_id: str) -> tuple[str | None, str | None, str 
     per-analysis figure with no per-sim scope).
     """
     event_id: str | None = None
-    sa_id: str | None = None
+    member_id: str | None = None
     independent_var: str | None = None
     for seg in plot_id.split("__"):
         if seg.startswith("evt."):
             event_id = seg[len("evt.") :]
-        elif seg.startswith("sa."):
-            sa_id = seg[len("sa.") :]
+        elif seg.startswith("member."):
+            member_id = seg[len("member.") :]
         elif seg.startswith("var."):
             independent_var = seg[len("var.") :]
-    return event_id, sa_id, independent_var
+    return event_id, member_id, independent_var
 
 
 def _resolve_event_iloc(scope_analysis: TRITONSWMM_analysis, event_id: str) -> int | None:
@@ -97,24 +97,24 @@ def _resolve_event_iloc(scope_analysis: TRITONSWMM_analysis, event_id: str) -> i
     return None
 
 
-def _scope_analysis_for_sa(analysis: TRITONSWMM_analysis, sa_id: str) -> TRITONSWMM_analysis:
-    """Return the sub-analysis for an ``sa.{id}`` selector (sensitivity master).
+def _scope_analysis_for_member(analysis: TRITONSWMM_analysis, member_id: str) -> TRITONSWMM_analysis:
+    """Return the member for an ``member.{id}`` selector (sensitivity master).
 
-    Mirrors _cli.py's --sa-id resolution so the generation-time event_iloc is
+    Mirrors _cli.py's --member-id resolution so the generation-time event_iloc is
     computed against the SAME scope the renderer will operate on.
     """
     from hhemt.exceptions import ConfigurationError
 
-    analyses = analysis.sensitivity.analyses
-    if sa_id not in analyses:
+    analyses = analysis.sensitivity.members
+    if member_id not in analyses:
         raise ConfigurationError(
             field="static_config_id",
             message=(
-                f"plot_id carries sa.{sa_id} but it is not in the master's sub_analyses "
+                f"plot_id carries member.{member_id} but it is not in the master's members "
                 f"(available: {sorted(analyses)})."
             ),
         )
-    return analyses[sa_id]
+    return analyses[member_id]
 
 
 def _harvest_static_rule_specs(
@@ -148,21 +148,21 @@ def _harvest_static_rule_specs(
         # carry a facade-supplied override_static_plot_configs list (that override
         # is resolved here at generation time but never persisted to the analysis
         # config the rule subprocess re-reads). Path is quoted for space-safety.
-        event_id, sa_id, independent_var = _parse_plot_id_selectors(scfg.plot_id)
+        event_id, member_id, independent_var = _parse_plot_id_selectors(scfg.plot_id)
         abs_cfg_path = Path(cfg_path).resolve()
         extra_flags: list[str] = [
             f"--static-config-id {scfg.plot_id}",
             f'--static-config-path "{abs_cfg_path}"',
         ]
-        if sa_id is not None:
-            extra_flags.append(f"--sa-id {sa_id}")
+        if member_id is not None:
+            extra_flags.append(f"--member-id {member_id}")
         if independent_var is not None:
             # sensitivity_benchmarking's required x-axis variable. report-mode
             # supplies this via a Snakefile wildcard; the bare-output static path
             # carries it on the plot ID's var.{name} segment instead.
             extra_flags.append(f"--independent-var {independent_var}")
         if event_id is not None:
-            scope = _scope_analysis_for_sa(analysis, sa_id) if sa_id is not None else analysis
+            scope = _scope_analysis_for_member(analysis, member_id) if member_id is not None else analysis
             iloc = _resolve_event_iloc(scope, event_id)
             if iloc is None:
                 from hhemt.exceptions import ConfigurationError

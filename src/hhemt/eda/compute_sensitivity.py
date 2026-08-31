@@ -8,7 +8,7 @@ Three pure-function calc members over a SENSITIVITY MASTER, mirroring
   within-family (R10): the %-metric anchors to the ``n_mpi_procs == 1`` mpi
   reference WITHIN each partition family; a family with no rank-1 mpi reference is
   skipped with a disclosed ``CheckResult`` reason (NEVER the global
-  lexicographically-first ``sa_id`` anchor, which would cross run_modes).
+  lexicographically-first ``member_id`` anchor, which would cross run_modes).
 - ``check_resume_sensitivity`` — clean-vs-resume byte-identity + magnitude, paired
   per compute-config. ``n_resumes`` is read from ``df_status`` (R9): a sub whose
   ``n_resumes == 0`` is the clean member, ``> 0`` the resume member of a pair.
@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import xarray as xr
 
-from hhemt.analysis_validation import CheckResult, _iter_analyses_or_self
+from hhemt.analysis_validation import CheckResult, _iter_members_or_self
 from hhemt.eda._result import EdaResult
 from hhemt.eda.cross_sim_identity import TRACKED_VARS, _enabled_modes, compare_variable_exact
 from hhemt.report_plot_ids import canonical_plot_id
@@ -217,7 +217,7 @@ def _partition(sub) -> str:
 
 
 def _model_arm(sub) -> str:
-    """The enabled model arm for one sub-analysis, as an identity component.
+    """The enabled model arm for one member, as an identity component.
 
     Mirrors `_run_mode` / `_partition`: a single string read off the sub's system
     config. Falls back to the empty string so a sub with no resolvable toggle sorts
@@ -250,7 +250,7 @@ def _config_identity(sub) -> tuple:
         int(getattr(c, "n_nodes", 0) or 0),
         _partition(sub),
         # DEFENCE-IN-DEPTH, not a live-bug fix (master R12). `_config_identity` is
-        # called only over ONE master's sub_analyses (`:519`), and under the sibling-
+        # called only over ONE master's members (`:519`), and under the sibling-
         # master architecture each master carries exactly one arm, so two arms can
         # never reach the same bucket today. The component makes the identity correct
         # if the single-model restriction is ever lifted.
@@ -258,14 +258,14 @@ def _config_identity(sub) -> tuple:
     )
 
 
-def _resumes_by_sa_id(master: TRITONSWMM_analysis, sa_ids: list[str]) -> dict[str, int]:
-    """Max ``n_resumes`` per ``sa_id`` from ``master.df_status`` (R9).
+def _resumes_by_member_id(master: TRITONSWMM_analysis, member_ids: list[str]) -> dict[str, int]:
+    """Max ``n_resumes`` per ``member_id`` from ``master.df_status`` (R9).
 
-    ``df_status``'s ``sa_id`` may carry the ``sa_`` prefix while
-    ``sub_analyses`` keys are bare — normalize both directions so the mapping is
+    ``df_status``'s ``member_id`` may carry the ``member_`` prefix while
+    ``members`` keys are bare — normalize both directions so the mapping is
     robust to either convention.
     """
-    out: dict[str, int] = {sa: 0 for sa in sa_ids}
+    out: dict[str, int] = {member: 0 for member in member_ids}
     try:
         df = master.df_status
     except Exception:  # noqa: BLE001 — df_status is best-effort; absence -> all clean
@@ -278,7 +278,7 @@ def _resumes_by_sa_id(master: TRITONSWMM_analysis, sa_ids: list[str]) -> dict[st
 
     def _norm(v: str) -> str:
         v = str(v)
-        return v[3:] if v.startswith("sa_") else v
+        return v[3:] if v.startswith("member_") else v
 
     grouped = df.groupby(id_col)["n_resumes"].max()
     for raw_id, val in grouped.items():
@@ -292,8 +292,8 @@ def _resumes_by_sa_id(master: TRITONSWMM_analysis, sa_ids: list[str]) -> dict[st
 
 
 def _present_subs(sub_items) -> dict:
-    """Sorted ``{sa_id: sub}`` for subs whose FLAT summaries are present on disk."""
-    subs = dict(sorted(((str(sa), sub) for sa, sub in sub_items), key=lambda kv: kv[0]))
+    """Sorted ``{member_id: sub}`` for subs whose FLAT summaries are present on disk."""
+    subs = dict(sorted(((str(member), sub) for member, sub in sub_items), key=lambda kv: kv[0]))
     return subs
 
 
@@ -379,13 +379,13 @@ def _persist_verdict(master: TRITONSWMM_analysis, plot_id: str, verdict: CheckRe
 def _scalar_grid(
     records: list[tuple[str, list[dict]]], key: str, *, from_magnitude: bool = False
 ) -> xr.DataArray | None:
-    """Assemble an ``(sa_id, event_iloc)`` grid of one scalar across comparison records.
+    """Assemble an ``(member_id, event_iloc)`` grid of one scalar across comparison records.
 
-    ``records`` are ``(sa_id, [per-event record])`` pairs. Returns None when no record
+    ``records`` are ``(member_id, [per-event record])`` pairs. Returns None when no record
     carries the key (e.g. no magnitude computed).
     """
     cells: list[tuple[str, int, float]] = []
-    for sa_id, recs in records:
+    for member_id, recs in records:
         for rec in recs:
             if from_magnitude:
                 mag = rec.get("magnitude")
@@ -396,18 +396,18 @@ def _scalar_grid(
                 if key not in rec:
                     continue
                 val = rec[key]
-            cells.append((sa_id, rec["event_iloc"], float(val)))
+            cells.append((member_id, rec["event_iloc"], float(val)))
     if not cells:
         return None
-    sa_ids = sorted({c[0] for c in cells})
+    member_ids = sorted({c[0] for c in cells})
     events = sorted({c[1] for c in cells})
     out = xr.DataArray(
-        np.full((len(sa_ids), len(events)), np.nan, dtype="float64"),
+        np.full((len(member_ids), len(events)), np.nan, dtype="float64"),
         dims=("sa_id", "event_iloc"),
-        coords={"sa_id": sa_ids, "event_iloc": events},
+        coords={"sa_id": member_ids, "event_iloc": events},
     )
-    for sa_id, e, val in cells:
-        out.loc[{"sa_id": sa_id, "event_iloc": e}] = val
+    for member_id, e, val in cells:
+        out.loc[{"sa_id": member_id, "event_iloc": e}] = val
     return out
 
 
@@ -415,7 +415,7 @@ def _artifact_vars(labeled_records: list[tuple[str, list[dict]]]) -> dict[str, x
     """Build the plottable-artifact variables from labeled comparison records."""
     ds_vars: dict[str, xr.DataArray] = {}
     identical = _scalar_grid(
-        [(sa, [{**r, "identical": float(r["identical"])} for r in recs]) for sa, recs in labeled_records], "identical"
+        [(member, [{**r, "identical": float(r["identical"])} for r in recs]) for member, recs in labeled_records], "identical"
     )
     if identical is not None:
         ds_vars["identical"] = identical
@@ -458,7 +458,7 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
     magnitude metrics characterize any divergence.
     """
     name = "Rank sensitivity"
-    sub_items = list(_iter_analyses_or_self(master))
+    sub_items = list(_iter_members_or_self(master))
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
 
@@ -467,10 +467,10 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
     tau = _tau(eda_cfg)
 
     # mpi subs only, grouped by partition family.
-    mpi_subs = {sa: sub for sa, sub in subs.items() if _run_mode(sub) == "mpi" and _enabled_modes(sub)}
+    mpi_subs = {member: sub for member, sub in subs.items() if _run_mode(sub) == "mpi" and _enabled_modes(sub)}
     families: dict[str, dict] = {}
-    for sa, sub in mpi_subs.items():
-        families.setdefault(_partition(sub), {})[sa] = sub
+    for member, sub in mpi_subs.items():
+        families.setdefault(_partition(sub), {})[member] = sub
 
     details: list[dict] = []
     labeled: list[tuple[str, list[dict]]] = []
@@ -480,7 +480,7 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
     n_dropped = 0
 
     for partition, members in sorted(families.items()):
-        ref_id = next((sa for sa, sub in sorted(members.items()) if _n_mpi(sub) == 1), None)
+        ref_id = next((member for member, sub in sorted(members.items()) if _n_mpi(sub) == 1), None)
         if ref_id is None:
             details.append(
                 {"family": partition, "detail": f"no n_mpi_procs==1 mpi reference in family '{partition}' — skipped"}
@@ -489,22 +489,22 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
         ref_sub = members[ref_id]
         ref_modes = _enabled_modes(ref_sub)
         contributing[ref_id] = ref_sub
-        for sa, sub in sorted(members.items()):
-            if sa == ref_id:
+        for member, sub in sorted(members.items()):
+            if member == ref_id:
                 continue
             recs = _compare_pair(ref_sub, sub, ref_modes, dry_threshold_m=dry, tau_m=tau)
             if not recs:
                 n_dropped += 1
                 continue
             any_compared = True
-            contributing[sa] = sub
-            labeled.append((sa, recs))
+            contributing[member] = sub
+            labeled.append((member, recs))
             for rec in recs:
                 if not rec["identical"]:
                     all_identical = False
                     details.append(
                         {
-                            "sa_id": sa,
+                            "sa_id": member,
                             "family": partition,
                             "event_iloc": rec["event_iloc"],
                             "variable": rec["variable"],
@@ -522,7 +522,7 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
     summary = (
         f"All {n_pairs} within-family rank-N vs rank-1 mpi pair(s) bit-identical{dropped_note}."
         if all_identical
-        else f"{n_div} (sa, event, variable) tuple(s) diverged from the rank-1 reference{dropped_note}."
+        else f"{n_div} (member, event, variable) tuple(s) diverged from the rank-1 reference{dropped_note}."
     )
     verdict = CheckResult(
         name=name,
@@ -559,23 +559,23 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
     sensitivity analysis, or when no clean/resume pair exists in the master.
     """
     name = "Resume sensitivity"
-    sub_items = list(_iter_analyses_or_self(master))
+    sub_items = list(_iter_members_or_self(master))
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
 
-    subs = {sa: sub for sa, sub in _present_subs(sub_items).items() if _enabled_modes(sub)}
+    subs = {member: sub for member, sub in _present_subs(sub_items).items() if _enabled_modes(sub)}
     if not subs:
-        return _skipped(name, "N/A — no sub-analysis has present summaries")
+        return _skipped(name, "N/A — no member has present summaries")
     dry = _dry_threshold(cfg_analysis)
     tau = _tau(eda_cfg)
-    resumes = _resumes_by_sa_id(master, list(subs.keys()))
+    resumes = _resumes_by_member_id(master, list(subs.keys()))
 
     # Group by compute-config identity; within each, split clean (0) vs resume (>0).
     groups: dict[tuple, dict[str, list[str]]] = {}
-    for sa, sub in subs.items():
+    for member, sub in subs.items():
         cid = _config_identity(sub)
         bucket = groups.setdefault(cid, {"clean": [], "resume": []})
-        bucket["resume" if resumes.get(sa, 0) > 0 else "clean"].append(sa)
+        bucket["resume" if resumes.get(member, 0) > 0 else "clean"].append(member)
 
     details: list[dict] = []
     labeled: list[tuple[str, list[dict]]] = []
@@ -597,23 +597,23 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
         ref_sub = subs[ref_id]
         ref_modes = _enabled_modes(ref_sub)
         contributing[ref_id] = ref_sub
-        for sa in resume_ids:
-            sub = subs[sa]
+        for member in resume_ids:
+            sub = subs[member]
             recs = _compare_pair(ref_sub, sub, ref_modes, dry_threshold_m=dry, tau_m=tau)
             if not recs:
                 n_dropped += 1
                 continue
             any_compared = True
-            contributing[sa] = sub
-            labeled.append((sa, recs))
+            contributing[member] = sub
+            labeled.append((member, recs))
             for rec in recs:
                 if not rec["identical"]:
                     all_identical = False
                     details.append(
                         {
-                            "sa_id": sa,
+                            "sa_id": member,
                             "config": str(cid),
-                            "n_resumes": resumes.get(sa, 0),
+                            "n_resumes": resumes.get(member, 0),
                             "event_iloc": rec["event_iloc"],
                             "variable": rec["variable"],
                             "detail": f"resume diverged from clean {ref_id} (max_abs_diff={rec['max_abs_diff']:.6g})",
@@ -630,7 +630,7 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
     summary = (
         f"All {n_pairs} resume-vs-clean pair(s) bit-identical{dropped_note}."
         if all_identical
-        else f"{n_div} (sa, event, variable) tuple(s) diverged from the clean counterpart{dropped_note}."
+        else f"{n_div} (member, event, variable) tuple(s) diverged from the clean counterpart{dropped_note}."
     )
     verdict = CheckResult(
         name=name,
@@ -667,21 +667,21 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
     Returns a skipped ``EdaResult`` when either endpoint is absent.
     """
     name = "Cross-hardware magnitude"
-    sub_items = list(_iter_analyses_or_self(master))
+    sub_items = list(_iter_members_or_self(master))
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
 
-    subs = {sa: sub for sa, sub in _present_subs(sub_items).items() if _enabled_modes(sub)}
+    subs = {member: sub for member, sub in _present_subs(sub_items).items() if _enabled_modes(sub)}
     dry = _dry_threshold(cfg_analysis)
     tau = _tau(eda_cfg)
 
     serial_id = next(
-        (sa for sa, sub in sorted(subs.items()) if _run_mode(sub) == "serial" and _n_mpi(sub) == 1),
+        (member for member, sub in sorted(subs.items()) if _run_mode(sub) == "serial" and _n_mpi(sub) == 1),
         None,
     )
     gpu_ids = [
-        sa
-        for sa, sub in sorted(subs.items())
+        member
+        for member, sub in sorted(subs.items())
         if _run_mode(sub) == "gpu" and int(getattr(_cfg(sub), "n_gpus", 0) or 0) == 1
     ]
     if serial_id is None or not gpu_ids:
@@ -695,20 +695,20 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
     any_compared = False
     n_dropped = 0
 
-    for sa in gpu_ids:
-        sub = subs[sa]
+    for member in gpu_ids:
+        sub = subs[member]
         recs = _compare_pair(ref_sub, sub, ref_modes, dry_threshold_m=dry, tau_m=tau)
         if not recs:
             n_dropped += 1
             continue
         any_compared = True
-        contributing[sa] = sub
-        labeled.append((sa, recs))
+        contributing[member] = sub
+        labeled.append((member, recs))
         for rec in recs:
             mag = rec.get("magnitude")
             details.append(
                 {
-                    "sa_id": sa,
+                    "sa_id": member,
                     "partition": _partition(sub),
                     "event_iloc": rec["event_iloc"],
                     "variable": rec["variable"],
@@ -730,11 +730,11 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
     n_gpu_compared = len(labeled)
     dropped_note = f" ({n_dropped} GPU pair(s) dropped for absent/unreadable outputs)" if n_dropped else ""
     summary = (
-        f"Characterized cross-hardware divergence (1-GPU vs 1-rank serial-CPU; disclosed, ref sa_id={serial_id}): "
+        f"Characterized cross-hardware divergence (1-GPU vs 1-rank serial-CPU; disclosed, ref member_id={serial_id}): "
         f"{n_gpu_compared} GPU pair(s) compared{dropped_note}; max_abs_depth_diff_m {', '.join(bounds)}."
         if bounds
         else f"Characterized cross-hardware divergence: no comparable depth field "
-        f"(ref sa_id={serial_id}; {n_gpu_compared} GPU pair(s) compared{dropped_note})."
+        f"(ref member_id={serial_id}; {n_gpu_compared} GPU pair(s) compared{dropped_note})."
     )
     verdict = CheckResult(
         name=name,

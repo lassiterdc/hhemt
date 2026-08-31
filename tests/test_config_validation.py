@@ -159,7 +159,7 @@ def test_validate_sensitivity_independent_vars_missing_columns(tmp_path: Path):
     )
     from hhemt.exceptions import ConfigurationError
 
-    csv_path = tmp_path / "sa.csv"
+    csv_path = tmp_path / "member.csv"
     pd.DataFrame({"n_omp_threads": [1, 2], "run_mode": ["serial", "parallel"]}).to_csv(csv_path, index=False)
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"]))
     with pytest.raises(ConfigurationError) as exc:
@@ -178,7 +178,7 @@ def test_validate_sensitivity_independent_vars_charset(tmp_path: Path):
     )
     from hhemt.exceptions import ConfigurationError
 
-    csv_path = tmp_path / "sa.csv"
+    csv_path = tmp_path / "member.csv"
     pd.DataFrame({"bad name": [1, 2]}).to_csv(csv_path, index=False)
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["bad name"]))
     with pytest.raises(ConfigurationError, match="charset"):
@@ -193,7 +193,7 @@ def test_validate_sensitivity_fails_when_block_missing_but_csv_present(tmp_path:
     )
     from hhemt.exceptions import ConfigurationError
 
-    csv_path = tmp_path / "sa.csv"
+    csv_path = tmp_path / "member.csv"
     csv_path.write_text("col\n1\n")
     cfg = report_config()  # no sensitivity block
     with pytest.raises(ConfigurationError, match="must be set"):
@@ -220,7 +220,7 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
     sensitivity-config<->sensitivity-analysis guard still fires for an UN-scoped
     benchmarking report on a non-sensitivity run.
 
-    This pins the _build_test_subanalyses overlay-scoping recipe (analysis.py:
+    This pins the _build_test_members overlay-scoping recipe (analysis.py:
     2725-2733) at the validator layer: the fix nulls report.sensitivity and resets
     report.reporting_set to the 'default' sentinel for the reference sub.
     """
@@ -231,7 +231,7 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
     )
     from hhemt.exceptions import ConfigurationError
 
-    # Pre-fix state: a sub-analysis cfg inherits the sensitivity master's report
+    # Pre-fix state: a member cfg inherits the sensitivity master's report
     # block verbatim onto a non-sensitivity reference (explicit benchmarking-validator
     # reporting_set + a sensitivity: benchmarking block). The guard MUST still fire
     # here -- Option A does NOT mask it.
@@ -431,7 +431,7 @@ def test_validate_active_reporting_set_benchmarking_delegates_csv(tmp_path: Path
     )
     from hhemt.exceptions import ConfigurationError
 
-    csv_path = tmp_path / "sa.csv"
+    csv_path = tmp_path / "member.csv"
     pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"]))
     # reporting_set "default" + is_sensitivity True -> "benchmarking" -> CSV check.
@@ -450,7 +450,7 @@ def test_validate_active_reporting_set_returns_resolved_name(tmp_path: Path):
         validate_active_reporting_set,
     )
 
-    csv_path = tmp_path / "sa.csv"
+    csv_path = tmp_path / "member.csv"
     pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads"]))
     name = validate_active_reporting_set(cfg, is_sensitivity=True, sensitivity_csv_path=csv_path)
@@ -628,7 +628,7 @@ def test_force_rerun_event_iloc_accepts_list(tmp_path: Path):
     assert result.force_rerun.stage == "simulate"
 
 
-def test_force_rerun_sa_id_requires_sensitivity_toggle(tmp_path: Path):
+def test_force_rerun_member_id_requires_sensitivity_toggle(tmp_path: Path):
     cfg = _minimal_analysis_config_dict(tmp_path)
     cfg["toggle_sensitivity_analysis"] = False
     cfg["force_rerun"] = {"sa_id": ["0", "5"]}
@@ -657,7 +657,7 @@ def test_force_rerun_event_iloc_requires_no_sensitivity(tmp_path: Path):
 )
 def test_force_rerun_rejects_invalid_dict_shapes(value, match, tmp_path: Path):
     cfg = _minimal_analysis_config_dict(tmp_path)
-    # Use sensitivity-on so sa_id paths don't trip on the cross-field rule
+    # Use sensitivity-on so member_id paths don't trip on the cross-field rule
     # before the per-field validator gets a chance to fire.
     cfg["toggle_sensitivity_analysis"] = True
     cfg["sensitivity_analysis"] = str(_touch(tmp_path / "inputs" / "sensitivity.csv"))

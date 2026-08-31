@@ -242,18 +242,18 @@ def _input_parts_from_case(cfg_case) -> list[dict]:
 
 
 def _iter_run_units(analysis):
-    """Yield (sa_id, event_id, model_type) per real invocation unit.
+    """Yield (member_id, event_id, model_type) per real invocation unit.
 
-    Regular analysis: sa_id is "" ; one unit per (event_iloc, enabled model_type).
+    Regular analysis: member_id is "" ; one unit per (event_iloc, enabled model_type).
     """
-    sa_id = str(getattr(analysis, "sa_id", "") or "")
+    member_id = str(getattr(analysis, "sa_id", "") or "")
     enabled = analysis._get_enabled_model_types()  # encapsulates self._system.cfg_system.toggle_* (analysis.py:1431)
     for event_iloc in analysis.df_sims.index:
         for model_type in enabled:
-            yield (sa_id, str(event_iloc), model_type)
+            yield (member_id, str(event_iloc), model_type)
 
 
-def _output_ids(analysis, sa_id, event_id, model_type) -> list[str]:
+def _output_ids(analysis, member_id, event_id, model_type) -> list[str]:
     """Per-output @ids for one run unit, derived from the per-model processing_log."""
     from hhemt.scenario import TRITONSWMM_scenario
 
@@ -308,12 +308,12 @@ def emit_provenance(
         emitted_vars=emitted_vars,
     )
 
-    for sa_id, event_id, model_type in _iter_run_units(analysis) if with_run_units else ():
-        out_ids = _output_ids(analysis, sa_id, event_id, model_type)
+    for member_id, event_id, model_type in _iter_run_units(analysis) if with_run_units else ():
+        out_ids = _output_ids(analysis, member_id, event_id, model_type)
         action = crate.add(
             ContextEntity(
                 crate,
-                f"#run-{sa_id}-{event_id}-{model_type}",
+                f"#run-{member_id}-{event_id}-{model_type}",
                 properties={
                     "@type": "CreateAction",
                     "name": f"TRITON-SWMM run {event_id} ({model_type})",

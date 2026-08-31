@@ -148,7 +148,7 @@ def build_figure(module=sb, tmp_path: Path | None = None):
     sens_cfg = report_config().sensitivity or SensitivityReportConfig(independent_vars=["n_devices"])
 
     df_avg = df.groupby(["group_value", "n_devices", "config_id"], as_index=False).agg(
-        wallclock_s=("wallclock_s", "mean"), sa_id=("sa_id", "first")
+        wallclock_s=("wallclock_s", "mean"), member_id=("sa_id", "first")
     )
     family_baselines = module._resolve_family_baselines(
         df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value"

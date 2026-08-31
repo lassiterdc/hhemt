@@ -38,8 +38,8 @@ REGEN_RULE_SET = {
     # Auto-carried into the bundle via _TMPL_WORKFLOW_PERFORMANCE, zero generator edits.
     "plot_workflow_performance",
     "plot_sensitivity_benchmarking",
-    "plot_per_sim_per_sa_peak_flood_depth",
-    "plot_per_sim_per_sa_conduit_flow",
+    "plot_per_sim_per_member_peak_flood_depth",
+    "plot_per_sim_per_member_conduit_flow",
     # EDA rules: emitted only for a bundle whose cfg_analysis selects a
     # reporting set carrying the eda_compute_sensitivity renderer. Absent from
     # the default/benchmarking fixtures, so the subset assertion above is
@@ -234,7 +234,7 @@ def test_preamble_preserved_for_jinja2_conditionals(multi_sim_bundle: Path) -> N
                 '"toolkit_version"',
                 '"n_sims"',
                 '"is_sensitivity"',
-                '"n_sub_analyses"',
+                '"n_members"',
                 '"independent_vars"',
                 '"report"',
             ],
@@ -457,7 +457,7 @@ def test_single_model_empty_family_emits_no_wildcards(pure_triton_sensitivity_bu
     rule all and render_report cannot carry wildcards; a raw templated path in either is
     a WildcardError at `snakemake --touch`. Asserted on the BRACE COUNT rather than by
     invoking Snakemake, so this stays a unit test and still discriminates: pre-fix both
-    blocks contain {sa_id}/{event_id}, post-fix neither does.
+    blocks contain {member_id}/{event_id}, post-fix neither does.
     """
     text = generate_regeneration_snakefile(pure_triton_sensitivity_bundle, static_backend="plotly")
 
@@ -467,7 +467,7 @@ def test_single_model_empty_family_emits_no_wildcards(pure_triton_sensitivity_bu
 
     # Distinguishes the harvest gate from the expansion fix alone: with only the latter,
     # rule all is clean but the orphan conduit rule is still emitted.
-    assert "rule plot_per_sim_per_sa_conduit_flow:" not in text
+    assert "rule plot_per_sim_per_member_conduit_flow:" not in text
 
 
 def test_coupled_bundle_emission_unaffected_by_the_gate(sensitivity_bundle: Path) -> None:
@@ -477,7 +477,7 @@ def test_coupled_bundle_emission_unaffected_by_the_gate(sensitivity_bundle: Path
 
     Asserts RULE PRESENCE, not expansion contents. Expansion is the wrong probe on this
     fixture: its per-sim manifest sidecars are named `conduit_flow.manifest.json` (the bare
-    renderer name) while the glob builds `conduit_flow__sa.*__evt.*.manifest.json`, so BOTH
+    renderer name) while the glob builds `conduit_flow__member.*__evt.*.manifest.json`, so BOTH
     per-sim families expand to nothing here for a NAMING reason unrelated to model gating.
     An earlier version of this test asserted `"conduit_flow" in` the rule-all input block
     and passed only because the WILDCARDED TEMPLATE contains that substring — i.e. it was
@@ -486,5 +486,5 @@ def test_coupled_bundle_emission_unaffected_by_the_gate(sensitivity_bundle: Path
     """
     text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="plotly")
 
-    assert "rule plot_per_sim_per_sa_conduit_flow:" in text
+    assert "rule plot_per_sim_per_member_conduit_flow:" in text
     assert "{" not in _input_block(text, "all")

@@ -633,13 +633,13 @@ def collect_per_sim_source_paths(
     storm_tide_datavar: str | None,
     dem_rel_path: str | None = None,
     watershed_rel_path: str | None = None,
-    sa_id: str | None = None,
+    member_id: str | None = None,
 ) -> list[dict]:
     """Build `source_paths` for a per-sim plot rule at wildcards-resolution time.
 
     Called from within the generated master Snakefile via a function-based
     `params:` (see `workflow.py:_build_plot_rule_block_per_sim` and
-    `_build_plot_rule_block_per_sim_per_sa`). Reads relative paths so the
+    `_build_plot_rule_block_per_sim_per_member`). Reads relative paths so the
     figure metadata + caption interpolation stay portable across analysis-dir
     relocations.
 
@@ -664,22 +664,22 @@ def collect_per_sim_source_paths(
     watershed_rel_path : str, optional
         Analysis-dir-relative path to the watershed boundary GIS polygon
         (read by peak_flood_depth as the masking shape).
-    sa_id : str, optional
-        Sub-analysis id when called at sensitivity-master scope. When present,
-        the per-event source paths are prefixed with ``subanalyses/{sa_id}/``
+    member_id : str, optional
+        member id when called at sensitivity-master scope. When present,
+        the per-event source paths are prefixed with ``members/{member_id}/``
         so the caption-rendered paths are master-analysis-dir-relative (the
-        master Snakefile renders captions; per-sa scenarios live under
-        ``master_dir/subanalyses/{sa_id}/sims/{event_id}/...``).
+        master Snakefile renders captions; per-member scenarios live under
+        ``master_dir/members/{member_id}/sims/{event_id}/...``).
 
     Returns
     -------
     list[dict]
         Source descriptors expressed relative to the analysis_dir.
     """
-    sa_prefix = f"subanalyses/{sa_id}/" if sa_id else ""
-    analysis_datatree = f"{sa_prefix}analysis_datatree.zarr"
+    member_prefix = f"members/{member_id}/" if member_id else ""
+    analysis_datatree = f"{member_prefix}analysis_datatree.zarr"
     master_weather = "weather_timeseries.nc"
-    swmm_inp = f"{sa_prefix}sims/{event_id}/swmm/hydraulics.inp"
+    swmm_inp = f"{member_prefix}sims/{event_id}/swmm/hydraulics.inp"
     if renderer_kind == "peak_flood_depth":
         sources: list[dict] = [
             {
@@ -750,9 +750,9 @@ def collect_sensitivity_source_paths(
     see :func:`collect_per_sim_source_paths` for caption-RST rendering details.
 
     The renderer reads the master `sensitivity_datatree.zarr` for TRITON-coupled /
-    TRITON-only sub-analyses (per Phase 6 verification: `/sa_{id}/tritonswmm/performance.Total`
+    TRITON-only members (per Phase 6 verification: `/member_{id}/tritonswmm/performance.Total`
     is present on the master DataTree, dimensioned by event_iloc). The `independent_var`
-    columns live in the sensitivity CSV. SWMM-only sub-analyses fall back to per-scenario
+    columns live in the sensitivity CSV. SWMM-only members fall back to per-scenario
     `.rpt` parsing inside the renderer; those `.rpt` paths are not enumerated here
     because they are SWMM-only-conditional and only the renderer knows the enabled
     model types.
@@ -762,7 +762,7 @@ def collect_sensitivity_source_paths(
         {
             "path": "sensitivity_datatree.zarr",
             "variables": [
-                "/sa_{id}/tritonswmm/performance.Total (per sub-analysis)",
+                "/member_{id}/tritonswmm/performance.Total (per member)",
             ],
         },
         {
@@ -772,11 +772,11 @@ def collect_sensitivity_source_paths(
             ],
         },
     ]
-    # SWMM-only sub-analyses' .rpt paths (baked into closure at Snakefile-emit
+    # SWMM-only members' .rpt paths (baked into closure at Snakefile-emit
     # time by `workflow.py:_build_plot_rule_block_sensitivity_benchmarking`).
     # Each .rpt is parsed via `swmm_output_parser.parse_total_elapsed` to
-    # produce that sub-analysis's wallclock value when the DataTree path
-    # `/sa_{id}/tritonswmm/performance.Total` is unavailable (SWMM-only mode
+    # produce that member's wallclock value when the DataTree path
+    # `/member_{id}/tritonswmm/performance.Total` is unavailable (SWMM-only mode
     # has no TRITON-SWMM coupled tree branch).
     for rpt_rel in swmm_only_rpt_rel_paths or []:
         sources.append(
@@ -800,13 +800,13 @@ def harvest_source_paths(plots_dir: Path, analysis_dir: Path) -> dict[str, list[
     ``prov.artist().add_channel(...)`` are not silently dropped.
 
     For sensitivity master bundles, the per-sub renderers (``analysis`` arg
-    is the sub-analysis) emit manifests at master-relative locations like
-    ``master_dir/plots/sensitivity/per_sim/sa-{N}/{event_id}/x.manifest.json``
-    but with ``source_paths_relative`` rooted at ``sub_analysis_dir =
-    master_dir/subanalyses/sa_{N}``. This function detects the
-    ``plots/sensitivity/per_sim/sa-{N}/`` segment in the manifest's
+    is the member) emit manifests at master-relative locations like
+    ``master_dir/plots/sensitivity/per_sim/member-{N}/{event_id}/x.manifest.json``
+    but with ``source_paths_relative`` rooted at ``member_dir =
+    master_dir/members/member_{N}``. This function detects the
+    ``plots/sensitivity/per_sim/member-{N}/`` segment in the manifest's
     master-relative position and resolves that manifest's paths against
-    the corresponding sub_analysis_dir; manifests at master-only locations
+    the corresponding member_dir; manifests at master-only locations
     (``plots/system_overview.*``, ``plots/per_analysis/*``,
     ``plots/sensitivity/benchmarking/*``) resolve against the master
     analysis_dir as before.
@@ -823,7 +823,7 @@ def harvest_source_paths(plots_dir: Path, analysis_dir: Path) -> dict[str, list[
         figure_stem = manifest_path.stem.removesuffix(".manifest")
         manifest = json.loads(manifest_path.read_text())
         # Detect sensitivity per-sub manifest position:
-        # plots/sensitivity/per_sim/sa-{N}/{event_id}/<stem>.manifest.json
+        # plots/sensitivity/per_sim/member-{N}/{event_id}/<stem>.manifest.json
         rel_from_plots = manifest_path.parent.resolve().relative_to(plots_root)
         emit_analysis_dir = master_root
         rel_parts = rel_from_plots.parts
@@ -831,11 +831,11 @@ def harvest_source_paths(plots_dir: Path, analysis_dir: Path) -> dict[str, list[
             len(rel_parts) >= 3
             and rel_parts[0] == "sensitivity"
             and rel_parts[1] == "per_sim"
-            and rel_parts[2].startswith("sa-")
+            and rel_parts[2].startswith("member-")
         ):
-            sa_wildcard = rel_parts[2][len("sa-") :]
-            sa_id_rule = sa_wildcard.replace(".", "_").replace("-", "_")
-            emit_analysis_dir = master_root / "subanalyses" / f"sa_{sa_id_rule}"
+            member_wildcard = rel_parts[2][len("member-") :]
+            member_id_rule = member_wildcard.replace(".", "_").replace("-", "_")
+            emit_analysis_dir = master_root / "members" / f"member_{member_id_rule}"
         rel_paths = manifest.get("source_paths_relative", [])
         paths = [(emit_analysis_dir / Path(rp)).resolve() for rp in rel_paths]
         for artist in manifest.get("artists", []):

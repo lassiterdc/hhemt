@@ -49,7 +49,7 @@ def test_delete_dry_run_summary_does_not_delete(synth_multi_sim_analysis, capsys
 
     out = capsys.readouterr().out
     assert "Delete preview" in out
-    assert "scenario" in out.lower() or "sub-analysis" in out.lower()
+    assert "scenario" in out.lower() or "member" in out.lower()
     assert analysis_dir.exists()  # not deleted
 
 

@@ -125,13 +125,13 @@ _RULE_PREFIX_TO_PURPOSE: tuple[tuple[str, str], ...] = (
     ("reprocess", "reprocess"),
 )
 
-#: Recover sa_id / event_id from a rule NAME, for jobs that survive only in the executor's
+#: Recover member_id / event_id from a rule NAME, for jobs that survive only in the executor's
 #: log tree (Tier 2 of `_job_purpose_map`) and therefore carry no sidecar record. Lossless
-#: because `workflow.py` mints per-sub-analysis rule names as `{phase}_sa_{sa_id}_evt_{id}`.
-#: The sa_id alternation tolerates the evt-less forms (`consolidate_sa_{sa_id}`), and the
-#: capture is non-greedy so an sa_id containing underscores (`gpu_0_r1`) stops at `_evt_`
+#: because `workflow.py` mints per-member rule names as `{phase}_member_{member_id}_evt_{id}`.
+#: The member_id alternation tolerates the evt-less forms (`consolidate_member_{member_id}`),
+#: and the capture is non-greedy so a member_id containing underscores (`gpu_0_r1`) stops at `_evt_`
 #: rather than swallowing it.
-_RULE_SA_ID_RE = re.compile(r"_sa_(.+?)(?:_evt_|$)")
+_RULE_MEMBER_ID_RE = re.compile(r"_member_(.+?)(?:_evt_|$)")
 _RULE_EVENT_ID_RE = re.compile(r"_evt_(.+)$")
 
 _ROOT_ID = "./"
@@ -166,7 +166,7 @@ _BUCKET_INSTRUCTION: dict[str, str] = {
         "Revise them for your target system — EXCEPT any row marked as varied by the "
         "sensitivity analysis, which is a measured axis of this experiment and must be "
         "reproduced as swept, not revised. Bundle.reprex(reprex_config, "
-        "target_hpc_profile) emits the concrete per-(sa_id, column) problem pairs and "
+        "target_hpc_profile) emits the concrete per-(member_id, column) problem pairs and "
         "validated-vs-advisory amendments for your target."
     ),
     "experiment": (
@@ -657,14 +657,14 @@ def _job_purpose_map(
     payloads: list[dict],
     job_index: dict[str, str] | None = None,
 ) -> dict[str, dict[str, str]]:
-    """`{slurm_job_id: {purpose, rule_name, sa_id, event_id, model_type, written_at}}`.
+    """`{slurm_job_id: {purpose, rule_name, member_id, event_id, model_type, written_at}}`.
 
     TWO sources in stated precedence, because neither alone covers the table.
 
     Tier 1 -- `status_flags.write_status_flag` records `slurm_job_id` from the
     ``SLURM_JOB_ID`` environment variable, which is the PARENT job id, exactly the
     efficiency CSV's `MainJobID`, so the join is direct. It is the RICHER source (it
-    alone carries sa_id/event_id/model_type as RECORDED values rather than parsed
+    alone carries member_id/event_id/model_type as RECORDED values rather than parsed
     ones) and therefore wins any collision. But it is keyed on the flag PATH and
     rewritten every run, so it retains only the LAST job per rule: measured 60 distinct
     ids for 116 rule instances against 570 allocations.
@@ -672,9 +672,9 @@ def _job_purpose_map(
     Tier 2 -- `_status/_job_index.json`, harvested by
     `status_flags.harvest_slurm_job_index` from the executor's own per-job log tree:
     `{jobid: rule_name}` for every job ever submitted, including the ones whose sidecar
-    a later submission overwrote. It carries no sa_id/event_id directly; those are
+    a later submission overwrote. It carries no member_id/event_id directly; those are
     parsed back out of the rule name, which is lossless because `workflow.py` mints
-    rule names as `{phase}_sa_{sa_id}_evt_{event_id}`.
+    rule names as `{phase}_member_{member_id}_evt_{event_id}`.
 
     Tier 2 does NOT raise the join's match rate -- that is already 99% of the keys the
     sidecars retain. It raises the KEY CEILING, by keeping log files the executor would
@@ -701,18 +701,18 @@ def _job_purpose_map(
             "written_at": str(payload.get("written_at") or ""),
         }
     # Tier 2. `not in out` is what preserves Tier-1 precedence: a job the sidecar still
-    # retains keeps its RECORDED sa_id/event_id/model_type rather than the parsed ones.
+    # retains keeps its RECORDED member_id/event_id/model_type rather than the parsed ones.
     for job_id, rule_name in (job_index or {}).items():
         job_id = str(job_id)
         if not job_id or job_id in out:
             continue
         rule_name = str(rule_name or "")
-        sa_match = _RULE_SA_ID_RE.search(rule_name)
+        member_match = _RULE_MEMBER_ID_RE.search(rule_name)
         evt_match = _RULE_EVENT_ID_RE.search(rule_name)
         out[job_id] = {
             "purpose": _purpose_for_rule(rule_name),
             "rule_name": rule_name,
-            "sa_id": sa_match.group(1) if sa_match else "",
+            "sa_id": member_match.group(1) if member_match else "",
             "event_id": evt_match.group(1) if evt_match else "",
             # Not parseable from a rule name: the model type is a per-scenario property,
             # not a naming component. Left empty rather than guessed -- an em-dash here
@@ -772,7 +772,7 @@ def _provenance_process(runs: list[dict]) -> str:
     if not runs:
         return "<h4>5. Process</h4>\n" + _banner(
             "Run units not captured — this is a consolidation-level crate "
-            "(a sensitivity master aggregates its sub-analyses, each of which "
+            "(a sensitivity master aggregates its members, each of which "
             "carries its own per-run provenance)."
         )
     rows: list[list[str]] = []
@@ -820,7 +820,7 @@ def _sentinel_label(names: list[str]) -> str:
     run's actual names, and N is the run length. Nothing here is authored per experiment,
     so the label cannot drift from the data.
 
-    The count sits OUTSIDE the braces on purpose (Iter-11, item 14a). `{subanalysis id
+    The count sits OUTSIDE the braces on purpose (Iter-11, item 14a). `{member id
     (28)}` nests a parenthesis inside a brace, which reads as though the count were part
     of the parameter's NAME; a trailing multiplier reads as a quantity applied to the
     placeholder, which is what it is. The user ruled for this form on 2026-08-17.
@@ -832,12 +832,12 @@ def _sentinel_label(names: list[str]) -> str:
 def _sibling_runs(node: dict) -> list[tuple[list[str], dict]]:
     """Split `node`'s sorted children into CONTIGUOUS runs of identical subtrees.
 
-    Identity is DECIDED, never assumed. The writer builds every sub-analysis path from
+    Identity is DECIDED, never assumed. The writer builds every member path from
     one f-string (`sensitivity_analysis.py`, `_sub_relpaths`), so structural identity is
     guaranteed at WRITE time -- but this function's input is a persisted crate that
     outlives the writer, and the RO-Crate contract is that the on-disk JSON-LD IS the
     object. So the subtrees are compared by canonical sorted-key serialization, and THAT
-    COMPARISON IS THE DIVERGENCE DETECTOR: a sub-analysis whose structure legitimately
+    COMPARISON IS THE DIVERGENCE DETECTOR: a member whose structure legitimately
     differs breaks the run and renders under its own name. The collapse can never hide a
     real structural difference.
 
@@ -865,11 +865,11 @@ def _path_tree_html(paths: list[str]) -> str:
     branch structure like people use to display folder structure could be good for this.'
 
     Measured on the delivered bundle: 29 paths in ONE table cell, space-separated, over two
-    distinct prefixes (`sensitivity_datatree.zarr/` and `subanalyses/`).
+    distinct prefixes (`sensitivity_datatree.zarr/` and `members/`).
 
-    Single-child chains are COLLAPSED onto one line (`sa_gpu_0_r1/analysis_datatree.zarr`
+    Single-child chains are COLLAPSED onto one line (`member_gpu_0_r1/analysis_datatree.zarr`
     rather than a directory line plus an indented leaf). Without that, 28 identically
-    shaped sub-analyses render as 56 lines whose every other line is the same filename —
+    shaped members render as 56 lines whose every other line is the same filename —
     which trades one unreadable shape for another rather than fixing the readability the
     user asked about.
     """
@@ -1120,7 +1120,7 @@ def _provenance_outputs(
     # exists and nothing about what is in it. This row supplies the store's own DataTree
     # GROUP hierarchy, rendered INLINE through the same branch-tree renderer rather than
     # behind a disclosure widget -- the user asked for the structure shown "rather than
-    # forcing the user to hit the dropdown". The sub-analysis membership dropdown above is
+    # forcing the user to hit the dropdown". The member membership dropdown above is
     # deliberately left alone; the user called it good and desirable.
     _group_paths, _realized = _consolidated_group_paths(analysis_dir, analysis)
     if _group_paths:
@@ -1355,7 +1355,7 @@ def _provenance_timeline(payloads: list[dict]) -> _MountedTable | None:
     # reached first. Same collision the SLURM table dodges; the pattern is to suffix the
     # TABLE id, never to rename the section.
     mounted = _mounted_tabulator_table(
-        ["Completed at", "Job desc", "Rule", "Sub-analysis", "Event", "Model", "SLURM job"],
+        ["Completed at", "Job desc", "Rule", "Member", "Event", "Model", "SLURM job"],
         rows,
         container_id="run-timeline-table",
     )
@@ -1709,7 +1709,7 @@ def _sensitivity_varied_values(analysis: TRITONSWMM_analysis) -> dict[str, tuple
 
     Why the cell is REPLACED and not annotated: for a varied parameter the master's
     config value is one arm's setting. Rendering it as "Value used" presents one
-    sub-analysis's configuration as though it were the experiment's, which is
+    member's configuration as though it were the experiment's, which is
     affirmatively misleading rather than merely incomplete. An appended "(varied)"
     tag does not undo a number the reader has already read as the answer.
 
@@ -1890,7 +1890,7 @@ def _build_reprex_guide_html(
             #
             # Precedence: a SWEPT parameter's cell is replaced outright, because the
             # master's stored value is one arm's setting and rendering it here would
-            # present one sub-analysis's configuration as the experiment's. A field with
+            # present one member's configuration as the experiment's. A field with
             # neither a swept marker nor a producer value falls back to the bucket
             # placeholder rather than a bare em-dash -- the reprex_config.target_*
             # rows have no producer value BY DESIGN (they describe the reproducer's
@@ -2372,7 +2372,7 @@ _EFF_COLUMNS: tuple[_EffColumn, ...] = (
     _EffColumn("attempts", "Attempts", _ATTEMPTS_JOIN),
     _EffColumn("record", "Record", _TOOLKIT_JOIN),
     _EffColumn("purpose", "Job desc", _TOOLKIT_JOIN),
-    _EffColumn("sa_id", "Sub-analysis", _TOOLKIT_JOIN),
+    _EffColumn("sa_id", "Member", _TOOLKIT_JOIN),
     _EffColumn("event_id", "Event", _TOOLKIT_JOIN),
     _EffColumn("model_type", "Model", _TOOLKIT_JOIN),
     _EffColumn("partition", "Partition", _TOOLKIT_JOIN),
@@ -2522,7 +2522,7 @@ _EFF_UNCAPTURED_NOTE = (
     "wherever SLURM reported no CPU time "
     "for the job step; a zero there would claim the job used no processor, which is not "
     "what an absent measurement means.</p>"
-    "<p class='note'><strong>Why most rows carry no purpose, sub-analysis or compute "
+    "<p class='note'><strong>Why most rows carry no purpose, member or compute "
     "configuration.</strong> The toolkit columns in this table are joined in from "
     "<code>_status/*.flag.json</code>, which records ONE SLURM job id per rule — the most "
     "recent one. A simulation that resumed across several allocations, and any rule that "
@@ -2530,7 +2530,7 @@ _EFF_UNCAPTURED_NOTE = (
     "earlier allocation appears here as a measured SLURM job with no toolkit label. On this "
     "report that is the majority of rows. An em-dash in these columns means the row could "
     "not be matched to a toolkit record — never that the job ran without a partition, "
-    "without MPI ranks, or outside a sub-analysis. Every one of those values existed; this "
+    "without MPI ranks, or outside a member. Every one of those values existed; this "
     f"table cannot currently reach them, and the <em>{_eff_label('record')}</em> column says "
     "which rows those "
     "are. This is a MEASURED CEILING rather than a capture failure: the join already matches "
@@ -3184,7 +3184,7 @@ def _resolve_all_efficiency_csvs(eff_dir: Path) -> list[Path]:
 
 
 def _read_scenario_status(analysis_dir: Path) -> tuple[dict[tuple[str, str, str], dict[str, str]], Path | None]:
-    """`{(sa_id, event_id, model_type): row}` from `scenario_status.csv`; and the file read.
+    """`{(member_id, event_id, model_type): row}` from `scenario_status.csv`; and the file read.
 
     The file is returned so the caller can DECLARE it (ADR-6 Gate-A). It is already
     carried in every bundle by `_copy_supporting_files`, so declaring it adds a
@@ -3215,13 +3215,13 @@ def _read_scenario_status(analysis_dir: Path) -> tuple[dict[tuple[str, str, str]
         return ({}, None)
     out: dict[tuple[str, str, str], dict[str, str]] = {}
     for record in csv.DictReader(io.StringIO(text)):
-        sa_id = (record.get("sa_id") or "").strip()
+        member_id = (record.get("sa_id") or "").strip()
         model_type = (record.get("model_type") or "").strip()
         iloc = (record.get("event_iloc") or "").strip()
         slug = os.path.basename((record.get("scenario_directory") or "").rstrip("/\\"))
         for event_key in {iloc, f"event_index.{iloc}", slug}:
             if event_key:
-                out[(sa_id, event_key, model_type)] = record
+                out[(member_id, event_key, model_type)] = record
     return (out, path)
 
 
@@ -3338,7 +3338,7 @@ def _build_data_availability_html(report_path: Path) -> str:
         for d in check.get("details", [])
     ]
     if detail_rows:
-        parts.append(_grid_table(["Sub-analysis", "Scenario", "Detail"], detail_rows))
+        parts.append(_grid_table(["Member", "Scenario", "Detail"], detail_rows))
     return "\n".join(parts)
 
 

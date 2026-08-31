@@ -73,7 +73,7 @@ class AnalysisPaths(MainDataClass):
     # Hierarchical DataTree zarr — aggregates all enabled modes into one store.
     analysis_datatree_zarr: Optional[Path] = None
 
-    # Sensitivity-level hierarchical DataTree zarr (aggregates sub-analysis trees).
+    # Sensitivity-level hierarchical DataTree zarr (aggregates member trees).
     sensitivity_datatree_zarr: Optional[Path] = None
 
     bash_script_path: Optional[Path] = None

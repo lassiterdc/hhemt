@@ -56,9 +56,9 @@ def test_b4b_clean_identity_reason_distinguishes_no_clean_subs_from_raw_cleared(
     master = types.SimpleNamespace(analysis_paths=types.SimpleNamespace(analysis_dir=tmp_path))
 
     # One RESUME sub (n_resumes==3) whose raw IS present -> clean set empty, raw not cleared.
-    monkeypatch.setattr(av, "_iter_analyses_or_self", lambda m: [("gpu_0", sub)])
+    monkeypatch.setattr(av, "_iter_members_or_self", lambda m: [("gpu_0", sub)])
     monkeypatch.setattr(rri, "_b4b_enabled_model", lambda s: "triton")
-    monkeypatch.setattr(rri, "_b4b_n_resumes", lambda m, sa_id: 3)
+    monkeypatch.setattr(rri, "_b4b_n_resumes", lambda m, member_id: 3)
     monkeypatch.setattr(rri, "_b4b_config_identity", lambda s: "cfgA")
     monkeypatch.setattr(rri, "_b4b_sub_raw_bin_dir", lambda s, model, rot: raw_bin)
     monkeypatch.setattr(fe, "emit_data_artifact_with_sources", lambda **kw: kw["artifact_path"])
@@ -105,7 +105,7 @@ def test_triton_raw_b4b_identical_and_divergent_at_boundary(tmp_path):
 
 
 def test_parse_resume_timestep(tmp_path):
-    log = tmp_path / "model_tritonswmm_sa_x_evt0.log"
+    log = tmp_path / "model_tritonswmm_member_x_evt0.log"
     log.write_text(
         "[..] Reading checkpoint files\n[OK] Checkpoint files read\n"
         "[..] SWMM exchange history replayed to t=3600.0 s\nSimulation ends\n"
@@ -147,35 +147,35 @@ def test_compare_variable_exact_object_dtype_no_raise():
 
 
 def test_read_sub_resume_context_cache_split(tmp_path):
-    """FD1+FD3: the resume log root + reporting interval come from the sub's {sa_id}.yaml master
+    """FD1+FD3: the resume log root + reporting interval come from the sub's {member_id}.yaml master
     pointer, which may point OUTSIDE the sub dir (cache-vs-scratch split), not a sibling glob."""
     import yaml
 
     from hhemt.eda.raw_resume_identity import read_sub_resume_context
 
-    sa_id, iloc = "sa_gpu_0_r1", 0
+    member_id, iloc = "member_gpu_0_r1", 0
     master_root = tmp_path / "cache" / "synth_cc_resume"  # SEPARATE tree from the sub dir
     logdir = master_root / "logs" / "sims"
     logdir.mkdir(parents=True)
-    (logdir / f"model_tritonswmm_{sa_id}_evt{iloc}.log").write_text(
+    (logdir / f"model_tritonswmm_{member_id}_evt{iloc}.log").write_text(
         "[..] SWMM exchange history replayed to t=3000 s (11435 steps); resuming live segment\n"
     )
-    sub_dir = tmp_path / "scratch" / "subanalyses" / sa_id
+    sub_dir = tmp_path / "scratch" / "members" / member_id
     sub_dir.mkdir(parents=True)
-    (sub_dir / f"{sa_id}.yaml").write_text(yaml.safe_dump({
-        "analysis_id": sa_id,
+    (sub_dir / f"{member_id}.yaml").write_text(yaml.safe_dump({
+        "analysis_id": member_id,
         "is_experiment_member": True,
         "TRITON_reporting_timestep_s": 600.0,
         "experiment_cfg_yaml": str(master_root / "analysis_config.yaml"),
     }))
 
-    log, interval, schedule = read_sub_resume_context(sub_dir, sa_id, iloc)
+    log, interval, schedule = read_sub_resume_context(sub_dir, member_id, iloc)
     assert interval == 600.0
     assert log is not None and log.exists()
     assert parse_resume_timestep(log) == 3000.0
     assert schedule is None  # no resume_interruption_schedule key in this fixture
     # missing yaml -> (None, None, None), never raises
-    assert read_sub_resume_context(tmp_path / "nope", sa_id, iloc) == (None, None, None)
+    assert read_sub_resume_context(tmp_path / "nope", member_id, iloc) == (None, None, None)
 
 
 def test_resume_boundaries_from_schedule_unit_conversion():
@@ -193,15 +193,15 @@ def test_read_sub_resume_context_returns_schedule(tmp_path):
 
     from hhemt.eda.raw_resume_identity import read_sub_resume_context
 
-    sa_id, iloc = "sa_gpu_0_r1", 0
-    sub_dir = tmp_path / "subanalyses" / sa_id
+    member_id, iloc = "member_gpu_0_r1", 0
+    sub_dir = tmp_path / "members" / member_id
     sub_dir.mkdir(parents=True)
-    (sub_dir / f"{sa_id}.yaml").write_text(yaml.safe_dump({
-        "analysis_id": sa_id,
+    (sub_dir / f"{member_id}.yaml").write_text(yaml.safe_dump({
+        "analysis_id": member_id,
         "TRITON_reporting_timestep_s": 600.0,
         "resume_interruption_schedule": [25, 50, 75],
     }))
-    log, interval, schedule = read_sub_resume_context(sub_dir, sa_id, iloc)
+    log, interval, schedule = read_sub_resume_context(sub_dir, member_id, iloc)
     assert interval == 600.0
     assert schedule == (25, 50, 75)
     # index 25 at interval 600 s -> 250.0 min (pure-TRITON path needs no marker)
@@ -321,8 +321,8 @@ def test_b4b_ref_key_is_deterministic_under_a_device_count_tie():
     assert min([a6000, a100], key=_b4b_ref_key)[0] == "a_gpu_1_r1"
     # Shuffled arrival order selects the SAME member — this is the determinism claim.
     assert min([a100, a6000], key=_b4b_ref_key)[0] == "a_gpu_1_r1"
-    # And it is the PARTITION that breaks the tie, not the sa_id: here the a100 sub carries
-    # the sa_id that sorts LAST, so a sa_id-only tiebreak would pick the other member.
+    # And it is the PARTITION that breaks the tie, not the member_id: here the a100 sub carries
+    # the member_id that sorts LAST, so a member_id-only tiebreak would pick the other member.
     a100_late = ("z_late", _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a100-80")))
     a6000_early = ("a_early", _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a6000")))
     assert min([a6000_early, a100_late], key=_b4b_ref_key)[0] == "z_late"
@@ -463,23 +463,23 @@ def _b4b_two_configs(reps_per_label: dict[str, int]):
     per_config, meta = {}, {}
     for label, n in reps_per_label.items():
         for r in range(1, n + 1):
-            sa = f"{label}_r{r}"
-            per_config[sa] = {"wlevel_m": _b4b_pair(ts, [True] * 3, [0.0] * 3)}
-            meta[sa] = _b4b_meta(label, is_reference=(label == "serial" and r == 1))
+            member = f"{label}_r{r}"
+            per_config[member] = {"wlevel_m": _b4b_pair(ts, [True] * 3, [0.0] * 3)}
+            meta[member] = _b4b_meta(label, is_reference=(label == "serial" and r == 1))
     return per_config, meta
 
 
 def test_b4b_dataset_draws_one_row_per_compute_config_not_per_replicate():
-    """N4: the rendered `compute_config` dim is the DISTINCT LABEL set, not the sa_id set.
+    """N4: the rendered `compute_config` dim is the DISTINCT LABEL set, not the member_id set.
 
     The label omits the replicate suffix by contract, so before the collapse the figure drew
-    one row per sa_id and two byte-identical y-labels read as a rendering bug. This asserts
+    one row per member_id and two byte-identical y-labels read as a rendering bug. This asserts
     the collapse at the DATASET level; the fold-level tests above assert its aggregation.
     """
     per_config, meta = _b4b_two_configs({"serial": 2, "gpu x1": 2})
     ds = _b4b_ds(per_config, meta)
 
-    assert len(per_config) == 4, "fixture must carry 4 sa_ids across 2 configs"
+    assert len(per_config) == 4, "fixture must carry 4 member_ids across 2 configs"
     assert [str(c) for c in ds["compute_config"].values] == ["gpu x1", "serial"]
     assert sorted(int(v) for v in ds["n_replicates"].values) == [2, 2]
 

@@ -55,7 +55,7 @@ class RuleSpecTemplate:
     log_path_template: str = ""
     #: Per-TEMPLATE gate, distinct from RendererSelection.predicate_key which gates a
     #: whole selection. A selection may carry N templates that are not all applicable
-    #: to the same analysis -- per_sim_per_sa carries peak_flood_depth (any model) and
+    #: to the same analysis -- per_sim_per_member carries peak_flood_depth (any model) and
     #: conduit_flow (SWMM-derived only). Splitting the selection instead is UNSAFE:
     #: every consumer takes the FIRST selection per builder_key, so a second same-key
     #: selection is silently dropped. None = always emitted.
@@ -70,11 +70,11 @@ class RendererSelection:
     predicate_key      : None for unconditional renderers; a string the dispatcher
                          resolves to a Callable[[inputs], bool] for conditional
                          renderers (e.g. "has_independent_vars",
-                         "has_sa_event_pairs").
+                         "has_member_event_pairs").
     rule_spec_template : () for selections the bundle generator does not emit;
                          a TUPLE of RuleSpecTemplate (one per emitted bundle
                          figure — most renderers map to one, but per_sim and
-                         per_sim_per_sa each expand to two: peak_flood_depth +
+                         per_sim_per_member each expand to two: peak_flood_depth +
                          conduit_flow) carrying the bundle-side rule facts when the
                          bundle generator data-drives this renderer (P1b). Consumed
                          ONLY by the bundle generator.
@@ -342,7 +342,7 @@ _TMPL_EDA_COMPUTE_SENSITIVITY = RuleSpecTemplate(
 # dem-resolution (D13): the in-report EDA adapter for the DEM-resolution family.
 # FOUR figures under ONE RendererSelection reusing builder key
 # eda_compute_sensitivity -- the same one-selection-N-templates shape per_sim and
-# per_sim_per_sa already use. All four share renderer_module
+# per_sim_per_member already use. All four share renderer_module
 # "eda_compute_sensitivity" (the _cli entrypoint and the _OUTPUT_EXT_BY_RENDERER
 # key are per-MODULE, not per-figure), and differ only in plot ID, caption, label
 # and log path. Tuple order is the figures' authored reading order (cost/error
@@ -444,7 +444,7 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
 
 # The benchmarking (sensitivity-master) set: the five common renderers shared by
 # the master/reprocess generators (workflow.py:6391-6415), plus the two
-# conditional sensitivity renderers gated by predicate. per_sim_per_sa expands to
+# conditional sensitivity renderers gated by predicate. per_sim_per_member expands to
 # two bundle figures.
 _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("system_overview", rule_spec_template=(_TMPL_SYSTEM_OVERVIEW,)),
@@ -455,50 +455,50 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("metadata", rule_spec_template=(_TMPL_METADATA,)),
     RendererSelection("workflow_performance", rule_spec_template=(_TMPL_WORKFLOW_PERFORMANCE,)),
     RendererSelection(
-        "per_sim_per_sa",
-        predicate_key="has_sa_event_pairs",
+        "per_sim_per_member",
+        predicate_key="has_member_event_pairs",
         rule_spec_template=(
             RuleSpecTemplate(
-                rule_name="plot_per_sim_per_sa_peak_flood_depth",
-                # The REAL module; sa-routing is via the --sa-id flag, not a separate
-                # module. There is no per_sim_per_sa_* module on disk, and this field is
+                rule_name="plot_per_sim_per_member_peak_flood_depth",
+                # The REAL module; member-routing is via the --member-id flag, not a separate
+                # module. There is no per_sim_per_member_* module on disk, and this field is
                 # copied verbatim into the bundle-side regen RuleSpec
                 # (bundle/snakefile_generator.py), which then shells out to a module that
                 # does not exist. Safe to rename: this field reaches only output_ext_for,
-                # whose per_sim_* and per_sim_per_sa_* entries are identical under both
+                # whose per_sim_* and per_sim_per_member_* entries are identical under both
                 # backends; plot IDs are minted from renderer_kind, not from this value.
                 renderer_module="per_sim_peak_flood_depth",
-                output_path_template="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}__OUTPUT_EXT__",
+                output_path_template="plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}__OUTPUT_EXT__",
                 report_kwargs={
                     "caption": "report/captions/per_sim_peak_flood_depth.rst",
                     "category": "Per Simulation Results",
                     "labels": (
                         '(lambda w: {"figure": "Peak flood depth", '
-                        '"sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), '
+                        '"member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), '
                         '"event": _report_label_value(_EVENT_LABELS, w.event_id, "event")})'
                     ),
                 },
-                wildcards=("sa_id", "event_id"),
+                wildcards=("member_id", "event_id"),
                 resources_yaml="mem_mb=4000, time_min=15",
-                log_path_template="_logs/plots/per_sim_per_sa_peak_flood_depth_sa-{sa_id}_{event_id}.log",
+                log_path_template="_logs/plots/per_sim_per_member_peak_flood_depth_member-{member_id}_{event_id}.log",
             ),
             RuleSpecTemplate(
-                rule_name="plot_per_sim_per_sa_conduit_flow",
+                rule_name="plot_per_sim_per_member_conduit_flow",
                 # The REAL module — see the note on the peak_flood_depth template above.
                 renderer_module="per_sim_conduit_flow",
-                output_path_template="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}__OUTPUT_EXT__",
+                output_path_template="plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}__OUTPUT_EXT__",
                 report_kwargs={
                     "caption": "report/captions/per_sim_conduit_flow.rst",
                     "category": "Per Simulation Results",
                     "labels": (
                         '(lambda w: {"figure": "Conduit flow", '
-                        '"sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), '
+                        '"member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), '
                         '"event": _report_label_value(_EVENT_LABELS, w.event_id, "event")})'
                     ),
                 },
-                wildcards=("sa_id", "event_id"),
+                wildcards=("member_id", "event_id"),
                 resources_yaml="mem_mb=4000, time_min=15",
-                log_path_template="_logs/plots/per_sim_per_sa_conduit_flow_sa-{sa_id}_{event_id}.log",
+                log_path_template="_logs/plots/per_sim_per_member_conduit_flow_member-{member_id}_{event_id}.log",
                 predicate_key="has_swmm_link_outputs",
             ),
         ),

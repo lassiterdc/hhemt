@@ -6,7 +6,7 @@ Covers:
   "1_job_many_srun_tasks") to the delete-executor mode; unrecognized values
   raise ConfigurationError.
 - V-P3.5: Each of the three delete-runner modules (`delete_scenario_runner`,
-  `delete_subanalysis_runner`, `delete_consolidation_runner`):
+  `delete_member_runner`, `delete_consolidation_runner`):
   (a) writes a submission sentinel at entry when `SLURM_JOB_ID` is set,
   (b) propagates Python-side exceptions out of `main()` instead of
       swallowing them,
@@ -142,36 +142,36 @@ def test_delete_scenario_runner_no_op_without_slurm_job_id(tmp_path, monkeypatch
 def test_delete_analysis_runner_writes_and_cleans_sentinel_on_success(
     tmp_path, slurm_env
 ):
-    from hhemt import delete_subanalysis_runner as runner
+    from hhemt import delete_member_runner as runner
 
     analysis_dir = tmp_path / "analysis"
-    (analysis_dir / "subanalyses" / "sa_3").mkdir(parents=True)
+    (analysis_dir / "members" / "member_3").mkdir(parents=True)
 
     rc = runner.main(
-        ["--sa-id", "3", "--analysis-dir", str(analysis_dir)]
+        ["--member-id", "3", "--analysis-dir", str(analysis_dir)]
     )
     assert rc == 0
 
     sentinel = (
-        analysis_dir / "_status" / "_submitted" / "delete_subanalysis_sa-3.json"
+        analysis_dir / "_status" / "_submitted" / "delete_member_member-3.json"
     )
     _assert_sentinel_written_and_cleaned(sentinel)
 
 
 def test_delete_analysis_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
-    from hhemt import delete_subanalysis_runner as runner
+    from hhemt import delete_member_runner as runner
 
     analysis_dir = tmp_path / "analysis"
-    (analysis_dir / "subanalyses" / "sa_3").mkdir(parents=True)
+    (analysis_dir / "members" / "member_3").mkdir(parents=True)
 
-    with patch.object(runner, "fast_rmtree", side_effect=RuntimeError("boom-sa")):
-        with pytest.raises(RuntimeError, match="boom-sa"):
+    with patch.object(runner, "fast_rmtree", side_effect=RuntimeError("boom-member")):
+        with pytest.raises(RuntimeError, match="boom-member"):
             runner.main(
-                ["--sa-id", "3", "--analysis-dir", str(analysis_dir)]
+                ["--member-id", "3", "--analysis-dir", str(analysis_dir)]
             )
 
     sentinel = (
-        analysis_dir / "_status" / "_submitted" / "delete_subanalysis_sa-3.json"
+        analysis_dir / "_status" / "_submitted" / "delete_member_member-3.json"
     )
     _assert_sentinel_written_and_cleaned(sentinel)
 

@@ -290,45 +290,45 @@ def inject_multi_sim_failures_at_paths(paths: dict) -> None:
 
 
 def inject_sensitivity_failures_at_paths(paths: dict) -> None:
-    """Inject failures across sub-analyses of a synth_sensitivity clone.
+    """Inject failures across members of a synth_sensitivity clone.
 
     Coverage:
-    - sa_<first> / event_*: scenario setup failure (A1)
-    - sa_<second> / event_*: simulation run failure (A2)
-    - sa_<third> / event_*: timeseries processing failure (A3)
+    - member_<first> / event_*: scenario setup failure (A1)
+    - member_<second> / event_*: simulation run failure (A2)
+    - member_<third> / event_*: timeseries processing failure (A3)
     - System: SWMM compilation marked failed (S1)
     - System: sensitivity_datatree.zarr deleted (S2)
     """
     analysis_dir = paths["analysis_dir"]
     system_dir = paths["system_dir"]
-    sub_root = analysis_dir / "subanalyses"
+    sub_root = analysis_dir / "members"
     if not sub_root.exists():
         # Some sensitivity layouts use a different root; try common alternatives.
-        for alt in ["sub_analyses", "sa", "ensemble"]:
+        for alt in ["members", "member", "ensemble"]:
             if (analysis_dir / alt).exists():
                 sub_root = analysis_dir / alt
                 break
-    sa_dirs = sorted([d for d in sub_root.iterdir() if d.is_dir()])
-    assert len(sa_dirs) >= 3, f"expected ≥3 sub-analysis dirs in {sub_root}, found {len(sa_dirs)}"
+    member_dirs = sorted([d for d in sub_root.iterdir() if d.is_dir()])
+    assert len(member_dirs) >= 3, f"expected ≥3 member dirs in {sub_root}, found {len(member_dirs)}"
 
-    def _first_scenario_in_sa(sa_dir):
-        sims = sa_dir / "sims"
+    def _first_scenario_in_member(member_dir):
+        sims = member_dir / "sims"
         return next(iter(sorted(d for d in sims.iterdir() if d.is_dir())))
 
-    inject_scenario_setup_failure(_first_scenario_in_sa(sa_dirs[0]))
-    inject_simulation_run_failure(_first_scenario_in_sa(sa_dirs[1]), model_type="triton")
-    if len(sa_dirs) >= 3:
-        inject_timeseries_failure(_first_scenario_in_sa(sa_dirs[2]))
-    # Flip per-sub-analysis log flags so the validators see them as failed
-    for i, sa_dir in enumerate(sa_dirs[:3]):
+    inject_scenario_setup_failure(_first_scenario_in_member(member_dirs[0]))
+    inject_simulation_run_failure(_first_scenario_in_member(member_dirs[1]), model_type="triton")
+    if len(member_dirs) >= 3:
+        inject_timeseries_failure(_first_scenario_in_member(member_dirs[2]))
+    # Flip per-member log flags so the validators see them as failed
+    for i, member_dir in enumerate(member_dirs[:3]):
         if i == 0:
-            inject_analysis_log_flag_false(sa_dir, "all_scenarios_created")
+            inject_analysis_log_flag_false(member_dir, "all_scenarios_created")
         elif i == 1:
-            inject_analysis_log_flag_false(sa_dir, "all_sims_run")
+            inject_analysis_log_flag_false(member_dir, "all_sims_run")
         elif i == 2:
-            inject_analysis_log_flag_false(sa_dir, "all_TRITONSWMM_performance_timeseries_processed")
-            inject_analysis_log_flag_false(sa_dir, "all_TRITON_timeseries_processed")
-            inject_analysis_log_flag_false(sa_dir, "all_SWMM_timeseries_processed")
+            inject_analysis_log_flag_false(member_dir, "all_TRITONSWMM_performance_timeseries_processed")
+            inject_analysis_log_flag_false(member_dir, "all_TRITON_timeseries_processed")
+            inject_analysis_log_flag_false(member_dir, "all_SWMM_timeseries_processed")
     sys_log = system_dir / "system_log.json"
     if sys_log.exists():
         _mutate_log_field(sys_log, "compilation_swmm_successful", False)

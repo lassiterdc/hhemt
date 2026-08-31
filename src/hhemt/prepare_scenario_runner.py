@@ -98,10 +98,10 @@ def main():
         help="Event id slug for the flag sidecar payload",
     )
     parser.add_argument(
-        "--sa-id",
+        "--member-id",
         type=str,
         default=None,
-        help="Sub-analysis id for the flag sidecar payload (sensitivity)",
+        help="Member id for the flag sidecar payload (sensitivity)",
     )
     parser.add_argument(
         "--target-partition",
@@ -151,7 +151,7 @@ def main():
         # the GPU build dir from these fields, so they MUST be injected here or a GPU prepare
         # finds build_dir_gpu=None and raises CompilationError("Log: missing"). Unlike
         # setup/simulation (which read --target-partition from the Snakefile), prepare is
-        # always per-single-sub-analysis, so the ensemble partition is unambiguous and read
+        # always per-single-member, so the ensemble partition is unambiguous and read
         # directly from the loaded analysis config — no Snakefile thread needed. The helper
         # returns (None, None) for null selectors, so CPU/local prepares are byte-identical.
         cfg_hpc = (
@@ -159,7 +159,7 @@ def main():
         )
         # The Snakefile's prepare rule carries --target-partition (the shared
         # UniqueSystemTarget's canonical partition) just like setup/sim — prefer it; fall
-        # back to the per-sub analysis config's hpc_ensemble_partition for direct CLI use
+        # back to the per-member config's hpc_ensemble_partition for direct CLI use
         # or a target without an explicit partition. resolve_gpu_target returns (None, None)
         # for null selectors, so CPU/local prepares stay byte-identical.
         _partition = (

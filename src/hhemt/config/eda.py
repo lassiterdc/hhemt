@@ -89,7 +89,7 @@ class eda_config(cfgBaseModel):
             "dem_resolution_error_ecdf, dem_resolution_coupling_table -- pair it with "
             "report.reporting_set='dem-resolution' and a system.target_dem_resolution "
             "sweep. The two families are mutually exclusive per experiment: "
-            "config_diff_maps requires a UNIFORM grid across sub-analyses and raises "
+            "config_diff_maps requires a UNIFORM grid across members and raises "
             "a named ProcessingError on a mixed-resolution master. Membership is "
             "VALIDATED AT RENDER TIME (not config-load): an unknown key raises "
             "ValueError in render_eda_plots, which fails fast at the eda() facade "

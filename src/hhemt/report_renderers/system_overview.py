@@ -768,7 +768,7 @@ def _resolve_inp_sources(analysis: TRITONSWMM_analysis) -> tuple[Path, Path]:
         )
 
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        subs = analysis.sensitivity.analyses
+        subs = analysis.sensitivity.members
         first_sub = subs[next(iter(subs))]
         return _pick(first_sub._retrieve_sim_runs(0)._scenario.scen_paths)
     return _pick(analysis._retrieve_sim_runs(0)._scenario.scen_paths)

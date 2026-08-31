@@ -245,7 +245,7 @@ class Bundle:
 
         Verifies the SIF (mandatory sha256 digest match when the crate references
         one, fail-closed; best-effort ``apptainer verify`` PGP), re-aims
-        ``validation.py`` preflight at ``target_hpc_profile``, and emits per-``(sa_id,
+        ``validation.py`` preflight at ``target_hpc_profile``, and emits per-``(member_id,
         column)`` problem pairs plus per-field graduated experiment amendments for
         closest-possible cross-system reproduction. Mirrors ``Bundle.eda()`` —
         delegates to the ``bundle._reprex`` free function with ``bundle.root``.
@@ -426,12 +426,12 @@ class Bundle:
         # Navbar upper-left brand text from the bundled theme (D-6/D-9), defaulting
         # to the bundle's analysis_id; None falls back to the historical literal.
         _navbar = _theme.upper_left_text or (self._cfg_analysis.analysis_id if self._cfg_analysis else None)
-        # S4: resolve sa_id card names to derived compute-config labels, from the
+        # S4: resolve member_id card names to derived compute-config labels, from the
         # bundle's own scenario_status.csv. Threaded to BOTH branches so the html
         # and the zip cannot diverge on card names.
-        from ..report_plot_ids import event_labels_from_status, sa_labels_from_status
+        from ..report_plot_ids import event_labels_from_status, member_labels_from_status
 
-        _sa_labels = sa_labels_from_status(self._root)
+        _member_labels = member_labels_from_status(self._root)
         _event_labels = event_labels_from_status(self._root)
         try:
             if format == "html":
@@ -440,7 +440,7 @@ class Bundle:
                         output_path.read_text(),
                         bundle_mode=True,
                         navbar_text=_navbar,
-                        sa_labels=_sa_labels,
+                        member_labels=_member_labels,
                         event_labels=_event_labels,
                     )
                 )
@@ -449,7 +449,7 @@ class Bundle:
                     output_path,
                     bundle_mode=True,
                     navbar_text=_navbar,
-                    sa_labels=_sa_labels,
+                    member_labels=_member_labels,
                     event_labels=_event_labels,
                 )
         except Exception:

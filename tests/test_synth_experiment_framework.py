@@ -169,7 +169,7 @@ def test_matrix_is_partition_as_axis(tmp_path):
         | {_ANALYSIS_COLUMN_PREFIX + f for f in analysis_config.model_fields}
         | {_HPC_COLUMN_PREFIX + k for k in _HPC_ALIAS_TO_ANALYSIS_FIELD}
     )
-    unknown = (set(df.columns) - {"sa_id"}) - valid
+    unknown = (set(df.columns) - {"member_id"}) - valid
     assert not unknown, f"matrix has Unknown sensitivity-CSV columns: {sorted(unknown)}"
 
 
@@ -180,7 +180,7 @@ def test_rank_sweep_generates_mpi_rows(tmp_path):
     mpi = df[df.run_mode == "mpi"]
     assert sorted(mpi.n_mpi_procs.tolist()) == [2, 2, 4, 4, 8, 8]
     # baseline global-enumerate indices 9/10/11 (mpi spliced between openmp and hybrid)
-    assert set(mpi.sa_id) == {"mpi_9_r1", "mpi_9_r2", "mpi_10_r1", "mpi_10_r2", "mpi_11_r1", "mpi_11_r2"}
+    assert set(mpi.member_id) == {"mpi_9_r1", "mpi_9_r2", "mpi_10_r1", "mpi_10_r2", "mpi_11_r1", "mpi_11_r2"}
 
 
 def test_synth_model_importable_without_tests():

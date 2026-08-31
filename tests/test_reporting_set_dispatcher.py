@@ -3,7 +3,7 @@
 
 The byte-identity gate (test_synth_reporting_sets_byte_identity.py) covers the
 production generators, but its fixtures fire BOTH conditional predicates
-(sa_event_pairs + independent_vars), so it never exercises the predicate-FALSE /
+(member_event_pairs + independent_vars), so it never exercises the predicate-FALSE /
 mixed paths or the B-i interleave-hook placement when the first conditional is
 skipped. This module pins that load-bearing logic directly with stub builders, so
 the export-rule interleave placement and the predicate gating are verified for
@@ -58,7 +58,7 @@ class _StubBuilder(wf._ReportingSetDispatchMixin):
     def _build_plot_rule_block_per_sim(self, ctx=None):
         return "PSIM\n"
 
-    def _build_plot_rule_block_per_sim_per_sa(self, ctx=None):
+    def _build_plot_rule_block_per_sim_per_member(self, ctx=None):
         return "PSS\n"
 
     def _build_plot_rule_block_sensitivity_benchmarking(self, independent_vars, ctx=None):
@@ -74,7 +74,7 @@ def _benchmarking_shaped_set() -> ReportingSet:
         renderer_selection=(
             RendererSelection("system_overview"),
             RendererSelection("disk_utilization"),
-            RendererSelection("per_sim_per_sa", predicate_key="has_sa_event_pairs"),
+            RendererSelection("per_sim_per_member", predicate_key="has_member_event_pairs"),
             RendererSelection("sensitivity_benchmarking", predicate_key="has_independent_vars"),
         ),
         validator_key="none",
@@ -91,14 +91,14 @@ def test_interleave_and_both_conditionals_fire():
     out = _StubBuilder()._emit_active_set_plot_rules(
         _benchmarking_shaped_set(),
         input_flag="f",
-        predicate_inputs={"sa_event_pairs_sa": [(0, 0)], "independent_vars": ["x"]},
+        predicate_inputs={"member_event_pairs_member": [(0, 0)], "independent_vars": ["x"]},
         interleave_after_unconditional=_export_hook,
     )
     assert out == "SO\nDISK\nEXPORT\nPSS\nSB\n"
 
 
 def test_interleave_fires_even_when_first_conditional_predicate_false():
-    """sa_event_pairs empty (per_sim_per_sa skipped) but independent_vars present:
+    """member_event_pairs empty (per_sim_per_member skipped) but independent_vars present:
     EXPORT must STILL fire before the (skipped) first conditional, then SB emits.
     This is the load-bearing B-i property — export is unconditional and lands
     between the unconditional and conditional renderers regardless of the first
@@ -106,7 +106,7 @@ def test_interleave_fires_even_when_first_conditional_predicate_false():
     out = _StubBuilder()._emit_active_set_plot_rules(
         _benchmarking_shaped_set(),
         input_flag="f",
-        predicate_inputs={"sa_event_pairs_sa": [], "independent_vars": ["x"]},
+        predicate_inputs={"member_event_pairs_member": [], "independent_vars": ["x"]},
         interleave_after_unconditional=_export_hook,
     )
     assert out == "SO\nDISK\nEXPORT\nSB\n"
@@ -118,7 +118,7 @@ def test_interleave_fires_when_all_conditionals_skip():
     out = _StubBuilder()._emit_active_set_plot_rules(
         _benchmarking_shaped_set(),
         input_flag="f",
-        predicate_inputs={"sa_event_pairs_sa": [], "independent_vars": []},
+        predicate_inputs={"member_event_pairs_member": [], "independent_vars": []},
         interleave_after_unconditional=_export_hook,
     )
     assert out == "SO\nDISK\nEXPORT\n"
@@ -136,7 +136,7 @@ def test_hook_fires_exactly_once():
     out = _StubBuilder()._emit_active_set_plot_rules(
         _benchmarking_shaped_set(),
         input_flag="f",
-        predicate_inputs={"sa_event_pairs_sa": [(0, 0)], "independent_vars": ["x"]},
+        predicate_inputs={"member_event_pairs_member": [(0, 0)], "independent_vars": ["x"]},
         interleave_after_unconditional=_counting_hook,
     )
     assert calls["n"] == 1

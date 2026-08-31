@@ -1,0 +1,42 @@
+# Caption-vocabulary guard: fails if any file under src/hhemt/report_templates/
+# still carries the retired member vocabulary. That tree is package data copied
+# into {analysis_dir}/report/ at every Snakefile write and rendered into
+# analysis_report.html by `snakemake --report`, so its prose is published text.
+# Modelled on anonymization-guard.yml.
+# This workflow DELIVERS the check; designating it a required status check on
+# `main` is branch-protection scope, not this file's.
+#
+# DEVIATION FROM SPEC (primary:4443), disclosed rather than silent. That spec says
+# "stdlib-only, so no install step is needed", which was true of the checker as it
+# stood in primary:4320 -- it inlined the alternation. The paired [REPHRASE] at
+# primary:4920 re-points the token set at scripts/vocabulary_retired.yaml, and its
+# load_retired() runs UNCONDITIONALLY at checker start-up. So the "paths that do not
+# read the file" the REPHRASE's reachability note relies on do not exist, and the job
+# as specified would die with ModuleNotFoundError: No module named 'yaml' on a bare
+# actions/setup-python interpreter. PyYAML is not stdlib. Verified against the claimed
+# precedent: check_anonymization.py imports only argparse/re/subprocess/sys/dataclasses/
+# pathlib, so anonymization-guard.yml is correctly install-free and this one cannot be.
+name: Caption vocabulary guard
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+permissions:
+  contents: read
+
+jobs:
+  caption-vocabulary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install --disable-pip-version-check pyyaml
+      - name: Run caption-vocabulary guard
+        run: python scripts/check_caption_vocabulary.py

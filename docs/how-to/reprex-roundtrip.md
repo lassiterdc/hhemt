@@ -18,7 +18,7 @@ during `render_report()`, so run it first):
 # Single analysis
 bundle_dir = analysis.reprex_bundle()
 
-# Sensitivity master (the primary reprex surface, because the per-(sa_id, column)
+# Sensitivity master (the primary reprex surface, because the per-(member_id, column)
 # problem-pair report is intrinsically a sensitivity concept)
 bundle_dir = sensitivity.reprex_bundle()
 ```
@@ -115,7 +115,7 @@ result = Bundle.from_directory(bundle_dir).reprex(my_reprex, my_hpc_profile)
    | Field | Meaning |
    |---|---|
    | `runnable` | `True` when no sensitivity row exceeds a target partition cap |
-   | `problem_pairs` | one `ValidationIssue` per `(sa_id, column)` that exceeds a cap, naming the exact rows/resources to reduce |
+   | `problem_pairs` | one `ValidationIssue` per `(member_id, column)` that exceeds a cap, naming the exact rows/resources to reduce |
    | `amendments` | per-field experiment amendments, each labelled `validated` (a deterministic target-partition lookup pins the value) or `advisory` (you must decide, with a named reason) |
    | `sif_reference_present` / `sif_verified` / `sif_signature_ok` | SIF verification outcome (see step 1) |
    | `zero_user_info_leaks` | informational: producer tokens still present in the bundle (see below) |

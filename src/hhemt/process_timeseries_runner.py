@@ -144,10 +144,10 @@ def main():
         help="Event id slug for the flag sidecar payload",
     )
     parser.add_argument(
-        "--sa-id",
+        "--member-id",
         type=str,
         default=None,
-        help="Sub-analysis id for the flag sidecar payload (sensitivity)",
+        help="Member id for the flag sidecar payload (sensitivity)",
     )
     try:
         args = parser.parse_args()
@@ -359,7 +359,7 @@ def main():
 
         # (R6 positive completion marker) Gate the d_process flag write on THIS
         # model's summary files actually existing on disk. The d_process flag is
-        # per-(model_type, sa_id, event_id) — each runner processes one
+        # per-(model_type, member_id, event_id) — each runner processes one
         # args.model_type and writes one per-model flag — so gate on THIS model
         # only; gating on other models' summaries would fail spuriously because
         # each model's runner is an independent rule. This strengthens the flag's

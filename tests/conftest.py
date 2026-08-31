@@ -639,7 +639,7 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
 
     # Ensure the master analysis is in a "post-master-consolidate" state. If
     # ``f_consolidate_master_complete.flag`` is absent, run the master
-    # sensitivity workflow once locally to materialize per-sa flags + the
+    # sensitivity workflow once locally to materialize per-member flags + the
     # master flag + the sensitivity_datatree.zarr.
     payload = ("sensitivity_datatree.zarr", "_status/f_consolidate_master_complete.flag")
     state = _marker_state(analysis_dir, payload)
@@ -656,7 +656,7 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
 # Per-test isolated clones of the session-scoped ``*_completed`` fixtures, built
 # on the in-tree clone helper (``tests/_failing_fixture_helpers.clone_analysis_to_tmp``),
 # which copies the FULL system_directory (configs + nested analysis_dir +
-# ``subanalyses/``) and re-roots ``system_directory`` in the cloned config — the
+# ``members/``) and re-roots ``system_directory`` in the cloned config — the
 # config files live in the system_directory (the parent of analysis_dir), NOT in
 # analysis_dir. Mutating consumers depend on these wrappers so a full
 # ``pytest tests/`` run yields the same per-test verdict as an isolated ``-k`` run.
@@ -671,7 +671,7 @@ def synthetic_multisim_completed_isolated(synthetic_multisim_completed, tmp_path
 @pytest.fixture
 def synthetic_sensitivity_completed_isolated(synthetic_sensitivity_completed, tmp_path):
     """Per-test isolated copy of ``synthetic_sensitivity_completed`` (D1) — clones
-    the master system_directory (with ``subanalyses/``) so master AND per-sa
+    the master system_directory (with ``members/``) so master AND per-member
     reprocess paths re-derive under tmp_path."""
     from tests._failing_fixture_helpers import clone_analysis_to_tmp
 
@@ -957,7 +957,7 @@ def synthetic_two_bundle_fixture(rendered_synth_multi_sim, tmp_path):
     (``_combine_merge.CONSOLIDATED_TREE_NAME``), which is the consolidated tree a
     single analysis ships at its root. A sensitivity master instead ships
     ``sensitivity_datatree.zarr`` at root (its per-sub trees live under
-    ``subanalyses/sa_N/analysis_datatree.zarr``), so ``combine_bundle`` would raise
+    ``members/member_N/analysis_datatree.zarr``), so ``combine_bundle`` would raise
     ``FileNotFoundError`` in merge. Combining sensitivity-master bundles is a
     routed follow-up (generalize the merge to accept ``sensitivity_datatree.zarr``).
 

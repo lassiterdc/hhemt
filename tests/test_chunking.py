@@ -153,7 +153,7 @@ def create_sensitivity_dataset(
             "sub_analysis_iloc": np.arange(n_analysis),
             "sa_id": (
                 "sub_analysis_iloc",
-                np.array([f"sa{i}" for i in range(n_analysis)]),
+                np.array([f"member{i}" for i in range(n_analysis)]),
             ),
             "run_mode": run_mode_labels,
             "n_gpus": np.arange(n_gpus),

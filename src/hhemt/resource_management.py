@@ -67,7 +67,7 @@ class ResourceManager:
         Notes
         -----
         If this is a sensitivity analysis, returns the most demanding requirements
-        across all sub-analyses.
+        across all members.
         """
         # Get per-simulation requirements from config
         mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
@@ -78,9 +78,9 @@ class ResourceManager:
         max_gpus = self.cfg_analysis.n_gpus or 0
         max_mem_mb = self.cfg_analysis.mem_gb_per_cpu * max_cpus * 1000
 
-        # For sensitivity analysis, find max demands across sub-analyses
+        # For sensitivity analysis, find max demands across members
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            for analysis in self.analysis.sensitivity.analyses.values():
+            for analysis in self.analysis.sensitivity.members.values():
                 mpi_ranks = analysis.cfg_analysis.n_mpi_procs or 1
                 omp_threads = analysis.cfg_analysis.n_omp_threads or 1
                 n_gpus = analysis.cfg_analysis.n_gpus or 0

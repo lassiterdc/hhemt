@@ -57,7 +57,7 @@ safe to inspect first: each has a listing mode before it has a deleting mode.
 | Command | What it does |
 |---|---|
 | `delete` | Delete an entire analysis tree by dispatching per-scenario Snakemake delete jobs. **Not `rm -rf`-equivalent**: it refuses by default while any simulation is in flight. Use `--dry-run` first. |
-| `cleanup-orphans` | List or delete sub-analysis directories orphaned by an edit to the sensitivity spreadsheet. |
+| `cleanup-orphans` | List or delete member directories orphaned by an edit to the sensitivity spreadsheet. |
 | `cleanup-stale-metadata` | List or delete orphaned `.snakemake/metadata/` records left by past rule-output renames. |
 | `cleanup-orphan-delete-sentinels` | Clear known-dead orphan delete sentinels left by killed delete workers. |
 | `cleanup-settled-markers` | Prune settled completion/failure markers whose submitted-sentinel is gone. |
