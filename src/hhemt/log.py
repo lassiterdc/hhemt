@@ -8,12 +8,6 @@ import json
 from typing import Type, Optional, Generic, TypeVar, Any, Dict
 import logging
 
-# Bounded re-read for an absent log inside write(). write_json rebinds the name with
-# temp+fsync+os.replace, so a concurrent writer restores it in microseconds; these
-# bound how long a racing reader waits before REFUSING rather than clobbering.
-_ABSENT_LOG_READ_RETRIES = 5
-_ABSENT_LOG_READ_BACKOFF_S = 0.05
-
 
 T = TypeVar("T")  # Generic type variable
 
@@ -252,44 +246,6 @@ class TRITONSWMM_log(BaseModel):
                     try:
                         with self.logfile.open() as f:
                             disk = json.load(f)
-                    except FileNotFoundError as exc:
-                        # ABSENCE IS NOT CORRUPTION, and this arm MUST precede the
-                        # OSError arm below because FileNotFoundError subclasses it.
-                        # The file was bound at .exists() and gone at .open(): a race,
-                        # not a damaged document. Degrading to `disk = {}` here makes
-                        # `overlay` empty, so `merged == mine` -- and when `mine` is an
-                        # information-free instance (the one `_refresh_log`'s absent-log
-                        # branch yields) that persists ALL-NULLS over whatever another
-                        # process holds. That is state DESTRUCTION, so the "never abort
-                        # over a diagnostic" rationale below does not reach it.
-                        # Retry briefly -- write_json is temp+fsync+os.replace, so a
-                        # concurrent writer rebinds the name in microseconds -- then
-                        # REFUSE. Refusing is loud and loses nothing: this instance's
-                        # state is still in memory and the rule retries.
-                        import time as _time
-
-                        _disk = None
-                        for _ in range(_ABSENT_LOG_READ_RETRIES):
-                            _time.sleep(_ABSENT_LOG_READ_BACKOFF_S)
-                            try:
-                                with self.logfile.open() as f:
-                                    _disk = json.load(f)
-                                break
-                            except (json.JSONDecodeError, OSError):
-                                continue
-                        if _disk is None:
-                            raise ProcessingError(
-                                "log write (re-read after absence)",
-                                filepath=self.logfile,
-                                reason=(
-                                    f"{self.logfile} vanished between the existence check and "
-                                    f"the read, and did not reappear within "
-                                    f"{_ABSENT_LOG_READ_RETRIES} retries. Refusing to write: "
-                                    "proceeding would persist this instance's unchanged fields "
-                                    "as nulls over the on-disk log."
-                                ),
-                            ) from exc
-                        disk = _disk
                     except (json.JSONDecodeError, OSError) as exc:
                         # An EXISTING log that will not parse/read is NOT the same as
                         # an absent log. Degrading to {} here silently discards every
