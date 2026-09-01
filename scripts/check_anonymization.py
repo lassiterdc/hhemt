@@ -7,6 +7,16 @@ ground-truth blocklist `scripts/anonymization_blocklist.txt`. Working-tree scrub
 enforcement only; git HISTORY exposure is a separate concern (ADR-3 /
 git-specialist). Pure-stdlib; mirrors scripts/check_du_sentinel_sites.py.
 
+OUT OF SCOPE, stated because a green run here is NOT "nothing private ships".
+This guard reads a git-tracked WORKING TREE and nothing else. It cannot see:
+(a) BUILT ARTIFACT CONTENTS -- an Apptainer SIF, a wheel, a tarball. `%files`
+has no ignore mechanism, so `containers/*.def`'s `%files ../` copies the repo
+root INCLUDING `.git`; those recipes now `rm -rf /opt/hhemt-src/.git` in
+`%post`, and that removal -- not this guard -- is what keeps commit history out
+of an image. (b) UNTRACKED files, which `git ls-files` does not enumerate.
+(c) Git history, per above. Anything shipped by a path other than the tracked
+working tree needs its own control at that path.
+
 INDEPENDENCE INVARIANT: this module imports NOTHING from src/hhemt/. Its
 ground truth is the hand-authored blocklist file, never the constants the scrub
 edits (verification guards need an independent ground-truth signal).
