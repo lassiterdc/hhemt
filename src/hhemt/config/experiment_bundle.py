@@ -122,7 +122,8 @@ class ContainerRef(BaseModel):
     def_recipe: str = Field(
         description=(
             "BUNDLE-relative .def path (e.g. 'containers/uva-cuda.def'), or a "
-            "${VAR}-rooted path (e.g. '${HHEMT_CONTAINERS}/uva-cuda.def') when several "
+            "${VAR}-rooted path (e.g. '${HHEMT_TOOLKIT}/containers/uva-cuda.def') when "
+            "several "
             "experiments share one recipe. The VALUE declares its own root, so there is "
             "no resolution order and no cwd fallback. An operator-rooted value -- "
             "absolute, ~-rooted, or unbraced $VAR -- declares neither and is rejected."
@@ -133,6 +134,15 @@ class ContainerRef(BaseModel):
         description="Where the authoritative SIF digest lives. Only 'ro-crate' is valid.",
     )
 
+    # THE WORKED EXAMPLES ABOVE NAME A PROVISIONED VARIABLE ON PURPOSE. They previously
+    # read `${HHEMT_CONTAINERS}`, which nothing exports: `grep -rn 'export HHEMT_CONTAINERS'`
+    # over BOTH repos returns 0, and its only other occurrences are two test values. A
+    # schema's worked example is the text the next author copies, so an unprovisioned
+    # variable there MINTS the unset-variable failure the value contract exists to make
+    # loud. `$HHEMT_TOOLKIT` is the estate's own root for the toolkit checkout (~150
+    # references across its scripts and READMEs) and is what eight of the nine live
+    # descriptors resolve through.
+    #
     # The two roots a value may declare. `${` is checked FIRST and exempts the shared
     # arm from the `$` rejection below -- that exemption is what makes the first clause
     # of the guard load-bearing rather than dead.
@@ -148,7 +158,8 @@ class ContainerRef(BaseModel):
             raise ValueError(
                 f"ContainerRef: def_recipe must declare its own root -- BUNDLE-relative "
                 f"(e.g. 'containers/uva-cuda.def') or ${{VAR}}-rooted (e.g. "
-                f"'${{HHEMT_CONTAINERS}}/uva-cuda.def'). Got {self.def_recipe!r}, which is "
+                f"'${{HHEMT_TOOLKIT}}/containers/uva-cuda.def'). Got {self.def_recipe!r}, "
+                "which is "
                 "operator-rooted and therefore unreproducible for a third party."
             )
         return self
