@@ -127,6 +127,10 @@ From: ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc709
     export LD_LIBRARY_PATH=/opt/openmpi/lib:${LD_LIBRARY_PATH:-}
 
 %labels
+    # Read by process_timeseries_runner's container-toolkit guard via
+    # /.singularity.d/labels.json: the rung refuses to process when the imported
+    # `hhemt` resolves outside this root. Must match the `%files ../ <dest>` target.
+    org.hhemt.toolkit_root /opt/hhemt-src
     org.hhemt.role        uva-cpu-production
     org.hhemt.backend     kokkos-openmp-serial
     # NOTE: intentionally NO org.hhemt.gpu_arch / org.hhemt.gpu_hardware label — this is
