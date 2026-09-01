@@ -112,11 +112,7 @@ def _quantised_depth_cap(masked) -> float | None:
     """
     arr = np.asarray(masked, dtype=float)
     raw = float(np.nanmax(arr)) if np.isfinite(arr).any() else None
-    cap = (
-        float(np.ceil(raw / _DEPTH_CAP_STEP_M) * _DEPTH_CAP_STEP_M)
-        if raw is not None and raw > 0
-        else raw
-    )
+    cap = float(np.ceil(raw / _DEPTH_CAP_STEP_M) * _DEPTH_CAP_STEP_M) if raw is not None and raw > 0 else raw
     return cap if cap is not None and cap > 0 else None
 
 
@@ -866,9 +862,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     if not subs:
         return _config_diff_absent_panel(
             headline="Config-diff maps unavailable (no comparable members)",
-            observed=(
-                "The consolidated tree carries no member with a TRITON node, so there is " "nothing to compare."
-            ),
+            observed=("The consolidated tree carries no member with a TRITON node, so there is nothing to compare."),
             remedy=(
                 "The figure populates once the master carries members whose processed "
                 "outputs include the TRITON depth tier."
@@ -1235,9 +1229,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             labels=g["labels"],
             members=g["members"],
             attrs_by_member={member: subs[member]["attrs"] for member in g["members"] if member in subs},
-            value_by_member={
-                member: int(nr) for member, nr in zip(g["members"], g["n_resumes"], strict=False)
-            },
+            value_by_member={member: int(nr) for member, nr in zip(g["members"], g["n_resumes"], strict=False)},
             order_key=_device_count,
         )
         fig.add_trace(
@@ -1648,6 +1640,7 @@ def config_diff_source_paths(root: Path) -> list[Path]:
     srcs: list[Path] = [
         root / "sensitivity_datatree.zarr",
         root / "eda" / "eda_cross_sim_identity.zarr",
+        root / "eda" / "eda_cross_sim_identity.manifest.json",
         root / "scenario_status.csv",  # b5: n_resumes column in the per-panel config table
         # The watershed polygon: this figure otherwise free-rides on ANOTHER renderer's
         # declaration to get it into the bundle. Declaring it here makes the harvest file set

@@ -600,7 +600,7 @@ def _render_b4b(
     return emit_plot_with_sources(
         html_text,
         output_path,
-        source_paths=[artifact],
+        source_paths=[artifact, artifact.with_suffix(".manifest.json")],
         analysis_dir=root,
         output_format="html",
     )

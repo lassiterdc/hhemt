@@ -37,6 +37,7 @@ def sensitivity_source_paths(root: Path, plot_id: str) -> list[Path]:
     return [
         root / "eda" / f"{plot_id}.zarr",
         root / "eda" / f"{plot_id}.verdict.json",
+        root / "eda" / f"{plot_id}.manifest.json",
     ]
 
 
