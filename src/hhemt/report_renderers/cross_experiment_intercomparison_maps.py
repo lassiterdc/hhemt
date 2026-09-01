@@ -13,7 +13,7 @@ place, so this is pure rendering over already-shipped data (Q11) with no re-run.
 
 MANDATORY caveat (master §Risks :218): the coupled runs use TRITON's variable dt, so
 SWMM drops the final reporting period (Nperiods=N-1). The truncation is ONE-SIDED, NOT
-common-mode: the clean arm drops it on all 28 sub-analyses, while the resume arm
+common-mode: the clean arm drops it on all 28 members, while the resume arm
 recovers it on 14 — a hotstart restarts the coupling-clock FP accumulation at an
 exactly-representable checkpoint time, so emission of the final period is a
 deterministic function of the restart time replay_t (predicts 28/28; compute config
@@ -47,7 +47,7 @@ _TRUNCATION_CAVEAT = (
     "(Nperiods=N-1). The truncation is ONE-SIDED, not common-mode: the clean arm "
     "drops the final period on every config, while a resumed run recovers it "
     "whenever the restart time falls on the emitting side of SWMM's report-gate "
-    "tolerance (measured: 14 of 28 sub-analyses). SWMM series are therefore "
+    "tolerance (measured: 14 of 28 members). SWMM series are therefore "
     "compared over the shared leading periods, which are timestamp-identical "
     "across both arms; the clean-vs-resume DIFFERENCE shown here is taken over "
     "that shared prefix. TRITON-side fields are unaffected (full length on both "
@@ -130,6 +130,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
+    from hhemt.config_labels import _derive_config_label
     from hhemt.eda._config_diff import (
         _CONFIG_DIFF_DEPTH_BAND_M,
         _CONFIG_DIFF_FLOW_BAND_CMS,
@@ -142,7 +143,6 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _align_to,
         _apply_mask,
         _conduit_traces,
-        _derive_config_label,
         _device_count_key,
         _group_by_identity,
         _heatmap,
@@ -225,9 +225,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     # is meaningful only on the coupled arm, and a fixed five-column header over a
     # pure-TRITON figure is a header-over-cells mismatch -- the defect that made the first
     # attempt at this table undeployable.
-    _summary_cols = (
-        ["Panel", "# configs in group", "byte-identical clean vs resume?", "max abs depth diff (m)"]
-        + (["max abs flow diff (cms)"] if has_coupled_arm else [])
+    _summary_cols = ["Panel", "# configs in group", "byte-identical clean vs resume?", "max abs depth diff (m)"] + (
+        ["max abs flow diff (cms)"] if has_coupled_arm else []
     )
 
     # A pair that differs ONLY in max_flow_cms still earns a panel: group by (model, config,
@@ -390,6 +389,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 model_groups = _group_by_identity(clean_subs, crates / clean_eid)
             except Exception:
                 model_groups = _fallback_groups(clean_subs)
+
             # DECLARED panel order. `_group_by_identity` returns its groups in the order it
             # happened to iterate `subs.items()`, i.e. the zarr store's group-traversal
             # order -- reproducible for a fixed store, but not derived from any stated rule,
@@ -406,11 +406,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             # happen to be correct and would break silently the moment the sort is deferred
             # or the loop advances first. Explicit capture is also what ruff's B023 asks for.
             def _group_order_key(gg, _cs=clean_subs):
-                _dev = (
-                    _device_count_key({"attrs": _cs[s].get("attrs", {})})
-                    for s in gg["members"]
-                    if s in _cs
-                )
+                _dev = (_device_count_key({"attrs": _cs[s].get("attrs", {})}) for s in gg["members"] if s in _cs)
                 return (
                     min(_dev, default=()),
                     sorted(gg["labels"])[0] if gg["labels"] else "",
@@ -423,7 +419,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     continue
                 # The family's baseline is its MINIMUM-device clean run: serial-CPU for the
                 # cpu family, the 1-GPU run for each GPU hardware token.
-                base_sa = min(fam_subs, key=lambda k: _sub_devkey(fam_subs[k]))
+                base_member = min(fam_subs, key=lambda k: _sub_devkey(fam_subs[k]))
                 # Within a class the sub-partition is the identity of its own members, so
                 # this is a no-op grouping that preserves the existing `groups` contract for
                 # the diff/pct rows below.
@@ -436,7 +432,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 ctx = dict(
                     model=model,
                     evt=evt,
-                    base_sa=base_sa,
+                    base_member=base_member,
                     fam_subs=fam_subs,
                     clean_eid=clean_eid,
                     resume_subs=resume_subs,
@@ -519,7 +515,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     def _grid(ctx):
         key = (ctx["clean_eid"], ctx["evt"])
         if key not in _mask_cache:
-            base_da = ctx["fam_subs"][ctx["base_sa"]]["wlevel"]
+            base_da = ctx["fam_subs"][ctx["base_member"]]["wlevel"]
             xd = [float(v) for v in base_da["x"].values]
             yd = [float(v) for v in base_da["y"].values]
             wpoly = _watershed_polygon(crates / ctx["clean_eid"])
@@ -528,23 +524,23 @@ def build_cross_experiment_diff_figure(combined_root: Path):
 
     def _resume_da(ctx, g):
         """The resumed run for this identity group's representative config."""
-        for sa_id in g["members"]:
-            s = ctx["resume_subs"].get(sa_id)
+        for member_id in g["members"]:
+            s = ctx["resume_subs"].get(member_id)
             if s is not None:
                 return s["wlevel"]
         return None
 
-    def _lbl_of(grp, sa) -> str:
+    def _lbl_of(grp, member) -> str:
         """A member's config label, from the group's parallel members/labels lists.
 
-        The absent rows are built from sa_ids rather than from `side_table_columns`' output,
+        The absent rows are built from member_ids rather than from `side_table_columns`' output,
         so they need this to render a label. Positional over two parallel lists -- no set or
         dict traversal -- so it satisfies the deterministic-labels ruling by construction.
         """
         for _s, _l in zip(grp["members"], grp["labels"], strict=False):
-            if _s == sa:
+            if _s == member:
                 return _l
-        return sa
+        return member
 
     def _class_descriptor(ctx_, grp) -> str:
         """Name an identity class by what it holds, not by how it was formed.
@@ -639,10 +635,10 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     # the per-panel side table already uses, which is required here because R9.4 removed
     # table cells from `specs` entirely and there is no subplot slot to put this in.
     #
-    # Pairs are attributed to a panel through the CONFIG IDENTITY, not the sa_id:
+    # Pairs are attributed to a panel through the CONFIG IDENTITY, not the member_id:
     # `_combine` keys its pair records with `config_identity_from_node_attrs`, which
     # deliberately excludes replicate suffixes so a clean and a resume sub of one config
-    # collide. `grp["members"]` are sa_ids. Joining those two directly yields an EMPTY
+    # collide. `grp["members"]` are member_ids. Joining those two directly yields an EMPTY
     # intersection and a table of blank magnitude columns that raises nothing.
     _pairs_by_cfg: dict[str, list[dict]] = {}
     for _p in all_pairs:
@@ -658,17 +654,19 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _ps = [q for cid in sorted(_ids) for q in _pairs_by_cfg.get(cid, [])]
         _n_cfg = len({lbl for lbl in _grp["labels"]})
         _depth = [
-            q["max_abs_diff"] for q in _ps
-            if q.get("variable") == "max_wlevel_m" and q.get("max_abs_diff") is not None
+            q["max_abs_diff"] for q in _ps if q.get("variable") == "max_wlevel_m" and q.get("max_abs_diff") is not None
         ]
         _flow = [
-            q["max_abs_diff"] for q in _ps
-            if q.get("variable") == "max_flow_cms" and q.get("max_abs_diff") is not None
+            q["max_abs_diff"] for q in _ps if q.get("variable") == "max_flow_cms" and q.get("max_abs_diff") is not None
         ]
         _verdict = (
-            "no comparable pair" if not _ps
-            else ("identical" if all(q.get("identical", True) for q in _ps)
-                  else f"{sum(1 for q in _ps if not q.get('identical', True))} of {len(_ps)} differ")
+            "no comparable pair"
+            if not _ps
+            else (
+                "identical"
+                if all(q.get("identical", True) for q in _ps)
+                else f"{sum(1 for q in _ps if not q.get('identical', True))} of {len(_ps)} differ"
+            )
         )
         _row = [f"Panel {_letter}", _n_cfg, _verdict, f"{max(_depth):.4g}" if _depth else "—"]
         # The flow column exists only when the coupled arm does, so the row width tracks
@@ -741,7 +739,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             continue
         ctx, g = entry["ctx"], entry["g"]
         _, _, _, wmask = _grid(ctx)
-        base_da = ctx["fam_subs"][ctx["base_sa"]]["wlevel"]
+        base_da = ctx["fam_subs"][ctx["base_member"]]["wlevel"]
         rda = _resume_da(ctx, g)
         if rda is None:
             continue
@@ -765,7 +763,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         row = 1 + i  # see _panel_rows: row 1 is a map row now, not the summary table
         ctx, kind = entry["ctx"], entry["kind"]
         model, evt = ctx["model"], ctx["evt"]
-        base_s = ctx["fam_subs"][ctx["base_sa"]]
+        base_s = ctx["fam_subs"][ctx["base_member"]]
         base_da = base_s["wlevel"]
         base_label = _derive_config_label(base_s.get("attrs", {}))
         xd, yd, wpoly, wmask = _grid(ctx)
@@ -805,13 +803,19 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 return _device_count_key({"attrs": a})
 
             _clean_cfg, _clean_nr = side_table_columns(
-                labels=g_["labels"], members=_clean_members, attrs_by_sa=_attrs,
-                value_by_sa={_sa: int(ctx["fam_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in _clean_members},
+                labels=g_["labels"],
+                members=_clean_members,
+                attrs_by_member=_attrs,
+                value_by_member={_sa: int(ctx["fam_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in _clean_members},
                 order_key=_ordk,
             )
             _res_cfg, _res_nr = side_table_columns(
-                labels=g_["labels"], members=_resume_members, attrs_by_sa=_attrs,
-                value_by_sa={_sa: int(ctx["resume_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in _resume_members},
+                labels=g_["labels"],
+                members=_resume_members,
+                attrs_by_member=_attrs,
+                value_by_member={
+                    _sa: int(ctx["resume_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in _resume_members
+                },
                 order_key=_ordk,
             )
             # MEMBERSHIP MADE VISIBLE, not a count check and not a hard failure. The table
@@ -1066,7 +1070,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             # repositioned. Iteration 10 moved it inside the panel to stop it crossing the
             # dashed outline; the Iteration-11 ruling SUPERSEDES that fix on FACTUAL grounds
             # rather than positional ones -- a panel's reference is its identity class's
-            # MINIMUM-DEVICE clean run (`base_sa = min(fam_subs, key=_sub_devkey)`), which is
+            # MINIMUM-DEVICE clean run (`base_member = min(fam_subs, key=_sub_devkey)`), which is
             # serial CPU only for the cpu class and is a 1-GPU run for every GPU class. A
             # fixed "Reference - ..." line therefore asserted a reference the panel does not
             # use. The same falsehood is what item 3 strips from the map titles, so the two
@@ -1243,11 +1247,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         # predicate the conduit block above tests -- so a pure-TRITON panel or a flow-less
         # base run cannot acquire a "Flow (cms)" title over an empty axis.
         _map_titles[(row, 1)] = _ROW_KIND_TITLE[_entry["kind"]]
-        if (
-            _ncols >= 2
-            and _entry["kind"] == "ref"
-            and _ctx["fam_subs"][_ctx["base_sa"]].get("flow") is not None
-        ):
+        if _ncols >= 2 and _entry["kind"] == "ref" and _ctx["fam_subs"][_ctx["base_member"]].get("flow") is not None:
             _map_titles[(row, 2)] = "Flow (cms)"
     for (_tr_row, _tr_col), _title_text in _map_titles.items():
         _xa0, _xa1 = _layout.map_domains[_tr_col]
@@ -1309,16 +1309,13 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         if _eid and _eid not in _bases:
             _bases.append(_eid)
     _span = " vs ".join(_bases)
-    _page_title = (
-        f"{_span} — Clean vs resume spatial diff maps" if _span else "Clean vs resume spatial diff maps"
-    )
+    _page_title = f"{_span} — Clean vs resume spatial diff maps" if _span else "Clean vs resume spatial diff maps"
     fig.update_layout(
         height=plot_h + _T_MARGIN + b_px,
         width=_FIG_W,
         margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
         title=(
-            f"{_page_title}<br><sup>resumed alternates vs the clean reference within "
-            "each byte-identity class</sup>"
+            f"{_page_title}<br><sup>resumed alternates vs the clean reference within " "each byte-identity class</sup>"
         ),
         annotations=list(fig.layout.annotations) + annotations,
         showlegend=False,

@@ -49,17 +49,20 @@ ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "s
 #      clearing hydro_swmm_sim_completed and re-simulating hydrology by hand.
 #   T2 (regenerable only by re-running an EXPENSIVE solver): timeseries,
 #      raw_swmm_binaries, coupled_rpt, standalone_rpt
-RemoveValue = Literal["all", "none"] | list[
-    Literal[
-        "timeseries",
-        "raw_swmm_binaries",
-        "coupled_rpt",
-        "hydro_out",
-        "prep_inputs",
-        "hydrographs",
-        "standalone_rpt",
+RemoveValue = (
+    Literal["all", "none"]
+    | list[
+        Literal[
+            "timeseries",
+            "raw_swmm_binaries",
+            "coupled_rpt",
+            "hydro_out",
+            "prep_inputs",
+            "hydrographs",
+            "standalone_rpt",
+        ]
     ]
-]
+)
 # Deliberately NOT a widening of ClearRawValue: that alias is ALSO ForceRerunSpec.subject's
 # type (see the comment directly below), so adding an artifact-class member to it would make
 # that member a legal force-rerun subject, where it means nothing. Different axis --
@@ -77,7 +80,7 @@ class ForceRerunSpec(cfgBaseModel):
     """WHICH simulations to force, and from WHICH stage down.
 
     Two ORTHOGONAL axes as separate fields rather than keys in one dict. The subject keys
-    are mutually exclusive by construction -- `sa_id` requires `toggle_sensitivity_analysis`
+    are mutually exclusive by construction -- `member_id` requires `toggle_sensitivity_analysis`
     True and `event_iloc` requires it False -- which is why the shipped validator's
     `next(iter(...))` is correct. A `stage` key added to that same dict would make the
     first-key read insertion-order-dependent and silently skip subject validation.
@@ -136,7 +139,7 @@ class ForceRerunSpec(cfgBaseModel):
         a malformed subject reports its own shape error rather than the render error.
         """
         v = self.subject
-        _SA_ID_RE = re.compile(r"^[A-Za-z0-9_.]+$")
+        MEMBER_ID_RE = re.compile(r"^[A-Za-z0-9_.]+$")
         if isinstance(v, dict):
             if len(v) != 1:
                 raise ValueError(
@@ -152,10 +155,10 @@ class ForceRerunSpec(cfgBaseModel):
             if len(values) != len(set(map(str, values))):
                 raise ValueError(f"force_rerun.{key} list contains duplicates: {values}")
             if key == "sa_id":
-                bad = [str(x) for x in values if not _SA_ID_RE.match(str(x))]
+                bad = [str(x) for x in values if not MEMBER_ID_RE.match(str(x))]
                 if bad:
                     raise ValueError(
-                        f"force_rerun.sa_id values must match ^[A-Za-z0-9_.]+$ "
+                        f"force_rerun.member_id values must match ^[A-Za-z0-9_.]+$ "
                         f"(per accepted decision 'All user-provided identifiers that "
                         f"become Snakemake wildcards must match ^[A-Za-z0-9_.]+$'); "
                         f"got invalid: {bad}"
@@ -167,9 +170,9 @@ class ForceRerunSpec(cfgBaseModel):
         """A subject-scoped ``render`` floor is not a capability of this design.
 
         `plots/` is not partitioned by subject: alongside the per-sim figures that carry
-        `__sa.{sa_id}__` it holds CROSS-SUB aggregates (`b4b_clean_identity`,
+        `__member.{member_id}__` it holds CROSS-SUB aggregates (`b4b_clean_identity`,
         `config_diff_maps`, `eda_cross_hardware_magnitude`) whose inputs span every
-        sub-analysis and which carry no subject token at all. Honouring a subject-scoped
+        member and which carry no subject token at all. Honouring a subject-scoped
         render would refresh some figures and leave the aggregates stale -- an artifact
         inconsistent with its own inputs, which is the defect class the stage axis exists
         to remove. So the render floor is subject-blind, and asking for a subset must FAIL
@@ -225,17 +228,22 @@ class analysis_config(cfgBaseModel):
         str,
         Field(
             ...,
-            description="analysis identifier. Used for creating analysis folder if one with the same name does not exist.",
+            description="analysis identifier. Used for creating analysis folder if one with the same name does not "
+            "exist.",
             pattern=r"^[A-Za-z][A-Za-z0-9_.]*$",
         ),
     ]
     weather_event_indices: list = Field(
         ...,
-        description="List of one or more strings corresponding to fields used for indexing unique weather events. These must match what is in weather_timeseries and weather_event_summary_csv.",
+        description="List of one or more strings corresponding to fields used for indexing "
+        "unique weather events. These "
+        "must "
+        "match what is in weather_timeseries and weather_event_summary_csv.",
     )
     weather_timeseries: Path = Field(
         ...,
-        description="Netcdf containing weather event time series data. Events must share indices with weather_event_summary_csv.",
+        description="Netcdf containing weather event time series data. Events must share indices with "
+        "weather_event_summary_csv.",
     )
     weather_time_series_timestep_dimension_name: str = Field(
         ...,
@@ -298,7 +306,8 @@ class analysis_config(cfgBaseModel):
                 "serial": "One process, one thread, no GPU. n_mpi_procs and n_omp_threads must be 1 or unset.",
                 "openmp": "Shared-memory threading on one node. n_omp_threads must be > 1; no MPI, no GPU.",
                 "mpi": "Distributed MPI ranks, one thread each. n_mpi_procs must be > 1 and >= n_nodes; no GPU.",
-                "hybrid": "MPI ranks each running OpenMP threads. Both n_mpi_procs and n_omp_threads must be > 1; no GPU.",
+                "hybrid": "MPI ranks each running OpenMP threads. Both n_mpi_procs and "
+                "n_omp_threads must be > 1; no GPU.",
                 "gpu": "GPU-accelerated solve. n_gpus must be >= 1; MPI and OpenMP are optional alongside it.",
             }
         ),
@@ -325,14 +334,17 @@ class analysis_config(cfgBaseModel):
         json_schema_extra=field_meta(
             options={
                 "local": "ThreadPoolExecutor in-process on the local machine. No SLURM.",
-                "batch_job": "tmux session running Snakemake on the login node, submitting one SLURM job per scenario. Recommended for HPC.",
-                "1_job_many_srun_tasks": "A single SLURM job that runs the scenarios as concurrent srun tasks inside one allocation.",
+                "batch_job": "tmux session running Snakemake on the login node, submitting "
+                "one SLURM job per scenario. Recommended for HPC.",
+                "1_job_many_srun_tasks": "A single SLURM job that runs the scenarios as "
+                "concurrent srun tasks inside one allocation.",
             }
         ),
     )
     hpc_total_nodes: int | None = Field(
         None,
-        description="This is the total number of nodes that will be requested when multi_sim_run_method = 1_job_many_srun_tasks",
+        description="This is the total number of nodes that will be requested when multi_sim_run_method = "
+        "1_job_many_srun_tasks",
     )
     hpc_total_job_duration_min: int | None = Field(
         None,
@@ -493,14 +505,16 @@ class analysis_config(cfgBaseModel):
     mem_gb_per_cpu: int = Field(2, description="Memory per CPU in GB. Defaults to 2GB.")
     hpc_time_min_per_sim: int | None = Field(
         60,
-        description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+        description="Time in minutes per simulation for SLURM job array. Required if using "
+        "generate_SLURM_job_array_script() or "
+        "submit_SLURM_job_array().",
     )
     hpc_restart_times_simulate: int = Field(
         2,
         ge=0,
         description=(
             "Per-rule Snakemake `retries:` for the simulation rules "
-            "(run_triton/run_tritonswmm/run_swmm/simulation_sa_*). A walltime "
+            "(run_triton/run_tritonswmm/run_swmm/simulation_member_*). A walltime "
             "kill is a SLURM TIMEOUT (retriable); raise this high (e.g. 20) for a "
             "hotstart-resume sweep so a killed sim re-dispatches from its latest "
             "config_NNNN.cfg checkpoint within ONE analysis.run(). Default 2."
@@ -527,11 +541,16 @@ class analysis_config(cfgBaseModel):
     # as the per-CSV-row overlay column. They are NOT retired despite the hpc_* prefix.
     hpc_ensemble_partition: str | None = Field(
         None,
-        description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory') for running simulations. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+        description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory') for "
+        "running simulations. Required if "
+        "using "
+        "generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
     hpc_setup_and_analysis_processing_partition: str | None = Field(
         None,
-        description="SLURM partition name for simulation setup and analysis output consolidation (single node, single core processing). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+        description="SLURM partition name for simulation setup and analysis output consolidation (single node, single "
+        "core "
+        "processing). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
     hpc_cpu_sim_partition: str | None = Field(
         None,
@@ -551,12 +570,16 @@ class analysis_config(cfgBaseModel):
     # Popped by the check_consistency shim.
     additional_SBATCH_params: list[str] | None = Field(
         None,
-        description="Optional list of SBATCH arguments (omit #SBATCH). Really only relevant for when multi_sim_run_method = 1_job_many_srun_tasks.",
+        description="Optional list of SBATCH arguments (omit #SBATCH). Really only relevant for when "
+        "multi_sim_run_method = "
+        "1_job_many_srun_tasks.",
     )
     # TOGGLES
     toggle_sensitivity_analysis: bool = Field(
         ...,
-        description="Whether or not this is a sensitivity study. If so, a .csv file is required for input sensitivity_analysis defining the analysisal setup.",
+        description="Whether or not this is a sensitivity study. If so, a .csv file is required for input "
+        "sensitivity_analysis "
+        "defining the analysisal setup.",
     )
     toggle_storm_tide_boundary: bool = Field(
         ...,
@@ -565,7 +588,9 @@ class analysis_config(cfgBaseModel):
 
     storm_tide_boundary_line_gis: Path | None = Field(
         None,
-        description="Path to a line gis file spanning the extent of the dem boundary where the variable storm tide boundary condition should be applied.",
+        description="Path to a line gis file spanning the extent of the dem boundary where the variable storm tide "
+        "boundary "
+        "condition should be applied.",
         json_schema_extra=field_meta(required_when=[when("toggle_storm_tide_boundary", True)]),
     )
     storm_tide_units: str | None = Field(
@@ -575,7 +600,8 @@ class analysis_config(cfgBaseModel):
     )
     weather_event_summary_csv: Path | None = Field(
         None,
-        description="CSV file with weather event summary statistics. Events must share indices with weather_timeseries.",
+        description="CSV file with weather event summary statistics. Events must share "
+        "indices with weather_timeseries.",
     )
     weather_time_series_storm_tide_datavar: str | None = Field(
         None,
@@ -589,7 +615,10 @@ class analysis_config(cfgBaseModel):
     )
     weather_events_to_simulate: Path = Field(
         ...,
-        description="Path to a .csv file defining weather event index used for sensitivity. The columns must correspond to the sytem's weather_event_indices.",
+        description="Path to a .csv file defining weather event index used for sensitivity. "
+        "The columns must correspond "
+        "to the "
+        "sytem's weather_event_indices.",
     )
     weather_event_windows_csv: Path | None = Field(
         None,
@@ -693,11 +722,26 @@ class analysis_config(cfgBaseModel):
     )
     process_output_target_chunksize_mb: int = Field(
         200,
-        description="Target memory budget (MiB) PER LOAD CHUNK for streaming-chunked operations on per-scenario timeseries output. This is the in-memory RSS guard ONLY; it does NOT govern zarr-append granularity (see process_append_batch_timesteps). Consumed by both write_timeseries_outputs (raw-to-zarr chunked LOAD at process_simulation.py L544/L736) AND summarize_triton_simulation_results' _streaming_argmax_with_companions helper (per-cell argmax+companion reduction). On fine grids a single float64 timestep can meet/exceed this budget, flooring the load chunk to 1 timestep — that is a correct memory guard, NOT a performance bug, because append granularity is decoupled via process_append_batch_timesteps. See Gotcha #23/#24.",
+        description="Target memory budget (MiB) PER LOAD CHUNK for streaming-chunked operations on per-scenario "
+        "timeseries "
+        "output. This is the in-memory RSS guard ONLY; it does NOT govern zarr-append granularity (see "
+        "process_append_batch_timesteps). Consumed by both write_timeseries_outputs (raw-to-zarr chunked LOAD at "
+        "process_simulation.py L544/L736) AND summarize_triton_simulation_results' "
+        "_streaming_argmax_with_companions helper (per-cell argmax+companion reduction). On fine grids a single "
+        "float64 timestep can meet/exceed this budget, flooring the load chunk to 1 timestep — that is a correct "
+        "memory guard, NOT a performance bug, because append granularity is decoupled via "
+        "process_append_batch_timesteps. See Gotcha #23/#24.",
     )
     process_append_batch_timesteps: int = Field(
         128,
-        description="Number of LOADED timesteps to accumulate before emitting ONE zarr append in write_timeseries_outputs. Decouples zarr-append granularity from the in-memory load-chunk size (process_output_target_chunksize_mb), so fine grids that floor the load chunk to 1 timestep still emit only ceil(N_timesteps / this) appends instead of O(N_timesteps) tiny appends. Independent of the streaming-summary reduction (which does not append). Buffer RSS is additionally byte-capped at 2x the load budget at write time, so raising this is safe.",
+        description="Number of LOADED timesteps to accumulate before emitting ONE zarr append in "
+        "write_timeseries_outputs. "
+        "Decouples zarr-append granularity from the in-memory load-chunk size "
+        "(process_output_target_chunksize_mb), "
+        "so fine grids that floor the load chunk to 1 timestep still emit only ceil(N_timesteps / this) appends "
+        "instead of O(N_timesteps) tiny appends. Independent of the streaming-summary reduction (which does not "
+        "append). Buffer RSS is additionally byte-capped at 2x the load budget at write time, so raising this is "
+        "safe.",
     )
     process_append_batch_memory_budget_mb: int | None = Field(
         None,
@@ -767,19 +811,24 @@ class analysis_config(cfgBaseModel):
     )
     open_boundaries: int = Field(
         ...,
-        description="0 for closed, 1 for open. This is affects all boundaries wherever external boundary conditions are not otherwise defined.",
+        description="0 for closed, 1 for open. This is affects all boundaries wherever "
+        "external boundary conditions are "
+        "not "
+        "otherwise defined.",
     )
 
     # extra inputs (currently only used by sensitivity analysis)
     analysis_dir: Path | None = Field(
         None,
-        description="Optional path to analysis directory. If not specified, the analysis directory will be placed within the system directory named named with the analysis_id",
+        description="Optional path to analysis directory. If not specified, the analysis directory will be placed "
+        "within the "
+        "system directory named named with the analysis_id",
     )
-    is_subanalysis: bool = Field(
+    is_experiment_member: bool = Field(
         False,
-        description="This is used in the backend to help route subanalyses to appropriate processes.",
+        description="This is used in the backend to help route members to appropriate processes.",
     )
-    master_analysis_cfg_yaml: Path | None = Field(
+    experiment_cfg_yaml: Path | None = Field(
         None,
         description="Path to the configuration file of the master analysis.",
     )
@@ -817,7 +866,7 @@ class analysis_config(cfgBaseModel):
             "precedent. Callers may pass an explicit `override_brand_theme=` Path "
             "to `analysis.run()` to override for one invocation, mirroring the "
             "`report_config=` runtime-override precedent. Automatically "
-            "per-sub-analysis overlayable via an `analysis.brand_theme` "
+            "per-member overlayable via an `analysis.brand_theme` "
             "sensitivity column."
         ),
     )
@@ -883,26 +932,26 @@ class analysis_config(cfgBaseModel):
         "none",
         description=(
             "Post-processing reclaim policy. Fires ONLY after the per-model summary "
-            "outputs are verified present AND openable on disk. \"none\" reclaims "
-            "nothing. \"all\" reclaims every artifact class. A list selects classes: "
-            "\"timeseries\" drops the per-scenario *_tseries zarr/nc set (the paired "
+            'outputs are verified present AND openable on disk. "none" reclaims '
+            'nothing. "all" reclaims every artifact class. A list selects classes: '
+            '"timeseries" drops the per-scenario *_tseries zarr/nc set (the paired '
             "complement of summary_paths._SUMMARY_STEMS_BY_MODEL -- no renderer and no "
-            "default consolidation path reads them); \"raw_swmm_binaries\" drops "
+            'default consolidation path reads them); "raw_swmm_binaries" drops '
             "out_tritonswmm/swmm/*.out (hydraulics.out plus the per-node *.out set), and "
             "NEVER *.rpt, which is a live completion predicate via "
-            "run_simulation._coupled_swmm_report_finalized. \"raw_swmm_binaries\" "
+            'run_simulation._coupled_swmm_report_finalized. "raw_swmm_binaries" '
             "TRUNCATES out_tritonswmm/swmm/hydraulics.rpt in place to its header, "
             "continuity and summary tables plus its trailer -- truncation, NEVER deletion, "
             "because that file is a live completion predicate via "
-            "run_simulation._coupled_swmm_report_finalized. \"hydro_out\" drops the SWMM "
+            'run_simulation._coupled_swmm_report_finalized. "hydro_out" drops the SWMM '
             "hydrology output swmm/hydro.out, which write_hydrograph_files reads; that is "
             "safe only because write_hydrograph_files carries an already-written gate. "
-            "\"raw_swmm_binaries\" "
-            "no-ops (with a logged reason) when clear_raw == \"none\", because its only "
+            '"raw_swmm_binaries" '
+            'no-ops (with a logged reason) when clear_raw == "none", because its only '
             "consumer, eda.raw_resume_identity.compare_swmm_raw, also needs the raw "
             "H/QX/QY/MH set that clear_raw governs. Every reclaim is recorded per "
             "scenario in the per-model log and surfaced by "
-            "analysis_validation.check_data_availability. Defaults to \"none\" -- "
+            'analysis_validation.check_data_availability. Defaults to "none" -- '
             "existing yamls load cleanly with the strict-safe (reclaim-nothing) default. "
             "Reclaiming makes REPROCESSING those scenarios impossible without re-running "
             "the simulations."
@@ -925,7 +974,7 @@ class analysis_config(cfgBaseModel):
             'Force-rerun policy. "all" re-runs everything. "none" runs no '
             'forced re-runs. A dict with exactly one key — "sa_id" (sensitivity '
             'only) or "event_iloc" (non-sensitivity only) — and a list of int '
-            "or string identifiers re-runs only the named sub-analyses or "
+            "or string identifiers re-runs only the named members or "
             'events. Defaults to "none" — yamls written before this field '
             "was introduced load cleanly with the strict-safe (re-run-nothing) "
             "default."
@@ -979,9 +1028,7 @@ class analysis_config(cfgBaseModel):
         """Mirror of _validate_clear_raw's three reject arms, on the artifact-class axis."""
         if isinstance(v, list):
             if not v:
-                raise ValueError(
-                    "remove_after_processing list form cannot be empty; use 'none' to reclaim nothing"
-                )
+                raise ValueError("remove_after_processing list form cannot be empty; use 'none' to reclaim nothing")
             if len(v) != len(set(v)):
                 raise ValueError(f"remove_after_processing list contains duplicates: {v}")
             for item in v:
@@ -998,19 +1045,13 @@ class analysis_config(cfgBaseModel):
         if v is None:
             return v
         if not v:
-            raise ValueError(
-                "resume_interruption_schedule cannot be an empty tuple; use None to disable the harness"
-            )
+            raise ValueError("resume_interruption_schedule cannot be an empty tuple; use None to disable the harness")
         if len(v) != len(set(v)):
             raise ValueError(f"resume_interruption_schedule contains duplicates: {v}")
         if any(entry < 1 for entry in v):
-            raise ValueError(
-                f"resume_interruption_schedule entries must be >= 1 (absolute checkpoint indices): {v}"
-            )
+            raise ValueError(f"resume_interruption_schedule entries must be >= 1 (absolute checkpoint indices): {v}")
         if any(b <= a for a, b in zip(v, v[1:], strict=False)):
-            raise ValueError(
-                f"resume_interruption_schedule must be strictly increasing with no duplicates: {v}"
-            )
+            raise ValueError(f"resume_interruption_schedule must be strictly increasing with no duplicates: {v}")
         return v
 
     @model_validator(mode="before")
@@ -1029,13 +1070,13 @@ class analysis_config(cfgBaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_subanalysis_requirements(cls, values):
+    def validate_analysis_requirements(cls, values):
         errors = []
-        if values.get("is_subanalysis") is True:
-            if values.get("master_analysis_cfg_yaml") is None:
-                errors.append("master_analysis_cfg_yaml must be provided when is_subanalysis=True")
+        if values.get("is_experiment_member") is True:
+            if values.get("experiment_cfg_yaml") is None:
+                errors.append("experiment_cfg_yaml must be provided when is_experiment_member=True")
             if values.get("analysis_dir") is None:
-                errors.append("analysis_dir must be provided when is_subanalysis=True")
+                errors.append("analysis_dir must be provided when is_experiment_member=True")
 
         if errors:
             raise ValueError("; ".join(errors))
@@ -1168,7 +1209,8 @@ class analysis_config(cfgBaseModel):
                 raise ValueError("hpc_time_min_per_sim is required and must be >= 1 for multi_sim_run_method=batch_job")
             if isinstance(hpc_time_min_per_sim, float) and math.isnan(hpc_time_min_per_sim):
                 raise ValueError(
-                    "hpc_time_min_per_sim must be a valid integer >= 1 for multi_sim_run_method=batch_job (NaN detected)"
+                    "hpc_time_min_per_sim must be a valid integer >= 1 for multi_sim_run_method=batch_job (NaN "
+                    "detected)"
                 )
             if hpc_time_min_per_sim < 1:
                 raise ValueError("hpc_time_min_per_sim must be >= 1 for multi_sim_run_method=batch_job")
@@ -1186,11 +1228,11 @@ class analysis_config(cfgBaseModel):
         if isinstance(subject, dict):
             key = next(iter(subject))
             if key == "sa_id" and not self.toggle_sensitivity_analysis:
-                raise ValueError("force_rerun.sa_id requires toggle_sensitivity_analysis=True")
+                raise ValueError("force_rerun.member_id requires toggle_sensitivity_analysis=True")
             if key == "event_iloc" and self.toggle_sensitivity_analysis:
                 raise ValueError(
                     "force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
-                    "sensitivity-toggled analyses must use force_rerun.sa_id instead"
+                    "sensitivity-toggled analyses must use force_rerun.member_id instead"
                 )
         return self
 

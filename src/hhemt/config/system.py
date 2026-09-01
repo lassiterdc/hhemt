@@ -1,7 +1,8 @@
 import warnings
-from pydantic import Field, model_validator
-from typing import Optional
 from pathlib import Path
+
+from pydantic import Field, model_validator
+
 from hhemt.config.base import cfgBaseModel, field_meta, when
 
 
@@ -46,8 +47,7 @@ class CRSConfig(cfgBaseModel):
         horiz = pyproj.CRS.from_epsg(self.horizontal_epsg)
         if not (horiz.is_projected or horiz.is_geographic):
             raise ValueError(
-                f"horizontal_epsg {self.horizontal_epsg} is neither projected "
-                f"nor geographic; check the EPSG code."
+                f"horizontal_epsg {self.horizontal_epsg} is neither projected " f"nor geographic; check the EPSG code."
             )
         vert = pyproj.CRS.from_epsg(self.vertical_epsg)
         if not vert.is_vertical:
@@ -62,10 +62,10 @@ class CRSConfig(cfgBaseModel):
 class system_config(cfgBaseModel):
     """Pydantic model for TRITON-SWMM system configuration.
 
-    Per-sub-analysis variation via prefixed sensitivity-CSV columns
+    Per-member variation via prefixed sensitivity-CSV columns
     ----------------------------------------------------------------
     When used with hhemt's sensitivity-analysis workflow,
-    every field of this SystemConfig may be varied per sub-analysis via
+    every field of this SystemConfig may be varied per member via
     sensitivity-CSV/XLSX columns of the form ``system.{field}``. The
     column is mutually exclusive with the ``system_config_yaml`` full-file
     column on a per-row basis. Overlay cells are synthesized into a
@@ -87,37 +87,39 @@ class system_config(cfgBaseModel):
         ...,
         description="Path where TRITON-SWMM system outputs will be stored.",
     )
-    watershed_gis_polygon: Path = Field(
-        ..., description="Watershed or subcatchment gis used for plotting."
-    )
-    DEM_fullres: Path = Field(
-        ..., description="DEM to be formatted and, if desired, coarsened, for TRITON"
-    )
-    landuse_lookup_file: Optional[Path] = Field(
+    watershed_gis_polygon: Path = Field(..., description="Watershed or subcatchment gis used for plotting.")
+    DEM_fullres: Path = Field(..., description="DEM to be formatted and, if desired, coarsened, for TRITON")
+    landuse_lookup_file: Path | None = Field(
         None,
         description="CSV file containing lookup table relating landuse categories to manning's roughness coefficients",
         json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
     SWMM_hydraulics: Path = Field(
         ...,
-        description="Hydraulics-only SWMM model (.inp) template with fillable fields based on input weather data. An event-specific scenario of this model will be input to TRITON-SWMM.",
+        description="Hydraulics-only SWMM model (.inp) template with fillable fields based on input weather data. An "
+        "event-specific scenario of this model will be input to TRITON-SWMM.",
     )
-    SWMM_hydrology: Optional[Path] = Field(
+    SWMM_hydrology: Path | None = Field(
         None,
-        description="Hydrology-only SWMM model (.inp) template with fillable fields based on input weather data. This will be run prior to TRITON-SWMM to generate runoff time series in grid cells that overlap with subcatchment outlet nodes.",
+        description="Hydrology-only SWMM model (.inp) template with fillable fields based on input weather data. This "
+        "will be "
+        "run prior to TRITON-SWMM to generate runoff time series in grid cells that overlap with subcatchment "
+        "outlet nodes.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
     )
-    SWMM_full: Optional[Path] = Field(
+    SWMM_full: Path | None = Field(
         None,
-        description="Full SWMM model (.inp) template with fillable fields based on input weather data. Scenarios based on this can be run in addition to TRITON-SWMM to compare SWMM hydraulics results.",
+        description="Full SWMM model (.inp) template with fillable fields based on input weather data. Scenarios based "
+        "on this "
+        "can be run in addition to TRITON-SWMM to compare SWMM hydraulics results.",
         json_schema_extra=field_meta(required_when=[when("toggle_swmm_model", True)]),
     )
-    landuse_raster: Optional[Path] = Field(
+    landuse_raster: Path | None = Field(
         None,
         description="Landuse raster used for creating manning's roughness input.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
-    SWMM_software_directory: Optional[Path] = Field(
+    SWMM_software_directory: Path | None = Field(
         None,
         json_schema_extra={"toolkit_owned_output": True},
         description="Folder containing the SWMM model software (created by the clone/build gate at run/setup).",
@@ -127,16 +129,19 @@ class system_config(cfgBaseModel):
     # loads for bundle-local EDA/render; requiredness is enforced at the
     # TRITONSWMM_system constructor chokepoint, not at load time. Mirrors the
     # SWMM_software_directory sibling above.
-    TRITONSWMM_software_directory: Optional[Path] = Field(
+    TRITONSWMM_software_directory: Path | None = Field(
         None,
         json_schema_extra={"toolkit_owned_output": True},
-        description="Folder containing the TRITONSWMM model software (created by the clone/build gate at run/setup). May be null in a reconstituted reprex bundle's synthesized system_config.yaml -- the round-trip re-derives it from the by-reference software.",
+        description="Folder containing the TRITONSWMM model software (created by the clone/build gate at run/setup). "
+        "May be "
+        "null in a reconstituted reprex bundle's synthesized system_config.yaml -- the round-trip re-derives it "
+        "from the by-reference software.",
     )
     TRITONSWMM_git_URL: str = Field(
         ...,
         description="Git repository with TRITONSWMM",
     )
-    TRITONSWMM_branch_key: Optional[str] = Field(
+    TRITONSWMM_branch_key: str | None = Field(
         None,
         description="TRITONSWMM branch to checkout. Known working branches: 02438b60613a7d913d884e7b836f9f5ff421fe7d",
     )
@@ -144,7 +149,7 @@ class system_config(cfgBaseModel):
         "https://github.com/USEPA/Stormwater-Management-Model.git",
         description="Git repository with SWMM",
     )
-    SWMM_tag_key: Optional[str] = Field(
+    SWMM_tag_key: str | None = Field(
         "v5.2.4",
         description="SWMM tag to checkout.",
     )
@@ -157,7 +162,7 @@ class system_config(cfgBaseModel):
     # hpc_system_config.additional_modules (joined via resolve_additional_modules).
     # A one-cycle pop-and-warn shim in validate_toggle_dependencies (below) lets
     # un-migrated YAMLs still load. REMOVE the shim after <release>.
-    subcatchment_raingage_mapping: Optional[Path] = Field(
+    subcatchment_raingage_mapping: Path | None = Field(
         None,
         description="Lookup table relating spatially indexed rainfall time series to SWMM subcatchment IDs.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
@@ -167,36 +172,37 @@ class system_config(cfgBaseModel):
         description="Path to the template TRITON-SWMM cfg file that defines the variables and inputs per simulation.",
     )
     # ATTRIBUTES
-    landuse_description_colname: Optional[str] = Field(
+    landuse_description_colname: str | None = Field(
         None,
         description="column name in the landuse_lookup_file corresponding to landuse description.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
-    landuse_lookup_class_id_colname: Optional[str] = Field(
+    landuse_lookup_class_id_colname: str | None = Field(
         None,
         description="column name in the landuse_lookup_file corresponding to landuse classification.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
-    landuse_lookup_mannings_colname: Optional[str] = Field(
+    landuse_lookup_mannings_colname: str | None = Field(
         None,
         description="column name in the landuse_lookup_file corresponding to manning's coefficient.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
-    landuse_plot_color_colname: Optional[str] = Field(
+    landuse_plot_color_colname: str | None = Field(
         None,
         description="column name in the landuse_lookup_file corresponding to target plot colors by landuse.",
     )
-    subcatchment_raingage_mapping_gage_id_colname: Optional[str] = Field(
+    subcatchment_raingage_mapping_gage_id_colname: str | None = Field(
         None,
         description="Column name in subcatchment_raingage_mapping_gage corresponding to the rain gage ids.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
     )
     # CONSTANTS
-    dem_outside_watershed_height: Optional[float] = Field(
+    dem_outside_watershed_height: float | None = Field(
         None,
-        description="DEM height applied to grid cells outside of the watershed boundary. Used for scaling DEM plot colorbars.",
+        description="DEM height applied to grid cells outside of the watershed boundary. Used for scaling DEM plot "
+        "colorbars.",
     )
-    dem_building_height: Optional[float] = Field(
+    dem_building_height: float | None = Field(
         None,
         description="DEM height applied to DEM gridcells overlapping buildings. Used for scaling DEM plot colorbars.",
     )
@@ -226,36 +232,33 @@ class system_config(cfgBaseModel):
         ...,
         description="Target DEM resolution for TRITON-SWMM in the native resolution of the provided DEM.",
     )
-    constant_mannings: Optional[float] = Field(
+    constant_mannings: float | None = Field(
         None,
-        description="Constant manning's coefficient to use. Only applies if toggle_use_constant_mannings is set to True.",
+        description="Constant manning's coefficient to use. Only applies if toggle_use_constant_mannings is set to "
+        "True.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", True)]),
     )
-    processed_xllcorner: Optional[float] = Field(
+    processed_xllcorner: float | None = Field(
         None,
         description=(
             "Optional lower-left x-coordinate to anchor processed DEM/Manning outputs "
             "(in DEM CRS units). When set, processed rasters are aligned to this origin."
         ),
     )
-    processed_yllcorner: Optional[float] = Field(
+    processed_yllcorner: float | None = Field(
         None,
         description=(
             "Optional lower-left y-coordinate to anchor processed DEM/Manning outputs "
             "(in DEM CRS units). When set, processed rasters are aligned to this origin."
         ),
     )
-    ncols: Optional[int] = Field(
+    ncols: int | None = Field(
         None,
-        description=(
-            "Target number of columns in the processed DEM, mannings, and TRITON results"
-        ),
+        description=("Target number of columns in the processed DEM, mannings, and TRITON results"),
     )
-    nrows: Optional[int] = Field(
+    nrows: int | None = Field(
         None,
-        description=(
-            "Target number of rows in the processed DEM, mannings, and TRITON results"
-        ),
+        description=("Target number of rows in the processed DEM, mannings, and TRITON results"),
     )
     crs: CRSConfig = Field(
         ...,
@@ -316,12 +319,8 @@ class system_config(cfgBaseModel):
         ncols = values.get("ncols")
         nrows = values.get("nrows")
         processed_fields = [processed_xllcorner, processed_yllcorner, ncols, nrows]
-        if any(val is not None for val in processed_fields) and not all(
-            val is not None for val in processed_fields
-        ):
-            errors.append(
-                "processed_xllcorner, processed_yllcorner, ncols, and nrows must be provided together."
-            )
+        if any(val is not None for val in processed_fields) and not all(val is not None for val in processed_fields):
+            errors.append("processed_xllcorner, processed_yllcorner, ncols, and nrows must be provided together.")
 
         if errors:
             raise ValueError("; ".join(errors))

@@ -159,7 +159,7 @@ def test_validate_sensitivity_independent_vars_missing_columns(tmp_path: Path):
     )
     from hhemt.exceptions import ConfigurationError
 
-    csv_path = tmp_path / "sa.csv"
+    csv_path = tmp_path / "member.csv"
     pd.DataFrame({"n_omp_threads": [1, 2], "run_mode": ["serial", "parallel"]}).to_csv(csv_path, index=False)
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"]))
     with pytest.raises(ConfigurationError) as exc:
@@ -178,7 +178,7 @@ def test_validate_sensitivity_independent_vars_charset(tmp_path: Path):
     )
     from hhemt.exceptions import ConfigurationError
 
-    csv_path = tmp_path / "sa.csv"
+    csv_path = tmp_path / "member.csv"
     pd.DataFrame({"bad name": [1, 2]}).to_csv(csv_path, index=False)
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["bad name"]))
     with pytest.raises(ConfigurationError, match="charset"):
@@ -193,7 +193,7 @@ def test_validate_sensitivity_fails_when_block_missing_but_csv_present(tmp_path:
     )
     from hhemt.exceptions import ConfigurationError
 
-    csv_path = tmp_path / "sa.csv"
+    csv_path = tmp_path / "member.csv"
     csv_path.write_text("col\n1\n")
     cfg = report_config()  # no sensitivity block
     with pytest.raises(ConfigurationError, match="must be set"):
@@ -220,7 +220,7 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
     sensitivity-config<->sensitivity-analysis guard still fires for an UN-scoped
     benchmarking report on a non-sensitivity run.
 
-    This pins the _build_test_subanalyses overlay-scoping recipe (analysis.py:
+    This pins the _build_test_members overlay-scoping recipe (analysis.py:
     2725-2733) at the validator layer: the fix nulls report.sensitivity and resets
     report.reporting_set to the 'default' sentinel for the reference sub.
     """
@@ -231,7 +231,7 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
     )
     from hhemt.exceptions import ConfigurationError
 
-    # Pre-fix state: a sub-analysis cfg inherits the sensitivity master's report
+    # Pre-fix state: a member cfg inherits the sensitivity master's report
     # block verbatim onto a non-sensitivity reference (explicit benchmarking-validator
     # reporting_set + a sensitivity: benchmarking block). The guard MUST still fire
     # here -- Option A does NOT mask it.
@@ -239,6 +239,12 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
         reporting_set="benchmarking",
         sensitivity=SensitivityReportConfig(independent_vars=["n_devices"]),
     )
+    # MOVED REFERENT (S16): this match= string was written against
+    # validate_sensitivity_independent_vars. The S16 shape check in
+    # validate_active_reporting_set now PRE-EMPTS that call, so the literal is
+    # produced by the shape branch instead. The bytes are unchanged and the
+    # function under assertion is not -- recorded so the guard is not read as
+    # still testing what it originally tested.
     with pytest.raises(ConfigurationError, match="not a sensitivity analysis"):
         validate_active_reporting_set(unscoped, is_sensitivity=False, sensitivity_csv_path=None)
 
@@ -272,6 +278,7 @@ def test_reporting_sets_registry_imports_cleanly():
     assert set(REPORTING_SETS) == {
         "default",
         "benchmarking",
+        "sensitivity",
         "combined",
         "compute-sensitivity",
         "dem-resolution",
@@ -293,8 +300,18 @@ def test_legacy_mode_key_rewritten_with_deprecation_warning():
     legacy `mode` key dropped (no extra_forbidden), independent_vars retained."""
     from hhemt.config.report import report_config
 
-    with pytest.warns(DeprecationWarning, match="report_config.sensitivity.mode is retired"):
+    # Anchored on the behaviour both wordings share, NOT on the model-vs-YAML naming:
+    # 5ada991b deliberately renamed `report_config.` -> `report.` in user-facing
+    # messages, and pinning that naming here is what made this assertion stale. The
+    # naming itself is guarded separately below, where a rename fails loudly instead
+    # of failing as a missing DeprecationWarning.
+    with pytest.warns(DeprecationWarning, match=r"sensitivity\.mode is retired") as rec:
         cfg = report_config.model_validate({"sensitivity": {"mode": "benchmarking", "independent_vars": ["x"]}})
+    # The message must name the YAML key a user edits, not the model's qualified name.
+    # `any(...)` rather than `rec[0]`: pytest.warns(match=) searches every recorded
+    # warning, but `rec` is ordered by EMISSION across all categories, so indexing [0]
+    # would make this assertion depend on an ordering nothing in the code guarantees.
+    assert any("report.sensitivity.mode is retired" in str(w.message) for w in rec)
     assert cfg.sensitivity is not None
     assert cfg.sensitivity.independent_vars == ["x"]
     assert not hasattr(cfg.sensitivity, "mode")
@@ -431,12 +448,17 @@ def test_validate_active_reporting_set_benchmarking_delegates_csv(tmp_path: Path
     )
     from hhemt.exceptions import ConfigurationError
 
-    csv_path = tmp_path / "sa.csv"
+    csv_path = tmp_path / "member.csv"
     pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"]))
     # reporting_set "default" + is_sensitivity True -> "benchmarking" -> CSV check.
     with pytest.raises(ConfigurationError, match="missing_col"):
-        validate_active_reporting_set(cfg, is_sensitivity=True, sensitivity_csv_path=csv_path)
+        validate_active_reporting_set(
+            cfg,
+            is_sensitivity=True,
+            sensitivity_csv_path=csv_path,
+            varied_axes=frozenset({"n_omp_threads"}),
+        )
 
 
 def test_validate_active_reporting_set_returns_resolved_name(tmp_path: Path):
@@ -450,11 +472,50 @@ def test_validate_active_reporting_set_returns_resolved_name(tmp_path: Path):
         validate_active_reporting_set,
     )
 
-    csv_path = tmp_path / "sa.csv"
+    csv_path = tmp_path / "member.csv"
     pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads"]))
-    name = validate_active_reporting_set(cfg, is_sensitivity=True, sensitivity_csv_path=csv_path)
+    name = validate_active_reporting_set(
+        cfg,
+        is_sensitivity=True,
+        sensitivity_csv_path=csv_path,
+        varied_axes=frozenset({"n_omp_threads"}),
+    )
     assert name == "benchmarking"
+
+
+def test_required_axes_derivation_matches_template_wildcards():
+    """Every set's `required_axes` is EMPTY iff its selection carries no axis-wildcarded
+    template. `required_axes` is derivable from the registry's own templates but stored
+    by hand, so nothing else checks the two agree.
+
+    SCOPE LIMIT, measured and recorded rather than implied: this is a biconditional on
+    EMPTINESS only. It catches an `()` that silently becomes false when a set gains an
+    axis-plotting figure. It catches NOTHING about a wrong NON-empty value -- swap
+    `dem-resolution`'s `(("target_dem_resolution",),)` for the compute-config tuple and
+    this test still passes, because both are non-empty. `dem-resolution` is in fact the
+    set that proves the limit: its only axis wildcard is `independent_var`, inherited
+    with `sensitivity_benchmarking`, while the axis it requires is a system-config field
+    that no template is wildcarded on.
+
+    The failing direction is verified, not assumed: three violating registries built with
+    `dataclasses.replace` (a frozen dataclass blocks mutation, not derivation) each drive
+    this assertion to raise -- including a `sensitivity` set given the benchmarking axis
+    figure while keeping its `()`, which is the exact regression this test exists to catch.
+    """
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS
+
+    # member_id / event_id index the (member, event) product, not a sensitivity axis.
+    non_axis = {"member_id", "event_id"}
+    for name, rset in REPORTING_SETS.items():
+        wildcards = {w for sel in rset.renderer_selection for tmpl in sel.rule_spec_template for w in tmpl.wildcards}
+        has_axis_figure = bool(wildcards - non_axis)
+        assert bool(rset.required_axes) == has_axis_figure, (
+            f"reporting set {name!r}: required_axes={rset.required_axes!r} but its templates "
+            f"carry axis wildcards {sorted(wildcards - non_axis)!r}. A set with an "
+            f"axis-plotted figure must declare an axis requirement, and a set without one "
+            f"must declare the empty tuple."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -628,7 +689,7 @@ def test_force_rerun_event_iloc_accepts_list(tmp_path: Path):
     assert result.force_rerun.stage == "simulate"
 
 
-def test_force_rerun_sa_id_requires_sensitivity_toggle(tmp_path: Path):
+def test_force_rerun_member_id_requires_sensitivity_toggle(tmp_path: Path):
     cfg = _minimal_analysis_config_dict(tmp_path)
     cfg["toggle_sensitivity_analysis"] = False
     cfg["force_rerun"] = {"sa_id": ["0", "5"]}
@@ -657,7 +718,7 @@ def test_force_rerun_event_iloc_requires_no_sensitivity(tmp_path: Path):
 )
 def test_force_rerun_rejects_invalid_dict_shapes(value, match, tmp_path: Path):
     cfg = _minimal_analysis_config_dict(tmp_path)
-    # Use sensitivity-on so sa_id paths don't trip on the cross-field rule
+    # Use sensitivity-on so member_id paths don't trip on the cross-field rule
     # before the per-field validator gets a chance to fire.
     cfg["toggle_sensitivity_analysis"] = True
     cfg["sensitivity_analysis"] = str(_touch(tmp_path / "inputs" / "sensitivity.csv"))

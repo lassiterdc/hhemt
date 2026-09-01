@@ -73,8 +73,8 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(
             f"--override-force-rerun expects 'all', 'none', a JSON subject dict like "
-            f"'{{\"sa_id\":[0,5]}}', or a JSON stage form like "
-            f"'{{\"subject\":\"all\",\"stage\":\"render\"}}'; got: {value!r} ({exc})"
+            f"'{{\"member_id\":[0,5]}}', or a JSON stage form like "
+            f'\'{{"subject":"all","stage":"render"}}\'; got: {value!r} ({exc})'
         ) from exc
 
 
@@ -83,6 +83,8 @@ app = typer.Typer(
     help="H&H Ensemble Modeling Toolkit: Coupled hydrodynamic-stormwater simulation orchestration",
     no_args_is_help=True,
 )
+
+
 @app.callback()
 def _root(ctx: typer.Context) -> None:
     """Root callback: one worktree-resolution guard for every CLI invocation.
@@ -160,7 +162,7 @@ def run_command(
         "--override-force-rerun",
         help=(
             'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
-            "or a JSON dict: '{\"sa_id\":[0,5,22]}' (sensitivity) or "
+            "or a JSON dict: '{\"member_id\":[0,5,22]}' (sensitivity) or "
             "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
@@ -528,9 +530,9 @@ def cleanup_orphans_command(
         help="Print each orphan path and deletion",
     ),
 ):
-    """List or delete sub-analysis directories orphaned by sensitivity CSV edits.
+    """List or delete member directories orphaned by sensitivity CSV edits.
 
-    When sensitivity sub-analyses are removed from the CSV and the workflow is
+    When sensitivity members are removed from the CSV and the workflow is
     re-run, their output directories remain on disk. This command identifies
     those orphans and optionally removes them.
 
@@ -575,7 +577,7 @@ def cleanup_orphans_command(
         total = n_dirs + n_flags + n_groups + n_fingerprints
 
         if total == 0:
-            console.print("[green]No orphan sub-analysis artifacts found.[/green]")
+            console.print("[green]No orphan member artifacts found.[/green]")
         elif dry_run:
             console.print(
                 f"[yellow]Found orphans (dry-run; nothing deleted): "
@@ -586,8 +588,8 @@ def cleanup_orphans_command(
                 console.print(f"  dir: {p}")
             for p in result["status_flags"]:
                 console.print(f"  flag: {p}")
-            for sa_id in result["datatree_groups"]:
-                console.print(f"  datatree-group: sa_{sa_id}")
+            for member_id in result["datatree_groups"]:
+                console.print(f"  datatree-group: member_{member_id}")
             for p in result["input_fingerprints"]:
                 console.print(f"  input-fingerprint: {p}")
         else:
@@ -700,7 +702,7 @@ def reprocess_command(
         "--override-force-rerun",
         help=(
             'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
-            "or a JSON dict: '{\"sa_id\":[0,5,22]}' (sensitivity) or "
+            "or a JSON dict: '{\"member_id\":[0,5,22]}' (sensitivity) or "
             "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
@@ -1196,7 +1198,7 @@ def synth_experiment_command(
             console.print(f"[green]Matrix CSV:[/green] {result['matrix_csv']}")
             console.print(f"[green]Synthetic model:[/green] {result['model_dir']}")
             console.print(
-                "[yellow]Note:[/yellow] this scaffolds the experiment inputs; the full ensemble "
+                "[yellow]Note:[/yellow] this prepares the experiment inputs; the full ensemble "
                 "run is via scripts/experiments/synth_compute_config.py (Phase 3)."
             )
         raise typer.Exit(0)
@@ -1407,14 +1409,14 @@ def delete_command(
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
-        help="Print what would be deleted (count of scenarios / sub-analyses + "
+        help="Print what would be deleted (count of scenarios / members + "
         "disk size estimate) without deleting anything.",
     ),
     skip_preview: bool = typer.Option(
         False,
         "--skip-preview",
-        help="Skip the per-sub-analysis disk-utilization preview before "
-        "deletion. Useful when the preview's per-sub-analysis `du -sh` "
+        help="Skip the per-member disk-utilization preview before "
+        "deletion. Useful when the preview's per-member `du -sh` "
         "walks dominate runtime on large Lustre trees (~minutes per TiB). "
         "Without the preview the user has no size context at the "
         "confirmation prompt; typically combined with --yes.",
@@ -1423,7 +1425,7 @@ def delete_command(
     """Delete an entire analysis tree via distributed Snakemake workflow.
 
     Generates a Snakefile.delete with per-scenario (regular analysis) or
-    per-sub-analysis (sensitivity) delete rules plus an analysis-level
+    per-member (sensitivity) delete rules plus an analysis-level
     consolidation rule, then submits the workflow. On full success, the
     orchestrator removes ``analysis_dir/`` atomically; if any per-rule
     sentinel is missing, ``analysis_dir/`` is preserved for debugging.
@@ -1497,7 +1499,7 @@ def delete_command(
 
 
 def _print_delete_dry_run_summary(analysis) -> None:
-    """Print a per-scenario / per-sub-analysis breakdown of what
+    """Print a per-scenario / per-member breakdown of what
     ``analysis.delete()`` would remove from disk, plus a total size estimate.
 
     Per cleanup-rerun-delete-redesign Phase 2.
@@ -1554,14 +1556,14 @@ def _print_delete_dry_run_summary(analysis) -> None:
     console.print(f"[bold]Delete preview for[/bold] {analysis_dir}")
     total = 0
     if analysis.cfg_analysis.toggle_sensitivity_analysis:
-        subanalyses_dir = analysis_dir / "subanalyses"
-        sa_ids = list(analysis.sensitivity.df_setup.index.astype(str))
-        console.print(f"  Sensitivity master with {len(sa_ids)} sub-analyses:")
-        for sa_id in sa_ids:
-            sa_dir = subanalyses_dir / f"sa_{sa_id}"
-            size = _du_via_sentinel(sa_dir)[0]
+        members_dir = analysis_dir / "members"
+        member_ids = list(analysis.sensitivity.df_setup.index.astype(str))
+        console.print(f"  Sensitivity master with {len(member_ids)} members:")
+        for member_id in member_ids:
+            member_dir = members_dir / f"member_{member_id}"
+            size = _du_via_sentinel(member_dir)[0]
             total += size
-            console.print(f"    sa_{sa_id}: {_fmt(size)}  ({sa_dir})")
+            console.print(f"    member_{member_id}: {_fmt(size)}  ({member_dir})")
     else:
         sims_dir = analysis_dir / "sims"
         scen_dirs = sorted(sims_dir.glob("*")) if sims_dir.exists() else []
@@ -2054,8 +2056,7 @@ def _list_excludable_callback(value: bool) -> bool:
     for name, entry in sorted(_EXCLUDABLE_CATALOG.items()):
         if entry.excludable:
             console.print(
-                f"  [green]{name}[/green]\n      {entry.description}\n"
-                f"      cost: {entry.reproducibility_cost}"
+                f"  [green]{name}[/green]\n      {entry.description}\n" f"      cost: {entry.reproducibility_cost}"
             )
         else:
             console.print(
@@ -2193,15 +2194,13 @@ def bundle_command(
     from hhemt.bundle import emit_bundle
 
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        target = analysis.sensitivity.master_analysis
+        target = analysis.sensitivity.experiment
     else:
         target = analysis
     from hhemt.experiment_bundle import resolve_container_defs
 
     container_defs = resolve_container_defs(experiment_config, container_defs)
-    bundle_path = emit_bundle(
-        target, output, exclude_config=exclude_config, container_defs=container_defs
-    )
+    bundle_path = emit_bundle(target, output, exclude_config=exclude_config, container_defs=container_defs)
     if exclude_config is None:
         console.print(f"[green]Bundle emitted (self-contained):[/green] {bundle_path}")
     else:
@@ -2372,9 +2371,7 @@ def ingest_command(
 
     try:
         if not (doi or pid):
-            raise CLIValidationError(
-                "doi", "Provide at least one of --doi or --pid."
-            )
+            raise CLIValidationError("doi", "Provide at least one of --doi or --pid.")
         exp = TRITON_SWMM_experiment.from_doi(
             doi=doi,
             pid=pid,

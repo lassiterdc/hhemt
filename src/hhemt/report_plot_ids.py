@@ -10,7 +10,7 @@ threaded three ways with no second source of truth:
      rule-emission generators (workflow.py, bundle/snakefile_generator.py,
      reprocess_snakefile_generator.py) -- all derive from this module.
 
-Grammar (ADR-2): {renderer_kind}[__{descriptor}][__sa.{sa_id}][__evt.{event_id}]
+Grammar (ADR-2): {renderer_kind}[__{descriptor}][__member.{member_id}][__evt.{event_id}]
 using "." as the within-segment separator. "-" is NOT used: it is absent
 from the enforced wildcard charset ^[A-Za-z0-9_.]+$ (C-CHARSET).
 
@@ -42,8 +42,8 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     # analysis.run() entry under static_backend="matplotlib", so a ".png" entry
     # here would name a file the renderer can never produce.
     "per_sim_event_page": {"matplotlib": ".html", "plotly": ".html"},
-    "per_sim_per_sa_peak_flood_depth": {"matplotlib": ".png", "plotly": ".html"},
-    "per_sim_per_sa_conduit_flow": {"matplotlib": ".png", "plotly": ".html"},
+    "per_sim_per_member_peak_flood_depth": {"matplotlib": ".png", "plotly": ".html"},
+    "per_sim_per_member_conduit_flow": {"matplotlib": ".png", "plotly": ".html"},
     "sensitivity_benchmarking": {"matplotlib": ".png", "plotly": ".html"},
     "per_analysis_summary": {"matplotlib": ".html", "plotly": ".html"},
     "scenario_status_appendix": {"matplotlib": ".html", "plotly": ".html"},
@@ -98,14 +98,14 @@ def canonical_plot_id(
     renderer_kind: str,
     *,
     descriptor: str | None = None,
-    sa_id: str | None = None,
+    member_id: str | None = None,
     event_id: str | None = None,
 ) -> str:
     """Mint a canonical plot ID per the ADR-2 grammar.
 
     Segments are joined with "__"; within a segment the separator is ".".
     Order is fixed: renderer_kind, then optional descriptor, then optional
-    sa.{sa_id}, then optional evt.{event_id}.
+    member.{member_id}, then optional evt.{event_id}.
 
     Callers pass CONCRETE wildcard values (e.g. event_id="year.9_...") to get
     the display/manifest string; the rule-emission generators pass the literal
@@ -115,8 +115,8 @@ def canonical_plot_id(
     segments = [renderer_kind]
     if descriptor is not None:
         segments.append(descriptor)
-    if sa_id is not None:
-        segments.append(f"sa.{sa_id}")
+    if member_id is not None:
+        segments.append(f"member.{member_id}")
     if event_id is not None:
         segments.append(f"evt.{event_id}")
     return "__".join(segments)
@@ -157,18 +157,18 @@ _RENDERER_KIND_LABELS: dict[str, str] = {
 }
 
 
-def sa_labels_from_status(analysis_dir) -> dict[str, str]:
-    """``{sa_id: derived compute-config label}`` from scenario_status.csv, or ``{}``.
+def member_labels_from_status(analysis_dir) -> dict[str, str]:
+    """``{member_id: derived compute-config label}`` from scenario_status.csv, or ``{}``.
 
     The CSV ships in every bundle AND sits in every live analysis dir, and carries
     every column ``_derive_config_label`` reads (run_mode, n_gpus, n_mpi_procs,
-    n_omp_threads, n_nodes, hpc.partition) keyed by sa_id -- so ONE reader serves
+    n_omp_threads, n_nodes, hpc.partition) keyed by member_id -- so ONE reader serves
     the source-side and bundle-side callers alike.
 
     The replicate ordinal is appended because ``_derive_config_label`` strips
     ``_rN`` by design ("Replicate suffixes are NOT in the identity, so replicates
     share one label"). Measured on a 28-row status CSV: 14 distinct labels for 28
-    sa_ids, so without the ordinal every per-replicate figure would collapse onto
+    member_ids, so without the ordinal every per-replicate figure would collapse onto
     one card name.
 
     NEVER raises: an absent or unreadable CSV yields ``{}``, and the caller then
@@ -182,7 +182,7 @@ def sa_labels_from_status(analysis_dir) -> dict[str, str]:
     import re as _re
     from pathlib import Path as _Path
 
-    from hhemt.eda._config_diff import _derive_config_label
+    from hhemt.config_labels import _derive_config_label
 
     path = _Path(analysis_dir) / "scenario_status.csv"
     if not path.exists():
@@ -191,12 +191,12 @@ def sa_labels_from_status(analysis_dir) -> dict[str, str]:
     try:
         with path.open() as fh:
             for row in _csv.DictReader(fh):
-                sa_id = str(row.get("sa_id") or "")
-                if not sa_id:
+                member_id = str(row.get("sa_id") or "")
+                if not member_id:
                     continue
                 label = _derive_config_label(row)
-                m = _re.search(r"_r(\d+)$", sa_id)
-                out[sa_id] = f"{label}, replicate {m.group(1)}" if m else label
+                m = _re.search(r"_r(\d+)$", member_id)
+                out[member_id] = f"{label}, replicate {m.group(1)}" if m else label
     except (OSError, ValueError, KeyError):
         return {}
     return out
@@ -255,7 +255,7 @@ def event_page_reference(analysis, event_iloc) -> str:
 def event_labels_from_status(analysis_dir) -> dict[str, str]:
     """``{event_id slug: display label}`` from scenario_status.csv, or ``{}``.
 
-    The event-axis twin of ``sa_labels_from_status``, and deliberately the same
+    The event-axis twin of ``member_labels_from_status``, and deliberately the same
     shape: the CSV ships in every bundle AND sits in every live analysis dir, so
     ONE reader serves the source-side and bundle-side callers alike.
 
@@ -344,15 +344,15 @@ LABEL_GLOBALS_BLOCK = """
 from hhemt.report_plot_ids import (
     event_labels_from_status as _event_labels_from_status,
     report_label_value as _report_label_value,
-    sa_labels_from_status as _sa_labels_from_status,
+    member_labels_from_status as _member_labels_from_status,
 )
 
 _EVENT_LABELS = _event_labels_from_status(workflow.basedir)
-_SA_LABELS = _sa_labels_from_status(workflow.basedir)
+_MEMBER_LABELS = _member_labels_from_status(workflow.basedir)
 """
 
 
-def humanize_plot_id(plot_id: str, sa_labels=None, event_labels=None) -> str:
+def humanize_plot_id(plot_id: str, member_labels=None, event_labels=None) -> str:
     """Deterministic plot-id -> human display label (K1).
 
     Parses the ADR-2 grammar (segments joined by "__"; "." within a segment) and
@@ -374,15 +374,15 @@ def humanize_plot_id(plot_id: str, sa_labels=None, event_labels=None) -> str:
     label = _RENDERER_KIND_LABELS.get(kind, _generic[:1].upper() + _generic[1:])
     extras: list[str] = []
     for seg in segments[1:]:
-        if seg.startswith("sa."):
-            # S4 reframing: an sa_id is admissible as a nominal id, inadmissible where
+        if seg.startswith("member."):
+            # S4 reframing: a member_id is admissible as a nominal id, inadmissible where
             # the reader is being shown a compute-config variation -- which is what a
             # card name in a list of sibling figures is. Falls back to the id when no
             # map is supplied, so every non-threading caller renders unchanged.
-            _sa = seg[3:]
-            extras.append((sa_labels or {}).get(_sa) or f"sub-analysis {_sa}")
+            _member = seg[3:]
+            extras.append((member_labels or {}).get(_member) or f"member {_member}")
         elif seg.startswith("evt."):
-            # Mirrors the sa. branch above: a supplied display label wins, the raw
+            # Mirrors the member. branch above: a supplied display label wins, the raw
             # slug is the fallback, so every non-threading caller renders unchanged.
             _evt = seg[4:]
             extras.append((event_labels or {}).get(_evt) or f"event {_evt}")
@@ -398,7 +398,7 @@ def plot_output_template(
     renderer_kind: str,
     subdir: str,
     descriptor: str | None = None,
-    sa_id: str | None = None,
+    member_id: str | None = None,
     event_id: str | None = None,
 ) -> str:
     """Return the Snakefile-relative output path template for a figure.
@@ -413,7 +413,7 @@ def plot_output_template(
     plot_id = canonical_plot_id(
         renderer_kind,
         descriptor=descriptor,
-        sa_id=sa_id,
+        member_id=member_id,
         event_id=event_id,
     )
     return f"{subdir}/{plot_id}__OUTPUT_EXT__"

@@ -1,0 +1,158 @@
+# Vocabulary freeze manifest.
+#
+# WHY THIS FILE EXISTS. Migrations are FORWARD-ONLY: a tree at layout v0 runs
+# V0001 .. V0019 in sequence, so every historical module executes against a tree
+# written in the vocabulary of ITS OWN era. A rename sweep across src/ rewrites
+# those literals, and the modules then look for names no historical tree has.
+#
+# The failure is SILENT. V0007 checks `if not (target_dir / "subanalyses").is_dir():
+# return` and treats absence as "multisim pass, nothing to do". Rename that literal
+# and a genuine v0 tree takes the early return, the migration reports success, and
+# nothing raises. A glob that matches nothing returns [].
+#
+# HOW THE CHECKER READS THIS. `scripts/check_vocabulary_freeze.py` asserts the
+# OPPOSITE of every other check in this stage: it requires each token below to be
+# PRESENT in its file. A sweep that reached the frozen set turns it red; nothing
+# else does.
+#
+# ADDING A MIGRATION. A new file under versions/ that legitimately needs historical
+# vocabulary must be DECLARED here. The checker fails on any undeclared file under
+# versions/ that carries a retired token, so the declaration is mandatory rather
+# than remembered.
+#
+# NOT FROZEN, deliberately: version_migration/context.py and state.py are SHARED
+# across old and new migrations. They run for V0001 on a v0 tree and for the newest
+# migration on a current tree, so they must handle BOTH layouts. Freezing them
+# would be as wrong as sweeping them.
+
+# TOKENS CARRY THEIR CODE SYNTAX, and that is load-bearing rather than stylistic.
+# A bare word is defeated by a docstring: V0007 mentions `subanalyses/` in its module
+# docstring AND uses it as a path literal, so pinning the bare word passes even after
+# the executable literal is swept. Measured during this round's negative control,
+# which exited 0 on a genuinely broken V0007. Pin the form that executes:
+# `/ "subanalyses"`, `startswith("sa-")`, `== "subanalyses"`.
+#
+# Tokens that indicate a file is carrying pre-rename vocabulary. Used only for the
+# undeclared-file check; a file under versions/ containing any of these must appear
+# in `frozen` below.
+retired_tokens:
+  - subanalyses
+  - "sa_*"
+  - "sa-"
+  - sa_id
+
+frozen:
+  src/hhemt/version_migration/versions/V0001__rename_scenario_dirs.py:
+    reason: >-
+      Walks {target_dir}/subanalyses/sa_*/sims/ on a v0 tree. The tokens are in the
+      module docstring, which documents the on-disk shape this migration reads.
+    tokens:
+      - subanalyses
+      - "sa_*"
+
+  src/hhemt/version_migration/versions/V0006__fingerprint_schema_v3.py:
+    reason: >-
+      Carries all three silent classes: two globs and a literal-length removeprefix.
+      Renaming the removeprefix argument silently changes how many characters are
+      stripped, which corrupts every sa_id it parses rather than failing.
+    tokens:
+      - '"sa-*_inputs.json"'
+      - b_prepare_sa-
+      - removeprefix("sa-")
+
+  src/hhemt/version_migration/versions/V0007__setup_target_flag_rename.py:
+    reason: >-
+      The canonical silent-failure case. Line 55 builds the container path and line
+      56 treats its absence as "multisim pass, nothing to do", so a swept literal
+      makes a genuine v0 tree take the early return while the migration reports
+      success. The pinned token is the PATH LITERAL, not the bare word: this file
+      mentions subanalyses/ in its docstring too, and pinning the bare word passes
+      on an already-broken module.
+    tokens:
+      - '/ "subanalyses"'
+
+  src/hhemt/version_migration/versions/V0008__fix_per_rank_diff_aggregation.py:
+    reason: >-
+      Globs subanalyses/sa_*/sims/*/processed/ to find the per-rank performance
+      stores it rewrites. A renamed glob matches nothing and returns [].
+    tokens:
+      - subanalyses/sa_*/sims/*/processed/
+      - process_sa_*
+
+  src/hhemt/version_migration/versions/V0010__canonical_plot_id.py:
+    reason: >-
+      Reconstructs the pre-v10 plot-ID grammar, whose sub-analysis segment is the
+      literal sa- prefix. It parses historical stems and must keep reading them.
+    tokens:
+      - 'startswith("sa-")'
+      - 'len("sa-")'
+
+  src/hhemt/version_migration/versions/V0013__partition_as_sensitivity_axis.py:
+    reason: >-
+      Its docstring documents the per-sa_id fingerprint path that this migration's
+      config change invalidates. The record describes a v12-era tree.
+    tokens:
+      - sa_id
+
+  src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py:
+    reason: >-
+      Globs subanalyses/sa_*/sims/ for both the coupled and TRITON-only performance
+      stores, and checks for the subanalyses container directly.
+    tokens:
+      - subanalyses/sa_*/sims/*/processed/
+      - '== "subanalyses"'
+
+  src/hhemt/version_migration/versions/V0019__member_vocabulary.py:
+    reason: >-
+      Carries every retired token by construction: its docstring documents the
+      subanalyses/sa_* to members/member_* move, its _FLAG_REWRITES table matches
+      the sa- flag dialect, and _OLD_CONTAINER is the literal "subanalyses". This
+      is the migration that RETIRES the vocabulary, so it is the last module that
+      must still be able to read it.
+    tokens:
+      - subanalyses
+      - "sa-"
+
+  tests/test_version_migration_golden.py:
+    reason: >-
+      Asserts on legacy on-disk shapes by literal. A v18 tree HAS subanalyses/sa_0/;
+      renaming the assertion makes the pair assert the wrong shape and pass.
+    tokens:
+      - subanalyses
+
+  tests/test_version_migration_V0018.py:
+    reason: >-
+      Builds a v17-era status directory whose consolidation flag carries the
+      pre-rename sa- segment, and names the captured campaign scenario it was
+      recorded from. Both are historical record.
+    tokens:
+      - e_consolidate_sa-
+      - sa_serial
+
+  tests/test_version_migration_primitives.py:
+    reason: >-
+      Exercises the migration primitives against legacy directory shapes, so its
+      inputs must stay in the vocabulary those primitives were written against.
+    tokens:
+      - subanalyses
+
+  tests/test_version_migration_V0008.py:
+    reason: >-
+      Line 39 builds the v7-era fixture path Path("subanalyses") / "sa_22" / "sims" /
+      as the input V0008 migrates. Sweeping it makes the test assert a tree shape that
+      never existed, and pass. Declared here because the undeclared-file check is
+      scoped to versions/ and cannot see a test file.
+    tokens:
+      - subanalyses
+      - sa_22
+
+# Fixture trees. A vN fixture is a RECORD of what a vN tree looked like, so renaming
+# a directory inside one makes the vN-1 -> vN golden pair assert a shape that never
+# existed. Checked as directory existence rather than substring.
+frozen_fixture_dirs:
+  reason: >-
+    Every legacy_layouts fixture that models a sensitivity tree must retain its
+    subanalyses/ container. The golden tests diff these trees directly.
+  root: tests/fixtures/legacy_layouts
+  must_contain_dir: subanalyses
+  minimum_count: 19

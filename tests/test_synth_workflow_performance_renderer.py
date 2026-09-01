@@ -73,7 +73,7 @@ def test_status_sidecars_are_declared_when_they_exist(tmp_path):
     (analysis_dir / "_status").mkdir(parents=True)
     for name, payload in (
         ("a_setup_target_0_complete.flag.json", {"rule_name": "setup_target_0", "slurm_job_id": "1"}),
-        ("c_run_complete.flag.json", {"rule_name": "simulation_sa_x_evt_0", "slurm_job_id": "2"}),
+        ("c_run_complete.flag.json", {"rule_name": "simulation_member_x_evt_0", "slurm_job_id": "2"}),
     ):
         (analysis_dir / "_status" / name).write_text(json.dumps(payload))
 
@@ -104,7 +104,7 @@ def test_timeline_heading_and_table_ids_do_not_collide(tmp_path):
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "_status").mkdir(parents=True)
     (analysis_dir / "_status" / "c_run_complete.flag.json").write_text(
-        json.dumps({"rule_name": "simulation_sa_x_evt_0", "slurm_job_id": "2"})
+        json.dumps({"rule_name": "simulation_member_x_evt_0", "slurm_job_id": "2"})
     )
     html, _ = _render(analysis_dir)
 
@@ -226,9 +226,9 @@ def test_absent_slurm_csv_degrades_gracefully(tmp_path):
     # form would forbid a declaration the convention requires. `_render` never writes a
     # scenario_status.csv, so the R7 guarantee this test exists for -- the absent-SLURM
     # path declares no efficiency CSV -- is preserved exactly.
-    assert not any(
-        "efficiency_report" in p for p in manifest["source_paths_relative"]
-    ), manifest["source_paths_relative"]
+    assert not any("efficiency_report" in p for p in manifest["source_paths_relative"]), manifest[
+        "source_paths_relative"
+    ]
 
 
 def test_slurm_report_path_is_a_directory_not_a_file(tmp_path):

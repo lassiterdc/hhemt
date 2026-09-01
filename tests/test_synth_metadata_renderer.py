@@ -473,11 +473,7 @@ def test_reprex_guide_rows_default_to_required_first_then_alphabetical(tmp_path,
     assert tiers == sorted(tiers), f"clause (a): required rows must come first; tiers={tiers}"
 
     for tier in (0, 1):
-        names = [
-            metadata._strip_code(r[0]).lower()
-            for r, t in zip(rows, tiers, strict=True)
-            if t == tier
-        ]
+        names = [metadata._strip_code(r[0]).lower() for r, t in zip(rows, tiers, strict=True) if t == tier]
         assert names == sorted(names), f"clause (b): tier {tier} not alphabetical: {names}"
 
 
@@ -624,9 +620,9 @@ def test_a_constant_sweep_column_returns_the_same_shape_as_a_varied_one():
     # 1. The return shape is UNIFORM across both branches -- this is the invariant.
     for label, out in (("constant", constant), ("varied", varied)):
         cell_tip = out["analysis_config.run_mode"]
-        assert isinstance(cell_tip, tuple) and len(cell_tip) == 2, (
-            f"{label} column returned {type(cell_tip).__name__}, not a (cell, tooltip) 2-tuple"
-        )
+        assert (
+            isinstance(cell_tip, tuple) and len(cell_tip) == 2
+        ), f"{label} column returned {type(cell_tip).__name__}, not a (cell, tooltip) 2-tuple"
 
     # A constant column is NOT a varied parameter: it shows its value, with no hover.
     cell, tip = constant["analysis_config.run_mode"]
@@ -726,14 +722,12 @@ def test_option_glossary_drift_is_refused_at_class_definition_time():
     with pytest.raises(TypeError, match="options keys"):
 
         class _Drifted(cfgBaseModel):
-            m: Literal["a", "b", "c"] = Field(
-                "a", json_schema_extra=field_meta(options={"a": "A", "b": "B"})
-            )
+            m: Literal["a", "b", "c"] = Field("a", json_schema_extra=field_meta(options={"a": "A", "b": "B"}))
 
 
 def test_required_when_falls_back_to_the_triggers_declared_default():
     """A YAML that omits the trigger must still be judged against its default."""
-    from typing import Literal, Optional
+    from typing import Literal
 
     import pytest
     from pydantic import Field
@@ -742,9 +736,7 @@ def test_required_when_falls_back_to_the_triggers_declared_default():
 
     class _M(cfgBaseModel):
         mode: Literal["local", "batch_job"] = "local"
-        dur: Optional[int] = Field(
-            None, json_schema_extra=field_meta(required_when=[when("mode", "batch_job")])
-        )
+        dur: int | None = Field(None, json_schema_extra=field_meta(required_when=[when("mode", "batch_job")]))
 
     assert _M().dur is None  # trigger absent -> default "local" -> not required
     assert _M(mode="batch_job", dur=90).dur == 90
@@ -919,15 +911,18 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
         "111": {
             "job": {"JobID": "111", "Elapsed": "00:00:23", "NNodes": "1", "NCPUS": "1"},
             # No recorded CPU usage at all -> not measured -> em-dash.
-            "batch": {"JobID": "111.batch", "TotalCPU": "00:00:00", "MaxRSS": "700K",
-                      "TRESUsageInTot": ""},
+            "batch": {"JobID": "111.batch", "TotalCPU": "00:00:00", "MaxRSS": "700K", "TRESUsageInTot": ""},
         },
         "222": {
             "job": {"JobID": "222", "Elapsed": "00:01:40", "NNodes": "1", "NCPUS": "1"},
             # A genuine measurement -> the number must survive. The numerator moved off
             # `TotalCPU`, which reads zero for srun-step work, onto the recorded usage.
-            "batch": {"JobID": "222.batch", "TotalCPU": "00:00:00", "MaxRSS": "512K",
-                      "TRESUsageInTot": "cpu=00:00:00,energy=0,mem=512K"},
+            "batch": {
+                "JobID": "222.batch",
+                "TotalCPU": "00:00:00",
+                "MaxRSS": "512K",
+                "TRESUsageInTot": "cpu=00:00:00,energy=0,mem=512K",
+            },
             "0": {"JobID": "222.0", "TRESUsageInTot": "cpu=00:01:31,energy=0,mem=512K"},
         },
     }
@@ -992,7 +987,7 @@ def test_resume_attempts_are_numbered_in_the_description_column():
     purpose_map = metadata._job_purpose_map(
         [
             {
-                "rule_name": "simulation_sa_mpi_11_r1_evt_event_index_0",
+                "rule_name": "simulation_member_mpi_11_r1_evt_event_index_0",
                 "slurm_job_id": "777",
                 "sa_id": "mpi_11_r1",
                 "event_id": "event_index.0",
@@ -1045,8 +1040,8 @@ def test_slurm_job_index_harvest_reads_the_executor_log_tree(tmp_path):
     from hhemt.status_flags import harvest_slurm_job_index
 
     logs = tmp_path / ".snakemake" / "slurm_logs"
-    (logs / "rule_simulation_sa_mpi_11_r1" / "mpi_11_r1_0").mkdir(parents=True)
-    (logs / "rule_simulation_sa_mpi_11_r1" / "mpi_11_r1_0" / "18396671.log").write_text("")
+    (logs / "rule_simulation_member_mpi_11_r1" / "mpi_11_r1_0").mkdir(parents=True)
+    (logs / "rule_simulation_member_mpi_11_r1" / "mpi_11_r1_0" / "18396671.log").write_text("")
     (logs / "rule_setup_target_0").mkdir(parents=True)
     (logs / "rule_setup_target_0" / "18396501.log").write_text("")
     # A non-jobid filename must not enter the index.
@@ -1054,7 +1049,7 @@ def test_slurm_job_index_harvest_reads_the_executor_log_tree(tmp_path):
 
     index = harvest_slurm_job_index(tmp_path)
     assert index == {
-        "18396671": "simulation_sa_mpi_11_r1",
+        "18396671": "simulation_member_mpi_11_r1",
         "18396501": "setup_target_0",
     }
 
@@ -1075,7 +1070,7 @@ def test_job_purpose_and_hardware_are_joined_in_from_toolkit_records():
     purpose_map = metadata._job_purpose_map(
         [
             {
-                "rule_name": "simulation_sa_gpu_0_r1_evt_event_index_0",
+                "rule_name": "simulation_member_gpu_0_r1_evt_event_index_0",
                 "slurm_job_id": "999",
                 "sa_id": "gpu_0_r1",
                 "event_id": "event_index.0",
@@ -1138,7 +1133,7 @@ def test_run_timeline_counts_rules_not_workflow_steps():
         },
         {
             "written_at": "2026-08-11T13:31:35-04:00",
-            "rule_name": "prepare_sa_openmp_7_r2_evt_event_index_0",
+            "rule_name": "prepare_member_openmp_7_r2_evt_event_index_0",
             "sa_id": "openmp_7_r2",
             "event_id": "event_index.0",
             "slurm_job_id": "18393109",
@@ -1175,9 +1170,9 @@ def test_bucket_heading_does_not_repeat_badge_verb(bucket):
     badge_text = re.sub(r"<[^>]+>", "", metadata._bucket_badge(bucket)).strip()
     verb = metadata._BUCKET_VERB[bucket]
     assert badge_text == verb, "precondition: the badge renders the verb"
-    assert not metadata._BUCKET_HEADING[bucket].startswith(verb), (
-        f"heading repeats the badge verb {verb!r} immediately after it"
-    )
+    assert not metadata._BUCKET_HEADING[bucket].startswith(
+        verb
+    ), f"heading repeats the badge verb {verb!r} immediately after it"
 
 
 def test_table_interaction_note_is_single_sourced():
@@ -1213,9 +1208,7 @@ def test_reader_visible_prose_uses_one_dash_convention():
     """
     prose = re.sub(r"<[^>]+>", "", metadata._EFF_UNCAPTURED_NOTE)
     ascii_dash = re.findall(r"(?<![-<!])--(?!>)", prose)
-    assert not ascii_dash, (
-        f"{len(ascii_dash)} ASCII '--' in prose that elsewhere uses an em dash"
-    )
+    assert not ascii_dash, f"{len(ascii_dash)} ASCII '--' in prose that elsewhere uses an em dash"
 
 
 def test_scenario_status_registers_the_scenario_directory_slug(tmp_path):
@@ -1240,16 +1233,16 @@ def test_scenario_status_registers_the_scenario_directory_slug(tmp_path):
         assert ("", "0", "triton") in scenario_map, slug
 
 
-def test_scenario_status_slug_key_carries_a_non_empty_sa_id(tmp_path):
-    """The sensitivity arm: `sa_id` is non-empty on BOTH sides there, so the tuple must carry it.
+def test_scenario_status_slug_key_carries_a_non_empty_member_id(tmp_path):
+    """The sensitivity arm: `member_id` is non-empty on BOTH sides there, so the tuple must carry it.
 
-    On a non-sensitivity analysis both sides degrade to `""` and agree, which is why an
-    `sa_id`-shaped bug would be invisible on every other case in this module.
+    On a non-sensitivity analysis both sides degrade to `""` and agree, which is why a
+    `member_id`-shaped bug would be invisible on every other case in this module.
     """
     slug = "year.9_event_type.compound_event_id.1"
     (tmp_path / "scenario_status.csv").write_text(
-        "sa_id,event_iloc,model_type,scenario_directory\n"
-        f"12,0,tritonswmm,/scratch/u/system/an/subanalyses/sa_12/sims/{slug}\n"
+        "member_id,event_iloc,model_type,scenario_directory\n"
+        f"12,0,tritonswmm,/scratch/u/system/an/members/member_12/sims/{slug}\n"
     )
     scenario_map, _path = metadata._read_scenario_status(tmp_path)
     assert ("12", slug, "tritonswmm") in scenario_map
@@ -1296,7 +1289,7 @@ def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     top-level prefixes. This asserts the tree markup AND that no path is lost -- a renderer
     that dropped entries would otherwise look tidier and score better.
 
-    TWO sub-analyses, not three, and that is deliberate. Iter-11 item 14 collapses a
+    TWO members, not three, and that is deliberate. Iter-11 item 14 collapses a
     contiguous run of `_TREE_SENTINEL_MIN_SIBLINGS` (3) or more structurally identical
     siblings into one `{stem…} × N` sentinel, which is a DIFFERENT rendering from the
     single-child-chain collapse this test guards. A three-sibling fixture straddles that
@@ -1307,8 +1300,8 @@ def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     """
     paths = [
         "sensitivity_datatree.zarr/",
-        "subanalyses/sa_gpu_0_r1/analysis_datatree.zarr",
-        "subanalyses/sa_gpu_0_r2/analysis_datatree.zarr",
+        "members/member_gpu_0_r1/analysis_datatree.zarr",
+        "members/member_gpu_0_r2/analysis_datatree.zarr",
     ]
     html = metadata._path_tree_html(paths)
 
@@ -1319,19 +1312,19 @@ def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     lines = [ln for ln in body.replace("</pre>", "").split("\n") if ln.strip()]
 
     # Every leaf survives the transformation.
-    for leaf in ("sa_gpu_0_r1", "sa_gpu_0_r2", "sensitivity_datatree.zarr"):
+    for leaf in ("member_gpu_0_r1", "member_gpu_0_r2", "sensitivity_datatree.zarr"):
         assert any(leaf in ln for ln in lines), leaf
 
-    # Single-child chains COLLAPSE: each sub-analysis is one line carrying both its own
+    # Single-child chains COLLAPSE: each member is one line carrying both its own
     # directory and its single child, never a directory line plus an indented leaf. Without
-    # this the real 28-sub-analysis population renders 56 lines, half of them the same
+    # this the real 28-member population renders 56 lines, half of them the same
     # filename, which is the unreadability the item is about reached from the other side.
-    collapsed = [ln for ln in lines if "sa_gpu_0_r1/analysis_datatree.zarr" in ln]
+    collapsed = [ln for ln in lines if "member_gpu_0_r1/analysis_datatree.zarr" in ln]
     assert len(collapsed) == 1, f"single-child chain not collapsed: {lines}"
 
-    # `subanalyses` is a real branch (2 children), so it must NOT be collapsed into its
+    # `members` is a real branch (2 children), so it must NOT be collapsed into its
     # children -- proving the collapse stops at a branch rather than flattening everything.
-    assert any(ln.strip().endswith("subanalyses") for ln in lines), lines
+    assert any(ln.strip().endswith("members") for ln in lines), lines
 
 
 def test_no_hand_written_conditional_requirement_survives():
@@ -1381,8 +1374,7 @@ def test_every_closed_set_field_declares_its_option_glossary():
                 if declared(fi, "options") is None:
                     missing.append(f"{label}.{name}")
     assert not missing, (
-        "closed-set fields rendered in the Reproduction Guide with no option "
-        f"glossary: {sorted(missing)}"
+        "closed-set fields rendered in the Reproduction Guide with no option " f"glossary: {sorted(missing)}"
     )
 
 
@@ -1410,20 +1402,18 @@ def test_varied_values_cell_carries_the_tooltip_affordance_as_one_rule():
     # td[title], span[title], abbr[title]`), so the pattern captures the whole selector
     # list and requires `strong.tip-affordance` to be a member of it. A bare substring
     # test would pass over an empty match set and certify nothing.
-    match = re.search(
-        r"(?:^|\}|\n)\s*([^{}]*\bstrong\.tip-affordance\b[^{}]*)\{([^}]*)\}", css
-    )
+    match = re.search(r"(?:^|\}|\n)\s*([^{}]*\bstrong\.tip-affordance\b[^{}]*)\{([^}]*)\}", css)
     assert match is not None, f"no strong.tip-affordance rule in the emitted CSS:\n{css}"
-    assert "strong.tip-affordance" in match.group(1), (
-        f"strong.tip-affordance is not a member of the matched selector list: {match.group(1)!r}"
-    )
+    assert "strong.tip-affordance" in match.group(
+        1
+    ), f"strong.tip-affordance is not a member of the matched selector list: {match.group(1)!r}"
     block = match.group(2)
 
     assert "cursor: help" in block, f"affordance rule lacks the help cursor: {block!r}"
     assert re.search(r"border-bottom:\s*1px\s+dotted", block), f"affordance rule lacks the dotted underline: {block!r}"
-    assert re.search(rf"(?<!-)color:\s*{re.escape(expected_color)}", block), (
-        f"affordance colour is not the resolved brand colour {expected_color!r}: {block!r}"
-    )
+    assert re.search(
+        rf"(?<!-)color:\s*{re.escape(expected_color)}", block
+    ), f"affordance colour is not the resolved brand colour {expected_color!r}: {block!r}"
 
 
 def test_varied_values_affordance_is_absent_from_the_single_value_branch():
@@ -1533,9 +1523,7 @@ def test_queue_column_falls_back_to_slurm_planned_and_discloses_its_source():
     csv = _EFF_HEADER + row
 
     def queue_cell(recovery, scenario_map):
-        mounted = metadata._build_slurm_efficiency_html(
-            [("r", csv)], {}, scenario_map, lambda p: "", recovery
-        )
+        mounted = metadata._build_slurm_efficiency_html([("r", csv)], {}, scenario_map, lambda p: "", recovery)
         rows = _tabulator_rows(mounted)
         assert rows, "no data row rendered"
         assert "Queue, this job (s)" in rows[0], f"queue header absent; got {sorted(rows[0])}"

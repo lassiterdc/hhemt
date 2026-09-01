@@ -19,6 +19,7 @@ The helpers are called directly (no analysis-instance harness needed) per Spec 8
 architectural constraint that V0008 + this regression test share one source of truth
 with the production aggregator.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -52,7 +53,7 @@ def test_zero_byte_perf_file_is_skipped(synthetic_perf_dir):
 
     Pre-fix behavior (the failure this guards): ``parse_performance_file`` ->
     ``pandas.read_csv`` raises ``EmptyDataError`` on the empty file and the whole
-    process rule fails (observed 2026-07-28: ``synth_cc_resume_triton`` ``sa_gpu_1_r1``
+    process rule fails (observed 2026-07-28: ``synth_cc_resume_triton`` ``member_gpu_1_r1``
     left ``performance110.txt`` at 0 bytes of 144). The FIRST
     ``_aggregate_perf_tseries`` call below therefore RAISES against pre-fix code — the
     assertion anchors on the raise/return behavior (true in both pre- and post-fix
@@ -67,18 +68,13 @@ def test_zero_byte_perf_file_is_skipped(synthetic_perf_dir):
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        ds = _aggregate_perf_tseries(
-            synthetic_perf_dir, resume_steps=[]
-        )  # raises EmptyDataError pre-fix
+        ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])  # raises EmptyDataError pre-fix
 
     # The empty file is skipped: the series covers exactly the 10 valid checkpoints.
     assert ds.sizes["timestep_min"] == 10
     # A UserWarning naming the skipped empty file(s) was emitted (mirrors the
     # existing perfs-with-negatives warning pattern).
-    assert any(
-        issubclass(w.category, UserWarning) and "empty" in str(w.message).lower()
-        for w in caught
-    )
+    assert any(issubclass(w.category, UserWarning) and "empty" in str(w.message).lower() for w in caught)
 
 
 def test_malformed_perf_file_is_skipped(synthetic_perf_dir):
@@ -89,15 +85,15 @@ def test_malformed_perf_file_is_skipped(synthetic_perf_dir):
     corpus (2026-08-23):
 
       (a) a trailing numeric fragment after the ``Average`` row -- 10 of 1080 files in
-          ``sa_0``, e.g. ``performance201.txt`` ending in a bare ``.6453`` line.
+          ``member_0``, e.g. ``performance201.txt`` ending in a bare ``.6453`` line.
           ``read_csv`` NaN-pads it into a row and ``df_ranks["Rank"].astype(int)``
           raises ``ValueError: invalid literal for int() with base 10: '.6453'``.
-      (b) a mangled ``Average`` row -- ``performance911.txt`` in the ``sa_2`` set-aside
+      (b) a mangled ``Average`` row -- ``performance911.txt`` in the ``member_2`` set-aside
           tree reads ``AAverage``, leaving no ``Average`` sentinel, so
           ``df[df["Rank"] == "Average"].iloc[0]`` raises
           ``IndexError: single positional indexer is out-of-bounds``.
 
-    Pre-fix, EITHER shape fails the whole process rule, which costs the sub-analysis
+    Pre-fix, EITHER shape fails the whole process rule, which costs the member
     its ``d_process`` flag. The assertions below anchor on raise/return behavior, not
     on warning wording, so they discriminate on behavior in both pre- and post-fix
     worlds.
@@ -124,30 +120,20 @@ def test_malformed_perf_file_is_skipped(synthetic_perf_dir):
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        ds = _aggregate_perf_tseries(
-            synthetic_perf_dir, resume_steps=[]
-        )  # raises ValueError / IndexError pre-fix
+        ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])  # raises ValueError / IndexError pre-fix
 
     # Both malformed files are skipped: the series covers exactly the 10 valid
     # checkpoints built by the fixture.
     assert ds.sizes["timestep_min"] == 10
     # The skipped checkpoints do not leak into the reset-row join's iloc set: the
     # per-rank sum still telescopes to the final cumulative of checkpoint 10.
-    assert ds["Total"].sum(dim="timestep_min").max(dim="Rank").item() == pytest.approx(
-        160.0, rel=1e-6
-    )
+    assert ds["Total"].sum(dim="timestep_min").max(dim="Rank").item() == pytest.approx(160.0, rel=1e-6)
     # A UserWarning naming the malformed file(s) was emitted, and it carries the
     # DIAGNOSIS (concurrent writers), not merely the fact of a skip -- this artifact is
     # the only place duplicate execution is visible, so a generic message would read as
     # noise and delete the detector.
-    assert any(
-        issubclass(w.category, UserWarning) and "malformed" in str(w.message).lower()
-        for w in caught
-    )
-    assert any(
-        issubclass(w.category, UserWarning) and "concurrent" in str(w.message).lower()
-        for w in caught
-    )
+    assert any(issubclass(w.category, UserWarning) and "malformed" in str(w.message).lower() for w in caught)
+    assert any(issubclass(w.category, UserWarning) and "concurrent" in str(w.message).lower() for w in caught)
 
 
 def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
@@ -166,12 +152,12 @@ def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
         "Rank-1 cumulative Total at checkpoint 10 is 160s; max(Rank).sum(timestep_min) "
         "of correctly-diffed deltas must equal this."
     )
-    assert summary["Compute"].item() == pytest.approx(120.0, rel=1e-6), (
-        "Rank-1 Compute at checkpoint 10 is 120s; max(Rank) selects rank-1."
-    )
-    assert summary["SWMM"].item() == pytest.approx(50.0, rel=1e-6), (
-        "Rank-0 SWMM = 50s; max(Rank) selects rank-0 because rank-0 > rank-1 SWMM."
-    )
+    assert summary["Compute"].item() == pytest.approx(
+        120.0, rel=1e-6
+    ), "Rank-1 Compute at checkpoint 10 is 120s; max(Rank) selects rank-1."
+    assert summary["SWMM"].item() == pytest.approx(
+        50.0, rel=1e-6
+    ), "Rank-0 SWMM = 50s; max(Rank) selects rank-0 because rank-0 > rank-1 SWMM."
 
 
 def test_corrected_reconstruction_matches_final_performance_txt(synthetic_perf_dir):
@@ -181,12 +167,12 @@ def test_corrected_reconstruction_matches_final_performance_txt(synthetic_perf_d
     ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])
     rank0_total = ds["Total"].sel(Rank=0).sum(dim="timestep_min").item()
     rank1_total = ds["Total"].sel(Rank=1).sum(dim="timestep_min").item()
-    assert rank0_total == pytest.approx(150.0, rel=1e-6), (
-        "rank-0 final Total at checkpoint 10 = 15s/checkpoint × 10 = 150s"
-    )
-    assert rank1_total == pytest.approx(160.0, rel=1e-6), (
-        "rank-1 final Total at checkpoint 10 = 16s/checkpoint × 10 = 160s"
-    )
+    assert rank0_total == pytest.approx(
+        150.0, rel=1e-6
+    ), "rank-0 final Total at checkpoint 10 = 15s/checkpoint × 10 = 150s"
+    assert rank1_total == pytest.approx(
+        160.0, rel=1e-6
+    ), "rank-1 final Total at checkpoint 10 = 16s/checkpoint × 10 = 160s"
 
 
 def _write_resume_boundary(perf_dir):
@@ -197,7 +183,7 @@ def _write_resume_boundary(perf_dir):
     `(deltas <= 0).all(axis=1)` detected this boundary. That is precisely the degeneracy
     that made the old test pass while production failed: at a REAL boundary the restarted
     process re-pays initialization and Init INCREASES (measured 0.05694 -> 0.07816 s on
-    sa_serial_6_r1), one positive column defeats `.all()`, and the reset is missed.
+    member_serial_6_r1), one positive column defeats `.all()`, and the reset is missed.
 
     Giving checkpoint 9 a nonzero Init and checkpoint 10 a LARGER one reproduces that
     shape, so the retired predicate and the ledger join now DISAGREE on this data. That

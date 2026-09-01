@@ -162,9 +162,7 @@ def test_submit_tmux_threads_adopted_token_count_into_the_wait(builder, monkeypa
     assert seen.get("adopted_token_count") == 7
 
 
-def test_liveness_names_the_prior_driver_uuid_from_the_log_set_with_no_caller_capture(
-    builder, monkeypatch
-):
+def test_liveness_names_the_prior_driver_uuid_from_the_log_set_with_no_caller_capture(builder, monkeypatch):
     """PRE-FIX FAILURE: _workflow_has_live_slurm_jobs read only the NEWEST log's
     LAST uuid, so a resumed driver saw only its own. The adopted uuid then had to be
     captured at the call site BEFORE the new log was created -- correctness by read
@@ -242,7 +240,7 @@ def sens_builder(tmp_path):
     master.analysis_paths.analysis_log_directory = logs
     master._resource_manager._get_simulation_resource_requirements.return_value = {"n_gpus": 0}
     sa = Mock()
-    sa.master_analysis = master
+    sa.experiment = master
     return SensitivityAnalysisWorkflowBuilder(sa)
 
 

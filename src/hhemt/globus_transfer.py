@@ -102,7 +102,7 @@ class GlobusTransferManager:
             filter_sim_outputs: If True, exclude large intermediate sim files
                                 (see ``_SIM_OUTPUT_EXCLUDE_PATTERNS``).
             exclude_dirs:       Directory path suffixes to exclude via Globus
-                                filter rules (e.g. ``["subanalyses/"]``).
+                                filter rules (e.g. ``["members/"]``).
 
         Returns:
             Globus task ID string.  Pass to :meth:`wait` to block until done.

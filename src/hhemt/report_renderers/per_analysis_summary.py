@@ -5,7 +5,7 @@ Tabulator HTML emit at Phase 6 of the interactive_report_renderers feature.
 Default rows in regular multisim mode: total simulations, expected total,
 n successful / pending / failed, enabled model types, sensitivity-analysis
 mode (when applicable). Sensitivity-master mode renders one row per
-sub-analysis with status counts.
+member with status counts.
 """
 
 from __future__ import annotations
@@ -43,13 +43,13 @@ def render(
     prov = ProvenanceLog()
 
     # Sensitivity-master scope: the analysis is the master sensitivity analysis
-    # with sub-analyses populated. Render a per-sa-row table (one row per
-    # sub-analysis showing status counts). Otherwise fall back to the regular
+    # with members populated. Render a per-member-row table (one row per
+    # member showing status counts). Otherwise fall back to the regular
     # multisim single-scope metrics table.
     is_sensitivity_master = (
         getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
         and getattr(analysis, "sensitivity", None) is not None
-        and len(analysis.sensitivity.sub_analyses) > 0
+        and len(analysis.sensitivity.members) > 0
     )
 
     metrics = report_cfg.per_analysis_summary.metrics
@@ -68,12 +68,12 @@ def render(
 
     if is_sensitivity_master:
         # CSV-authoritative (matches the non-sensitivity branch): when the master
-        # scenario_status.csv is present, derive per-sa status counts from it
-        # (columns: sa_id, event_iloc, model_type, run_completed, scenario_setup).
+        # scenario_status.csv is present, derive per-member status counts from it
+        # (columns: member_id, event_iloc, model_type, run_completed, scenario_setup).
         # The CSV is written by the export_scenario_status rule, which can race AFTER
         # this plot rule in the DAG — so at render time the CSV may be absent, forcing
         # the _is_scenario_successful fallback, which reads the per-sub PRIMARY-model
-        # runtime logs via _analysis_level_model_logfile. For a sensitivity sub-analysis
+        # runtime logs via _analysis_level_model_logfile. For a sensitivity member
         # those logs live under the MASTER analysis_dir's logs/sims (NOT the system_dir
         # parent): _analysis_level_model_logfile uses master_analysis_yaml.parent/logs/sims
         # (run_simulation.py) and simlog_directory == analysis_dir/logs/sims (analysis.py).
@@ -93,14 +93,14 @@ def render(
         if not use_csv:
             master_simlogs = analysis.analysis_paths.simlog_directory
             log_source_files.extend(sorted(master_simlogs.glob("model_*.log")))
-        per_sa_rows = []
-        for sa_id, sub in analysis.sensitivity.sub_analyses.items():
+        per_member_rows = []
+        for member_id, sub in analysis.sensitivity.members.items():
             n = len(sub.df_sims.index)
             if use_csv:
-                sa_rows = status_df[status_df["sa_id"].astype(str) == str(sa_id)]
-                succ_by_event = sa_rows.groupby("event_iloc")["run_completed"].all()
+                member_rows = status_df[status_df["sa_id"].astype(str) == str(member_id)]
+                succ_by_event = member_rows.groupby("event_iloc")["run_completed"].all()
                 n_succ = int(succ_by_event.sum())
-                setup_by_event = sa_rows.groupby("event_iloc")["scenario_setup"].any()
+                setup_by_event = member_rows.groupby("event_iloc")["scenario_setup"].any()
                 n_fail = sum(
                     1 for e in setup_by_event.index if setup_by_event.get(e, False) and not succ_by_event.get(e, False)
                 )
@@ -109,16 +109,16 @@ def render(
                 n_succ = sum(1 for i in sub.df_sims.index if _is_scenario_successful(sub, i))
                 n_pend = sum(1 for i in sub.df_sims.index if _is_scenario_pending(sub, i))
                 n_fail = n - n_succ - n_pend
-            per_sa_rows.append(
+            per_member_rows.append(
                 {
-                    "sub-analysis": sa_id,
+                    "member": member_id,
                     "n sims": n,
                     "successful": n_succ,
                     "pending": n_pend,
                     "failed": n_fail,
                 }
             )
-        df = pd.DataFrame(per_sa_rows)
+        df = pd.DataFrame(per_member_rows)
     else:
         n_sims = len(analysis.df_sims.index)
         # Prefer scenario_status.csv (written by export_scenario_status.py as
@@ -152,9 +152,9 @@ def render(
             and getattr(analysis, "sensitivity", None) is not None
         )
         if is_sensitivity:
-            n_sa_rows = len(analysis.sensitivity.df_setup.index)
-            expected_total = n_weather_events * n_sa_rows
-            expected_label = f"Expected total (derived: {n_weather_events} events × {n_sa_rows} sa rows)"
+            n_member_rows = len(analysis.sensitivity.df_setup.index)
+            expected_total = n_weather_events * n_member_rows
+            expected_label = f"Expected total (derived: {n_weather_events} events × {n_member_rows} member rows)"
         else:
             expected_total = n_weather_events
             expected_label = f"Expected total (derived: {n_weather_events} weather events)"
@@ -183,7 +183,7 @@ def render(
     scenario_status_csv_path = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
     # Declare the expected source unconditionally (ADR-6 D3): scenario_status.csv
     # is the named source even when absent (sensitivity-master mode derives counts
-    # from in-memory sub_analyses). _validate_source_path accepts non-existent
+    # from in-memory members). _validate_source_path accepts non-existent
     # paths, so this surfaces the expected CSV rather than tripping Gate-A.
     source_paths: list[Path] = [scenario_status_csv_path, *log_source_files]
 
@@ -224,7 +224,7 @@ def _build_tabulator_html(df: pd.DataFrame, report_cfg: report_config) -> str:
 
     Delegates construction to ``_tabulator_defaults``. No persistence-id
     derivation here — per_analysis_summary's data is fully aggregate (one
-    row per metric in regular mode; one row per sub-analysis in
+    row per metric in regular mode; one row per member in
     sensitivity-master mode) so cross-analysis persistence collision is
     not a risk; ``persistence_id`` is wired only when the user explicitly
     sets it via config.

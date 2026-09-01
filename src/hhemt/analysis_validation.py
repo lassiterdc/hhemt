@@ -9,8 +9,8 @@ share the same validation logic.
 Each per-check function returns one `CheckResult` describing pass/fail plus
 optional per-scenario detail rows. The aggregator `validate_analysis()` runs
 all 9 checks and returns a `ValidationReport`. For sensitivity analyses, the
-aggregate per-scenario checks iterate sub-analyses and prefix each detail
-row with the sub-analysis id.
+aggregate per-scenario checks iterate members and prefix each detail
+row with the member id.
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ class ValidationReport:
     def granular_failures(self) -> list[dict]:
         """Flat list of per-scenario failure rows across all checks.
 
-        Each row carries `{stage, sa_id (optional), scenario, detail}` so the
+        Each row carries `{stage, member_id (optional), scenario, detail}` so the
         renderer can emit a uniform "scenario × stage × detail" table.
         """
         rows: list[dict] = []
@@ -174,7 +174,7 @@ def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
     # Gotcha 71(d) disclosed denominator: `passed` derives from len(issues)==0 and
     # therefore cannot distinguish "evaluated and found nothing" from "did not
     # evaluate". A system that declares a GPU backend but resolves NO GPU build dir
-    # (the sensitivity-master template, whose GPU hardware varies per sub-analysis)
+    # (the sensitivity-master template, whose GPU hardware varies per member)
     # ABSTAINS on the GPU compile term; name that in the artifact itself.
     if analysis.cfg_analysis.execution_environment != "container" and sys.gpu_compilation_backend:
         _abstained = [
@@ -189,24 +189,24 @@ def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
             summary += (
                 f" [GPU compile term NOT evaluated for {', '.join(_abstained)}: this system "
                 "declares a GPU backend but resolves no GPU build dir (master-level template; "
-                "GPU hardware varies per sub-analysis). CPU term evaluated; per-hardware GPU "
-                "compile status is certified downstream by each sub-analysis's own system.]"
+                "GPU hardware varies per member). CPU term evaluated; per-hardware GPU "
+                "compile status is certified downstream by each member's own system.]"
             )
     return CheckResult(name="System setup", level="system", passed=passed, summary=summary, details=issues)
 
 
-def _iter_subanalyses_or_self(analysis: TRITONSWMM_analysis):
-    """Yield (sa_id, sub_analysis) for sensitivity master, else (None, analysis)."""
+def _iter_members_or_self(analysis: TRITONSWMM_analysis):
+    """Yield (member_id, member) for sensitivity master, else (None, analysis)."""
     sensitivity_on = getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
     sens = getattr(analysis, "sensitivity", None)
     if sensitivity_on and sens is not None:
-        yield from sens.sub_analyses.items()
+        yield from sens.members.items()
     else:
         yield None, analysis
 
 
 def _detail_rows_for_failed_scenarios(analysis: TRITONSWMM_analysis, failed_paths: list[str]) -> list[dict]:
-    """Convert a list of scenario_dir strings to detail-row dicts (no sa_id)."""
+    """Convert a list of scenario_dir strings to detail-row dicts (no member_id)."""
     return [{"scenario": str(Path(p).name), "scenario_dir": str(p), "detail": "did not complete"} for p in failed_paths]
 
 
@@ -215,7 +215,7 @@ def check_scenarios_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
     details: list[dict] = []
     total = 0
     failed_count = 0
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for member_id, sub in _iter_members_or_self(analysis):
         n = int(sub.n_scenarios)
         total += n
         if not sub._all_scenarios_created:
@@ -223,8 +223,8 @@ def check_scenarios_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
             failed_count += len(failed)
             for p in failed:
                 row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": "scenario not created"}
-                if sa_id is not None:
-                    row["sa_id"] = f"sa_{sa_id}"
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
                 details.append(row)
     passed = failed_count == 0
     summary = (
@@ -238,7 +238,7 @@ def check_scenarios_run(analysis: TRITONSWMM_analysis) -> CheckResult:
     details: list[dict] = []
     total = 0
     failed_count = 0
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for member_id, sub in _iter_members_or_self(analysis):
         try:
             n = len(sub.df_sims)
         except Exception:
@@ -249,8 +249,8 @@ def check_scenarios_run(analysis: TRITONSWMM_analysis) -> CheckResult:
             failed_count += len(failed)
             for p in failed:
                 row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": "simulation did not complete"}
-                if sa_id is not None:
-                    row["sa_id"] = f"sa_{sa_id}"
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
                 details.append(row)
     passed = failed_count == 0
     summary = f"All {total} scenarios ran" if passed else f"Simulation failed for {failed_count} of {total} scenarios"
@@ -280,8 +280,8 @@ def check_timeseries_processed(
     - ``"TRITON"``: TRITONSWMM + TRITON-only
     - ``"SWMM"``: TRITONSWMM + SWMM-only
 
-    Iterates ``_iter_subanalyses_or_self(analysis)`` so the sensitivity
-    sub-analysis fan-out is preserved — iterating the master's own ``df_sims``
+    Iterates ``_iter_members_or_self(analysis)`` so the sensitivity
+    member fan-out is preserved — iterating the master's own ``df_sims``
     would silently pass on a sensitivity analysis (also part of the R4 bug).
     """
     from hhemt.scenario import compute_event_id_slug
@@ -289,7 +289,7 @@ def check_timeseries_processed(
 
     details: list[dict] = []
     total = 0
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for member_id, sub in _iter_members_or_self(analysis):
         enabled = sub._get_enabled_model_types()
         if which == "TRITON":
             enabled = [m for m in enabled if m in ("tritonswmm", "triton")]
@@ -306,8 +306,8 @@ def check_timeseries_processed(
                     "scenario_dir": str(sim_dir / event_id),
                     "detail": "timeseries not processed",
                 }
-                if sa_id is not None:
-                    row["sa_id"] = f"sa_{sa_id}"
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
                 details.append(row)
     passed = not details
     summary = (
@@ -332,8 +332,8 @@ def check_analysis_summaries_created(analysis: TRITONSWMM_analysis) -> CheckResu
         sens_zarr = analysis.analysis_paths.sensitivity_datatree_zarr
         if sens_zarr is None or not sens_zarr.exists():
             missing.append({"detail": f"Sensitivity DataTree zarr missing at {sens_zarr}"})
-        for sa_id, sub in analysis.sensitivity.sub_analyses.items():
-            _check_one(sub, label_prefix=f"sa_{sa_id}: ")
+        for member_id, sub in analysis.sensitivity.members.items():
+            _check_one(sub, label_prefix=f"member_{member_id}: ")
     else:
         _check_one(analysis)
 
@@ -507,7 +507,6 @@ def check_invalidating_fixes(analysis: TRITONSWMM_analysis) -> CheckResult:
         summary=f"{len(matches)} registered invalidating fix(es) affect this analysis.",
         details=rows,
     )
-
 
 
 #: The positive marker TRITON prints to its stderr log on every SUCCESSFUL exchange-
@@ -849,13 +848,20 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis) -> CheckResult:
         df = None
     if df is None or not {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
         return CheckResult(
-            name=_name, level="aggregate", passed=True, applicable=False,
-            summary="No resume record available — known-resume-defect status N/A.", details=[],
+            name=_name,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="No resume record available — known-resume-defect status N/A.",
+            details=[],
         )
     n_resumed = int((pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0) >= 1).sum())
     if n_resumed == 0:
         return CheckResult(
-            name=_name, level="aggregate", passed=True, applicable=False,
+            name=_name,
+            level="aggregate",
+            passed=True,
+            applicable=False,
             summary="No sim was resumed — known-resume-defect status N/A (0 resumed sim(s)).",
             details=[],
         )
@@ -865,33 +871,35 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis) -> CheckResult:
     sha = _read_triton_provenance(analysis)
     if not sha:
         return CheckResult(
-            name=_name, level="aggregate", passed=True, applicable=False,
-            summary="Producing-TRITON sha unknown — known-resume-defect status N/A.", details=[],
+            name=_name,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="Producing-TRITON sha unknown — known-resume-defect status N/A.",
+            details=[],
         )
     coupled = bool(getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False))
     present = [
-        d for d in REGISTRY
-        if not (d.trigger == "resumed_coupled" and not coupled)
-        and resolve(d, sha).status == "present"
+        d
+        for d in REGISTRY
+        if not (d.trigger == "resumed_coupled" and not coupled) and resolve(d, sha).status == "present"
     ]
     if present:
         return CheckResult(
-            name=_name, level="aggregate", passed=False,
+            name=_name,
+            level="aggregate",
+            passed=False,
             summary=(
                 f"{n_resumed} resumed sim(s) at a TRITON build carrying {len(present)} known "
                 f"resume defect(s): {', '.join(d.defect_id for d in present)} (pin {sha[:12]})."
             ),
-            details=[
-                {"scenario": "(analysis-level)", "detail": f"{d.defect_id}: {d.remedy}"}
-                for d in present
-            ],
+            details=[{"scenario": "(analysis-level)", "detail": f"{d.defect_id}: {d.remedy}"} for d in present],
         )
     return CheckResult(
-        name=_name, level="aggregate", passed=True,
-        summary=(
-            f"{n_resumed} resumed sim(s) at a build carrying no known resume defect "
-            f"(pin {sha[:12]})."
-        ),
+        name=_name,
+        level="aggregate",
+        passed=True,
+        summary=(f"{n_resumed} resumed sim(s) at a build carrying no known resume defect " f"(pin {sha[:12]})."),
         details=[],
     )
 
@@ -975,14 +983,13 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="No resume record available — resume validity N/A (scenario_status.csv absent or missing model_type/n_resumes).",
+            summary="No resume record available — resume validity N/A (scenario_status.csv absent or missing "
+            "model_type/n_resumes).",
             details=[],
         )
     _n_resumes_col = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
     _any_resumed = bool((_n_resumes_col >= 1).any())
     triton_sha = _read_triton_provenance(analysis)
-    from hhemt.model_defects import REGISTRY_BY_ID, resolve
-
     # Behavior-preserving mapping of the three retired flag states onto registry verdicts:
     #   has_fix is None  -> replay.status == "indeterminate"   (INDETERMINATE early return)
     #   not has_fix      -> replay.status == "present"         (Arm A, pre-fix TRITON)
@@ -990,7 +997,12 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     #   scatter is False -> scatter.status == "present"        (Arm C, missing node-depth scatter)
     # No live ancestry is attempted here: the read path has no guaranteed clone, and the
     # registry's cached sets are authored for exactly that reason.
-    from hhemt.model_defects import REGISTRY, TriggerKind  # noqa: F401  (TriggerKind documents the axis)
+    from hhemt.model_defects import (  # noqa: F401  (TriggerKind documents the axis)
+        REGISTRY,
+        REGISTRY_BY_ID,
+        TriggerKind,
+        resolve,
+    )
 
     def _trigger_applies(trigger: str, *, any_resumed: bool, coupled: bool) -> bool:
         """The selection half of the version x selection cross.
@@ -1038,10 +1050,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             level="aggregate",
             passed=True,
             applicable=False,
-            summary=(
-                f"Producing-TRITON resume status unknown ({replay.detail}); "
-                "resume validity NOT verified."
-            ),
+            summary=(f"Producing-TRITON resume status unknown ({replay.detail}); " "resume validity NOT verified."),
             details=[],
         )
 
@@ -1161,17 +1170,17 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
         from hhemt.run_simulation import model_logfile_for
 
         # Resolve the log through the PRODUCER's own convention — never hand-build it.
-        # `_iter_subanalyses_or_self` yields (sa_id, sub) for a sensitivity master and
+        # `_iter_members_or_self` yields (member_id, sub) for a sensitivity master and
         # (None, analysis) otherwise, which is ALREADY keyed the way `row.get("sa_id")`
-        # reads: a non-sensitivity df_status carries no sa_id column (only
+        # reads: a non-sensitivity df_status carries no member_id column (only
         # sensitivity_analysis.df_status adds it), so `.get` returns None and hits the
-        # None key. str-normalized per the sa_id-cast-to-string stipulation, mirroring
-        # per_analysis_summary.py's `astype(str) == str(sa_id)` precedent.
-        subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+        # None key. str-normalized per the member_id-cast-to-string stipulation, mirroring
+        # per_analysis_summary.py's `astype(str) == str(member_id)` precedent.
+        subs = {(str(k) if k is not None else None): v for k, v in _iter_members_or_self(analysis)}
         # DURABLE FALLBACK (Q4): the model log is opened "w" per exec and can be purged/cleared,
         # so when read_text() below raises we consult the per-sub replay evidence stamped onto the
         # consolidated tree ROOT at consolidation time (_stamp_coupled_resume_evidence). Read once,
-        # best-effort; keyed identically to the log-path branch (str(sa_id) else scenario_directory).
+        # best-effort; keyed identically to the log-path branch (str(member_id) else scenario_directory).
         import json
 
         _tree_ev: dict = {}
@@ -1484,7 +1493,7 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis) -> CheckResult:
         if df is not None and {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
             n_res = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
             triton_resumed = df[(df["model_type"] == "triton") & (n_res >= 1)]
-            subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+            subs = {(str(k) if k is not None else None): v for k, v in _iter_members_or_self(analysis)}
             for _, row in triton_resumed.iterrows():
                 _sa = row.get("sa_id")
                 sub = subs.get(str(_sa) if _sa is not None else None)
@@ -1633,9 +1642,7 @@ def _enumerated_eda_templates(analysis: TRITONSWMM_analysis) -> tuple:
     active = getattr(analysis, "_active_reporting_set", None)
     if active is None:
         try:
-            active = get_reporting_set(
-                resolve_active_reporting_set_name(cfg_report, is_sensitivity=True)
-            )
+            active = get_reporting_set(resolve_active_reporting_set_name(cfg_report, is_sensitivity=True))
         except Exception:  # unresolvable/typo'd set -> run-entry validation owns the error
             return ()
     return tuple(eda_rule_spec_templates(active))
@@ -1805,7 +1812,7 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
     examined = 0
     indeterminate = 0
 
-    # Iterate `_iter_subanalyses_or_self` like every other sensitivity-aware check in this
+    # Iterate `_iter_members_or_self` like every other sensitivity-aware check in this
     # module. A sensitivity MASTER carries `n_scenarios == n_events * n_subs` while its own
     # `df_sims` holds only the events, so the previous master-scoped `range(n_scenarios)` +
     # `analysis._retrieve_weather_indexer_using_integer_index(i)` raised `KeyError` on the
@@ -1815,9 +1822,9 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
     # (export_scenario_status.py:444 and :540, consolidate_workflow.py:489,
     # analysis.py:1081) -- silently wrote NO master-level validation_report.json at all,
     # while every sub wrote its own. The master scope was also the wrong sims root: a
-    # master's `sims/` is empty (scenarios live under `subanalyses/sa_N/sims/`), so even
+    # master's `sims/` is empty (scenarios live under `members/member_N/sims/`), so even
     # without the raise this check examined zero scenarios on every sensitivity run.
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for member_id, sub in _iter_members_or_self(analysis):
         sims_dir = Path(sub.analysis_paths.simulation_directory)
         for i in range(int(sub.n_scenarios)):
             evt = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(i))
@@ -1852,8 +1859,8 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
                     "wet_cells": int(wet.sum()),
                     "forced_end_min": forced_end_min,
                 }
-                if sa_id is not None:
-                    row["sa_id"] = f"sa_{sa_id}"
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
                 details.append(row)
 
     return CheckResult(
@@ -1908,7 +1915,7 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
     indeterminate = 0
     reclaimed_counts: dict[str, int] = {label: 0 for label in _RECLAIM_LOG_FIELDS.values()}
 
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for member_id, sub in _iter_members_or_self(analysis):
         try:
             enabled = sub._get_enabled_model_types()
             sim_dir = Path(sub.analysis_paths.simulation_directory)
@@ -1928,11 +1935,7 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
                 except (OSError, ValueError):
                     indeterminate += 1
                     continue
-                classes = [
-                    label
-                    for field, label in _RECLAIM_LOG_FIELDS.items()
-                    if payload.get(field) is True
-                ]
+                classes = [label for field, label in _RECLAIM_LOG_FIELDS.items() if payload.get(field) is True]
                 if not classes:
                     continue
                 for label in classes:
@@ -1947,8 +1950,8 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
                             "a disclosed reclaim"
                         ),
                     }
-                    if sa_id is not None:
-                        row["sa_id"] = f"sa_{sa_id}"
+                    if member_id is not None:
+                        row["sa_id"] = f"member_{member_id}"
                     details.append(row)
 
     passed = not details

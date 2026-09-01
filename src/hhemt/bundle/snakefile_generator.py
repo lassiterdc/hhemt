@@ -223,7 +223,7 @@ def _harvest_rule_specs(
     # toggle_*_model fields, which are REQUIRED, so absence is impossible.
     #
     # Every other predicate reads an OPTIONAL cfg_analysis key — eda.enabled_plots,
-    # clear_raw, independent_vars, n_sub_analyses — and for those, absence is
+    # clear_raw, independent_vars, n_members — and for those, absence is
     # indistinguishable from false. Reading an absent field as false converts a missing
     # RECORD into a positive gating DECISION, which silently drops a figure family that is
     # present on disk. Measured: the checked-in sensitivity_master fixture carries no `eda`
@@ -236,8 +236,7 @@ def _harvest_rule_specs(
     _cfg_system = yaml.safe_load(_sys_path.read_text()) if _sys_path.is_file() else {}
     _predicate_inputs = {
         "has_swmm_link_outputs": bool(
-            (_cfg_system or {}).get("toggle_tritonswmm_model")
-            or (_cfg_system or {}).get("toggle_swmm_model")
+            (_cfg_system or {}).get("toggle_tritonswmm_model") or (_cfg_system or {}).get("toggle_swmm_model")
         ),
     }
 
@@ -306,8 +305,7 @@ def _build_preamble() -> str:
         "    from importlib.metadata import version as _pkg_version\n"
         '    _toolkit_version = _pkg_version("hhemt")\n'
         "except Exception:\n"
-        '    _toolkit_version = "unknown"\n'
-        + LABEL_GLOBALS_BLOCK
+        '    _toolkit_version = "unknown"\n' + LABEL_GLOBALS_BLOCK
     )
 
 
@@ -324,9 +322,9 @@ def _build_config_block(*, cfg_analysis: dict, is_sensitivity: bool) -> str:
         'config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}',
     ]
     if is_sensitivity:
-        n_sub = int(cfg_analysis.get("n_sub_analyses", 0))
+        n_sub = int(cfg_analysis.get("n_members", 0))
         independent_vars = cfg_analysis.get("independent_vars", [])
-        lines.append(f'config["n_sub_analyses"] = {n_sub}')
+        lines.append(f'config["n_members"] = {n_sub}')
         lines.append(f'config["independent_vars"] = {independent_vars!r}')
         group_by = cfg_analysis.get("group_by_var")
         if group_by:

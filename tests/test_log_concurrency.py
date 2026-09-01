@@ -1,4 +1,5 @@
 """Concurrency + compute-on-read regression tests for the log-write-race fix."""
+
 from __future__ import annotations
 
 import json
@@ -40,9 +41,7 @@ def test_rollups_compute_on_read_and_are_not_persisted(synthetic_multisim_comple
 # TEST-NEW-2b (main agent authored) — legacy log.json with stale all_* keys still loads (extra="ignore").
 def test_legacy_log_with_stale_rollup_keys_loads(tmp_path):
     logfile = tmp_path / "log.json"
-    logfile.write_text(
-        json.dumps({"logfile": str(logfile), "all_sims_run": True, "all_scenarios_created": True})
-    )
+    logfile.write_text(json.dumps({"logfile": str(logfile), "all_sims_run": True, "all_scenarios_created": True}))
     assert TRITONSWMM_analysis_log.from_json(logfile) is not None  # no validation error
 
 
@@ -54,9 +53,7 @@ def test_n_resumes_coalesce_and_increment(tmp_path):
     from hhemt.log import TRITONSWMM_model_log
 
     logfile = tmp_path / "log_tritonswmm.json"
-    log = TRITONSWMM_model_log(
-        event_iloc=0, event_idx={}, simulation_folder=tmp_path, logfile=logfile
-    )
+    log = TRITONSWMM_model_log(event_iloc=0, event_idx={}, simulation_folder=tmp_path, logfile=logfile)
     # Unset on a fresh log -> get() is None; readers MUST coalesce to 0.
     assert log.n_resumes.get() is None
     assert (log.n_resumes.get() or 0) == 0
@@ -122,7 +119,7 @@ def test_log_single_writer_invariant():
     import hhemt
 
     src = Path(hhemt.__file__).parent
-    assert "sub_analysis._update_log()" not in (src / "sensitivity_analysis.py").read_text()
+    assert "member._update_log()" not in (src / "sensitivity_analysis.py").read_text()
     assert "skip_log_update=True" in (src / "report_renderers" / "_cli.py").read_text()
 
 

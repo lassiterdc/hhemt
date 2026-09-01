@@ -21,21 +21,22 @@ Exit codes:
     2: Invalid arguments
 """
 
-import sys
 import argparse
-import json
-from pathlib import Path
-import traceback
-import logging
-
-from hhemt.log_utils import log_workflow_context
-from hhemt.status_flags import emit_runner_flag as _emit_runner_flag
 import gc
+import json
+import logging
+import os
+import sys
+import traceback
 
 # Memory profiling imports (always-on, minimal overhead)
 import tracemalloc
+from pathlib import Path
+
 import psutil
-import os
+
+from hhemt.log_utils import log_workflow_context
+from hhemt.status_flags import emit_runner_flag as _emit_runner_flag
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -67,9 +68,7 @@ def log_memory_profile(description: str):
 
 def main():
     """Main entry point for timeseries processing subprocess."""
-    parser = argparse.ArgumentParser(
-        description="Process TRITON-SWMM scenario timeseries outputs in a subprocess"
-    )
+    parser = argparse.ArgumentParser(description="Process TRITON-SWMM scenario timeseries outputs in a subprocess")
     parser.add_argument(
         "--event-iloc",
         type=int,
@@ -114,9 +113,9 @@ def main():
         type=str,
         default=None,
         help=(
-            'Runtime override for cfg_analysis.clear_raw. Accepts a JSON-encoded '
+            "Runtime override for cfg_analysis.clear_raw. Accepts a JSON-encoded "
             'value: \'"all"\', \'"none"\', or \'["tritonswmm","swmm"]\'. When '
-            'omitted, the runner reads cfg_analysis.clear_raw from the YAML.'
+            "omitted, the runner reads cfg_analysis.clear_raw from the YAML."
         ),
     )
     parser.add_argument(
@@ -151,10 +150,10 @@ def main():
         help="Event id slug for the flag sidecar payload",
     )
     parser.add_argument(
-        "--sa-id",
+        "--member-id",
         type=str,
         default=None,
-        help="Sub-analysis id for the flag sidecar payload (sensitivity)",
+        help="Member id for the flag sidecar payload (sensitivity)",
     )
     try:
         args = parser.parse_args()
@@ -185,12 +184,12 @@ def main():
 
     try:
         # Import here to avoid import errors if dependencies are missing
-        from hhemt.system import TRITONSWMM_system
         from hhemt.analysis import TRITONSWMM_analysis
-        from hhemt.scenario import TRITONSWMM_scenario
         from hhemt.process_simulation import (
             TRITONSWMM_sim_post_processing,
         )
+        from hhemt.scenario import TRITONSWMM_scenario
+        from hhemt.system import TRITONSWMM_system
 
         # Log workflow context for traceability
         log_workflow_context(logger)
@@ -343,41 +342,23 @@ def main():
         # Performance time series verification (TRITON models only)
         if args.which == "TRITON" or args.which == "both":
             if args.model_type in ("triton", "tritonswmm"):
-                if (
-                    not model_log.performance_timeseries_written
-                    or not model_log.performance_timeseries_written.get()
-                ):
-                    logger.error(
-                        f"Performance timeseries not created for scenario {args.event_iloc}"
-                    )
+                if not model_log.performance_timeseries_written or not model_log.performance_timeseries_written.get():
+                    logger.error(f"Performance timeseries not created for scenario {args.event_iloc}")
                     return 1
         # TRITON outputs verification (TRITON models only)
         if args.which == "TRITON" or args.which == "both":
             if args.model_type in ("triton", "tritonswmm"):
-                if (
-                    not model_log.TRITON_timeseries_written
-                    or not model_log.TRITON_timeseries_written.get()
-                ):
-                    logger.error(
-                        f"TRITON timeseries not created for scenario {args.event_iloc}"
-                    )
+                if not model_log.TRITON_timeseries_written or not model_log.TRITON_timeseries_written.get():
+                    logger.error(f"TRITON timeseries not created for scenario {args.event_iloc}")
                     return 1
 
         # SWMM outputs verification (SWMM models only)
         if args.which == "SWMM" or args.which == "both":
             if args.model_type in ("swmm", "tritonswmm"):
-                node_ok = (
-                    model_log.SWMM_node_timeseries_written
-                    and model_log.SWMM_node_timeseries_written.get()
-                )
-                link_ok = (
-                    model_log.SWMM_link_timeseries_written
-                    and model_log.SWMM_link_timeseries_written.get()
-                )
+                node_ok = model_log.SWMM_node_timeseries_written and model_log.SWMM_node_timeseries_written.get()
+                link_ok = model_log.SWMM_link_timeseries_written and model_log.SWMM_link_timeseries_written.get()
                 if not (node_ok and link_ok):
-                    logger.error(
-                        f"SWMM timeseries not created for scenario {args.event_iloc}"
-                    )
+                    logger.error(f"SWMM timeseries not created for scenario {args.event_iloc}")
                     return 1
 
         logger.info(f"Scenario {args.event_iloc} timeseries processed successfully")
@@ -398,28 +379,15 @@ def main():
         # (Now safe because each model has its own log - no race conditions!)
         if args.which == "TRITON" or args.which == "both":
             if args.model_type in ("triton", "tritonswmm"):
-                if (
-                    not model_log.TRITON_summary_written
-                    or not model_log.TRITON_summary_written.get()
-                ):
-                    logger.error(
-                        f"TRITON summary not created for scenario {args.event_iloc}"
-                    )
+                if not model_log.TRITON_summary_written or not model_log.TRITON_summary_written.get():
+                    logger.error(f"TRITON summary not created for scenario {args.event_iloc}")
                     return 1
         if args.which == "SWMM" or args.which == "both":
             if args.model_type in ("swmm", "tritonswmm"):
-                node_ok = (
-                    model_log.SWMM_node_summary_written
-                    and model_log.SWMM_node_summary_written.get()
-                )
-                link_ok = (
-                    model_log.SWMM_link_summary_written
-                    and model_log.SWMM_link_summary_written.get()
-                )
+                node_ok = model_log.SWMM_node_summary_written and model_log.SWMM_node_summary_written.get()
+                link_ok = model_log.SWMM_link_summary_written and model_log.SWMM_link_summary_written.get()
                 if not (node_ok and link_ok):
-                    logger.error(
-                        f"SWMM summaries not created for scenario {args.event_iloc}"
-                    )
+                    logger.error(f"SWMM summaries not created for scenario {args.event_iloc}")
                     return 1
 
         # Memory checkpoint after summary generation
@@ -430,7 +398,7 @@ def main():
         # Final memory profiling summary
         gc.collect()
         snapshot_after = tracemalloc.take_snapshot()
-        top_stats = snapshot_after.compare_to(snapshot_before, 'lineno')
+        top_stats = snapshot_after.compare_to(snapshot_before, "lineno")
 
         logger.info("[MEMORY] Top 10 memory allocations:")
         for stat in top_stats[:10]:
@@ -442,7 +410,7 @@ def main():
 
         # (R6 positive completion marker) Gate the d_process flag write on THIS
         # model's summary files actually existing on disk. The d_process flag is
-        # per-(model_type, sa_id, event_id) — each runner processes one
+        # per-(model_type, member_id, event_id) — each runner processes one
         # args.model_type and writes one per-model flag — so gate on THIS model
         # only; gating on other models' summaries would fail spuriously because
         # each model's runner is an independent rule. This strengthens the flag's

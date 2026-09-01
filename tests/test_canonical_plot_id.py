@@ -6,7 +6,7 @@ These tests pin the two correctness conditions that keep the single source of
 truth honest:
 
 1. Grammar (``canonical_plot_id``) -- ``__`` between segments, ``.`` within a
-   segment, fixed renderer_kind/descriptor/sa/evt order, charset-safe (no ``-``).
+   segment, fixed renderer_kind/descriptor/member/evt order, charset-safe (no ``-``).
 2. Stem == manifest ``plot_id`` (OE-3) -- ``_emit_manifest_sidecar`` stamps the
    field as ``output_path.stem`` so ``harvest_source_paths``' stem-keying and the
    manifest field can never drift.
@@ -32,13 +32,13 @@ def test_canonical_plot_id_grammar() -> None:
     """`__` joins segments, `.` separates within a segment; fixed segment order."""
     assert canonical_plot_id("system_overview") == "system_overview"
     assert canonical_plot_id("peak_flood_depth", event_id="evt001") == "peak_flood_depth__evt.evt001"
-    assert canonical_plot_id("conduit_flow", sa_id="3", event_id="evt001") == "conduit_flow__sa.3__evt.evt001"
+    assert canonical_plot_id("conduit_flow", member_id="3", event_id="evt001") == "conduit_flow__member.3__evt.evt001"
     assert canonical_plot_id("benchmarking", descriptor="n_gpus.vs.total") == "benchmarking__n_gpus.vs.total"
 
 
 def test_canonical_plot_id_is_charset_safe() -> None:
     """The grammar never introduces a `-` (absent from the C-CHARSET ^[A-Za-z0-9_.]+$)."""
-    pid = canonical_plot_id("peak_flood_depth", sa_id="3", event_id="year.9_event_type.compound")
+    pid = canonical_plot_id("peak_flood_depth", member_id="3", event_id="year.9_event_type.compound")
     assert "-" not in pid
     assert set(pid) <= set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.")
 
@@ -59,7 +59,7 @@ def test_plot_output_template_preserves_wildcard_braces() -> None:
     [
         "system_overview",  # singleton
         "peak_flood_depth__evt.year.9_event_type.compound",  # per-sim
-        "conduit_flow__sa.3__evt.year.9_event_type.compound",  # per-sa
+        "conduit_flow__member.3__evt.year.9_event_type.compound",  # per-member
         "benchmarking__n_gpus.vs.total",  # benchmarking descriptor
     ],
 )

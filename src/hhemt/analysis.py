@@ -106,7 +106,7 @@ class TestRepresentative:
     Option A: compute-config is a group KEY so every unique config is
     represented; device count is the tiebreak). ``source_analysis`` is the
     already-built, already-validated candidate analysis the representative was
-    chosen from (the master itself, or one ``self.sensitivity.sub_analyses``)."""
+    chosen from (the master itself, or one ``self.sensitivity.members``)."""
 
     key: tuple
     source_analysis: "TRITONSWMM_analysis"
@@ -154,13 +154,13 @@ class TestSubResult:
 @dataclass
 class TestResult:
     """Result of ``TRITONSWMM_analysis.test()`` -- the selected representatives,
-    the materialized ``_test/`` sub-analyses as ``TestSubResult`` records (each
+    the materialized ``_test/`` members as ``TestSubResult`` records (each
     carrying the representative's declared ``axes``, the resolved
     ``workflow_result``, and informational ``binary_provenance``), and the
     ``{analysis_dir}/_test`` root directory."""
 
     representatives: list
-    subanalyses: list
+    analyses: list
     root: Path
 
 
@@ -233,7 +233,7 @@ class TRITONSWMM_analysis:
     Sensitivity analyses
     --------------------
     When ``toggle_sensitivity_analysis`` is set, this object coordinates a set
-    of sub-analyses — each itself a full ``TRITONSWMM_analysis`` — defined by
+    of members — each itself a full ``TRITONSWMM_analysis`` — defined by
     the rows of a sensitivity spreadsheet. The ``sensitivity`` attribute
     EXISTS ONLY in that case; guard on the toggle, or use
     ``getattr(analysis, "sensitivity", None)``, rather than assuming it.
@@ -382,7 +382,7 @@ class TRITONSWMM_analysis:
         # Hierarchical DataTree consolidation (Phase 2)
         analysis_paths_kwargs["analysis_datatree_zarr"] = analysis_dir / "analysis_datatree.zarr"
 
-        # Sensitivity-level DataTree zarr (Phase 3) — aggregates sub-analyses.
+        # Sensitivity-level DataTree zarr (Phase 3) — aggregates members.
         if cfg_analysis.toggle_sensitivity_analysis:
             analysis_paths_kwargs["sensitivity_datatree_zarr"] = analysis_dir / "sensitivity_datatree.zarr"
 
@@ -493,9 +493,9 @@ class TRITONSWMM_analysis:
         # post-completion; ``_invalidate_downstream_flags`` never deletes them.)
         total_sims = self.nsims
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            # The canonical per-(sa_id, event_id) enumeration is owned by the
-            # sub-analyses; the sa-flag glob is the existing sensitivity count
-            # (``c_run_*_sa-*`` flags are likewise post-completion + durable).
+            # The canonical per-(member_id, event_id) enumeration is owned by the
+            # members; the member-flag glob is the existing sensitivity count
+            # (``c_run_*_member-*`` flags are likewise post-completion + durable).
             sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_sa*_complete.flag"))
             n_complete = len(sim_flags)
         else:
@@ -535,25 +535,25 @@ class TRITONSWMM_analysis:
 
         # Node recommendation — only for 1_job_many_srun_tasks
         if self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
-            # Compute per-sim node requirement for each incomplete sub-analysis
+            # Compute per-sim node requirement for each incomplete member
             failures = self._classify_incomplete_sim_failures()
             if self.cfg_analysis.toggle_sensitivity_analysis:
                 incomplete_nodes: list[int] = []
-                incomplete_sa_ids = {re.search(r"sa-(.+?)_evt-", k).group(1) for k in failures}
-                for sa_id in incomplete_sa_ids:
-                    sa = self.sensitivity.sub_analyses[sa_id]
-                    n_gpus = sa.cfg_analysis.n_gpus or 0
-                    # Phase-4 (4d): per-node GPU topology resolves from the sub-analysis
+                incomplete_member_ids = {re.search(r"member-(.+?)_evt-", k).group(1) for k in failures}
+                for member_id in incomplete_member_ids:
+                    member = self.sensitivity.members[member_id]
+                    n_gpus = member.cfg_analysis.n_gpus or 0
+                    # Phase-4 (4d): per-node GPU topology resolves from the member
                     # ensemble partition's PartitionSpec (retired off analysis_config).
                     from hhemt.config.hpc_system import resolve_gpus_per_node
 
                     gpus_per_node = (
-                        resolve_gpus_per_node(sa.cfg_hpc_system, sa.cfg_analysis.hpc_ensemble_partition) or 1
+                        resolve_gpus_per_node(member.cfg_hpc_system, member.cfg_analysis.hpc_ensemble_partition) or 1
                     )
                     if n_gpus > 0:
                         nodes = math.ceil(n_gpus / gpus_per_node)
                     else:
-                        nodes = sa.cfg_analysis.n_nodes or 1
+                        nodes = member.cfg_analysis.n_nodes or 1
                     incomplete_nodes.append(nodes)
                 max_per_sim_nodes = max(incomplete_nodes) if incomplete_nodes else 1
                 recommended_nodes = max_per_sim_nodes
@@ -638,7 +638,7 @@ class TRITONSWMM_analysis:
             event_id = compute_event_id_slug(ev)
             orphans.append(f"plots/per_sim/{event_id}/peak_flood_depth.png")
             orphans.append(f"plots/per_sim/{event_id}/conduit_flow.png")
-        if self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_subanalysis:
+        if self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_experiment_member:
             for ind_var in self.sensitivity.independent_vars:
                 orphans.append(f"plots/sensitivity/benchmarking/{ind_var}_vs_total.svg")
         return orphans
@@ -978,9 +978,7 @@ class TRITONSWMM_analysis:
         from hhemt.bundle import emit_bundle
         from hhemt.bundle._reprex import extract_reprex_bundle
 
-        return extract_reprex_bundle(
-            emit_bundle(self, output_path, container_defs=container_defs)
-        )
+        return extract_reprex_bundle(emit_bundle(self, output_path, container_defs=container_defs))
 
     def publish(
         self,
@@ -1885,8 +1883,8 @@ class TRITONSWMM_analysis:
 
         Routing is strict and context-aware:
         - regular analysis: parse `run_<model>` rules from this analysis Snakefile
-        - sensitivity sub-analysis: parse `simulation_sa*_evt*` rules from the
-          parent/master sensitivity Snakefile and select this sub-analysis id
+        - sensitivity member: parse `simulation_member*_evt*` rules from the
+          parent/master sensitivity Snakefile and select this member id
 
         Raises
         ------
@@ -1899,14 +1897,14 @@ class TRITONSWMM_analysis:
 
         if self.cfg_analysis.toggle_sensitivity_analysis:
             snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-            expected_sa_ids = sorted(self.sensitivity.sub_analyses.keys())
-            sa_allocations = parse_sensitivity_analysis_workflow_model_allocations(
+            expected_member_ids = sorted(self.sensitivity.members.keys())
+            member_allocations = parse_sensitivity_analysis_workflow_model_allocations(
                 snakefile_path=snakefile_path,
-                expected_subanalysis_ids=expected_sa_ids,
+                expected_analysis_ids=expected_member_ids,
                 strict=False,
             )
             allocations = {
-                model_type: alloc.copy() for model_type in enabled_models for alloc in sa_allocations.values()
+                model_type: alloc.copy() for model_type in enabled_models for alloc in member_allocations.values()
             }
             return allocations, None
 
@@ -2285,7 +2283,7 @@ class TRITONSWMM_analysis:
         override_hpc_restart_times_simulate: int | None = None,
         override_hpc_restart_times_other: int | None = None,
         override_pickup_where_leftoff: bool | None = None,
-        override_clean_restart_sa_ids: list[str] | None = None,
+        override_clean_restart_member_ids: list[str] | None = None,
         override_wipe_nonempty: bool = False,
         override_live_driver: str | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
@@ -2329,10 +2327,10 @@ class TRITONSWMM_analysis:
             If provided, automatically transfer results to the local machine
             after successful completion (requires ``wait_for_job_completion=True``).
         cleanup_orphans : bool, default False
-            When True, deletes orphan sub-analysis artifacts (subanalysis dirs,
+            When True, deletes orphan member artifacts (member dirs,
             status flags, sensitivity_datatree.zarr groups) detected when an
-            ``sa_id`` is removed from the sensitivity CSV/XLSX. Opt-in because
-            the blast radius is irrecoverable (subanalysis data deleted).
+            ``member_id`` is removed from the sensitivity CSV/XLSX. Opt-in because
+            the blast radius is irrecoverable (member data deleted).
         cleanup_stale_metadata : bool, default True
             When True (default), subprocess-invokes ``snakemake --cleanup-metadata``
             against orphaned ``.snakemake/metadata/`` records left by past
@@ -2492,11 +2490,21 @@ class TRITONSWMM_analysis:
         else:
             cfg_report = self.cfg_analysis.report
 
-        sa_csv = self.cfg_analysis.sensitivity_analysis if self.cfg_analysis.toggle_sensitivity_analysis else None
+        member_csv = self.cfg_analysis.sensitivity_analysis if self.cfg_analysis.toggle_sensitivity_analysis else None
+        # S16: the sweep's varied-axis set, from the two single-source properties that
+        # already canonicalize overlay columns to config field names (including the
+        # hpc.partition alias). Re-deriving this from the CSV inside config/report.py
+        # would be a second implementation of that classification.
+        _varied_axes: frozenset[str] = frozenset()
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            _varied_axes = frozenset(self.sensitivity.analysis_independent_vars) | frozenset(
+                self.sensitivity.system_independent_vars
+            )
         _resolved_set_name = validate_active_reporting_set(
             cfg_report,
             is_sensitivity=self.cfg_analysis.toggle_sensitivity_analysis,
-            sensitivity_csv_path=sa_csv,
+            sensitivity_csv_path=member_csv,
+            varied_axes=_varied_axes,
         )
         self._active_reporting_set_name = _resolved_set_name
         self._active_reporting_set = get_reporting_set(_resolved_set_name)
@@ -2647,15 +2655,19 @@ class TRITONSWMM_analysis:
             # EXEMPT-DU: full-analysis-root-wipe
             fast_rmtree(self.analysis_paths.analysis_dir)
 
-        if override_clean_restart_sa_ids and not dry_run:
-            self._clean_restart_wipe([str(v) for v in override_clean_restart_sa_ids])
+        if override_clean_restart_member_ids and not dry_run:
+            self._clean_restart_wipe([str(v) for v in override_clean_restart_member_ids])
 
         # Orphan detection gate (sensitivity-only; non-sensitivity covered by
         # follow-up plan per D-EVENT-PARITY).
-        if not from_scratch and self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_subanalysis:
+        if (
+            not from_scratch
+            and self.cfg_analysis.toggle_sensitivity_analysis
+            and not self.cfg_analysis.is_experiment_member
+        ):
             from hhemt.exceptions import ConfigurationError as _CfgErr
 
-            _dirs = self.sensitivity.find_orphan_subanalysis_dirs()
+            _dirs = self.sensitivity.find_orphan_member_dirs()
             _flags = self.sensitivity.find_orphan_status_flags()
             _groups = self.sensitivity.find_orphan_datatree_groups()
             _fingerprints = self.sensitivity.find_orphan_input_fingerprints()
@@ -2664,9 +2676,9 @@ class TRITONSWMM_analysis:
                 raise _CfgErr(
                     field="cleanup_orphans",
                     message=(
-                        "Detected orphan sub-analysis artifacts on disk that are "
+                        "Detected orphan member artifacts on disk that are "
                         "absent from the current sensitivity CSV: "
-                        f"{len(_dirs)} subanalysis dir(s), "
+                        f"{len(_dirs)} member dir(s), "
                         f"{len(_flags)} _status flag(s), "
                         f"{len(_groups)} datatree group(s). "
                         f"{len(_fingerprints)} input-fingerprint(s). "
@@ -2877,20 +2889,20 @@ class TRITONSWMM_analysis:
             ``test_synth_analysis_test_end_to_end.py`` synthetic smoke).
         """
         reps = self._select_test_representatives()
-        # Truncation happens INSIDE _build_test_subanalyses: the sliced-weather path
+        # Truncation happens INSIDE _build_test_analyses: the sliced-weather path
         # + reporting interval are carried THROUGH the model_validate overlay dict so
         # the on-disk _test YAML the runner subprocess reloads
         # (prepare_scenario_runner.py:139) points at the short weather. An in-memory
         # setattr would be discarded at that reload (Gotcha 15). Scenario-prep
         # regenerates the SWMM .inp window from the sliced weather automatically
         # (swmm_utils.py:105-110), so no separate .inp-edit pass is needed.
-        test_subs = self._build_test_subanalyses(
+        test_subs = self._build_test_analyses(
             reps,
             n_reporting_timesteps=n_reporting_timesteps,
             reporting_timestep_s=reporting_timestep_s,
         )
         results: list = []
-        # reps and test_subs are index-aligned: _build_test_subanalyses appends
+        # reps and test_subs are index-aligned: _build_test_analyses appends
         # one sub per rep in `representatives` order.
         for rep, sub in zip(reps, test_subs, strict=True):
             wf_result = sub.run(
@@ -2911,7 +2923,7 @@ class TRITONSWMM_analysis:
             )
         return TestResult(
             representatives=reps,
-            subanalyses=results,
+            analyses=results,
             root=self.analysis_paths.analysis_dir / "_test",
         )
 
@@ -2921,12 +2933,12 @@ class TRITONSWMM_analysis:
         minimum-device row per group (D-AXES Option A: compute-config is a KEY, so
         every unique config is represented; device count is the tiebreak). Branches
         on ``toggle_sensitivity_analysis`` (Gotcha 26): a sensitivity master
-        enumerates its already-built ``self.sensitivity.sub_analyses`` (each a
+        enumerates its already-built ``self.sensitivity.members`` (each a
         fully-validated TRITONSWMM_analysis), a plain analysis is its own single
         candidate."""
         sensitivity = getattr(self, "sensitivity", None)
         if self.cfg_analysis.toggle_sensitivity_analysis and sensitivity is not None:
-            candidates: list = list(sensitivity.sub_analyses.values())
+            candidates: list = list(sensitivity.members.values())
         else:
             candidates = [self]
 
@@ -2983,7 +2995,7 @@ class TRITONSWMM_analysis:
             )
         return reps
 
-    def _build_test_subanalyses(
+    def _build_test_analyses(
         self,
         representatives: "list[TestRepresentative]",
         *,
@@ -2991,9 +3003,9 @@ class TRITONSWMM_analysis:
         reporting_timestep_s: int,
     ) -> "list[TRITONSWMM_analysis]":
         """Materialize one TRITONSWMM_analysis per representative under
-        ``{analysis_dir}/_test/``, reusing the ``_create_sub_analyses`` overlay
+        ``{analysis_dir}/_test/``, reusing the ``_create_members`` overlay
         recipe (sensitivity_analysis.py:2021-2074): ``model_validate`` (never
-        ``model_copy``+``setattr``), atomic YAML write, ``is_subanalysis=True``,
+        ``model_copy``+``setattr``), atomic YAML write, ``is_experiment_member=True``,
         ``toggle_sensitivity_analysis=False``.
 
         Truncation (SE F-B Flag 1; the former ``_truncate_test_inputs`` is dissolved
@@ -3005,8 +3017,8 @@ class TRITONSWMM_analysis:
         in-memory setattr would be silently discarded at that reload, Gotcha 15).
         Scenario-prep regenerates the SWMM .inp window from the sliced weather
         (swmm_utils.py:105-110), so no .inp-edit pass is needed. ``analysis_dir``
-        and ``master_analysis_cfg_yaml`` are ALSO carried through the overlay: the
-        is_subanalysis model-validator (config/analysis.py:529-541) requires both,
+        and ``experiment_cfg_yaml`` are ALSO carried through the overlay: the
+        is_experiment_member model-validator (config/analysis.py:529-541) requires both,
         and ``analysis_dir`` is what keeps every test artifact under ``_test/`` (R2 --
         without it ``__init__`` derives ``system_directory/{analysis_id}``)."""
         import xarray as xr
@@ -3034,21 +3046,21 @@ class TRITONSWMM_analysis:
             wx_short.to_netcdf(short_weather, engine="h5netcdf")
             # The reference sub is toggle_sensitivity_analysis=False (line below),
             # so it is definitionally NOT a sensitivity analysis. base_cfg is a
-            # sub-analysis cfg that inherited the master's report block wholesale
+            # member cfg that inherited the master's report block wholesale
             # (report.reporting_set + report.sensitivity benchmarking block). Left
             # un-scoped, at the reference sub's run() entry validate_active_reporting_set
             # -> validate_sensitivity_independent_vars (config/report.py:924-932) raises
             # ConfigurationError ("report_config.sensitivity is set but the analysis is
             # not a sensitivity analysis") whenever the master's reporting_set names a
             # benchmarking-validator set ("benchmarking" / "compute-sensitivity"),
-            # because the reference's sa_csv resolves to None (analysis.py:2231). Scope
+            # because the reference's member_csv resolves to None (analysis.py:2231). Scope
             # the report block to the non-sensitivity default: null the benchmarking
             # sensitivity: sub-block (report_config.sensitivity is Optional and is
             # "ignored for main analyses" per its field doc, config/report.py:872-874)
             # and reset reporting_set to the "default" sentinel, which resolves to the
             # standard non-sensitivity set at the sub's run()-entry so the reference
             # renders the standard report instead of selecting benchmarking renderers
-            # with no sub-analyses. Every other report field (interactive / per_sim /
+            # with no members. Every other report field (interactive / per_sim /
             # brand_theme / ...) is inherited unchanged. This is a config fix at the
             # SOURCE, not a validator carve-out: the sensitivity-config<->sensitivity-
             # analysis guard stays fully intact for genuine (mis)configured analyses.
@@ -3060,9 +3072,9 @@ class TRITONSWMM_analysis:
             overlay = {
                 "analysis_id": f"{self.cfg_analysis.analysis_id}_test_{group_id}",
                 "toggle_sensitivity_analysis": False,
-                "is_subanalysis": True,  # cfg field, NOT a constructor kwarg
+                "is_experiment_member": True,  # cfg field, NOT a constructor kwarg
                 "analysis_dir": str(sub_dir),  # keeps all artifacts under _test/ (R2)
-                "master_analysis_cfg_yaml": str(self.analysis_config_yaml),
+                "experiment_cfg_yaml": str(self.analysis_config_yaml),
                 "weather_timeseries": str(short_weather),  # short weather survives the YAML reload
                 "TRITON_reporting_timestep_s": reporting_timestep_s,
                 "report": scoped_report,
@@ -3074,9 +3086,9 @@ class TRITONSWMM_analysis:
             # config not found"). Write it to the _test/ root (sibling of group_0/) so
             # the wipe of group_0/ cannot reach it; the sub's analysis_dir stays
             # group_0/ via the overlay. (analysis_id is group-unique, so no collision.)
-            sub_yaml = self._atomic_write_subanalysis_yaml(cfg_a, test_root)
-            # TRITONSWMM_analysis.__init__ has NO is_subanalysis param; is_subanalysis
-            # is set in the cfg overlay above (mirrors _create_sub_analyses,
+            sub_yaml = self._atomic_write_analysis_yaml(cfg_a, test_root)
+            # TRITONSWMM_analysis.__init__ has NO is_experiment_member param; is_experiment_member
+            # is set in the cfg overlay above (mirrors _create_members,
             # sensitivity_analysis.py:2031). is_main_orchestrator=False -- a _test/
             # sub is not a main orchestrator. The representative's own _system carries
             # the right model toggles / resolved target hardware.
@@ -3089,13 +3101,13 @@ class TRITONSWMM_analysis:
             subs.append(sub)
         return subs
 
-    def _atomic_write_subanalysis_yaml(self, cfg_a: "analysis_config", sub_dir: Path) -> Path:
-        """Atomically write a sub-analysis overlay config to ``{sub_dir}/{id}.yaml``
+    def _atomic_write_analysis_yaml(self, cfg_a: "analysis_config", sub_dir: Path) -> Path:
+        """Atomically write a member overlay config to ``{sub_dir}/{id}.yaml``
         via a PID-keyed temp file + ``Path.replace`` (POSIX-atomic on one
         filesystem), so a concurrent reader never catches a truncated file.
 
         DRY-DEBT: shared atomic-overlay-write contract -- mirrors the temp+replace
-        overlay-YAML write at ``sensitivity_analysis.py::_create_sub_analyses``
+        overlay-YAML write at ``sensitivity_analysis.py::_create_members``
         (:2056-2063). The source module is layout-relevant
         (``_layout_relevant_files.yaml``) and cannot be edited here without tripping
         CI Check B, so the dance is duplicated rather than extracted into one shared
@@ -3143,9 +3155,6 @@ class TRITONSWMM_analysis:
         import subprocess
         import sys
 
-        from .exceptions import WorkflowError
-        from .workflow import _assert_snakefile_package_current
-
         # Build-match gate (VMS-17/18). Safe at the TOP because this method executes NO
         # rules: `snakemake --report` is a post-execution render, and when this runs as the
         # DAG's `rule render_report` every plot rule is already a completed input. So the
@@ -3154,9 +3163,10 @@ class TRITONSWMM_analysis:
         # rebuild happens in run()/_apply_force_rerun, a different method, strictly earlier.
         from hhemt.provenance import assert_plots_match_running_build
 
-        assert_plots_match_running_build(
-            self.analysis_paths.analysis_dir, declare_stale_plots=declare_stale_plots
-        )
+        from .exceptions import WorkflowError
+        from .workflow import _assert_snakefile_package_current
+
+        assert_plots_match_running_build(self.analysis_paths.analysis_dir, declare_stale_plots=declare_stale_plots)
 
         snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
         snakefile = self.analysis_paths.analysis_dir / snakefile_name
@@ -3263,12 +3273,12 @@ class TRITONSWMM_analysis:
                 )
                 _active_set = get_reporting_set("default")
         _category_order = list(_active_set.category_order)
-        # S4: resolve sa_id card names to derived compute-config labels. Threaded to
+        # S4: resolve member_id card names to derived compute-config labels. Threaded to
         # BOTH branches -- the html and the zip carry the same card names, and
         # resolving one alone would ship a divergence between two delivered artifacts.
-        from .report_plot_ids import event_labels_from_status, sa_labels_from_status
+        from .report_plot_ids import event_labels_from_status, member_labels_from_status
 
-        _sa_labels = sa_labels_from_status(self.analysis_paths.analysis_dir)
+        _member_labels = member_labels_from_status(self.analysis_paths.analysis_dir)
         _event_labels = event_labels_from_status(self.analysis_paths.analysis_dir)
         try:
             if format == "html":
@@ -3277,7 +3287,7 @@ class TRITONSWMM_analysis:
                         out.read_text(),
                         navbar_text=_navbar,
                         category_order=_category_order,
-                        sa_labels=_sa_labels,
+                        member_labels=_member_labels,
                         event_labels=_event_labels,
                     )
                 )
@@ -3286,7 +3296,7 @@ class TRITONSWMM_analysis:
                     out,
                     navbar_text=_navbar,
                     category_order=_category_order,
-                    sa_labels=_sa_labels,
+                    member_labels=_member_labels,
                     event_labels=_event_labels,
                 )
         except Exception:
@@ -3336,7 +3346,7 @@ class TRITONSWMM_analysis:
     def n_scenarios(self):
         """Number of distinct scenarios this analysis defines.
 
-        A scenario is one weather event within one sub-analysis. The count is
+        A scenario is one weather event within one member. The count is
         the number of simulated events times the number of sensitivity rows
         (1 when ``toggle_sensitivity_analysis`` is False).
 
@@ -3740,9 +3750,7 @@ class TRITONSWMM_analysis:
             # zero preview yield and an unbounded cost.
             # Build-stamp reconciliation MUST precede the pre-delete: it can replace the
             # force-rerun value, and _apply_force_rerun is what acts on it.
-            override_force_rerun = self._reconcile_build_stamp_force(
-                override_force_rerun, dry_run=dry_run
-            )
+            override_force_rerun = self._reconcile_build_stamp_force(override_force_rerun, dry_run=dry_run)
             self._apply_force_rerun(override_force_rerun, dry_run=dry_run)
 
             # Fold the five kept override_* kwargs into one carrier at this facade
@@ -3981,9 +3989,9 @@ class TRITONSWMM_analysis:
         # Dispatch to the sensitivity-master reprocess path for sensitivity-toggled
         # analyses. The non-sensitivity reprocess generator emits a `rule consolidate`
         # that consumes from `analysis_dir/sims/`, which for sensitivity layouts does
-        # not exist — sims live under `subanalyses/sa_*/sims/`. The sensitivity-master
+        # not exist — sims live under `members/member_*/sims/`. The sensitivity-master
         # generator (SensitivityAnalysisWorkflowBuilder.generate_reprocess_master_snakefile_content)
-        # emits per-sa consolidate rules + a master_consolidation rule that consume
+        # emits per-member consolidate rules + a master_consolidation rule that consume
         # from the correct paths. Pattern mirrors analysis.py:683-801 property
         # dispatches and the bundle CLI dispatch at cli.py:1026.
         if self.cfg_analysis.toggle_sensitivity_analysis:
@@ -3996,7 +4004,7 @@ class TRITONSWMM_analysis:
                         f"{resolved_clear_raw!r}). The sensitivity-master reprocess "
                         "path deliberately omits the clear-raw gate (see "
                         "TRITONSWMM_sensitivity_analysis.reprocess docstring). Invoke "
-                        "self.sensitivity.reprocess(...) directly with explicit sa_ids if "
+                        "self.sensitivity.reprocess(...) directly with explicit member_ids if "
                         "raw-output clearing is required."
                     ),
                     config_path=str(self.analysis_config_yaml),
@@ -4004,7 +4012,7 @@ class TRITONSWMM_analysis:
             # R7 master-level in-flight guard (Phase 3) — refuse processed-output
             # deletion while live workers may be re-writing the master analysis's
             # processed dirs. Mirrors the non-sensitivity guard below. (Per-sub
-            # subanalyses/sa_*/_status/_submitted/ recursion is a documented later
+            # members/member_*/_status/_submitted/ recursion is a documented later
             # refinement; the conservative guard refuses on master presence.)
             if start_with == "process" and regenerate_existing and not dry_run:
                 submitted_dir = self.analysis_paths.analysis_dir / "_status" / "_submitted"
@@ -4193,9 +4201,7 @@ class TRITONSWMM_analysis:
         if not dry_run:
             # Same reconciliation as the submit_workflow site. `dry_run=False` is correct
             # and not a shortcut: this statement is already inside `if not dry_run:`.
-            override_force_rerun = self._reconcile_build_stamp_force(
-                override_force_rerun, dry_run=False
-            )
+            override_force_rerun = self._reconcile_build_stamp_force(override_force_rerun, dry_run=False)
             self._apply_force_rerun(override_force_rerun)
 
         # Processed-output deletion (Phase 3). The per-model PROCESSING-LOG
@@ -4330,10 +4336,10 @@ class TRITONSWMM_analysis:
         analysis's event set, expect
         ``{_status}/c_run_{model_type}_evt-{event_id}.flag``.
 
-        For a sensitivity master analysis: recurse into each sub-analysis's
+        For a sensitivity master analysis: recurse into each member's
         ``_status/`` directory and check
-        ``c_run_{model_type}_sa-{sa_id}_evt-{event_id}.flag`` for every
-        (sa_id, event_id, enabled_model_type) tuple.
+        ``c_run_{model_type}_member-{member_id}_evt-{event_id}.flag`` for every
+        (member_id, event_id, enabled_model_type) tuple.
 
         Returns True only if every expected flag exists. Missing → False.
         Does NOT consult ``_submitted/`` sentinels; that signal is the
@@ -4535,7 +4541,7 @@ class TRITONSWMM_analysis:
         # regenerate_existing=True process-arm — no duplicate deletion here.
 
     def _validate_force_rerun_targets(self, resolved_force_rerun) -> None:
-        """Validate that requested ``sa_id`` / ``event_iloc`` values exist in the analysis.
+        """Validate that requested ``member_id`` / ``event_iloc`` values exist in the analysis.
 
         Per cleanup-rerun-delete-redesign Phase 4, R11 + D-ForceRerunValidatesSaId
         Option 1 (hard error at API entry). Unknown values raise
@@ -4560,14 +4566,14 @@ class TRITONSWMM_analysis:
         if key == "sa_id" and not self.cfg_analysis.toggle_sensitivity_analysis:
             raise ConfigurationError(
                 field="override_force_rerun",
-                message=("override_force_rerun.sa_id requires toggle_sensitivity_analysis=True"),
+                message=("override_force_rerun.member_id requires toggle_sensitivity_analysis=True"),
             )
         if key == "event_iloc" and self.cfg_analysis.toggle_sensitivity_analysis:
             raise ConfigurationError(
                 field="override_force_rerun",
                 message=(
                     "override_force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
-                    "sensitivity-toggled analyses must use override_force_rerun.sa_id instead"
+                    "sensitivity-toggled analyses must use override_force_rerun.member_id instead"
                 ),
             )
         requested = set(map(str, resolved_force_rerun[key]))
@@ -4590,7 +4596,7 @@ class TRITONSWMM_analysis:
 
         For the ``event_iloc`` scope, resolves event_iloc integers to event_id
         slugs via ``compute_event_id_slug`` (V0001's stable event-slug
-        invariant); the builder helper consumes only slugs/sa_ids.
+        invariant); the builder helper consumes only slugs/member_ids.
         """
         from hhemt.scenario import compute_event_id_slug
         from hhemt.workflow import ResolvedForceRerunSpec
@@ -4611,18 +4617,18 @@ class TRITONSWMM_analysis:
         key = next(iter(resolved_force_rerun))
         values = resolved_force_rerun[key]
         if key == "sa_id":
-            return ResolvedForceRerunSpec(scope="sa", tokens=tuple(str(v) for v in values), stage=_stage)
+            return ResolvedForceRerunSpec(scope="member", tokens=tuple(str(v) for v in values), stage=_stage)
         # event_iloc → event_id slug per V0001 stable slug invariant.
         slugs = tuple(
             compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(int(iloc))) for iloc in values
         )
         return ResolvedForceRerunSpec(scope="event", tokens=slugs, stage=_stage)
 
-    def _clean_restart_wipe(self, sa_ids: list[str]) -> None:
+    def _clean_restart_wipe(self, member_ids: list[str]) -> None:
         """Targeted clean-restart wipe for a resume-sweep recovery: remove ONLY the
-        named sub-analysis dirs (sim outputs incl. the coupled exchange-replay
+        named member dirs (sim outputs incl. the coupled exchange-replay
         side-file, per-model logs incl. ``n_resumes``, and per-sub status) and
-        delete their master per-sa completion flags, so a subsequent
+        delete their master per-member completion flags, so a subsequent
         ``run(from_scratch=False)`` re-fires ONLY those subs fresh from
         ``checkpoint_id=0`` (``n_resumes`` reset -> the deterministic-kill schedule
         re-arms) while every other sub's flags survive and skip.
@@ -4633,36 +4639,36 @@ class TRITONSWMM_analysis:
         ``clear raw triton outputs deferred until last allocation`` stipulation).
         ``fast_rmtree(analysis_dir=...)`` re-stamps parent DU sentinels (DU-correct
         restamp path, no ``# EXEMPT-DU`` needed). Invoked from ``run()`` under the
-        ``override_clean_restart_sa_ids`` gate.
+        ``override_clean_restart_member_ids`` gate.
         """
         from hhemt.workflow import ResolvedForceRerunSpec
 
-        restart_ids = [str(v) for v in sa_ids]
-        for sa in restart_ids:
-            sub_dir = self.analysis_paths.analysis_dir / "subanalyses" / f"sa_{sa}"
+        restart_ids = [str(v) for v in member_ids]
+        for member in restart_ids:
+            sub_dir = self.analysis_paths.analysis_dir / "members" / f"member_{member}"
             if not sub_dir.exists():
                 continue
-            # PRESERVE the setup-generated per-sub config `sa_{sa}.yaml` — it is written
-            # by sensitivity_analysis._create_sub_analyses at MASTER __init__ (before this
+            # PRESERVE the setup-generated per-sub config `member_{member}.yaml` — it is written
+            # by sensitivity_analysis._create_members at MASTER __init__ (before this
             # wipe fires) and read by the prepare runner via --analysis-config. Remove ONLY
             # the RUNTIME children: sims/ (per-scenario inputs, the coupled exchange-replay
             # side-file, the config_NNNN.cfg checkpoints, and the per-model logs carrying
             # n_resumes), log.json, and any analysis_datatree.zarr/plots/_status/_du.json a
             # completed sub carries — so the DAG re-fires this sub fresh from checkpoint_id=0
             # (n_resumes reset) WITHOUT re-firing the shared per-target setup rule. A whole-
-            # dir fast_rmtree(sub_dir) would delete sa_{sa}.yaml, and because the surviving
+            # dir fast_rmtree(sub_dir) would delete member_{member}.yaml, and because the surviving
             # a_setup_target_N_complete.flag makes snakemake skip setup, nothing regenerates
             # it -> prepare aborts "[ERROR] Analysis config not found". Mirrors the .test()
             # config-outside-wipe precedent (analysis.py:2835-2841). fast_rmtree handles both
             # files and dirs and re-stamps parent DU sentinels per child.
-            config_name = f"sa_{sa}.yaml"
+            config_name = f"member_{member}.yaml"
             for child in sorted(sub_dir.iterdir()):
                 if child.name == config_name:
                     continue
                 fast_rmtree(child, analysis_dir=self.analysis_paths.analysis_dir)
             # The sub's analysis-level model runtime logs do NOT live under sub_dir --
             # model_logfile_for routes them to the MASTER's logs/sims/ so all sims of a
-            # sensitivity sweep share one directory. Leaving them behind reproduces, at sa
+            # sensitivity sweep share one directory. Leaving them behind reproduces, at member
             # granularity, exactly the stale-evidence skip that motivated the
             # model_logfile_for fix: model_run_completed's raw-marker fallback would find a
             # prior campaign's "Simulation ends" and skip the sim this method just cleared
@@ -4670,12 +4676,23 @@ class TRITONSWMM_analysis:
             # a ledger surviving its log would double-count into wall_clock_ledger_s on the
             # re-run. Best-effort: a missing file is the normal case on a first restart.
             _simlogs = self.analysis_paths.simlog_directory
-            for _log in _simlogs.glob(f"model_*_sa_{sa}_evt*.log"):
-                _log.unlink(missing_ok=True)  # EXEMPT-DU: runtime log
+            for _log in _simlogs.glob(f"model_*_member_{member}_evt*.log"):
+                _log.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
                 _ledger = _simlogs / "_walltime" / f"{_log.stem}.jsonl"
-                _ledger.unlink(missing_ok=True)  # EXEMPT-DU: runtime log
+                _ledger.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+            # These bytes ARE DU-counted -- `simlog_directory` is `{analysis_dir}/logs/sims`,
+            # and `sum_child_sentinels`' own-files walk excludes only child-scope dirs and
+            # top-level `_status*`, so `logs/` is reached. The exemption marker previously
+            # here named a nonexistent runtime-log category and was a FALSE claim rather than a
+            # miscategorization -- these bytes were never exempt. ONE restamp AFTER the loop
+            # rather than one per unlink: a per-file restamp inside a delete loop re-walks the
+            # scope's children once per file and does not finish at ensemble scale, which is
+            # the recorded pathology behind the raw-SWMM-binaries reclaim.
+            from hhemt.du_sentinels import restamp_parent_sentinels as _restamp_simlogs
+
+            _restamp_simlogs(_simlogs, analysis_dir=self.analysis_paths.analysis_dir)
         self._workflow_builder._delete_flags_for_force_rerun(
-            ResolvedForceRerunSpec(scope="sa", tokens=tuple(restart_ids), stage="simulate")
+            ResolvedForceRerunSpec(scope="member", tokens=tuple(restart_ids), stage="simulate")
         )
 
     def _reconcile_build_stamp_force(self, override_force_rerun, *, dry_run: bool = False):
@@ -4756,11 +4773,7 @@ class TRITONSWMM_analysis:
         if not (_keys and _mine[0] and _keys != {_mine}):
             return override_force_rerun
 
-        _resolved = (
-            override_force_rerun
-            if override_force_rerun is not None
-            else self.cfg_analysis.force_rerun
-        )
+        _resolved = override_force_rerun if override_force_rerun is not None else self.cfg_analysis.force_rerun
         if not isinstance(_resolved, ForceRerunSpec):
             _resolved = ForceRerunSpec.model_validate(_resolved)
         # A render floor is the WEAKEST floor, so an existing simulate/process/consolidate
@@ -4836,6 +4849,7 @@ class TRITONSWMM_analysis:
         # "subject" and set(map(str, "all")) -> {'a','l'}. Coercing after it leaves the
         # CLI's json.loads dict — the ONLY form --override-force-rerun produces — broken.
         from hhemt.config.analysis import ForceRerunSpec
+
         from .exceptions import ConfigurationError
 
         if not isinstance(resolved, ForceRerunSpec):
@@ -4928,7 +4942,7 @@ class TRITONSWMM_analysis:
                     (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
 
     def _reconcile_stale_process_flags_against_summaries(
-        self, *, sa_id: str | None = None, master_dir: Path | None = None
+        self, *, member_id: str | None = None, master_dir: Path | None = None
     ) -> set[tuple[str, str]]:
         """Self-heal the reprocess divergence state (FIX 2).
 
@@ -4949,14 +4963,14 @@ class TRITONSWMM_analysis:
         (evt, model) whose enabled summary set is fully present, so it is a
         provable no-op on a healthy analysis and cannot delete a present output.
 
-        Works for both non-sensitivity analyses and sub-analyses (sub-analyses
-        are full Analysis instances per Gotcha 11). For a sub-analysis the
-        sensitivity master passes the BARE ``sa_id`` AND ``master_dir`` (the
-        master analysis_dir, whose ``_status/`` holds the per-sa flags); both
-        are required because a sub-analysis's own ``analysis_id`` is the prefixed
-        ``sa_{bare}`` (sensitivity_analysis.py:1607) and its own ``analysis_dir``
-        is ``subanalyses/sa_X/`` (sensitivity_analysis.py:50) — neither matches
-        the gate's bare-``sa_id`` flag under the master ``_status/``
+        Works for both non-sensitivity analyses and members (members
+        are full Analysis instances per Gotcha 11). For a member the
+        sensitivity master passes the BARE ``member_id`` AND ``master_dir`` (the
+        master analysis_dir, whose ``_status/`` holds the per-member flags); both
+        are required because a member's own ``analysis_id`` is the prefixed
+        ``member_{bare}`` (sensitivity_analysis.py:1607) and its own ``analysis_dir``
+        is ``members/member_X/`` (sensitivity_analysis.py:50) — neither matches
+        the gate's bare-``member_id`` flag under the master ``_status/``
         (workflow.py:6652/6678; sensitivity_analysis.py:480-498). Non-sensitivity
         callers pass neither (flags live in this analysis's own ``_status/``).
         The summary set is never narrowed.
@@ -4967,14 +4981,14 @@ class TRITONSWMM_analysis:
             The (event_id, model_type) pairs reconciled (flag+log cleared).
             Empty on a healthy analysis.
         """
-        # Flag-name helpers live in constants, NOT workflow. There is a per-sa
-        # helper (process_timeseries_flag_per_sa) but NO non-sa variant — the
+        # Flag-name helpers live in constants, NOT workflow. There is a per-member
+        # helper (process_timeseries_flag_per_member) but NO non-member variant — the
         # non-sensitivity d_process flag is built inline by workflow.py:1350 as
         # "_status/d_process_{model_type}_evt-{event_id}_complete.flag". Verified
         # against constants.py:179 + workflow.py:1350 (2026-06-01).
         from hhemt.constants import (
             STATUS_DIR_NAME,
-            process_timeseries_flag_per_sa,
+            process_timeseries_flag_per_member,
         )
         from hhemt.scenario import (
             TRITONSWMM_scenario,
@@ -5008,19 +5022,19 @@ class TRITONSWMM_analysis:
                     return True
             return False
 
-        # sub-analyses: sa_id (BARE) and master_dir (the MASTER analysis_dir,
-        # whose _status/ holds the per-sa flags — sensitivity_analysis.py:480-498)
-        # are threaded from the sensitivity master loop. A sub-analysis's OWN
-        # analysis_dir is subanalyses/sa_X/ (sensitivity_analysis.py:50), which
-        # does NOT hold the per-sa flags, and its cfg_analysis.analysis_id is the
-        # PREFIXED "sa_{bare}" (sensitivity_analysis.py:1607) — deriving the flag
-        # path from either would miss (wrong dir and/or doubled "sa-sa_" token),
+        # members: member_id (BARE) and master_dir (the MASTER analysis_dir,
+        # whose _status/ holds the per-member flags — sensitivity_analysis.py:480-498)
+        # are threaded from the sensitivity master loop. A member's OWN
+        # analysis_dir is members/member_X/ (sensitivity_analysis.py:50), which
+        # does NOT hold the per-member flags, and its cfg_analysis.analysis_id is the
+        # PREFIXED "member_{bare}" (sensitivity_analysis.py:1607) — deriving the flag
+        # path from either would miss (wrong dir and/or doubled "member-member_" token),
         # silently breaking the rebuild. None/None => non-sensitivity: flags live
         # in THIS analysis's own _status/.
-        assert (sa_id is None) == (master_dir is None), (
-            "sa_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
-        )
-        is_sub = sa_id is not None
+        assert (member_id is None) == (
+            master_dir is None
+        ), "member_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
+        is_sub = member_id is not None
 
         reconciled: set[tuple[str, str]] = set()
         reconciled_event_ids: set[str] = set()
@@ -5029,22 +5043,22 @@ class TRITONSWMM_analysis:
             evt = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(event_iloc))
             for model_type in scen.run.model_types_enabled:
                 # Flag name shape MUST match the generator gate's token shape
-                # (workflow.py:6678 for sub-analyses; the non-sa flag for
+                # (workflow.py:6678 for members; the non-member flag for
                 # non-sensitivity) so the unlink hits exactly the flag the gate
                 # checks.
                 if is_sub:
-                    # Per-sa flags live under the MASTER analysis_dir's _status/
-                    # (NOT the sub's own). process_timeseries_flag_per_sa returns
-                    # a "_status/"-prefixed rel path keyed by the BARE sa_id, so
+                    # per-member flags live under the MASTER analysis_dir's _status/
+                    # (NOT the sub's own). process_timeseries_flag_per_member returns
+                    # a "_status/"-prefixed rel path keyed by the BARE member_id, so
                     # the base must be master_dir.
                     # Narrow the Optionals for the type checker; the pre-loop
-                    # assert guarantees sa_id and master_dir are set together on
-                    # the sub-analysis path (is_sub is True iff sa_id is not None).
-                    assert sa_id is not None and master_dir is not None
-                    flag_rel = process_timeseries_flag_per_sa(model_type, sa_id, evt)
+                    # assert guarantees member_id and master_dir are set together on
+                    # the member path (is_sub is True iff member_id is not None).
+                    assert member_id is not None and master_dir is not None
+                    flag_rel = process_timeseries_flag_per_member(model_type, member_id, evt)
                     flag_path = master_dir / flag_rel
                 else:
-                    # No non-sa helper exists; mirror workflow.py:1350 inline.
+                    # No non-member helper exists; mirror workflow.py:1350 inline.
                     # Non-sensitivity flags live in this analysis's own _status/.
                     flag_rel = f"{STATUS_DIR_NAME}/d_process_{model_type}_evt-{evt}_complete.flag"
                     flag_path = self.analysis_paths.analysis_dir / flag_rel
@@ -5162,8 +5176,8 @@ class TRITONSWMM_analysis:
         ``raw_*_outputs_cleared`` markers so the clear-raw step re-runs.
 
         For the ``"all"`` scope: invalidates every scenario's per-model
-        log. For ``"sa"`` scope: dispatches via
-        ``sensitivity._invalidate_processing_log_for_sa_ids``. For
+        log. For ``"member"`` scope: dispatches via
+        ``sensitivity._invalidate_processing_log_for_member_ids``. For
         ``"event"`` scope: invalidates only the scenarios whose
         ``event_id`` slug matches the tokens.
 
@@ -5183,9 +5197,9 @@ class TRITONSWMM_analysis:
             # to the Snakemake planner.
             return
 
-        if spec.scope == "sa":
-            # Sensitivity dispatch — sub-analyses own their scenarios.
-            self.sensitivity._invalidate_processing_log_for_sa_ids(spec.tokens)
+        if spec.scope == "member":
+            # Sensitivity dispatch — members own their scenarios.
+            self.sensitivity._invalidate_processing_log_for_member_ids(spec.tokens)
             return
 
         if spec.scope == "all":
@@ -5273,23 +5287,23 @@ class TRITONSWMM_analysis:
 
         if self.cfg_analysis.toggle_sensitivity_analysis:
             snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-            expected_sa_ids = sorted(self.sensitivity.sub_analyses.keys())
-            sa_allocations = parse_sensitivity_analysis_workflow_model_allocations(
+            expected_member_ids = sorted(self.sensitivity.members.keys())
+            member_allocations = parse_sensitivity_analysis_workflow_model_allocations(
                 snakefile_path=snakefile_path,
-                expected_subanalysis_ids=expected_sa_ids,
+                expected_analysis_ids=expected_member_ids,
                 strict=False,
             )
             rows: list[dict] = []
-            for sa_id, sub_analysis in self.sensitivity.sub_analyses.items():
-                if sa_id not in sa_allocations:
-                    # Sub-analysis set up on disk but absent from the Snakefile's
-                    # simulation_sa_* rules (expected — see bug plan D-b). Emit no
+            for member_id, analysis in self.sensitivity.members.items():
+                if member_id not in member_allocations:
+                    # member set up on disk but absent from the Snakefile's
+                    # simulation_member_* rules (expected — see bug plan D-b). Emit no
                     # allocation rows here; df_status's left-merge leaves NaN allocation
                     # columns which df_status annotates with the parse-error string (R5).
                     continue
-                alloc = sa_allocations[sa_id]
-                for event_iloc in sub_analysis.df_sims.index:
-                    scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
+                alloc = member_allocations[member_id]
+                for event_iloc in analysis.df_sims.index:
+                    scen = TRITONSWMM_scenario(event_iloc, analysis)
                     scen.log.refresh()
                     scenario_dir = str(scen.log.logfile.parent)
                     for model_type in enabled_models:
@@ -5483,8 +5497,8 @@ class TRITONSWMM_analysis:
             if allocation_columns:
                 missing_mask = df_status_joined[allocation_columns].isna().any(axis=1)
                 if missing_mask.any():
-                    # Un-run sub-analyses: present in sensitivity.df_status (full XLSX
-                    # definition) but absent from the parsed Snakefile's simulation_sa_*
+                    # Un-run members: present in sensitivity.df_status (full XLSX
+                    # definition) but absent from the parsed Snakefile's simulation_member_*
                     # rules (expected per v2 wait-rule substitution / reprocess filtering /
                     # mid-study XLSX growth — see bug plan D-b). Surface them (R5) instead
                     # of raising (R1): annotate the parse-error column, leave allocation
@@ -5492,7 +5506,7 @@ class TRITONSWMM_analysis:
                     if "snakemake_allocation_parse_error" not in df_status_joined.columns:
                         df_status_joined["snakemake_allocation_parse_error"] = None
                     df_status_joined.loc[missing_mask, "snakemake_allocation_parse_error"] = (
-                        "no simulation_sa_* rule in Snakefile — sub-analysis not run"
+                        "no simulation_member_* rule in Snakefile — member not run"
                     )
             return self._reorder_df_status_columns(df_status_joined)
 
@@ -5629,7 +5643,7 @@ class TRITONSWMM_analysis:
                 rows.append(row)
 
         df_status = pd.DataFrame(rows)
-        if self.cfg_analysis.is_subanalysis:
+        if self.cfg_analysis.is_experiment_member:
             return self._reorder_df_status_columns(df_status)
         else:
             df_status_joined = df_status.merge(

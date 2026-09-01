@@ -22,7 +22,7 @@ Ref: docs/planning/refactors/frontend_validation_checklist.md
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from hhemt.config.analysis import analysis_config
 from hhemt.config.system import system_config
@@ -51,8 +51,8 @@ class ValidationIssue:
     level: IssueLevel
     field: str
     message: str
-    current_value: Optional[Any] = None
-    fix_hint: Optional[str] = None
+    current_value: Any | None = None
+    fix_hint: str | None = None
 
     def __str__(self) -> str:
         """Format issue for display."""
@@ -79,7 +79,7 @@ class ValidationResult:
 
     errors: list[ValidationIssue] = field(default_factory=list)
     warnings: list[ValidationIssue] = field(default_factory=list)
-    context: Optional[str] = None
+    context: str | None = None
 
     @property
     def is_valid(self) -> bool:
@@ -100,8 +100,8 @@ class ValidationResult:
         self,
         field: str,
         message: str,
-        current_value: Optional[Any] = None,
-        fix_hint: Optional[str] = None,
+        current_value: Any | None = None,
+        fix_hint: str | None = None,
     ):
         """Add an error-level issue."""
         self.errors.append(
@@ -118,8 +118,8 @@ class ValidationResult:
         self,
         field: str,
         message: str,
-        current_value: Optional[Any] = None,
-        fix_hint: Optional[str] = None,
+        current_value: Any | None = None,
+        fix_hint: str | None = None,
     ):
         """Add a warning-level issue."""
         self.warnings.append(
@@ -248,7 +248,7 @@ def _validate_system_paths(cfg: system_config, result: ValidationResult):
                 field=f"system.{field_name}",
                 message=f"Path does not exist for {field_name}: {path_val}",
                 current_value=str(path_val),
-                fix_hint=f"Create the file/directory or correct the path in system config",
+                fix_hint="Create the file/directory or correct the path in system config",
             )
 
 
@@ -336,9 +336,7 @@ def _validate_toggle_exclusions_system(cfg: system_config, result: ValidationRes
 
 def _validate_model_selection(cfg: system_config, result: ValidationResult):
     """Validate at least one model is enabled."""
-    if not (
-        cfg.toggle_triton_model or cfg.toggle_tritonswmm_model or cfg.toggle_swmm_model
-    ):
+    if not (cfg.toggle_triton_model or cfg.toggle_tritonswmm_model or cfg.toggle_swmm_model):
         result.add_error(
             field="system.model_toggles",
             message="At least one model must be enabled",
@@ -384,7 +382,6 @@ def validate_analysis_config(cfg: analysis_config, cfg_hpc_system: Any | None = 
 
     # HPC sanity checks (section 5)
     _validate_hpc_configuration(cfg, result, cfg_hpc_system=cfg_hpc_system)
-
 
     return result
 
@@ -444,7 +441,7 @@ def _validate_run_mode_consistency(cfg: analysis_config, result: ValidationResul
         if omp <= 1:
             result.add_error(
                 field="analysis.n_omp_threads",
-                message=f"n_omp_threads must be > 1 for run_mode=openmp",
+                message="n_omp_threads must be > 1 for run_mode=openmp",
                 current_value=omp,
                 fix_hint="Set n_omp_threads > 1 or change run_mode to 'serial'",
             )
@@ -460,7 +457,7 @@ def _validate_run_mode_consistency(cfg: analysis_config, result: ValidationResul
         if mpi <= 1:
             result.add_error(
                 field="analysis.n_mpi_procs",
-                message=f"n_mpi_procs must be > 1 for run_mode=mpi",
+                message="n_mpi_procs must be > 1 for run_mode=mpi",
                 current_value=mpi,
                 fix_hint="Set n_mpi_procs > 1 or change run_mode",
             )
@@ -495,14 +492,14 @@ def _validate_run_mode_consistency(cfg: analysis_config, result: ValidationResul
         if mpi <= 1:
             result.add_error(
                 field="analysis.n_mpi_procs",
-                message=f"n_mpi_procs must be > 1 for run_mode=hybrid",
+                message="n_mpi_procs must be > 1 for run_mode=hybrid",
                 current_value=mpi,
                 fix_hint="Set n_mpi_procs > 1 or change run_mode",
             )
         if omp <= 1:
             result.add_error(
                 field="analysis.n_omp_threads",
-                message=f"n_omp_threads must be > 1 for run_mode=hybrid",
+                message="n_omp_threads must be > 1 for run_mode=hybrid",
                 current_value=omp,
                 fix_hint="Set n_omp_threads > 1 or change run_mode",
             )
@@ -537,7 +534,7 @@ def _validate_run_mode_consistency(cfg: analysis_config, result: ValidationResul
         if gpus < 1:
             result.add_error(
                 field="analysis.n_gpus",
-                message=f"n_gpus must be >= 1 for run_mode=gpu",
+                message="n_gpus must be >= 1 for run_mode=gpu",
                 current_value=gpus,
                 fix_hint="Set n_gpus >= 1 or change run_mode",
             )
@@ -562,9 +559,7 @@ def _validate_run_mode_consistency(cfg: analysis_config, result: ValidationResul
             )
 
 
-def _validate_toggle_dependencies_analysis(
-    cfg: analysis_config, result: ValidationResult
-):
+def _validate_toggle_dependencies_analysis(cfg: analysis_config, result: ValidationResult):
     """Validate analysis toggle dependencies."""
     # Sensitivity analysis requires sensitivity file
     if cfg.toggle_sensitivity_analysis:
@@ -587,12 +582,12 @@ def _validate_toggle_dependencies_analysis(
             )
 
 
-def _validate_per_sa_system_configs(
+def _validate_per_member_system_configs(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
     result: ValidationResult,
 ):
-    """Validate per-sub-analysis system configs declared in the sensitivity CSV.
+    """Validate per-member system configs declared in the sensitivity CSV.
 
     Runs only when ``toggle_sensitivity_analysis=True`` AND the sensitivity CSV
     contains a ``system_config_yaml`` column. Implements the four Phase 4 checks:
@@ -600,7 +595,7 @@ def _validate_per_sa_system_configs(
     1. **Existence** — each non-null cell points to a YAML file on disk.
     2. **Validity** — each unique YAML loads cleanly through
        :func:`load_system_config` (Pydantic validation runs).
-    3. **Model-toggle consistency** — every sub-analysis system config enables
+    3. **Model-toggle consistency** — every member system config enables
        the same model-type toggles as the master ``cfg_system``. The Snakefile
        is generated against the master's enabled model; a mismatch would
        silently route the wrong runner script.
@@ -642,28 +637,17 @@ def _validate_per_sa_system_configs(
         _strip_system_prefix,
     )
 
-    overlay_columns_present = sorted(
-        c for c in df.columns
-        if c.startswith("system.") and _is_system_overlay_column(c)
-    )
-    for sa_id, row in df.iterrows():
-        sa_id_str = str(sa_id)
+    overlay_columns_present = sorted(c for c in df.columns if c.startswith("system.") and _is_system_overlay_column(c))
+    for member_id, row in df.iterrows():
+        member_id_str = str(member_id)
         yaml_cell = row.get("system_config_yaml") if "system_config_yaml" in df.columns else None
-        yaml_specified = (
-            "system_config_yaml" in df.columns
-            and not pd.isna(yaml_cell)
-            and str(yaml_cell).strip() != ""
-        )
-        overlay_cells = {
-            _strip_system_prefix(c): row[c]
-            for c in overlay_columns_present
-            if not pd.isna(row[c])
-        }
+        yaml_specified = "system_config_yaml" in df.columns and not pd.isna(yaml_cell) and str(yaml_cell).strip() != ""
+        overlay_cells = {_strip_system_prefix(c): row[c] for c in overlay_columns_present if not pd.isna(row[c])}
         if overlay_cells and yaml_specified:
             result.add_error(
-                field=f"sensitivity_analysis.row[{sa_id_str}]",
+                field=f"sensitivity_analysis.row[{member_id_str}]",
                 message=(
-                    f"sa_id={sa_id_str}: row specifies both system_config_yaml "
+                    f"member_id={member_id_str}: row specifies both system_config_yaml "
                     f"({yaml_cell}) and system.* overlay column(s) {sorted(overlay_cells)}; "
                     f"mutually exclusive — choose one mechanism per row."
                 ),
@@ -673,16 +657,19 @@ def _validate_per_sa_system_configs(
             continue
         if overlay_cells:
             import pydantic
+
             try:
-                system_config.model_validate({
-                    **cfg_system.model_dump(),
-                    **overlay_cells,
-                })
+                system_config.model_validate(
+                    {
+                        **cfg_system.model_dump(),
+                        **overlay_cells,
+                    }
+                )
             except pydantic.ValidationError as exc:
                 result.add_error(
-                    field=f"sensitivity_analysis.row[{sa_id_str}]",
+                    field=f"sensitivity_analysis.row[{member_id_str}]",
                     message=(
-                        f"sa_id={sa_id_str}: system.* overlay-column values failed "
+                        f"member_id={member_id_str}: system.* overlay-column values failed "
                         f"SystemConfig validation: {exc}"
                     ),
                     current_value=None,
@@ -759,7 +746,7 @@ def _validate_per_sa_system_configs(
                     f"(triton={sub_toggles[0]}, tritonswmm={sub_toggles[1]}, "
                     f"swmm={sub_toggles[2]}) do not match master "
                     f"(triton={master_toggles[0]}, tritonswmm={master_toggles[1]}, "
-                    f"swmm={master_toggles[2]}). Sub-analysis system configs "
+                    f"swmm={master_toggles[2]}). Member system configs "
                     "must enable the same model type as the master."
                 ),
                 current_value=str(yaml_path),
@@ -803,14 +790,14 @@ def _validate_per_sa_system_configs(
                             f"on non-compile-relevant field {field_name!r}: "
                             f"{base_path} has {base_dump[field_name]!r}, "
                             f"{other_path} has {other_dump[field_name]!r}. "
-                            "Reconcile the YAMLs or split the sub-analyses into "
+                            "Reconcile the YAMLs or split the members into "
                             "different compile targets."
                         ),
                         current_value=None,
                         fix_hint=(
                             "Either align the divergent field across the collapsing "
                             "YAMLs, or differentiate the dedup-key fields so the "
-                            "sub-analyses no longer collapse."
+                            "members no longer collapse."
                         ),
                     )
                     break  # First divergence per pair is enough.
@@ -855,14 +842,10 @@ def _validate_per_row_partition_requires_batch_job(
 
     # The partition axis may be spelled `hpc.partition` (canonical) or
     # `analysis.hpc_ensemble_partition` (legacy). Both resolve to the same field.
-    partition_cols = [
-        c for c in df.columns if c in ("hpc.partition", "analysis.hpc_ensemble_partition")
-    ]
+    partition_cols = [c for c in df.columns if c in ("hpc.partition", "analysis.hpc_ensemble_partition")]
     distinct_partitions: set = set()
     for c in partition_cols:
-        distinct_partitions |= {
-            str(v) for v in df[c].dropna().tolist() if str(v).strip() != ""
-        }
+        distinct_partitions |= {str(v) for v in df[c].dropna().tolist() if str(v).strip() != ""}
     if len(distinct_partitions) > 1:
         result.add_error(
             field="analysis.multi_sim_run_method",
@@ -962,8 +945,7 @@ def _validate_hpc_configuration(
                 ),
                 current_value=None,
                 fix_hint=(
-                    "Set hpc_system_config.login_node to your specific login node "
-                    "(e.g., 'login1.hpc.virginia.edu')"
+                    "Set hpc_system_config.login_node to your specific login node " "(e.g., 'login1.hpc.virginia.edu')"
                 ),
             )
 
@@ -1359,6 +1341,7 @@ def _validate_storm_tide_data(cfg: analysis_config, result: ValidationResult):
     if cfg.weather_timeseries and Path(cfg.weather_timeseries).exists():
         try:
             import xarray as xr
+
             # FORCING-READ: preflight
             with xr.open_dataset(cfg.weather_timeseries, engine="h5netcdf") as ds:
                 avail = list(ds.data_vars)
@@ -1371,10 +1354,7 @@ def _validate_storm_tide_data(cfg: analysis_config, result: ValidationResult):
                             f"weather_timeseries NetCDF. Available: {avail}"
                         ),
                         current_value=rain_name,
-                        fix_hint=(
-                            f"Set weather_time_series_spatial_mean_rainfall_datavar to "
-                            f"one of: {avail}"
-                        ),
+                        fix_hint=(f"Set weather_time_series_spatial_mean_rainfall_datavar to " f"one of: {avail}"),
                     )
                 if (
                     cfg.toggle_storm_tide_boundary
@@ -1501,9 +1481,7 @@ def _check_interactive_dependencies(report_cfg, result: ValidationResult) -> Non
         )
 
 
-def _check_static_backend_kaleido_available(
-    report_cfg, result: ValidationResult
-) -> None:
+def _check_static_backend_kaleido_available(report_cfg, result: ValidationResult) -> None:
     # Error when static_backend='plotly' but kaleido is not importable.
     #
     # Runtime kaleido availability is the load-bearing precondition
@@ -1526,8 +1504,7 @@ def _check_static_backend_kaleido_available(
         result.add_error(
             field="report_config.interactive.static_backend",
             message=(
-                "static_backend='plotly' requires kaleido, but kaleido "
-                "is not importable in the current environment."
+                "static_backend='plotly' requires kaleido, but kaleido " "is not importable in the current environment."
             ),
             current_value="plotly",
             fix_hint=(
@@ -1568,7 +1545,7 @@ def _validate_setup_mem_sizing(
     result: ValidationResult,
 ):
     """Warn when hpc_mem_allocation_for_setup_mb is under-sized for the smallest
-    target_dem_resolution across master + sensitivity overlays + per-sub-analysis
+    target_dem_resolution across master + sensitivity overlays + per-member
     YAMLs. Empirical peak parent-process RSS at 0.35 m DEM is ~5.15 GB; an 8 GB
     threshold gives a guard band without preventing user override.
     """
@@ -1582,14 +1559,15 @@ def _validate_setup_mem_sizing(
         candidate_resolutions.append(float(master_res))
 
     if cfg_analysis.toggle_sensitivity_analysis and cfg_analysis.sensitivity_analysis:
-        sa_csv = Path(cfg_analysis.sensitivity_analysis)
-        if sa_csv.is_file():
+        member_csv = Path(cfg_analysis.sensitivity_analysis)
+        if member_csv.is_file():
             try:
                 import pandas as pd
-                if sa_csv.suffix.lower() in {".xlsx", ".xls"}:
-                    df = pd.read_excel(sa_csv)
+
+                if member_csv.suffix.lower() in {".xlsx", ".xls"}:
+                    df = pd.read_excel(member_csv)
                 else:
-                    df = pd.read_csv(sa_csv)
+                    df = pd.read_csv(member_csv)
             except Exception:
                 df = None
             if df is not None:
@@ -1601,6 +1579,7 @@ def _validate_setup_mem_sizing(
                             continue
                 if "system_config_yaml" in df.columns:
                     from hhemt.config.loaders import load_system_config
+
                     seen: set[Path] = set()
                     for cell in df["system_config_yaml"].dropna().tolist():
                         yaml_path = Path(str(cell).strip())
@@ -1632,12 +1611,12 @@ def _validate_setup_mem_sizing(
         )
 
 
-def _validate_per_sa_row_caps(
+def _validate_per_member_row_caps(
     cfg_analysis: analysis_config,
     cfg_hpc_system: Any | None,
     result: ValidationResult,
 ) -> None:
-    """Per-``(sa_id, resource-column)`` partition-cap scanner (reproducibility C8, ADR-10).
+    """Per-``(member_id, resource-column)`` partition-cap scanner (reproducibility C8, ADR-10).
 
     Generalizes the master-level per-partition runtime cap check (the batch_job /
     1_job_many_srun_tasks bounds in ``validate_analysis_config``) to EACH sensitivity
@@ -1645,12 +1624,12 @@ def _validate_per_sa_row_caps(
     ``analysis.hpc_ensemble_partition`` overlay column when present, else
     ``cfg_analysis.hpc_ensemble_partition``), then check each requested resource
     column in the row against THAT partition's ``PartitionSpec`` caps. Emits one
-    ``ValidationIssue`` per ``(sa_id, column)`` that exceeds its cap — the reprex
+    ``ValidationIssue`` per ``(member_id, column)`` that exceeds its cap — the reprex
     "problem pair" surface consumed by ``hhemt.bundle._reprex.reprex`` when a bundle
     is re-aimed at a target HPC profile.
 
     No-op unless sensitivity analysis is on AND a ``cfg_hpc_system`` is supplied AND
-    the sensitivity CSV is readable (mirrors ``_validate_per_sa_system_configs``
+    the sensitivity CSV is readable (mirrors ``_validate_per_member_system_configs``
     gating; a relative/absent/unreadable CSV path silently returns — the reprex
     caller rebases the CSV onto the bundle root before invoking preflight).
     """
@@ -1683,19 +1662,22 @@ def _validate_per_sa_row_caps(
         (("n_gpus", "analysis.n_gpus", "hpc.n_gpus"), "max_gpu", "GPUs"),
         (("n_nodes", "hpc_total_nodes", "analysis.n_nodes", "hpc.n_nodes"), "max_nodes", "nodes"),
         (
-            ("hpc_time_min_per_sim", "hpc_total_job_duration_min", "runtime_min",
-             "analysis.hpc_time_min_per_sim", "hpc.runtime_min"),
+            (
+                "hpc_time_min_per_sim",
+                "hpc_total_job_duration_min",
+                "runtime_min",
+                "analysis.hpc_time_min_per_sim",
+                "hpc.runtime_min",
+            ),
             "max_runtime",
             "runtime (min)",
         ),
         (("mem_mb", "hpc_mem_allocation_for_setup_mb", "hpc.mem_mb"), "max_mem_mb", "memory (MB)"),
     ]
-    partition_cols = [
-        c for c in df.columns if c in ("hpc.partition", "analysis.hpc_ensemble_partition")
-    ]
+    partition_cols = [c for c in df.columns if c in ("hpc.partition", "analysis.hpc_ensemble_partition")]
 
-    for sa_id, row in df.iterrows():
-        sa_id_str = str(sa_id)
+    for member_id, row in df.iterrows():
+        member_id_str = str(member_id)
         # Resolve the row's target partition: an overlay column wins, else the
         # analysis-config default ensemble partition (the re-aimed target profile).
         partition_name = None
@@ -1711,15 +1693,13 @@ def _validate_per_sa_row_caps(
         spec = cfg_hpc_system.partitions.get(partition_name)
         if spec is None:
             result.add_error(
-                field=f"sensitivity_analysis.row[{sa_id_str}].hpc.partition",
+                field=f"sensitivity_analysis.row[{member_id_str}].hpc.partition",
                 message=(
-                    f"sa_id={sa_id_str}: target partition '{partition_name}' is not "
+                    f"member_id={member_id_str}: target partition '{partition_name}' is not "
                     f"declared in the target hpc_system_config partitions block."
                 ),
                 current_value=partition_name,
-                fix_hint=(
-                    f"Choose a declared partition: {sorted(cfg_hpc_system.partitions)}."
-                ),
+                fix_hint=(f"Choose a declared partition: {sorted(cfg_hpc_system.partitions)}."),
             )
             continue
         for candidates, cap_attr, label in _resource_caps:
@@ -1736,16 +1716,13 @@ def _validate_per_sa_row_caps(
             cap = getattr(spec, cap_attr, None)
             if cap is not None and requested > cap:
                 result.add_error(
-                    field=f"sensitivity_analysis.row[{sa_id_str}].{col}",
+                    field=f"sensitivity_analysis.row[{member_id_str}].{col}",
                     message=(
-                        f"sa_id={sa_id_str}: requests {label}={requested:g} on partition "
+                        f"member_id={member_id_str}: requests {label}={requested:g} on partition "
                         f"'{partition_name}', exceeding its cap of {cap}."
                     ),
                     current_value=requested,
-                    fix_hint=(
-                        f"Reduce {col} to <= {cap} or choose a partition with a higher "
-                        f"{cap_attr} cap."
-                    ),
+                    fix_hint=(f"Reduce {col} to <= {cap} or choose a partition with a higher " f"{cap_attr} cap."),
                 )
 
 
@@ -1771,9 +1748,7 @@ def _running_toolkit_sha() -> str | None:
     return None if (not sha or sha == "unknown") else sha
 
 
-def _validate_container_config(
-    cfg_analysis, cfg_hpc_system, result: "ValidationResult", cfg_system=None
-) -> None:
+def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "ValidationResult", cfg_system=None) -> None:
     """ADR-1 preflight (R10): container mode requires a resolvable ContainerSpec.
 
     Accumulates into the shared ValidationResult (the established preflight
@@ -1819,8 +1794,7 @@ def _validate_container_config(
     from pathlib import Path as _Path
 
     _declared = [("container.sif_path", cspec.sif_path)] + [
-        (f"container.sif_paths_by_arch[{_a}]", _p)
-        for _a, _p in (cspec.sif_paths_by_arch or {}).items()
+        (f"container.sif_paths_by_arch[{_a}]", _p) for _a, _p in (cspec.sif_paths_by_arch or {}).items()
     ]
     for _field, _p in _declared:
         if not _p:
@@ -1843,8 +1817,7 @@ def _validate_container_config(
         if _pp.is_dir() and (_pp / ".singularity.d").is_dir():
             continue
         _kind = (
-            "a directory exists there but carries no .singularity.d/ marker, so it is not an "
-            "apptainer sandbox"
+            "a directory exists there but carries no .singularity.d/ marker, so it is not an " "apptainer sandbox"
             if _pp.is_dir()
             else "no SIF file or sandbox directory exists there"
         )
@@ -2079,7 +2052,7 @@ def _validate_resume_interruption_schedule(cfg: analysis_config, result: Validat
     """
     # getattr, not direct access: a real analysis_config always carries the field
     # (default None), but preflight_validate is also called with partial/stub configs
-    # (e.g. the Phase-4 per-sa-validator test's SimpleNamespace). Absent field == None
+    # (e.g. the Phase-4 per-member-validator test's SimpleNamespace). Absent field == None
     # == harness disabled, so the R6 check is correctly skipped. Mirrors the runner's
     # arming gate, which reads the same field via getattr.
     schedule = getattr(cfg, "resume_interruption_schedule", None)
@@ -2105,7 +2078,7 @@ def _validate_resume_interruption_schedule(cfg: analysis_config, result: Validat
 def preflight_validate(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
-    report_cfg: Optional[Any] = None,
+    report_cfg: Any | None = None,
     cfg_hpc_system: Any | None = None,
 ) -> ValidationResult:
     """Run full preflight validation on system and analysis configs.
@@ -2149,14 +2122,14 @@ def preflight_validate(
     data_result = validate_data_consistency(cfg_system, cfg_analysis)
     result.merge(data_result)
 
-    # Per-sub-analysis system config validation (Phase 4): runs only when the
+    # Per-member system config validation (Phase 4): runs only when the
     # sensitivity CSV declares a `system_config_yaml` column. Surfaces existence,
     # validity, model-toggle-consistency, and canonical-YAML-correctness errors
     # before TRITONSWMM_sensitivity_analysis.__init__ would otherwise raise them
     # at instantiation time. Needs cfg_system (for master toggles) — invoked
     # here at the preflight_validate level rather than from inside
     # _validate_toggle_dependencies_analysis (which lacks cfg_system).
-    _validate_per_sa_system_configs(cfg_system, cfg_analysis, result)
+    _validate_per_member_system_configs(cfg_system, cfg_analysis, result)
     # Re-parented here from _validate_storm_tide_data: this is a whole-analysis
     # check and needs BOTH configs to resolve the rule-(1) forcing variable set.
     _validate_selected_event_forcing_extent(cfg_analysis, cfg_system, result)
@@ -2164,11 +2137,11 @@ def preflight_validate(
     # from preflight, sharing its predicate with the consumer so the two cannot drift.
     _validate_event_window_columns(cfg_analysis, result)
 
-    # Per-(sa_id, resource-column) partition-cap scan (reproducibility C8, ADR-10).
+    # Per-(member_id, resource-column) partition-cap scan (reproducibility C8, ADR-10).
     # No-op unless cfg_hpc_system is supplied AND the sensitivity CSV is readable, so
     # native / non-reprex preflight is byte-identical. Emits the reprex problem pairs
     # when validation.py is re-aimed at a target HPC profile via bundle._reprex.reprex.
-    _validate_per_sa_row_caps(cfg_analysis, cfg_hpc_system, result)
+    _validate_per_member_row_caps(cfg_analysis, cfg_hpc_system, result)
 
     # Per-row partition variation requires batch_job mode (DQ6). Runs only when
     # the sensitivity CSV varies the ensemble partition across rows.
@@ -2214,7 +2187,7 @@ def _iter_config_paths(cfg) -> list[tuple[str, Path]]:
         value = getattr(cfg, name, None)
         if isinstance(value, Path):
             out.append((name, value))
-        elif isinstance(value, (list, tuple)):
+        elif isinstance(value, list | tuple):
             out.extend((f"{name}[{i}]", v) for i, v in enumerate(value) if isinstance(v, Path))
     return out
 

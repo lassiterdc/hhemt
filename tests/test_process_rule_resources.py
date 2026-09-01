@@ -58,9 +58,7 @@ def test_multisim_process_rule_walltime_is_no_longer_120(norfolk_multi_sim_analy
 
 
 @pytest.mark.parametrize("site", ["multisim", "sensitivity_canonical", "sensitivity_reprocess"])
-def test_process_rule_walltime_is_config_sourced(
-    site, norfolk_multi_sim_analysis, norfolk_sensitivity_analysis
-):
+def test_process_rule_walltime_is_config_sourced(site, norfolk_multi_sim_analysis, norfolk_sensitivity_analysis):
     """PRE-FIX FAILURE, ValueError: `hpc_runtime_min_for_sim_output_processing`
     does not exist on the pre-fix model, and analysis_config forbids extras, so
     the assignment raises before any assertion runs. Stated plainly because a
@@ -82,7 +80,7 @@ def test_process_rule_walltime_is_config_sourced(
         # The per-sub read is the point: the sites take sub_analysis.cfg_analysis,
         # so setting the master alone would NOT reach them if the overlay is honored.
         analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing = sentinel
-        for _sub in analysis.sensitivity.sub_analyses.values():
+        for _sub in analysis.sensitivity.members.values():
             _sub.cfg_analysis.hpc_runtime_min_for_sim_output_processing = sentinel
         builder = analysis.sensitivity._workflow_builder
         if site == "sensitivity_canonical":
@@ -101,17 +99,13 @@ def test_process_rule_walltime_is_config_sourced(
             # Constructing the flag is the same idiom test_synth_06_submission_guard
             # uses for sentinel files: build the documented precondition, then
             # exercise the code under test.
-            from hhemt.constants import sim_run_flag_per_sa
+            from hhemt.constants import sim_run_flag_per_member
             from hhemt.scenario import compute_event_id_slug
 
             _model = analysis._get_enabled_model_types()[0]
-            _sa_id, _sub0 = next(iter(analysis.sensitivity.sub_analyses.items()))
-            _evt = compute_event_id_slug(
-                _sub0._retrieve_weather_indexer_using_integer_index(_sub0.df_sims.index[0])
-            )
-            _flag = analysis.analysis_paths.analysis_dir / sim_run_flag_per_sa(
-                _model, str(_sa_id), str(_evt)
-            )
+            _sa_id, _sub0 = next(iter(analysis.sensitivity.members.items()))
+            _evt = compute_event_id_slug(_sub0._retrieve_weather_indexer_using_integer_index(_sub0.df_sims.index[0]))
+            _flag = analysis.analysis_paths.analysis_dir / sim_run_flag_per_member(_model, str(_sa_id), str(_evt))
             _flag.parent.mkdir(parents=True, exist_ok=True)
             _flag.touch()
 

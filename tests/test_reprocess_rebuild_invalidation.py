@@ -15,7 +15,7 @@ The three tests here drive:
 - ``(a)`` SENSITIVITY reprocess SLURM-route: ``d_process_*`` flags deleted +
   per-scenario per-model ``processing_log.outputs`` cleared for every sub.
 - ``(b)`` the reprocess MASTER generator emits a ``process_*`` rebuild rule per
-  (sa, event) whose ``d_process`` flag is absent, routes the per-sa consolidate
+  (member, event) whose ``d_process`` flag is absent, routes the per-member consolidate
   input through that ``d_process`` flag, and the generated Snakefile PARSES via a
   Snakemake dry-run.
 - ``(b2)`` NON-sensitivity reprocess SLURM-route: per-scenario per-model
@@ -39,9 +39,9 @@ import pytest
 import xarray as xr
 
 from hhemt.constants import (
-    process_timeseries_flag_per_sa,
-    sa_inputs_fingerprint_flag,
-    sim_run_flag_per_sa,
+    member_inputs_fingerprint_flag,
+    process_timeseries_flag_per_member,
+    sim_run_flag_per_member,
 )
 from hhemt.exceptions import ProcessingError
 from hhemt.log import ProcessingEntry
@@ -75,11 +75,11 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitiv
     """Sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route deletes every sub's ``d_process_*`` flags AND
     clears every scenario's per-model ``processing_log.outputs`` (FIX 1, hunk 2a)."""
-    analysis = norfolk_sensitivity_analysis
-    sensitivity = analysis.sensitivity
+    experiment = norfolk_sensitivity_analysis
+    sensitivity = experiment.sensitivity
 
     # Force the SLURM-offload route: batch_job → _hpc=True → route_delete_via_slurm.
-    sensitivity.master_analysis.cfg_analysis.multi_sim_run_method = "batch_job"
+    sensitivity.experiment.cfg_analysis.multi_sim_run_method = "batch_job"
 
     # Patch BOTH submission methods to no-op stubs so no real workflow fires.
     monkeypatch.setattr(
@@ -93,19 +93,19 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitiv
         lambda *a, **k: {"success": True},
     )
 
-    master_analysis_dir = sensitivity.master_analysis.analysis_paths.analysis_dir
-    status_dir = master_analysis_dir / "_status"
+    experiment_dir = sensitivity.experiment.analysis_paths.analysis_dir
+    status_dir = experiment_dir / "_status"
     status_dir.mkdir(parents=True, exist_ok=True)
 
-    # Seed, per sub: (i) dummy d_process_*_sa-<sa>_evt-<eid>_complete.flag files
+    # Seed, per sub: (i) dummy d_process_*_member-<member>_evt-<eid>_complete.flag files
     # via the real flag-name builder, and (ii) a non-empty per-model processing
     # log for each scenario.
     seeded: dict[str, list[tuple[int, list[str]]]] = {}
-    for sa_id, sub_analysis in sensitivity.sub_analyses.items():
-        sa_str = str(sa_id)
+    for member_id, analysis in sensitivity.members.items():
+        member_str = str(member_id)
         per_sub: list[tuple[int, list[str]]] = []
-        for event_iloc in sub_analysis.df_sims.index:
-            scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
+        for event_iloc in analysis.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, analysis)
             event_id = scen.event_id
             model_types = _seed_scenario_processing_log(scen)
             # Seed the RAW rebuild source per enabled model so the d5d0084
@@ -131,18 +131,18 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitiv
                     out_file.parent.mkdir(parents=True, exist_ok=True)
                     out_file.write_bytes(b"\x00")
             for model_type in model_types:
-                flag_rel = process_timeseries_flag_per_sa(model_type, sa_str, event_id)
-                flag_path = master_analysis_dir / flag_rel
+                flag_rel = process_timeseries_flag_per_member(model_type, member_str, event_id)
+                flag_path = experiment_dir / flag_rel
                 flag_path.parent.mkdir(parents=True, exist_ok=True)
                 flag_path.write_text("")
             per_sub.append((event_iloc, model_types))
-        seeded[sa_str] = per_sub
+        seeded[member_str] = per_sub
 
     # Precondition sanity: flags + log entries exist before reprocess.
-    for sa_str, per_sub in seeded.items():
-        assert list(status_dir.glob(f"d_process_*_sa-{sa_str}_*")), (
-            f"precondition: d_process flags must exist for sa {sa_str}"
-        )
+    for member_str, _per_sub in seeded.items():
+        assert list(
+            status_dir.glob(f"d_process_*_member-{member_str}_*")
+        ), f"precondition: d_process flags must exist for member {member_str}"
 
     sensitivity.reprocess(
         start_with="process",
@@ -153,18 +153,18 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitiv
         verbose=False,
     )
 
-    for sa_id, sub_analysis in sensitivity.sub_analyses.items():
-        sa_str = str(sa_id)
+    for member_id, analysis in sensitivity.members.items():
+        member_str = str(member_id)
         # (a-i) every d_process flag for this sub was deleted.
-        remaining = list(status_dir.glob(f"d_process_*_sa-{sa_str}_*"))
-        assert remaining == [], f"sa {sa_str}: d_process_* flags must all be deleted; found {remaining!r}"
+        remaining = list(status_dir.glob(f"d_process_*_member-{member_str}_*"))
+        assert remaining == [], f"member {member_str}: d_process_* flags must all be deleted; found {remaining!r}"
         # (a-ii) every scenario's per-model processing_log.outputs is empty.
-        for event_iloc, model_types in seeded[sa_str]:
-            scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
+        for event_iloc, model_types in seeded[member_str]:
+            scen = TRITONSWMM_scenario(event_iloc, analysis)
             for model_type in model_types:
                 reloaded = scen.get_log(model_type)
                 assert reloaded.processing_log.outputs == {}, (
-                    f"sa {sa_str} event_iloc {event_iloc} model {model_type}: "
+                    f"member {member_str} event_iloc {event_iloc} model {model_type}: "
                     f"processing_log.outputs must be cleared; got "
                     f"{reloaded.processing_log.outputs!r}"
                 )
@@ -178,13 +178,13 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitiv
 def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivity_analysis):
     """Pure generator test (no reprocess() call). With ``c_run`` flags present
     and ``d_process`` flags absent, the reprocess master generator emits a
-    ``process_*`` rebuild rule per (sa, event) and routes each per-sa
+    ``process_*`` rebuild rule per (member, event) and routes each per-member
     consolidate's input through the ``d_process`` flag. The generated Snakefile
     PARSES (Snakemake dry-run, no compiler needed)."""
-    analysis = norfolk_sensitivity_analysis
-    builder = analysis.sensitivity._workflow_builder
+    experiment = norfolk_sensitivity_analysis
+    builder = experiment.sensitivity._workflow_builder
 
-    analysis_dir = builder.master_analysis.analysis_paths.analysis_dir
+    analysis_dir = builder.experiment.analysis_paths.analysis_dir
     status_dir = analysis_dir / "_status"
     status_dir.mkdir(parents=True, exist_ok=True)
 
@@ -201,48 +201,48 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivit
     assert len(enabled_models) == 1, f"sensitivity fixture must enable exactly one model; got {enabled_models!r}"
     model_type = enabled_models[0]
 
-    # Seed: every (sa, event) gets its c_run flag present, d_process ABSENT
+    # Seed: every (member, event) gets its c_run flag present, d_process ABSENT
     # (mirror workflow.py:6675-6678 for the event_id slug derivation).
-    sa_event_pairs: list[tuple[str, str]] = []
-    for sa_id, sub_analysis in analysis.sensitivity.sub_analyses.items():
-        sa_str = str(sa_id)
-        # The per-sa process + consolidate rules declare the per-sa input
+    member_event_pairs: list[tuple[str, str]] = []
+    for member_id, analysis in experiment.sensitivity.members.items():
+        member_str = str(member_id)
+        # The per-member process + consolidate rules declare the per-member input
         # fingerprint as `input:`; seed it so the dry-run DAG resolves.
-        fingerprint_rel = sa_inputs_fingerprint_flag(sa_str)
+        fingerprint_rel = member_inputs_fingerprint_flag(member_str)
         (analysis_dir / fingerprint_rel).parent.mkdir(parents=True, exist_ok=True)
         (analysis_dir / fingerprint_rel).write_text("{}")
-        for event_iloc in sub_analysis.df_sims.index:
-            event_id = compute_event_id_slug(sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
-            c_run_rel = sim_run_flag_per_sa(model_type, sa_str, event_id)
-            d_process_rel = process_timeseries_flag_per_sa(model_type, sa_str, event_id)
+        for event_iloc in analysis.df_sims.index:
+            event_id = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+            c_run_rel = sim_run_flag_per_member(model_type, member_str, event_id)
+            d_process_rel = process_timeseries_flag_per_member(model_type, member_str, event_id)
             (analysis_dir / c_run_rel).parent.mkdir(parents=True, exist_ok=True)
             (analysis_dir / c_run_rel).write_text("")
             (analysis_dir / d_process_rel).unlink(missing_ok=True)
-            sa_event_pairs.append((sa_str, event_id))
+            member_event_pairs.append((member_str, event_id))
 
-    assert sa_event_pairs, "fixture must construct at least one (sa, event) pair"
+    assert member_event_pairs, "fixture must construct at least one (member, event) pair"
 
     content = builder.generate_reprocess_master_snakefile_content(start_with="process")
 
-    # A process rebuild rule per (sa, event) — the generator emits
-    # `rule process_sa_{sa}_evt_{event}` (sa_id_rule/event_id_rule normalize
+    # A process rebuild rule per (member, event) — the generator emits
+    # `rule process_member_{member}_evt_{event}` (member_id_rule/event_id_rule normalize
     # '.'/'-' to '_').
-    for sa_str, event_id in sa_event_pairs:
-        sa_rule = sa_str.replace(".", "_").replace("-", "_")
+    for member_str, event_id in member_event_pairs:
+        member_rule = member_str.replace(".", "_").replace("-", "_")
         event_rule = event_id.replace(".", "_").replace("-", "_")
-        rule_name = f"process_sa_{sa_rule}_evt_{event_rule}"
+        rule_name = f"process_member_{member_rule}_evt_{event_rule}"
         assert f"rule {rule_name}:" in content, f"expected reprocess rebuild rule '{rule_name}' in generated content"
 
-    # Each per-sa consolidate routes its input through the d_process flag the
+    # Each per-member consolidate routes its input through the d_process flag the
     # rebuild rule produces (conditional-process-emit routing), not c_run.
-    for sa_id, sub_analysis in analysis.sensitivity.sub_analyses.items():
-        sa_str = str(sa_id)
-        for event_iloc in sub_analysis.df_sims.index:
-            event_id = compute_event_id_slug(sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
-            d_process_rel = process_timeseries_flag_per_sa(model_type, sa_str, event_id)
-            assert f'"{d_process_rel}"' in content, (
-                f"per-sa consolidate input must include d_process flag {d_process_rel!r}"
-            )
+    for member_id, analysis in experiment.sensitivity.members.items():
+        member_str = str(member_id)
+        for event_iloc in analysis.df_sims.index:
+            event_id = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+            d_process_rel = process_timeseries_flag_per_member(model_type, member_str, event_id)
+            assert (
+                f'"{d_process_rel}"' in content
+            ), f"per-member consolidate input must include d_process flag {d_process_rel!r}"
 
     # The generated Snakefile must PARSE — write it and run a Snakemake dry-run.
     snakefile = analysis_dir / "Snakefile.reprocess"
@@ -348,8 +348,8 @@ def test_reprocess_consolidate_inprocess_preserves_processed(norfolk_sensitivity
     coverage gap that previously let the defect reach only the ~4-min
     compile-gated Tier-2 gate.
     """
-    analysis = norfolk_sensitivity_analysis
-    sensitivity = analysis.sensitivity
+    experiment = norfolk_sensitivity_analysis
+    sensitivity = experiment.sensitivity
 
     # In-process (local) route: pass delete_via_slurm=False so
     # route_delete_via_slurm is False and the in-process `elif` branch fires
@@ -362,9 +362,9 @@ def test_reprocess_consolidate_inprocess_preserves_processed(norfolk_sensitivity
 
     # Seed each sub's per-scenario processed/ dir on disk (the rebuild source).
     seeded_procs: list[Path] = []
-    for sa_id, sub_analysis in sensitivity.sub_analyses.items():
-        for event_iloc in range(len(sub_analysis.df_sims)):
-            scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
+    for _member_id, analysis in sensitivity.members.items():
+        for event_iloc in range(len(analysis.df_sims)):
+            scen = TRITONSWMM_scenario(event_iloc, analysis)
             proc = scen.scen_paths.sim_folder / "processed"
             proc.mkdir(parents=True, exist_ok=True)
             (proc / "summary.zarr").mkdir(exist_ok=True)

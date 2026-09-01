@@ -1,6 +1,6 @@
 """Disk-utilization sentinel helper.
 
-Writes hierarchical `_du.json` sentinels at scenario / sub-analysis /
+Writes hierarchical `_du.json` sentinels at scenario / member /
 analysis levels via compare-and-write semantics, preserving file mtime
 when payload bytes are unchanged. The mtime-preservation property is
 the load-bearing mechanism that prevents Snakemake's `--rerun-triggers
@@ -10,13 +10,13 @@ processing re-runs.
 
 Schema chosen per Design Recommendation D1 (Option A — parallel helper,
 hand-written compare-and-write mirroring `sensitivity_analysis.py::
-_write_sa_id_fingerprint:1591-1620`).
+_write_member_id_fingerprint:1591-1620`).
 
 Sentinel file: `{scope_dir}/_status/_du.json`
 Schema:
     {"disk_utilization_bytes": int,
      "computed_at": str (ISO-8601),
-     "scope": str ("scenario"|"sub_analysis"|"analysis"),
+     "scope": str ("scenario"|"member"|"analysis"),
      "sub_path_breakdown": {str: int} | null,
      "walk_errors": int}
 
@@ -35,7 +35,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-Scope = Literal["scenario", "sub_analysis", "analysis"]
+Scope = Literal["scenario", "member", "analysis"]
 
 # Ephemeral top-level dirs that MUST NOT count toward the analysis-scope DU
 # rollup (ADR-8/ASR-8): `_test/` is the user-deletable smoke-test subtree
@@ -123,9 +123,7 @@ def _walk_root_bytes(root: Path) -> tuple[int, int]:
             return root.stat().st_size, 0
         except OSError:
             return 0, 1
-    total, _per_child, walk_errors = _scandir_walk(
-        root, want_breakdown=False, skip_status_top=False
-    )
+    total, _per_child, walk_errors = _scandir_walk(root, want_breakdown=False, skip_status_top=False)
     return total, walk_errors
 
 
@@ -164,11 +162,11 @@ def write_du_sentinel(
         the same identifier reads identically across all three consumer
         surfaces (sentinel JSON, scenario_status.csv column, Python
         property `TRITONSWMM_analysis.disk_utilization_bytes`).
-    scope : Literal["scenario", "sub_analysis", "analysis"]
+    scope : Literal["scenario", "member", "analysis"]
         The scope this sentinel describes.
     sub_path_breakdown : dict[str, int] | None
-        Optional per-child-path bytes breakdown (e.g., per-event for sa-scope,
-        per-sa for analysis-scope). Skipped from payload when None.
+        Optional per-child-path bytes breakdown (e.g., per-event for member-scope,
+        per-member for analysis-scope). Skipped from payload when None.
     walk_errors : int
         Count of OSError events encountered during the sentinel-computation
         walk. A non-zero value indicates the disk_utilization_bytes total
@@ -238,7 +236,7 @@ def compute_and_write_scope_sentinel(
 
     Uses single-pass `_walk_root_and_breakdown` (SE F-I Flag 1) so total bytes
     + per-child breakdown are computed in one rglob, eliminating the N+1-walks
-    cost on large sub-analysis trees. The `walk_errors` count is threaded into
+    cost on large member trees. The `walk_errors` count is threaded into
     the payload per SE F-I Flag 5 precision contract.
     """
     sentinel_path = scope_dir / "_status" / "_du.json"
@@ -367,12 +365,12 @@ def restamp_parent_sentinels(removed_path: Path, *, analysis_dir: Path) -> None:
     Called from mutation sites that change disk size to keep parent sentinels
     accurate. Walks upward from `removed_path` (exclusive) to `analysis_dir`
     (inclusive); for each ancestor whose directory layout matches a sentinel-
-    bearing scope (scenario / sub_analysis / analysis), recomputes and writes.
+    bearing scope (scenario / member / analysis), recomputes and writes.
 
     The scope determination is structural — sentinel-bearing dirs are those
     that already contain a `_status/_du.json`, OR are one of the recognized
     canonical layouts (`{analysis_dir}/sims/{event_id}`, `{analysis_dir}/
-    subanalyses/sa_{sa_id}`, `{analysis_dir}`).
+    members/member_{member_id}`, `{analysis_dir}`).
     """
     if not analysis_dir.exists():
         return
@@ -385,9 +383,7 @@ def restamp_parent_sentinels(removed_path: Path, *, analysis_dir: Path) -> None:
         sentinel = cur / "_status" / "_du.json"
         if sentinel.exists() or (cur / "_status").exists():
             scope: Scope = _infer_scope(cur, analysis_dir)
-            _child_dirs = (
-                ["sims"] if scope == "sub_analysis" else (["subanalyses", "sims"] if scope == "analysis" else [])
-            )
+            _child_dirs = ["sims"] if scope == "member" else (["members", "sims"] if scope == "analysis" else [])
             if scope == "scenario" or not _child_dirs:
                 compute_and_write_scope_sentinel(cur, scope=scope)
             else:
@@ -398,13 +394,13 @@ def restamp_parent_sentinels(removed_path: Path, *, analysis_dir: Path) -> None:
 
 
 def _infer_scope(scope_dir: Path, analysis_dir: Path) -> Scope:
-    # A sub-analysis dir (parent name "subanalyses") is sub_analysis scope even
+    # A member dir (parent name "members") is member scope even
     # when it equals analysis_dir — the per-sub consolidate/processing runners
     # pass the SUB dir as analysis_dir, so the `== analysis_dir` short-circuit
     # below would otherwise mislabel the sub root scope="analysis" and clobber
-    # the D6 fold's scope="sub_analysis" write (consolidate_workflow.py:457).
-    if scope_dir.parent.name == "subanalyses":
-        return "sub_analysis"
+    # the D6 fold's scope="member" write (consolidate_workflow.py:457).
+    if scope_dir.parent.name == "members":
+        return "member"
     if scope_dir == analysis_dir:
         return "analysis"
     return "scenario"

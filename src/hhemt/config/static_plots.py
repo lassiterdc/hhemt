@@ -37,7 +37,7 @@ from hhemt.config.viz_vocabulary import (
 
 # ADR-2 plot-ID charset, local mirror of config/report.py:14 (D3). The whole
 # canonical plot ID is segments joined by '__' with '.' within a segment
-# (sa.{id}, evt.{id}); BOTH separators are inside the charset, so a single
+# (member.{id}, evt.{id}); BOTH separators are inside the charset, so a single
 # fullmatch over the whole string suffices and no separator stripping is needed.
 # Mirrors report.py rather than importing from the LAYOUT-RELEVANT
 # report_plot_ids.py (editing that file to add a charset export would trip CI
@@ -236,13 +236,13 @@ class StaticPlotBaseConfig(cfgBaseModel):
     @classmethod
     def _plot_id_wildcard_safe(cls, v: str) -> str:
         # ADR-2: '__' separates segments, '.' separates within a segment
-        # (sa.{id}, evt.{id}). BOTH separators are inside ^[A-Za-z0-9_.]+$, so a
+        # (member.{id}, evt.{id}). BOTH separators are inside ^[A-Za-z0-9_.]+$, so a
         # full-string match suffices; no separator stripping. '-' is NOT legal.
         if not _WILDCARD_SAFE.fullmatch(v):
             raise ValueError(
                 f"plot_id={v!r} must match ^[A-Za-z0-9_.]+$ (ADR-2 canonical "
                 "plot-ID charset; '-' is not legal — use '.' as the within-segment "
-                "separator, e.g. 'per_sim_peak_flood_depth__sa.0__evt.year.9')."
+                "separator, e.g. 'per_sim_peak_flood_depth__member.0__evt.year.9')."
             )
         return v
 

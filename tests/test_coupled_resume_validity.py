@@ -131,9 +131,9 @@ _ENDS = "Simulation ends\n"
 # Producing shas that stand in for the retired per-defect booleans. Each is a REAL commit whose
 # ancestry the registry resolved at authoring time, so these exercise the production read path
 # (no clone, cached sets) rather than a path production never takes.
-_SHA_PRE_REPLAY = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"   # replay PRESENT  (Arm A)
+_SHA_PRE_REPLAY = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"  # replay PRESENT  (Arm A)
 _SHA_PRE_SCATTER = "b3820a448f304b3f732f4b6fac5564adf86ac333"  # replay absent, scatter PRESENT (Arm C)
-_SHA_POST_ALL = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"     # replay + scatter both absent (Arm B)
+_SHA_POST_ALL = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"  # replay + scatter both absent (Arm B)
 
 
 def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None):
@@ -141,7 +141,7 @@ def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None)
         _system=SimpleNamespace(
             cfg_system=SimpleNamespace(toggle_tritonswmm_model=coupled),
         ),
-        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity, is_subanalysis=False),
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity, is_experiment_member=False),
         analysis_paths=SimpleNamespace(
             analysis_datatree_zarr=None,
             sensitivity_datatree_zarr=None,
@@ -151,15 +151,15 @@ def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None)
     )
 
 
-def _resumed_df(scenario_directory="", event_iloc=0, sa_id=None, model_type="tritonswmm"):
+def _resumed_df(scenario_directory="", event_iloc=0, member_id=None, model_type="tritonswmm"):
     row = {
         "model_type": model_type,
         "n_resumes": 2,
         "scenario_directory": scenario_directory,
         "event_iloc": event_iloc,
     }
-    if sa_id is not None:
-        row["sa_id"] = sa_id
+    if member_id is not None:
+        row["sa_id"] = member_id
     return pd.DataFrame([row])
 
 
@@ -394,8 +394,8 @@ def test_postfix_partial_checkpoint_read_is_indeterminate(monkeypatch, tmp_path)
 
 
 def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
-    """The SENSITIVITY BRANCH. A master's df_status carries sa_id and its sub-analyses'
-    logs live under {master}/logs/sims via the is_subanalysis branch of the convention.
+    """The SENSITIVITY BRANCH. A master's df_status carries member_id and its members'
+    logs live under {master}/logs/sims via the is_experiment_member branch of the convention.
 
     FAILS PRE-FIX: today the check reads the decoy (marker PRESENT) -> passed=True, so
     `assert res.passed is False` fails.
@@ -405,26 +405,26 @@ def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
     master_dir = tmp_path / "master"
     sub = SimpleNamespace(
         cfg_analysis=SimpleNamespace(
-            is_subanalysis=True,
-            analysis_id="sa_0",
-            master_analysis_cfg_yaml=master_dir / "cfg_analysis.yaml",
+            is_experiment_member=True,
+            analysis_id="member_0",
+            experiment_cfg_yaml=master_dir / "cfg_analysis.yaml",
         ),
         # model_logfile_for now derives the master log dir from the sub's OWN analysis_dir
         # (`.parent.parent`), so the stub must carry the real two-level layout.
         analysis_paths=SimpleNamespace(
             simlog_directory=tmp_path / "unused",
-            analysis_dir=master_dir / "subanalyses" / "sa_0",
+            analysis_dir=master_dir / "members" / "member_0",
         ),
     )
     master = _analysis_stub(
         sensitivity=True,
-        df=_resumed_df(str(scen), sa_id="sa_0"),
+        df=_resumed_df(str(scen), member_id="member_0"),
         simlog_dir=tmp_path / "unused",
     )
-    master.sensitivity = SimpleNamespace(sub_analyses={"sa_0": sub})
+    master.sensitivity = SimpleNamespace(analyses={"member_0": sub})
     master.cfg_analysis.toggle_sensitivity_analysis = True
     _write_real_log(sub, 0, _CKPT + _ENDS)  # resumed, complete, no replay marker -> WARN
-    assert (master_dir / "logs" / "sims" / "model_tritonswmm_sa_0_evt0.log").exists()
+    assert (master_dir / "logs" / "sims" / "model_tritonswmm_member_0_evt0.log").exists()
     _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)  # inverse verdict
     res = check_coupled_resume_validity(master)
     assert res.passed is False
@@ -444,19 +444,19 @@ def test_model_logfile_method_delegates_to_free_function():
 
     a = SimpleNamespace(
         analysis_paths=SimpleNamespace(simlog_directory=_P("/x/logs/sims")),
-        cfg_analysis=SimpleNamespace(is_subanalysis=False),
+        cfg_analysis=SimpleNamespace(is_experiment_member=False),
     )
     run = SimpleNamespace(_analysis=a, _scenario=SimpleNamespace(event_iloc=7))
     assert TRITONSWMM_run._analysis_level_model_logfile(run, "tritonswmm") == model_logfile_for(a, 7, "tritonswmm")
     assert model_logfile_for(a, 7, "tritonswmm").name == "model_tritonswmm_evt7.log"
 
 
-def test_sub_model_log_lives_under_master_analysis_dir_not_config_dir(tmp_path):
-    """THE WIPE-COVERAGE INVARIANT. A sub-analysis's model runtime log MUST land inside the
+def test_sub_model_log_lives_under_experiment_dir_not_config_dir(tmp_path):
+    """THE WIPE-COVERAGE INVARIANT. A member's model runtime log MUST land inside the
     MASTER's analysis_dir, so `run(from_scratch=True)`'s fast_rmtree(analysis_dir) removes it
     along with the outputs it describes.
 
-    FAILS PRE-FIX: the old form derived the dir from master_analysis_cfg_yaml.parent, so with
+    FAILS PRE-FIX: the old form derived the dir from experiment_cfg_yaml.parent, so with
     the config placed outside analysis_dir (the synth case-builder's platformdirs layout, and
     the ordinary production layout where the user's config is not at the analysis root) the
     log landed outside the wipe. Empirically, that stranded 28/28 week-stale "Simulation ends"
@@ -468,17 +468,17 @@ def test_sub_model_log_lives_under_master_analysis_dir_not_config_dir(tmp_path):
     config_dir = tmp_path / "cache" / "exp"  # deliberately NOT under master_dir
     sub = SimpleNamespace(
         cfg_analysis=SimpleNamespace(
-            is_subanalysis=True,
-            analysis_id="sa_gpu_2_r1",
-            master_analysis_cfg_yaml=config_dir / "analysis_config.yaml",
+            is_experiment_member=True,
+            analysis_id="member_gpu_2_r1",
+            experiment_cfg_yaml=config_dir / "analysis_config.yaml",
         ),
         analysis_paths=SimpleNamespace(
-            simlog_directory=master_dir / "subanalyses" / "sa_gpu_2_r1" / "logs" / "sims",
-            analysis_dir=master_dir / "subanalyses" / "sa_gpu_2_r1",
+            simlog_directory=master_dir / "members" / "member_gpu_2_r1" / "logs" / "sims",
+            analysis_dir=master_dir / "members" / "member_gpu_2_r1",
         ),
     )
     p = model_logfile_for(sub, 0, "triton")
-    assert p == master_dir / "logs" / "sims" / "model_triton_sa_gpu_2_r1_evt0.log"
+    assert p == master_dir / "logs" / "sims" / "model_triton_member_gpu_2_r1_evt0.log"
     assert config_dir not in p.parents, "model log must not be anchored to the config dir"
 
 
@@ -695,7 +695,7 @@ def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
 
     zpath = tmp_path / "analysis_datatree.zarr"
     ev = {
-        "sa_0": {
+        "member_0": {
             "resumed": True,
             "completed": True,
             "replayed": True,
@@ -721,12 +721,10 @@ def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
 
 
 def _triton_arm_b_stub(df):
-    """Pure-TRITON (Arm B) analysis stub: no sensitivity, so _iter_subanalyses_or_self
+    """Pure-TRITON (Arm B) analysis stub: no sensitivity, so _iter_members_or_self
     yields (None, analysis) and the schedule is read off analysis.cfg_analysis."""
     return SimpleNamespace(
-        _system=SimpleNamespace(
-            cfg_system=SimpleNamespace(toggle_tritonswmm_model=False, toggle_triton_model=True)
-        ),
+        _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=False, toggle_triton_model=True)),
         cfg_analysis=SimpleNamespace(
             toggle_sensitivity_analysis=False,
             resume_interruption_schedule=(36, 72, 108),
@@ -750,17 +748,15 @@ def test_resume_schedule_honored_surfaces_unverifiable_when_no_realized_boundari
     from hhemt.analysis_validation import check_resume_schedule_honored
 
     # n_resumes == len(schedule) (count check passes) and NO resume_reporting_tsteps.
-    df = pd.DataFrame(
-        [{"model_type": "triton", "n_resumes": 3, "scenario_directory": "sim_0"}]
-    )
+    df = pd.DataFrame([{"model_type": "triton", "n_resumes": 3, "scenario_directory": "sim_0"}])
     res = check_resume_schedule_honored(_triton_arm_b_stub(df))
 
-    assert any("CANNOT BE VERIFIED" in d["detail"] for d in res.details), (
-        "a resumed sim with no realized boundaries must be surfaced, not silently passed"
-    )
-    assert any("start_from_scratch" in d["detail"] for d in res.details), (
-        "the detail must name the operational cause a reader can act on"
-    )
+    assert any(
+        "CANNOT BE VERIFIED" in d["detail"] for d in res.details
+    ), "a resumed sim with no realized boundaries must be surfaced, not silently passed"
+    assert any(
+        "start_from_scratch" in d["detail"] for d in res.details
+    ), "the detail must name the operational cause a reader can act on"
 
 
 def test_resume_schedule_honored_is_quiet_when_realized_boundaries_match():
@@ -839,7 +835,6 @@ def test_armc_quiet_when_scatter_fix_present(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is True
     assert res.details == []
-
 
 
 # --- EW-2b: a check that EXAMINED NOTHING has not applied (P7 generalized). ------------
@@ -983,9 +978,7 @@ def test_clean_pin_with_resumed_sims_passes_positively(monkeypatch):
     "28 resumed coupled sim(s) ... lack the exchange-replay marker".
     """
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: SHA_EXTBC_GHOST_RING_FIX)
-    res = check_coupled_resume_validity(
-        _analysis_stub(coupled=False, df=_resumed_df(model_type="triton"))
-    )
+    res = check_coupled_resume_validity(_analysis_stub(coupled=False, df=_resumed_df(model_type="triton")))
     assert res.passed is True, f"got passed={res.passed!r} summary={res.summary!r}"
     assert res.applicable is True, "a clean pin with resumed sims is a POSITIVE pass, not N/A"
     assert "no known resume defect" in res.summary
@@ -999,9 +992,7 @@ def test_affected_pin_with_resumed_sims_still_selects(monkeypatch):
     status filter narrows selection without disabling it.
     """
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
-    res = check_coupled_resume_validity(
-        _analysis_stub(coupled=False, df=_resumed_df(model_type="triton"))
-    )
-    assert "no known resume defect" not in res.summary, (
-        "the positive-PASS branch fired on a pin carrying a PRESENT defect"
-    )
+    res = check_coupled_resume_validity(_analysis_stub(coupled=False, df=_resumed_df(model_type="triton")))
+    assert (
+        "no known resume defect" not in res.summary
+    ), "the positive-PASS branch fired on a pin carrying a PRESENT defect"

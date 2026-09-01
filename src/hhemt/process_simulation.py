@@ -1,31 +1,33 @@
+import gc
+import json
 import os
 import sys
 import time
-import json
-import xarray as xr
-import pandas as pd
-import numpy as np
-from collections.abc import Sequence
-from typing import Literal
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
-import gc
-from hhemt.utils import (
-    write_zarr,
-    write_zarr_then_netcdf,
-    paths_to_strings,
-    get_file_size_MiB,
-    convert_datetime_to_str,
-    current_datetime_string,
-    fast_rmtree,
-    return_dic_zarr_encodings,
-)
+from typing import Literal
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+from hhemt.config.analysis import ClearRawValue
+from hhemt.exceptions import ProcessingError
+from hhemt.log import TRITONSWMM_model_log
 from hhemt.run_simulation import TRITONSWMM_run
 from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
-from hhemt.log import TRITONSWMM_model_log
-from hhemt.config.analysis import ClearRawValue
-from hhemt.exceptions import ProcessingError
+from hhemt.utils import (
+    convert_datetime_to_str,
+    current_datetime_string,
+    fast_rmtree,
+    get_file_size_MiB,
+    paths_to_strings,
+    return_dic_zarr_encodings,
+    write_zarr,
+    write_zarr_then_netcdf,
+)
 
 # Subdirectories under `out_tritonswmm/` or `out_triton/` that the cleanup
 # helper deletes. The shape is an explicit DELETE allowlist rather than a
@@ -48,9 +50,7 @@ from hhemt.exceptions import ProcessingError
 # adding `swmm` here would INVERT the intent and delete the side-file. The side-file
 # is reclaimed (bounded-retention) at a sanctioned point AFTER the final allocation —
 # see `_reclaim_exchange_replay_sidefiles` below.
-_CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset(
-    {"H", "QX", "QY", "MH", "bin", "cfg", "performance"}
-)
+_CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset({"H", "QX", "QY", "MH", "bin", "cfg", "performance"})
 
 # FILE-suffix allowlist for the post-processing reclaim INSIDE `out_tritonswmm/swmm/`.
 # Same shape rationale as _CLEAR_RAW_DELETE_SUBDIRS above and for the same reason: an
@@ -348,7 +348,9 @@ class TRITONSWMM_sim_post_processing:
             # F-I-3) so the float64-width assumption stays single-sited.
             pending_bytes_MiB = pending_timesteps * per_ts_MiB
             if pending_timesteps >= append_batch_timesteps or pending_bytes_MiB >= flush_budget_MiB:
-                ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
+                ds_batch = (
+                    xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
+                )
                 if first_chunk:
                     if verbose:
                         print(
@@ -680,9 +682,7 @@ class TRITONSWMM_sim_post_processing:
         # _set_active_model_log), so no plumbing is needed -- the exporter has always
         # held it. Legacy pre-KR-b logs coalesce None -> [] (no claimed resumes).
         _resume_steps = list(self.log.resume_reporting_tsteps.get() or [])
-        ds = _aggregate_perf_tseries(
-            performance_dir, min_per_tstep=min_per_tstep, resume_steps=_resume_steps
-        )
+        ds = _aggregate_perf_tseries(performance_dir, min_per_tstep=min_per_tstep, resume_steps=_resume_steps)
 
         event_iloc = self._scenario.event_iloc
         ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
@@ -764,8 +764,6 @@ class TRITONSWMM_sim_post_processing:
                 print(f"{fname_out.name} already written. Not overwriting.")
             return
 
-        event_iloc = self._scenario.event_iloc
-
         ds = ds.sum(dim="timestep_min").max(dim="Rank")
         ds.attrs["units"] = "seconds"
         ds.attrs["notes"] = (
@@ -831,14 +829,18 @@ class TRITONSWMM_sim_post_processing:
             )
 
         self._streaming_chunked_zarr_write(
-            df_outputs, rds_dem, fname_out,
-            model_type="tritonswmm", raw_out_type=raw_out_type,
-            comp_level=comp_level, verbose=verbose,
+            df_outputs,
+            rds_dem,
+            fname_out,
+            model_type="tritonswmm",
+            raw_out_type=raw_out_type,
+            comp_level=comp_level,
+            verbose=verbose,
         )
 
         # Consolidate metadata
         if verbose:
-            print(f"[Chunked Processing] Consolidating zarr metadata", flush=True)
+            print("[Chunked Processing] Consolidating zarr metadata", flush=True)
         import zarr
 
         zarr.consolidate_metadata(fname_out)
@@ -914,14 +916,18 @@ class TRITONSWMM_sim_post_processing:
             )
 
         self._streaming_chunked_zarr_write(
-            df_outputs, rds_dem, fname_out,
-            model_type="triton", raw_out_type=raw_out_type,
-            comp_level=comp_level, verbose=verbose,
+            df_outputs,
+            rds_dem,
+            fname_out,
+            model_type="triton",
+            raw_out_type=raw_out_type,
+            comp_level=comp_level,
+            verbose=verbose,
         )
 
         # Consolidate metadata
         if verbose:
-            print(f"[Chunked Processing] Consolidating zarr metadata", flush=True)
+            print("[Chunked Processing] Consolidating zarr metadata", flush=True)
         import zarr
 
         zarr.consolidate_metadata(fname_out)
@@ -1122,8 +1128,14 @@ class TRITONSWMM_sim_post_processing:
 
         ds.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=self._current_model_type, astype="str")
         ds.attrs["output_creation_date"] = current_datetime_string()
-        paths_attr = paths_to_strings(self._analysis._dict_of_all_sim_files(self._scenario.event_iloc))
-        config_attr = paths_to_strings(
+        # noqa below: these two are the surviving PRODUCERS of a disabled provenance-
+        # stamping feature. Every consumer is commented out immediately after this block
+        # and each commented line REFERENCES these names, so deleting the producers would
+        # make that block un-restorable. Retained deliberately rather than removed.
+        paths_attr = paths_to_strings(  # noqa: F841
+            self._analysis._dict_of_all_sim_files(self._scenario.event_iloc)
+        )
+        config_attr = paths_to_strings(  # noqa: F841
             {
                 "system": self._system.cfg_system.model_dump(),
                 "analysis": self._analysis.cfg_analysis.model_dump(),
@@ -1314,7 +1326,9 @@ class TRITONSWMM_sim_post_processing:
             out_file = self.scen_paths.swmm_full_out_file
             if out_file is not None and Path(out_file).exists():
                 Path(out_file).unlink()
-                restamp_parent_sentinels(Path(out_file), analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
+                restamp_parent_sentinels(
+                    Path(out_file), analysis_dir=self._analysis.analysis_paths.analysis_dir
+                )  # PATTERN B
             if getattr(self.log, "raw_SWMM_outputs_cleared", None):
                 self.log.raw_SWMM_outputs_cleared.set(True)
         else:
@@ -1331,7 +1345,7 @@ class TRITONSWMM_sim_post_processing:
 
         (the log call is per-TRITON-step, ``triton.h:2408``, NOT per print interval) — so at
         the double-precision default (``sizeof(value_t)``=8) a fine-grid 100-node 1e6-step
-        coupled sim writes ~808 MB PER SIM. Retained across every sub-analysis in an ensemble
+        coupled sim writes ~808 MB PER SIM. Retained across every member in an ensemble
         and counted against the analysis-scope DU sentinels, that is unbounded permanent
         disk. The side-file is dead weight once the sim can no longer resume: after the FINAL
         allocation ``checkpoint_id`` never regresses, and a force-rerun restarts at
@@ -1351,7 +1365,7 @@ class TRITONSWMM_sim_post_processing:
         analysis_dir = self._analysis.analysis_paths.analysis_dir
         for sidefile in out_dir.glob("**/swmm/*_exchange_replay.bin"):
             try:
-                sidefile.unlink()
+                sidefile.unlink()  # EXEMPT-DU: du-handled-by-decrement
             except OSError:
                 continue
             restamp_parent_sentinels(sidefile, analysis_dir=analysis_dir)  # PATTERN B
@@ -1832,7 +1846,7 @@ class TRITONSWMM_sim_post_processing:
         trailer_started = False
         n_dropped = 0
         body_started = False
-        with open(rpt_path, "r", errors="replace") as fh:
+        with open(rpt_path, errors="replace") as fh:
             for line in fh:
                 if not body_started:
                     if _RPT_BODY_START_SENTINEL in line:
@@ -1995,11 +2009,7 @@ class TRITONSWMM_sim_post_processing:
                 # consumer is the solver. It depends on model_run_completed being sound
                 # for SWMM, which is what Spec 12 repairs -- an ordering dependency, not
                 # a circular one: Spec 12 never reads this guard.
-                _unrun = [
-                    m
-                    for m in self._run.model_types_enabled
-                    if not self._scenario.model_run_completed(m)
-                ]
+                _unrun = [m for m in self._run.model_types_enabled if not self._scenario.model_run_completed(m)]
                 if _unrun:
                     print(
                         f"[reclaim] scenario {self._scenario.event_iloc}: 'prep_inputs' is "
@@ -2132,20 +2142,16 @@ def _aggregate_perf_tseries(
     There is no default and no inference fallback -- a defaulted value would let a caller
     silently reintroduce the ``(deltas <= 0).all(axis=1)`` guess this parameter replaces,
     which is the failure mode the parameter exists to make impossible.
-"""
+    """
     import re
 
     files = sorted(
         raw_perf_dir.glob("performance*.txt"),
-        key=lambda f: int(re.search(r"(\d+)", f.name).group(1) or 0)
-        if re.search(r"(\d+)", f.name)
-        else 0,
+        key=lambda f: int(re.search(r"(\d+)", f.name).group(1) or 0) if re.search(r"(\d+)", f.name) else 0,
     )
     files = [f for f in files if re.search(r"performance(\d+)", f.name)]
     if not files:
-        raise FileNotFoundError(
-            f"Performance directory {raw_perf_dir} contains no performance{{N}}.txt files."
-        )
+        raise FileNotFoundError(f"Performance directory {raw_perf_dir} contains no performance{{N}}.txt files.")
 
     # Integer reporting-step index of every file actually parsed. The reset-row
     # selection below joins on THIS, never on the `timestep_min` coord: that coord is
@@ -2171,7 +2177,7 @@ def _aggregate_perf_tseries(
             # reporting step, which the per-rank diff/reset logic below already
             # tolerates) rather than let pandas.read_csv raise EmptyDataError and
             # fail the whole process rule. Empirically: synth_cc_resume_triton
-            # sa_gpu_1_r1 left performance110.txt at 0 bytes of 144 perf files.
+            # member_gpu_1_r1 left performance110.txt at 0 bytes of 144 perf files.
             empty_perfs.append(str(f))
             continue
         tstep_iloc = int(m.group(1))
@@ -2190,7 +2196,7 @@ def _aggregate_perf_tseries(
             # the per-rank `groupby(level='Rank').diff()` below telescopes across a gap,
             # so omitting one reporting step of ~1081 leaves the cumulative sum intact.
             # Measured incidence 10/1080 and 3/1080 across two synth_sensitivity trees.
-            # Raising instead would cost the sub-analysis its `d_process` flag and, with
+            # Raising instead would cost the member its `d_process` flag and, with
             # it, the whole fixture tree.
             malformed_perfs.append((str(f), exc.reason or str(exc)))
             continue
@@ -2283,7 +2289,7 @@ def _aggregate_perf_tseries(
     # perf data itself is foreclosed, because the inferred predicate
     # `(deltas <= 0).all(axis=1)` requires EVERY column to decrease and `Init` INCREASES
     # at a real boundary (the restarted process re-pays init: measured 0.05694 -> 0.07816
-    # on sa_serial_6_r1). One positive column defeated `.all()` and a whole segment was
+    # on member_serial_6_r1). One positive column defeated `.all()` and a whole segment was
     # subtracted instead of added -- 56 of 112 sims on the synth_cc campaign, every
     # resumed sim on both models.
     #
@@ -2314,7 +2320,7 @@ def _aggregate_perf_tseries(
     # comparing `int(t)` against a file index silently matches NOTHING whenever
     # min_per_tstep != 1.0 -- and production always passes 600/60 = 10.0 while every test
     # and the V0018 migration use the 1.0 default, which is the one value where the two
-    # spaces coincide. Measured: sa_serial_6_r1 produced 89.51 s (the pure telescope to
+    # spaces coincide. Measured: member_serial_6_r1 produced 89.51 s (the pure telescope to
     # performance144.txt) instead of 409.30 s, with a correct ledger and correct raw.
     # Deriving the coords by the identical multiplication keeps float equality exact even
     # when min_per_tstep is not representable, because both sides are the same product of
@@ -2367,10 +2373,8 @@ def _aggregate_perf_summary(
     keep compiling while silently supplying an empty ledger to a required parameter --
     reintroducing, one layer up, the very guess the required parameter removes. Callers
     pass ``[]`` only when they positively know the sim never resumed.
-"""
-    ds = _aggregate_perf_tseries(
-        raw_perf_dir, min_per_tstep=min_per_tstep, resume_steps=resume_steps
-    )
+    """
+    ds = _aggregate_perf_tseries(raw_perf_dir, min_per_tstep=min_per_tstep, resume_steps=resume_steps)
     return ds.sum(dim="timestep_min").max(dim="Rank")
 
 
@@ -2415,7 +2419,7 @@ def parse_performance_file(filepath):
     # Both are the fingerprint of TWO PROCESSES writing one performance/ directory
     # concurrently, each from offset 0 with a slightly different formatted length.
     # The proof is not the junk token, it is that in
-    # synth_sensitivity.setaside-20260824T0000Z sa_2 performance911.txt the rank
+    # synth_sensitivity.setaside-20260824T0000Z member_2 performance911.txt the rank
     # row and the Average row carry DIFFERENT numbers (0.5636 vs 0.5606, 3.466 vs
     # 3.464) -- a single 1-rank TRITON process computes Average as the mean over
     # one element, so those lines are byte-identical in all healthy files.
@@ -2481,7 +2485,8 @@ def return_filelist_by_tstep(fldr_out_triton: Path, fpattern_prefix, min_per_tst
             tstep_parts = f.name.split(f"{fpattern_prefix}_")[-1].split(".")[0].split("_")
             if int(tstep_parts[1]) != 0:
                 sys.exit(
-                    f"problem parsing reporting timestep for file {f}\nnot expecting nonzero values behind the last underscore"
+                    f"problem parsing reporting timestep for file {f}\n"
+                    "not expecting nonzero values behind the last underscore"
                 )
             reporting_tstep_iloc = int(tstep_parts[0])
         else:
@@ -2720,25 +2725,19 @@ def _streaming_argmax_with_companions(
 
     running_max = np.full((ny, nx), -np.inf, dtype=np.float64)
     argmax_idx = np.full((ny, nx), -1, dtype=np.int64)
-    companion_at_argmax = {
-        cv: np.full((ny, nx), np.nan, dtype=np.float64) for cv in companion_vars
-    }
+    companion_at_argmax = {cv: np.full((ny, nx), np.nan, dtype=np.float64) for cv in companion_vars}
 
     for chunk_idx, chunk_start in enumerate(range(0, total_timesteps, chunk_size)):
         chunk_end = min(chunk_start + chunk_size, total_timesteps)
 
         if verbose:
             print(
-                f"[Streaming Argmax] chunk {chunk_idx + 1}/{n_chunks}: "
-                f"timesteps {chunk_start}-{chunk_end - 1}",
+                f"[Streaming Argmax] chunk {chunk_idx + 1}/{n_chunks}: timesteps {chunk_start}-{chunk_end - 1}",
                 flush=True,
             )
 
         primary_chunk = ds[primary_var].isel({dim: slice(chunk_start, chunk_end)}).values
-        companion_chunks = {
-            cv: ds[cv].isel({dim: slice(chunk_start, chunk_end)}).values
-            for cv in companion_vars
-        }
+        companion_chunks = {cv: ds[cv].isel({dim: slice(chunk_start, chunk_end)}).values for cv in companion_vars}
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
@@ -2756,9 +2755,7 @@ def _streaming_argmax_with_companions(
         for cv, cv_chunk in companion_chunks.items():
             yi, xi = np.ogrid[:ny, :nx]
             cv_at_chunk_argmax = cv_chunk[chunk_argmax_local, yi, xi]
-            companion_at_argmax[cv] = np.where(
-                update_mask, cv_at_chunk_argmax, companion_at_argmax[cv]
-            )
+            companion_at_argmax[cv] = np.where(update_mask, cv_at_chunk_argmax, companion_at_argmax[cv])
 
         del primary_chunk
         del companion_chunks
@@ -2767,18 +2764,16 @@ def _streaming_argmax_with_companions(
     no_data_mask = argmax_idx == -1
 
     running_max_out = np.where(no_data_mask, np.nan, running_max).astype(np.float64)
-    argmax_dim_values_out = np.where(
-        no_data_mask, np.nan, dim_values[np.where(no_data_mask, 0, argmax_idx)]
-    ).astype(np.float64)
+    argmax_dim_values_out = np.where(no_data_mask, np.nan, dim_values[np.where(no_data_mask, 0, argmax_idx)]).astype(
+        np.float64
+    )
 
     result = {
         f"max_{primary_var}": running_max_out,
         f"argmax_{dim}": argmax_dim_values_out,
     }
     for cv in companion_vars:
-        result[f"{cv}_at_argmax"] = np.where(
-            no_data_mask, np.nan, companion_at_argmax[cv]
-        ).astype(np.float64)
+        result[f"{cv}_at_argmax"] = np.where(no_data_mask, np.nan, companion_at_argmax[cv]).astype(np.float64)
 
     return result
 
@@ -2837,16 +2832,13 @@ def summarize_triton_simulation_results(
     """
     if verbose:
         print(
-            f"[Summary] Computing summary statistics (streaming chunked reduction, "
-            f"chunksize_mb={chunksize_mb})",
+            f"[Summary] Computing summary statistics (streaming chunked reduction, chunksize_mb={chunksize_mb})",
             flush=True,
         )
 
     tsteps = ds[tstep_dimname].to_series()
 
-    ds_with_velocity = ds.assign(
-        velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5
-    )
+    ds_with_velocity = ds.assign(velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5)
 
     velocity_result = _streaming_argmax_with_companions(
         ds=ds_with_velocity,
@@ -2883,20 +2875,32 @@ def summarize_triton_simulation_results(
             .compute()
         )
         wlevel_argmax_result = _streaming_argmax_with_companions(
-            ds=ds, primary_var="wlevel_m", companion_vars=[],
-            dim=tstep_dimname, chunksize_mb=chunksize_mb, verbose=verbose,
+            ds=ds,
+            primary_var="wlevel_m",
+            companion_vars=[],
+            dim=tstep_dimname,
+            chunksize_mb=chunksize_mb,
+            verbose=verbose,
         )
         ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
-            wlevel_argmax_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords,
+            wlevel_argmax_result[f"argmax_{tstep_dimname}"],
+            dims=cell_dims,
+            coords=cell_coords,
         )
     elif "max_wlevel_m" in ds.data_vars:
         ds_summary["max_wlevel_m"] = ds["max_wlevel_m"].compute()
         wlevel_argmax_result = _streaming_argmax_with_companions(
-            ds=ds, primary_var="wlevel_m", companion_vars=[],
-            dim=tstep_dimname, chunksize_mb=chunksize_mb, verbose=verbose,
+            ds=ds,
+            primary_var="wlevel_m",
+            companion_vars=[],
+            dim=tstep_dimname,
+            chunksize_mb=chunksize_mb,
+            verbose=verbose,
         )
         ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
-            wlevel_argmax_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords,
+            wlevel_argmax_result[f"argmax_{tstep_dimname}"],
+            dims=cell_dims,
+            coords=cell_coords,
         )
     else:
         wlevel_result = _streaming_argmax_with_companions(
@@ -2907,16 +2911,12 @@ def summarize_triton_simulation_results(
             chunksize_mb=chunksize_mb,
             verbose=verbose,
         )
-        ds_summary["max_wlevel_m"] = xr.DataArray(
-            wlevel_result["max_wlevel_m"], dims=cell_dims, coords=cell_coords
-        )
+        ds_summary["max_wlevel_m"] = xr.DataArray(wlevel_result["max_wlevel_m"], dims=cell_dims, coords=cell_coords)
         ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
             wlevel_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
         )
 
-    ds_summary["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(
-        timestep_min=tsteps.max()
-    ).reset_coords(drop=True).compute()
+    ds_summary["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max()).reset_coords(drop=True).compute()
     ds_summary["wlevel_m_last_tstep"].attrs["notes"] = (
         "this is the water level in the last reported time step for computing mass balance"
     )
@@ -2941,9 +2941,7 @@ def summarize_triton_simulation_results(
             f"Tolerance: {tolerance}m"
         )
 
-    ds_summary["final_surface_flood_volume_m3"] = (
-        ds_summary["wlevel_m_last_tstep"] * abs(x_dim) * abs(y_dim)
-    ).sum()
+    ds_summary["final_surface_flood_volume_m3"] = (ds_summary["wlevel_m_last_tstep"] * abs(x_dim) * abs(y_dim)).sum()
     ds_summary["final_surface_flood_volume_m3"].attrs["units"] = "m3"
 
     ds_summary = ds_summary.assign_coords(coords=dict(event_iloc=event_iloc))

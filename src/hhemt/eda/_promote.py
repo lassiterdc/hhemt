@@ -122,14 +122,14 @@ def register_eda_plot_in_reporting_set(plot_id: str, set_name: str) -> EdaReport
     # lean (d): diagnose whether the target set already renders this plot. R11
     # wired the compute-sensitivity set's eda_compute_sensitivity adapter, so a
     # registration against a set whose selection already carries that renderer IS
-    # routed (config-selectable via report_config.reporting_set); other sets are
+    # routed (config-selectable via report.reporting_set); other sets are
     # register-only (report()-routing deferred to reporting-system_eda-skill).
     _wired = any(sel.builder_key == "eda_compute_sensitivity" for sel in REPORTING_SETS[set_name].renderer_selection)
     if _wired:
         print(
             f"[eda-promote] {plot_id!r} registered against reporting set {set_name!r} — "
             f"this set already renders the EDA adapter; select it with "
-            f"report_config.reporting_set={set_name!r}.",
+            f"report.reporting_set={set_name!r} in your analysis config.",
             flush=True,
         )
     else:

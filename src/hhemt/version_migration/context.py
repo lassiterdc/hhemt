@@ -7,6 +7,7 @@ Every primitive method:
   3. Verifies post-state immediately.
   4. Is idempotent: re-running against an already-migrated state does nothing.
 """
+
 from __future__ import annotations
 
 import json
@@ -84,10 +85,17 @@ class MigrationContext:
         top = Path(self.target_dir) / "sims"
         if top.is_dir():
             out.append(top)
-        sa_root = Path(self.target_dir) / "subanalyses"
-        if sa_root.is_dir():
-            for sa in sorted(sa_root.glob("sa_*")):
-                sims = sa / "sims"
+        # WIDENED, never substituted: this helper is shared across every
+        # migration, so it must read a legacy tree (subanalyses/sa_*) and a
+        # current one (members/member_*) alike. vocabulary_freeze.yaml declines
+        # to freeze this file for exactly this reason, so no checker would catch
+        # a substitution here; it would simply return [] on every legacy tree.
+        for _container, _glob in (("subanalyses", "sa_*"), ("members", "member_*")):
+            container_root = Path(self.target_dir) / _container
+            if not container_root.is_dir():
+                continue
+            for member_dir in sorted(container_root.glob(_glob)):
+                sims = member_dir / "sims"
                 if sims.is_dir():
                     out.append(sims)
         return out
@@ -120,9 +128,7 @@ class MigrationContext:
         for op in self.plan:
             handler = getattr(self, f"_apply_{op.op_kind}", None)
             if handler is None:
-                raise NotImplementedError(
-                    f"no _apply handler for op_kind={op.op_kind}"
-                )
+                raise NotImplementedError(f"no _apply handler for op_kind={op.op_kind}")
             handler(**op.args)
 
     # ---- Directory operations ----
@@ -142,9 +148,7 @@ class MigrationContext:
                     "parent": str(parent),
                     "match_regex": match_regex,
                     "dest_template": dest_template,
-                    "expected_slugs": sorted(expected_slugs)
-                    if expected_slugs
-                    else None,
+                    "expected_slugs": sorted(expected_slugs) if expected_slugs else None,
                     "on_conflict": on_conflict,
                 },
             )
@@ -196,15 +200,10 @@ class MigrationContext:
                 raise MigrationConflictError(
                     version=0,
                     op_index=len(self.plan),
-                    reason=(
-                        f"post-rename verification failed for "
-                        f"{entry} -> {dest_path}"
-                    ),
+                    reason=(f"post-rename verification failed for " f"{entry} -> {dest_path}"),
                 )
 
-    def move_dir(
-        self, src: Path, dest: Path, merge_policy: str = "error"
-    ) -> None:
+    def move_dir(self, src: Path, dest: Path, merge_policy: str = "error") -> None:
         self.plan.append(
             PlannedOp(
                 "move_dir",
@@ -239,9 +238,7 @@ class MigrationContext:
             )
         )
 
-    def _apply_prune_orphans(
-        self, parent: str, expected_set: list[str]
-    ) -> None:
+    def _apply_prune_orphans(self, parent: str, expected_set: list[str]) -> None:
         parent_path = Path(parent)
         keep = set(expected_set)
         for entry in parent_path.iterdir():
@@ -275,20 +272,14 @@ class MigrationContext:
     ) -> None:
         log_path = Path(log_file)
         with resolve_filelock(str(log_path) + ".lock", timeout=LOCK_TIMEOUT_SECONDS):
-            data = (
-                json.loads(log_path.read_text()) if log_path.exists() else {}
-            )
+            data = json.loads(log_path.read_text()) if log_path.exists() else {}
             if field_name in data:
                 return
-            value = (
-                default_or_fn(data) if callable(default_or_fn) else default_or_fn
-            )
+            value = default_or_fn(data) if callable(default_or_fn) else default_or_fn
             data[field_name] = value
             log_path.write_text(json.dumps(data, indent=2, sort_keys=True))
 
-    def log_rename_field(
-        self, log_file: Path, old_name: str, new_name: str
-    ) -> None:
+    def log_rename_field(self, log_file: Path, old_name: str, new_name: str) -> None:
         self.plan.append(
             PlannedOp(
                 "log_rename_field",
@@ -300,9 +291,7 @@ class MigrationContext:
             )
         )
 
-    def _apply_log_rename_field(
-        self, log_file: str, old_name: str, new_name: str
-    ) -> None:
+    def _apply_log_rename_field(self, log_file: str, old_name: str, new_name: str) -> None:
         log_path = Path(log_file)
         with resolve_filelock(str(log_path) + ".lock", timeout=LOCK_TIMEOUT_SECONDS):
             data = json.loads(log_path.read_text())
@@ -372,9 +361,7 @@ class MigrationContext:
         import zarr
 
         path_arg = path_in_tree if path_in_tree else None
-        ds = xr.open_dataset(
-            store, engine="zarr", group=path_arg, consolidated=False
-        )
+        ds = xr.open_dataset(store, engine="zarr", group=path_arg, consolidated=False)
         if new_name in ds.variables and old_name not in ds.variables:
             return
         ds = ds.rename({old_name: new_name}).load()
@@ -505,10 +492,7 @@ class MigrationContext:
                 if var.chunks is None:
                     continue
                 max_chunk_nbytes = (
-                    max(
-                        int(np.prod(cs)) * var.dtype.itemsize
-                        for cs in zip(*var.chunks, strict=False)
-                    )
+                    max(int(np.prod(cs)) * var.dtype.itemsize for cs in zip(*var.chunks, strict=False))
                     if var.chunks
                     else 0
                 )
@@ -544,16 +528,12 @@ class MigrationContext:
             )
             return
         dt = xr.DataTree.from_dict(nodes)
-        dt.to_zarr(
-            output_store, mode="w-", consolidated=False, encoding=encoding
-        )
+        dt.to_zarr(output_store, mode="w-", consolidated=False, encoding=encoding)
         zarr.consolidate_metadata(str(output_store))
 
     # ---- Config / CSV operations ----
 
-    def yaml_rename_field(
-        self, path: Path, old: str, new: str, in_model_cls: type
-    ) -> None:
+    def yaml_rename_field(self, path: Path, old: str, new: str, in_model_cls: type) -> None:
         self.plan.append(
             PlannedOp(
                 "yaml_rename_field",
@@ -566,9 +546,7 @@ class MigrationContext:
             )
         )
 
-    def _apply_yaml_rename_field(
-        self, path: str, old: str, new: str, in_model_cls: type
-    ) -> None:
+    def _apply_yaml_rename_field(self, path: str, old: str, new: str, in_model_cls: type) -> None:
         p = Path(path)
         data = yaml.safe_load(p.read_text())
         if new in data and old not in data:
@@ -576,9 +554,7 @@ class MigrationContext:
         data[new] = data.pop(old)
         p.write_text(yaml.safe_dump(data, sort_keys=False))
 
-    def yaml_add_field(
-        self, path: Path, name: str, default: Any, in_model_cls: type
-    ) -> None:
+    def yaml_add_field(self, path: Path, name: str, default: Any, in_model_cls: type) -> None:
         self.plan.append(
             PlannedOp(
                 "yaml_add_field",
@@ -633,9 +609,7 @@ class MigrationContext:
         df = pd.read_csv(path)
         if colname in df.columns:
             return
-        df[colname] = df.apply(
-            lambda row: default_fn(row.to_dict()), axis=1
-        )
+        df[colname] = df.apply(lambda row: default_fn(row.to_dict()), axis=1)
         df.to_csv(path, index=False)
 
     def csv_assert_unique(self, path: Path, colname: str) -> None:
@@ -651,9 +625,7 @@ class MigrationContext:
 
         df = pd.read_csv(path)
         if df[colname].duplicated().any():
-            raise ValueError(
-                f"column {colname} in {path} has duplicate values"
-            )
+            raise ValueError(f"column {colname} in {path} has duplicate values")
 
     # ---- Snakemake flag operations ----
 
@@ -674,9 +646,7 @@ class MigrationContext:
             )
         )
 
-    def _apply_flag_rewrite_paths(
-        self, analysis_dir: str, old_regex: str, new_template: str
-    ) -> None:
+    def _apply_flag_rewrite_paths(self, analysis_dir: str, old_regex: str, new_template: str) -> None:
         status = Path(analysis_dir) / "_status"
         if not status.is_dir():
             return
@@ -699,9 +669,7 @@ class MigrationContext:
             )
         )
 
-    def _apply_rewrite_text_preserving_mtime(
-        self, path: str, new_text: str
-    ) -> None:
+    def _apply_rewrite_text_preserving_mtime(self, path: str, new_text: str) -> None:
         """Atomically rewrite `path` with `new_text`, restoring the original mtime.
 
         Idempotent: when the on-disk bytes already match new_text, no write
@@ -715,6 +683,7 @@ class MigrationContext:
         callers do not collide.
         """
         import os
+
         p = Path(path)
         if p.exists() and p.read_text() == new_text:
             return  # idempotent: byte-identical, mtime preserved
@@ -729,9 +698,7 @@ class MigrationContext:
         tmp.replace(p)
         os.utime(p, (stat.st_atime, stat.st_mtime))
 
-    def rewrite_text_with_reference_mtime(
-        self, path: Path, new_text: str, reference_mtime: float
-    ) -> None:
+    def rewrite_text_with_reference_mtime(self, path: Path, new_text: str, reference_mtime: float) -> None:
         self.plan.append(
             PlannedOp(
                 "rewrite_text_with_reference_mtime",
@@ -743,9 +710,7 @@ class MigrationContext:
             )
         )
 
-    def _apply_rewrite_text_with_reference_mtime(
-        self, path: str, new_text: str, reference_mtime: float
-    ) -> None:
+    def _apply_rewrite_text_with_reference_mtime(self, path: str, new_text: str, reference_mtime: float) -> None:
         """Atomically rewrite `path` with `new_text` and set mtime to an EXPLICIT reference.
 
         Distinct from `rewrite_text_preserving_mtime`, which preserves whatever
@@ -763,6 +728,7 @@ class MigrationContext:
         therefore no mtime-trigger fire).
         """
         import os
+
         p = Path(path)
         if p.exists() and p.read_text() == new_text:
             # Idempotent on content; ensure mtime matches the reference even if
@@ -813,6 +779,7 @@ class MigrationContext:
         is intentionally not auto-deleted — it carries audit value.
         """
         import shutil
+
         metadata_dir = self.target_dir / ".snakemake" / "metadata"
         if not metadata_dir.is_dir():
             return  # nothing to clear (e.g., never-run analysis)
@@ -831,9 +798,7 @@ class MigrationContext:
 
     # ---- Invalidation ----
 
-    def invalidate_compile_artifacts(
-        self, condition_fn: Callable[[Path], bool]
-    ) -> None:
+    def invalidate_compile_artifacts(self, condition_fn: Callable[[Path], bool]) -> None:
         self.plan.append(
             PlannedOp(
                 "invalidate_compile_artifacts",
@@ -841,9 +806,7 @@ class MigrationContext:
             )
         )
 
-    def _apply_invalidate_compile_artifacts(
-        self, condition_fn: Callable[[Path], bool]
-    ) -> None:
+    def _apply_invalidate_compile_artifacts(self, condition_fn: Callable[[Path], bool]) -> None:
         for sims in self.collect_sims_dirs():
             for scenario_dir in sims.iterdir():
                 build = scenario_dir / "build"
@@ -851,9 +814,7 @@ class MigrationContext:
                     shutil.rmtree(build)
 
     def regenerate_scenario_status_csv(self) -> None:
-        self.plan.append(
-            PlannedOp("regenerate_scenario_status_csv", {})
-        )
+        self.plan.append(PlannedOp("regenerate_scenario_status_csv", {}))
 
     def _apply_regenerate_scenario_status_csv(self) -> None:
         # Delegates to export_scenario_status_to_csv(analysis), which takes a
@@ -869,9 +830,7 @@ class MigrationContext:
                 "cfg_paths required for regenerate_scenario_status_csv; pass "
                 "--analysis-config and --system-config to the migrate CLI"
             )
-        system = TRITONSWMM_system(
-            system_config_yaml=self.cfg_paths["system"]
-        )
+        system = TRITONSWMM_system(system_config_yaml=self.cfg_paths["system"])
         analysis = TRITONSWMM_analysis(
             system=system,
             analysis_config_yaml=self.cfg_paths["analysis"],
@@ -910,20 +869,11 @@ class MigrationContext:
         if not force:
             return
         if not replacement.exists():
-            raise FileNotFoundError(
-                f"guarded_remove refused: replacement {replacement} "
-                "does not exist"
-            )
+            raise FileNotFoundError(f"guarded_remove refused: replacement {replacement} " "does not exist")
         if replacement.is_dir() and not any(replacement.iterdir()):
-            raise ValueError(
-                f"guarded_remove refused: replacement {replacement} "
-                "is empty dir"
-            )
+            raise ValueError(f"guarded_remove refused: replacement {replacement} " "is empty dir")
         if replacement.is_file() and replacement.stat().st_size == 0:
-            raise ValueError(
-                f"guarded_remove refused: replacement {replacement} "
-                "is empty file"
-            )
+            raise ValueError(f"guarded_remove refused: replacement {replacement} " "is empty file")
         if not src_path.exists():
             return
         if src_path.is_dir():
@@ -933,16 +883,13 @@ class MigrationContext:
             src_path.unlink()
         if not replacement.exists():
             raise RuntimeError(
-                f"guarded_remove post-verify failed: replacement "
-                f"{replacement} disappeared during removal"
+                f"guarded_remove post-verify failed: replacement " f"{replacement} disappeared during removal"
             )
 
     # ---- Cross-cutting ----
 
     def record_applied(self, migration_id: str) -> None:
-        self.plan.append(
-            PlannedOp("record_applied", {"migration_id": migration_id})
-        )
+        self.plan.append(PlannedOp("record_applied", {"migration_id": migration_id}))
 
     def _apply_record_applied(self, migration_id: str) -> None:
         logger.info("[%s] applied", migration_id)

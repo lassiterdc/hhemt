@@ -25,7 +25,7 @@ def _write_bundle(root, *, sha: str, n_resumes: int) -> None:
     """A minimal bundle dir: cfg_system.yaml (TRITONSWMM_branch_key) + scenario_status.csv (n_resumes)."""
     root.mkdir(parents=True, exist_ok=True)
     (root / "cfg_system.yaml").write_text(f"TRITONSWMM_branch_key: {sha}\n")
-    (root / "scenario_status.csv").write_text(f"sa_id,n_resumes\nsa_0,{n_resumes}\nsa_1,{n_resumes}\n")
+    (root / "scenario_status.csv").write_text(f"member_id,n_resumes\nsa_0,{n_resumes}\nsa_1,{n_resumes}\n")
 
 
 def _clean_dep(sha: str = "3a832f7d") -> ExperimentDependency:

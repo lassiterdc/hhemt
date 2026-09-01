@@ -253,7 +253,7 @@ _SCENARIO_ID_BASE_FIELDS = frozenset(
         "model_type",
         "scenario_directory",
         "sa_id",
-        "subanalysis_id",
+        "member_id",
         "sub_analysis_iloc",
         EVENT_LABEL_COLUMN,
     }

@@ -200,7 +200,7 @@ def _fake_master(tmp_path, subs: dict):
     master_dir.mkdir(parents=True, exist_ok=True)
     return SimpleNamespace(
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=True),
-        sensitivity=SimpleNamespace(sub_analyses=subs),
+        sensitivity=SimpleNamespace(analyses=subs),
         analysis_paths=SimpleNamespace(analysis_dir=str(master_dir)),
     )
 
@@ -293,7 +293,7 @@ def test_resume_sensitivity_pairs_clean_and_resume_by_config(tmp_path, monkeypat
     }
     master = _fake_master(tmp_path, subs)
 
-    # df_status carries n_resumes per sa_id (R9): r1 was resumed once.
+    # df_status carries n_resumes per member_id (R9): r1 was resumed once.
     import pandas as pd
 
     master.df_status = pd.DataFrame(
@@ -317,7 +317,7 @@ def test_resume_sensitivity_pairs_clean_and_resume_by_config(tmp_path, monkeypat
 
 def test_config_identity_separates_arms_at_same_compute_config(tmp_path):
     """HAND-CONSTRUCTED two-arm bucket (master R12): `_config_identity` is called ONLY
-    over one master's `sub_analyses` (compute_sensitivity.py:519), and under the
+    over one master's `members` (compute_sensitivity.py:519), and under the
     sibling-master architecture each master carries exactly ONE arm, so NO run of this
     system produces a two-arm bucket. This fabricates one to prove the model-arm identity
     component prevents the pre-fix collapse. Pre-fix `_config_identity` (no model) returns

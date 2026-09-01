@@ -27,11 +27,11 @@ ILOC_BY_EVENT_ID = {'event_index.0': 0, 'event_index.1': 1, 'event_index.2': 2}
 from hhemt.report_plot_ids import (
     event_labels_from_status as _event_labels_from_status,
     report_label_value as _report_label_value,
-    sa_labels_from_status as _sa_labels_from_status,
+    member_labels_from_status as _member_labels_from_status,
 )
 
 _EVENT_LABELS = _event_labels_from_status(workflow.basedir)
-_SA_LABELS = _sa_labels_from_status(workflow.basedir)
+_MEMBER_LABELS = _member_labels_from_status(workflow.basedir)
 
 
 rule all:
@@ -370,8 +370,8 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson``\n',
+        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson', 'variables': []}],
+        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson``\n',
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
@@ -396,7 +396,7 @@ def _per_sim_event_page_sources(wildcards):
             rainfall_datavar='RG_synth',
             storm_tide_datavar='water_level',
             dem_rel_path='../elevation_10.00m.dem',
-            watershed_rel_path='../../../../../../..{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson',
+            watershed_rel_path='{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson',
         ):
             if _src not in out:
                 out.append(_src)

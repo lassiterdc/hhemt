@@ -36,6 +36,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: check-caption-vocabulary
+        name: retired-vocabulary guard over the report template tree
+        entry: python scripts/check_caption_vocabulary.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # DU-sentinel mutation-site restamp discipline (scripts/check_du_sentinel_sites.py)
   # Flags fast_rmtree(...) missing analysis_dir= and .unlink() not adjacent-followed
   # by restamp_parent_sentinels(...), unless the site carries # EXEMPT-DU: {category}.
@@ -83,6 +90,21 @@ repos:
         entry: python scripts/check_commit_message_anonymization.py
         language: system
         stages: [commit-msg]
+
+  # Vocabulary freeze (scripts/check_vocabulary_freeze.py)
+  # INVERTED assertion: requires the OLD vocabulary to still be PRESENT in the
+  # forward-only migration modules, their legacy fixtures, and their tests. A
+  # rename sweep that reaches the frozen set turns this red; nothing else does.
+  # Without it, a renamed literal makes a historical migration find nothing,
+  # take its early return, and report success.
+  - repo: local
+    hooks:
+      - id: vocabulary-freeze
+        name: migration vocabulary freeze
+        entry: python scripts/check_vocabulary_freeze.py
+        language: system
+        pass_filenames: false
+        always_run: true
 
   # Retired-field overlay-column discipline (scripts/check_retired_field_overlay_columns.py)
   # Flags any sensitivity-xlsx overlay column system.{field} / analysis.{field}

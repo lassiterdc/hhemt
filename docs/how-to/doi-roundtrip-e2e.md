@@ -1,14 +1,15 @@
 # Reproduce an experiment by DOI (operator round-trip)
 
 This runbook mints a DOI for a runnable reprex bundle, then fetches and runs it on another
-machine — the end-to-end reproducibility round-trip.
+machine: the end-to-end reproducibility round-trip.
 
 The bundle is **self-contained by default**: it carries every input the experiment declares,
 so a consumer can run it from scratch. Excluding an input is a governed opt-out for data you
-cannot redistribute — see [Excluding an input](#excluding-an-input-the-governed-opt-out).
+cannot redistribute. See [Excluding an input](#excluding-an-input-the-governed-opt-out).
 
 ## Prerequisites
 
+--8<-- "prerequisites-base.md"
 - A completed analysis with a rendered report (`analysis.render_report()` must have run at
   least once, so the provenance sidecars the bundle is built from exist).
 - **Deposit credentials, under exactly these names.** These are the variables the code reads
@@ -34,11 +35,13 @@ result = tk.analysis.publish_reprex_bundle(target="zenodo")
 print(result["data_doi"], result["record_url"])
 ```
 
-Before uploading, a size validator measures the bundle against the target's **documented**
-limits (Zenodo 50 GB/record; HydroShare 20 GB default account quota) and warns — with the
-exact overflow and a remediation menu — if it will not fit. It does not block: neither
-platform exposes a queryable quota, so the deposit is attempted and a live storage rejection
-is caught and reframed with the real numbers.
+??? note "What happens if the bundle is too large for the target"
+    Before uploading, a size validator measures the bundle against the target's
+    **documented** limits (Zenodo 50 GB/record; HydroShare 20 GB default account
+    quota) and warns, with the exact overflow and a remediation menu, if it will not
+    fit. It does not block: neither platform exposes a queryable quota, so the
+    deposit is attempted, and a live storage rejection is caught and reframed with
+    the real numbers.
 
 ## 2. Fetch and reconstitute on another machine
 
@@ -46,8 +49,8 @@ is caught and reframed with the real numbers.
 hhemt ingest --doi {minted-doi} --host zenodo
 ```
 
-If you minted against the **sandbox** in step 1, set the same base URL on the fetch side —
-the ingest resolves the Zenodo host from `HHEMT_ZENODO_BASE_URL`, so a sandbox DOI resolves
+If you minted against the **sandbox** in step 1, set the same base URL on the fetch side.
+The ingest resolves the Zenodo host from `HHEMT_ZENODO_BASE_URL`, so a sandbox DOI resolves
 against the sandbox instead of 404ing on production:
 
 ```bash
@@ -69,20 +72,20 @@ is carried *by reference* instead: the bundle records where it came from, what i
 and how to obtain it.
 
 **This is a three-step sequence, and the order matters.** The excluded input must already
-have a durable record before you author the exclude-config — the toolkit has no per-file
+have a durable record before you author the exclude-config. The toolkit has no per-file
 deposit helper and cannot mint one for you.
 
-### Step 1 — Give the input a durable record
+### Step 1: give the input a durable record
 
 - **Data you own**: deposit it as its own Zenodo/HydroShare resource. Note its
   direct-download URL and its DOI.
 - **Third-party or licensed data**: locate its original source. **The toolkit must not
   redeposit it**, and you should not either.
 
-### Step 2 — Author the exclude-config
+### Step 2: author the exclude-config
 
 `hhemt bundle --list-excludable` prints every input you may opt out of, with the
-reproducibility cost of each. It needs no configs — run it before you have written anything.
+reproducibility cost of each. It needs no configs, so run it before you have written anything.
 
 ```yaml
 # bundle_exclude.yaml
@@ -104,15 +107,15 @@ exclusions:
 `citation` is **required** for every excluded input. `contentUrl` is what decides what a
 consumer experiences:
 
-- **`contentUrl` present** — `hhemt ingest` downloads the file automatically and verifies it
+- **`contentUrl` present**: `hhemt ingest` downloads the file automatically and verifies it
   against the recorded sha256.
-- **`contentUrl` omitted** — ingest **fails closed** and prints your citation, the landing
+- **`contentUrl` omitted**: ingest **fails closed** and prints your citation, the landing
   page, the expected sha256, and the exact path to place the file at. **This is the correct
   outcome for restricted data, not a degraded one.** The bundle still carries complete,
   public, machine-readable metadata about the input; only the bytes are withheld, which is
   what the license requires.
 
-### Step 3 — Emit and deposit
+### Step 3: emit and deposit
 
 ```python
 tk.analysis.publish_reprex_bundle(target="zenodo", exclude_config="bundle_exclude.yaml")
@@ -123,7 +126,7 @@ tk.analysis.publish_reprex_bundle(target="zenodo", exclude_config="bundle_exclud
 - **A green Zenodo run is not a green HydroShare run.** `hsclient` v1.1.6 cannot mint a DOI
   programmatically, so the HydroShare path publishes the resource and then *stops*, printing
   a manual web-UI DOI-mint instruction. The "fetch back by DOI" leg is therefore **not** a
-  single automated round-trip on that host — mint the DOI in the web UI first, then ingest.
+  single automated round-trip on that host: mint the DOI in the web UI first, then ingest.
 - **Deposit record ids are yours, not the repo's.** Supply them via environment variables
   (`HHEMT_E2E_ZENODO_RECORD` / `HHEMT_E2E_HYDROSHARE_RESOURCE`); never commit them.
 - **Match the toolkit version.** The bundle-schema guard is exact-match: install the version

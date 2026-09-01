@@ -165,12 +165,11 @@ class ContainerRef(BaseModel):
         return self
 
 
-class ExperimentBundle(BaseModel):
+class ExperimentConfig(BaseModel):
     """Validated schema for an estate `experiments/{slug}/experiment.yaml`."""
 
     model_config = ConfigDict(extra="forbid")
 
-    experiment_id: str = Field(description="Stable slug; must equal the containing directory name.")
     description: str = Field(description="One-line description.")
     system_config: str = Field(description="Bundle-relative path to the system config YAML.")
     analysis_config: str = Field(description="Bundle-relative path to the analysis config YAML.")
@@ -183,7 +182,7 @@ class ExperimentBundle(BaseModel):
     container: ContainerRef | None = Field(default=None, description="None => native execution.")
 
     @model_validator(mode="after")
-    def _check_deposit_coverage(self) -> ExperimentBundle:
+    def _check_deposit_coverage(self) -> ExperimentConfig:
         undepositable = [i.name for i in self.inputs if not i.deposit and not (i.doi or i.pid)]
         if undepositable:
             raise ValueError(

@@ -6,7 +6,7 @@ for the artifact, not a live sample.
 
 ## Producing a report
 
-The report is rendered from completed-workflow outputs. It is idempotent —
+The report is rendered from completed-workflow outputs. It is idempotent:
 re-rendering does not re-execute any simulation rule.
 
 ```python
@@ -22,8 +22,9 @@ figure inlined. There is no size-based selection between them.
 
 ## Sidebar sections
 
-Which sections appear is driven by the active reporting set
-(`report_config.reporting_set`). The default set renders, in sidebar order:
+Which sections appear is driven by the active reporting set, selected with
+`report.reporting_set` (see [Reporting sets](reporting-sets.md)). The default
+set renders, in sidebar order:
 
 | Section | Contents |
 |---|---|
@@ -41,7 +42,7 @@ sidebar order.
 
 ## Viewing a report you did not generate
 
-A rendered report is portable — it carries its own JavaScript and needs no
+A rendered report is portable: it carries its own JavaScript and needs no
 server. Open the HTML file directly in a browser, or unzip the `.zip` form and
 open `report.html` from the extracted directory.
 
@@ -60,5 +61,5 @@ report dropped under `docs/` is embeddable directly:
 </iframe>
 ```
 
-Reports are large — a full analysis report with inlined Plotly figures runs to
-several megabytes — so weigh the repository cost before committing one.
+Reports are large: a full analysis report with inlined Plotly figures runs to
+several megabytes, so weigh the repository cost before committing one.

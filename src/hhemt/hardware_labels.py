@@ -2,9 +2,14 @@
 
 LEAF MODULE BY DESIGN: it imports nothing from hhemt, so `report_renderers/`,
 `eda/` and `analysis.py` can all read one map rather than growing three. This
-corpus has already paid for the alternative — `_hardware_family`,
-`_hw_family_key` and `_b4b_family_key` are three hardware keys in three modules,
-and the claim that they agreed was false for several phases before anyone checked.
+corpus has already paid for the alternative — a device NAME was derived ad hoc at
+each display site rather than read from one map. Note what this module does NOT
+claim: `_hardware_family`, `_hw_family_key` and `_b4b_family_key` are NOT three
+copies of one key. `_hardware_family` implements the FINE per-hardware axis;
+the other two implement the COARSE device-class axis, and the stipulation "the
+three compute-config axes are run mode, hardware, and device class" locks that
+split. Unifying them is stipulation-forbidden, and this module must not be cited
+as grounds for doing so.
 
 The map is ORDERED and matched by case-insensitive SUBSTRING, not by exact key,
 because vendor strings carry SKU-varying noise ("64-Core Processor", "with Radeon
@@ -20,19 +25,24 @@ has yet observed.
 
 from __future__ import annotations
 
-#: (needle, label) in match order. GPU labels use the arch-key vocabulary of
+#: (needle, label, path_token) in match order. GPU labels use the arch-key vocabulary of
 #: `system.py::_resolve_cuda_arch_flags` (rtx3090/a6000/a100/h100/h200/v100) so a
 #: legend and a compile flag name the same device. Note that the Rivanna PARTITION
 #: suffix for the same card is `a100-80`; the two spellings are deliberate and the
 #: arch key is the one used here.
-_DEVICE_LABELS: tuple[tuple[str, str], ...] = (
+#: Rows are (needle, label, path_token). The token is a THIRD ELEMENT rather than a
+#: sibling dict keyed on label: a sibling map is a second artifact that must stay
+#: row-for-row in sync with nothing structural forcing it, which is the shape four
+#: measured precedents in this tree have already drifted on. A third element makes a
+#: label without a token unconstructible.
+_DEVICE_LABELS: tuple[tuple[str, str, str], ...] = (
     # GPU — NVIDIA. "rtx a6000" precedes "a6000" only for readability; both hit.
-    ("rtx a6000", "a6000"),
-    ("a100", "a100"),
-    ("h200", "h200"),
-    ("h100", "h100"),
-    ("v100", "v100"),
-    ("rtx 3090", "rtx3090"),
+    ("rtx a6000", "a6000", "a6000"),
+    ("a100", "a100", "a100"),
+    ("h200", "h200", "h200"),
+    ("h100", "h100", "h100"),
+    ("v100", "v100", "v100"),
+    ("rtx 3090", "rtx3090", "rtx3090"),
     # GPU — AMD is deliberately UNMAPPED. No AMD GPU is reachable from this
     # campaign's cluster, so any needle here would guess at an unobserved string:
     # it would either fail to match (indistinguishable from the fallback) or match
@@ -40,9 +50,9 @@ _DEVICE_LABELS: tuple[tuple[str, str], ...] = (
     # until a real Frontier log supplies the string.
     # CPU. Same map, same contract — the CPU axis is the one that currently has no
     # hardware channel at all in the benchmarking figure.
-    ("epyc 7742", "epyc-7742"),
-    ("epyc 7763", "epyc-7763"),
-    ("xeon gold 6248", "xeon-6248"),
+    ("epyc 7742", "epyc-7742", "epyc_7742"),
+    ("epyc 7763", "epyc-7763", "epyc_7763"),
+    ("xeon gold 6248", "xeon-6248", "xeon_6248"),
 )
 
 
@@ -59,7 +69,7 @@ def hardware_label(raw: str | None) -> str | None:
     if not name:
         return None
     low = name.lower()
-    for needle, label in _DEVICE_LABELS:
+    for needle, label, _token in _DEVICE_LABELS:
         if needle in low:
             return label
     return name

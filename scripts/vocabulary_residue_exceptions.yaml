@@ -1,0 +1,644 @@
+ # Declared exceptions for scripts/check_vocabulary_residue.py.
+ # Ships EMPTY on purpose: on a POST-rename tree every hit is undeclared until
+ # a maintainer justifies it here. Each entry:
+ #   - path: {path substring}
+ #     token: {retired token, or "*" for any}
+ #     reason: {why this site legitimately keeps the retired vocabulary}
+
+  # FILENAME renames landed in this commit. No content-scanning instrument reaches a
+  # file NAME, so the post-condition for this class is a tracked-file listing swept for
+  # the retired vocabulary, which must return only paths under
+  # tests/fixtures/legacy_layouts/ -- those are frozen historical records.
+  #   src/hhemt/delete_subanalysis_runner.py           -> delete_member_runner.py
+  #   src/hhemt/delete_subanalysis_reprocess_runner.py -> delete_member_reprocess_runner.py
+  #   tests/test_cleanup_orphan_subanalyses.py         -> test_cleanup_orphan_members.py
+  #   tests/test_subanalysis_yaml_materialization_gate.py -> test_member_yaml_materialization_gate.py
+  #   tests/fixtures/perf_resume_ledger/{clean,resume}_triton/
+  #       walltime_model_triton_sa_serial_6_r1_evt0.jsonl
+  #       -> walltime_model_triton_member_serial_6_r1_evt0.jsonl
+  # The four bundle-fixture directories per_sim/sa-{0,1,2,3}/ become member-{0,1,2,3}/.
+  #
+  # NON-PYTHON post-condition. check_vocabulary_residue.py globs "*.py" only, so a
+  # plain-text sweep over *.yaml, *.yml, *.md, *.csv, *.j2, *.rst, *.toml, *.golden and
+  # *.Snakefile is the completeness check for every other surface, and must return zero
+  # outside the frozen legacy_layouts tree.
+exceptions:
+  - path: environment-lock.yaml
+    token: "sa-"
+    reason: >-
+      `alsa-lib` is the Linux sound library; the `sa-` substring is coincidental, and this
+      is a solver-produced lock file that must not be hand-edited.
+  - path: test_data/norfolk_coastal_flooding/hpc_system_config_frontier.yaml
+    token: "sa-"
+    reason: >-
+      `libhsa-runtime64` is the ROCm HSA runtime named in an LD_LIBRARY_PATH comment; the
+      `sa-` substring is coincidental.
+  - path: src/hhemt/workflow.py
+    token: "sa-"
+    reason: >-
+      _SNAKEFILE_RETIRED_VOCAB_RE and its comment block are the guard that DETECTS a stale
+      Snakefile; the retired literals ARE the check. Expected residue is 1 DIRECT plus 1
+      INDIRECT. NARROW: this exempts every `sa-` in the largest file in the tranche, so run
+      the whole-file post-condition BEFORE adding this entry and confirm the only residue
+      is the guard.
+  - path: src/hhemt/sensitivity_analysis.py
+    token: "sa-"
+    reason: >-
+      _RETIRED_ID_COLUMNS holds the retired spreadsheet header spellings so the reader can
+      tell an operator holding a pre-rename experiments spreadsheet which column to change.
+      Same narrowness caveat as workflow.py.
+  - path: scripts/check_vocabulary_freeze.py
+    token: subanalys
+    reason: >-
+      The module's own docstring illustrates the inverted-assertion mechanism with a
+      literal `(target_dir / "subanalyses").is_dir()` snippet describing what a frozen
+      historical migration reads. Sweeping it would make the checker's own explanation of
+      itself describe a directory name the checker no longer protects, and the residue gate
+      would otherwise flag this prose as undeclared residue -- a self-inflicted false
+      positive on the guard's own docstring.
+  - path: src/hhemt/version_migration/context.py
+    token: "*"
+    reason: >-
+      WIDENED, never substituted. `_iter_member_dirs` is shared across EVERY migration, so
+      it must enumerate a legacy tree (`subanalyses/sa_*`) and a current one
+      (`members/member_*`) alike -- the pair is a two-element tuple read in one loop, and
+      the retired half is the legacy arm. Substituting it does not fail loudly; it makes
+      the helper return [] on every pre-rename tree, so a migration silently finds no
+      members to migrate. Same class as V0019 reading the OLD value in order to rewrite it.
+      vocabulary_freeze.yaml deliberately declines to freeze this file (freezing asserts a
+      token must REMAIN, which is the wrong assertion for a file that must carry BOTH
+      vocabularies), so this entry is the only surface that records the intent.
+  - path: src/hhemt/version_migration/state.py
+    token: "*"
+    reason: >-
+      Same legacy-plus-current container pair as version_migration/context.py, for the same
+      reason and with the same silent-failure mode. Declared separately rather than by a
+      `version_migration/` path prefix so that a future module under that package does not
+      inherit an exemption nobody granted it.
+  - path: scripts/check_rename_scope_collisions.py
+    token: "sa_id"
+    reason: >-
+      the retired literals ARE the check; sweeping them inverts the instrument.
+  - path: scripts/check_vocabulary_residue.py
+    token: "sa-"
+    reason: >-
+      the retired literals ARE the check; sweeping them inverts the instrument.
+  - path: src/hhemt/analysis.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/analysis.py
+    token: "sub_analys"
+    reason: >-
+      `sub_analysis_iloc` is a persisted coordinate name in the same standing-deferral class as
+      `sa_id`. Renaming it is an on-disk schema change, not a code rename.
+  - path: src/hhemt/analysis_validation.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/bundle/_path_policy.py
+    token: "(?<![A-Za-z0-9_])[Ss][Aa](?![A-Za-z0-9_])"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/cli.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/config/analysis.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/delete_member_reprocess_runner.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/delete_member_runner.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/eda/_config_diff.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/eda/_dem_resolution_plots.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/eda/compute_sensitivity.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/eda/cross_sim_identity.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/eda/raw_resume_identity.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/processing_analysis.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/provenance.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/recompute.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/report_plot_ids.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/report_renderers/_figure_emission.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/report_renderers/errors_and_warnings.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/report_renderers/metadata.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/report_renderers/per_analysis_summary.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/report_renderers/scenario_status_appendix.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/report_renderers/scenario_status_appendix.py
+    token: "sub_analys"
+    reason: >-
+      `sub_analysis_iloc` is a persisted coordinate name in the same standing-deferral class as
+      `sa_id`. Renaming it is an on-disk schema change, not a code rename.
+  - path: src/hhemt/report_renderers/sensitivity_benchmarking.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/run_simulation_runner.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/sensitivity_analysis.py
+    token: "(?<![A-Za-z0-9_])[Ss][Aa](?![A-Za-z0-9_])"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/sensitivity_analysis.py
+    token: "[Ss]ub-analys"
+    reason: >-
+      `sub_analysis_iloc` is a persisted coordinate name in the same standing-deferral class as
+      `sa_id`. Renaming it is an on-disk schema change, not a code rename.
+  - path: src/hhemt/sensitivity_analysis.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: src/hhemt/sensitivity_analysis.py
+    token: "sub_analys"
+    reason: >-
+      `sub_analysis_iloc` is a persisted coordinate name in the same standing-deferral class as
+      `sa_id`. Renaming it is an on-disk schema change, not a code rename.
+  - path: src/hhemt/status_flags.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_chunking.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_chunking.py
+    token: "sub_analys"
+    reason: >-
+      `sub_analysis_iloc` is a persisted coordinate name in the same standing-deferral class as
+      `sa_id`. Renaming it is an on-disk schema change, not a code rename.
+  - path: tests/test_compute_config_adapters.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_config_validation.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_coupled_resume_validity.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_eda_cross_sim_identity.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_force_rerun_stage_axis.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_job_purpose_map_tiering.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_per_member_system_configs.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_recompute_resolver.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_sensitivity_benchmarking_math.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_sensitivity_benchmarking_symbology.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_sensitivity_datatree.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_05_sensitivity_analysis_with_snakemake.py
+    token: "(?<![A-Za-z0-9_])[Ss][Aa](?![A-Za-z0-9_])"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_05_sensitivity_analysis_with_snakemake.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_06_submission_guard.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_07_validation_report.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_compute_sensitivity_eda.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_config_diff_verification.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_cross_bundle_intercomparison.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_dem_resolution_matrix.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_eda_sensitivity_renderers.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_experiment_dependency.py
+    token: "\\bsa_[A-Za-z0-9_]*"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_flag_writes.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_metadata_renderer.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_synth_sensitivity_csv_row_rerun.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_validation.py
+    token: "sa_id"
+    reason: >-
+      the `sa_id` identity column is a STANDING deferral -- it is the df_status /
+      scenario_status.csv column AND the `override_force_rerun` API key (config/analysis.py:148
+      raises "key must be 'sa_id' or 'event_iloc'"; analysis.py:4496/4510/4549 test it). It
+      interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
+      differing column names are immaterial. Closing this deferral changes a user-visible
+      research output and a public API, and is a separate decision.
+  - path: tests/test_version_migration_V0008.py
+    token: "\\bsa_[A-Za-z0-9_]*"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.
+  - path: tests/test_version_migration_V0008.py
+    token: "subanalys"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.
+  - path: tests/test_version_migration_V0018.py
+    token: "\\bsa_[A-Za-z0-9_]*"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.
+  - path: tests/test_version_migration_V0018.py
+    token: "sa-"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.
+  - path: tests/test_version_migration_golden.py
+    token: "[Ss]ub-analys"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.
+  - path: tests/test_version_migration_golden.py
+    token: "sa-"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.
+  - path: tests/test_version_migration_golden.py
+    token: "sa_id"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.
+  - path: tests/test_version_migration_golden.py
+    token: "subanalys"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.
+  - path: tests/test_version_migration_primitives.py
+    token: "\\bsa_[A-Za-z0-9_]*"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.
+  - path: tests/test_version_migration_primitives.py
+    token: "sa_id"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.
+  - path: tests/test_version_migration_primitives.py
+    token: "subanalys"
+    reason: >-
+      a migration or migration-test module that must read a PRE-rename tree. Substituting here
+      does not fail loudly -- it makes the module silently find nothing on every legacy tree.
+      Same class as version_migration/context.py.

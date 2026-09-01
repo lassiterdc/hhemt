@@ -250,7 +250,7 @@ def _invalidate_consolidation_signals(analysis_dir: Path) -> None:
     if status_dir.is_dir():
         for flag in sorted(status_dir.iterdir()):
             if flag.name.startswith(("e_consolidate_", "f_consolidate_master")):
-                flag.unlink(missing_ok=True)  # EXEMPT-DU: status flag
+                flag.unlink(missing_ok=True)  # EXEMPT-DU: status-flag
                 logger.info("V0018: cleared consolidate flag %s", flag)
 
     log_path = analysis_dir / "log.json"

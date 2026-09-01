@@ -66,25 +66,17 @@ def _exercise_add_remove_rerun(analysis, *, kind: str) -> None:
     assert before, f"baseline produced no scenario outputs to snapshot ({kind})"
 
     scenario_keys = list(before.keys())  # list[tuple[str | None, str]]
-    assert len(scenario_keys) >= 2, (
-        f"need >= 2 baseline scenarios to add+remove ({kind}); got {scenario_keys}"
-    )
+    assert len(scenario_keys) >= 2, f"need >= 2 baseline scenarios to add+remove ({kind}); got {scenario_keys}"
     victim_key = scenario_keys[len(scenario_keys) // 2]
     donor_key = next(k for k in scenario_keys if k != victim_key)
 
     # ---- Phase 3: mutate input CSV on disk; re-instantiate analysis ----
-    mutated_csv, new_key = tst_ut.mutate_scenario_csv(
-        analysis, kind=kind, donor_key=donor_key, remove_key=victim_key
-    )
-    rerun_analysis = tst_ut.reinstantiate_analysis_pointing_at_csv(
-        analysis, kind=kind, mutated_csv_path=mutated_csv
-    )
+    mutated_csv, new_key = tst_ut.mutate_scenario_csv(analysis, kind=kind, donor_key=donor_key, remove_key=victim_key)
+    rerun_analysis = tst_ut.reinstantiate_analysis_pointing_at_csv(analysis, kind=kind, mutated_csv_path=mutated_csv)
 
     # ---- Phase 4: re-run ----
     rerun_result = _run_full_workflow(rerun_analysis, pickup=True)
-    assert rerun_result.get("success"), rerun_result.get(
-        "message", f"rerun failed ({kind})"
-    )
+    assert rerun_result.get("success"), rerun_result.get("message", f"rerun failed ({kind})")
 
     # ---- Phase 5: snapshot post-rerun and assert correctness ----
     after = tst_ut.snapshot_scenario_output_mtimes(rerun_analysis, kind=kind)
@@ -104,6 +96,6 @@ def test_rerun_triggers_multi_sim_add_remove(norfolk_multi_sim_analysis):
 
 
 def test_rerun_triggers_sensitivity_add_remove(norfolk_sensitivity_analysis):
-    """Sensitivity: add+remove a sub-analysis row in the sensitivity CSV, re-run,
-    assert untouched sub-analyses' scenarios were not re-executed."""
+    """Sensitivity: add+remove a member row in the sensitivity CSV, re-run,
+    assert untouched members' scenarios were not re-executed."""
     _exercise_add_remove_rerun(norfolk_sensitivity_analysis, kind="sensitivity")

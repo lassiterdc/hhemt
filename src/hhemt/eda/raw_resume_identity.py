@@ -216,26 +216,26 @@ def resume_boundaries_from_schedule(schedule: Sequence[int] | None, reporting_in
 
 
 def read_sub_resume_context(
-    sub_analysis_dir: Path, sa_id: str, event_iloc: int
+    analysis_dir: Path, member_id: str, event_iloc: int
 ) -> tuple[Path | None, float | None, tuple[int, ...] | None]:
     """Resolve (resume tritonswmm model-log path, TRITON reporting interval s, requested
-    resume-interruption schedule) for one sub-analysis from its on-disk ``{sa_id}.yaml``,
+    resume-interruption schedule) for one member from its on-disk ``{member_id}.yaml``,
     reproducing the ``run_simulation.model_logfile_for`` convention (Gotcha 71) WITHOUT
     constructing a ``TRITONSWMM_analysis`` (keeps the kernel plain-dirs / no mkdir side effect).
 
     The synth compute-config experiment writes sim DATA under a scratch ``analysis_dir`` but
-    routes model runtime logs to ``{master_analysis_cfg_yaml.parent}/logs/sims`` — and the master
+    routes model runtime logs to ``{experiment_cfg_yaml.parent}/logs/sims`` — and the master
     cfg lives in the platformdirs CACHE tree, so a scratch-arm log glob matches nothing. The sub
-    yaml carries the authoritative ``master_analysis_cfg_yaml`` pointer, ``TRITON_reporting_timestep_s``,
+    yaml carries the authoritative ``experiment_cfg_yaml`` pointer, ``TRITON_reporting_timestep_s``,
     AND ``resume_interruption_schedule``, so ONE read resolves the resume-marker log path (log dir
-    + the ``model_logfile_for`` filename ``model_tritonswmm_{sa_id}_evt{event_iloc}.log``), the
+    + the ``model_logfile_for`` filename ``model_tritonswmm_{member_id}_evt{event_iloc}.log``), the
     reporting interval that sets the ``timestep_min`` axis / vline scale (a wrong interval
     mis-scales both), and the K REQUESTED resume-boundary indices (the durable, K-complete,
     model-agnostic vline source -- the surviving cfg set is NOT one; see
     ``resume_boundaries_from_schedule``). Tolerant: missing yaml / key / log -> that element is
     None (no vline / caller falls back), never raising.
     """
-    sub_yaml = sub_analysis_dir / f"{sa_id}.yaml"
+    sub_yaml = analysis_dir / f"{member_id}.yaml"
     try:
         cfg = yaml.safe_load(sub_yaml.read_text())
     except (OSError, yaml.YAMLError):
@@ -246,11 +246,11 @@ def read_sub_resume_context(
     reporting_interval_s = float(interval) if interval is not None else None
     _sched = cfg.get("resume_interruption_schedule")
     schedule = tuple(int(n) for n in _sched) if _sched else None
-    master = cfg.get("master_analysis_cfg_yaml")
+    master = cfg.get("experiment_cfg_yaml")
     log_path: Path | None = None
     # Resolve the model-log dir the way model_logfile_for now does: structurally, from the
-    # sub dir (`{master_analysis_dir}/subanalyses/sa_{sa_id}` -> .parent.parent). The
-    # `master_analysis_cfg_yaml` pointer is retained ONLY as a legacy fallback, because this
+    # sub dir (`{master_analysis_dir}/members/member_{member_id}` -> .parent.parent). The
+    # `experiment_cfg_yaml` pointer is retained ONLY as a legacy fallback, because this
     # function reads arms that COMPLETED before the relocation and whose logs are still at
     # the config-adjacent path. New-location-first, legacy-second: on a post-fix arm the
     # first candidate exists and the legacy path is never consulted.
@@ -271,8 +271,8 @@ def read_sub_resume_context(
     # DELETION CRITERION: once none of those four trees survives on disk, or every one has
     # been re-run under a post-513d5e1 toolkit, the first candidate is total -- drop the
     # `if master:` branch, this comment, and the now-unused `master` read above.
-    _filename = f"model_tritonswmm_{sa_id}_evt{event_iloc}.log"
-    _candidates = [Path(sub_analysis_dir).parent.parent / "logs" / "sims" / _filename]
+    _filename = f"model_tritonswmm_{member_id}_evt{event_iloc}.log"
+    _candidates = [Path(analysis_dir).parent.parent / "logs" / "sims" / _filename]
     if master:
         _candidates.append(Path(master).parent / "logs" / "sims" / _filename)
     log_path = next((c for c in _candidates if c.exists()), None)
@@ -339,7 +339,7 @@ def build_binary_timestep_figure(
 # --- Promotable calc member (ADR-9): the b4b figures' WITHIN-MASTER producer -----------
 #
 # check_raw_b4b is single-arm by construction (master R12(b)): it reads ONLY the passed
-# master's own sub-analyses' raw per-timestep rasters and NEVER reaches a sibling master.
+# master's own members' raw per-timestep rasters and NEVER reaches a sibling master.
 # It writes TWO backing artifacts (one per registered b4b figure) ALWAYS -- real grids or
 # an honest-degradation marker -- so neither report() target raises WorkflowError:
 #   * eda/b4b_clean_identity.zarr   config-vs-config raw identity over the master's CLEAN
@@ -383,10 +383,10 @@ def _b4b_sub_raw_bin_dir(sub, model: str, raw_out_type: str) -> Path | None:
     return None
 
 
-def _b4b_n_resumes(master, sa_id) -> int:
-    """Max ``n_resumes`` for one sa_id from ``master.df_status`` (R9); 0 on any absence.
+def _b4b_n_resumes(master, member_id) -> int:
+    """Max ``n_resumes`` for one member_id from ``master.df_status`` (R9); 0 on any absence.
 
-    ``df_status``'s sa_id may carry the ``sa_`` prefix while sub keys are bare -- normalize.
+    ``df_status``'s member_id may carry the ``member_`` prefix while sub keys are bare -- normalize.
     """
     try:
         df = master.df_status
@@ -398,9 +398,9 @@ def _b4b_n_resumes(master, sa_id) -> int:
 
     def _norm(v: object) -> str:
         s = str(v)
-        return s[3:] if s.startswith("sa_") else s
+        return s[3:] if s.startswith("member_") else s
 
-    want = _norm(sa_id)
+    want = _norm(member_id)
     vals: list[int] = []
     for raw_id, n in zip(df["sa_id"], df["n_resumes"], strict=False):
         if _norm(raw_id) != want:
@@ -430,7 +430,7 @@ def _b4b_config_identity(sub) -> tuple:
 
 def _b4b_config_attrs(sub) -> dict:
     """Attrs dict in the shape _config_diff._derive_config_label / _gpu_hardware consume
-    (they key on 'hpc.partition'), sourced from the sub's cfg_analysis (NOT the sa_id)."""
+    (they key on 'hpc.partition'), sourced from the sub's cfg_analysis (NOT the member_id)."""
     c = getattr(sub, "cfg_analysis", None)
     return {
         "run_mode": str(getattr(c, "run_mode", "") or ""),
@@ -476,14 +476,13 @@ def _b4b_device_key(sub) -> tuple:
     )
 
 
-
 def _b4b_ref_key(member: tuple) -> tuple:
-    """Within-family reference ordering for a (sa_id, sub) member — deterministic under ties.
+    """Within-family reference ordering for a (member_id, sub) member — deterministic under ties.
 
     _b4b_device_key alone ties GPU x1 (a6000) against GPU x1 (a100-80), and min() would then
     resolve on members' arrival order (a glob order), so the starred reference row could move
     between renders of the SAME data. Tiebreak on the ensemble partition alphabetically
-    (selects gpu-a100-80), then on sa_id. Which GPU hardware wins is immaterial; that the rule
+    (selects gpu-a100-80), then on member_id. Which GPU hardware wins is immaterial; that the rule
     is deterministic is not.
     """
     return (
@@ -491,6 +490,7 @@ def _b4b_ref_key(member: tuple) -> tuple:
         str(_b4b_config_attrs(member[1]).get("hpc.partition", "")),
         str(member[0]),
     )
+
 
 def _b4b_dataset(
     per_config: dict[str, dict[str, tuple[xr.DataArray, xr.DataArray]]],
@@ -526,12 +526,18 @@ def _b4b_dataset(
         ds = xr.Dataset({"identical": xr.DataArray(np.array(np.nan, dtype="float64"))})
     else:
         cc = xr.DataArray(labels, dims="compute_config", name="compute_config")
-        identical = xr.concat(id_das, dim=cc, join="outer").transpose("compute_config", "raw_output_type", "timestep_min")
-        max_abs_diff = xr.concat(mad_das, dim=cc, join="outer").transpose("compute_config", "raw_output_type", "timestep_min")
+        identical = xr.concat(id_das, dim=cc, join="outer").transpose(
+            "compute_config", "raw_output_type", "timestep_min"
+        )
+        max_abs_diff = xr.concat(mad_das, dim=cc, join="outer").transpose(
+            "compute_config", "raw_output_type", "timestep_min"
+        )
         ds = xr.Dataset({"identical": identical, "max_abs_diff": max_abs_diff})
 
         def _sa(key):
-            return xr.DataArray([meta[c][key] for c in labels], dims="compute_config", coords={"compute_config": labels})
+            return xr.DataArray(
+                [meta[c][key] for c in labels], dims="compute_config", coords={"compute_config": labels}
+            )
 
         ds["config_label"] = _sa("config_label")
         ds["family"] = _sa("family")
@@ -570,10 +576,10 @@ def _b4b_dataset(
 
 
 def _collapse_replicates(per_config: dict, meta: dict) -> tuple[dict, dict, dict[str, int]]:
-    """Fold sa_id-keyed b4b results into ONE entry per COMPUTE CONFIG (N4).
+    """Fold member_id-keyed b4b results into ONE entry per COMPUTE CONFIG (N4).
 
-    `per_config` is keyed by sa_id (`gpu_0_r1`, `gpu_0_r2`, ...) while the rendered row
-    LABEL is `meta[sa]["config_label"]`, which by contract omits the replicate suffix
+    `per_config` is keyed by member_id (`gpu_0_r1`, `gpu_0_r2`, ...) while the rendered row
+    LABEL is `meta[member]["config_label"]`, which by contract omits the replicate suffix
     (`_config_diff._derive_config_label`: "Replicate suffixes (``_r1``/``_r2``) are NOT
     in the identity"). The figure therefore drew 16 rows carrying 9 distinct labels, and
     two byte-identical y-labels read as a rendering bug rather than as two replicates.
@@ -604,8 +610,8 @@ def _collapse_replicates(per_config: dict, meta: dict) -> tuple[dict, dict, dict
     import numpy as _np
 
     by_label: dict[str, list[str]] = {}
-    for sa in per_config:
-        by_label.setdefault(str(meta[sa]["config_label"]), []).append(sa)
+    for member in per_config:
+        by_label.setdefault(str(meta[member]["config_label"]), []).append(member)
 
     out_pc: dict[str, dict] = {}
     out_meta: dict[str, dict] = {}
@@ -651,7 +657,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     import dataclasses as _dc
     import json as _json
 
-    from hhemt.analysis_validation import CheckResult, _iter_subanalyses_or_self
+    from hhemt.analysis_validation import CheckResult, _iter_members_or_self
     from hhemt.eda._result import EdaResult
     from hhemt.report_plot_ids import canonical_plot_id
     from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
@@ -665,17 +671,17 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     analysis_dir = Path(master.analysis_paths.analysis_dir)
     eda_dir = analysis_dir / "eda"
 
-    from hhemt.eda._config_diff import _derive_config_label
+    from hhemt.config_labels import _derive_config_label
 
-    # gather: (sa_id, sub, model, raw_bin_dir, n_resumes)
+    # gather: (member_id, sub, model, raw_bin_dir, n_resumes)
     subs: list[tuple] = []
-    for sa_id, sub in _iter_subanalyses_or_self(master):
+    for member_id, sub in _iter_members_or_self(master):
         model = _b4b_enabled_model(sub)
         if model not in ("tritonswmm", "triton"):
             continue
         raw_bin = _b4b_sub_raw_bin_dir(sub, model, raw_out_type)
-        n_res = _b4b_n_resumes(master, sa_id) if sa_id is not None else 0
-        label = str(sa_id) if sa_id is not None else "self"
+        n_res = _b4b_n_resumes(master, member_id) if member_id is not None else 0
+        label = str(member_id) if member_id is not None else "self"
         subs.append((label, sub, model, raw_bin, n_res))
 
     # PER-FAMILY cross-config raw byte-identity over the master's OWN subs. Applicable
@@ -725,9 +731,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         for s in members:
             if s is ref:
                 continue
-            tri = compare_triton_raw_timeseries(
-                ref[3], s[3], reporting_interval_s=interval, raw_out_type=raw_out_type
-            )
+            tri = compare_triton_raw_timeseries(ref[3], s[3], reporting_interval_s=interval, raw_out_type=raw_out_type)
             if tri:
                 per_config[s[0]] = tri
                 meta[s[0]] = _meta_for(s, family, False)
@@ -736,13 +740,13 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     # N4: collapse r1/r2 replicates so the figure draws ONE row per compute config.
     # Done AFTER the per-family comparison loop (each replicate is compared against the
     # reference in its own right) and BEFORE _b4b_dataset, so the compute_config DIM is
-    # the config label rather than the sa_id.
+    # the config label rather than the member_id.
     per_config, meta, n_replicates = _collapse_replicates(per_config, meta)
     degraded = not per_config
     degraded_reason = ""
     if degraded:
         degraded_reason = (
-            "no sub-analysis with present raw outputs in this master (raw cleared or absent); "
+            "no member with present raw outputs in this master (raw cleared or absent); "
             "the b4b masters must preserve raw outputs (clear_raw disabled)"
             if not with_raw
             else "no within-family config pair with present raw outputs"

@@ -11,6 +11,7 @@ qa:
     uv run --python=3.12 --extra test ruff check --select I --fix .
     uv run --python=3.12 --extra test ty check .
     python scripts/check_du_sentinel_sites.py
+    python scripts/check_vocabulary_freeze.py
     uv run --python=3.12 --extra test pytest .
 
 # Run all the tests for all the supported Python versions

@@ -1,5 +1,5 @@
 # Auto-generated flattened master Snakefile for sensitivity analysis
-# Each sub-analysis simulation phase gets its own rule with appropriate resources
+# Each member simulation phase gets its own rule with appropriate resources
 
 import os
 from datetime import datetime as _dt
@@ -16,16 +16,16 @@ config["analysis_id"] = 'synth_sensitivity'
 config["toolkit_version"] = _toolkit_version
 config["n_sims"] = 4
 config["is_sensitivity"] = True
-config["n_sub_analyses"] = 4
+config["n_members"] = 4
 config["independent_vars"] = ['n_devices']
 config["group_by_var"] = 'run_mode'
 config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}
 
-# Paired (sa_id, event_id) lists for per-sa per-event plot rules.
-# Used by `expand(..., zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)`
-# in the master `rule all` and in the per-sa per-event plot rule definitions.
-SA_EVENT_PAIRS_SA = ['0', '1', '2', '3']
-SA_EVENT_PAIRS_EVT = ['event_index.0', 'event_index.0', 'event_index.0', 'event_index.0']
+# Paired (member_id, event_id) lists for per-member per-event plot rules.
+# Used by `expand(..., zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT)`
+# in the master `rule all` and in the per-member per-event plot rule definitions.
+MEMBER_EVENT_PAIRS_MEMBER = ['0', '1', '2', '3']
+MEMBER_EVENT_PAIRS_EVT = ['event_index.0', 'event_index.0', 'event_index.0', 'event_index.0']
 
 report: "report/workflow_description.rst"
 
@@ -47,7 +47,7 @@ onerror:
 
 rule all:
     input:
-        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_sa-0_complete.flag", "_status/e_consolidate_sa-1_complete.flag", "_status/e_consolidate_sa-2_complete.flag", "_status/e_consolidate_sa-3_complete.flag", "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
+        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_member-0_complete.flag", "_status/e_consolidate_member-1_complete.flag", "_status/e_consolidate_member-2_complete.flag", "_status/e_consolidate_member-3_complete.flag", "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
 
 rule setup_target_0:
     output: "_status/a_setup_target_0_complete.flag"
@@ -78,12 +78,12 @@ rule setup_target_0:
             > {log} 2>&1
         """
 
-rule prepare_sa_0_evt_event_index_0:
+rule prepare_member_0_evt_event_index_0:
     input:
         "_status/a_setup_target_0_complete.flag",
-        "_status/sa-0_inputs.json"
-    output: "_status/b_prepare_sa-0_evt-event_index.0_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_sa_0_evt_event_index_0.log"
+        "_status/member-0_inputs.json"
+    output: "_status/b_prepare_member-0_evt-event_index.0_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_0_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -98,23 +98,23 @@ rule prepare_sa_0_evt_event_index_0:
         python -m hhemt.prepare_scenario_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_0/sa_0.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_0/member_0.yaml \
             \
             \
             --flag-output {output} \
-            --rule-name prepare_sa_0_evt_event_index_0 \
-            --sa-id 0 \
+            --rule-name prepare_member_0_evt_event_index_0 \
+            --member-id 0 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule simulation_sa_0_evt_event_index_0:
+rule simulation_member_0_evt_event_index_0:
     input:
-        "_status/b_prepare_sa-0_evt-event_index.0_complete.flag",
-        "_status/sa-0_inputs.json"
-    output: "_status/c_run_tritonswmm_sa-0_evt-event_index.0_complete.flag"
+        "_status/b_prepare_member-0_evt-event_index.0_complete.flag",
+        "_status/member-0_inputs.json"
+    output: "_status/c_run_tritonswmm_member-0_evt-event_index.0_complete.flag"
     retries: 2
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_sa_0_evt_event_index_0.log"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_0_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 2
     resources:
@@ -131,22 +131,22 @@ rule simulation_sa_0_evt_event_index_0:
         python -m hhemt.run_simulation_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_0/sa_0.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_0/member_0.yaml \
             --model-type tritonswmm \
-            --sa-id 0 \
+            --member-id 0 \
             --pickup-where-leftoff \
             --flag-output {output} \
-            --rule-name simulation_sa_0_evt_event_index_0 \
+            --rule-name simulation_member_0_evt_event_index_0 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule process_sa_0_evt_event_index_0:
+rule process_member_0_evt_event_index_0:
     input:
-        "_status/c_run_tritonswmm_sa-0_evt-event_index.0_complete.flag",
-        "_status/sa-0_inputs.json"
-    output: "_status/d_process_tritonswmm_sa-0_evt-event_index.0_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/process_sa_0_evt_event_index_0.log"
+        "_status/c_run_tritonswmm_member-0_evt-event_index.0_complete.flag",
+        "_status/member-0_inputs.json"
+    output: "_status/d_process_tritonswmm_member-0_evt-event_index.0_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/process_member_0_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -161,22 +161,22 @@ rule process_sa_0_evt_event_index_0:
         python -m hhemt.process_timeseries_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_0/sa_0.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_0/member_0.yaml \
             --model-type tritonswmm \
             --which both \
             \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name process_sa_0_evt_event_index_0 \
-            --sa-id 0 \
+            --rule-name process_member_0_evt_event_index_0 \
+            --member-id 0 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule consolidate_sa_0:
-    input: "_status/d_process_tritonswmm_sa-0_evt-event_index.0_complete.flag", "_status/sa-0_inputs.json"
-    output: "_status/e_consolidate_sa-0_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_sa_0.log"
+rule consolidate_member_0:
+    input: "_status/d_process_tritonswmm_member-0_evt-event_index.0_complete.flag", "_status/member-0_inputs.json"
+    output: "_status/e_consolidate_member-0_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_member_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -190,21 +190,21 @@ rule consolidate_sa_0:
         mkdir -p {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.consolidate_workflow \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_0/sa_0.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_0/member_0.yaml \
             --which both \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name consolidate_sa_0 \
-            --sa-id 0 \
+            --rule-name consolidate_member_0 \
+            --member-id 0 \
             > {log} 2>&1
         """
 
-rule prepare_sa_1_evt_event_index_0:
+rule prepare_member_1_evt_event_index_0:
     input:
         "_status/a_setup_target_0_complete.flag",
-        "_status/sa-1_inputs.json"
-    output: "_status/b_prepare_sa-1_evt-event_index.0_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_sa_1_evt_event_index_0.log"
+        "_status/member-1_inputs.json"
+    output: "_status/b_prepare_member-1_evt-event_index.0_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_1_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -219,23 +219,23 @@ rule prepare_sa_1_evt_event_index_0:
         python -m hhemt.prepare_scenario_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_1/sa_1.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_1/member_1.yaml \
             \
             \
             --flag-output {output} \
-            --rule-name prepare_sa_1_evt_event_index_0 \
-            --sa-id 1 \
+            --rule-name prepare_member_1_evt_event_index_0 \
+            --member-id 1 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule simulation_sa_1_evt_event_index_0:
+rule simulation_member_1_evt_event_index_0:
     input:
-        "_status/b_prepare_sa-1_evt-event_index.0_complete.flag",
-        "_status/sa-1_inputs.json"
-    output: "_status/c_run_tritonswmm_sa-1_evt-event_index.0_complete.flag"
+        "_status/b_prepare_member-1_evt-event_index.0_complete.flag",
+        "_status/member-1_inputs.json"
+    output: "_status/c_run_tritonswmm_member-1_evt-event_index.0_complete.flag"
     retries: 2
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_sa_1_evt_event_index_0.log"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_1_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 2
     resources:
@@ -251,22 +251,22 @@ rule simulation_sa_1_evt_event_index_0:
         python -m hhemt.run_simulation_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_1/sa_1.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_1/member_1.yaml \
             --model-type tritonswmm \
-            --sa-id 1 \
+            --member-id 1 \
             --pickup-where-leftoff \
             --flag-output {output} \
-            --rule-name simulation_sa_1_evt_event_index_0 \
+            --rule-name simulation_member_1_evt_event_index_0 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule process_sa_1_evt_event_index_0:
+rule process_member_1_evt_event_index_0:
     input:
-        "_status/c_run_tritonswmm_sa-1_evt-event_index.0_complete.flag",
-        "_status/sa-1_inputs.json"
-    output: "_status/d_process_tritonswmm_sa-1_evt-event_index.0_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/process_sa_1_evt_event_index_0.log"
+        "_status/c_run_tritonswmm_member-1_evt-event_index.0_complete.flag",
+        "_status/member-1_inputs.json"
+    output: "_status/d_process_tritonswmm_member-1_evt-event_index.0_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/process_member_1_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -281,22 +281,22 @@ rule process_sa_1_evt_event_index_0:
         python -m hhemt.process_timeseries_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_1/sa_1.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_1/member_1.yaml \
             --model-type tritonswmm \
             --which both \
             \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name process_sa_1_evt_event_index_0 \
-            --sa-id 1 \
+            --rule-name process_member_1_evt_event_index_0 \
+            --member-id 1 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule consolidate_sa_1:
-    input: "_status/d_process_tritonswmm_sa-1_evt-event_index.0_complete.flag", "_status/sa-1_inputs.json"
-    output: "_status/e_consolidate_sa-1_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_sa_1.log"
+rule consolidate_member_1:
+    input: "_status/d_process_tritonswmm_member-1_evt-event_index.0_complete.flag", "_status/member-1_inputs.json"
+    output: "_status/e_consolidate_member-1_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_member_1.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -310,21 +310,21 @@ rule consolidate_sa_1:
         mkdir -p {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.consolidate_workflow \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_1/sa_1.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_1/member_1.yaml \
             --which both \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name consolidate_sa_1 \
-            --sa-id 1 \
+            --rule-name consolidate_member_1 \
+            --member-id 1 \
             > {log} 2>&1
         """
 
-rule prepare_sa_2_evt_event_index_0:
+rule prepare_member_2_evt_event_index_0:
     input:
         "_status/a_setup_target_0_complete.flag",
-        "_status/sa-2_inputs.json"
-    output: "_status/b_prepare_sa-2_evt-event_index.0_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_sa_2_evt_event_index_0.log"
+        "_status/member-2_inputs.json"
+    output: "_status/b_prepare_member-2_evt-event_index.0_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_2_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -339,23 +339,23 @@ rule prepare_sa_2_evt_event_index_0:
         python -m hhemt.prepare_scenario_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_2/sa_2.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_2/member_2.yaml \
             \
             \
             --flag-output {output} \
-            --rule-name prepare_sa_2_evt_event_index_0 \
-            --sa-id 2 \
+            --rule-name prepare_member_2_evt_event_index_0 \
+            --member-id 2 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule simulation_sa_2_evt_event_index_0:
+rule simulation_member_2_evt_event_index_0:
     input:
-        "_status/b_prepare_sa-2_evt-event_index.0_complete.flag",
-        "_status/sa-2_inputs.json"
-    output: "_status/c_run_tritonswmm_sa-2_evt-event_index.0_complete.flag"
+        "_status/b_prepare_member-2_evt-event_index.0_complete.flag",
+        "_status/member-2_inputs.json"
+    output: "_status/c_run_tritonswmm_member-2_evt-event_index.0_complete.flag"
     retries: 2
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_sa_2_evt_event_index_0.log"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_2_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 4
     resources:
@@ -372,22 +372,22 @@ rule simulation_sa_2_evt_event_index_0:
         python -m hhemt.run_simulation_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_2/sa_2.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_2/member_2.yaml \
             --model-type tritonswmm \
-            --sa-id 2 \
+            --member-id 2 \
             --pickup-where-leftoff \
             --flag-output {output} \
-            --rule-name simulation_sa_2_evt_event_index_0 \
+            --rule-name simulation_member_2_evt_event_index_0 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule process_sa_2_evt_event_index_0:
+rule process_member_2_evt_event_index_0:
     input:
-        "_status/c_run_tritonswmm_sa-2_evt-event_index.0_complete.flag",
-        "_status/sa-2_inputs.json"
-    output: "_status/d_process_tritonswmm_sa-2_evt-event_index.0_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/process_sa_2_evt_event_index_0.log"
+        "_status/c_run_tritonswmm_member-2_evt-event_index.0_complete.flag",
+        "_status/member-2_inputs.json"
+    output: "_status/d_process_tritonswmm_member-2_evt-event_index.0_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/process_member_2_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -402,22 +402,22 @@ rule process_sa_2_evt_event_index_0:
         python -m hhemt.process_timeseries_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_2/sa_2.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_2/member_2.yaml \
             --model-type tritonswmm \
             --which both \
             \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name process_sa_2_evt_event_index_0 \
-            --sa-id 2 \
+            --rule-name process_member_2_evt_event_index_0 \
+            --member-id 2 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule consolidate_sa_2:
-    input: "_status/d_process_tritonswmm_sa-2_evt-event_index.0_complete.flag", "_status/sa-2_inputs.json"
-    output: "_status/e_consolidate_sa-2_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_sa_2.log"
+rule consolidate_member_2:
+    input: "_status/d_process_tritonswmm_member-2_evt-event_index.0_complete.flag", "_status/member-2_inputs.json"
+    output: "_status/e_consolidate_member-2_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_member_2.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -431,21 +431,21 @@ rule consolidate_sa_2:
         mkdir -p {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.consolidate_workflow \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_2/sa_2.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_2/member_2.yaml \
             --which both \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name consolidate_sa_2 \
-            --sa-id 2 \
+            --rule-name consolidate_member_2 \
+            --member-id 2 \
             > {log} 2>&1
         """
 
-rule prepare_sa_3_evt_event_index_0:
+rule prepare_member_3_evt_event_index_0:
     input:
         "_status/a_setup_target_0_complete.flag",
-        "_status/sa-3_inputs.json"
-    output: "_status/b_prepare_sa-3_evt-event_index.0_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_sa_3_evt_event_index_0.log"
+        "_status/member-3_inputs.json"
+    output: "_status/b_prepare_member-3_evt-event_index.0_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_3_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -460,23 +460,23 @@ rule prepare_sa_3_evt_event_index_0:
         python -m hhemt.prepare_scenario_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_3/sa_3.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_3/member_3.yaml \
             \
             \
             --flag-output {output} \
-            --rule-name prepare_sa_3_evt_event_index_0 \
-            --sa-id 3 \
+            --rule-name prepare_member_3_evt_event_index_0 \
+            --member-id 3 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule simulation_sa_3_evt_event_index_0:
+rule simulation_member_3_evt_event_index_0:
     input:
-        "_status/b_prepare_sa-3_evt-event_index.0_complete.flag",
-        "_status/sa-3_inputs.json"
-    output: "_status/c_run_tritonswmm_sa-3_evt-event_index.0_complete.flag"
+        "_status/b_prepare_member-3_evt-event_index.0_complete.flag",
+        "_status/member-3_inputs.json"
+    output: "_status/c_run_tritonswmm_member-3_evt-event_index.0_complete.flag"
     retries: 2
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_sa_3_evt_event_index_0.log"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_3_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
     resources:
@@ -492,22 +492,22 @@ rule simulation_sa_3_evt_event_index_0:
         python -m hhemt.run_simulation_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_3/sa_3.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_3/member_3.yaml \
             --model-type tritonswmm \
-            --sa-id 3 \
+            --member-id 3 \
             --pickup-where-leftoff \
             --flag-output {output} \
-            --rule-name simulation_sa_3_evt_event_index_0 \
+            --rule-name simulation_member_3_evt_event_index_0 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule process_sa_3_evt_event_index_0:
+rule process_member_3_evt_event_index_0:
     input:
-        "_status/c_run_tritonswmm_sa-3_evt-event_index.0_complete.flag",
-        "_status/sa-3_inputs.json"
-    output: "_status/d_process_tritonswmm_sa-3_evt-event_index.0_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/process_sa_3_evt_event_index_0.log"
+        "_status/c_run_tritonswmm_member-3_evt-event_index.0_complete.flag",
+        "_status/member-3_inputs.json"
+    output: "_status/d_process_tritonswmm_member-3_evt-event_index.0_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/process_member_3_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -522,22 +522,22 @@ rule process_sa_3_evt_event_index_0:
         python -m hhemt.process_timeseries_runner \
             --event-iloc 0 \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_3/sa_3.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_3/member_3.yaml \
             --model-type tritonswmm \
             --which both \
             \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name process_sa_3_evt_event_index_0 \
-            --sa-id 3 \
+            --rule-name process_member_3_evt_event_index_0 \
+            --member-id 3 \
             --event-id event_index.0 \
             > {log} 2>&1
         """
 
-rule consolidate_sa_3:
-    input: "_status/d_process_tritonswmm_sa-3_evt-event_index.0_complete.flag", "_status/sa-3_inputs.json"
-    output: "_status/e_consolidate_sa-3_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_sa_3.log"
+rule consolidate_member_3:
+    input: "_status/d_process_tritonswmm_member-3_evt-event_index.0_complete.flag", "_status/member-3_inputs.json"
+    output: "_status/e_consolidate_member-3_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_member_3.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -551,17 +551,17 @@ rule consolidate_sa_3:
         mkdir -p {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.consolidate_workflow \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_3/sa_3.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/members/member_3/member_3.yaml \
             --which both \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name consolidate_sa_3 \
-            --sa-id 3 \
+            --rule-name consolidate_member_3 \
+            --member-id 3 \
             > {log} 2>&1
         """
 
 rule master_consolidation:
-    input: "_status/e_consolidate_sa-0_complete.flag", "_status/e_consolidate_sa-1_complete.flag", "_status/e_consolidate_sa-2_complete.flag", "_status/e_consolidate_sa-3_complete.flag"
+    input: "_status/e_consolidate_member-0_complete.flag", "_status/e_consolidate_member-1_complete.flag", "_status/e_consolidate_member-2_complete.flag", "_status/e_consolidate_member-3_complete.flag"
     output: "_status/f_consolidate_master_complete.flag"
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/master_consolidation.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
@@ -597,8 +597,8 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson``\n',
+        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'members/member_0/sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'members/member_0/sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson', 'variables': []}],
+        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``members/member_0/sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``members/member_0/sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson``\n',
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
@@ -624,8 +624,8 @@ rule plot_per_analysis_summary_table:
             labels={"figure": "Summary table"},
         )
     params:
-        source_paths = [{'path': 'subanalyses/sa_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_0/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'subanalyses/sa_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_1/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'subanalyses/sa_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_2/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'subanalyses/sa_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_3/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}],
-        source_paths_rst = '- ``subanalyses/sa_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_0/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``subanalyses/sa_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_1/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``subanalyses/sa_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_2/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``subanalyses/sa_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_3/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n',
+        source_paths = [{'path': 'members/member_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_0/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_1/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_2/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_3/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}],
+        source_paths_rst = '- ``members/member_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_0/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_1/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_2/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_3/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n',
     log: "logs/plots/per_analysis_summary_table.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=5
@@ -811,19 +811,19 @@ rule export_scenario_status:
             > {log} 2>&1
         """
 
-ILOC_BY_EVENT_ID_BY_SA = {'0': {'event_index.0': 0}, '1': {'event_index.0': 0}, '2': {'event_index.0': 0}, '3': {'event_index.0': 0}}
+ILOC_BY_EVENT_ID_BY_MEMBER = {'0': {'event_index.0': 0}, '1': {'event_index.0': 0}, '2': {'event_index.0': 0}, '3': {'event_index.0': 0}}
 
 from hhemt.report_plot_ids import (
     event_labels_from_status as _event_labels_from_status,
     report_label_value as _report_label_value,
-    sa_labels_from_status as _sa_labels_from_status,
+    member_labels_from_status as _member_labels_from_status,
 )
 
 _EVENT_LABELS = _event_labels_from_status(workflow.basedir)
-_SA_LABELS = _sa_labels_from_status(workflow.basedir)
+_MEMBER_LABELS = _member_labels_from_status(workflow.basedir)
 
 
-def _per_sim_per_sa_flood_depth_sources(wildcards):
+def _per_sim_per_member_flood_depth_sources(wildcards):
     from hhemt.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
     )
@@ -832,10 +832,10 @@ def _per_sim_per_sa_flood_depth_sources(wildcards):
         wildcards.event_id,
         rainfall_datavar='RG_synth',
         storm_tide_datavar='water_level',
-        sa_id=wildcards.sa_id,
+        member_id=wildcards.member_id,
     )
 
-def _per_sim_per_sa_conduit_flow_sources(wildcards):
+def _per_sim_per_member_conduit_flow_sources(wildcards):
     from hhemt.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
     )
@@ -844,27 +844,27 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         wildcards.event_id,
         rainfall_datavar='RG_synth',
         storm_tide_datavar='water_level',
-        sa_id=wildcards.sa_id,
+        member_id=wildcards.member_id,
     )
 
-rule plot_per_sim_per_sa_peak_flood_depth:
+rule plot_per_sim_per_member_peak_flood_depth:
     input:
         master = "_status/f_consolidate_master_complete.flag",
     output:
         report(
-            "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html",
+            "plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}.html",
             caption="report/captions/per_sim_peak_flood_depth.rst",
             category="Per Simulation Results",
-            labels=(lambda w: {"figure": "Peak flood depth", "sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
+            labels=(lambda w: {"figure": "Peak flood depth", "member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
-        sa_id="[A-Za-z0-9_.]+",
+        member_id="[A-Za-z0-9_.]+",
         event_id="[A-Za-z0-9_.]+",
     params:
-        source_paths = _per_sim_per_sa_flood_depth_sources,
-        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_per_sa_flood_depth_sources(w)),
-        event_iloc = lambda w: ILOC_BY_EVENT_ID_BY_SA[w.sa_id][w.event_id],
-    log: "logs/plots/per_sim_per_sa_peak_flood_depth_sa-{sa_id}_{event_id}.log"
+        source_paths = _per_sim_per_member_flood_depth_sources,
+        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_per_member_flood_depth_sources(w)),
+        event_iloc = lambda w: ILOC_BY_EVENT_ID_BY_MEMBER[w.member_id][w.event_id],
+    log: "logs/plots/per_sim_per_member_peak_flood_depth_member-{member_id}_{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=4000, time_min=15
     shell:
@@ -872,30 +872,30 @@ rule plot_per_sim_per_sa_peak_flood_depth:
         {PYTHON} -m hhemt.report_renderers._cli per_sim_peak_flood_depth \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
-            --sa-id {wildcards.sa_id} \
+            --member-id {wildcards.member_id} \
             --event-iloc {params.event_iloc} \
             --output {output} \
             > {log} 2>&1
         """
 
-rule plot_per_sim_per_sa_conduit_flow:
+rule plot_per_sim_per_member_conduit_flow:
     input:
         master = "_status/f_consolidate_master_complete.flag",
     output:
         report(
-            "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html",
+            "plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}.html",
             caption="report/captions/per_sim_conduit_flow.rst",
             category="Per Simulation Results",
-            labels=(lambda w: {"figure": "Conduit flow", "sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
+            labels=(lambda w: {"figure": "Conduit flow", "member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
-        sa_id="[A-Za-z0-9_.]+",
+        member_id="[A-Za-z0-9_.]+",
         event_id="[A-Za-z0-9_.]+",
     params:
-        source_paths = _per_sim_per_sa_conduit_flow_sources,
-        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_per_sa_conduit_flow_sources(w)),
-        event_iloc = lambda w: ILOC_BY_EVENT_ID_BY_SA[w.sa_id][w.event_id],
-    log: "logs/plots/per_sim_per_sa_conduit_flow_sa-{sa_id}_{event_id}.log"
+        source_paths = _per_sim_per_member_conduit_flow_sources,
+        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_per_member_conduit_flow_sources(w)),
+        event_iloc = lambda w: ILOC_BY_EVENT_ID_BY_MEMBER[w.member_id][w.event_id],
+    log: "logs/plots/per_sim_per_member_conduit_flow_member-{member_id}_{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=4000, time_min=15
     shell:
@@ -903,7 +903,7 @@ rule plot_per_sim_per_sa_conduit_flow:
         {PYTHON} -m hhemt.report_renderers._cli per_sim_conduit_flow \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
-            --sa-id {wildcards.sa_id} \
+            --member-id {wildcards.member_id} \
             --event-iloc {params.event_iloc} \
             --output {output} \
             > {log} 2>&1
@@ -961,8 +961,8 @@ rule render_report:
         "plots/workflow_performance.html",
         "scenario_status.csv",
         "workflow_summary.md",
-        expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT),
-        expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT),
+        expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT),
+        expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT),
         expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices'])
     output:
         "analysis_report.{format}"

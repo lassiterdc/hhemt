@@ -163,13 +163,19 @@ _MODEL_STACK_CSS = """
 .model-stack{display:flex;flex-direction:column;margin:1.5rem 0;}
 .model-stack>.model-section{width:100%;padding:1rem 0;}
 .model-stack>.model-section[data-model="tritonswmm"]{order:0;}
-.model-stack>.model-section[data-model="triton"]{order:1;border-top:2px solid var(--uva-medium-gray,#cccccc);margin-top:.5rem;}
+.model-stack>.model-section[data-model="triton"]{order:1;
+border-top:2px solid var(--uva-medium-gray,#cccccc);margin-top:.5rem;}
 .model-stack>.model-section[data-model]::before{display:block;font-weight:bold;color:var(--uva-blue,#1a1a1a);margin-bottom:.5rem;font-size:1.05rem;}
 .model-stack>.model-section[data-model="tritonswmm"]::before{content:"TRITON-SWMM";}
 .model-stack>.model-section[data-model="triton"]::before{content:"TRITON";}
-.model-stack>.model-section img,.model-stack>.model-section iframe,.model-stack>.model-section svg,.model-stack>.model-section table{max-width:100%;}
+.model-stack>.model-section img,.model-stack>.model-section iframe,
+.model-stack>.model-section svg,.model-stack>.model-section table{max-width:100%;}
 .model-arm-frame{width:100%;height:900px;border:0;overflow:auto;}
-.model-stack>.model-section[data-model-absent],.model-stack>.model-section.model-absent{color:var(--uva-text-gray,#6b7280);background:var(--uva-light-gray,#f1f3f5);border:1px dashed var(--uva-medium-gray,#cccccc);border-radius:4px;padding:.75rem 1rem;font-style:italic;}
+.model-stack>.model-section[data-model-absent],
+.model-stack>.model-section.model-absent{color:var(--uva-text-gray,#6b7280);
+background:var(--uva-light-gray,#f1f3f5);
+border:1px dashed var(--uva-medium-gray,#cccccc);
+border-radius:4px;padding:.75rem 1rem;font-style:italic;}
 """
 
 #: Iter-13 defect 2. The arm frame used to be sized ONCE, from its own `onload` handler, as
@@ -247,7 +253,7 @@ def _compose_model_pair_page(
     ts_html: str,
     tri_html: str | None,
     root_css_vars: str = "",
-    sa_labels: dict[str, str] | None = None,
+    member_labels: dict[str, str] | None = None,
     event_labels: dict[str, str] | None = None,
 ) -> str:
     """Compose ONE self-contained page STACKING the TRITON-SWMM figure (top) and its pure-TRITON
@@ -278,7 +284,7 @@ def _compose_model_pair_page(
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
         f"<title>{_html.escape(base_eid)} — "
-        f"{_html.escape(humanize_plot_id(plot_id, sa_labels, event_labels))}</title>"
+        f"{_html.escape(humanize_plot_id(plot_id, member_labels, event_labels))}</title>"
         f"<style>{root_css_vars}\n{_MODEL_STACK_CSS}</style>"
         # Defined ONCE per composed page rather than inlined into each iframe's onload
         # attribute: one definition for both arms, and no attribute-escaping hazard around
@@ -322,20 +328,20 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
     hashed child_crates/; CR4-safe -- the whole harvest runs under the CR4-monkeypatched
     _render_combined_report). R5-1's .model-stack CSS is inlined per page (FQ2); its var(--uva-*)
     resolves from the staged report.css :root{} (brand_theme stipulation)."""
-    # S4: one sa_id -> derived-config-label map for every label this harvest emits --
+    # S4: one member_id -> derived-config-label map for every label this harvest emits --
     # the paired-page <title>/<h2> and the sidebar `labels.figure` facet. Merged across
     # child crates because the combined bundle has no top-level scenario_status.csv.
     # Built ONCE here rather than per figure: the harvest emits one page per
     # (base-experiment, plot_id) pair and re-reading per page would re-parse the same
     # CSVs for every figure.
-    from ..report_plot_ids import event_labels_from_status, sa_labels_from_status
+    from ..report_plot_ids import event_labels_from_status, member_labels_from_status
 
-    _sa_labels: dict[str, str] = {}
+    _member_labels: dict[str, str] = {}
     _event_labels: dict[str, str] = {}
     _crates_dir = bundle_root / "child_crates"
     if _crates_dir.exists():
         for _c in sorted(p for p in _crates_dir.iterdir() if p.is_dir()):
-            _sa_labels.update(sa_labels_from_status(_c))
+            _member_labels.update(member_labels_from_status(_c))
             _event_labels.update(event_labels_from_status(_c))
     import json as _json
     import re as _re
@@ -370,7 +376,9 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         continue
                     claimed.add(fpath)
                     sidecar = fpath.with_suffix(".manifest.json")
-                    plot_id = _json.loads(sidecar.read_text()).get("plot_id", fpath.stem) if sidecar.exists() else fpath.stem
+                    plot_id = (
+                        _json.loads(sidecar.read_text()).get("plot_id", fpath.stem) if sidecar.exists() else fpath.stem
+                    )
                     rk = tmpl.report_kwargs
                     out.append((plot_id, rk.get("category", "Other"), rk.get("subcategory", ""), rel, fpath, sidecar))
         for fpath in sorted(child.glob("plots/**/*.html")):
@@ -413,8 +421,8 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
         # campaign) has neither, and falling through to `continue` harvested ZERO figures for
         # it silently. Such a base renders its single section alone, exactly as a coupled-only
         # figure does.
-        primary_eid = ts_eid or tri_eid or next(
-            (arms[k] for k in sorted(arms) if k not in ("tritonswmm", "triton")), None
+        primary_eid = (
+            ts_eid or tri_eid or next((arms[k] for k in sorted(arms) if k not in ("tritonswmm", "triton")), None)
         )
         if primary_eid is None:
             warnings.warn(
@@ -426,12 +434,12 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
             continue
         # pure-TRITON counterpart figures by plot_id, only when the primary IS the coupled arm
         counterpart = {f[0]: f for f in _figures_of(tri_eid)} if (ts_eid and tri_eid) else {}
-        for plot_id, category, subcategory, rel, fpath, sidecar in _figures_of(primary_eid):
+        for plot_id, category, subcategory, _rel, fpath, sidecar in _figures_of(primary_eid):
             ts_html = fpath.read_text(encoding="utf-8", errors="replace")
             cf = counterpart.get(plot_id)
             tri_html = cf[4].read_text(encoding="utf-8", errors="replace") if cf is not None else None
             page_html = _compose_model_pair_page(
-                base, plot_id, ts_html, tri_html, root_css_vars, _sa_labels, _event_labels
+                base, plot_id, ts_html, tri_html, root_css_vars, _member_labels, _event_labels
             )
             (paired_dir / _re.sub(r"[^A-Za-z0-9_.]", "_", base)).mkdir(parents=True, exist_ok=True)
             # Per-base SUBDIRECTORY, so the page's filename STEM is exactly the plot id: the
@@ -452,7 +460,8 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
             specs.append(
                 RuleSpec(
                     rule_name=rn,
-                    renderer_module="cross_experiment_compatibility",  # any keyed renderer; shell inert (page pre-composed)
+                    # any keyed renderer; shell inert (page pre-composed)
+                    renderer_module="cross_experiment_compatibility",
                     input_flags=(),
                     output_path_template=page_rel,
                     source_paths=tuple(srcs),
@@ -518,7 +527,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         # benchmarking figures and Per Simulation Results inserted a redundant
                         # experiment level. The replacement facets are read off the plot id,
                         # which the ADR-2 grammar already encodes: per-sim figures vary in
-                        # sa_id and event_id, benchmarking figures vary in the descriptor.
+                        # member_id and event_id, benchmarking figures vary in the descriptor.
                         #
                         # Iter-13. TWO claims that stood here are RETIRED because measurement
                         # falsified them; they are named rather than deleted so the next
@@ -539,7 +548,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         # not validate key consistency across results." The premise is true and
                         # the conclusion does not follow: the per-arm reports already ship
                         # THREE distinct key sets in ONE report (8 results with {figure}, 1
-                        # with {independent_var, figure}, 56 with {figure, sa_id, event_id})
+                        # with {independent_var, figure}, 56 with {figure, member_id, event_id})
                         # and render correctly. The fixed set was what emitted an all-blank
                         # row -- measured 18 of them, and NO result populated all three.
                         # Absent facets are now OMITTED rather than emitted empty.
@@ -574,15 +583,13 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                                 # escape_label_braces because THIS value reaches a Snakemake
                                 # `report(labels=...)` entry, where `expand_labels` re-expands
                                 # it through `apply_wildcards` -- so a `{` in any user-authored
-                                # sa/event label aborts the render. `report_label_value` escapes
+                                # member/event label aborts the render. `report_label_value` escapes
                                 # for the per-master rules; `humanize_plot_id` does not, because
                                 # its other two consumers (the composed page `<title>` here and
                                 # the React `name` field in `_react_surgery`) are never
                                 # re-expanded and would show doubled braces to the reader. The
                                 # escape therefore belongs at THIS call, not inside the humanizer.
-                                "figure": escape_label_braces(
-                                    humanize_plot_id(plot_id, _sa_labels, _event_labels)
-                                ),
+                                "figure": escape_label_braces(humanize_plot_id(plot_id, _member_labels, _event_labels)),
                                 **_plot_id_facets(
                                     plot_id,
                                     models=(
@@ -604,7 +611,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
 def _plot_id_facets(plot_id: str, *, models: str = "") -> dict[str, str]:
     """Split an ADR-2 plot id into the facets that PARTITION a harvested figure set.
 
-    Grammar (`report_plot_ids.py`): ``{renderer_kind}[__{descriptor}][__sa.{sa_id}]
+    Grammar (`report_plot_ids.py`): ``{renderer_kind}[__{descriptor}][__member.{member_id}]
     [__evt.{event_id}]``, "__" between segments and "." within one. This reads the two
     prefixed segments and treats any remaining segment as the descriptor.
 
@@ -632,8 +639,8 @@ def _plot_id_facets(plot_id: str, *, models: str = "") -> dict[str, str]:
     segments = stem.split("__")[1:]
     facets: dict[str, str] = {}
     for seg in segments:
-        if seg.startswith("sa."):
-            facets["sub-analysis"] = seg[3:]
+        if seg.startswith("member."):
+            facets["member"] = seg[3:]
         elif seg.startswith("evt."):
             facets["event"] = seg[4:]
         else:
@@ -876,17 +883,17 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
         # data lives under child_crates/. Reading the root would yield {} and leave the
         # combined report's card names unresolved while the per-arm reports resolve,
         # which is a P5 divergence between two views of the same figure. Merge across
-        # the children instead. sa_ids are unique per child by construction, and a
-        # collision would mean two children ran the same sub-analysis, in which case
+        # the children instead. member_ids are unique per child by construction, and a
+        # collision would mean two children ran the same member, in which case
         # either label is correct.
-        from ..report_plot_ids import event_labels_from_status, sa_labels_from_status
+        from ..report_plot_ids import event_labels_from_status, member_labels_from_status
 
-        _sa_labels: dict[str, str] = {}
+        _member_labels: dict[str, str] = {}
         _event_labels: dict[str, str] = {}
         _crates = bundle_root / "child_crates"
         if _crates.exists():
             for _child in sorted(p for p in _crates.iterdir() if p.is_dir()):
-                _sa_labels.update(sa_labels_from_status(_child))
+                _member_labels.update(member_labels_from_status(_child))
                 _event_labels.update(event_labels_from_status(_child))
         try:
             if fmt == "html":
@@ -896,7 +903,7 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
                         bundle_mode=True,
                         navbar_text=_COMBINED_NAVBAR_TEXT,
                         category_order=category_order,
-                        sa_labels=_sa_labels,
+                        member_labels=_member_labels,
                         event_labels=_event_labels,
                     )
                 )
@@ -906,7 +913,7 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
                     bundle_mode=True,
                     navbar_text=_COMBINED_NAVBAR_TEXT,
                     category_order=category_order,
-                    sa_labels=_sa_labels,
+                    member_labels=_member_labels,
                     event_labels=_event_labels,
                 )
         except Exception:

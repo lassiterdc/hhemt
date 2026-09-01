@@ -28,7 +28,7 @@ def _fmt_bytes(size_bytes: int) -> str:
 
 
 def _child_model(child: Path) -> str:
-    """'TRITON-SWMM' when a coupled tier exists on any /sa_* node, else 'TRITON'."""
+    """'TRITON-SWMM' when a coupled tier exists on any /member_* node, else 'TRITON'."""
     store = child / "sensitivity_datatree.zarr"
     if not store.exists():
         return "TRITON"
@@ -37,7 +37,7 @@ def _child_model(child: Path) -> str:
 
         dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
         grps = set(dt.groups)
-        for g in sorted(g for g in grps if g.count("/") == 1 and g.startswith("/sa_")):
+        for g in sorted(g for g in grps if g.count("/") == 1 and g.startswith("/member_")):
             if f"{g}/tritonswmm/triton" in grps:
                 return "TRITON-SWMM"
             if f"{g}/triton_only/triton" in grps:
@@ -97,15 +97,14 @@ def render(analysis, report_cfg, output_path: Path) -> Path:
         scopes = sorted({s for col in per_col for s in col})
         _unit_cols = [f"{c} (MiB)" for c in cols]
         _records = [
-            {"Scope": scope, **{
-                _unit_cols[i]: round(col.get(scope, 0) / _MIB, 1)
-                for i, col in enumerate(per_col)
-            }}
+            {"Scope": scope, **{_unit_cols[i]: round(col.get(scope, 0) / _MIB, 1) for i, col in enumerate(per_col)}}
             for scope in scopes
         ]
         df_du = pd.DataFrame(_records, columns=["Scope", *_unit_cols])
         columns_spec = build_columns_spec(
-            df_du, visible_columns_default=None, header_filter=True,
+            df_du,
+            visible_columns_default=None,
+            header_filter=True,
         )
         # The Total row is Tabulator's own column calculation over the displayed
         # values. The shared surface ships no totals feature -- no column spec sets
@@ -137,7 +136,10 @@ def render(analysis, report_cfg, output_path: Path) -> Path:
             renderer_name="cross_experiment_disk_utilization",
         )
         if not source_paths:  # honest empty state + declare the expected dir (ADR-6 D3)
-            html = "<section class='cross-experiment-disk-utilization'><p class='note'>No child crates recorded.</p></section>"
+            html = (
+                "<section class='cross-experiment-disk-utilization'>"
+                "<p class='note'>No child crates recorded.</p></section>"
+            )
             source_paths = [crates / "_du.json"]
 
     return emit_plot_with_sources(

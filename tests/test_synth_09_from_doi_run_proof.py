@@ -89,9 +89,7 @@ def _reprex_bundle_zip(rendered_synth_multi_sim, tmp_path) -> Path:
     return rendered_synth_multi_sim.bundle_report_data(out / "bundle.zip")
 
 
-def test_from_doi_reconstituted_bundle_runs_locally(
-    _reprex_bundle_zip, _prebuilt_software_dir, monkeypatch, tmp_path
-):
+def test_from_doi_reconstituted_bundle_runs_locally(_reprex_bundle_zip, _prebuilt_software_dir, monkeypatch, tmp_path):
     """emit -> from_doi (fetch mocked) -> analysis.test() proves a RECONSTITUTED
     bundle RUNS end to end, network-free and without a recompile."""
     # Mock the network fetch: return the pre-built zip; from_doi still runs the
@@ -125,8 +123,8 @@ def test_from_doi_reconstituted_bundle_runs_locally(
 
     # "It ran" proof set (mirrors test_synth_analysis_test_end_to_end.py):
     assert (exp.bundle_root / "_test").exists(), "no _test subtree materialized"
-    assert result.subanalyses, "analysis.test() produced no _test sub-analyses"
-    for sub_result in result.subanalyses:
+    assert result.members, "analysis.test() produced no _test members"
+    for sub_result in result.members:
         # validate_analysis's 7 checks inspect REAL consolidated outputs -- a
         # Snakemake --dry-run could never satisfy them.
         tst_ut.assert_analysis_workflow_completed_successfully(sub_result.analysis)

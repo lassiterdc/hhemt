@@ -2,7 +2,7 @@
 
 The H&H Ensemble Modeling Toolkit (hhemt) is publicly available at <https://github.com/lassiterdc/hhemt> and on PyPI (`pip install hhemt`).
 
-**License.** Released under [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/) — free for any noncommercial purpose (see `LICENSE`).
+**License.** Released under [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/), free for any noncommercial purpose (see `LICENSE`).
 
 **How to cite.** Cite the software via its Zenodo DOI (see the repository's "How to cite" section and `CITATION.cff`).
 

@@ -92,11 +92,11 @@ class PanelBudget:
     """Pixel budget for a stacked-panel figure. All fields are px."""
 
     map_h: int = PANEL_H_PX
-    gap_within: int = 24      # between rows INSIDE one panel (diff -> pct)
-    gap_top: int = 26         # above a panel's first map (subplot title + outline top)
-    gap_footer: int = 62      # below a panel's last map (ticks + title + outline bottom)
-    gap_inter: int = 30       # between panels
-    gap_table: int = 16       # below the summary table
+    gap_within: int = 24  # between rows INSIDE one panel (diff -> pct)
+    gap_top: int = 26  # above a panel's first map (subplot title + outline top)
+    gap_footer: int = 62  # below a panel's last map (ticks + title + outline bottom)
+    gap_inter: int = 30  # between panels
+    gap_table: int = 16  # below the summary table
     top_margin: int = 80
 
 
@@ -107,10 +107,10 @@ class PanelLayout:
     plot_h: float
     fig_width: int
     row_ydom: dict[int, list[float]]
-    map_domains: dict[int, list[float]]     # column index -> [x0, x1]
-    colorbar_x: dict[int, float]            # column index -> paper-x
+    map_domains: dict[int, list[float]]  # column index -> [x0, x1]
+    colorbar_x: dict[int, float]  # column index -> paper-x
     colorbar_len: float
-    table_domain: dict[str, list[float]]    # {"x": [...], "y": [...]}
+    table_domain: dict[str, list[float]]  # {"x": [...], "y": [...]}
     side_table_x: list[float]
     panel_spans: list[tuple[int, int]] = field(default_factory=list)
     #: panel index -> [y_bot, y_top] of a band reserved ABOVE that panel by
@@ -278,8 +278,8 @@ def side_table_columns(
     *,
     labels: list[str],
     members: list[str],
-    attrs_by_sa: dict[str, dict],
-    value_by_sa: dict[str, int],
+    attrs_by_member: dict[str, dict],
+    value_by_member: dict[str, int],
     order_key,
 ) -> tuple[list[str], list[str]]:
     """The two columns of a per-panel side table: distinct config labels, and their values.
@@ -288,12 +288,12 @@ def side_table_columns(
     trivial -- dedupe by label, order by device count, and COLLAPSE the per-member values
     for a label into one cell. `_config_diff._panel_config_table` had it inline, and the
     cross-experiment restructure was about to open-code it a second time, which is the
-    duplication the standing directive forbids. The CSV read behind `value_by_sa` is NOT
+    duplication the standing directive forbids. The CSV read behind `value_by_member` is NOT
     moved here: it is already shared via `_load_subs`, and relocating working shared I/O
     would be churn.
 
-    `value_by_sa` is keyed by sa_id rather than by label deliberately. A label can map to
-    several sa_ids (replicates, and the same config in two experiments), and those may
+    `value_by_member` is keyed by member_id rather than by label deliberately. A label can map to
+    several member_ids (replicates, and the same config in two experiments), and those may
     carry DIFFERENT values -- which is the signal, not noise: byte-identical configs whose
     resume counts differ are the evidence that resuming does not perturb the bytes. Distinct
     values for one label render joined ("0, 1") rather than silently reduced to one.
@@ -303,10 +303,10 @@ def side_table_columns(
     """
     attrs_by_label: dict[str, dict] = {}
     vals_by_label: dict[str, set[int]] = {}
-    for sa, lbl in zip(members, labels, strict=False):
-        attrs_by_label.setdefault(lbl, attrs_by_sa.get(sa, {}))
-        if sa in value_by_sa:
-            vals_by_label.setdefault(lbl, set()).add(int(value_by_sa[sa]))
+    for member, lbl in zip(members, labels, strict=False):
+        attrs_by_label.setdefault(lbl, attrs_by_member.get(member, {}))
+        if member in value_by_member:
+            vals_by_label.setdefault(lbl, set()).add(int(value_by_member[member]))
     ordered = sorted(attrs_by_label, key=lambda lbl: (order_key(attrs_by_label[lbl]), lbl))
     values = [", ".join(str(v) for v in sorted(vals_by_label.get(lbl, set()))) for lbl in ordered]
     return ordered, values

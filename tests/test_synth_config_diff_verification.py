@@ -102,10 +102,10 @@ def test_synth_master_compliant_equals_positional(synthetic_sensitivity_complete
     Agreement, NOT identity: the synth solver need not be bit-reproducible across the compute
     modes; what R3 guards is that the two predicates never DISAGREE on aligned data (a
     disagreement is what _config_diff.py's positional read would misreport)."""
-    master = Path(synthetic_sensitivity_completed.master_analysis.analysis_paths.analysis_dir)
+    master = Path(synthetic_sensitivity_completed.experiment.analysis_paths.analysis_dir)
     out_type = _detect_out_type(master)
-    subs = sorted(d for d in (master / "subanalyses").glob("sa_*") if d.is_dir())
-    assert len(subs) >= 2, "a sensitivity master must have >=2 sub-analyses"
+    subs = sorted(d for d in (master / "members").glob("member_*") if d.is_dir())
+    assert len(subs) >= 2, "a sensitivity master must have >=2 members"
     ref_dir = subs[0]
     ev_dirs = sorted(p.name for p in (ref_dir / "sims").glob("*") if p.is_dir())
     assert ev_dirs, "reference sub has no sims/ event dirs"
@@ -134,9 +134,9 @@ def test_synth_master_compliant_equals_positional(synthetic_sensitivity_complete
                     if e is not None and e not in _events(cmp_var):
                         continue
                     cmp_da = _at_event(cmp_var, e)
-                    assert _three_guard(ref_da, cmp_da)[0] == _positional(ref_da, cmp_da), (
-                        f"{sub.name}:{var}[event={e}] compliant/positional disagree on aligned synth data"
-                    )
+                    assert _three_guard(ref_da, cmp_da)[0] == _positional(
+                        ref_da, cmp_da
+                    ), f"{sub.name}:{var}[event={e}] compliant/positional disagree on aligned synth data"
                     checked += 1
     assert checked > 0, "no (sub, variable) pairs were compared"
 
@@ -151,8 +151,8 @@ def _grp(run_modes, member) -> dict:
 def test_identity_cell_unknown_when_artifact_absent():
     from hhemt.eda._config_diff import _identity_cell
 
-    g = _grp(["mpi"], "sa_mpi_9_r1")
-    serial = _grp(["serial"], "sa_serial_6_r1")
+    g = _grp(["mpi"], "member_mpi_9_r1")
+    serial = _grp(["serial"], "member_serial_6_r1")
     # identical is None -> the identity artifact was absent (legacy bundle): NEVER a bare "no".
     assert _identity_cell(None, g, serial, 0.0, 0.0) == "unknown (identity artifact absent)"
 
@@ -160,7 +160,7 @@ def test_identity_cell_unknown_when_artifact_absent():
 def test_identity_cell_identical():
     from hhemt.eda._config_diff import _identity_cell
 
-    serial = _grp(["serial"], "sa_serial_6_r1")
+    serial = _grp(["serial"], "member_serial_6_r1")
     assert _identity_cell(True, serial, serial, 0.0, 0.0) == "identical"
 
 
@@ -170,8 +170,8 @@ def test_identity_cell_within_family_expected():
     # Q1 (iter-2): `identical` is now computed against each group's OWN hardware-family
     # minimum-device reference, so a False verdict is ALWAYS a within-family difference
     # (decomposition / rank FP non-associativity) -- never a cross-hardware claim.
-    g = _grp(["mpi"], "sa_mpi_11_r1")
-    serial = _grp(["serial"], "sa_serial_6_r1")
+    g = _grp(["mpi"], "member_mpi_11_r1")
+    serial = _grp(["serial"], "member_serial_6_r1")
     assert _identity_cell(False, g, serial, 1.19e-07, 0.0) == "differs (within-family; FP non-associativity)"
 
 
@@ -181,8 +181,8 @@ def test_identity_cell_gpu_differs_reads_within_family_not_cross_family_bound():
     # Q1 (iter-2): a differing GPU group is measured against its OWN 1-GPU family reference, so
     # _identity_cell reads it as a within-family difference and NO LONGER emits a cross-family
     # "bounded, disclosed" bound (the vs-serial magnitude lives in the max_wlevel_m abs-diff column).
-    g = _grp(["gpu"], "sa_gpu_0_r1")
-    serial = _grp(["serial"], "sa_serial_6_r1")
+    g = _grp(["gpu"], "member_gpu_0_r1")
+    serial = _grp(["serial"], "member_serial_6_r1")
     cell = _identity_cell(False, g, serial, 1.19e-07, 0.0)
     assert cell == "differs (within-family; FP non-associativity)"
     assert "bounded, disclosed" not in cell
@@ -191,7 +191,7 @@ def test_identity_cell_gpu_differs_reads_within_family_not_cross_family_bound():
 def test_within_family_cpu_vs_cpu_true_gpu_vs_cpu_false():
     from hhemt.eda._config_diff import _within_family
 
-    serial = _grp(["serial"], "sa_serial_6_r1")
+    serial = _grp(["serial"], "member_serial_6_r1")
     assert _within_family(_grp(["mpi"], "m"), serial) is True
     assert _within_family(_grp(["openmp"], "o"), serial) is True
     assert _within_family(_grp(["gpu"], "g"), serial) is False
@@ -208,11 +208,11 @@ def test_family_reference_group_within_family_min_device():
     # keeps the finer per-hardware axis; see sensitivity_benchmarking._hardware_family.
     from hhemt.eda._config_diff import _family_reference_group, _hw_family_key
 
-    serial = _grp_attrs(["serial"], "sa_serial", {"n_nodes": 1, "n_gpus": 0, "n_mpi_procs": 1, "n_omp_threads": 1})
-    mpi8 = _grp_attrs(["mpi"], "sa_mpi8", {"n_nodes": 1, "n_gpus": 0, "n_mpi_procs": 8, "n_omp_threads": 1})
-    a6000_1 = _grp_attrs(["gpu"], "sa_a6000_1", {"n_nodes": 1, "n_gpus": 1, "hpc.partition": "gpu-a6000"})
-    a6000_4 = _grp_attrs(["gpu"], "sa_a6000_4", {"n_nodes": 1, "n_gpus": 4, "hpc.partition": "gpu-a6000"})
-    a100_1 = _grp_attrs(["gpu"], "sa_a100_1", {"n_nodes": 1, "n_gpus": 1, "hpc.partition": "gpu-a100-80"})
+    serial = _grp_attrs(["serial"], "member_serial", {"n_nodes": 1, "n_gpus": 0, "n_mpi_procs": 1, "n_omp_threads": 1})
+    mpi8 = _grp_attrs(["mpi"], "member_mpi8", {"n_nodes": 1, "n_gpus": 0, "n_mpi_procs": 8, "n_omp_threads": 1})
+    a6000_1 = _grp_attrs(["gpu"], "member_a6000_1", {"n_nodes": 1, "n_gpus": 1, "hpc.partition": "gpu-a6000"})
+    a6000_4 = _grp_attrs(["gpu"], "member_a6000_4", {"n_nodes": 1, "n_gpus": 4, "hpc.partition": "gpu-a6000"})
+    a100_1 = _grp_attrs(["gpu"], "member_a100_1", {"n_nodes": 1, "n_gpus": 1, "hpc.partition": "gpu-a100-80"})
     groups = [serial, mpi8, a6000_1, a6000_4, a100_1]
 
     # device-class keys are COARSE: every GPU token collapses to one 'gpu' bucket.
@@ -234,7 +234,7 @@ def test_family_reference_group_within_family_min_device():
     assert _family_reference_group(a100_1, groups) is a100_1
     assert _family_reference_group(a6000_4, [serial, mpi8, a100_1, a6000_4, a6000_1]) is a100_1
     # a lone-family member falls back to itself.
-    lone = _grp_attrs(["gpu"], "sa_a40", {"n_gpus": 2, "hpc.partition": "gpu-a40"})
+    lone = _grp_attrs(["gpu"], "member_a40", {"n_gpus": 2, "hpc.partition": "gpu-a40"})
     assert _family_reference_group(lone, [lone]) is lone
 
 
@@ -249,25 +249,25 @@ def test_identity_labels_none_when_store_absent(tmp_path):
 def test_identity_labels_reads_partition_and_folds_reference(tmp_path):
     from hhemt.eda._config_diff import _identity_labels
 
-    # Build a minimal partition artifact: non-reference labels on the sa_id coord, the
+    # Build a minimal partition artifact: non-reference labels on the member_id coord, the
     # reference's own group in the reference_group attr. The reader must return every sub's
     # label INCLUDING the reference folded in from the attr.
     eda_dir = tmp_path / "eda"
     eda_dir.mkdir()
     ds = xr.Dataset(
         {"identity_group": ("sa_id", np.asarray([0, 0, 1], dtype="int32"))},
-        coords={"sa_id": ["sa_mpi_9_r1", "sa_serial_6_r1", "sa_gpu_0_r2"]},
+        coords={"sa_id": ["member_mpi_9_r1", "member_serial_6_r1", "member_gpu_0_r2"]},
     )
-    ds.attrs["reference_sa_id"] = "sa_gpu_0_r1"
+    ds.attrs["reference_member_id"] = "member_gpu_0_r1"
     ds.attrs["reference_group"] = 1
     ds.to_zarr(eda_dir / "eda_cross_sim_identity.zarr", mode="w", consolidated=False)
 
     labels = _identity_labels(tmp_path)
     assert labels == {
-        "sa_mpi_9_r1": 0,
-        "sa_serial_6_r1": 0,
-        "sa_gpu_0_r2": 1,
-        "sa_gpu_0_r1": 1,  # reference folded in from reference_group -> groups with sa_gpu_0_r2
+        "member_mpi_9_r1": 0,
+        "member_serial_6_r1": 0,
+        "member_gpu_0_r2": 1,
+        "member_gpu_0_r1": 1,  # reference folded in from reference_group -> groups with member_gpu_0_r2
     }
 
 

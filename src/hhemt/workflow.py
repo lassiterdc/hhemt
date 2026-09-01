@@ -61,11 +61,11 @@ from hhemt.slurm_liveness import (  # noqa: F401
 from hhemt.summary_paths import (  # noqa: F401  (re-export shims under the historical private names)
     _SUMMARY_STEMS_BY_MODEL,
 )
+from hhemt.summary_paths import (
+    analysis_summaries_complete as _analysis_summaries_complete,
+)
 from hhemt.summary_paths import (  # noqa: F401  (re-export shim under the historical private name)
     scenario_summaries_present as _scenario_summaries_present,
-)
-from hhemt.summary_paths import (
-    sub_analysis_summaries_complete as _sub_analysis_summaries_complete,
 )
 from hhemt.utils import fast_rmtree
 
@@ -95,7 +95,7 @@ class ResolvedForceRerunSpec:
 
     The orchestrator resolves event_iloc integers to event_id slugs BEFORE
     constructing this spec (per V0001's stable event-slug invariant); the
-    builder helper consumes only slugs/sa_ids. The ``scope`` field names which
+    builder helper consumes only slugs/member_ids. The ``scope`` field names which
     axis the ``tokens`` index into, eliminating the same-type-different-content
     failure mode where ints could be either user-supplied event_ilocs or
     already-resolved slug strings.
@@ -103,8 +103,8 @@ class ResolvedForceRerunSpec:
     Per cleanup-rerun-delete-redesign Phase 4.
     """
 
-    scope: Literal["all", "none", "sa", "event"]
-    tokens: tuple[str, ...]  # () for "all"/"none"; sa_id strings for "sa"; event_id slugs for "event"
+    scope: Literal["all", "none", "member", "event"]
+    tokens: tuple[str, ...]  # () for "all"/"none"; member_id strings for "member"; event_id slugs for "event"
     # REQUIRED, deliberately no default. A default would let every construction site keep
     # "simulate" without saying so, which is exactly the silence this field exists to end:
     # the axis was declared in config and honoured by the actuator, and dropped here.
@@ -292,12 +292,15 @@ def _registry_report_kwargs(rule_name: str) -> dict[str, str]:
     and never the source, so the cluster-rendered report shows raw ids for a feature that
     is merged and approved.
 
-    Keyed on ``rule_name``, not ``renderer_module``: the per-sim-per-sa builder emits rules
-    named ``plot_per_sim_per_sa_*`` whose renderer_module is ``per_sim_*``, so rule_name is
+    Keyed on ``rule_name``, not ``renderer_module``: the per-sim-per-member builder emits rules
+    named ``plot_per_sim_per_member_*`` whose renderer_module is ``per_sim_*``, so rule_name is
     the stable cross-reference (the same key `test_reporting_set_cosourcing` uses).
 
     Scans every registered set and requires UNANIMITY. Measured 2026-08-23: 0 of 22 distinct
-    rule_names carry differing report_kwargs across the 6 registered sets, so this is a
+    rule_names carry differing report_kwargs across the 7 registered sets (re-measured
+    2026-08-31 after the `sensitivity` set was registered: 22 distinct rule_names, 0
+    disagreements, unchanged because that set reuses the shared template objects
+    `benchmarking` already contributes), so this is a
     well-defined lookup today; the assertion is what makes it fail loudly if that stops
     being true rather than silently picking whichever set was iterated first.
 
@@ -341,7 +344,7 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     output_path = spec.output_path_template.replace("__OUTPUT_EXT__", output_ext)
 
     # input: block — `{label} = "<flag>",` for each non-empty input_flag.
-    # Label is "consolidated" for multi-sim and sensitivity-sub-analysis plot
+    # Label is "consolidated" for multi-sim and sensitivity-member plot
     # rules, "master" for sensitivity-master rules. Empty / missing flags emit
     # `input: []` (regen-only bundle Snakefile: plot files exist on disk via
     # the bundle, rules need no upstream status-flag inputs).
@@ -465,7 +468,7 @@ def _emit_render_report_rule(
     ``plot_output_paths`` is the list of (output_ext-resolved) plot
     paths this rule depends on. Each entry is either a literal path or
     a bare `expand("...", ...)` invocation string (for wildcarded
-    per-sim/per-sa rules); the helper inserts each verbatim into the
+    per-sim/per-member rules); the helper inserts each verbatim into the
     input: block.
     """
     input_lines = "\n        ".join(f"{p}," for p in plot_output_paths)
@@ -512,14 +515,15 @@ rule all:
 """
 
 
-def _per_sim_per_sa_rule_all_inputs(
+def _per_sim_per_member_rule_all_inputs(
     *,
-    sa_event_pairs_sa,
+    member_event_pairs_member,
     disabled: "list[str] | None",
     ext: "dict[str, str]",
     has_swmm_link_outputs: bool = True,
+    set_carries_renderer: bool,
 ) -> list[str]:
-    """Return the per-sa `rule all` input entries, or [] when not applicable.
+    """Return the per-member `rule all` input entries, or [] when not applicable.
 
     Hoisted from two byte-identical copies in the master and reprocess sensitivity
     generators. The guard lives HERE, not at the call sites: two copies of the
@@ -539,26 +543,26 @@ def _per_sim_per_sa_rule_all_inputs(
     # must not make.
     from hhemt.report_renderers._reporting_sets import renderer_active
 
-    if not (sa_event_pairs_sa and renderer_active("per_sim_per_sa", disabled)):
+    if not (set_carries_renderer and member_event_pairs_member and renderer_active("per_sim_per_member", disabled)):
         return []
-    _e_pfd = ext["per_sim_per_sa_peak_flood_depth"]
-    _e_cf = ext["per_sim_per_sa_conduit_flow"]
-    # ADR-2 OE-1: per-sa input stems derive from the single-source helper
+    _e_pfd = ext["per_sim_per_member_peak_flood_depth"]
+    _e_cf = ext["per_sim_per_member_conduit_flow"]
+    # ADR-2 OE-1: per-member input stems derive from the single-source helper
     # so a future stem-grammar change cannot desync them from the outputs.
-    _pfd_sa = _plot_output_template(
+    _pfd_member = _plot_output_template(
         renderer_kind="peak_flood_depth",
-        subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
-        sa_id="{sa_id}",
+        subdir="plots/sensitivity/per_sim/member-{member_id}/{event_id}",
+        member_id="{member_id}",
         event_id="{event_id}",
     ).replace("__OUTPUT_EXT__", _e_pfd)
-    _cf_sa = _plot_output_template(
+    _cf_member = _plot_output_template(
         renderer_kind="conduit_flow",
-        subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
-        sa_id="{sa_id}",
+        subdir="plots/sensitivity/per_sim/member-{member_id}/{event_id}",
+        member_id="{member_id}",
         event_id="{event_id}",
     ).replace("__OUTPUT_EXT__", _e_cf)
     entries = [
-        f'expand("{_pfd_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)',
+        f'expand("{_pfd_member}", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT)',
     ]
     # FQ1 ENUMERATION half. Its EMISSION counterpart gates _emit_plot_rule(conduit_emit)
     # on the identical expression; both derive from _get_enabled_model_types(), so they
@@ -566,7 +570,7 @@ def _per_sim_per_sa_rule_all_inputs(
     # emitting one enumeration drops yields an orphan rule.
     if has_swmm_link_outputs:
         entries.append(
-            f'expand("{_cf_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
+            f'expand("{_cf_member}", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT)'
         )
     return entries
 
@@ -585,10 +589,17 @@ def _brand_theme_css_map(theme) -> "dict[str, str]":
 
 _SNAKEFILE_RUNNER_RE = re.compile(r"-m\s+([A-Za-z_][A-Za-z0-9_]*)\.\w+(?:_runner|_workflow)\b")
 
+# Retired member-vocabulary dialects a pre-rename Snakefile bakes. Each form carries a
+# delimiter on at least one side so none can match an unrelated word. Measured against
+# tests/fixtures/golden_snakefiles/sensitivity_master.Snakefile.golden, a real generated
+# artifact: _sa- 38, --sa-id 18, /subanalyses/ 16, __sa. 6.
+_SNAKEFILE_RETIRED_VOCAB_RE = re.compile(r"_sa-|__sa\.|/subanalyses/|--sa-id")
+
 
 def _assert_snakefile_package_current(snakefile_path: Path) -> None:
     """Fail fast at the login node if an on-disk Snakefile bakes a runner module
-    path for a distribution other than the installed package.
+    path for a distribution other than the installed package, or bakes the retired
+    member vocabulary.
 
     A Snakefile written by a prior ``run()`` before a package rename (e.g.
     ``TRITON_SWMM_toolkit`` -> ``hhemt``) keeps the old ``-m {dist}.{runner}``
@@ -596,10 +607,18 @@ def _assert_snakefile_package_current(snakefile_path: Path) -> None:
     against it would surface an hours-deep mid-SLURM ``ModuleNotFoundError``. This
     converts that into a sub-second ``ConfigurationError`` (CLI exit 2). No-ops on
     a current or absent Snakefile.
+
+    The second class is the S8a member rename. Only ``render_report(reprocess=True)``
+    reads an existing Snakefile without regenerating it -- the execution path calls
+    ``write_reprocess_snakefile``, which overwrites -- so a stale file reaches
+    ``snakemake --report`` still enumerating ``report()`` targets at pre-rename figure
+    paths that ``V0019`` has moved, and the report engine raises "marked for report but
+    does not exist" (Gotcha 39). Same remedy, same exit code, one read of the file.
     """
     if not snakefile_path.exists():
         return
-    baked = {m.group(1) for m in _SNAKEFILE_RUNNER_RE.finditer(snakefile_path.read_text())}
+    text = snakefile_path.read_text()
+    baked = {m.group(1) for m in _SNAKEFILE_RUNNER_RE.finditer(text)}
     current = __name__.split(".", 1)[0]  # "hhemt"
     stale = baked - {current}
     if stale:
@@ -611,6 +630,22 @@ def _assert_snakefile_package_current(snakefile_path: Path) -> None:
             message=(
                 f"On-disk Snakefile bakes runner module path(s) for {sorted(stale)}, "
                 f"but the installed package is '{current}'. Regenerate it by re-running "
+                f"analysis.run()/submit_workflow() before invoking render/reprocess."
+            ),
+        )
+
+    retired = sorted({m.group(0) for m in _SNAKEFILE_RETIRED_VOCAB_RE.finditer(text)})
+    if retired:
+        from hhemt.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            field="Snakefile",
+            config_path=snakefile_path,
+            message=(
+                f"On-disk Snakefile bakes retired member-vocabulary token(s) {retired}. "
+                f"Its report() targets name pre-rename figure paths that V0019 has moved, "
+                f"so snakemake --report would fail with 'marked for report but does not "
+                f"exist'. Regenerate it by re-running "
                 f"analysis.run()/submit_workflow() before invoking render/reprocess."
             ),
         )
@@ -680,7 +715,7 @@ def _sanitize_rule_name(token: str) -> str:
     Snakemake rule names must be valid Python identifiers (no ``-``, ``.``).
     Sentinel rule_tokens written by :mod:`run_simulation_runner` follow the
     pattern ``run_{model_type}_evt-{event_id}`` (multisim) or
-    ``simulation_sa_{sa_id}_evt-{event_id}`` (sensitivity); both contain
+    ``simulation_member_{member_id}_evt-{event_id}`` (sensitivity); both contain
     literal hyphens that must be replaced for use as a Snakemake rule name.
 
     Per sentinel-system-v2 Phase 2.
@@ -690,7 +725,7 @@ def _sanitize_rule_name(token: str) -> str:
 
 # Pinned to the format emitted by snakemake-executor-plugin-slurm/submit_string.py:29
 # (--comment rule_{job.name}_wildcards_{...}). Bump on plugin version changes.
-_COMMENT_RULE_PREFIXES: tuple[str, ...] = ("rule_run_", "rule_simulation_sa_")
+_COMMENT_RULE_PREFIXES: tuple[str, ...] = ("rule_run_", "rule_simulation_member_")
 
 
 # SLURM-liveness primitives (_slurm_job_is_live, _SACCT_DEAD_STATES,
@@ -836,17 +871,17 @@ class _ReportingSetDispatchMixin:
     dispatcher lives in a mixin both inherit: `getattr(self, "_base_builder", self)`
     resolves the five common builders to the base builder when `self` is the
     sensitivity builder and to `self` when `self` is the base builder; the two
-    conditional builders (per_sim_per_sa, sensitivity_benchmarking) live only on
+    conditional builders (per_sim_per_member, sensitivity_benchmarking) live only on
     the sensitivity builder and resolve via getattr.
     """
 
     # Predicate-key -> predicate over the per-call predicate_inputs dict. The
-    # values (independent_vars, sa_event_pairs_sa) are METHOD-LOCALs inside the
+    # values (independent_vars, member_event_pairs_member) are METHOD-LOCALs inside the
     # master/reprocess generators (NOT instance attributes), threaded in via
     # predicate_inputs; getattr-on-self would always be None. (F-I-2)
     _RENDERER_PREDICATES = {
         "has_independent_vars": lambda inp: bool(inp.get("independent_vars")),
-        "has_sa_event_pairs": lambda inp: bool(inp.get("sa_event_pairs_sa")),
+        "has_member_event_pairs": lambda inp: bool(inp.get("member_event_pairs_member")),
         # R11: the compute-sensitivity EDA adapter fires only when the master
         # carries an EDA artifact (the eda calc ran, producing plots/eda/*.zarr).
         # Threaded via predicate_inputs["has_eda_artifact"] at the generator sites.
@@ -859,7 +894,7 @@ class _ReportingSetDispatchMixin:
         # FQ1: a SWMM-derived figure (conduit flow) is not applicable to a TRITON-only
         # analysis. Threaded from analysis._get_enabled_model_types() at the generator
         # sites. Consumed PER TEMPLATE (RuleSpecTemplate.predicate_key), not per
-        # selection: per_sim_per_sa's two templates differ in applicability.
+        # selection: per_sim_per_member's two templates differ in applicability.
         "has_swmm_link_outputs": lambda inp: bool(inp.get("has_swmm_link_outputs")),
     }
 
@@ -922,7 +957,7 @@ class _ReportingSetDispatchMixin:
             "workflow_performance",
         ):
             return {"input_flag": input_flag, "ctx": ctx}
-        if builder_key in ("per_sim", "per_sim_per_sa", "eda_compute_sensitivity"):
+        if builder_key in ("per_sim", "per_sim_per_member", "eda_compute_sensitivity"):
             return {"ctx": ctx}  # wildcard over event_id (per_sim) / no wildcards (eda); no input_flag
         if builder_key == "sensitivity_benchmarking":
             # positional independent_vars, forwarded from predicate_inputs (the
@@ -944,7 +979,7 @@ class _ReportingSetDispatchMixin:
 
         The set's `renderer_selection` is the single source of which renderers fire
         and in what order; each entry names a builder method (by key) and an
-        optional predicate_key gating conditional renderers (benchmarking, per_sa).
+        optional predicate_key gating conditional renderers (benchmarking, per_member).
         `input_flag` is threaded per generator (multisim: e_consolidate_complete;
         master/reprocess: f_consolidate_master_complete).
 
@@ -971,7 +1006,7 @@ class _ReportingSetDispatchMixin:
             "disk_utilization": base._build_plot_rule_block_disk_utilization,
             "metadata": base._build_plot_rule_block_metadata,
             "workflow_performance": base._build_plot_rule_block_workflow_performance,
-            "per_sim_per_sa": getattr(self, "_build_plot_rule_block_per_sim_per_sa", None),
+            "per_sim_per_member": getattr(self, "_build_plot_rule_block_per_sim_per_member", None),
             "sensitivity_benchmarking": getattr(self, "_build_plot_rule_block_sensitivity_benchmarking", None),
             "eda_compute_sensitivity": getattr(self, "_build_plot_rule_block_eda_compute_sensitivity", None),
         }
@@ -1402,9 +1437,9 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         analysis_dir : Path | None, default None
             Analysis directory whose ``_status/`` subtree is swept. ``None``
             uses ``self.analysis_paths.analysis_dir`` (multisim / master). The
-            sensitivity path passes each per-sub-analysis dir
-            (``master/subanalyses/{analysis_id}``) because sensitivity markers
-            live under the sub-analysis dir, not the master dir (Spec D).
+            sensitivity path passes each per-member dir
+            (``master/members/{analysis_id}``) because sensitivity markers
+            live under the member dir, not the master dir (Spec D).
 
         Returns
         -------
@@ -1794,8 +1829,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             If provided, use this analysis config instead of self.analysis.analysis_config_yaml
         system_config_yaml : Path | None
             If provided, use this system config instead of self.system.system_config_yaml.
-            Threaded by SensitivityAnalysisWorkflowBuilder so each sub-analysis rule
-            invokes its runner script with the correct per-SA system config (Phase 3).
+            Threaded by SensitivityAnalysisWorkflowBuilder so each member rule
+            invokes its runner script with the correct per-member system config (Phase 3).
         hpc_system_config_yaml : Path | None
             If provided, use this HPC-system config instead of
             self.analysis.hpc_system_config_yaml. Emitted as ``--hpc-system-config``
@@ -1842,10 +1877,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         directly-matched flags + their `.flag.json` sidecars.
 
         Glob anchors use delimiter-anchored separators per the FQ3 canonical
-        flag-name table — ``*sa-{v}_*.flag`` (non-terminal) AND
-        ``*sa-{v}.flag`` (terminal). Substring-only ``*sa-{v}*.flag`` is
-        NOT used because it false-matches `sa-1` against `sa-10`, `sa-11`,
-        `sa-100`.
+        flag-name table — ``*member-{v}_*.flag`` (non-terminal) AND
+        ``*member-{v}.flag`` (terminal). Substring-only ``*member-{v}*.flag`` is
+        NOT used because it false-matches `member-1` against `member-10`, `member-11`,
+        `member-100`.
 
         Parameters
         ----------
@@ -1881,24 +1916,22 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         def _subject_matches(name: str) -> bool:
             """True when a flag belongs to the requested subject.
 
-            Delimiter-anchored per the FQ3 canonical flag-name table -- ``sa-{v}_``
-            (non-terminal) and ``sa-{v}.flag`` (terminal). Substring-only matching is NOT
-            used: it false-matches `sa-1` against `sa-10`, `sa-11`, `sa-100`.
+            Delimiter-anchored per the FQ3 canonical flag-name table -- ``member-{v}_``
+            (non-terminal) and ``member-{v}.flag`` (terminal). Substring-only matching is NOT
+            used: it false-matches `member-1` against `member-10`, `member-11`, `member-100`.
             """
             if spec.scope == "all":
                 return True
-            tag = "sa-" if spec.scope == "sa" else "evt-"
+            tag = "member-" if spec.scope == "member" else "evt-"
             return any(f"{tag}{v}_" in name or name.endswith(f"{tag}{v}.flag") for v in spec.tokens)
 
         # NEVER a bare glob over _status/: the family is selected from the floor table and
         # the subject filter is applied on top. `scope == "all"` widens the SUBJECT, not the
         # STAGE -- it must not resurrect the pre-floor behaviour of deleting every flag.
-        if spec.scope not in ("all", "sa", "event"):
+        if spec.scope not in ("all", "member", "event"):
             raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
         matched_flags: set[Path] = {
-            p
-            for p in status_dir.glob("*.flag")
-            if p.name.startswith(prefixes) and _subject_matches(p.name)
+            p for p in status_dir.glob("*.flag") if p.name.startswith(prefixes) and _subject_matches(p.name)
         }
 
         for flag_path in sorted(matched_flags):
@@ -1917,9 +1950,9 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         #
         # SUBJECT-BLIND, DELIBERATELY -- not an accident of a filter that fails to match.
         # `plots/` holds CROSS-SUB figures (plots/eda/b4b_clean_identity, config_diff_maps,
-        # eda_cross_hardware_magnitude) whose inputs span every sub-analysis and which carry
+        # eda_cross_hardware_magnitude) whose inputs span every member and which carry
         # NO subject token in their names or paths. A subject-scoped delete would refresh the
-        # named sa_ids' per-sim panels and leave those aggregates on disk built from pre-rerun
+        # named member_ids' per-sim panels and leave those aggregates on disk built from pre-rerun
         # data -- a bundle internally inconsistent with its own inputs. A subject-scoped
         # render is rejected at config-load; see ForceRerunSpec._reject_subject_scoped_render.
         #
@@ -1938,6 +1971,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # so every existing caller is byte-identical.
         if stage == "render" and not dry_run:
             plots_dir = self.analysis_paths.analysis_dir / "plots"
+            _freed_render: dict[str, int] = {}
             if plots_dir.exists():
                 for fig_path in sorted(plots_dir.rglob("*")):
                     if fig_path.is_dir() or fig_path.name.endswith(".manifest.json"):
@@ -1953,9 +1987,24 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                     if EDA_PLOTS_SUBDIR in fig_path.relative_to(plots_dir).parts:
                         continue
                     logger.info("force_rerun[stage=render]: deleting figure %s", fig_path)
-                    fig_path.unlink(missing_ok=True)
                     sidecar = fig_path.with_suffix(fig_path.suffix + ".manifest.json")
-                    sidecar.unlink(missing_ok=True)
+                    # Sizes BEFORE the unlink -- a post-unlink stat is impossible. Gotcha 38
+                    # names the render-path delete of known-size artifacts as an O(1)
+                    # decrement, explicitly NOT a restamp and explicitly NOT an exemption.
+                    _freed_render["plots"] = _freed_render.get("plots", 0) + (
+                        fig_path.stat().st_size if fig_path.exists() else 0
+                    )
+                    _freed_render["plots"] = _freed_render.get("plots", 0) + (
+                        sidecar.stat().st_size if sidecar.exists() else 0
+                    )
+                    fig_path.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+                    sidecar.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+            if _freed_render.get("plots"):
+                from hhemt.du_sentinels import decrement_scope_sentinel
+
+                decrement_scope_sentinel(
+                    self.analysis_paths.analysis_dir, scope="analysis", child_deltas=dict(_freed_render)
+                )
 
     def _cpu_sim_partition(self) -> str | None:
         """Resolve the SLURM partition for CPU-ONLY simulation rules (``run_swmm``).
@@ -2254,13 +2303,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # form (this is why the committed byte-identity goldens, captured from a
         # DIRECT generate_* call where the field stays None, need no regen).
         _runs_under_slurm = (
-            self.cfg_analysis.multi_sim_run_method != "local"
-            or self._resolved_execution_locus == "slurm"
+            self.cfg_analysis.multi_sim_run_method != "local" or self._resolved_execution_locus == "slurm"
         )
         _report_tail_partition = (
-            str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "")
-            if _runs_under_slurm
-            else ""
+            str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "") if _runs_under_slurm else ""
         )
         # Local import: keeps workflow.py's module-level import set unchanged and matches
         # this file's existing habit for report_renderers symbols (:486, :727, :808, :2697).
@@ -2312,7 +2358,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         analysis_root = str(analysis_dir.resolve())
         cfg_ana = self.analysis.cfg_analysis
         if getattr(cfg_ana, "toggle_sensitivity_analysis", False):
-            subs = self.analysis.sensitivity.sub_analyses
+            subs = self.analysis.sensitivity.members
             first_sub = subs[next(iter(subs))]
             repr_scen_paths = first_sub._retrieve_sim_runs(0)._scenario.scen_paths
         else:
@@ -3206,7 +3252,7 @@ rule run_{model_type}:
             compression_level=compression_level,
         )
         # Registry-driven plot-rule dispatch (P1b / TO-8): the active set's
-        # renderer_selection (default → the six common renderers in order) is the
+        # renderer_selection (default → its eight renderers in order) is the
         # single source of which renderers fire. Replaces the hardcoded call list.
         snakefile_content += self._emit_active_set_plot_rules(
             self._resolve_active_reporting_set(self.analysis),
@@ -3271,9 +3317,9 @@ rule render_report:
         backward-compat shim for callers still returning ``list[str]``.
 
         Sensitivity-master detection: if the analysis is a sensitivity master,
-        iterate per-sub-analysis scenarios so the master per_analysis_summary
-        table has provenance for every sub-analysis's status counts (per
-        Iteration 6 "show all sub-analyses" scope).
+        iterate per-member scenarios so the master per_analysis_summary
+        table has provenance for every member's status counts (per
+        Iteration 6 "show all members" scope).
         """
         import os as _os
 
@@ -3281,14 +3327,14 @@ rule render_report:
         analysis_root = str(Path(analysis_dir).resolve())
         enabled = self.analysis._get_enabled_model_types()
         sources: list[dict] = []
-        # Sensitivity-master scope: iterate every sub-analysis's scenarios.
+        # Sensitivity-master scope: iterate every member's scenarios.
         is_sensitivity_master = (
             getattr(self.analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
             and getattr(self.analysis, "sensitivity", None) is not None
         )
         if is_sensitivity_master:
             scenario_objs = []
-            for sub in self.analysis.sensitivity.sub_analyses.values():
+            for sub in self.analysis.sensitivity.members.values():
                 for event_iloc in sub.df_sims.index:
                     try:
                         scenario_objs.append(sub._retrieve_sim_run_processing_object(event_iloc).scen_paths)
@@ -3632,7 +3678,7 @@ rule export_scenario_status:
         rainfall_datavar = self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
         storm_tide_datavar = self.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
 
-        helpers = f'''
+        helpers = f"""
 def _per_sim_event_page_sources(wildcards):
     from hhemt.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
@@ -3650,7 +3696,7 @@ def _per_sim_event_page_sources(wildcards):
             if _src not in out:
                 out.append(_src)
     return out
-'''
+"""
 
         page_spec = RuleSpec(
             rule_name="plot_per_sim_event_page",
@@ -3707,7 +3753,7 @@ def _per_sim_event_page_sources(wildcards):
             # resume after driver/orchestrator death cannot re-fire COMPLETED sims via
             # the `input` trigger (which would waste GPU-days). The mtime trigger still
             # covers every legitimate rerun the toolkit relies on — including the
-            # per-sa_id fingerprint mechanism (sa-{id}_inputs.json bumps mtime on
+            # per-member_id fingerprint mechanism (member-{id}_inputs.json bumps mtime on
             # content change; see Gotcha 17 and the comment near the fingerprint write
             # site) and missing-output reruns after Phase 2 DEAD-token reclaim. The
             # delete (:5045 → mtime,input) and reprocess (:4546/:7044 → mtime) paths
@@ -3715,9 +3761,9 @@ def _per_sim_event_page_sources(wildcards):
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
         }
-        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
-            "local_cpu_cores_for_workflow must be specified for local runs"
-        )
+        assert isinstance(
+            self.cfg_analysis.local_cpu_cores_for_workflow, int
+        ), "local_cpu_cores_for_workflow must be specified for local runs"
         if mode == "local":
             config.update(
                 {
@@ -3739,9 +3785,9 @@ def _per_sim_event_page_sources(wildcards):
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
             max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
-            assert isinstance(max_concurrent, int), (
-                "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
-            )
+            assert isinstance(
+                max_concurrent, int
+            ), "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -3978,9 +4024,9 @@ echo ""
             # per-node count is required) — _resolve_gpus_per_node resolves an
             # absent value to 0, which is a misconfiguration in the GPU branch.
             gpus_per_node = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
-            assert isinstance(gpus_per_node, int) and gpus_per_node > 0, (
-                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
-            )
+            assert (
+                isinstance(gpus_per_node, int) and gpus_per_node > 0
+            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self._resolve_gpu_hardware(self.cfg_analysis.hpc_ensemble_partition)
             if gpu_hardware:
@@ -5817,8 +5863,18 @@ exit $snakemake_status
         try:
             r = subprocess.run(
                 [
-                    "sacct", "-X", "--parsable2", "--noheader", "--clusters", "all",
-                    "--name", ",".join(_names), "--starttime", starttime, "-o", "State",
+                    "sacct",
+                    "-X",
+                    "--parsable2",
+                    "--noheader",
+                    "--clusters",
+                    "all",
+                    "--name",
+                    ",".join(_names),
+                    "--starttime",
+                    starttime,
+                    "-o",
+                    "State",
                 ],
                 capture_output=True,
                 text=True,
@@ -5920,9 +5976,7 @@ exit $snakemake_status
         last_fp = self._status_progress_fingerprint()
         last_progress_t = time.monotonic()
         all_pending_since: float | None = None
-        queue_starved_seconds = (
-            float(getattr(self.cfg_analysis, "hpc_max_queue_wait_min", None) or 720.0) * 60.0
-        )
+        queue_starved_seconds = float(getattr(self.cfg_analysis, "hpc_max_queue_wait_min", None) or 720.0) * 60.0
         try:
             while True:
                 has_session_cmd = f"{module_load_prefix}tmux has-session -t {session_name}"
@@ -7112,9 +7166,7 @@ exit $snakemake_status
         """
         prefix = self._get_module_load_prefix()
         quoted = shlex.quote(session_name)
-        attempts = ([f"{prefix}tmux has-session -t {quoted}"] if prefix else []) + [
-            f"tmux has-session -t {quoted}"
-        ]
+        attempts = ([f"{prefix}tmux has-session -t {quoted}"] if prefix else []) + [f"tmux has-session -t {quoted}"]
         for cmd in attempts:
             try:
                 r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=30)
@@ -7430,9 +7482,7 @@ exit $snakemake_status
                 alive = None
 
             if alive:
-                live.append(
-                    f"{s.get('driver_id')} (mode={mode}, host={origin_host or 'unrecorded'}, liveness=ALIVE)"
-                )
+                live.append(f"{s.get('driver_id')} (mode={mode}, host={origin_host or 'unrecorded'}, liveness=ALIVE)")
                 continue
 
             if alive is None:
@@ -7531,7 +7581,7 @@ exit $snakemake_status
         ``analysis_dir_override`` sets the ``--analysis-dir`` the wait-runner
         polls. The multisim path leaves it ``None`` (markers live under the
         single master ``analysis_dir``). The sensitivity path MUST pass the
-        per-sub-analysis dir (``master/subanalyses/{analysis_id}``) because
+        per-member dir (``master/members/{analysis_id}``) because
         ``run_simulation_runner`` writes sensitivity markers under the sub
         analysis's own ``analysis_dir`` (sensitivity_analysis.py:1485), not the
         master dir — without the override the wait-runner would poll the wrong
@@ -7668,7 +7718,7 @@ exit $snakemake_status
     # `default-resources`' slurm_partition={hpc_ensemble_partition} (:3177),
     # which is the GPU ensemble partition, and are submitted with ZERO GRES —
     # rejected at sbatch on a GPU-only partition. Observed 2026-07-20: 112
-    # uniform `Error in rule delete_subanalysis_reprocess` failures on
+    # uniform `Error in rule delete_member_reprocess` failures on
     # gpu-a6000. Empty partition (local mode, or an unset processing partition)
     # emits NO slurm_partition key — byte-identical to the pre-fix literal, so
     # local-mode Snakefiles are unchanged.
@@ -7741,41 +7791,41 @@ exit $snakemake_status
         rule_all = f'rule all:\n    input:\n        "{consolidation_flag}"\n\n'
         return rule_all + "".join(rules)
 
-    def _build_delete_sensitivity_snakefile_content(self, sa_ids: list[str]) -> str:
+    def _build_delete_sensitivity_snakefile_content(self, member_ids: list[str]) -> str:
         """Build the sensitivity-master delete Snakefile content.
 
         Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
-        Per-sub-analysis delete rules + analysis-level consolidation rule.
+        Per-member delete rules + analysis-level consolidation rule.
         """
         analysis_dir = str(self.analysis_paths.analysis_dir)
         python_exe = self.python_executable
 
         rules = []
-        per_sa_flags = []
-        for sa_id in sa_ids:
+        per_member_flags = []
+        for member_id in member_ids:
             # Snakemake rule names must be valid Python identifiers; sanitize
-            # the sa_id for the rule name only, keep flag-path interpolation
-            # using the original sa_id so paths match `_enumerate_expected_*`.
-            rule_name_slug = sa_id.replace(".", "_").replace("-", "_")
-            flag = f"{analysis_dir}/_status/_deleting/subanalysis_sa-{sa_id}.flag"
-            per_sa_flags.append(flag)
+            # the member_id for the rule name only, keep flag-path interpolation
+            # using the original member_id so paths match `_enumerate_expected_*`.
+            rule_name_slug = member_id.replace(".", "_").replace("-", "_")
+            flag = f"{analysis_dir}/_status/_deleting/member_member-{member_id}.flag"
+            per_member_flags.append(flag)
             rules.append(
-                f"rule delete_subanalysis_{rule_name_slug}:\n"
+                f"rule delete_member_{rule_name_slug}:\n"
                 f"    output:\n"
                 f'        "{flag}"\n'
                 f"{self._delete_rule_resources()}"
                 f"    shell:\n"
-                f'        "{python_exe} -m hhemt.delete_subanalysis_runner "\n'
-                f'        "--sa-id {sa_id} "\n'
+                f'        "{python_exe} -m hhemt.delete_member_runner "\n'
+                f'        "--member-id {member_id} "\n'
                 f'        "--analysis-dir {analysis_dir}"\n\n'
             )
 
         consolidation_flag = f"{analysis_dir}/_status/_deleting/analysis_consolidation.flag"
-        consolidation_inputs = ",\n        ".join(f'"{f}"' for f in per_sa_flags)
+        consolidation_inputs = ",\n        ".join(f'"{f}"' for f in per_member_flags)
         rules.append(
             f"rule delete_analysis_consolidation:\n"
             f"    input:\n"
-            f"        {consolidation_inputs if per_sa_flags else ''}\n"
+            f"        {consolidation_inputs if per_member_flags else ''}\n"
             f"    output:\n"
             f'        "{consolidation_flag}"\n'
             f"{self._delete_rule_resources()}"
@@ -7900,7 +7950,7 @@ exit $snakemake_status
         per-scenario delete_processed_{slug} (processed/-only) when
         start_with=='process' + one delete_reprocess_consolidation (master zarr).
         Sensitivity (D-scope Option C — per-sub fan-out mirroring the existing
-        delete_subanalysis_{sa} granularity): one delete_subanalysis_reprocess_{sa}
+        delete_member_{member} granularity): one delete_member_reprocess_{member}
         per sub (deletes that sub's processed/ across all events when
         start_with=='process' + that sub's analysis_datatree.zarr) + one master
         delete_reprocess_consolidation (sensitivity_datatree.zarr) fanning in on
@@ -7952,21 +8002,21 @@ exit $snakemake_status
                 f'        "> {{log}} 2>&1"\n\n'
             )
 
-        def _subanalysis_rule(rule_suffix: str, sa_id: str, sub_dir: str, flag: str, start_with: str) -> str:
-            # D-scope Option C: ONE rule per sub-analysis (mirrors the existing
-            # delete_subanalysis_{sa} granularity). The runner deletes the sub's
+        def _analysis_rule(rule_suffix: str, member_id: str, sub_dir: str, flag: str, start_with: str) -> str:
+            # D-scope Option C: ONE rule per member (mirrors the existing
+            # delete_member_{member} granularity). The runner deletes the sub's
             # processed/ across ALL its events (only when start_with=='process')
             # + the sub's analysis_datatree.zarr.
             proc_arg = " --delete-processed" if start_with == "process" else ""
-            log = f"{master_dir}/logs/delete_reprocess/delete_subanalysis_reprocess_{rule_suffix}.log"
+            log = f"{master_dir}/logs/delete_reprocess/delete_member_reprocess_{rule_suffix}.log"
             return (
-                f"rule delete_subanalysis_reprocess_{rule_suffix}:\n"
+                f"rule delete_member_reprocess_{rule_suffix}:\n"
                 f'    output:\n        "{flag}"\n'
                 f'    log:\n        "{log}"\n'
                 f"{self._delete_rule_resources()}"
                 f"    shell:\n"
-                f'        "{python_exe} -m hhemt.delete_subanalysis_reprocess_runner "\n'
-                f'        "--sa-id {sa_id} --analysis-dir {sub_dir}{proc_arg} "\n'
+                f'        "{python_exe} -m hhemt.delete_member_reprocess_runner "\n'
+                f'        "--member-id {member_id} --analysis-dir {sub_dir}{proc_arg} "\n'
                 f'        "> {{log}} 2>&1"\n\n'
             )
 
@@ -7984,22 +8034,22 @@ exit $snakemake_status
         else:
             # D-scope → Option C: PER-SUB-ANALYSIS fan-out mirroring the EXISTING
             # _build_delete_sensitivity_snakefile_content granularity
-            # (delete_subanalysis_{sa}, workflow.py:5316) — ONE rule per sub, NOT
-            # per-(sa, event). Each per-sub rule deletes that sub's processed/
+            # (delete_member_{member}, workflow.py:5316) — ONE rule per sub, NOT
+            # per-(member, event). Each per-sub rule deletes that sub's processed/
             # (across all its events, only when start_with=='process') + that
-            # sub's analysis_datatree.zarr via delete_subanalysis_reprocess_runner
+            # sub's analysis_datatree.zarr via delete_member_reprocess_runner
             # (item 5b). A master rule then deletes sensitivity_datatree.zarr,
             # fanning in on the per-sub flags. Rationale (vs the rejected
-            # per-(sa,evt) shape): ~n_sa jobs instead of ~n_sa*n_evt tiny SLURM
+            # per-(member,evt) shape): ~n_member jobs instead of ~n_member*n_evt tiny SLURM
             # jobs (avoids scheduler flood on large suites), and reuses the
             # validated per-sub rule granularity rather than a novel shape.
             sub_flags: list[str] = []
-            for sa_id, sub in self.analysis.sensitivity.sub_analyses.items():
+            for member_id, sub in self.analysis.sensitivity.members.items():
                 sub_dir = str(sub.analysis_paths.analysis_dir)
-                sa_slug = str(sa_id).replace(".", "_").replace("-", "_")
-                sub_flag = f"{sub_dir}/_status/_deleting_reprocess/subanalysis_reprocess.flag"
+                member_slug = str(member_id).replace(".", "_").replace("-", "_")
+                sub_flag = f"{sub_dir}/_status/_deleting_reprocess/member_reprocess.flag"
                 sub_flags.append(sub_flag)
-                rules.append(_subanalysis_rule(sa_slug, sa_id, sub_dir, sub_flag, start_with))
+                rules.append(_analysis_rule(member_slug, member_id, sub_dir, sub_flag, start_with))
             # master zarr rule (deletes sensitivity_datatree.zarr); fans in on all per-sub flags.
             master_flag = f"{master_dir}/_status/_deleting_reprocess/reprocess_consolidation.flag"
             rules.append(_zarr_rule("consolidation", master_dir, master_flag, sub_flags))
@@ -8042,19 +8092,19 @@ exit $snakemake_status
     def submit_delete_workflow_sensitivity(
         self,
         *,
-        sa_ids: list[str],
+        member_ids: list[str],
         override_in_flight: bool = False,
         override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
     ) -> dict:
         """Generate and submit the sensitivity-master delete Snakefile.
 
         Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
-        Per-sub-analysis fan-out + analysis-level consolidation.
+        Per-member fan-out + analysis-level consolidation.
         """
         self._pre_delete_guards(override_in_flight=override_in_flight)
 
         snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
-        _write_snakefile_atomic(snakefile_path, self._build_delete_sensitivity_snakefile_content(sa_ids))
+        _write_snakefile_atomic(snakefile_path, self._build_delete_sensitivity_snakefile_content(member_ids))
         return self._submit_delete_snakemake(
             snakefile_path,
             override_multi_sim_run_method=override_multi_sim_run_method,
@@ -8066,20 +8116,20 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
     Builder class for generating and executing Snakemake workflows for sensitivity analysis.
 
     This class handles the unique requirements of sensitivity analysis workflows,
-    which involve a hierarchical structure (master analysis → sub-analyses → simulations)
+    which involve a hierarchical structure (master analysis → members → simulations)
     with multiple consolidation steps. It composes SnakemakeWorkflowBuilder to reuse
     common workflow patterns while adding sensitivity-specific logic.
 
     Key Features:
     - Generates flattened master Snakefile with all simulation rules
-    - Handles dynamic resource allocation per sub-analysis
-    - Supports multiple consolidation levels (per-subanalysis + master)
+    - Handles dynamic resource allocation per member
+    - Supports multiple consolidation levels (per-member + master)
     - Delegates workflow submission to base SnakemakeWorkflowBuilder
 
     Parameters
     ----------
     sensitivity_analysis : TRITONSWMM_sensitivity_analysis
-        The parent sensitivity analysis object containing configuration and sub-analyses
+        The parent sensitivity analysis object containing configuration and members
     """
 
     def __init__(self, sensitivity_analysis: "TRITONSWMM_sensitivity_analysis"):
@@ -8089,21 +8139,21 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         Parameters
         ----------
         sensitivity_analysis : TRITONSWMM_sensitivity_analysis
-            The parent sensitivity analysis object containing configuration and sub-analyses
+            The parent sensitivity analysis object containing configuration and members
         """
         self.sensitivity_analysis = sensitivity_analysis
-        self.master_analysis = sensitivity_analysis.master_analysis
-        self.system = self.master_analysis._system
-        self.analysis_paths = self.master_analysis.analysis_paths
-        self.python_executable = self.master_analysis._python_executable
+        self.experiment = sensitivity_analysis.experiment
+        self.system = self.experiment._system
+        self.analysis_paths = self.experiment.analysis_paths
+        self.python_executable = self.experiment._python_executable
         # Phase 3: unique compile targets (deduplicated by compile-relevant tuple
         # in Phase 1). One Snakemake `rule setup_target_{N}` is emitted per entry
         # so a sensitivity study spanning different gpu_hardware / DEM resolution
-        # values compiles once per target rather than once per sub-analysis.
+        # values compiles once per target rather than once per member.
         self.unique_system_targets = sensitivity_analysis.unique_system_targets
 
         # Compose base workflow builder for common patterns
-        self._base_builder = SnakemakeWorkflowBuilder(self.master_analysis)
+        self._base_builder = SnakemakeWorkflowBuilder(self.experiment)
         # ADR-1: the sensitivity-master + reprocess-master process_{model} shells
         # reference self._container_process_prefix; delegate to the base builder's
         # resolved token so all three process-rung sites carry the identical prefix
@@ -8114,9 +8164,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # (:6787), NOT the base builder's sys.executable, so falling back to the
         # base builder's resolved attribute would change native emission and
         # break the byte-identity goldens.
-        self._process_python_executable = (
-            self._base_builder._container_process_python or self.python_executable
-        )
+        self._process_python_executable = self._base_builder._container_process_python or self.python_executable
 
     def submit_delete_workflow_sensitivity(
         self,
@@ -8126,7 +8174,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
     ) -> dict:
         """Submit the distributed sensitivity-master delete workflow.
 
-        Thin facade: derives the ``sa_ids`` list from
+        Thin facade: derives the ``member_ids`` list from
         ``self.sensitivity_analysis.df_setup.index`` and delegates to
         :meth:`SnakemakeWorkflowBuilder.submit_delete_workflow_sensitivity`
         on the composed base builder. Pre-delete guards (live-sentinel
@@ -8135,47 +8183,47 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
 
         Per cleanup-rerun-delete-redesign Phase 2.
         """
-        sa_ids = self.sensitivity_analysis.df_setup.index.astype(str).tolist()
+        member_ids = self.sensitivity_analysis.df_setup.index.astype(str).tolist()
         return self._base_builder.submit_delete_workflow_sensitivity(
-            sa_ids=sa_ids,
+            member_ids=member_ids,
             override_in_flight=override_in_flight,
             override_multi_sim_run_method=override_multi_sim_run_method,
         )
 
-    def _enumerate_sa_event_pairs(
+    def _enumerate_member_event_pairs(
         self,
         *,
         context_label: str,
         include_sub=None,
     ) -> tuple[list[str], list[str]]:
-        """Best-effort enumeration of the ``(sa_id, event_id_slug)`` pairs that
+        """Best-effort enumeration of the ``(member_id, event_id_slug)`` pairs that
         feed the master generators' per-sim plot-rule wildcards
-        (``SA_EVENT_PAIRS_SA`` / ``SA_EVENT_PAIRS_EVT``).
+        (``MEMBER_EVENT_PAIRS_MEMBER`` / ``MEMBER_EVENT_PAIRS_EVT``).
 
         Shared by ``generate_master_snakefile_content`` and
         ``generate_reprocess_master_snakefile_content`` (R13/D10 hardening: one
         tested ``except`` instead of two byte-identical copies). On ANY failure
         it logs a WARNING naming the exception type and returns two EMPTY lists,
         so ``rule all`` does not demand the per-sim panels and the master report
-        skips them — the silent-zero becomes a DETECTED-zero. ``include_sub(sa_id,
-        sub) -> bool`` optionally filters sub-analyses (the reprocess generator
-        gates on completion state); ``None`` includes every sub-analysis.
+        skips them — the silent-zero becomes a DETECTED-zero. ``include_sub(member_id,
+        sub) -> bool`` optionally filters members (the reprocess generator
+        gates on completion state); ``None`` includes every member.
         """
         from hhemt.scenario import compute_event_id_slug
 
-        sa_event_pairs_sa: list[str] = []
-        sa_event_pairs_evt: list[str] = []
+        member_event_pairs_member: list[str] = []
+        member_event_pairs_evt: list[str] = []
         try:
-            for sa_id, sub in self.sensitivity_analysis.sub_analyses.items():
-                if include_sub is not None and not include_sub(sa_id, sub):
+            for member_id, sub in self.sensitivity_analysis.members.items():
+                if include_sub is not None and not include_sub(member_id, sub):
                     continue
                 for event_iloc in sub.df_sims.index:
                     ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
-                    sa_event_pairs_sa.append(str(sa_id))
-                    sa_event_pairs_evt.append(compute_event_id_slug(ev))
+                    member_event_pairs_member.append(str(member_id))
+                    member_event_pairs_evt.append(compute_event_id_slug(ev))
         except Exception as exc:
             logger.warning(
-                "Per-sim panel enumeration failed for the %s (%s: %s). Per-sa "
+                "Per-sim panel enumeration failed for the %s (%s: %s). Per-member "
                 "per-event plot rules will emit NO wildcarded outputs and the %s "
                 "report will skip Per-Simulation panels. This is a silent-zero "
                 "unless you are reading this line.",
@@ -8184,11 +8232,11 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
                 exc,
                 context_label,
             )
-            # Best-effort: if any sub-analysis can't materialize event ids, leave
-            # the paired lists empty — per-sa per-event plot rules simply emit no
+            # Best-effort: if any member can't materialize event ids, leave
+            # the paired lists empty — per-member per-event plot rules simply emit no
             # wildcarded outputs and the master report skips Per-Simulation panels.
             return [], []
-        return sa_event_pairs_sa, sa_event_pairs_evt
+        return member_event_pairs_member, member_event_pairs_evt
 
     def generate_master_snakefile_content(
         self,
@@ -8215,9 +8263,9 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
 
         This method generates a single Snakefile with all simulation rules
         flattened directly into it (no nested Snakemake calls). Each simulation
-        gets its own rule with exact resource requirements from its sub-analysis config.
+        gets its own rule with exact resource requirements from its member config.
 
-        This avoids resource contention issues where sub-analyses with different
+        This avoids resource contention issues where members with different
         CPU/GPU requirements would fail due to incorrect resource allocation.
 
         Parameters
@@ -8256,7 +8304,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
 
         # Emit report templates into the master analysis_dir/report/ so the
         # snakemake --report engine can resolve caption= paths.
-        _emit_report_artifacts(self.master_analysis.analysis_paths.analysis_dir)
+        _emit_report_artifacts(self.experiment.analysis_paths.analysis_dir)
 
         # Re-materialize the per-target `_generated/target_*.yaml` files that the
         # setup_target_N rules (emitted below) reference by absolute path. The
@@ -8271,13 +8319,13 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # Get absolute path to conda environment file using helper
         conda_env_path = self._base_builder._get_conda_env_path()
         master_config_args = self._base_builder._get_config_args(
-            analysis_config_yaml=self.master_analysis.analysis_config_yaml
+            analysis_config_yaml=self.experiment.analysis_config_yaml
         )
 
         # Post-F2 (R1): report cfg is inline on cfg_analysis; source the
         # sensitivity benchmarking independent_vars directly from there so
         # the master Snakefile can wildcard the plot rule per independent_var.
-        _report_cfg = self.master_analysis.cfg_analysis.report
+        _report_cfg = self.experiment.cfg_analysis.report
         _independent_vars: list[str] = (
             list(_report_cfg.sensitivity.independent_vars) if _report_cfg.sensitivity is not None else []
         )
@@ -8305,29 +8353,31 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
 
         model_type = enabled_models[0]
 
-        log_dir_str = str(self.master_analysis.analysis_paths.analysis_log_directory)
-        master_analysis_id = str(self.master_analysis.cfg_analysis.analysis_id)
-        n_sub_analyses = len(self.sensitivity_analysis.sub_analyses)
-        # Total scenarios across all sub-analyses (best-effort; matches per-sub-analysis n_sims sum)
+        log_dir_str = str(self.experiment.analysis_paths.analysis_log_directory)
+        experiment_id = str(self.experiment.cfg_analysis.analysis_id)
+        n_analyses = len(self.sensitivity_analysis.members)
+        # Total scenarios across all members (best-effort; matches per-member n_sims sum)
         try:
-            total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.sub_analyses.values())
+            total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.members.values())
         except Exception as exc:
             logger.warning(
                 "Total-sim-count enumeration failed for the sensitivity master "
-                "(%s: %s); falling back to n_sub_analyses=%d for config['n_sims']. "
+                "(%s: %s); falling back to n_members=%d for config['n_sims']. "
                 "The reported sim count will be approximate. This is a silent "
                 "degradation unless you are reading this line.",
                 type(exc).__name__,
                 exc,
-                n_sub_analyses,
+                n_analyses,
             )
-            total_n_sims = n_sub_analyses
+            total_n_sims = n_analyses
 
-        # Compute paired (sa_id, event_id) lists for per-sa per-event plot rules.
-        # Used by `_build_plot_rule_block_per_sim_per_sa` and the master `rule all`
-        # via `expand(..., zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)`.
+        # Compute paired (member_id, event_id) lists for per-member per-event plot rules.
+        # Used by `_build_plot_rule_block_per_sim_per_member` and the master `rule all`
+        # via `expand(..., zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT)`.
         # Event IDs derived via the canonical slug helper used elsewhere in workflow.py.
-        sa_event_pairs_sa, sa_event_pairs_evt = self._enumerate_sa_event_pairs(context_label="sensitivity master")
+        member_event_pairs_member, member_event_pairs_evt = self._enumerate_member_event_pairs(
+            context_label="sensitivity master"
+        )
 
         # Auto-render — modeled as an explicit Snakemake rule (not an `onsuccess:`
         # hook). `onsuccess:` only fires when rules execute; on a fully up-to-date
@@ -8340,7 +8390,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
 
         # Start building the Snakefile
         snakefile_content = f'''# Auto-generated flattened master Snakefile for sensitivity analysis
-# Each sub-analysis simulation phase gets its own rule with appropriate resources
+# Each member simulation phase gets its own rule with appropriate resources
 
 import os
 from datetime import datetime as _dt
@@ -8353,20 +8403,20 @@ except Exception:
     _toolkit_version = "unknown"
 
 # Config dict consumed by report_templates/workflow_description.rst.j2
-config["analysis_id"] = {master_analysis_id!r}
+config["analysis_id"] = {experiment_id!r}
 config["toolkit_version"] = _toolkit_version
 config["n_sims"] = {total_n_sims}
 config["is_sensitivity"] = True
-config["n_sub_analyses"] = {n_sub_analyses}
+config["n_members"] = {n_analyses}
 config["independent_vars"] = {_independent_vars!r}
 config["group_by_var"] = {_group_by_var!r}
 config["report"] = {{"generated_at": _dt.now().isoformat(timespec="seconds")}}
 
-# Paired (sa_id, event_id) lists for per-sa per-event plot rules.
-# Used by `expand(..., zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)`
-# in the master `rule all` and in the per-sa per-event plot rule definitions.
-SA_EVENT_PAIRS_SA = {sa_event_pairs_sa!r}
-SA_EVENT_PAIRS_EVT = {sa_event_pairs_evt!r}
+# Paired (member_id, event_id) lists for per-member per-event plot rules.
+# Used by `expand(..., zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT)`
+# in the master `rule all` and in the per-member per-event plot rule definitions.
+MEMBER_EVENT_PAIRS_MEMBER = {member_event_pairs_member!r}
+MEMBER_EVENT_PAIRS_EVT = {member_event_pairs_evt!r}
 
 report: "report/workflow_description.rst"
 
@@ -8392,49 +8442,51 @@ onerror:
         # render_report subset derived from it below) MUST match or the DAG
         # planner cannot resolve the wildcards. `_ext` is in scope for every
         # subsequent `rule_all_inputs.append(...)` site below, including those
-        # nested inside the `if sa_event_pairs_sa:` and `if _independent_vars:`
+        # nested inside the `if member_event_pairs_member:` and `if _independent_vars:`
         # blocks (Python's nested-block scoping rules).
         _ext = _resolve_rule_all_extensions(self._base_builder._get_report_cfg_static_backend())
 
         # Build the rule all with all dependencies
         consolidation_flags = []
-        for sa_id in self.sensitivity_analysis.sub_analyses.keys():  # type: ignore
+        for member_id in self.sensitivity_analysis.members.keys():  # type: ignore
             consolidation_flags.append(
-                f"_status/e_consolidate_sa-{sa_id}_complete.flag"  # type: ignore
+                f"_status/e_consolidate_member-{member_id}_complete.flag"  # type: ignore
             )
 
         # Phase 3: per-target setup flags. Listed explicitly in rule_all_inputs so
-        # the DAG planner can reach setup_target rules even for sub-analyses whose
+        # the DAG planner can reach setup_target rules even for members whose
         # df_sims is empty (otherwise only reachable via transitive deps through
-        # prepare_sa rules).
+        # prepare_member rules).
         setup_target_flags = [
             f"_status/a_setup_target_{target.target_id}_complete.flag" for target in self.unique_system_targets
         ]
-        # sa_id (str) → target_id reverse lookup used when emitting per-SA rule
+        # member_id (str) → target_id reverse lookup used when emitting per-member rule
         # dependencies. Built once per Snakefile generation. Keys are coerced to
-        # str to match sub_analyses dict iteration keys regardless of source type.
-        sa_id_to_target_id: dict[str, int] = {
-            str(sa_id): target.target_id for target in self.unique_system_targets for sa_id in target.sub_analysis_ids
+        # str to match members dict iteration keys regardless of source type.
+        member_id_to_target_id: dict[str, int] = {
+            str(member_id): target.target_id
+            for target in self.unique_system_targets
+            for member_id in target.analysis_ids
         }
 
         rule_all_inputs = [f'"{flag}"' for flag in setup_target_flags]
         rule_all_inputs.extend(f'"{flag}"' for flag in consolidation_flags)
         rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
         # System-overview at master scope: the DEM and SWMM topology are shared
-        # across sub-analyses, so a single system_overview.png in the master
+        # across members, so a single system_overview.png in the master
         # report is the natural place to surface them. Per-analysis summary at
-        # master scope renders one row per sub-analysis (Iteration 6 "show all
-        # sub-analyses" scope). Per-sim plots wildcarded over (sa_id, event_id)
+        # master scope renders one row per member (Iteration 6 "show all
+        # members" scope). Per-sim plots wildcarded over (member_id, event_id)
         # pairs (Iteration 7 Change 3b — "show all" panel parity per the user's
-        # scope expansion: identical-looking panels across sub-analyses are a QC
+        # scope expansion: identical-looking panels across members are a QC
         # signal; expected variation is also visible).
         # Phase 3: per-plot disable — each common-renderer append is gated by
         # renderer_active so a disabled key drops from rule all AND the derived
         # render_report subset (render_rule_input_items below); _disabled resolves
         # to [] for an unconfigured run, preserving byte-identity.
-        from hhemt.report_renderers._reporting_sets import renderer_active
+        from hhemt.report_renderers._reporting_sets import renderer_active, set_carries
 
-        _disabled = self._resolve_disabled_renderers(self.master_analysis)
+        _disabled = self._resolve_disabled_renderers(self.experiment)
         if renderer_active("system_overview", _disabled):
             rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
         if renderer_active("per_analysis_summary", _disabled):
@@ -8452,17 +8504,25 @@ onerror:
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
 
+        # ONE resolution of the active set, consumed by BOTH the enumeration below and
+        # the dispatcher call later in this method. Two independent resolutions would be
+        # two readers of one fact with nothing binding them -- the emission/enumeration
+        # parity defect this gate exists to close, one level up.
+        _active_set = self._resolve_active_reporting_set(self.experiment)
         rule_all_inputs.extend(
-            _per_sim_per_sa_rule_all_inputs(
-                sa_event_pairs_sa=sa_event_pairs_sa,
+            _per_sim_per_member_rule_all_inputs(
+                member_event_pairs_member=member_event_pairs_member,
                 disabled=_disabled,
                 ext=_ext,
-                has_swmm_link_outputs=bool(
-                    {"tritonswmm", "swmm"} & set(self.master_analysis._get_enabled_model_types())
-                ),
+                has_swmm_link_outputs=bool({"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())),
+                set_carries_renderer=set_carries(_active_set, "per_sim_per_member"),
             )
         )
-        if _independent_vars and renderer_active("sensitivity_benchmarking", _disabled):
+        if (
+            _independent_vars
+            and set_carries(_active_set, "sensitivity_benchmarking")
+            and renderer_active("sensitivity_benchmarking", _disabled)
+        ):
             _e_bench = _ext["sensitivity_benchmarking"]
             # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
             # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
@@ -8476,14 +8536,14 @@ onerror:
         # the eda renderer AND (b) eda being configured (enabled_plots non-empty).
         # Inert for the benchmarking/default sets (no eda renderer in the selection),
         # so byte-identity for those sets is preserved.
-        _has_eda_artifact = bool(self.master_analysis.cfg_analysis.eda.enabled_plots)
+        _has_eda_artifact = bool(self.experiment.cfg_analysis.eda.enabled_plots)
         # b4b (Phase 4): the resolved clear-raw policy (runtime override wins, else the
         # config value). ClearRawValue = Literal["all","none"] | list[...] (config/analysis.py):
         # None is NOT a member, and a LIST form that does not name THIS master's model leaves
         # the raw TRITON binaries the b4b comparison reads intact, so a bare `in ("none",)`
         # test would gate the set off on a legitimate `clear_raw: ["swmm"]` run.
         _resolved_clear_raw = (
-            override_clear_raw if override_clear_raw is not None else self.master_analysis.cfg_analysis.clear_raw
+            override_clear_raw if override_clear_raw is not None else self.experiment.cfg_analysis.clear_raw
         )
         _has_preserved_raw_outputs = _resolved_clear_raw == "none" or (
             isinstance(_resolved_clear_raw, list) and model_type not in _resolved_clear_raw
@@ -8514,13 +8574,13 @@ onerror:
 """
 
         # Phase 3: emit one setup rule per unique compile target. For a sensitivity
-        # study that varies gpu_hardware or target_dem_resolution across sub-analyses,
+        # study that varies gpu_hardware or target_dem_resolution across members,
         # this materializes the per-target compile DAG without redundant compilation.
         # Backward-compat: a study with no `system_config_yaml` column (or all rows
         # collapsing to one target) yields exactly one rule (`setup_target_0`).
         for target in self.unique_system_targets:
             target_config_args = self._base_builder._get_config_args(
-                analysis_config_yaml=self.master_analysis.analysis_config_yaml,
+                analysis_config_yaml=self.experiment.analysis_config_yaml,
                 system_config_yaml=target.system_config_yaml,
                 target_partition=target.target_partition,
             )
@@ -8532,9 +8592,9 @@ onerror:
     resources:
 {
                 self._base_builder._build_resource_block(
-                    partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                    runtime_min=self.master_analysis.cfg_analysis.hpc_runtime_min_for_setup,
-                    mem_mb=self.master_analysis.cfg_analysis.hpc_mem_allocation_for_setup_mb,
+                    partition=self.experiment.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                    runtime_min=self.experiment.cfg_analysis.hpc_runtime_min_for_setup,
+                    mem_mb=self.experiment.cfg_analysis.hpc_mem_allocation_for_setup_mb,
                     nodes=1,
                     tasks=1,
                     cpus_per_task=1,
@@ -8559,65 +8619,64 @@ onerror:
 
 '''
 
-        # Write per-sa_id input fingerprint files (compare-and-write).
-        # Per-sa_id input fingerprint files declared as `input:` of every
-        # sub-analysis rule. When a row in the parent sensitivity CSV/Excel
+        # Write per-member_id input fingerprint files (compare-and-write).
+        # Per-member_id input fingerprint files declared as `input:` of every
+        # member rule. When a row in the parent sensitivity CSV/Excel
         # changes (any independent_vars column value), the corresponding
         # fingerprint file's content changes → its mtime bumps → Snakemake's
-        # mtime trigger re-runs only that sa_id's rule chain.
-        status_dir = self.master_analysis.analysis_paths.analysis_dir / "_status"
+        # mtime trigger re-runs only that member_id's rule chain.
+        status_dir = self.experiment.analysis_paths.analysis_dir / "_status"
         status_dir.mkdir(parents=True, exist_ok=True)
-        for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():  # type: ignore
-            fingerprint_path = status_dir / f"sa-{sa_id}_inputs.json"
-            self.sensitivity_analysis._write_sa_id_fingerprint(sub_analysis, fingerprint_path)
+        for member_id, analysis in self.sensitivity_analysis.members.items():  # type: ignore
+            fingerprint_path = status_dir / f"member-{member_id}_inputs.json"
+            self.sensitivity_analysis._write_member_id_fingerprint(analysis, fingerprint_path)
         if len(self.sensitivity_analysis.independent_vars) == 0:
             print(
                 "[Sensitivity] WARNING: independent_vars is empty; sensitivity-row-edit rerun trigger is a no-op",
                 flush=True,
             )
 
-        # Generate simulation rules for each sub-analysis
-        subanalysis_flags = []
-        for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():  # type: ignore
-            # Extract resource requirements from sub-analysis config
-            n_mpi = sub_analysis.cfg_analysis.n_mpi_procs or 1
-            n_omp = sub_analysis.cfg_analysis.n_omp_threads or 1
-            n_gpus = sub_analysis.cfg_analysis.n_gpus or 0
-            n_nodes = sub_analysis.cfg_analysis.n_nodes or 1
-            hpc_time = sub_analysis.cfg_analysis.hpc_time_min_per_sim or 30
-            mem_per_cpu = sub_analysis.cfg_analysis.mem_gb_per_cpu or 2
+        # Generate simulation rules for each member
+        analysis_flags = []
+        for member_id, analysis in self.sensitivity_analysis.members.items():  # type: ignore
+            # Extract resource requirements from member config
+            n_mpi = analysis.cfg_analysis.n_mpi_procs or 1
+            n_omp = analysis.cfg_analysis.n_omp_threads or 1
+            n_gpus = analysis.cfg_analysis.n_gpus or 0
+            n_nodes = analysis.cfg_analysis.n_nodes or 1
+            hpc_time = analysis.cfg_analysis.hpc_time_min_per_sim or 30
+            mem_per_cpu = analysis.cfg_analysis.mem_gb_per_cpu or 2
             gpus_per_node_config = (
-                resolve_gpus_per_node(sub_analysis.cfg_hpc_system, sub_analysis.cfg_analysis.hpc_ensemble_partition)
-                or 0
+                resolve_gpus_per_node(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition) or 0
             )
             cpus_per_sim = n_mpi * n_omp
-            run_mode = sub_analysis.cfg_analysis.run_mode
+            run_mode = analysis.cfg_analysis.run_mode
 
             sub_config_args = self._base_builder._get_config_args(
-                analysis_config_yaml=sub_analysis.analysis_config_yaml,
-                system_config_yaml=sub_analysis._system.system_config_yaml,
+                analysis_config_yaml=analysis.analysis_config_yaml,
+                system_config_yaml=analysis._system.system_config_yaml,
             )
             # Phase 6 (DQ7b): the run_simulation_runner resolves + injects the GPU
             # hardware from --target-partition. Pass the per-sub ensemble partition
             # so the sim runs (and any per-sim GPU compile) target the right hardware.
             sub_gpu_compile_config_args = self._base_builder._get_config_args(
-                analysis_config_yaml=sub_analysis.analysis_config_yaml,
-                system_config_yaml=sub_analysis._system.system_config_yaml,
-                target_partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
+                analysis_config_yaml=analysis.analysis_config_yaml,
+                system_config_yaml=analysis._system.system_config_yaml,
+                target_partition=analysis.cfg_analysis.hpc_ensemble_partition,
             )
 
-            # Phase 3: per-SA system config sources gpu_alloc_mode + gpu_hw so a
+            # Phase 3: per-member system config sources gpu_alloc_mode + gpu_hw so a
             # sensitivity study spanning UVA (gres) and Frontier (gpus) emits the
-            # correct SLURM directive per sub-analysis.
+            # correct SLURM directive per member.
             gpu_alloc_mode = self._base_builder._resolve_gpu_alloc_mode()
 
-            # Setup-target flag this sub-analysis depends on (Phase 3). Keyed by
-            # str(sa_id) to match the map built before the rule_all section.
-            setup_target_flag = f"_status/a_setup_target_{sa_id_to_target_id[str(sa_id)]}_complete.flag"
+            # Setup-target flag this member depends on (Phase 3). Keyed by
+            # str(member_id) to match the map built before the rule_all section.
+            setup_target_flag = f"_status/a_setup_target_{member_id_to_target_id[str(member_id)]}_complete.flag"
 
-            # Build resource blocks for this sub-analysis
-            prep_resources_sa = self._base_builder._build_resource_block(
-                partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+            # Build resource blocks for this member
+            prep_resources_member = self._base_builder._build_resource_block(
+                partition=analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                 runtime_min=30,
                 mem_mb=mem_per_cpu * 1000,
                 nodes=1,
@@ -8635,11 +8694,9 @@ onerror:
             # gpu_hardware comes directly from the per-target cfg_system. Under the
             # prefixed-column overlay mechanism, `system.gpu_hardware` overlay values
             # already populated this field via the synthesized per-target YAML.
-            gpu_hw = resolve_gpu_target(sub_analysis.cfg_hpc_system, sub_analysis.cfg_analysis.hpc_ensemble_partition)[
-                0
-            ]
-            sim_resources_sa = self._base_builder._build_resource_block(
-                partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
+            gpu_hw = resolve_gpu_target(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition)[0]
+            sim_resources_member = self._base_builder._build_resource_block(
+                partition=analysis.cfg_analysis.hpc_ensemble_partition,
                 runtime_min=hpc_time,
                 mem_mb=int(mem_per_cpu * n_mpi * n_omp * 1000),
                 nodes=n_nodes,
@@ -8652,37 +8709,37 @@ onerror:
                 mpi=(run_mode in ["hybrid", "mpi"]),
             )
 
-            process_resources_sa = self._base_builder._build_resource_block(
-                partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=sub_analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing,
-                mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
+            process_resources_member = self._base_builder._build_resource_block(
+                partition=analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing,
+                mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                 nodes=1,
                 tasks=1,
                 cpus_per_task=2,
             )
 
-            # For each simulation in this sub-analysis
-            sub_analysis_sim_flags = []
-            for event_iloc in sub_analysis.df_sims.index:
-                event_id = compute_event_id_slug(sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+            # For each simulation in this member
+            analysis_sim_flags = []
+            for event_iloc in analysis.df_sims.index:
+                event_id = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
                 # Rule names must be valid Python identifiers (no `.`, `-`).
                 # Flag paths keep the hyphen-delimited format for wildcard parsing.
-                sa_id_rule = str(sa_id).replace(".", "_").replace("-", "_")
+                member_id_rule = str(member_id).replace(".", "_").replace("-", "_")
                 event_id_rule = event_id.replace(".", "_").replace("-", "_")
                 # Phase 1: Scenario preparation (if enabled)
                 if prepare_scenarios:
-                    prep_rule_name = f"prepare_sa_{sa_id_rule}_evt_{event_id_rule}"
-                    prep_outflag = f"_status/b_prepare_sa-{sa_id}_evt-{event_id}_complete.flag"
+                    prep_rule_name = f"prepare_member_{member_id_rule}_evt_{event_id_rule}"
+                    prep_outflag = f"_status/b_prepare_member-{member_id}_evt-{event_id}_complete.flag"
 
                     snakefile_content += f'''rule {prep_rule_name}:
     input:
         "{setup_target_flag}",
-        "_status/sa-{sa_id}_inputs.json"
+        "_status/member-{member_id}_inputs.json"
     output: "{prep_outflag}"
     log: "{log_dir_str}/sims/{prep_rule_name}.log"
     conda: "{conda_env_path}"
     resources:
-{prep_resources_sa}
+{prep_resources_member}
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
@@ -8693,7 +8750,7 @@ onerror:
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
             --flag-output {{output}} \\
             --rule-name {prep_rule_name} \\
-            --sa-id {sa_id} \\
+            --member-id {member_id} \\
             --event-id {event_id} \\
             > {{log}} 2>&1
         """
@@ -8701,27 +8758,27 @@ onerror:
 '''
 
                 # Phase 2: Simulation execution
-                sim_rule_name = f"simulation_sa_{sa_id_rule}_evt_{event_id_rule}"
-                sim_outflag = f"_status/c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
+                sim_rule_name = f"simulation_member_{member_id_rule}_evt_{event_id_rule}"
+                sim_outflag = f"_status/c_run_{model_type}_member-{member_id}_evt-{event_id}_complete.flag"
                 upstream_flag = prep_outflag if prepare_scenarios else setup_target_flag
 
                 # v2 graceful-rerun: if this scenario is in the alive set, emit a
                 # wait-rule instead of the run-rule. The sensitivity sentinel
                 # rule_token convention (run_simulation_runner.py) is
-                # ``simulation_sa_{sa_id}_evt-{event_id}`` (literal hyphen). The
-                # wait-rule's ``--analysis-dir`` MUST be the per-sub-analysis dir
-                # (markers live under master/subanalyses/{id}/_status/, NOT the
+                # ``simulation_member_{member_id}_evt-{event_id}`` (literal hyphen). The
+                # wait-rule's ``--analysis-dir`` MUST be the per-member dir
+                # (markers live under master/members/{id}/_status/, NOT the
                 # master dir — Spec D). Distinct concrete rule names mean no
                 # ``ruleorder`` is needed (unlike the multisim wildcard path).
-                _sentinel_token = f"simulation_sa_{sa_id}_evt-{event_id}"
+                _sentinel_token = f"simulation_member_{member_id}_evt-{event_id}"
                 if _sentinel_token in (alive_by_token or {}):
                     snakefile_content += self._base_builder._emit_wait_for_sim_rule_block(
                         rule_token=_sentinel_token,
                         flag_output_path=sim_outflag,
-                        run_rule_inputs=[upstream_flag, f"_status/sa-{sa_id}_inputs.json"],
-                        wait_walltime_cap_min=sub_analysis.cfg_analysis.hpc_max_wait_for_inflight_min,
+                        run_rule_inputs=[upstream_flag, f"_status/member-{member_id}_inputs.json"],
+                        wait_walltime_cap_min=analysis.cfg_analysis.hpc_max_wait_for_inflight_min,
                         analysis_dir_override=(alive_token_to_dir or {}).get(
-                            _sentinel_token, str(sub_analysis.analysis_paths.analysis_dir)
+                            _sentinel_token, str(analysis.analysis_paths.analysis_dir)
                         ),
                     )
                 else:
@@ -8729,14 +8786,14 @@ onerror:
                     snakefile_content += f'''rule {sim_rule_name}:
     input:
         "{upstream_flag}",
-        "_status/sa-{sa_id}_inputs.json"
+        "_status/member-{member_id}_inputs.json"
     output: "{sim_outflag}"
     retries: {self._base_builder._resolved_simulate_retries()}
     log: "{log_dir_str}/sims/{sim_rule_name}.log"
     conda: "{conda_env_path}"
     threads: {snakemake_threads}
     resources:
-{sim_resources_sa}
+{sim_resources_member}
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
@@ -8744,7 +8801,7 @@ onerror:
             --event-iloc {event_iloc} \\
             {sub_gpu_compile_config_args} \\
             --model-type {model_type} \\
-            --sa-id {sa_id} \\
+            --member-id {member_id} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             --flag-output {{output}} \\
             --rule-name {sim_rule_name} {"--execution-locus " + _loc + " " if _loc else ""}\\
@@ -8756,18 +8813,18 @@ onerror:
 
                 # Phase 3: Output processing (if enabled)
                 if process_timeseries:
-                    process_rule_name = f"process_sa_{sa_id_rule}_evt_{event_id_rule}"
-                    process_outflag = f"_status/d_process_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
+                    process_rule_name = f"process_member_{member_id_rule}_evt_{event_id_rule}"
+                    process_outflag = f"_status/d_process_{model_type}_member-{member_id}_evt-{event_id}_complete.flag"
 
                     snakefile_content += f'''rule {process_rule_name}:
     input:
         "{sim_outflag}",
-        "_status/sa-{sa_id}_inputs.json"
+        "_status/member-{member_id}_inputs.json"
     output: "{process_outflag}"
     log: "{log_dir_str}/sims/{process_rule_name}.log"
     conda: "{conda_env_path}"
     resources:
-{process_resources_sa}
+{process_resources_member}
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
@@ -8780,7 +8837,7 @@ onerror:
             --compression-level {compression_level} \\
             --flag-output {{output}} \\
             --rule-name {process_rule_name} \\
-            --sa-id {sa_id} \\
+            --member-id {member_id} \\
             --event-id {event_id} \\
             > {{log}} 2>&1
         """
@@ -8790,27 +8847,27 @@ onerror:
                 else:
                     final_flag = sim_outflag
 
-                sub_analysis_sim_flags.append(final_flag)
+                analysis_sim_flags.append(final_flag)
 
-            subanalysis_flag = f"_status/e_consolidate_sa-{sa_id}_complete.flag"
-            subanalysis_flags.append(subanalysis_flag)
+            analysis_flag = f"_status/e_consolidate_member-{member_id}_complete.flag"
+            analysis_flags.append(analysis_flag)
 
             # Consolidate outputs after all sims have been run. Sanitize for
             # use as a Snakemake rule identifier.
-            prefix = self.sensitivity_analysis.sub_analyses_prefix  # type: ignore
-            consolidate_inputs = [f'"{flag}"' for flag in sub_analysis_sim_flags]
-            consolidate_inputs.append(f'"_status/sa-{sa_id}_inputs.json"')
-            snakefile_content += f'''rule consolidate_{prefix}{sa_id_rule}:
+            prefix = self.sensitivity_analysis.member_prefix  # type: ignore
+            consolidate_inputs = [f'"{flag}"' for flag in analysis_sim_flags]
+            consolidate_inputs.append(f'"_status/member-{member_id}_inputs.json"')
+            snakefile_content += f'''rule consolidate_{prefix}{member_id_rule}:
     input: {", ".join(consolidate_inputs)}
-    output: "{subanalysis_flag}"
-    log: "{log_dir_str}/sims/consolidate_{prefix}{sa_id}.log"
+    output: "{analysis_flag}"
+    log: "{log_dir_str}/sims/consolidate_{prefix}{member_id}.log"
     conda: "{conda_env_path}"
     resources:
 {
                 self._base_builder._build_resource_block(
-                    partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                    partition=analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                     runtime_min=30,
-                    mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
+                    mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                     nodes=1,
                     tasks=1,
                     cpus_per_task=1,
@@ -8824,8 +8881,8 @@ onerror:
             --which {which} \\
             --compression-level {compression_level} \\
             --flag-output {{output}} \\
-            --rule-name consolidate_{prefix}{sa_id_rule} \\
-            --sa-id {sa_id} \\
+            --rule-name consolidate_{prefix}{member_id_rule} \\
+            --member-id {member_id} \\
             > {{log}} 2>&1
         """
 
@@ -8833,16 +8890,16 @@ onerror:
 
         # Generate master consolidation rule
         snakefile_content += f'''rule master_consolidation:
-    input: {", ".join([f'"{flag}"' for flag in subanalysis_flags])}
+    input: {", ".join([f'"{flag}"' for flag in analysis_flags])}
     output: "_status/f_consolidate_master_complete.flag"
     log: "{log_dir_str}/master_consolidation.log"
     conda: "{conda_env_path}"
     resources:
 {
             self._base_builder._build_resource_block(
-                partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                partition=self.experiment.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                 runtime_min=30,
-                mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
+                mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
                 nodes=1,
                 tasks=1,
                 cpus_per_task=1,
@@ -8863,9 +8920,9 @@ onerror:
 '''
 
         # Registry-driven plot-rule dispatch at master scope (P1b / TO-8). The
-        # benchmarking set drives the five common renderers + the two conditional
-        # sensitivity renderers (per_sim_per_sa, sensitivity_benchmarking), gated
-        # by predicate_key against the method-local sa_event_pairs_sa /
+        # benchmarking set drives the seven unconditional renderers + the two conditional
+        # sensitivity renderers (per_sim_per_member, sensitivity_benchmarking), gated
+        # by predicate_key against the method-local member_event_pairs_member /
         # _independent_vars threaded in via predicate_inputs. The export rule is a
         # set-invariant non-figure rule (Option B — NOT a renderer_selection
         # entry); the B-i interleave hook flushes it BETWEEN the unconditional and
@@ -8873,16 +8930,14 @@ onerror:
         # Master uses f_consolidate_master_complete.flag (NOT the multisim
         # e_consolidate_complete flag).
         snakefile_content += self._emit_active_set_plot_rules(
-            self._resolve_active_reporting_set(self.master_analysis),
+            _active_set,
             input_flag="_status/f_consolidate_master_complete.flag",
             predicate_inputs={
                 "independent_vars": _independent_vars,
-                "sa_event_pairs_sa": sa_event_pairs_sa,
+                "member_event_pairs_member": member_event_pairs_member,
                 "has_eda_artifact": _has_eda_artifact,
                 "has_preserved_raw_outputs": _has_preserved_raw_outputs,
-                "has_swmm_link_outputs": bool(
-                    {"tritonswmm", "swmm"} & set(self.master_analysis._get_enabled_model_types())
-                ),
+                "has_swmm_link_outputs": bool({"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())),
             },
             disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
@@ -8906,9 +8961,9 @@ rule render_report:
     resources:
 {
             self._base_builder._build_resource_block(
-                partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                partition=self.experiment.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                 runtime_min=30,
-                mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+                mem_mb=self.experiment.cfg_analysis.mem_gb_per_cpu * 1000,
                 nodes=1,
                 tasks=1,
                 cpus_per_task=1,
@@ -8938,28 +8993,28 @@ rule render_report:
         master generator stable while emitting only the downstream rules needed
         for a master-level reprocess:
 
-        - ``rule consolidate_{prefix}{sa_id}`` for each sub-analysis WITH AT
+        - ``rule consolidate_{prefix}{member_id}`` for each member WITH AT
           LEAST ONE COMPLETED SIM (filtered by ``c_run_*`` flag existence on
-          disk). Sub-analyses with zero completed sims are silently excluded
-          from the DAG — no per-sa consolidate rule emitted, no fingerprint
-          fallback input. Per-sub-analysis resources are sourced from the
-          sub-analysis's own ``cfg_analysis`` (honoring per-row overrides for
+          disk). members with zero completed sims are silently excluded
+          from the DAG — no per-member consolidate rule emitted, no fingerprint
+          fallback input. Per-member resources are sourced from the
+          member's own ``cfg_analysis`` (honoring per-row overrides for
           ``hpc_mem_allocation_for_sim_output_processing_mb`` and partition).
-        - Under ``start_with='process'``: for each (sa_id, event_id) whose
+        - Under ``start_with='process'``: for each (member_id, event_id) whose
           ``c_run_*`` flag exists AND whose ``d_process_*`` flag does NOT
-          exist on disk, emit a per-sa per-event ``rule process_{model_type}_sa_{sa_id}_evt_{event_id}``
+          exist on disk, emit a per-member per-event ``rule process_{model_type}_member_{member_id}_evt_{event_id}``
           mirroring the canonical sensitivity workflow generator's process
-          emit (workflow.py:4920-4954). The per-sa consolidate's input list
+          emit (workflow.py:4920-4954). The per-member consolidate's input list
           dynamically mixes ``d_process_*`` flags (newly-emitted process rules)
-          and ``c_run_*`` flags (events already processed). The per-sa
+          and ``c_run_*`` flags (events already processed). The per-member
           consolidate shell appends ``--allow-incomplete`` ONLY when at least
-          one event in this sub-analysis went through the conditional process
-          emit (truly mixed state); fully-complete sub-analyses retain the
+          one event in this member went through the conditional process
+          emit (truly mixed state); fully-complete members retain the
           consolidate runner's existing fail-fast behavior. Under
           ``start_with='consolidate'`` or ``'render'``: no process rules
           emitted; consolidate consumes ``c_run_*`` flags directly and
           ``--allow-incomplete`` is not added (fail-fast preserved).
-        - ``rule master_consolidation`` aggregating the per-sa flags into
+        - ``rule master_consolidation`` aggregating the per-member flags into
           ``f_consolidate_master_complete.flag`` (overwrite + allow-incomplete
           baked).
         - The full plot + ``export_scenario_status`` + ``render_report`` rules,
@@ -8986,27 +9041,27 @@ rule render_report:
         report_formats
             List of report formats to render; defaults to ``["zip"]``.
         start_with
-            Stage to re-fire from. ``"process"`` enables conditional per-sa
+            Stage to re-fire from. ``"process"`` enables conditional per-member
             per-event process_timeseries emission (Option C: only emit for
-            (sa_id, event_id) pairs whose d_process flag is missing).
+            (member_id, event_id) pairs whose d_process flag is missing).
             ``"consolidate"`` and ``"render"`` skip process emission entirely
-            and the per-sa consolidate consumes c_run flags directly.
+            and the per-member consolidate consumes c_run flags directly.
         """
         from hhemt.scenario import compute_event_id_slug
 
         # Emit report templates into master analysis_dir/report/ so the
         # snakemake --report engine can resolve caption= paths. Mirrors the
         # full master generator.
-        _emit_report_artifacts(self.master_analysis.analysis_paths.analysis_dir)
+        _emit_report_artifacts(self.experiment.analysis_paths.analysis_dir)
 
         conda_env_path = self._base_builder._get_conda_env_path()
         master_config_args = self._base_builder._get_config_args(
-            analysis_config_yaml=self.master_analysis.analysis_config_yaml
+            analysis_config_yaml=self.experiment.analysis_config_yaml
         )
 
         # Sensitivity benchmarking + per-sim plotting context (sourced same as
         # the full master generator so render targets match).
-        _report_cfg = self.master_analysis.cfg_analysis.report
+        _report_cfg = self.experiment.cfg_analysis.report
         _independent_vars: list[str] = (
             list(_report_cfg.sensitivity.independent_vars) if _report_cfg.sensitivity is not None else []
         )
@@ -9031,63 +9086,63 @@ rule render_report:
             )
         model_type = enabled_models[0]
 
-        log_dir_str = str(self.master_analysis.analysis_paths.analysis_log_directory)
-        master_analysis_id = str(self.master_analysis.cfg_analysis.analysis_id)
-        n_sub_analyses = len(self.sensitivity_analysis.sub_analyses)
+        log_dir_str = str(self.experiment.analysis_paths.analysis_log_directory)
+        experiment_id = str(self.experiment.cfg_analysis.analysis_id)
+        n_analyses = len(self.sensitivity_analysis.members)
         try:
-            total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.sub_analyses.values())
+            total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.members.values())
         except Exception as exc:
             logger.warning(
                 "Total-sim-count enumeration failed for the reprocess master "
-                "(%s: %s); falling back to n_sub_analyses=%d for config['n_sims']. "
+                "(%s: %s); falling back to n_members=%d for config['n_sims']. "
                 "The reported sim count will be approximate. This is a silent "
                 "degradation unless you are reading this line.",
                 type(exc).__name__,
                 exc,
-                n_sub_analyses,
+                n_analyses,
             )
-            total_n_sims = n_sub_analyses
+            total_n_sims = n_analyses
 
-        # Paired (sa_id, event_id) lists for per-sa per-event plot rules.
-        # Report-target invariant: only include a sub's (sa_id, event_id) pairs
+        # Paired (member_id, event_id) lists for per-member per-event plot rules.
+        # Report-target invariant: only include a sub's (member_id, event_id) pairs
         # when the sub passes the shared summary-existence predicate (matches
         # consolidate_sensitivity_datatree's whole-sub skip, Gotcha 36). The
         # c_run_* flag is a STRICTLY WEAKER signal (Gotcha 34) — a sim can have
         # run with its summary absent — so enumerating a per-sim plot/report
         # target on c_run produces an unsatisfiable target the renderer fails on.
-        from hhemt.constants import sim_run_flag_per_sa
+        from hhemt.constants import sim_run_flag_per_member
 
-        analysis_dir_for_pairs = self.master_analysis.analysis_paths.analysis_dir
+        analysis_dir_for_pairs = self.experiment.analysis_paths.analysis_dir
 
-        def _sub_included_for_reprocess(sa_id, sub) -> bool:
-            """Shared sub-inclusion predicate for SA_EVENT_PAIRS, completed_sa_ids,
-            and the per-sa consolidate-emission loop, so the ~6785 equality
+        def _sub_included_for_reprocess(member_id, sub) -> bool:
+            """Shared sub-inclusion predicate for MEMBER_EVENT_PAIRS, completed_member_ids,
+            and the per-member consolidate-emission loop, so the ~6785 equality
             assertion holds. On the consolidate/render paths a sub is included
             iff ALL its summaries exist (matches consolidate_sensitivity_datatree's
-            whole-sub skip, Gotcha 36 -> no per-sa consolidate FileNotFoundError:
-            the per-sa consolidate is a pure summary CONSUMER via
+            whole-sub skip, Gotcha 36 -> no per-member consolidate FileNotFoundError:
+            the per-member consolidate is a pure summary CONSUMER via
             consolidate_to_datatree/_retrieve_combined_output, which has no
             per-sub allow_incomplete). On the process path a sub with >=1
             completed sim (c_run) is ALSO included so its self-healed divergent
             events get a process rebuild rule: the FIX-2 self-heal
             (_reconcile_stale_process_flags_against_summaries) unlinked the stale
             d_process flag at reprocess entry (c_run present, summary absent); the
-            per-EVENT c_run filter in the per-sa loop admits those events; the
-            process-emit gate re-emits their rebuild rule; the per-sa consolidate
+            per-EVENT c_run filter in the per-member loop admits those events; the
+            process-emit gate re-emits their rebuild rule; the per-member consolidate
             then runs with --allow-incomplete via the existing
             had_conditional_process_emit mixed-state path. The start_with
             disjunct is INERT on the default consolidate/render paths (which have
             no self-heal — it is guarded on start_with == 'process')."""
-            if _sub_analysis_summaries_complete(sub, enabled_models):
+            if _analysis_summaries_complete(sub, enabled_models):
                 return True
             if start_with == "process":
                 for _evt_iloc in sub.df_sims.index:
                     _evt = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(_evt_iloc))
-                    if (analysis_dir_for_pairs / sim_run_flag_per_sa(model_type, str(sa_id), _evt)).exists():
+                    if (analysis_dir_for_pairs / sim_run_flag_per_member(model_type, str(member_id), _evt)).exists():
                         return True
             return False
 
-        sa_event_pairs_sa, sa_event_pairs_evt = self._enumerate_sa_event_pairs(
+        member_event_pairs_member, member_event_pairs_evt = self._enumerate_member_event_pairs(
             context_label="reprocess master",
             include_sub=_sub_included_for_reprocess,
         )
@@ -9098,8 +9153,8 @@ rule render_report:
         # the production master generator so the rendered report's metadata
         # surface is unchanged on reprocess.
         snakefile_content = f'''# Auto-generated reprocess-scoped master Snakefile for sensitivity analysis
-# Re-runs downstream stages (per-sa consolidate + master consolidation +
-# plots + render) against existing per-sa sim completion flags. No
+# Re-runs downstream stages (per-member consolidate + master consolidation +
+# plots + render) against existing per-member sim completion flags. No
 # simulation or scenario-preparation rules are emitted.
 
 import os
@@ -9112,17 +9167,17 @@ try:
 except Exception:
     _toolkit_version = "unknown"
 
-config["analysis_id"] = {master_analysis_id!r}
+config["analysis_id"] = {experiment_id!r}
 config["toolkit_version"] = _toolkit_version
 config["n_sims"] = {total_n_sims}
 config["is_sensitivity"] = True
-config["n_sub_analyses"] = {n_sub_analyses}
+config["n_members"] = {n_analyses}
 config["independent_vars"] = {_independent_vars!r}
 config["group_by_var"] = {_group_by_var!r}
 config["report"] = {{"generated_at": _dt.now().isoformat(timespec="seconds")}}
 
-SA_EVENT_PAIRS_SA = {sa_event_pairs_sa!r}
-SA_EVENT_PAIRS_EVT = {sa_event_pairs_evt!r}
+MEMBER_EVENT_PAIRS_MEMBER = {member_event_pairs_member!r}
+MEMBER_EVENT_PAIRS_EVT = {member_event_pairs_evt!r}
 
 report: "report/workflow_description.rst"
 
@@ -9143,38 +9198,38 @@ onerror:
 
         # rule all — mirrors the production master generator's render-target
         # set (system_overview, per_analysis_summary, scenario_status_appendix,
-        # errors_and_warnings, scenario_status.csv, workflow_summary.md, per-sa
+        # errors_and_warnings, scenario_status.csv, workflow_summary.md, per-member
         # per-event plots, sensitivity-benchmarking plots, analysis_report.*).
-        # Determine the set of sub-analyses that will actually emit per-sa
-        # consolidate rules — Option C invariant: only sub-analyses with at
-        # least one c_run_* flag on disk get a per-sa consolidate rule (the
-        # per-sa loop further down enforces this with the same predicate).
+        # Determine the set of members that will actually emit per-member
+        # consolidate rules — Option C invariant: only members with at
+        # least one c_run_* flag on disk get a per-member consolidate rule (the
+        # per-member loop further down enforces this with the same predicate).
         # rule_all's consolidation_flags list initializes from THIS filtered
         # set, not the full sensitivity-definition set. Snakemake's DAG
         # planner would otherwise complain about missing inputs for the
-        # consolidate rules we never emit for un-completed sub-analyses.
+        # consolidate rules we never emit for un-completed members.
         from hhemt.constants import (
-            consolidate_subanalysis_flag,
+            consolidate_analysis_flag,
         )
 
-        completed_sa_ids: list[str] = []
-        for sa_id_check, sub_check in self.sensitivity_analysis.sub_analyses.items():
+        completed_member_ids: list[str] = []
+        for member_id_check, sub_check in self.sensitivity_analysis.members.items():
             # Shared start_with-aware sub-inclusion predicate (lockstep with
-            # SA_EVENT_PAIRS and the per-sa loop) — keeps the ~6785 equality
+            # MEMBER_EVENT_PAIRS and the per-member loop) — keeps the ~6785 equality
             # assertion true. Summary-existence on consolidate/render;
             # + rebuildable-on-process. Replaces the prior per-event c_run scan.
-            if _sub_included_for_reprocess(sa_id_check, sub_check):
-                completed_sa_ids.append(str(sa_id_check))
-        consolidation_flags = [consolidate_subanalysis_flag(sa_id) for sa_id in completed_sa_ids]
+            if _sub_included_for_reprocess(member_id_check, sub_check):
+                completed_member_ids.append(str(member_id_check))
+        consolidation_flags = [consolidate_analysis_flag(member_id) for member_id in completed_member_ids]
         rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
         rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
         # Phase 3: per-plot disable — mirrors the production-master rule_all_inputs
         # site: each common-renderer append gated by renderer_active so a disabled
         # key drops from rule all AND the derived render_report subset; _disabled
         # resolves to [] for an unconfigured run, preserving byte-identity.
-        from hhemt.report_renderers._reporting_sets import renderer_active
+        from hhemt.report_renderers._reporting_sets import renderer_active, set_carries
 
-        _disabled = self._resolve_disabled_renderers(self.master_analysis)
+        _disabled = self._resolve_disabled_renderers(self.experiment)
         if renderer_active("system_overview", _disabled):
             rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
         if renderer_active("per_analysis_summary", _disabled):
@@ -9191,17 +9246,23 @@ onerror:
             rule_all_inputs.append(f'"plots/workflow_performance{_ext["workflow_performance"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
+        # ONE resolution of the active set, consumed by BOTH the enumeration below and
+        # the dispatcher call later in this method -- see the master generator's twin.
+        _active_set = self._resolve_active_reporting_set(self.experiment)
         rule_all_inputs.extend(
-            _per_sim_per_sa_rule_all_inputs(
-                sa_event_pairs_sa=sa_event_pairs_sa,
+            _per_sim_per_member_rule_all_inputs(
+                member_event_pairs_member=member_event_pairs_member,
                 disabled=_disabled,
                 ext=_ext,
-                has_swmm_link_outputs=bool(
-                    {"tritonswmm", "swmm"} & set(self.master_analysis._get_enabled_model_types())
-                ),
+                has_swmm_link_outputs=bool({"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())),
+                set_carries_renderer=set_carries(_active_set, "per_sim_per_member"),
             )
         )
-        if _independent_vars and renderer_active("sensitivity_benchmarking", _disabled):
+        if (
+            _independent_vars
+            and set_carries(_active_set, "sensitivity_benchmarking")
+            and renderer_active("sensitivity_benchmarking", _disabled)
+        ):
             _e_bench = _ext["sensitivity_benchmarking"]
             # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
             # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
@@ -9215,11 +9276,11 @@ onerror:
         # the eda renderer AND (b) eda being configured (enabled_plots non-empty).
         # Inert for the benchmarking/default sets (no eda renderer in the selection),
         # so byte-identity for those sets is preserved.
-        _has_eda_artifact = bool(self.master_analysis.cfg_analysis.eda.enabled_plots)
+        _has_eda_artifact = bool(self.experiment.cfg_analysis.eda.enabled_plots)
         # b4b (Phase 4): the reprocess generator runs no sims and takes no clear-raw runtime
         # override (override_clear_raw is NOT in this method's scope), so the resolved policy
         # is the config value alone. Same list-aware test as the master generator.
-        _resolved_clear_raw = self.master_analysis.cfg_analysis.clear_raw
+        _resolved_clear_raw = self.experiment.cfg_analysis.clear_raw
         _has_preserved_raw_outputs = _resolved_clear_raw == "none" or (
             isinstance(_resolved_clear_raw, list) and model_type not in _resolved_clear_raw
         )
@@ -9241,75 +9302,75 @@ onerror:
 
 """
 
-        # Per-sub-analysis emit block — Option C (2026-05-21):
-        #   1. Filter sub-analyses to those with at least one c_run_* flag on
+        # Per-member emit block — Option C (2026-05-21):
+        #   1. Filter members to those with at least one c_run_* flag on
         #      disk (Issue A fix: skip emit entirely for un-completed
-        #      sub-analyses, no fingerprint fallback).
-        #   2. Under start_with='process': for each (sa_id, event_id) with
-        #      c_run flag present but d_process flag missing, emit a per-sa
+        #      members, no fingerprint fallback).
+        #   2. Under start_with='process': for each (member_id, event_id) with
+        #      c_run flag present but d_process flag missing, emit a per-member
         #      per-event process_timeseries rule mirroring the canonical
         #      sensitivity workflow generator (workflow.py:4920-4954).
-        #   3. Per-sa consolidate input list mixes d_process flags (newly-
+        #   3. Per-member consolidate input list mixes d_process flags (newly-
         #      emitted process rules) and c_run flags (already-processed
-        #      events). Per-sa consolidate shell appends --allow-incomplete
-        #      ONLY when this sub-analysis has at least one event that went
+        #      events). Per-member consolidate shell appends --allow-incomplete
+        #      ONLY when this member has at least one event that went
         #      through the conditional process emit (truly mixed state);
-        #      fully-complete sub-analyses retain fail-fast behavior.
-        #   4. Per-sub-analysis process_resources_sa is computed INSIDE the
-        #      loop so per-row cfg overrides (e.g., sa-33's bumped
+        #      fully-complete members retain fail-fast behavior.
+        #   4. Per-member process_resources_member is computed INSIDE the
+        #      loop so per-row cfg overrides (e.g., member-33's bumped
         #      hpc_mem_allocation_for_sim_output_processing_mb for 1.1m DEM)
         #      are honored — mirrors canonical generator at workflow.py:4850.
         # Flag-name builders live in hhemt.constants (single
         # source of truth for new code; existing hardcoded sites are
         # tracked as a follow-up refactor).
         from hhemt.constants import (
-            consolidate_subanalysis_flag,
-            process_timeseries_flag_per_sa,
-            sa_inputs_fingerprint_flag,
+            consolidate_analysis_flag,
+            member_inputs_fingerprint_flag,
+            process_timeseries_flag_per_member,
         )
 
-        # sim_run_flag_per_sa is already imported at method scope (in the
-        # SA_EVENT_PAIRS block above, for the shared _sub_included_for_reprocess
+        # sim_run_flag_per_member is already imported at method scope (in the
+        # MEMBER_EVENT_PAIRS block above, for the shared _sub_included_for_reprocess
         # closure); the per-event c_run filter below reuses that binding.
-        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
-        subanalysis_flags: list[str] = []
+        analysis_dir = self.experiment.analysis_paths.analysis_dir
+        analysis_flags: list[str] = []
 
-        for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():
-            # Lockstep sub-inclusion gate (same shared closure as SA_EVENT_PAIRS
-            # and completed_sa_ids) — keeps the ~6785 equality assertion true. A
-            # summary-absent sub on the consolidate/render path gets NO per-sa
+        for member_id, analysis in self.sensitivity_analysis.members.items():
+            # Lockstep sub-inclusion gate (same shared closure as MEMBER_EVENT_PAIRS
+            # and completed_member_ids) — keeps the ~6785 equality assertion true. A
+            # summary-absent sub on the consolidate/render path gets NO per-member
             # consolidate rule (its consolidate_to_datatree would raise
             # FileNotFoundError — there is no per-sub allow_incomplete). The
             # per-EVENT c_run filter below stays on c_run for process rebuild and
             # is intentionally NOT gated here.
-            if not _sub_included_for_reprocess(sa_id, sub_analysis):
+            if not _sub_included_for_reprocess(member_id, analysis):
                 continue
-            sa_id_rule = str(sa_id).replace(".", "_").replace("-", "_")
+            member_id_rule = str(member_id).replace(".", "_").replace("-", "_")
             sub_config_args = self._base_builder._get_config_args(
-                analysis_config_yaml=sub_analysis.analysis_config_yaml,
-                system_config_yaml=sub_analysis._system.system_config_yaml,
+                analysis_config_yaml=analysis.analysis_config_yaml,
+                system_config_yaml=analysis._system.system_config_yaml,
             )
-            # Per-sub-analysis process resources sourced from THIS sub-analysis's
+            # Per-member process resources sourced from THIS member's
             # cfg (mirrors canonical sensitivity workflow at workflow.py:4850);
-            # honors per-sub-analysis overrides via the `analysis.*` overlay
+            # honors per-member overrides via the `analysis.*` overlay
             # column convention.
-            process_resources_sa = self._base_builder._build_resource_block(
-                partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=sub_analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing,
-                mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
+            process_resources_member = self._base_builder._build_resource_block(
+                partition=analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing,
+                mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                 nodes=1,
                 tasks=1,
                 cpus_per_task=2,
             )
-            # Walk this sub-analysis's events, classifying each by on-disk
+            # Walk this member's events, classifying each by on-disk
             # c_run / d_process flag presence.
             consolidate_inputs: list[str] = []
             per_event_process_rules: list[str] = []
             had_conditional_process_emit = False
-            for event_iloc in sub_analysis.df_sims.index:
-                event_id = compute_event_id_slug(sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
-                c_run_flag = sim_run_flag_per_sa(model_type, str(sa_id), event_id)
-                d_process_flag = process_timeseries_flag_per_sa(model_type, str(sa_id), event_id)
+            for event_iloc in analysis.df_sims.index:
+                event_id = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+                c_run_flag = sim_run_flag_per_member(model_type, str(member_id), event_id)
+                d_process_flag = process_timeseries_flag_per_member(model_type, str(member_id), event_id)
                 c_run_path = analysis_dir / c_run_flag
                 d_process_path = analysis_dir / d_process_flag
                 if not c_run_path.exists():
@@ -9320,7 +9381,7 @@ onerror:
                 # are CORRECT. The reprocess rebuild rule's correctness under
                 # --rerun-triggers comes from (i) the deleted/absent d_process
                 # output (missing-output reruns are trigger-independent) plus
-                # (ii) the downstream consolidate_sa_* consuming the d_process
+                # (ii) the downstream consolidate_member_* consuming the d_process
                 # flag as input: — NOT from any declared dependency on the
                 # deleted summary zarr. The d5d0084 regression was an UPSTREAM
                 # stale-flag survival on the sensitivity regenerate_existing
@@ -9328,14 +9389,14 @@ onerror:
                 # in this gate. Do not add a summary-zarr input: here — it would
                 # break the rerun semantics.
                 if start_with == "process" and not d_process_path.exists():
-                    # Conditional process emit: this (sa_id, event_id) needs
+                    # Conditional process emit: this (member_id, event_id) needs
                     # process_timeseries re-fired. Build the rule and route
                     # consolidate's input through the d_process flag it will
                     # produce.
                     had_conditional_process_emit = True
                     event_id_rule = event_id.replace(".", "_").replace("-", "_")
-                    process_rule_name = f"process_sa_{sa_id_rule}_evt_{event_id_rule}"
-                    fingerprint_flag = sa_inputs_fingerprint_flag(str(sa_id))
+                    process_rule_name = f"process_member_{member_id_rule}_evt_{event_id_rule}"
+                    fingerprint_flag = member_inputs_fingerprint_flag(str(member_id))
                     per_event_process_rules.append(f'''rule {process_rule_name}:
     input:
         "{c_run_flag}",
@@ -9344,7 +9405,7 @@ onerror:
     log: "{log_dir_str}/sims/{process_rule_name}.log"
     conda: "{conda_env_path}"
     resources:
-{process_resources_sa}
+{process_resources_member}
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
@@ -9356,7 +9417,7 @@ onerror:
             --compression-level {compression_level} \\
             --flag-output {{output}} \\
             --rule-name {process_rule_name} \\
-            --sa-id {sa_id} \\
+            --member-id {member_id} \\
             --event-id {event_id} \\
             > {{log}} 2>&1
         """
@@ -9370,14 +9431,14 @@ onerror:
                     consolidate_inputs.append(f'"{c_run_flag}"')
 
             if not consolidate_inputs:
-                # Issue A fix: this sub-analysis has zero completed sims;
-                # skip emitting the per-sa consolidate rule entirely. No
+                # Issue A fix: this member has zero completed sims;
+                # skip emitting the per-member consolidate rule entirely. No
                 # fingerprint fallback. Spec 5's rule_all reconciliation
-                # excludes this sa_id from rule_all's input list.
+                # excludes this member_id from rule_all's input list.
                 continue
 
-            # Emit any per-(sa, event) process rules first so they sit above
-            # the per-sa consolidate that depends on them (Snakemake rule
+            # Emit any per-(member, event) process rules first so they sit above
+            # the per-member consolidate that depends on them (Snakemake rule
             # order does not affect DAG resolution but readability puts
             # producers above consumers).
             for process_rule_block in per_event_process_rules:
@@ -9385,22 +9446,22 @@ onerror:
 
             # Conditional --allow-incomplete: only emit when truly mixed
             # state (option (a) from the SE specialist's plan review).
-            # Fully-complete sub-analyses retain consolidate's fail-fast.
+            # Fully-complete members retain consolidate's fail-fast.
             allow_incomplete_line = "            --allow-incomplete \\\n" if had_conditional_process_emit else ""
-            subanalysis_flag = consolidate_subanalysis_flag(str(sa_id))
-            subanalysis_flags.append(subanalysis_flag)
-            prefix = self.sensitivity_analysis.sub_analyses_prefix
-            snakefile_content += f'''rule consolidate_{prefix}{sa_id_rule}:
+            analysis_flag = consolidate_analysis_flag(str(member_id))
+            analysis_flags.append(analysis_flag)
+            prefix = self.sensitivity_analysis.member_prefix
+            snakefile_content += f'''rule consolidate_{prefix}{member_id_rule}:
     input: {", ".join(consolidate_inputs)}
-    output: "{subanalysis_flag}"
-    log: "{log_dir_str}/sims/consolidate_{prefix}{sa_id}.log"
+    output: "{analysis_flag}"
+    log: "{log_dir_str}/sims/consolidate_{prefix}{member_id}.log"
     conda: "{conda_env_path}"
     resources:
 {
                 self._base_builder._build_resource_block(
-                    partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                    partition=analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                     runtime_min=30,
-                    mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
+                    mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                     nodes=1,
                     tasks=1,
                     cpus_per_task=1,
@@ -9414,53 +9475,53 @@ onerror:
             --which {which} \\
 {allow_incomplete_line}            --compression-level {compression_level} \\
             --flag-output {{output}} \\
-            --rule-name consolidate_{prefix}{sa_id_rule} \\
-            --sa-id {sa_id} \\
+            --rule-name consolidate_{prefix}{member_id_rule} \\
+            --member-id {member_id} \\
             > {{log}} 2>&1
         """
 
 '''
 
-        # Sanity assertion: the per-sa loop's subanalysis_flags must match the
-        # up-front completed_sa_ids list — both now gate sub-inclusion on the
+        # Sanity assertion: the per-member loop's member_flags must match the
+        # up-front completed_member_ids list — both now gate sub-inclusion on the
         # SAME shared _sub_included_for_reprocess predicate (whole-sub summary-
         # existence on consolidate/render; + rebuildable-on-process). Equality
         # (NOT subset) is the correct invariant: a mismatch in EITHER direction
         # is the workflow.py line-142 integration risk. Over-count -> the loop
-        # emits a consolidate_{sa} flag rule all does not depend on (orphan
-        # rule). Under-count -> rule all demands a consolidate_subanalysis flag
+        # emits a consolidate_{member} flag rule all does not depend on (orphan
+        # rule). Under-count -> rule all demands a consolidate_member flag
         # the loop never emitted -> Snakemake MissingInputException at DAG build.
-        # Both lists iterate sub_analyses.items() in the same order, so the
+        # Both lists iterate members.items() in the same order, so the
         # order-sensitive list == comparison is exact.
-        from hhemt.constants import consolidate_subanalysis_flag as _cons_flag
+        from hhemt.constants import consolidate_analysis_flag as _cons_flag
 
-        _expected_subanalysis_flags = [_cons_flag(sa_id) for sa_id in completed_sa_ids]
-        if subanalysis_flags != _expected_subanalysis_flags:
+        _expected_analysis_flags = [_cons_flag(member_id) for member_id in completed_member_ids]
+        if analysis_flags != _expected_analysis_flags:
             raise RuntimeError(
-                "generate_reprocess_master_snakefile_content: per-sa loop's "
-                f"subanalysis_flags={subanalysis_flags!r} does not match the "
-                f"up-front completed_sa_ids derivation={_expected_subanalysis_flags!r}; "
-                "shared sub-inclusion invariant violated — the per-sa consolidate-"
-                "emission gate and the completed_sa_ids gate must both call "
+                "generate_reprocess_master_snakefile_content: per-member loop's "
+                f"member_flags={analysis_flags!r} does not match the "
+                f"up-front completed_member_ids derivation={_expected_analysis_flags!r}; "
+                "shared sub-inclusion invariant violated — the per-member consolidate-"
+                "emission gate and the completed_member_ids gate must both call "
                 "_sub_included_for_reprocess (workflow.py line-142 integration risk)."
             )
 
-        # Master consolidation — aggregates the EMITTED per-sa flags into the
+        # Master consolidation — aggregates the EMITTED per-member flags into the
         # master flag + sensitivity_datatree.zarr; overwrite + allow-incomplete
         # baked. Uses the central flag-name builder for the master flag (Spec 1).
         from hhemt.constants import consolidate_master_flag
 
         snakefile_content += f'''rule master_consolidation:
-    input: {", ".join([f'"{flag}"' for flag in subanalysis_flags])}
+    input: {", ".join([f'"{flag}"' for flag in analysis_flags])}
     output: "{consolidate_master_flag()}"
     log: "{log_dir_str}/master_consolidation.log"
     conda: "{conda_env_path}"
     resources:
 {
             self._base_builder._build_resource_block(
-                partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                partition=self.experiment.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                 runtime_min=30,
-                mem_mb=self.master_analysis.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
+                mem_mb=self.experiment.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
                 nodes=1,
                 tasks=1,
                 cpus_per_task=1,
@@ -9487,16 +9548,14 @@ onerror:
         # dispatcher running the SAME set on both surfaces makes the
         # historically hand-maintained "byte-equivalent" guarantee structural.
         snakefile_content += self._emit_active_set_plot_rules(
-            self._resolve_active_reporting_set(self.master_analysis),
+            _active_set,
             input_flag="_status/f_consolidate_master_complete.flag",
             predicate_inputs={
                 "independent_vars": _independent_vars,
-                "sa_event_pairs_sa": sa_event_pairs_sa,
+                "member_event_pairs_member": member_event_pairs_member,
                 "has_eda_artifact": _has_eda_artifact,
                 "has_preserved_raw_outputs": _has_preserved_raw_outputs,
-                "has_swmm_link_outputs": bool(
-                    {"tritonswmm", "swmm"} & set(self.master_analysis._get_enabled_model_types())
-                ),
+                "has_swmm_link_outputs": bool({"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())),
             },
             disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
@@ -9519,9 +9578,9 @@ rule render_report:
     resources:
 {
             self._base_builder._build_resource_block(
-                partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                partition=self.experiment.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                 runtime_min=30,
-                mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+                mem_mb=self.experiment.cfg_analysis.mem_gb_per_cpu * 1000,
                 nodes=1,
                 tasks=1,
                 cpus_per_task=1,
@@ -9554,7 +9613,7 @@ rule render_report:
         """
         from hhemt.report_renderers._reporting_sets import eda_rule_spec_templates
 
-        return eda_rule_spec_templates(self._resolve_active_reporting_set(self.master_analysis))
+        return eda_rule_spec_templates(self._resolve_active_reporting_set(self.experiment))
 
     def _build_plot_rule_block_eda_compute_sensitivity(self, *, ctx: RuleEmissionContext | None = None) -> str:
         """Generate the EDA adapter plot rules for the active reporting set (R11, D13).
@@ -9610,7 +9669,7 @@ rule render_report:
         ``validate_sensitivity_independent_vars()``; names reaching here are guaranteed
         Snakemake-safe.
 
-        SWMM-only sub-analyses' .rpt paths are computed at emit time and baked
+        SWMM-only members' .rpt paths are computed at emit time and baked
         into the closure as a list, so the collector can declare them as
         provenance even though they are conditional on enabled-model-types.
         """
@@ -9620,9 +9679,9 @@ rule render_report:
             ctx = self._base_builder._make_rule_emission_context(
                 static_backend=self._base_builder._get_report_cfg_static_backend()
             )
-        master_root = str(self.master_analysis.analysis_paths.analysis_dir.resolve())
+        master_root = str(self.experiment.analysis_paths.analysis_dir.resolve())
         swmm_only_rpt_rels: list[str] = []
-        for sub in self.sensitivity_analysis.sub_analyses.values():
+        for sub in self.sensitivity_analysis.members.values():
             sub_enabled = sub._get_enabled_model_types()
             if sub_enabled == ["swmm"] or sub_enabled == ("swmm",):
                 for event_iloc in sub.df_sims.index:
@@ -9681,19 +9740,19 @@ def _sensitivity_source_paths(wildcards):
         spec_with_label = RuleSpec(**{**spec.__dict__, "input_label": "master"})
         return helpers + _emit_plot_rule(spec_with_label, ctx)
 
-    def _build_plot_rule_block_per_sim_per_sa(self, *, ctx: RuleEmissionContext | None = None) -> str:
-        """Generate per-sa per-event plot rules for the sensitivity master Snakefile.
+    def _build_plot_rule_block_per_sim_per_member(self, *, ctx: RuleEmissionContext | None = None) -> str:
+        """Generate per-member per-event plot rules for the sensitivity master Snakefile.
 
-        Realizes Iteration 7 Change 3b ("show all sub-analyses" panel parity per
-        the user's scope expansion). For each (sa_id, event_id) pair in
-        SA_EVENT_PAIRS, emits two plot rules: peak_flood_depth + conduit_flow.
-        Both rules dispatch the per-sim renderer with `--sa-id {wildcards.sa_id}`
+        Realizes Iteration 7 Change 3b ("show all members" panel parity per
+        the user's scope expansion). For each (member_id, event_id) pair in
+        MEMBER_EVENT_PAIRS, emits two plot rules: peak_flood_depth + conduit_flow.
+        Both rules dispatch the per-sim renderer with `--member-id {wildcards.member_id}`
         + `--event-iloc {params.event_iloc}` so the renderer (via _cli.py
-        sub-analysis routing) resolves the sub-analysis from the master and
-        operates on per-sa-scoped scenario data.
+        member routing) resolves the member from the master and
+        operates on per-member-scoped scenario data.
 
-        ILOC_BY_EVENT_ID_BY_SA is emitted as a master-Snakefile global to map
-        (sa_id, event_id) -> event_iloc for the renderer dispatch.
+        ILOC_BY_EVENT_ID_BY_MEMBER is emitted as a master-Snakefile global to map
+        (member_id, event_id) -> event_iloc for the renderer dispatch.
         """
         from hhemt.scenario import compute_event_id_slug
 
@@ -9702,22 +9761,22 @@ def _sensitivity_source_paths(wildcards):
                 static_backend=self._base_builder._get_report_cfg_static_backend()
             )
 
-        iloc_by_event_id_by_sa: dict[str, dict[str, int]] = {}
-        for sa_id, sub in self.sensitivity_analysis.sub_analyses.items():
-            iloc_by_event_id_by_sa[str(sa_id)] = {}
+        iloc_by_event_id_by_member: dict[str, dict[str, int]] = {}
+        for member_id, sub in self.sensitivity_analysis.members.items():
+            iloc_by_event_id_by_member[str(member_id)] = {}
             for event_iloc in sub.df_sims.index:
                 ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
                 event_id = compute_event_id_slug(ev)
-                iloc_by_event_id_by_sa[str(sa_id)][event_id] = int(event_iloc)
+                iloc_by_event_id_by_member[str(member_id)][event_id] = int(event_iloc)
 
-        rainfall_datavar = self.master_analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
-        storm_tide_datavar = self.master_analysis.cfg_analysis.weather_time_series_storm_tide_datavar
+        rainfall_datavar = self.experiment.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
+        storm_tide_datavar = self.experiment.cfg_analysis.weather_time_series_storm_tide_datavar
 
         helpers = f"""
-ILOC_BY_EVENT_ID_BY_SA = {iloc_by_event_id_by_sa!r}
+ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
 {LABEL_GLOBALS_BLOCK}
 
-def _per_sim_per_sa_flood_depth_sources(wildcards):
+def _per_sim_per_member_flood_depth_sources(wildcards):
     from hhemt.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
     )
@@ -9726,10 +9785,10 @@ def _per_sim_per_sa_flood_depth_sources(wildcards):
         wildcards.event_id,
         rainfall_datavar={rainfall_datavar!r},
         storm_tide_datavar={storm_tide_datavar!r},
-        sa_id=wildcards.sa_id,
+        member_id=wildcards.member_id,
     )
 
-def _per_sim_per_sa_conduit_flow_sources(wildcards):
+def _per_sim_per_member_conduit_flow_sources(wildcards):
     from hhemt.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
     )
@@ -9738,97 +9797,97 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         wildcards.event_id,
         rainfall_datavar={rainfall_datavar!r},
         storm_tide_datavar={storm_tide_datavar!r},
-        sa_id=wildcards.sa_id,
+        member_id=wildcards.member_id,
     )
 """
         flood_spec = RuleSpec(
-            rule_name="plot_per_sim_per_sa_peak_flood_depth",
-            renderer_module="per_sim_per_sa_peak_flood_depth",
+            rule_name="plot_per_sim_per_member_peak_flood_depth",
+            renderer_module="per_sim_per_member_peak_flood_depth",
             input_flags=("_status/f_consolidate_master_complete.flag",),
             output_path_template=_plot_output_template(
                 renderer_kind="peak_flood_depth",
-                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
-                sa_id="{sa_id}",
+                subdir="plots/sensitivity/per_sim/member-{member_id}/{event_id}",
+                member_id="{member_id}",
                 event_id="{event_id}",
             ),
             source_paths=(),
-            wildcards=("sa_id", "event_id"),
+            wildcards=("member_id", "event_id"),
             extra_cli_flags=(
-                "--sa-id {wildcards.sa_id}",
+                "--member-id {wildcards.member_id}",
                 "--event-iloc {params.event_iloc}",
             ),
-            extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID_BY_SA[w.sa_id][w.event_id]"),),
+            extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID_BY_MEMBER[w.member_id][w.event_id]"),),
             report_kwargs={
                 # SOURCED from the registry -- see _registry_report_kwargs.
-                **_registry_report_kwargs("plot_per_sim_per_sa_peak_flood_depth"),
+                **_registry_report_kwargs("plot_per_sim_per_member_peak_flood_depth"),
             },
             resources_yaml="mem_mb=4000, time_min=15",
-            log_path_template="logs/plots/per_sim_per_sa_peak_flood_depth_sa-{sa_id}_{event_id}.log",
-            source_paths_fn_name="_per_sim_per_sa_flood_depth_sources",
+            log_path_template="logs/plots/per_sim_per_member_peak_flood_depth_member-{member_id}_{event_id}.log",
+            source_paths_fn_name="_per_sim_per_member_flood_depth_sources",
             input_label="master",
         )
         # NB: the underlying renderer module is `per_sim_peak_flood_depth`
-        # (not `per_sim_per_sa_peak_flood_depth`) — sa-routing is via the
-        # --sa-id flag. The renderer_module field is also used by
+        # (not `per_sim_per_member_peak_flood_depth`) — member-routing is via the
+        # --member-id flag. The renderer_module field is also used by
         # _output_ext_for; emit the correct shell-side module name via a
         # local RuleSpec that overrides renderer_module just for emission.
         flood_emit = RuleSpec(**{**flood_spec.__dict__, "renderer_module": "per_sim_peak_flood_depth"})
         conduit_spec = RuleSpec(
-            rule_name="plot_per_sim_per_sa_conduit_flow",
-            renderer_module="per_sim_per_sa_conduit_flow",
+            rule_name="plot_per_sim_per_member_conduit_flow",
+            renderer_module="per_sim_per_member_conduit_flow",
             input_flags=("_status/f_consolidate_master_complete.flag",),
             output_path_template=_plot_output_template(
                 renderer_kind="conduit_flow",
-                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
-                sa_id="{sa_id}",
+                subdir="plots/sensitivity/per_sim/member-{member_id}/{event_id}",
+                member_id="{member_id}",
                 event_id="{event_id}",
             ),
             source_paths=(),
-            wildcards=("sa_id", "event_id"),
+            wildcards=("member_id", "event_id"),
             extra_cli_flags=(
-                "--sa-id {wildcards.sa_id}",
+                "--member-id {wildcards.member_id}",
                 "--event-iloc {params.event_iloc}",
             ),
-            extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID_BY_SA[w.sa_id][w.event_id]"),),
+            extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID_BY_MEMBER[w.member_id][w.event_id]"),),
             report_kwargs={
                 # SOURCED from the registry -- see _registry_report_kwargs.
-                **_registry_report_kwargs("plot_per_sim_per_sa_conduit_flow"),
+                **_registry_report_kwargs("plot_per_sim_per_member_conduit_flow"),
             },
             resources_yaml="mem_mb=4000, time_min=15",
-            log_path_template="logs/plots/per_sim_per_sa_conduit_flow_sa-{sa_id}_{event_id}.log",
-            source_paths_fn_name="_per_sim_per_sa_conduit_flow_sources",
+            log_path_template="logs/plots/per_sim_per_member_conduit_flow_member-{member_id}_{event_id}.log",
+            source_paths_fn_name="_per_sim_per_member_conduit_flow_sources",
             input_label="master",
         )
         conduit_emit = RuleSpec(**{**conduit_spec.__dict__, "renderer_module": "per_sim_conduit_flow"})
         # FQ1: conduit flow is SWMM-derived and not applicable to a TRITON-only
         # analysis. This is the EMISSION half; the ENUMERATION half is the same
-        # predicate inside _per_sim_per_sa_rule_all_inputs. Both read
+        # predicate inside _per_sim_per_member_rule_all_inputs. Both read
         # _get_enabled_model_types() so they cannot disagree — a renderer dropped
         # from emission but left enumerated yields MissingInputException, and the
         # inverse yields an orphan rule.
-        _swmm = bool({"tritonswmm", "swmm"} & set(self.master_analysis._get_enabled_model_types()))
+        _swmm = bool({"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types()))
         out = helpers + _emit_plot_rule(flood_emit, ctx)
         if _swmm:
             out += _emit_plot_rule(conduit_emit, ctx)
         return out
 
     def _reconcile_sensitivity_alive(self) -> tuple[dict[str, str], dict[str, str]]:
-        """Reconcile in-flight sensitivity sims across all sub-analysis dirs.
+        """Reconcile in-flight sensitivity sims across all member dirs.
 
-        Sensitivity markers live under each sub-analysis's own ``analysis_dir``
-        (``master/subanalyses/{analysis_id}``), not the master dir — so the
+        Sensitivity markers live under each member's own ``analysis_dir``
+        (``master/members/{analysis_id}``), not the master dir — so the
         master-dir reconcile would miss them (Spec D). This sweeps every
-        sub-analysis dir and returns two maps keyed by sentinel rule_token:
+        member dir and returns two maps keyed by sentinel rule_token:
         ``alive_by_token`` (token -> slurm_jobid) for the run-vs-wait branch in
         :meth:`generate_master_snakefile_content`, and ``alive_token_to_dir``
-        (token -> sub-analysis dir str) so each wait-rule polls the directory
+        (token -> member dir str) so each wait-rule polls the directory
         where its markers actually land.
 
         Per sentinel-system-v2 Phase 2 (Spec 9 + Spec D).
         """
         alive_by_token: dict[str, str] = {}
         alive_token_to_dir: dict[str, str] = {}
-        for _sub in self.sensitivity_analysis.sub_analyses.values():  # type: ignore[attr-defined]
+        for _sub in self.sensitivity_analysis.members.values():  # type: ignore[attr-defined]
             _sub_dir = _sub.analysis_paths.analysis_dir
             for _tok, _jid in self._base_builder._reconcile_inflight_submissions(analysis_dir=_sub_dir):
                 alive_by_token[_tok] = _jid
@@ -9837,24 +9896,24 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
 
     def _write_queued_sentinels_sensitivity(self, alloc_jobid: str | None) -> None:
         """mechanism (b) PENDING-recovery writer for the sensitivity path: write
-        _status/_queued/{simulation_sa_{sa_id}_evt-{event_id}}.json under EACH
-        sub-analysis's OWN analysis_dir (sensitivity markers/sentinels live per-sub,
+        _status/_queued/{simulation_member_{member_id}_evt-{event_id}}.json under EACH
+        member's OWN analysis_dir (sensitivity markers/sentinels live per-sub,
         Spec D — the master-dir reconcile would miss them), for the full planned
         per-sub sim-token set, AFTER submit-success. The sensitivity sentinel token is
-        per-(sa_id, event_id) with NO model_type segment (matching
-        run_simulation_runner.py's _rule_token when args.sa_id is set, and the
+        per-(member_id, event_id) with NO model_type segment (matching
+        run_simulation_runner.py's _rule_token when args.member_id is set, and the
         generate_master_snakefile_content emission gate). Toolkit-owns-sbatch (1_job)
         records the master allocation jobid; executor-owns-sbatch (batch_job) null.
         Delegates the atomic compare-and-write to the base builder's writer so the
         mtime-preserving contract (R12) is single-sourced."""
         from hhemt.scenario import compute_event_id_slug
 
-        for sa_id, sub in self.sensitivity_analysis.sub_analyses.items():  # type: ignore[attr-defined]
+        for member_id, sub in self.sensitivity_analysis.members.items():  # type: ignore[attr-defined]
             event_ids = [
                 compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(i))
                 for i in range(len(sub.df_sims))
             ]
-            tokens = [f"simulation_sa_{sa_id}_evt-{event_id}" for event_id in event_ids]
+            tokens = [f"simulation_member_{member_id}_evt-{event_id}" for event_id in event_ids]
             self._base_builder._write_queued_sentinels(tokens, alloc_jobid, sub.analysis_paths.analysis_dir)
 
     def submit_workflow(
@@ -9884,8 +9943,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         """
         Submit sensitivity analysis workflow using Snakemake.
 
-        This orchestrates multiple sub-analysis workflows and a final master
-        consolidation step that combines all sub-analysis outputs.
+        This orchestrates multiple member workflows and a final master
+        consolidation step that combines all member outputs.
         If multi_sim_run_method is "1_job_many_srun_tasks", submits as a single SLURM
         job with multiple srun tasks inside.
 
@@ -9940,7 +9999,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
 
         # Retry overrides (P1 Decision 4, FQ3 SITE 5): the sensitivity path emits
         # rules via _base_builder (generate_snakemake_config global baseline +
-        # _resolved_simulate_retries on the simulation_sa rules), so stash the
+        # _resolved_simulate_retries on the simulation_member rules), so stash the
         # override knobs there, mirroring the diagnostics stash above.
         if overrides is None:
             from .orchestration import RunOverrides
@@ -9954,9 +10013,9 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         self._base_builder._override_hpc_restart_times_other = overrides.hpc_restart_times_other
 
         # Check if we should use 1-job mode based on config
-        multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method
+        multi_sim_method = self.experiment.cfg_analysis.multi_sim_run_method
 
-        sim_resources = self.master_analysis._resource_manager._get_simulation_resource_requirements()
+        sim_resources = self.experiment._resource_manager._get_simulation_resource_requirements()
         n_gpus_per_sim = sim_resources["n_gpus"]
         if n_gpus_per_sim > 0 and not self.system.gpu_compilation_backend:
             raise ConfigurationError(
@@ -9964,7 +10023,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 message=(
                     "Sensitivity analysis requests GPUs (n_gpus > 0) but system config "
                     "has gpu_compilation_backend unset. Set gpu_compilation_backend to "
-                    "CUDA/HIP or set n_gpus: 0 in sub-analyses."
+                    "CUDA/HIP or set n_gpus: 0 in members."
                 ),
                 config_path=self.system.system_config_yaml,
             )
@@ -9998,7 +10057,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                     flush=True,
                 )
 
-            # v2 graceful-rerun: reconcile per sub-analysis before build (Phase 2, Spec 9/D).
+            # v2 graceful-rerun: reconcile per member before build (Phase 2, Spec 9/D).
             alive_by_token, alive_token_to_dir = self._reconcile_sensitivity_alive()
             # Generate master Snakefile
             master_snakefile_content = self.generate_master_snakefile_content(
@@ -10020,7 +10079,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             )
 
             master_snakefile_path = _resolve_snakefile_path(
-                self.master_analysis.analysis_paths.analysis_dir, dry_run=dry_run
+                self.experiment.analysis_paths.analysis_dir, dry_run=dry_run
             )
             _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
 
@@ -10031,7 +10090,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 )
 
             # Create required directories
-            analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+            analysis_dir = self.experiment.analysis_paths.analysis_dir
             (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
             self.analysis_paths.analysis_log_directory.mkdir(parents=True, exist_ok=True)
             (self.analysis_paths.analysis_log_directory / "sims").mkdir(parents=True, exist_ok=True)
@@ -10039,7 +10098,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             # Always perform a dry run validation first
             dry_run_result = self._base_builder._validate_single_job_dry_run(
                 snakefile_path=master_snakefile_path,
-                analysis=self.master_analysis,
+                analysis=self.experiment,
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
             )
@@ -10047,7 +10106,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             if dry_run:
                 # Override mode to indicate intended execution context
                 dry_run_result["mode"] = "single_job"
-                self.sensitivity_analysis._update_master_analysis_log()
+                self.sensitivity_analysis._update_experiment_log()
                 return dry_run_result
 
             result = self._base_builder._submit_single_job_workflow(
@@ -10064,7 +10123,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 on_launch=self._write_queued_sentinels_sensitivity,
             )
 
-            self.sensitivity_analysis._update_master_analysis_log()
+            self.sensitivity_analysis._update_experiment_log()
             return result
 
         if multi_sim_method == "batch_job":
@@ -10074,7 +10133,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                     flush=True,
                 )
 
-            # v2 graceful-rerun: reconcile per sub-analysis before build (Phase 2, Spec 9/D).
+            # v2 graceful-rerun: reconcile per member before build (Phase 2, Spec 9/D).
             alive_by_token, alive_token_to_dir = self._reconcile_sensitivity_alive()
             master_snakefile_content = self.generate_master_snakefile_content(
                 which=which,
@@ -10095,7 +10154,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             )
 
             master_snakefile_path = _resolve_snakefile_path(
-                self.master_analysis.analysis_paths.analysis_dir, dry_run=dry_run
+                self.experiment.analysis_paths.analysis_dir, dry_run=dry_run
             )
             _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
 
@@ -10105,7 +10164,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                     flush=True,
                 )
 
-            analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+            analysis_dir = self.experiment.analysis_paths.analysis_dir
             (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
             self.analysis_paths.analysis_log_directory.mkdir(parents=True, exist_ok=True)
             (self.analysis_paths.analysis_log_directory / "sims").mkdir(parents=True, exist_ok=True)
@@ -10124,7 +10183,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 )
 
             if dry_run:
-                self.sensitivity_analysis._update_master_analysis_log()
+                self.sensitivity_analysis._update_experiment_log()
                 return dry_run_result
 
             result = self._base_builder._submit_tmux_workflow(
@@ -10140,7 +10199,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 adopted_token_count=len(alive_by_token),
             )
 
-            self.sensitivity_analysis._update_master_analysis_log()
+            self.sensitivity_analysis._update_experiment_log()
             return result
 
         # Standard workflow submission (existing logic)
@@ -10168,7 +10227,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 flush=True,
             )
 
-        # v2 graceful-rerun: reconcile per sub-analysis before build (Phase 2, Spec 9/D).
+        # v2 graceful-rerun: reconcile per member before build (Phase 2, Spec 9/D).
         alive_by_token, alive_token_to_dir = self._reconcile_sensitivity_alive()
         # Generate master Snakefile with flattened hierarchy
         # (no nested Snakemake calls - all rules in one file)
@@ -10190,9 +10249,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             alive_token_to_dir=alive_token_to_dir,
         )
 
-        master_snakefile_path = _resolve_snakefile_path(
-            self.master_analysis.analysis_paths.analysis_dir, dry_run=dry_run
-        )
+        master_snakefile_path = _resolve_snakefile_path(self.experiment.analysis_paths.analysis_dir, dry_run=dry_run)
         _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
 
         if verbose:
@@ -10203,13 +10260,13 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
 
         # Create required directories BEFORE Snakemake DAG construction
         # (onstart: in Snakefile runs AFTER DAG parsing, too late for file validation)
-        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+        analysis_dir = self.experiment.analysis_paths.analysis_dir
         (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
-        self.master_analysis.analysis_paths.simlog_directory.mkdir(parents=True, exist_ok=True)
+        self.experiment.analysis_paths.simlog_directory.mkdir(parents=True, exist_ok=True)
 
         if verbose:
             print(
-                f"[Snakemake] Created required directories (_status, {self.master_analysis.analysis_paths.simlog_directory})",  # noqa: E501
+                f"[Snakemake] Created required directories (_status, {self.experiment.analysis_paths.simlog_directory})",  # noqa: E501
                 flush=True,
             )
 
@@ -10237,7 +10294,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             )
 
         if dry_run:
-            self.sensitivity_analysis._update_master_analysis_log()
+            self.sensitivity_analysis._update_experiment_log()
             return dry_run_result
 
         # Submit workflow based on mode
@@ -10266,7 +10323,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 flush=True,
             )
 
-        self.sensitivity_analysis._update_master_analysis_log()
+        self.sensitivity_analysis._update_experiment_log()
         return result
 
     def submit_reprocess_workflow(
@@ -10300,15 +10357,15 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         Parameters
         ----------
         start_with
-            Stage to re-fire from. ``"consolidate"`` (default) emits per-sa
+            Stage to re-fire from. ``"consolidate"`` (default) emits per-member
             consolidate rules consuming ``c_run_*`` flags directly. ``"process"``
-            additionally emits per-(sa_id, event_id) process_timeseries rules
+            additionally emits per-(member_id, event_id) process_timeseries rules
             for events whose ``d_process_*`` flag is missing on disk, so partial
             process-step state (sim ran, summary zarrs missing) can be recovered
-            without invoking the normal workflow's ``run``. The per-sa
-            consolidate shell adds ``--allow-incomplete`` only for sub-analyses
-            in truly-mixed state; fully-complete sub-analyses retain
-            fail-fast behavior. ``"render"`` skips per-sa consolidate emission
+            without invoking the normal workflow's ``run``. The per-member
+            consolidate shell adds ``--allow-incomplete`` only for members
+            in truly-mixed state; fully-complete members retain
+            fail-fast behavior. ``"render"`` skips per-member consolidate emission
             entirely (handled by the upstream invalidation in
             :meth:`TRITONSWMM_sensitivity_analysis.reprocess`).
         execution_mode
@@ -10335,7 +10392,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # Effective execution mode dispatch — mirror the analysis-level
         # reprocess auto-detect.
         mode: Literal["local", "slurm"] = resolve_execution_locus(
-            execution_mode, self.master_analysis.cfg_analysis.multi_sim_run_method
+            execution_mode, self.experiment.cfg_analysis.multi_sim_run_method
         )
 
         if verbose:
@@ -10352,7 +10409,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             report_formats=report_formats,
             start_with=start_with,
         )
-        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+        analysis_dir = self.experiment.analysis_paths.analysis_dir
         snakefile_path = analysis_dir / "Snakefile.reprocess"
         (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
         self.analysis_paths.analysis_log_directory.mkdir(parents=True, exist_ok=True)
@@ -10382,7 +10439,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         ]
 
         if mode == "local":
-            local_cores = self.master_analysis.cfg_analysis.local_cpu_cores_for_workflow
+            local_cores = self.experiment.cfg_analysis.local_cpu_cores_for_workflow
             assert isinstance(local_cores, int), "local_cpu_cores_for_workflow must be specified for local runs"
             cmd_args.extend(["--cores", str(local_cores) if local_cores > 1 else "1"])
         else:  # slurm
@@ -10482,7 +10539,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                     }
                 if verbose:
                     print("[Snakemake] Sensitivity reprocess completed successfully", flush=True)
-                self.sensitivity_analysis._update_master_analysis_log()
+                self.sensitivity_analysis._update_experiment_log()
                 return {
                     "success": True,
                     "mode": "local",
@@ -10509,7 +10566,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             # Detached driver: leave the self-sentinel for the gate's liveness
             # reclaim — do NOT remove it in the finally.
             remove_self_sentinel = False
-            self.sensitivity_analysis._update_master_analysis_log()
+            self.sensitivity_analysis._update_experiment_log()
             return {
                 "success": True,
                 "mode": "slurm",

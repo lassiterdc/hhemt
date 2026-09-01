@@ -211,7 +211,7 @@ def generate_reprocess_snakefile(
     # this generator calls below -- emits exactly that one rule, so naming the
     # retired peak_flood_depth / conduit_flow stems here demanded files no rule
     # produced and failed DAG build with MissingInputException. The composite is
-    # NON-SENSITIVITY-ONLY: the per-sa rules still emit two separate figures.
+    # NON-SENSITIVITY-ONLY: the per-member rules still emit two separate figures.
     _ep_per_sim = _plot_output_template(
         renderer_kind="event_page",
         subdir="plots/per_sim/{event_id}",

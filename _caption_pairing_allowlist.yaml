@@ -27,13 +27,135 @@ unpaired_allowlist:
       change needed.
   - renderer: cross_experiment_intercomparison_maps
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
-    renderer_sha256: ff198c8b87d5bbaf87cecc2a0962872ad17915143d03b1bbca5a1f0b74795dcc
+    renderer_sha256: 882640f7f4e440bddad564484d61b4dbe149cd60e25a83e564105459fddb2fc1
     justification: >-
       Iteration-8 annotation-carrier group (D3 annotation split and the
       title-collision fix), plus a whole-file ruff-format pass. Caption re-read:
       it describes diff-map semantics (resume minus clean over byte-identity
       classes), the RdBu direction convention, and the variable-dt SWMM
       final-period truncation. All three are data claims; the change moved
-      annotation anchoring only. Looked; no change needed. NOTE: the
+      annotation anchoring only. Looked; no change needed.
+      RE-RECORDED for the config-labels leaf extraction: the renderer's only
+      change is an import re-point of _derive_config_label from
+      hhemt.eda._config_diff to the new hhemt.config_labels leaf. The BOUND
+      NAME, both call sites and the function body are unchanged, so no panel,
+      table, colour scale or caveat this caption describes can move. Caption
+      re-read in full; no change needed. NOTE: the
       cross-experiment RESTRUCTURE is still open on a user question, so this
       exemption expires with the next renderer change by construction.
+  - renderer: errors_and_warnings
+    caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
+    renderer_sha256: 1632cee63a3bce0f8406c1b97abf207ca642694b375c888e64c59196b9ad5491
+    justification: >-
+      docs-and-experiment-system merge. Caption re-read against a MEASURED diff
+      rather than a read-through. The merge-authored delta to this renderer --
+      taken from the index and whitespace-normalised -- is FOUR lines, all of
+      them the sub-analysis -> member vocabulary rename: two _CHECK_VOCABULARY
+      description strings, and a local variable renamed from sa_id to member_id.
+      The section-label set was extracted from HEAD, MERGE_HEAD and the merged
+      index and is BYTE-IDENTICAL across all three, so the caption's claim of
+      four sections (system-level, aggregate per-scenario, granular
+      per-scenario, resource-utilization) is exactly as true after the merge as
+      before it. No column moved, no section was added or removed, no unit
+      changed. Separately verified that member_id = d.get("sa_id", "") is a
+      cosmetic half-rename and not a defect: analysis_validation.py emits the
+      "sa_id" detail key 8 times at HEAD, 8 at MERGE_HEAD and 8 in the merged
+      index, so the producer key never moved. Looked; no change needed.
+      Digest recorded AFTER the whole-file ruff-format pass that rides this same
+      commit -- recording it before would have gone stale on arrival and the
+      guard would have fired again with a stale-exemption message.
+  - renderer: cross_experiment_disk_utilization
+    caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst
+    renderer_sha256: 6f92bab4587a3a7f54a5701df7a7f7961eeaaa45648ffd0a0e3389ea5a35c140
+    justification: >-
+      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
+      not by judgement. This renderer's abstract syntax tree, parsed from the working
+      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
+      merge took the other branch's version of this file wholesale). The only textual
+      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
+      commit. A formatting change cannot alter a column, a unit, a section, or any
+      other claim a caption can make, so this caption cannot have gone stale and a
+      re-read has no possible finding. The renderer's semantics were reviewed on the
+      branch that authored them. Reproduce with:
+      python -c "import ast,subprocess;
+      f='src/hhemt/report_renderers/cross_experiment_disk_utilization.py';
+      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
+      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
+      Digest recorded AFTER the reformat, so the exemption expires on the next real
+      change to this file rather than on arrival.
+  - renderer: metadata
+    caption: src/hhemt/report_templates/captions/metadata.rst
+    renderer_sha256: 5fccf9b946a2d380cc3feb1ab0f9f9149cba0636f42974ce3aa88b40d7841041
+    justification: >-
+      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
+      not by judgement. This renderer's abstract syntax tree, parsed from the working
+      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
+      merge took the other branch's version of this file wholesale). The only textual
+      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
+      commit. A formatting change cannot alter a column, a unit, a section, or any
+      other claim a caption can make, so this caption cannot have gone stale and a
+      re-read has no possible finding. The renderer's semantics were reviewed on the
+      branch that authored them. Reproduce with:
+      python -c "import ast,subprocess;
+      f='src/hhemt/report_renderers/metadata.py';
+      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
+      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
+      Digest recorded AFTER the reformat, so the exemption expires on the next real
+      change to this file rather than on arrival.
+  - renderer: per_analysis_summary
+    caption: src/hhemt/report_templates/captions/per_analysis_summary_table.rst
+    renderer_sha256: 5101456a3a8a06645385ef08bb0756c2f25677e5f275173b0862d9ed3dd505d8
+    justification: >-
+      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
+      not by judgement. This renderer's abstract syntax tree, parsed from the working
+      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
+      merge took the other branch's version of this file wholesale). The only textual
+      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
+      commit. A formatting change cannot alter a column, a unit, a section, or any
+      other claim a caption can make, so this caption cannot have gone stale and a
+      re-read has no possible finding. The renderer's semantics were reviewed on the
+      branch that authored them. Reproduce with:
+      python -c "import ast,subprocess;
+      f='src/hhemt/report_renderers/per_analysis_summary.py';
+      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
+      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
+      Digest recorded AFTER the reformat, so the exemption expires on the next real
+      change to this file rather than on arrival.
+  - renderer: scenario_status_appendix
+    caption: src/hhemt/report_templates/captions/scenario_status_appendix.rst
+    renderer_sha256: 3d7c2682cfbc438accfcf1d48f6b5507d62134be3d57788c4627fdee86b7e54e
+    justification: >-
+      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
+      not by judgement. This renderer's abstract syntax tree, parsed from the working
+      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
+      merge took the other branch's version of this file wholesale). The only textual
+      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
+      commit. A formatting change cannot alter a column, a unit, a section, or any
+      other claim a caption can make, so this caption cannot have gone stale and a
+      re-read has no possible finding. The renderer's semantics were reviewed on the
+      branch that authored them. Reproduce with:
+      python -c "import ast,subprocess;
+      f='src/hhemt/report_renderers/scenario_status_appendix.py';
+      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
+      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
+      Digest recorded AFTER the reformat, so the exemption expires on the next real
+      change to this file rather than on arrival.
+  - renderer: system_overview
+    caption: src/hhemt/report_templates/captions/system_map.rst
+    renderer_sha256: 43e350a7f310d742fcdadcb635cedbd11bf5a93be0c87208fd048c103aac974f
+    justification: >-
+      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
+      not by judgement. This renderer's abstract syntax tree, parsed from the working
+      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
+      merge took the other branch's version of this file wholesale). The only textual
+      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
+      commit. A formatting change cannot alter a column, a unit, a section, or any
+      other claim a caption can make, so this caption cannot have gone stale and a
+      re-read has no possible finding. The renderer's semantics were reviewed on the
+      branch that authored them. Reproduce with:
+      python -c "import ast,subprocess;
+      f='src/hhemt/report_renderers/system_overview.py';
+      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
+      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
+      Digest recorded AFTER the reformat, so the exemption expires on the next real
+      change to this file rather than on arrival.

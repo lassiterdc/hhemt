@@ -6,15 +6,15 @@ per-simulation requirements (without totals based on max_concurrent).
 """
 
 import pytest
+
 import tests.fixtures.test_case_catalog as cases
+from hhemt.resource_management import _parse_slurm_allocated_gpus
 
 
 @pytest.fixture
 def norfolk_analysis_cpu_only():
     """Norfolk test case configured with CPU-only simulation."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False
-    )
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure basic CPU-only simulation
@@ -30,9 +30,7 @@ def norfolk_analysis_cpu_only():
 @pytest.fixture
 def norfolk_analysis_with_gpus():
     """Norfolk test case configured with GPU simulation."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False
-    )
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure GPU simulation
@@ -93,9 +91,7 @@ def test_sim_requirements_gpu_calculations(norfolk_analysis_with_gpus):
 
 def test_sim_requirements_multi_node_config():
     """Verify per-simulation requirements with multi-node configuration."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=True
-    )
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
     analysis = case.analysis
 
     # Configure multi-node simulation
@@ -113,7 +109,7 @@ def test_sim_requirements_multi_node_config():
     assert sim_reqs["mem_mb_per_sim"] == 16000  # 1 × 16 × 1000
 
 
-# Note: Sensitivity analysis tests would require setting up sub-analyses,
+# Note: Sensitivity analysis tests would require setting up members,
 # which is more complex. The basic mechanism (finding MAX per-sim requirements)
 # is tested implicitly through the workflow integration tests.
 
@@ -121,7 +117,6 @@ def test_sim_requirements_multi_node_config():
 # ---------------------------------------------------------------------------
 # _parse_slurm_allocated_gpus unit tests
 # ---------------------------------------------------------------------------
-from hhemt.resource_management import _parse_slurm_allocated_gpus
 
 
 def test_parse_slurm_gpus_integer():

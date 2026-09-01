@@ -6,8 +6,8 @@ is honored). Each EDA plot emits via `emit_plot_with_sources` (HTML branch) unde
 MASTER-ROOTED `{root}/plots/eda/<plot_id>.html` and declares its
 `{root}/eda/<plot_id>.zarr` data-prep artifact as a source - so the existing
 harvest chain carries the dataset into a render bundle (D1 Option A). EDA plots
-MUST NOT emit under plots/sensitivity/per_sim/sa-{N}/ (harvest re-roots that subtree
-against subanalyses/sa_{N}/, which has no eda/ dir; see the master-rooted-emission
+MUST NOT emit under plots/sensitivity/per_sim/member-{N}/ (harvest re-roots that subtree
+against members/member_{N}/, which has no eda/ dir; see the master-rooted-emission
 stipulation).
 """
 
@@ -119,7 +119,7 @@ def _render_config_diff_maps(
     identity+absolute-diff table, and per byte-identical config group the SIGNED diff
     and percent-diff maps (DEM cells + SWMM conduits) vs the serial-CPU baseline with
     serial reference maps. Compute-config labels are derived from config attrs (never
-    the sa_id name). Emits under MASTER-ROOTED plots/eda/ as config_diff_maps.html.
+    the member_id name). Emits under MASTER-ROOTED plots/eda/ as config_diff_maps.html.
 
     plot_id `config_diff_maps` (== on-disk stem, ADR-2). Existing bundles carrying the
     legacy `eda_cross_sim_identity` enabled_plots key are normalized to this kind by
@@ -600,7 +600,7 @@ def _render_b4b(
     return emit_plot_with_sources(
         html_text,
         output_path,
-        source_paths=[artifact],
+        source_paths=[artifact, artifact.with_suffix(".manifest.json")],
         analysis_dir=root,
         output_format="html",
     )

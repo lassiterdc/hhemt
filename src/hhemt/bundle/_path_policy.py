@@ -88,7 +88,7 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "weather_event_windows_csv": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "weather_events_to_simulate": PathPolicy.BUNDLE_RELATIVE,
     "analysis_dir": PathPolicy.FORCED_DOT,
-    "master_analysis_cfg_yaml": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "experiment_cfg_yaml": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "brand_theme": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "static_plot_configs": PathPolicy.BUNDLE_RELATIVE_LIST,
 }
@@ -146,8 +146,7 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
     "landuse_raster": ExcludableInput(
         description="Landuse raster the spatially-varying Manning's n grid is built from.",
         reproducibility_cost=(
-            "Large. Excluding it blocks Manning's preprocessing when "
-            "toggle_use_constant_mannings=False."
+            "Large. Excluding it blocks Manning's preprocessing when " "toggle_use_constant_mannings=False."
         ),
     ),
     "landuse_lookup_file": ExcludableInput(
@@ -212,7 +211,7 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
             "window, so every per-sim hydrology panel loses its clip."
         ),
     ),
-    "master_analysis_cfg_yaml": ExcludableInput(
+    "experiment_cfg_yaml": ExcludableInput(
         description="Master analysis config the per-analysis configs derive from.",
         reproducibility_cost="Tiny; excluding it buys no space.",
     ),

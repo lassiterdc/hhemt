@@ -55,7 +55,7 @@ class RuleSpecTemplate:
     log_path_template: str = ""
     #: Per-TEMPLATE gate, distinct from RendererSelection.predicate_key which gates a
     #: whole selection. A selection may carry N templates that are not all applicable
-    #: to the same analysis -- per_sim_per_sa carries peak_flood_depth (any model) and
+    #: to the same analysis -- per_sim_per_member carries peak_flood_depth (any model) and
     #: conduit_flow (SWMM-derived only). Splitting the selection instead is UNSAFE:
     #: every consumer takes the FIRST selection per builder_key, so a second same-key
     #: selection is silently dropped. None = always emitted.
@@ -70,11 +70,11 @@ class RendererSelection:
     predicate_key      : None for unconditional renderers; a string the dispatcher
                          resolves to a Callable[[inputs], bool] for conditional
                          renderers (e.g. "has_independent_vars",
-                         "has_sa_event_pairs").
+                         "has_member_event_pairs").
     rule_spec_template : () for selections the bundle generator does not emit;
                          a TUPLE of RuleSpecTemplate (one per emitted bundle
                          figure — most renderers map to one, but per_sim and
-                         per_sim_per_sa each expand to two: peak_flood_depth +
+                         per_sim_per_member each expand to two: peak_flood_depth +
                          conduit_flow) carrying the bundle-side rule facts when the
                          bundle generator data-drives this renderer (P1b). Consumed
                          ONLY by the bundle generator.
@@ -93,6 +93,27 @@ class ReportingSet:
     # Run-entry validator selector: "benchmarking" delegates to
     # validate_sensitivity_independent_vars; "none" is a no-op (the default set).
     validator_key: str = "none"
+    #: The analysis SHAPE this set applies to, read at analysis.run() entry by the
+    #: compatibility check: "event_ensemble" iff toggle_sensitivity_analysis is
+    #: False, "sensitivity" iff True, "cross_experiment" never selectable from an
+    #: analysis config (it is reached only by hhemt combine, which looks the set up
+    #: by name). Also the homogeneity key for a LIST of sets: every named set must
+    #: declare the same shape. The default is None -- UNDECLARED, not a shape -- so
+    #: an undeclared set is refused by the run-entry check rather than silently
+    #: admitted; a str default would make every sweep set read as an event ensemble
+    #: until its declaration landed, which is fail-OPEN on the exact predicate this
+    #: field exists to close.
+    shape: str | None = None
+    #: Sensitivity AXES this set's figures plot against, as ALL-of over the outer
+    #: tuple and ANY-of within each inner tuple. Compared at run entry against the
+    #: sweep's varied-axis set (sensitivity.analysis_independent_vars union
+    #: system_independent_vars, both already canonical stripped field names). An
+    #: empty tuple means the set imposes no axis requirement -- a real declaration.
+    #: None means UNDECLARED and is refused by the run-entry check, exactly as an
+    #: undeclared shape is: without that distinction, holding a set at the default
+    #: would positively declare "no axis requirement" for a set that has one, which
+    #: is the S16 claim this field exists to encode.
+    required_axes: tuple[tuple[str, ...], ...] | None = None
 
 
 # Historical sidebar category order (the pre-ADR-5 _CATEGORY_ORDER, now a per-set
@@ -342,7 +363,7 @@ _TMPL_EDA_COMPUTE_SENSITIVITY = RuleSpecTemplate(
 # dem-resolution (D13): the in-report EDA adapter for the DEM-resolution family.
 # FOUR figures under ONE RendererSelection reusing builder key
 # eda_compute_sensitivity -- the same one-selection-N-templates shape per_sim and
-# per_sim_per_sa already use. All four share renderer_module
+# per_sim_per_member already use. All four share renderer_module
 # "eda_compute_sensitivity" (the _cli entrypoint and the _OUTPUT_EXT_BY_RENDERER
 # key are per-MODULE, not per-figure), and differ only in plot ID, caption, label
 # and log path. Tuple order is the figures' authored reading order (cost/error
@@ -409,8 +430,11 @@ _TMPL_DEM_RESOLUTION_COUPLING_TABLE = RuleSpecTemplate(
     log_path_template="_logs/plots/dem_resolution_coupling_table.log",
 )
 
-# The standard multisim set: the six common renderers, in emission order
-# (matches workflow.py:1913-1918 today). per_sim expands to two bundle figures.
+# The standard multisim set: its eight renderers, in emission order. The count is
+# len(_STANDARD_SELECTION) below, not the intersection with _BENCHMARKING_SELECTION.
+# Emitted by the `_emit_active_set_plot_rules` dispatch in `generate_snakefile_content`
+# (workflow.py), which replaced the hardcoded `_build_plot_rule_block_*` call list this
+# comment used to cite by line number. per_sim expands to two bundle figures.
 _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("system_overview", rule_spec_template=(_TMPL_SYSTEM_OVERVIEW,)),
     RendererSelection(
@@ -442,11 +466,15 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("workflow_performance", rule_spec_template=(_TMPL_WORKFLOW_PERFORMANCE,)),
 )
 
-# The benchmarking (sensitivity-master) set: the five common renderers shared by
-# the master/reprocess generators (workflow.py:6391-6415), plus the two
-# conditional sensitivity renderers gated by predicate. per_sim_per_sa expands to
-# two bundle figures.
-_BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
+# The SWEEP set: the seven unconditional renderers the master and reprocess-master
+# generators share, plus ONE conditional renderer (per_sim_per_member). This tuple is
+# the sensitivity-shaped bundle WITHOUT the benchmarking figure; _BENCHMARKING_SELECTION
+# below extends it with that figure and is the tuple carrying two conditionals. Emitted
+# by the `_emit_active_set_plot_rules` dispatch in `generate_master_snakefile_content`
+# and in `generate_reprocess_master_snakefile_content` (workflow.py), which replaced the
+# hardcoded call lists this comment used to cite by line number. per_sim_per_member
+# expands to two bundle figures.
+_SWEEP_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("system_overview", rule_spec_template=(_TMPL_SYSTEM_OVERVIEW,)),
     RendererSelection("per_analysis_summary", rule_spec_template=(_TMPL_PER_ANALYSIS_SUMMARY,)),
     RendererSelection("scenario_status_appendix", rule_spec_template=(_TMPL_SCENARIO_STATUS_APPENDIX,)),
@@ -455,54 +483,61 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("metadata", rule_spec_template=(_TMPL_METADATA,)),
     RendererSelection("workflow_performance", rule_spec_template=(_TMPL_WORKFLOW_PERFORMANCE,)),
     RendererSelection(
-        "per_sim_per_sa",
-        predicate_key="has_sa_event_pairs",
+        "per_sim_per_member",
+        predicate_key="has_member_event_pairs",
         rule_spec_template=(
             RuleSpecTemplate(
-                rule_name="plot_per_sim_per_sa_peak_flood_depth",
-                # The REAL module; sa-routing is via the --sa-id flag, not a separate
-                # module. There is no per_sim_per_sa_* module on disk, and this field is
+                rule_name="plot_per_sim_per_member_peak_flood_depth",
+                # The REAL module; member-routing is via the --member-id flag, not a separate
+                # module. There is no per_sim_per_member_* module on disk, and this field is
                 # copied verbatim into the bundle-side regen RuleSpec
                 # (bundle/snakefile_generator.py), which then shells out to a module that
                 # does not exist. Safe to rename: this field reaches only output_ext_for,
-                # whose per_sim_* and per_sim_per_sa_* entries are identical under both
+                # whose per_sim_* and per_sim_per_member_* entries are identical under both
                 # backends; plot IDs are minted from renderer_kind, not from this value.
                 renderer_module="per_sim_peak_flood_depth",
-                output_path_template="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}__OUTPUT_EXT__",
+                output_path_template="plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}__OUTPUT_EXT__",
                 report_kwargs={
                     "caption": "report/captions/per_sim_peak_flood_depth.rst",
                     "category": "Per Simulation Results",
                     "labels": (
                         '(lambda w: {"figure": "Peak flood depth", '
-                        '"sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), '
+                        '"member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), '
                         '"event": _report_label_value(_EVENT_LABELS, w.event_id, "event")})'
                     ),
                 },
-                wildcards=("sa_id", "event_id"),
+                wildcards=("member_id", "event_id"),
                 resources_yaml="mem_mb=4000, time_min=15",
-                log_path_template="_logs/plots/per_sim_per_sa_peak_flood_depth_sa-{sa_id}_{event_id}.log",
+                log_path_template="_logs/plots/per_sim_per_member_peak_flood_depth_member-{member_id}_{event_id}.log",
             ),
             RuleSpecTemplate(
-                rule_name="plot_per_sim_per_sa_conduit_flow",
+                rule_name="plot_per_sim_per_member_conduit_flow",
                 # The REAL module — see the note on the peak_flood_depth template above.
                 renderer_module="per_sim_conduit_flow",
-                output_path_template="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}__OUTPUT_EXT__",
+                output_path_template="plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}__OUTPUT_EXT__",
                 report_kwargs={
                     "caption": "report/captions/per_sim_conduit_flow.rst",
                     "category": "Per Simulation Results",
                     "labels": (
                         '(lambda w: {"figure": "Conduit flow", '
-                        '"sub-analysis": _report_label_value(_SA_LABELS, w.sa_id, "sub-analysis"), '
+                        '"member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), '
                         '"event": _report_label_value(_EVENT_LABELS, w.event_id, "event")})'
                     ),
                 },
-                wildcards=("sa_id", "event_id"),
+                wildcards=("member_id", "event_id"),
                 resources_yaml="mem_mb=4000, time_min=15",
-                log_path_template="_logs/plots/per_sim_per_sa_conduit_flow_sa-{sa_id}_{event_id}.log",
+                log_path_template="_logs/plots/per_sim_per_member_conduit_flow_member-{member_id}_{event_id}.log",
                 predicate_key="has_swmm_link_outputs",
             ),
         ),
     ),
+)
+
+# The benchmarking set is the sweep-shaped bundle plus the benchmarking figure,
+# which plots against a compute-configuration axis. Split out so the `default`
+# sentinel can resolve a sweep to _SWEEP_SELECTION, whose per_sim_per_member
+# figures carry the (member_id, event_id) axis a master-scope report needs.
+_BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = _SWEEP_SELECTION + (
     RendererSelection(
         "sensitivity_benchmarking",
         predicate_key="has_independent_vars",
@@ -520,7 +555,8 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
                     # `, "models": "TRITON-SWMM"` / `, "models": "TRITON"`, or to NOTHING on a
                     # master carrying neither TRITON arm. `models` is the same key the combined
                     # report already emits, so the two surfaces name one facet, not two synonyms.
-                    "labels": '{"independent_var": "{independent_var}", "figure": "vs Total runtime"__MODEL_ARM_LABEL__}',
+                    "labels": '{"independent_var": "{independent_var}", '
+                    '"figure": "vs Total runtime"__MODEL_ARM_LABEL__}',
                 },
                 wildcards=("independent_var",),
                 resources_yaml="mem_mb=4000, time_min=10",
@@ -602,18 +638,54 @@ _B4B_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
     ),
 )
 
+#: The compute-configuration sensitivity axes, as canonical stripped analysis_config
+#: field names. A benchmarking-family figure plots against one of these, so a sweep
+#: that varies none of them has no x-axis for it -- which is the S16 compatibility
+#: claim. Compared at run entry against sensitivity.analysis_independent_vars, whose
+#: entries are already stripped of the `analysis.` column prefix.
+_COMPUTE_CONFIG_AXES: tuple[str, ...] = (
+    "run_mode",
+    "n_mpi_procs",
+    "n_omp_threads",
+    "n_gpus",
+    "n_nodes",
+    "hpc_ensemble_partition",
+    # `mem_gb_per_cpu` is included as a JUDGEMENT, not a measurement: memory per CPU
+    # changes node packing and bandwidth contention and therefore wall clock, which is
+    # what the benchmarking figures plot. Do NOT cite synthetic_experiment.py's config
+    # tuple as the ground -- it names this field because every row needs a memory
+    # request, and across the whole default matrix the value is a function of
+    # run_mode (8 on every gpu row, 2 on every cpu row) with no memory-only contrast.
+    "mem_gb_per_cpu",
+    # DELIBERATELY EXCLUDED: `hpc_time_min_per_sim`. A walltime REQUEST changes nothing
+    # about how the computation runs, so a sweep varying only it has no performance
+    # axis to plot.
+)
+
 REPORTING_SETS: dict[str, ReportingSet] = {
     "default": ReportingSet(
         name="default",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_STANDARD_SELECTION,
         validator_key="none",
+        shape="event_ensemble",
+        required_axes=(),
     ),
     "benchmarking": ReportingSet(
         name="benchmarking",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_BENCHMARKING_SELECTION,
         validator_key="benchmarking",
+        shape="sensitivity",
+        required_axes=(_COMPUTE_CONFIG_AXES,),
+    ),
+    "sensitivity": ReportingSet(
+        name="sensitivity",
+        category_order=_STANDARD_CATEGORY_ORDER,
+        renderer_selection=_SWEEP_SELECTION,
+        validator_key="none",
+        shape="sensitivity",
+        required_axes=(),
     ),
     "combined": ReportingSet(
         name="combined",
@@ -653,24 +725,32 @@ REPORTING_SETS: dict[str, ReportingSet] = {
             ),
         ),
         validator_key="none",
+        shape="cross_experiment",
+        required_axes=(),
     ),
     "compute-sensitivity": ReportingSet(
         name="compute-sensitivity",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_COMPUTE_SENSITIVITY_SELECTION,
         validator_key="benchmarking",
+        shape="sensitivity",
+        required_axes=(_COMPUTE_CONFIG_AXES,),
     ),
     "dem-resolution": ReportingSet(
         name="dem-resolution",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_DEM_RESOLUTION_SELECTION,
         validator_key="benchmarking",
+        shape="sensitivity",
+        required_axes=(("target_dem_resolution",),),
     ),
     "b4b": ReportingSet(
         name="b4b",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_B4B_SELECTION,
         validator_key="benchmarking",
+        shape="sensitivity",
+        required_axes=(_COMPUTE_CONFIG_AXES,),
     ),
 }
 
@@ -698,6 +778,26 @@ def renderer_active(builder_key: str, disabled: list[str] | None) -> bool:
     ``validate_active_reporting_set`` is where such a key raises ConfigurationError.
     """
     return builder_key not in (disabled or ())
+
+
+def set_carries(reporting_set: ReportingSet, builder_key: str) -> bool:
+    """Return True when ``reporting_set`` carries a selection for ``builder_key``.
+
+    The membership half of the parity contract ``renderer_active`` states above: a
+    ``rule all`` entry gated only on ``renderer_active`` asks whether a renderer was
+    DISABLED and never whether the active set carries it at all, so a set that omits
+    the renderer still has its output enumerated and no rule produces it. Emission
+    already consults membership by construction -- the dispatcher iterates
+    ``renderer_selection`` -- so this is what lets an enumeration site ask the same
+    question the emission site answers implicitly.
+
+    Membership is by ``builder_key`` and not by rule_name, matching the dispatcher's
+    own loop; a selection whose per-template predicates all fail still counts as
+    carried, because emission and enumeration then agree via the predicate rather
+    than via membership.
+    """
+    return any(sel.builder_key == builder_key for sel in reporting_set.renderer_selection)
+
 
 def eda_rule_spec_templates(reporting_set: ReportingSet) -> tuple[RuleSpecTemplate, ...]:
     """Return ``reporting_set``'s ``eda_compute_sensitivity`` rule_spec_templates, or ().

@@ -30,9 +30,7 @@ def _write_live_sentinel(analysis_dir: Path, name: str, jobid: str) -> Path:
     d = analysis_dir / "_status" / "_submitted"
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{name}.json"
-    path.write_text(
-        json.dumps({"slurm_jobid": jobid, "run_uuid": "u", "submitted_at": "t"})
-    )
+    path.write_text(json.dumps({"slurm_jobid": jobid, "run_uuid": "u", "submitted_at": "t"}))
     return path
 
 
@@ -49,7 +47,7 @@ def test_delete_dry_run_summary_does_not_delete(synth_multi_sim_analysis, capsys
 
     out = capsys.readouterr().out
     assert "Delete preview" in out
-    assert "scenario" in out.lower() or "sub-analysis" in out.lower()
+    assert "scenario" in out.lower() or "member" in out.lower()
     assert analysis_dir.exists()  # not deleted
 
 
@@ -65,9 +63,7 @@ def test_delete_removes_analysis_dir(synth_multi_sim_analysis, monkeypatch):
     assert analysis_dir.exists()
 
     builder = analysis._workflow_builder
-    monkeypatch.setattr(
-        builder, "_recover_inflight_via_comment", lambda known_jobids: []
-    )
+    monkeypatch.setattr(builder, "_recover_inflight_via_comment", lambda known_jobids: [])
 
     analysis.delete(override_in_flight=False)
 
@@ -83,9 +79,7 @@ def test_delete_refuses_when_live_sentinel(synth_multi_sim_analysis, monkeypatch
 
     _write_live_sentinel(analysis_dir, "run_tritonswmm_evt-0", "999001")
     monkeypatch.setattr(workflow, "_slurm_job_is_live", lambda jid: True)
-    monkeypatch.setattr(
-        builder, "_recover_inflight_via_comment", lambda known_jobids: []
-    )
+    monkeypatch.setattr(builder, "_recover_inflight_via_comment", lambda known_jobids: [])
 
     with pytest.raises(ConfigurationError, match="Refusing to delete"):
         analysis.delete(override_in_flight=False)
@@ -93,9 +87,7 @@ def test_delete_refuses_when_live_sentinel(synth_multi_sim_analysis, monkeypatch
     assert analysis_dir.exists()  # preserved
 
 
-def test_delete_override_in_flight_bypasses_guard(
-    synth_multi_sim_analysis, monkeypatch, capsys
-):
+def test_delete_override_in_flight_bypasses_guard(synth_multi_sim_analysis, monkeypatch, capsys):
     """``override_in_flight=True`` bypasses the live-sentinel refusal and
     proceeds with deletion; the bypass logs a stderr-visible line naming the
     live job-ids it proceeded against."""
@@ -105,9 +97,7 @@ def test_delete_override_in_flight_bypasses_guard(
 
     _write_live_sentinel(analysis_dir, "run_tritonswmm_evt-0", "999001")
     monkeypatch.setattr(workflow, "_slurm_job_is_live", lambda jid: True)
-    monkeypatch.setattr(
-        builder, "_recover_inflight_via_comment", lambda known_jobids: []
-    )
+    monkeypatch.setattr(builder, "_recover_inflight_via_comment", lambda known_jobids: [])
 
     analysis.delete(override_in_flight=True)
 
@@ -117,9 +107,7 @@ def test_delete_override_in_flight_bypasses_guard(
     assert not analysis_dir.exists()
 
 
-def test_delete_preserves_dir_on_missing_sentinel(
-    synth_multi_sim_analysis, monkeypatch
-):
+def test_delete_preserves_dir_on_missing_sentinel(synth_multi_sim_analysis, monkeypatch):
     """If a per-rule sentinel is missing after the Snakemake delete workflow
     exits (simulating a partial-failure scenario), the orchestrator must
     PRESERVE the analysis_dir for debugging rather than destroy a
@@ -128,9 +116,7 @@ def test_delete_preserves_dir_on_missing_sentinel(
     analysis_dir = analysis.analysis_paths.analysis_dir
     builder = analysis._workflow_builder
 
-    monkeypatch.setattr(
-        builder, "_recover_inflight_via_comment", lambda known_jobids: []
-    )
+    monkeypatch.setattr(builder, "_recover_inflight_via_comment", lambda known_jobids: [])
 
     # Stub the Snakemake submission so no _status/_deleting/*.flag files are
     # ever produced — the post-check should then find the expected set

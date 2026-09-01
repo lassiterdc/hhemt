@@ -674,9 +674,9 @@ class SensitivityReportConfig(cfgBaseModel):
 
             data = {k: v for k, v in data.items() if k != "mode"}
             warnings.warn(
-                "report_config.sensitivity.mode is retired (ADR-5 ReportingSet "
+                "report.sensitivity.mode is retired (ADR-5 ReportingSet "
                 "registry). Reporting-set selection now lives on "
-                "report_config.reporting_set (default 'benchmarking' for "
+                "report.reporting_set (default 'benchmarking' for "
                 "sensitivity analyses). The legacy `mode:` key is ignored this "
                 "cycle and will be rejected in a future release.",
                 DeprecationWarning,
@@ -689,7 +689,7 @@ class SensitivityReportConfig(cfgBaseModel):
         description=(
             "Path into the per-scenario performance summary. Default "
             "'performance.Total' uses the Total column of the restart-safe "
-            "per-scenario summary. For SWMM-only sub-analyses, the renderer "
+            "per-scenario summary. For SWMM-only members, the renderer "
             "routes to the .rpt 'Total elapsed time' value."
         ),
     )
@@ -821,15 +821,31 @@ class _HtmlTableStyleBase(cfgBaseModel):
 
 
 _ERRORS_AND_WARNINGS_EXTRA_CSS = """\
-h2 {{ color: {primary_color}; border-bottom: {h2_border_width_px}px solid {primary_color}; padding-bottom: {h2_padding_bottom_px}px; margin-top: 0; }}
+h2 {{ color: {primary_color};
+    border-bottom: {h2_border_width_px}px solid {primary_color};
+    padding-bottom: {h2_padding_bottom_px}px;
+    margin-top: 0; }}
 h3 {{ color: {primary_color}; margin-top: {h3_margin_top_px}px; margin-bottom: {h3_margin_bottom_px}px; }}
 table {{ margin-bottom: {table_margin_bottom_px}px; }}
-td.pass {{ color: {pass_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
-td.fail {{ color: {fail_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
-td.na {{ color: {na_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
-td.pass-qualified {{ color: {qualified_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
+td.pass {{ color: {pass_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
+td.fail {{ color: {fail_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
+td.na {{ color: {na_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
+td.pass-qualified {{ color: {qualified_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
 span.floor-note {{ color: {na_text_color}; font-weight: 400; font-style: italic; }}
-.banner {{ padding: {banner_padding_v_px}px {banner_padding_h_px}px; border-radius: {banner_border_radius_px}px; margin: 10px 0 18px;
+.banner {{ padding: {banner_padding_v_px}px {banner_padding_h_px}px;
+    border-radius: {banner_border_radius_px}px; margin: 10px 0 18px;
           font-weight: {th_font_weight}; font-size: {banner_font_size_px}px; }}
 .banner.pass {{ background-color: {pass_bg_color}; color: {pass_text_color}; border: 1px solid {pass_text_color}; }}
 .banner.fail {{ background-color: {fail_bg_color}; color: {fail_text_color}; border: 1px solid {fail_text_color}; }}
@@ -893,9 +909,7 @@ class ScenarioStatusAppendixConfig(_HtmlTableStyleBase):
     )
 
     def render_inline_css(self) -> str:
-        return _HTML_TABLE_STYLE_TEMPLATE.format(
-            **self.model_dump(exclude={"interactive", "hide_constant_columns"})
-        )
+        return _HTML_TABLE_STYLE_TEMPLATE.format(**self.model_dump(exclude={"interactive", "hide_constant_columns"}))
 
 
 class report_config(cfgBaseModel):
@@ -1057,7 +1071,7 @@ def resolve_reporting_set_name(
         raise ConfigurationError(
             field="reporting_set",
             message=(
-                f"report_config.reporting_set='{requested}' resolves to "
+                f"report.reporting_set='{requested}' resolves to "
                 f"unknown set '{name}'. Registered sets: {sorted(REPORTING_SETS)}."
             ),
             config_path=None,
@@ -1093,6 +1107,7 @@ def validate_active_reporting_set(
     *,
     is_sensitivity: bool,
     sensitivity_csv_path: Path | None,
+    varied_axes: frozenset[str] | None = None,
 ) -> str:
     """Resolve and validate the active reporting set at analysis.run() entry.
 
@@ -1126,6 +1141,57 @@ def validate_active_reporting_set(
             ),
             config_path=None,
         )
+    # S16 (D51): membership is not suitability. A set declares the analysis SHAPE it
+    # applies to and the sensitivity AXES its figures plot against; a set fitting
+    # neither is refused here, on the login node, before compute is committed.
+    _analysis_shape = "sensitivity" if is_sensitivity else "event_ensemble"
+    if active.shape != _analysis_shape:
+        _fits = sorted(n for n, s in REPORTING_SETS.items() if s.shape == _analysis_shape)
+        if active.shape == "cross_experiment":
+            # Not selectable from an analysis config at all: the combine path reaches
+            # this set through hardcoded get_reporting_set("combined") literals, never
+            # through config resolution. Without this branch the message would name a
+            # "cross_experiment analysis", which is not a thing a user can create.
+            _why = "a set the `hhemt combine` verb selects for you, not one you set on an analysis"
+        elif active.shape == "sensitivity":
+            # The literal below is pinned by tests/test_config_validation.py's
+            # test_test_reference_report_scoping_passes_and_guard_intact, whose match=
+            # string bound validate_sensitivity_independent_vars before this check
+            # pre-empted it. Rewording this branch reds that test.
+            _why = "not a sensitivity analysis"
+        else:
+            _why = "not an event-ensemble analysis"
+        raise ConfigurationError(
+            field="reporting_set",
+            message=(
+                f"report.reporting_set='{name}' declares shape '{active.shape}', but this is "
+                f"{_why}. Sets that fit this analysis: {_fits}."
+            ),
+            config_path=None,
+        )
+    if active.required_axes:
+        if varied_axes is None:
+            raise ValueError(
+                f"validate_active_reporting_set: reporting set '{name}' declares required_axes, "
+                "so the caller must supply varied_axes. Passing None here would silently skip "
+                "the compatibility check."
+            )
+        _unmet = [fam for fam in active.required_axes if not (set(fam) & varied_axes)]
+        if _unmet:
+            _fits = sorted(
+                n
+                for n, s in REPORTING_SETS.items()
+                if s.shape == _analysis_shape and not [f for f in s.required_axes if not (set(f) & varied_axes)]
+            )
+            raise ConfigurationError(
+                field="reporting_set",
+                message=(
+                    f"report.reporting_set='{name}' plots against axes this sweep does not vary. "
+                    f"It requires at least one of each of {[sorted(f) for f in _unmet]}; the sweep "
+                    f"varies {sorted(varied_axes)}. Sets that fit this sweep: {_fits}."
+                ),
+                config_path=None,
+            )
     if active.validator_key == "benchmarking":
         validate_sensitivity_independent_vars(cfg, sensitivity_csv_path)
     return name

@@ -9,8 +9,10 @@ Classes:
 """
 
 import os
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
 import psutil
-from typing import TYPE_CHECKING, Mapping
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -67,7 +69,7 @@ class ResourceManager:
         Notes
         -----
         If this is a sensitivity analysis, returns the most demanding requirements
-        across all sub-analyses.
+        across all members.
         """
         # Get per-simulation requirements from config
         mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
@@ -78,18 +80,16 @@ class ResourceManager:
         max_gpus = self.cfg_analysis.n_gpus or 0
         max_mem_mb = self.cfg_analysis.mem_gb_per_cpu * max_cpus * 1000
 
-        # For sensitivity analysis, find max demands across sub-analyses
+        # For sensitivity analysis, find max demands across members
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            for sub_analysis in self.analysis.sensitivity.sub_analyses.values():
-                mpi_ranks = sub_analysis.cfg_analysis.n_mpi_procs or 1
-                omp_threads = sub_analysis.cfg_analysis.n_omp_threads or 1
-                n_gpus = sub_analysis.cfg_analysis.n_gpus or 0
-                n_nodes = sub_analysis.cfg_analysis.n_nodes or 1
+            for analysis in self.analysis.sensitivity.members.values():
+                mpi_ranks = analysis.cfg_analysis.n_mpi_procs or 1
+                omp_threads = analysis.cfg_analysis.n_omp_threads or 1
+                n_gpus = analysis.cfg_analysis.n_gpus or 0
+                n_nodes = analysis.cfg_analysis.n_nodes or 1
 
                 cpus_per_sim = mpi_ranks * omp_threads
-                mem_mb_per_sim = (
-                    sub_analysis.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
-                )
+                mem_mb_per_sim = analysis.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
 
                 max_nodes = max(max_nodes, n_nodes)
                 max_cpus = max(max_cpus, cpus_per_sim)
@@ -392,7 +392,7 @@ class ResourceManager:
         # Verbose logging
         # ----------------------------
         if verbose:
-            print(f"[SLURM] Resource Constraints:", flush=True)
+            print("[SLURM] Resource Constraints:", flush=True)
             print(f"  Nodes: {num_nodes}", flush=True)
             print(f"  CPUs per node: {cpus_on_node}", flush=True)
             print(f"  Total CPUs Allocated (SLURM): {slurm_total_cpus}", flush=True)

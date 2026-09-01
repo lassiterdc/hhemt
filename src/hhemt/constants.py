@@ -101,7 +101,7 @@ GLOBUS_SYSTEM_ENDPOINTS: dict[str, tuple[str, str, bool, str | None]] = {
 # Naming convention: descriptive function names communicate purpose at the
 # call site (the on-disk `c_run_*` / `d_process_*` / `e_consolidate_*`
 # string outputs are unchanged — those are the persistent contract).
-# Per the accepted-decision wildcard-charset stipulation, sa_id and
+# Per the accepted-decision wildcard-charset stipulation, member_id and
 # event_id must match `^[A-Za-z0-9_.]+$`; callers are responsible for
 # validating at CSV/config load time. The `_validate_id_fragment` helper
 # below provides a runtime fast-fail at the builder call site for
@@ -114,7 +114,7 @@ STATUS_DIR_NAME: str = "_status"
 def _validate_id_fragment(name: str, value: str) -> None:
     """Reject path-fragment-unsafe values in flag-name builder inputs.
 
-    sa_id / event_id end up baked into Snakemake rule names and on-disk
+    member_id / event_id end up baked into Snakemake rule names and on-disk
     flag file paths. Forbidden characters can corrupt rule names or paths.
     """
     if not isinstance(value, str) or not value:
@@ -124,32 +124,32 @@ def _validate_id_fragment(name: str, value: str) -> None:
             raise ValueError(f"{name}={value!r} contains forbidden fragment {ch!r}")
 
 
-def sim_run_flag_per_sa(model_type: str, sa_id: str, event_id: str) -> str:
-    """Per-sa per-event simulation completion flag (sensitivity workflow).
+def sim_run_flag_per_member(model_type: str, member_id: str, event_id: str) -> str:
+    """Per-member per-event simulation completion flag (sensitivity workflow).
 
-    sa_id and event_id must match `^[A-Za-z0-9_.]+$` per the
+    member_id and event_id must match `^[A-Za-z0-9_.]+$` per the
     accepted-decision wildcard-charset stipulation; this builder fast-fails
     on path-fragment-unsafe inputs via `_validate_id_fragment`.
     """
-    _validate_id_fragment("sa_id", sa_id)
+    _validate_id_fragment("member_id", member_id)
     _validate_id_fragment("event_id", event_id)
-    return f"{STATUS_DIR_NAME}/c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
+    return f"{STATUS_DIR_NAME}/c_run_{model_type}_member-{member_id}_evt-{event_id}_complete.flag"
 
 
-def process_timeseries_flag_per_sa(model_type: str, sa_id: str, event_id: str) -> str:
-    """Per-sa per-event process_timeseries completion flag (sensitivity workflow).
+def process_timeseries_flag_per_member(model_type: str, member_id: str, event_id: str) -> str:
+    """Per-member per-event process_timeseries completion flag (sensitivity workflow).
 
-    Same wildcard-charset contract as `sim_run_flag_per_sa`.
+    Same wildcard-charset contract as `sim_run_flag_per_member`.
     """
-    _validate_id_fragment("sa_id", sa_id)
+    _validate_id_fragment("member_id", member_id)
     _validate_id_fragment("event_id", event_id)
-    return f"{STATUS_DIR_NAME}/d_process_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
+    return f"{STATUS_DIR_NAME}/d_process_{model_type}_member-{member_id}_evt-{event_id}_complete.flag"
 
 
-def consolidate_subanalysis_flag(sa_id: str) -> str:
-    """Per-sa consolidate completion flag (sensitivity workflow)."""
-    _validate_id_fragment("sa_id", sa_id)
-    return f"{STATUS_DIR_NAME}/e_consolidate_sa-{sa_id}_complete.flag"
+def consolidate_analysis_flag(member_id: str) -> str:
+    """Per-member consolidate completion flag (sensitivity workflow)."""
+    _validate_id_fragment("member_id", member_id)
+    return f"{STATUS_DIR_NAME}/e_consolidate_member-{member_id}_complete.flag"
 
 
 def consolidate_master_flag() -> str:
@@ -157,7 +157,7 @@ def consolidate_master_flag() -> str:
     return f"{STATUS_DIR_NAME}/f_consolidate_master_complete.flag"
 
 
-def sa_inputs_fingerprint_flag(sa_id: str) -> str:
-    """Per-sa input fingerprint file used as an mtime-trigger sentinel for per-sa rules."""
-    _validate_id_fragment("sa_id", sa_id)
-    return f"{STATUS_DIR_NAME}/sa-{sa_id}_inputs.json"
+def member_inputs_fingerprint_flag(member_id: str) -> str:
+    """Per-member input fingerprint file used as an mtime-trigger sentinel for per-member rules."""
+    _validate_id_fragment("member_id", member_id)
+    return f"{STATUS_DIR_NAME}/member-{member_id}_inputs.json"

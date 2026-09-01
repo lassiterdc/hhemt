@@ -8,7 +8,7 @@ Environment-independent coverage (no GPU / no real simulation pipeline):
                                           preserving sibling raw ``out_*``.
   - ``delete_reprocess_zarr_runner``   — deletes the consolidated zarr(s) ONLY,
                                           preserving report/plots/_status.
-  - ``delete_subanalysis_reprocess_runner`` (D-scope Option C) — deletes the
+  - ``delete_member_reprocess_runner`` (D-scope Option C) — deletes the
                                           sub's ``sims/*/processed/`` (only with
                                           ``--delete-processed``) + the sub's
                                           ``analysis_datatree.zarr``.
@@ -19,8 +19,8 @@ Environment-independent coverage (no GPU / no real simulation pipeline):
   constructed analyses — no sims run):
   - non-sensitivity ``start_with='process'`` emits per-event
     ``delete_processed_*`` rules + a ``delete_reprocess_zarr_consolidation`` rule.
-  - sensitivity (D-scope Option C) emits ONE ``delete_subanalysis_reprocess_{sa}``
-    rule per sub (NOT per-(sa,event)) + a master consolidation rule.
+  - sensitivity (D-scope Option C) emits ONE ``delete_member_reprocess_{member}``
+    rule per sub (NOT per-(member,event)) + a master consolidation rule.
   - the reprocess-delete namespace is isolated to ``_deleting_reprocess/``.
 
 The synthetic end-to-end deletion tests (``test_synth_07`` / ``test_synth_08``
@@ -145,11 +145,11 @@ def test_delete_reprocess_zarr_runner_noop_on_absent_zarr(tmp_path, slurm_env):
 
 
 # ---------------------------------------------------------------------------
-# delete_subanalysis_reprocess_runner (Option C) — per-sub processed + zarr
+# delete_member_reprocess_runner (Option C) — per-sub processed + zarr
 # ---------------------------------------------------------------------------
 
 
-def _seed_subanalysis(sub_dir: Path) -> None:
+def _seed_analysis(sub_dir: Path) -> None:
     for eid in ("evt_1", "evt_2"):
         (sub_dir / "sims" / eid / "processed").mkdir(parents=True)
         (sub_dir / "sims" / eid / "out_triton").mkdir(parents=True)
@@ -157,54 +157,50 @@ def _seed_subanalysis(sub_dir: Path) -> None:
     (sub_dir / "analysis_datatree.zarr").mkdir()
 
 
-def test_subanalysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm_env):
-    from hhemt import delete_subanalysis_reprocess_runner as runner
+def test_analysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm_env):
+    from hhemt import delete_member_reprocess_runner as runner
 
-    sub_dir = tmp_path / "subanalyses" / "sa_3"
-    _seed_subanalysis(sub_dir)
+    sub_dir = tmp_path / "members" / "member_3"
+    _seed_analysis(sub_dir)
 
-    rc = runner.main(
-        ["--sa-id", "3", "--analysis-dir", str(sub_dir), "--delete-processed"]
-    )
+    rc = runner.main(["--member-id", "3", "--analysis-dir", str(sub_dir), "--delete-processed"])
     assert rc == 0
     assert not (sub_dir / "sims" / "evt_1" / "processed").exists()
     assert not (sub_dir / "sims" / "evt_2" / "processed").exists()
     assert (sub_dir / "sims" / "evt_1" / "out_triton" / "h.bin").exists(), "raw preserved"
     assert not (sub_dir / "analysis_datatree.zarr").exists()
 
-    flag = sub_dir / "_status" / "_deleting_reprocess" / "subanalysis_reprocess.flag"
+    flag = sub_dir / "_status" / "_deleting_reprocess" / "member_reprocess.flag"
     assert flag.exists()
-    sentinel = sub_dir / "_status" / "_submitted" / "delete_subanalysis_reprocess_3.json"
+    sentinel = sub_dir / "_status" / "_submitted" / "delete_member_reprocess_3.json"
     assert not sentinel.exists()
 
 
-def test_subanalysis_reprocess_runner_preserves_processed_without_flag(tmp_path, slurm_env):
+def test_analysis_reprocess_runner_preserves_processed_without_flag(tmp_path, slurm_env):
     """Without --delete-processed (start_with != 'process'), processed/ survives;
     only the sub's consolidated zarr is removed."""
-    from hhemt import delete_subanalysis_reprocess_runner as runner
+    from hhemt import delete_member_reprocess_runner as runner
 
-    sub_dir = tmp_path / "subanalyses" / "sa_3"
-    _seed_subanalysis(sub_dir)
+    sub_dir = tmp_path / "members" / "member_3"
+    _seed_analysis(sub_dir)
 
-    rc = runner.main(["--sa-id", "3", "--analysis-dir", str(sub_dir)])
+    rc = runner.main(["--member-id", "3", "--analysis-dir", str(sub_dir)])
     assert rc == 0
     assert (sub_dir / "sims" / "evt_1" / "processed").exists(), "processed/ preserved"
     assert not (sub_dir / "analysis_datatree.zarr").exists(), "sub zarr removed"
 
 
-def test_subanalysis_reprocess_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
-    from hhemt import delete_subanalysis_reprocess_runner as runner
+def test_analysis_reprocess_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
+    from hhemt import delete_member_reprocess_runner as runner
 
-    sub_dir = tmp_path / "subanalyses" / "sa_3"
-    _seed_subanalysis(sub_dir)
+    sub_dir = tmp_path / "members" / "member_3"
+    _seed_analysis(sub_dir)
 
     with patch.object(runner, "fast_rmtree", side_effect=RuntimeError("boom")):
         with pytest.raises(RuntimeError, match="boom"):
-            runner.main(
-                ["--sa-id", "3", "--analysis-dir", str(sub_dir), "--delete-processed"]
-            )
+            runner.main(["--member-id", "3", "--analysis-dir", str(sub_dir), "--delete-processed"])
 
-    sentinel = sub_dir / "_status" / "_submitted" / "delete_subanalysis_reprocess_3.json"
+    sentinel = sub_dir / "_status" / "_submitted" / "delete_member_reprocess_3.json"
     assert not sentinel.exists()
 
 
@@ -261,7 +257,7 @@ def test_build_reprocess_delete_snakefile_non_sensitivity(norfolk_multi_sim_anal
     assert "_deleting_reprocess/" in content
     assert "_status/_deleting/" not in content
     # non-sensitivity must NOT emit per-sub rules
-    assert "delete_subanalysis_reprocess_" not in content
+    assert "delete_member_reprocess_" not in content
 
 
 def test_delete_rules_declare_a_log_and_redirect_into_it(norfolk_multi_sim_analysis):
@@ -292,37 +288,33 @@ def test_delete_rules_declare_a_log_and_redirect_into_it(norfolk_multi_sim_analy
     assert content.count("    log:\n") >= 2, "delete rules must declare `log:`"
     assert "logs/delete_reprocess/" in content, "log path must be toolkit-owned, not executor-owned"
     # ...and every rule must redirect into the Snakemake-managed {log}, literally.
-    assert "> {log} 2>&1" in content, (
-        "shell must redirect into {log}; a `log:` directive alone captures nothing"
-    )
-    assert content.count("> {log} 2>&1") == content.count("    log:\n"), (
-        "every rule declaring a log must also redirect into it"
-    )
+    assert "> {log} 2>&1" in content, "shell must redirect into {log}; a `log:` directive alone captures nothing"
+    assert content.count("> {log} 2>&1") == content.count(
+        "    log:\n"
+    ), "every rule declaring a log must also redirect into it"
 
 
 def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivity_analysis):
-    """D-scope Option C: sensitivity emits ONE delete_subanalysis_reprocess_{sa}
-    rule per sub (NOT per-(sa,event)) + a master consolidation rule."""
+    """D-scope Option C: sensitivity emits ONE delete_member_reprocess_{member}
+    rule per sub (NOT per-(member,event)) + a master consolidation rule."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_sensitivity_analysis
-    sub_ids = [str(k) for k in analysis.sensitivity.sub_analyses.keys()]
-    assert len(sub_ids) >= 1, "fixture must construct >=1 sub-analysis"
+    sub_ids = [str(k) for k in analysis.sensitivity.members.keys()]
+    assert len(sub_ids) >= 1, "fixture must construct >=1 member"
 
     builder = SnakemakeWorkflowBuilder(analysis)
     content = builder._build_reprocess_delete_snakefile_content(start_with="process")
 
-    # exactly one per-sub rule per sub-analysis (Option C granularity)
-    n_sub_rules = content.count("rule delete_subanalysis_reprocess_")
-    assert n_sub_rules == len(sub_ids), (
-        f"expected one per-sub rule per sub ({len(sub_ids)}), got {n_sub_rules}"
-    )
-    assert "hhemt.delete_subanalysis_reprocess_runner" in content
+    # exactly one per-sub rule per member (Option C granularity)
+    n_sub_rules = content.count("rule delete_member_reprocess_")
+    assert n_sub_rules == len(sub_ids), f"expected one per-sub rule per sub ({len(sub_ids)}), got {n_sub_rules}"
+    assert "hhemt.delete_member_reprocess_runner" in content
     # start_with='process' threads --delete-processed into the per-sub runner
     assert "--delete-processed" in content
     # master consolidation rule deletes the sensitivity master zarr
     assert "rule delete_reprocess_zarr_consolidation:" in content
-    # Option C must NOT degenerate to per-(sa,event) processed rules at master level
+    # Option C must NOT degenerate to per-(member,event) processed rules at master level
     assert "rule delete_processed_" not in content
     assert "_deleting_reprocess/" in content
 

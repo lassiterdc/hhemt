@@ -15,7 +15,7 @@ Generator-parity scope (Phase 1): the TWO **reprocess** generators —
 (whole-sub, ``start_with``-aware) and
 ``reprocess_snakefile_generator._available_event_ids`` (per-event) — both filter
 their report-target enumeration on summary-existence via the shared
-``workflow._scenario_summaries_present`` / ``_sub_analysis_summaries_complete``
+``workflow._scenario_summaries_present`` / ``_member_summaries_complete``
 helpers. The PRODUCTION generator ``generate_master_snakefile_content`` is
 intentionally DESCOPED (it generates before sims run, so a generation-time gate
 is harmful, and its render failure is unreachable in a single-DAG ``run()`` — the
@@ -78,8 +78,8 @@ def test_report_target_predicate_excludes_summary_absent_sub(
       (the ~6785 shared-sub-inclusion EQUALITY invariant holds — generation does
       not abort).
     - (a)/(b) the sensitivity reprocess generator EXCLUDES the incomplete sub from
-      both its per-sa consolidate enumeration (``completed_sa_ids`` / ``rule all``)
-      and its per-sim plot targets (``SA_EVENT_PAIRS``), while a COMPLETE sub is
+      both its per-member consolidate enumeration (``completed_member_ids`` / ``rule all``)
+      and its per-sim plot targets (``MEMBER_EVENT_PAIRS``), while a COMPLETE sub is
       still enumerated.
     - (a)/(b) the non-sensitivity ``_available_event_ids`` EXCLUDES the divergent
       event (per-event predicate) while keeping every complete event.
@@ -92,8 +92,8 @@ def test_report_target_predicate_excludes_summary_absent_sub(
       main's owner; this test conservatively pins the newer guard's behavior.
     """
     from hhemt.constants import (
-        consolidate_subanalysis_flag,
-        sim_run_flag_per_sa,
+        consolidate_analysis_flag,
+        sim_run_flag_per_member,
     )
     from hhemt.reprocess_snakefile_generator import (
         _available_event_ids,
@@ -128,14 +128,14 @@ def test_report_target_predicate_excludes_summary_absent_sub(
 
     master_dir = analysis.analysis_paths.analysis_dir
 
-    sa_items = list(analysis.sensitivity.sub_analyses.items())
-    assert len(sa_items) >= 2, (
-        f"parity test needs >=2 sub-analyses (one to break, one to keep); fixture produced {len(sa_items)}"
-    )
-    target_sa_key, target_sub = sa_items[0]
-    complete_sa_key, _complete_sub = sa_items[1]
-    target_sa = str(target_sa_key)
-    complete_sa = str(complete_sa_key)
+    member_items = list(analysis.sensitivity.members.items())
+    assert (
+        len(member_items) >= 2
+    ), f"parity test needs >=2 members (one to break, one to keep); fixture produced {len(member_items)}"
+    target_member_key, target_sub = member_items[0]
+    complete_member_key, _complete_sub = member_items[1]
+    target_member = str(target_member_key)
+    complete_member = str(complete_member_key)
 
     scen = TRITONSWMM_scenario(0, target_sub)
     evt = compute_event_id_slug(target_sub._retrieve_weather_indexer_using_integer_index(0))
@@ -143,7 +143,7 @@ def test_report_target_predicate_excludes_summary_absent_sub(
 
     # The c_run flag is the precondition for the divergence (the predicate the
     # OLD code keyed on — must remain present after we delete the summary).
-    c_run_flag = master_dir / sim_run_flag_per_sa(model_type, target_sa, evt)
+    c_run_flag = master_dir / sim_run_flag_per_member(model_type, target_member, evt)
     assert c_run_flag.exists(), f"expected c_run flag present before delete: {c_run_flag}"
 
     # Delete one present per-scenario summary for the target sub's first event.
@@ -166,32 +166,32 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     content = analysis.sensitivity._workflow_builder.generate_reprocess_master_snakefile_content(
         start_with="consolidate"
     )
-    # Consolidate-flag enumeration (completed_sa_ids -> rule all): the flag names
+    # Consolidate-flag enumeration (completed_member_ids -> rule all): the flag names
     # are literal strings in the generated content.
-    target_consolidate_flag = consolidate_subanalysis_flag(target_sa)
-    complete_consolidate_flag = consolidate_subanalysis_flag(complete_sa)
+    target_consolidate_flag = consolidate_analysis_flag(target_member)
+    complete_consolidate_flag = consolidate_analysis_flag(complete_member)
     assert target_consolidate_flag not in content, (
         "incomplete sub's consolidate flag must NOT be enumerated "
-        "(completed_sa_ids / rule all / per-sa consolidate loop) — the ~6785 "
+        "(completed_member_ids / rule all / per-member consolidate loop) — the ~6785 "
         f"equality holds and the sub is excluded: {target_consolidate_flag}"
     )
     # Sanity: a COMPLETE sub IS still enumerated (the fix is not over-filtering).
-    assert complete_consolidate_flag in content, (
-        f"complete sub's consolidate flag must remain enumerated: {complete_consolidate_flag}"
-    )
+    assert (
+        complete_consolidate_flag in content
+    ), f"complete sub's consolidate flag must remain enumerated: {complete_consolidate_flag}"
 
-    # Per-sim plot targets are enumerated via the SA_EVENT_PAIRS_SA list (the plot
-    # rule path is wildcarded `sa-{sa_id}/{event_id}` + `zip` expand over the
+    # Per-sim plot targets are enumerated via the MEMBER_EVENT_PAIRS_MEMBER list (the plot
+    # rule path is wildcarded `member-{member_id}/{event_id}` + `zip` expand over the
     # list), so parse the list rather than matching an expanded literal.
-    m = re.search(r"^SA_EVENT_PAIRS_SA = (\[.*?\])\s*$", content, re.MULTILINE)
-    assert m is not None, "SA_EVENT_PAIRS_SA assignment not found in generated reprocess content"
-    sa_event_pairs_sa = ast.literal_eval(m.group(1))
-    assert target_sa not in sa_event_pairs_sa, (
-        f"incomplete sub {target_sa!r} must be excluded from SA_EVENT_PAIRS_SA={sa_event_pairs_sa}"
-    )
-    assert complete_sa in sa_event_pairs_sa, (
-        f"complete sub {complete_sa!r} must remain in SA_EVENT_PAIRS_SA={sa_event_pairs_sa}"
-    )
+    m = re.search(r"^MEMBER_EVENT_PAIRS_MEMBER = (\[.*?\])\s*$", content, re.MULTILINE)
+    assert m is not None, "MEMBER_EVENT_PAIRS_MEMBER assignment not found in generated reprocess content"
+    member_event_pairs_member = ast.literal_eval(m.group(1))
+    assert (
+        target_member not in member_event_pairs_member
+    ), f"incomplete sub {target_member!r} must be excluded from MEMBER_EVENT_PAIRS_MEMBER={member_event_pairs_member}"
+    assert (
+        complete_member in member_event_pairs_member
+    ), f"complete sub {complete_member!r} must remain in MEMBER_EVENT_PAIRS_MEMBER={member_event_pairs_member}"
 
     # ── (a)/(b) non-sensitivity per-event predicate excludes ONLY the divergent
     # event. ────────────────────────────────────────────────────────────────────

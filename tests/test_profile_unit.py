@@ -19,8 +19,8 @@ from scripts.profile.profile_routine_tests import _collect_corpus
 @pytest.mark.parametrize(
     "name,expected",
     [
-        ("simulate_sa_1_evt_2", "simulate_sa_N_evt_N"),
-        ("simulate_sa_999", "simulate_sa_N"),
+        ("simulate_member_1_evt_2", "simulate_member_N_evt_N"),
+        ("simulate_member_999", "simulate_member_N"),
         ("simulate_evt_42", "simulate_evt_N"),
         ("run_triton", "run_triton"),  # no wildcards — pass-through
         ("", ""),  # empty input — defensive
@@ -72,9 +72,7 @@ def test_discover_analysis_dirs(tmp_path):
 
 def test_collect_corpus_parses_nodeids(monkeypatch):
     fake_stdout = (
-        "tests/test_a.py::test_one\n"
-        "tests/test_a.py::test_two[a-1]\n"
-        "tests/test_b.py::TestClass::test_method\n"
+        "tests/test_a.py::test_one\n" "tests/test_a.py::test_two[a-1]\n" "tests/test_b.py::TestClass::test_method\n"
     )
     fake_stderr = "ERROR collecting tests/test_broken.py\n"
 

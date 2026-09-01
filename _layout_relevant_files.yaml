@@ -13,9 +13,9 @@ layout_relevant:
     - src/hhemt/cf_conventions.py
     - src/hhemt/sensitivity_analysis.py
     - src/hhemt/report_plot_ids.py  # reporting-system_canonical-plot-id (ADR-2): the canonical plot-ID grammar + per-renderer extension map. Figure stems ARE the plot IDs; a change here changes on-disk figure filenames (C-LAYOUT) and must bump LAYOUT_VERSION + ship a V{NNNN} migration. workflow.py consumes this module but is intentionally NOT layout-relevant (highest-churn file; would flood Check-B with false positives).
+    - src/hhemt/constants.py  # S8a stage-4: constants.py MINTS every _status flag filename (sim_run_flag_per_member / process_timeseries_flag_per_member / consolidate_analysis_flag / member_inputs_fingerprint_flag), so a change to any of those builders renames on-disk artifacts. It was absent from this list and reached by neither glob, so Check B could not see it. Same C-LAYOUT rationale as report_plot_ids.py. Churn measured at the refute round: 4 commits, versus 11 for report_plot_ids.py (already listed) and 70 for workflow.py (deliberately refused above), so the false-positive-flood objection does not reach it.
   globs:
     - "src/hhemt/config/**/*.py"
-    - "src/hhemt/version_migration/schema/*.json"
     - "src/hhemt/version_migration/versions/*.py"
 non_breaking_allowlist:
   - path: src/hhemt/process_simulation.py
@@ -29,7 +29,26 @@ non_breaking_allowlist:
       file passed Check B silently, including numeric-correctness edits to the
       per-scenario perf zarrs. Re-stamp layout_signature whenever a genuinely
       non-breaking change lands; a breaking one must bump LAYOUT_VERSION instead.
-    layout_signature: "e76709d8fdce45397bd3d0e9ed7d9328f4fb84eea5719d3f5adbae34563b4a72"
+    layout_signature: "0a364a83d9638df0a1b5f51c9c7b250bc1db331251a286e7c87f973478f13f8a"
+  - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
+    justification: >-
+      DU-sentinel gate closure — a one-character correction inside an existing
+      EXEMPT-DU annotation ("status flag" -> "status-flag", a space where the frozen
+      category set uses a hyphen). COMMENT-ONLY: the migration's applied operations,
+      its version_from/version_to and its upgrade() body are byte-unchanged, so no
+      on-disk state this migration produces can differ. Re-stamp layout_signature on
+      any further non-breaking edit; a change to the applied operations must bump
+      LAYOUT_VERSION instead.
+    layout_signature: "43cec8d0829441f1f0f84077f041588b1bd568c6bdc5f9f69d6b7dbbcad42d5e"
+  - path: src/hhemt/version_migration/versions/V0019__member_vocabulary.py
+    justification: >-
+      DU-sentinel gate closure — two "# EXEMPT-DU: migration-primitive" annotations
+      added to existing unlinks, plus one ruff-format reflow of a ternary that is
+      semantically identical. COMMENT-AND-FORMATTING-ONLY: no unlink, glob or write
+      changes, so the on-disk result of applying this migration is byte-unchanged.
+      Re-stamp layout_signature on any further non-breaking edit; a change to the
+      applied operations must bump LAYOUT_VERSION instead.
+    layout_signature: "e27854c6749b72a3c78e6771bad21be061bfe9c2b3cb89510c333e6d1b940b22"
   - path: src/hhemt/scenario.py
     justification: >-
       Two collapsed non-breaking changes. cleanup-rerun-delete-redesign Phase 3 —
@@ -180,9 +199,14 @@ non_breaking_allowlist:
       directive in the same commit. The rename is a BREAKING input-config-schema change under
       extra="forbid" and is nonetheless recorded here rather than as a LAYOUT_VERSION bump:
       LAYOUT_VERSION governs the on-disk ANALYSIS TREE, and a V{NNNN} migration receives a
-      MigrationContext scoped to analysis_dir, so it cannot reach a user-authored input YAML.
-      The derived in-tree copies (_generated/target_{N}.yaml, subanalyses/sa_*/sa_*.yaml, the
-      platformdirs cache analysis_config.yaml) are re-materialized from the parent config on
+      MigrationContext scoped to analysis_dir, so it cannot reach the user's AUTHORED SOURCE
+      config, which lives outside analysis_dir. CORRECTED 2026-08-29 (S8a Round 2): the earlier
+      wording said "cannot reach a user-authored input YAML", which is OVERSTATED -- a migration
+      CAN reach the machine-written model_dump copy at {analysis_dir}/cfg_analysis.yaml, and
+      V0005__inline_report_config.py does exactly that. That copy is re-derived from the
+      in-memory model (analysis.py:1100 writes it via model_dump), so a migration over it buys
+      nothing. The derived in-tree copies (_generated/target_{N}.yaml, subanalyses/sa_*/sa_*.yaml,
+      the platformdirs cache analysis_config.yaml) are re-materialized from the parent config on
       every load and self-heal. The schema the rename DOES break is the render bundle, which
       carries cfg_analysis.yaml and loads it back through the model -- so BUNDLE_SCHEMA_VERSION
       is bumped 3 -> 4 instead. The on-disk log keys (*_reclaimed) are deliberately NOT renamed;
@@ -288,6 +312,15 @@ non_breaking_allowlist:
       _OUTPUT_EXT_BY_RENDERER, so the C-LAYOUT property this file is listed for
       (figure filenames) is untouched. Same class as the additive
       _OUTPUT_EXT_BY_RENDERER-key entry above.
+  - path: src/hhemt/report_plot_ids.py
+    justification: >-
+      config-label leaf extraction -- the function-local import inside
+      member_labels_from_status is re-pointed from hhemt.eda._config_diff to the new
+      hhemt.config_labels leaf module. The BOUND NAME and the call site are unchanged,
+      so behaviour is identical. Touches NO figure stem: it references neither
+      canonical_plot_id, plot_output_template, nor _OUTPUT_EXT_BY_RENDERER, so the
+      C-LAYOUT property this file is listed for (figure filenames) is untouched. Same
+      class as the two additive entries above.
   - path: src/hhemt/config/loaders.py
     justification: >-
       oe-a-node-local-preflight-guard Option F — message-only diagnostic wrapper
@@ -318,3 +351,14 @@ non_breaking_allowlist:
       so an old tree lacking them classifies exactly as it does today and a new tree read
       by an old toolkit shows them absent rather than wrong. Same class as the existing
       triton_producing_sha stamp entry directly above.
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      S8a stage-4 Round 2 (vocabulary rename) -- is_subanalysis -> is_experiment_member and
+      master_analysis_cfg_yaml -> experiment_cfg_yaml. A BREAKING input-config-schema change
+      under extra="forbid", recorded here rather than as a LAYOUT_VERSION bump for exactly the
+      reason the reclaim_after_processing -> remove_after_processing entry above records:
+      LAYOUT_VERSION governs the on-disk ANALYSIS TREE, a migration cannot reach the user's
+      authored source config, and the derived in-tree copies self-heal. Nothing here renames a
+      log key, a flag name or a directory name -- those WOULD owe a migration. The schema this
+      DOES break is the render bundle, so BUNDLE_SCHEMA_VERSION is bumped 4 -> 5 and both
+      checked-in fixture bundles are regenerated in the same commit.

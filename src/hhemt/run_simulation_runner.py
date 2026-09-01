@@ -292,12 +292,12 @@ def main():
         help="Model type to run (default: tritonswmm)",
     )
     parser.add_argument(
-        "--sa-id",
+        "--member-id",
         type=str,
         default=None,
         help=(
-            "Sensitivity sub-analysis id (omitted for multisim runs). When set, "
-            "the at-most-once submission sentinel is keyed on simulation_sa_{sa_id}; "
+            "Sensitivity member id (omitted for multisim runs). When set, "
+            "the at-most-once submission sentinel is keyed on simulation_member_{member_id}; "
             "otherwise it is keyed on run_{model_type}."
         ),
     )
@@ -358,7 +358,7 @@ def main():
     # At-most-once-execution sentinel handle. Initialized to None so the
     # finally cleanup below is safe even if an exception fires before the
     # sentinel write (e.g., scenario instantiation failure). Charset note:
-    # event_id (and sa_id for sensitivity) flow into the sentinel filename
+    # event_id (and member_id for sensitivity) flow into the sentinel filename
     # but have already been validated at config load against
     # ^[A-Za-z0-9_.]+$, so no re-validation is needed here.
     _sentinel: Path | None = None
@@ -367,10 +367,10 @@ def main():
     try:
         # Import here to avoid import errors if dependencies are missing
         from hhemt.analysis import TRITONSWMM_analysis
+        from hhemt.config.hpc_system import resolve_additional_modules, resolve_gpu_target
+        from hhemt.config.loaders import load_hpc_system_config
         from hhemt.scenario import TRITONSWMM_scenario
         from hhemt.system import TRITONSWMM_system
-        from hhemt.config.loaders import load_hpc_system_config
-        from hhemt.config.hpc_system import resolve_gpu_target, resolve_additional_modules
 
         # Log workflow context for traceability
         log_workflow_context(logger)
@@ -418,9 +418,9 @@ def main():
             analysis_dir = analysis.analysis_paths.analysis_dir
             _subdir = Path(analysis_dir) / "_status" / "_submitted"
             _subdir.mkdir(parents=True, exist_ok=True)
-            if args.sa_id:
-                _sentinel = _subdir / f"simulation_sa_{args.sa_id}_evt-{event_id}.json"
-                _rule_token = f"simulation_sa_{args.sa_id}_evt-{event_id}"
+            if args.member_id:
+                _sentinel = _subdir / f"simulation_member_{args.member_id}_evt-{event_id}.json"
+                _rule_token = f"simulation_member_{args.member_id}_evt-{event_id}"
             else:
                 _sentinel = _subdir / f"run_{model_type}_evt-{event_id}.json"
                 _rule_token = f"run_{model_type}_evt-{event_id}"
@@ -430,7 +430,7 @@ def main():
                     {
                         "slurm_jobid": _jobid,
                         "run_uuid": os.environ.get("SLURM_JOB_NAME"),
-                        "sa_id": args.sa_id,
+                        "sa_id": args.member_id,
                         "model_type": model_type,
                         "event_id": event_id,
                         "submitted_at": datetime.datetime.now().isoformat(),
@@ -469,7 +469,7 @@ def main():
             _marker_payload_base = {
                 "slurm_jobid": _jobid,
                 "run_uuid": os.environ.get("SLURM_JOB_NAME"),
-                "sa_id": args.sa_id,
+                "sa_id": args.member_id,
                 "model_type": model_type,
                 "event_id": event_id,
             }
@@ -488,7 +488,7 @@ def main():
             # start, where the only marker that can exist is a stale one. Doing this
             # in the finally instead would delete the marker THIS attempt's own
             # failure paths just wrote and stamp a failed sim completed.
-            (_failed_dir / f"{_marker_ctx.rule_token}.json").unlink(missing_ok=True)
+            (_failed_dir / f"{_marker_ctx.rule_token}.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
 
         # Verify scenario is prepared (check scenario prep log)
         scenario.log.refresh()
@@ -619,9 +619,7 @@ def main():
         # interruption is schedule[k]. Re-read the model log AFTER
         # prepare_simulation_command so the count reflects this attempt's baseline.
         _n_done = scenario.get_log(model_type).n_resumes.get() or 0
-        _arm_deterministic_kill = (
-            _schedule is not None and model_type != "swmm" and _n_done < len(_schedule)
-        )
+        _arm_deterministic_kill = _schedule is not None and model_type != "swmm" and _n_done < len(_schedule)
 
         start_time = time.time()
         model_logfile.parent.mkdir(parents=True, exist_ok=True)
@@ -667,7 +665,7 @@ def main():
         # performanceN.txt) and the model log's sim_run_time_minutes are OVERWRITE-PRONE — a
         # resume re-runs from the checkpoint and overwrites the perf files for the re-run
         # steps, and sim_run_time_minutes is last-exec-only — so a resumed sim's total
-        # UNDER-counts (empirically 372.3 s reported vs 489 s actual on sa_serial_6_r1, 3
+        # UNDER-counts (empirically 372.3 s reported vs 489 s actual on member_serial_6_r1, 3
         # resumes). This ledger appends THIS attempt's wall (completed OR harness-killed) BEFORE
         # the next resume can overwrite anything; df_status sums it (fallback to the perf path
         # when absent, so non-resumed + legacy trees are byte-unchanged). Best-effort / non-fatal.

@@ -60,27 +60,27 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
     the ``Resuming ... from hotstart`` notice go to the RUNNER's stderr, not here; the
     file carries only the model subprocess's own stdout/stderr.
 
-    Naming convention (empirically ``model_tritonswmm_sa_gpu_0_r1_evt0.log`` on
-    synth_cc_resume -- note the segment is the full ``analysis_id``, NOT ``sa{N}``):
-    - Sensitivity sub-analysis:
+    Naming convention (empirically ``model_tritonswmm_member_gpu_0_r1_evt0.log`` on
+    synth_cc_resume -- note the segment is the full ``analysis_id``, NOT ``member{N}``):
+    - Sensitivity member:
       ``{master_analysis_dir}/logs/sims/model_{model_type}_{analysis_id}_evt{event_iloc}.log``
     - Regular analysis:
       ``{simlog_directory}/model_{model_type}_evt{event_iloc}.log``
     """
     log_dir = analysis.analysis_paths.simlog_directory
-    subanalysis_id = ""
-    if getattr(analysis.cfg_analysis, "is_subanalysis", False):
-        subanalysis_id = str(analysis.cfg_analysis.analysis_id) + "_"
+    analysis_id = ""
+    if getattr(analysis.cfg_analysis, "is_experiment_member", False):
+        analysis_id = str(analysis.cfg_analysis.analysis_id) + "_"
         # Derive the MASTER analysis dir STRUCTURALLY, from this sub's own analysis_dir.
-        # A sub's dir is always `{master_analysis_dir}/subanalyses/sa_{sa_id}` (single
-        # writer: sensitivity_analysis.py:273 + _create_sub_analyses; the same two-level
-        # convention du_sentinels.py:406 detects via parent.name == "subanalyses"), so
+        # A sub's dir is always `{master_analysis_dir}/members/member_{member_id}` (single
+        # writer: sensitivity_analysis.py:273 + _create_members; the same two-level
+        # convention du_sentinels.py:406 detects via parent.name == "members"), so
         # `.parent.parent` IS the master analysis_dir and this expression equals the
         # master's `analysis_paths.simlog_directory` (analysis.py:273-274) by construction.
         #
-        # DO NOT restore the previous `master_analysis_cfg_yaml.parent / "logs" / "sims"`
-        # form. `master_analysis_cfg_yaml` is the USER'S config-file path
-        # (sensitivity_analysis.py:2417 assigns master_analysis.analysis_config_yaml), so
+        # DO NOT restore the previous `experiment_cfg_yaml.parent / "logs" / "sims"`
+        # form. `experiment_cfg_yaml` is the USER'S config-file path
+        # (sensitivity_analysis.py:2417 assigns experiment.analysis_config_yaml), so
         # that form anchored the model logs to an arbitrary directory that
         # `run(from_scratch=True)`'s fast_rmtree(analysis_dir) does not cover. Empirically
         # (Rivanna, 2026-08-01, synth_cc_resume_triton): the wipe ran, out_triton/ was
@@ -95,7 +95,7 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
         # is eda/raw_resume_identity.py, which reads historical completed arms and gates
         # nothing.
         log_dir = analysis.analysis_paths.analysis_dir.parent.parent / "logs" / "sims"
-    return log_dir / f"model_{model_type}_{subanalysis_id}evt{event_iloc}.log"
+    return log_dir / f"model_{model_type}_{analysis_id}evt{event_iloc}.log"
 
 
 def read_walltime_ledger_total_s(model_logfile: Path) -> float | None:
@@ -161,7 +161,9 @@ def probe_slurm_planned_seconds(jobid: str) -> float | None:
     try:
         out = _sp.run(
             ["sacct", "-X", "-j", str(jobid), "--format=Planned", "-P", "-n"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if out.returncode == 0:
             val = _hms_to_s(out.stdout.splitlines()[0] if out.stdout.splitlines() else "")
@@ -173,7 +175,9 @@ def probe_slurm_planned_seconds(jobid: str) -> float | None:
     try:
         out = _sp.run(
             ["scontrol", "show", "job", str(jobid)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if out.returncode == 0:
             import re as _re
@@ -461,10 +465,7 @@ class TRITONSWMM_run:
             # was always present in the captured output; the predicate stopped short
             # of it. WARNINGS are NOT failures (main.c:93 is a separate branch), so
             # only the errors clause disqualifies.
-            success = (
-                "EPA SWMM completed" in log_content
-                and "There are errors." not in log_content
-            )
+            success = "EPA SWMM completed" in log_content and "There are errors." not in log_content
 
         # Divergence check — WARN, but deliberately NOT load-bearing.
         #
@@ -602,10 +603,8 @@ class TRITONSWMM_run:
         """
         if model_type == "triton":
             output_dir = self._scenario.scen_paths.out_triton
-            default_cfg = self._scenario.scen_paths.triton_cfg
         else:
             output_dir = self._scenario.scen_paths.out_tritonswmm
-            default_cfg = self._scenario.scen_paths.triton_swmm_cfg
 
         if output_dir is None:
             return None
@@ -874,10 +873,7 @@ class TRITONSWMM_run:
         # the failure this whole change exists to remove, so the fail-safe arm
         # wins over the marginally-more-precise one. Same shape as workflow.py's
         # own two-axis resolver, which is the authority cited above.
-        using_srun = (
-            multi_sim_run_method in {"1_job_many_srun_tasks", "batch_job"}
-            or execution_locus == "slurm"
-        )
+        using_srun = multi_sim_run_method in {"1_job_many_srun_tasks", "batch_job"} or execution_locus == "slurm"
 
         # ----------------------------
         # Model-specific paths
@@ -916,7 +912,7 @@ class TRITONSWMM_run:
         if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
             exe_in_sif = cspec.exe_in_sif.get(model_type) or f"/opt/hhemt/bin/{_DEFAULT_EXE_NAME[model_type]}"
             # Per-arch SIF resolution (multi-SIF cross-hardware, Option A): resolve THIS
-            # row's arch (gpu_hardware) from its (sub-analysis) partition and pick the
+            # row's arch (gpu_hardware) from its (member) partition and pick the
             # matching SIF; fall back to sif_path when no map entry (single-SIF/CPU,
             # byte-identical to before). Key is gpu_hardware ("a100"/"a6000") — the same
             # namespace resolve_gpu_target[0] returns and sif_paths_by_arch is keyed on.
@@ -1043,10 +1039,10 @@ class TRITONSWMM_run:
             # first-touched on the original NUMA node become cross-socket fetches,
             # which on Cascade Lake-SP (Rivanna 'standard' partition) adds ~3-5x
             # latency to every DRAM access on TRITON's memory-bandwidth-bound
-            # flux kernels. Empirically: missing the binding inflated sa_32's
+            # flux kernels. Empirically: missing the binding inflated member_32's
             # serial wallclock relative to a properly-bound baseline (see
             # `library/docs/decisions/hhemt/LAYOUT_VERSION 8 fix per rank diff in performance aggregation.md`
-            # for the empirically-verified sa_32 cumulative).
+            # for the empirically-verified member_32 cumulative).
             env["OMP_NUM_THREADS"] = "1"
             env["OMP_PROC_BIND"] = "true"
             env["OMP_PLACES"] = "cores"
@@ -1256,7 +1252,8 @@ class TRITONSWMM_run:
                     f"  - Total: {n_mpi_procs} × {n_omp_threads} = {expected_cpus} CPUs\n"
                     f"\n"
                     f"SLURM actually allocated: {slurm_allocated} CPUs\n"
-                    f"  - SLURM_NTASKS × SLURM_CPUS_PER_TASK: {slurm_ntasks} × {slurm_cpus_per_task} = {slurm_allocated}\n"
+                    f"  - SLURM_NTASKS × SLURM_CPUS_PER_TASK: {slurm_ntasks} × "
+                    f"{slurm_cpus_per_task} = {slurm_allocated}\n"
                     f"  - SLURM_CPUS_ON_NODE (single-node view): {slurm_cpus_on_node}\n"
                     f"  - SLURM_JOB_ID: {os.environ.get('SLURM_JOB_ID')}\n"
                     f"\n"
@@ -1351,9 +1348,7 @@ class TRITONSWMM_run:
                 # keying on SLURM_JOB_ID alone would skip the fix in an environment
                 # where the problem is present.
                 if "SLURM_JOBID" in os.environ or "SLURM_JOB_ID" in os.environ:
-                    _cpu_budget = int(os.environ.get("SLURM_NTASKS", 0)) * int(
-                        os.environ.get("SLURM_CPUS_PER_TASK", 1)
-                    )
+                    _cpu_budget = int(os.environ.get("SLURM_NTASKS", 0)) * int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
                     _needed = n_mpi_procs * n_omp_threads
                     # `0 <` mirrors the srun-arm guard above: under the slurm-jobstep
                     # MPI branch SLURM_NTASKS can read 0 in a correctly-sized job, and

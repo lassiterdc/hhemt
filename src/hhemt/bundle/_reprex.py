@@ -11,7 +11,7 @@
    runs are first-class (the primary sensitivity fixture is native).
 2. Re-aim ``validation.preflight_validate(cfg_hpc_system=target)`` at the target HPC
    profile, overlaying the target partition selectors from ``reprex_config``.
-3. Emit per-``(sa_id, resource-column)`` problem pairs (``ValidationIssue`` shape) for
+3. Emit per-``(member_id, resource-column)`` problem pairs (``ValidationIssue`` shape) for
    sensitivity rows whose requested resources exceed the target partition caps.
 4. Emit per-field graduated experiment amendments: **validated** where a deterministic
    ``PartitionSpec`` lookup pins the target value (the partition selectors resolve to a
@@ -40,7 +40,7 @@ from typing import Any, Literal
 from hhemt.exceptions import ProcessingError
 from hhemt.validation import ValidationIssue
 
-#: ``ValidationIssue.field`` prefix stamped by ``validation._validate_per_sa_row_caps``.
+#: ``ValidationIssue.field`` prefix stamped by ``validation._validate_per_member_row_caps``.
 _ROW_ISSUE_PREFIX = "sensitivity_analysis.row["
 
 
@@ -68,7 +68,7 @@ class ReprexResult:
     sif_verified: bool  # digest match, or vacuously True for a native bundle
     sif_signature_ok: bool | None  # None => apptainer/key unavailable, or native
     runnable: bool  # True => no sensitivity row exceeds a target partition cap
-    problem_pairs: list[ValidationIssue] = field(default_factory=list)  # (sa_id, column)
+    problem_pairs: list[ValidationIssue] = field(default_factory=list)  # (member_id, column)
     amendments: list[Amendment] = field(default_factory=list)
     zero_user_info_leaks: list[str] = field(default_factory=list)  # informational (ADR-9)
 
@@ -115,10 +115,7 @@ def _verify_sif(sif_path: Path, expected_sha256: str) -> tuple[bool, bool | None
         raise ProcessingError(
             operation="reprex SIF verify",
             filepath=sif_path,
-            reason=(
-                f"sha256 mismatch: this is NOT the reference SIF "
-                f"(expected {expected_sha256}, got {digest})."
-            ),
+            reason=(f"sha256 mismatch: this is NOT the reference SIF " f"(expected {expected_sha256}, got {digest})."),
         )
     # Best-effort PGP: warn (return None) when the apptainer binary is unavailable.
     try:
@@ -179,9 +176,7 @@ def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
     sif_entity = _find_sif_entity(bundle_root)
     if sif_entity is not None:
         sif_reference_present = True
-        sif_verified, sif_signature_ok = _verify_sif(
-            Path(reprex_cfg.sif_path), sif_entity["sha256"]
-        )
+        sif_verified, sif_signature_ok = _verify_sif(Path(reprex_cfg.sif_path), sif_entity["sha256"])
     else:
         sif_reference_present = False
         sif_verified = True  # native bundle: nothing to verify (vacuous pass)
@@ -194,44 +189,37 @@ def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
     # former inline sensitivity_analysis rebase is folded into the analysis helper so
     # there is one rebase implementation.
     cfg_system = yaml_to_model(reconstitute_runnable_config(bundle_root), system_config)
-    cfg_analysis = yaml_to_model(
-        reconstitute_runnable_analysis_config(bundle_root), analysis_config
-    )
+    cfg_analysis = yaml_to_model(reconstitute_runnable_analysis_config(bundle_root), analysis_config)
 
     # Overlay only the target partition selectors (the HPC-revisable axis); the input
     # paths are already rebased by the reconstitution helper above.
     overlay: dict[str, Any] = {
         "hpc_ensemble_partition": reprex_cfg.target_ensemble_partition,
         "hpc_setup_and_analysis_processing_partition": (
-            reprex_cfg.target_setup_and_analysis_processing_partition
-            or reprex_cfg.target_ensemble_partition
+            reprex_cfg.target_setup_and_analysis_processing_partition or reprex_cfg.target_ensemble_partition
         ),
     }
     cfg_analysis_target = cfg_analysis.model_copy(update=overlay)
 
-    # 3. Re-aim preflight at the target profile; extract the per-(sa_id, column) pairs.
+    # 3. Re-aim preflight at the target profile; extract the per-(member_id, column) pairs.
     try:
-        result = preflight_validate(
-            cfg_system, cfg_analysis_target, cfg_hpc_system=target_hpc_profile
-        )
+        result = preflight_validate(cfg_system, cfg_analysis_target, cfg_hpc_system=target_hpc_profile)
         all_issues = result.errors + result.warnings
     except Exception:
         # Full preflight can trip on the reprex cfg's target-supplied (not-yet-fetched)
         # paths; fall back to the isolated per-row cap scan so problem-pair emission
         # stays robust — the cap scan is the reprex-specific signal that matters here.
-        from hhemt.validation import _validate_per_sa_row_caps
+        from hhemt.validation import _validate_per_member_row_caps
 
         result = ValidationResult(context="reprex")
-        _validate_per_sa_row_caps(cfg_analysis_target, target_hpc_profile, result)
+        _validate_per_member_row_caps(cfg_analysis_target, target_hpc_profile, result)
         all_issues = result.errors + result.warnings
 
     problem_pairs = [i for i in all_issues if i.field.startswith(_ROW_ISSUE_PREFIX)]
     runnable = len(problem_pairs) == 0
 
     # 4. Per-field graduated experiment amendments.
-    amendments = _emit_amendments(
-        cfg_analysis, reprex_cfg, target_hpc_profile, problem_pairs
-    )
+    amendments = _emit_amendments(cfg_analysis, reprex_cfg, target_hpc_profile, problem_pairs)
 
     # 5. Informational zero-user-info scan (hard emit gate deferred — ADR-9 follow-up).
     leaks = _scan_zero_user_info(bundle_root)
@@ -266,8 +254,7 @@ def _emit_amendments(
         ("hpc_ensemble_partition", reprex_cfg.target_ensemble_partition),
         (
             "hpc_setup_and_analysis_processing_partition",
-            reprex_cfg.target_setup_and_analysis_processing_partition
-            or reprex_cfg.target_ensemble_partition,
+            reprex_cfg.target_setup_and_analysis_processing_partition or reprex_cfg.target_ensemble_partition,
         ),
     ):
         from_val = getattr(cfg_analysis, field_name, None)

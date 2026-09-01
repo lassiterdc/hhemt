@@ -1,7 +1,7 @@
 # Output data model
 
 What a completed analysis leaves on disk, and what is inside it. This is the
-reference for the toolkit's actual deliverable — if you are writing analysis code
+reference for the toolkit's actual deliverable. If you are writing analysis code
 against hhemt's results, this is the page you want.
 
 Every variable below carries CF-1.13 attributes. `src/hhemt/cf_conventions.py` is
@@ -19,7 +19,7 @@ hhemt writes results at three levels, and they differ in both shape and format.
 | Per-system | `system_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 
 A sensitivity analysis additionally writes `sensitivity_datatree.zarr` at the
-master level, with one node per completed sub-analysis.
+master level, with one node per completed member.
 
 **The per-scenario tier is flat and the consolidated tiers are hierarchical.**
 That distinction matters when you open them: the flat tier is a plain `Dataset`,
@@ -38,17 +38,17 @@ tree = xr.open_datatree(
 )
 ```
 
-`consolidated=False` is not optional — these stores are written without
+`consolidated=False` is not optional: these stores are written without
 consolidated metadata.
 
 For a sensitivity master, the root carries a `parameters` dataset describing
-**every defined** sub-analysis, while only **completed** sub-analyses appear as
-`sa_*` nodes. A tree with fewer nodes than parameter rows is therefore an
+**every defined** member, while only **completed** members appear as
+`member_*` nodes. A tree with fewer nodes than parameter rows is therefore an
 expected partial-completion state, not a corrupt store.
 
 ## Variables
 
-A variable with no `standard_name` has no applicable CF standard name — the CF
+A variable with no `standard_name` has no applicable CF standard name: the CF
 table does not cover it, and inventing one would be worse than leaving it unset.
 
 ### 2D surface results (TRITON)
@@ -61,8 +61,8 @@ table does not cover it, and inventing one would be worse than leaving it unset.
 | `max_velocity_mps` | `m s-1` | `sea_water_speed` | Maximum flood velocity |
 | `velocity_x_mps` | `m s-1` | `sea_water_x_velocity` | Flood-velocity x-component |
 | `velocity_y_mps` | `m s-1` | `sea_water_y_velocity` | Flood-velocity y-component |
-| `time_of_max_velocity_min` | `minutes` | — | Time at which maximum velocity occurred |
-| `final_surface_flood_volume_m3` | `m3` | — | Final surface flood volume |
+| `time_of_max_velocity_min` | `minutes` | n/a | Time at which maximum velocity occurred |
+| `final_surface_flood_volume_m3` | `m3` | n/a | Final surface flood volume |
 
 !!! warning "`max_velocity_mps` means two different things"
     On a TRITON surface node it is the maximum 2D flood velocity, as above. On a
@@ -75,10 +75,10 @@ table does not cover it, and inventing one would be worse than leaving it unset.
 
 | Variable | Units | `standard_name` | Meaning |
 |---|---|---|---|
-| `total_inflow_vol_10e6_ltr` | `10^6 L` | — | Total inflow volume |
-| `max_flow_cms` | `m3 s-1` | — | Maximum flow rate |
-| `max_over_full_flow` | `1` | — | Maximum flow as a fraction of full-flow capacity |
-| `max_over_full_depth` | `1` | — | Maximum depth as a fraction of full depth |
+| `total_inflow_vol_10e6_ltr` | `10^6 L` | n/a | Total inflow volume |
+| `max_flow_cms` | `m3 s-1` | n/a | Maximum flow rate |
+| `max_over_full_flow` | `1` | n/a | Maximum flow as a fraction of full-flow capacity |
+| `max_over_full_depth` | `1` | n/a | Maximum depth as a fraction of full depth |
 
 The two ratio variables are dimensionless, which CF expresses as units `1`. A
 value above 1 means the conduit exceeded its design capacity.
@@ -89,8 +89,8 @@ Tree roots carry `Conventions: "CF-1.13"`, `analysis_id`, and `system_id`.
 
 A consolidated tree also carries provenance: a deterministic RO-Crate core in the
 root attribute `ro_crate_metadata`, with a co-located `ro-crate-metadata.json`
-sidecar beside the store. The embedded core is deterministic by construction —
-byte-identical across reruns — because the volatile fields (wall-clock times,
+sidecar beside the store. The embedded core is deterministic by construction
+(byte-identical across reruns) because the volatile fields (wall-clock times,
 host, job id) live only in the sidecar.
 
 ## A caveat on performance columns
@@ -105,6 +105,6 @@ The `performance.*` columns are timing records, not physical results:
 
 ## See also
 
-- [Configuration schema](config-schema.md) — the inputs that produce these outputs.
-- [The interactive analysis report](example-report.md) — the rendered view of the same data.
-- [FAIR scope table](fair-scope-table.md) — the archival posture of each artifact class.
+- [Configuration schema](config-schema.md): the inputs that produce these outputs.
+- [The interactive analysis report](example-report.md): the rendered view of the same data.
+- [FAIR scope table](fair-scope-table.md): the archival posture of each artifact class.

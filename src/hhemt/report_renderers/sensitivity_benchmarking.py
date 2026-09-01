@@ -25,8 +25,8 @@ Special line-drawing rules per the user-locked Phase 6 iter-2 spec:
 - All non-hybrid lines: dashed, thin.
 
 DataTree-aware read pattern: ``performance.Total`` lives at
-``/sa_{id}/tritonswmm/performance`` in the master ``sensitivity_datatree.zarr``,
-dimensioned by ``event_iloc``. SWMM-only sub-analyses fall back to per-scenario
+``/member_{id}/tritonswmm/performance`` in the master ``sensitivity_datatree.zarr``,
+dimensioned by ``event_iloc``. SWMM-only members fall back to per-scenario
 ``.rpt`` parsing via :func:`hhemt.swmm_output_parser.parse_total_elapsed`.
 
 Derived columns: when ``independent_var`` is ``n_devices`` and the column is absent
@@ -51,6 +51,11 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import xarray as xr
 from plotly.subplots import make_subplots
+
+from hhemt.figure_caption import add_figure_caption, content_width_px
+from hhemt.report_renderers._figure_emission import emit_plot_with_sources
+from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
+from hhemt.swmm_output_parser import parse_total_elapsed
 
 # COLOUR IS THE DECOMPOSITION AXIS. Hardware is carried by the COLUMN FACET and by
 # nothing else; colour and marker symbol are LOCKED one-to-one and both key the
@@ -124,11 +129,6 @@ _CFG_HOVER_LABELS: dict[str, str] = {
 }
 
 
-from hhemt.figure_caption import add_figure_caption, content_width_px
-from hhemt.report_renderers._figure_emission import emit_plot_with_sources
-from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
-from hhemt.swmm_output_parser import parse_total_elapsed
-
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.config.report import report_config
@@ -139,7 +139,7 @@ if TYPE_CHECKING:
 class FacetConfig:
     """Configuration for multi-facet sensitivity-benchmarking layouts.
 
-    Architectural scaffold (F4 of the kickoff figure-review) for future experiments
+    Architectural groundwork (F4 of the kickoff figure-review) for future experiments
     that compare benchmark metrics across an additional categorical axis — typically
     DEM resolution (e.g., 1m vs 3.5m vs 10m) or GPU hardware (a6000 vs a100 vs h100).
 
@@ -198,7 +198,7 @@ class AxisGroup:
     divergence is exactly the shipped defect this replaced: one label was derived from
     `independent_var` and applied, under `sharex=True`, to the whole four-panel figure
     -- including the two panels keyed on `n_devices`. With independent_var =
-    'analysis.n_mpi_procs' on the live CPU matrix, sa_16 (mpi=8, omp=8) rendered at
+    'analysis.n_mpi_procs' on the live CPU matrix, member_16 (mpi=8, omp=8) rendered at
     x=8 in the top pair and x=64 in the bottom pair of one vertically-aligned figure,
     under a single label naming MPI ranks.
 
@@ -786,7 +786,7 @@ def render(
         # This scalar feeds ALL FOUR metric calls below -- speedup line, speedup markers,
         # efficiency line, efficiency markers -- so this one argument moves BOTH panels.
         _df_avg = df.groupby(["group_value", "n_devices", "config_id"], as_index=False).agg(
-            wallclock_s=("wallclock_s", "mean"), sa_id=("sa_id", "first")
+            wallclock_s=("wallclock_s", "mean"), member_id=("sa_id", "first")
         )
         family_baselines = _resolve_family_baselines(
             df,
@@ -894,17 +894,17 @@ def render(
             source_paths.append(Path(analysis.cfg_analysis.sensitivity_analysis))
         # F1: GPU hardware suffix (e.g., "gpu (a6000)"). Phase-4 (4c, D3): gpu_hardware
         # was retired off system_config to the partition axis; resolve it from each
-        # sub-analysis's resolved partition's PartitionSpec.
+        # member's resolved partition's PartitionSpec.
         from hhemt.config.hpc_system import resolve_gpu_target
 
         # Phase 6 (DQ7c): under per-row partition, derive the distinct GPU hardware
-        # across sub-analyses. Single-hardware experiments keep the master suffix
+        # across members. Single-hardware experiments keep the master suffix
         # (byte-identical); multi-hardware experiments suppress the global suffix so
         # the per-group hardware is carried by the group label instead.
         _hw_values = set()
         _sens = getattr(analysis, "sensitivity", None)
         if _sens is not None:
-            for _sub in _sens.sub_analyses.values():
+            for _sub in _sens.members.values():
                 _hw = resolve_gpu_target(_sub.cfg_hpc_system, _sub.cfg_analysis.hpc_ensemble_partition)[0]
                 if _hw:
                     _hw_values.add(_hw)
@@ -962,8 +962,8 @@ def render(
     # TWO shared-x GROUPS, not one. Panels 1+2 plot `indep_value` (the configured
     # independent_var); panels 3+4 plot `n_devices`. `sharex=True` at construction
     # forced all four onto ONE range, so with independent_var != n_devices the same
-    # sub-analysis rendered at two different x positions in one vertically-aligned
-    # figure (sa_16 at x=8 in the top pair, x=64 in the bottom). The groups are wired
+    # member rendered at two different x positions in one vertically-aligned
+    # figure (member_16 at x=8 in the top pair, x=64 in the bottom). The groups are wired
     # post-construction by _apply_matplotlib_axis_groups below, from the SAME two
     # AxisGroup objects that supply the labels.
     fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(4, 1, figsize=_figsize, sharex=False)
@@ -1107,7 +1107,7 @@ def _resolve_setup_col(df_setup: pd.DataFrame, bare: str) -> str | None:
 
     Sensitivity columns are BARE (``n_gpus``) for legacy suites or ``analysis.``-prefixed
     (``analysis.n_gpus``) for per-sub overlay suites (e.g. container-validation, which MUST
-    use the prefixed form so each row applies to its sub-analysis). ``df_setup_with_system_overlays``
+    use the prefixed form so each row applies to its member). ``df_setup_with_system_overlays``
     preserves whichever the CSV used. Returns None if neither form is present. Used by every
     compute-column read in this renderer so a prefixed-column suite does not raise ``KeyError``.
     """
@@ -1297,10 +1297,10 @@ def _compute_speedup_per_group(
 ) -> dict[str, list[tuple[float, float, str]]]:
     """Compute strong-scaling speedup S(N) = t_baseline / t(N) for each group.
 
-    Return shape: ``{group_value: [(n_devices, speedup, sa_id), ...]}``. The ``sa_id``
+    Return shape: ``{group_value: [(n_devices, speedup, member_id), ...]}``. The ``member_id``
     is the identifier of the wallclock-minimum row at each N (the "best configuration
     at that resource level" — same row whose `t` was used to compute the speedup).
-    Per-`sa_id` provenance enables hover-customdata population and per-point
+    Per-`member_id` provenance enables hover-customdata population and per-point
     annotations downstream (F2, F3 in the kickoff figure-review).
 
     ``baseline_mode='per_group'``: each group anchors against its own N=1 wallclock
@@ -1310,7 +1310,7 @@ def _compute_speedup_per_group(
     wallclock at the smallest N across all groups. Groups without an N=1 entry
     are still included; their points are normalized against the global anchor.
 
-    When a group has multiple sa rows at the same N, the minimum-wallclock entry
+    When a group has multiple member rows at the same N, the minimum-wallclock entry
     wins (best configuration at that resource level).
     """
     if baseline_mode not in ("per_group", "global", "serial"):
@@ -1327,7 +1327,7 @@ def _compute_speedup_per_group(
         return {}
     out: dict[str, list[tuple[float, float, str]]] = {}
     for group_value, sub in df.groupby(group_col):
-        # Keep the wallclock-min row per N so we can recover sa_id of the winning config.
+        # Keep the wallclock-min row per N so we can recover member_id of the winning config.
         min_rows = sub.loc[sub.groupby(indep_col)[t_col].idxmin()]
         per_n_min = min_rows.set_index(indep_col)
         if baseline_mode == "per_group":
@@ -1358,8 +1358,8 @@ def _compute_efficiency_per_group(
 ) -> dict[str, list[tuple[float, float, str]]]:
     """Compute scaling efficiency for each group.
 
-    Return shape: ``{group_value: [(n_devices, efficiency, sa_id), ...]}``. See
-    :func:`_compute_speedup_per_group` for the per-`sa_id` provenance rationale.
+    Return shape: ``{group_value: [(n_devices, efficiency, member_id), ...]}``. See
+    :func:`_compute_speedup_per_group` for the per-`member_id` provenance rationale.
 
     - ``mode='strong'``: E_s(N) = S(N) / N = t_baseline / (N × t(N)). Ideal = 1.0.
     - ``mode='weak'``: E_w(N) = t_baseline / t(N). Ideal = 1.0.
@@ -1506,7 +1506,7 @@ def _draw_metric_panel(
         if "n_omp_threads" in df_min.columns
         else {}
     )
-    for i, gv in enumerate(groups):
+    for _i, gv in enumerate(groups):
         pts = metric_per_group[gv]
         if not pts:
             continue
@@ -1610,7 +1610,7 @@ def _draw_panel(
     # channel, and its only consumer was the branch below. The config field survives for
     # other consumers; leaving the binding would be an unused local (ruff F841).
     cpu_marker = static_cfg.cpu_marker if static_cfg is not None else sens_cfg.cpu_marker
-    for i, gv in enumerate(groups):
+    for _i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
@@ -1706,15 +1706,15 @@ def _draw_panel(
                 )
 
 
-def _collect_rows(analysis: TRITONSWMM_analysis, dependent_var: str) -> tuple[list[dict[str, Any]], list[Path]]:
-    """Collect (sa_id, event_iloc, value) rows + source paths for the dependent_var."""
+def _collect_rows(experiment: TRITONSWMM_analysis, dependent_var: str) -> tuple[list[dict[str, Any]], list[Path]]:
+    """Collect (member_id, event_iloc, value) rows + source paths for the dependent_var."""
     if not dependent_var.startswith("performance."):
         raise ValueError(
             f"dependent_var {dependent_var!r} must start with 'performance.' "
             f"(only performance metrics are supported in v1)"
         )
     col = dependent_var.split(".", 1)[1]
-    sensitivity = analysis.sensitivity
+    sensitivity = experiment.sensitivity
     rows: list[dict[str, Any]] = []
     source_paths: list[Path] = []
 
@@ -1730,7 +1730,7 @@ def _collect_rows(analysis: TRITONSWMM_analysis, dependent_var: str) -> tuple[li
     #
     # NOTE, measured -- this corrects an earlier reading of this comment: the cause was
     # NOT that checkpoints were missing from disk. All 144 perf files are present for
-    # the resumed sa_serial_6_r1; the set IS the whole run. The fix is the ledger-driven
+    # the resumed member_serial_6_r1; the set IS the whole run. The fix is the ledger-driven
     # `resume_steps` join in process_simulation._aggregate_perf_tseries, which takes the
     # boundaries from TRITONSWMM_model_log.resume_reporting_tsteps instead of guessing.
     #
@@ -1769,17 +1769,17 @@ def _collect_rows(analysis: TRITONSWMM_analysis, dependent_var: str) -> tuple[li
     # first-class quantity, add it as its OWN series -- do not substitute it into a
     # decomposition.
 
-    datatree_path = analysis.analysis_paths.sensitivity_datatree_zarr
+    datatree_path = experiment.analysis_paths.sensitivity_datatree_zarr
     tree: xr.DataTree | None = None
     if datatree_path is not None and datatree_path.exists():
         tree = xr.open_datatree(str(datatree_path), engine="zarr", consolidated=False)
         source_paths.append(datatree_path)
 
-    for sa_id, sub_analysis in sensitivity.sub_analyses.items():
-        node_ds = _find_perf_node(tree, sa_id) if tree is not None else None
+    for member_id, analysis in sensitivity.members.items():
+        node_ds = _find_perf_node(tree, member_id) if tree is not None else None
         if node_ds is not None and col in node_ds.data_vars:
-            _emitted_for_sa = False
-            for event_iloc in sub_analysis.df_sims.index:
+            _emitted_for_member = False
+            for event_iloc in analysis.df_sims.index:
                 # SINGLE SOURCE + FAIL LOUD. The ledger substitution that used to preempt
                 # this read existed because the datatree `Total` was wrong on resume -- a
                 # missed reset boundary subtracted a whole segment (measured 0.527 of the
@@ -1802,54 +1802,54 @@ def _collect_rows(analysis: TRITONSWMM_analysis, dependent_var: str) -> tuple[li
                         else "<no event_iloc coord>"
                     )
                     raise ValueError(
-                        f"Benchmarking read failed: sa_id={sa_id!r} event_iloc={int(event_iloc)} "
+                        f"Benchmarking read failed: member_id={member_id!r} event_iloc={int(event_iloc)} "
                         f"column={col!r} produced no scalar. Node dims={_dims}; "
                         f"event_iloc values present={_events}. This is one of: the event index "
                         "is absent from the consolidated node, or the selection is non-scalar, "
                         "or the stored value is non-numeric. Until the ledger-driven resume-reset "
                         "fix, a wall_clock_ledger_s fallback masked this for 'Total' and every "
                         "other column skipped the row silently; the figure now refuses to plot "
-                        "a sub-analysis it cannot read."
+                        "a member it cannot read."
                     )
                 if not math.isfinite(value):
                     raise ValueError(
-                        f"Benchmarking read produced a non-finite value: sa_id={sa_id!r} "
+                        f"Benchmarking read produced a non-finite value: member_id={member_id!r} "
                         f"event_iloc={int(event_iloc)} column={col!r} value={value!r}. "
                         "NaN/inf passes the None-sentinel this code used before, so such a "
                         "value was previously PLOTTED rather than caught. A non-finite entry "
                         "here means the per-scenario perf zarr carries one -- regenerate it "
                         "(V0018) rather than suppressing this check."
                     )
-                _emitted_for_sa = True
-                rows.append({"sa_id": sa_id, "event_iloc": int(event_iloc), "value": value})
-            if not _emitted_for_sa:
+                _emitted_for_member = True
+                rows.append({"sa_id": member_id, "event_iloc": int(event_iloc), "value": value})
+            if not _emitted_for_member:
                 raise ValueError(
-                    f"Benchmarking produced no rows for sa_id={sa_id!r} on column={col!r} "
+                    f"Benchmarking produced no rows for member_id={member_id!r} on column={col!r} "
                     f"despite a resolvable performance node. df_sims index was "
-                    f"{list(sub_analysis.df_sims.index)}. A sub-analysis that silently "
+                    f"{list(analysis.df_sims.index)}. A member that silently "
                     "contributes zero bars is indistinguishable in the rendered figure from "
                     "one that was never configured; refuse rather than render a gap."
                 )
             continue
-        enabled = sub_analysis._get_enabled_model_types()
+        enabled = analysis._get_enabled_model_types()
         if "swmm" in enabled and len(enabled) == 1:
-            for event_iloc in sub_analysis.df_sims.index:
-                proc = sub_analysis._retrieve_sim_run_processing_object(int(event_iloc))
+            for event_iloc in analysis.df_sims.index:
+                proc = analysis._retrieve_sim_run_processing_object(int(event_iloc))
                 rpt = proc.scen_paths.swmm_full_rpt_file
                 if not rpt or not rpt.exists():
                     continue
                 value = parse_total_elapsed(rpt)
                 if value is None:
                     continue
-                rows.append({"sa_id": sa_id, "event_iloc": int(event_iloc), "value": value})
+                rows.append({"sa_id": member_id, "event_iloc": int(event_iloc), "value": value})
                 source_paths.append(rpt)
     return rows, source_paths
 
 
-def _find_perf_node(tree: xr.DataTree, sa_id: str) -> xr.Dataset | None:
-    """Locate the per-sa_id performance node, preferring tritonswmm over triton-only."""
+def _find_perf_node(tree: xr.DataTree, member_id: str) -> xr.Dataset | None:
+    """Locate the per-member_id performance node, preferring tritonswmm over triton-only."""
     for model_subpath in ("tritonswmm/performance", "triton_only/performance"):
-        path = f"/sa_{sa_id}/{model_subpath}"
+        path = f"/member_{member_id}/{model_subpath}"
         try:
             return tree[path].ds
         except KeyError:
@@ -1874,7 +1874,7 @@ def _resolve_model_arm(analysis) -> str | None:
     if sens is None:
         return None
     enabled: set[str] = set()
-    for sub in sens.sub_analyses.values():
+    for sub in sens.members.values():
         enabled.update(sub._get_enabled_model_types())
     if "tritonswmm" in enabled:
         return "coupled"
@@ -2335,7 +2335,7 @@ def _plotly_metric_panel(
     # the row emits duplicate identical entries. The CALLER owns the set when the row is
     # faceted, so first-occurrence is computed across every column rather than per panel.
     _legend_seen = legend_seen if legend_seen is not None else set()
-    for i, gv in enumerate(groups):
+    for _i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
@@ -2470,12 +2470,12 @@ def _plotly_metric_panel_precomputed(
 ) -> None:
     """Plot speedup / efficiency panel from precomputed per-group data.
 
-    Accepts ``per_group_data`` as ``{gv: list[(x, y, sa_id), ...]}`` (current format
+    Accepts ``per_group_data`` as ``{gv: list[(x, y, member_id), ...]}`` (current format
     returned by ``_compute_speedup_per_group`` / ``_compute_efficiency_per_group``,
     F2/F3 enriched), OR legacy ``{gv: list[(x, y), ...]}`` (older callers), OR
     ``{gv: {xs: [...], ys: [...]}}`` (legacy dict form for forward compat).
 
-    When per-row `sa_id` is available, populates `customdata` for hover enrichment
+    When per-row `member_id` is available, populates `customdata` for hover enrichment
     (n_mpi_procs / n_omp_threads / n_gpus / n_nodes) and per-point text annotations
     on hybrid markers (matplotlib reference parity for panels 3+4).
     """
@@ -2486,24 +2486,24 @@ def _plotly_metric_panel_precomputed(
     # slots in one figure. Colour now indexes a CLOSED four-entry decomposition map by
     # literal, so the index cannot move whatever frame arrives -- the defect is not fixed
     # but unrepresentable, which is why the parameter is gone rather than defaulted.
-    # Per-sa_id config lookup for hover customdata + hybrid annotations (F2, F3).
-    sa_cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes", "n_replicates"]
-    available_cfg_cols = [c for c in sa_cfg_cols if c in df_for_groups.columns]
+    # Per-member_id config lookup for hover customdata + hybrid annotations (F2, F3).
+    member_cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes", "n_replicates"]
+    available_cfg_cols = [c for c in member_cfg_cols if c in df_for_groups.columns]
     if available_cfg_cols and "sa_id" in df_for_groups.columns:
-        # Deduplicate to one row per sa_id (config doesn't vary within an sa_id).
-        sa_cfg_lookup = (
+        # Deduplicate to one row per member_id (config doesn't vary within a member_id).
+        member_cfg_lookup = (
             df_for_groups.drop_duplicates(subset=["sa_id"]).set_index("sa_id")[available_cfg_cols].fillna(0).astype(int)
         )
     else:
-        sa_cfg_lookup = None
+        member_cfg_lookup = None
 
-    # The `n_rep_by_sa` lookup that stood here is GONE. Its own comment recorded that
+    # The `n_rep_by_member` lookup that stood here is GONE. Its own comment recorded that
     # `n_replicates` "was never read again; this is the lookup that consumes it" -- so
     # with the fill encoding retired it had exactly zero remaining consumers, and keeping
-    # a per-sa_id reindex alive to feed nothing would be machinery that reads as live.
+    # a per-member_id reindex alive to feed nothing would be machinery that reads as live.
 
     def _extract_xyz(data):
-        """Return (xs, ys, sa_ids) from one of the supported per-group data formats."""
+        """Return (xs, ys, member_ids) from one of the supported per-group data formats."""
         if isinstance(data, dict):
             return data.get("xs") or [], data.get("ys") or [], None
         if isinstance(data, list):
@@ -2511,23 +2511,23 @@ def _plotly_metric_panel_precomputed(
                 return [], [], None
             xs_local = [p[0] for p in data]
             ys_local = [p[1] for p in data]
-            sa_local = [str(p[2]) for p in data] if len(data[0]) >= 3 else None
-            return xs_local, ys_local, sa_local
+            member_local = [str(p[2]) for p in data] if len(data[0]) >= 3 else None
+            return xs_local, ys_local, member_local
         return [], [], None
 
-    def _build_customdata(sa_ids_local):
-        if sa_ids_local is None or sa_cfg_lookup is None:
+    def _build_customdata(member_ids_local):
+        if member_ids_local is None or member_cfg_lookup is None:
             return None
         try:
-            return sa_cfg_lookup.reindex(sa_ids_local).to_numpy()
+            return member_cfg_lookup.reindex(member_ids_local).to_numpy()
         except KeyError:
             return None
 
-    for i, gv in enumerate(groups):
+    for _i, gv in enumerate(groups):
         if str(gv) not in per_group_data and gv not in per_group_data:
             continue
         data = per_group_data.get(str(gv), per_group_data.get(gv))
-        line_xs, line_ys, line_sa = _extract_xyz(data)
+        line_xs, line_ys, line_member = _extract_xyz(data)
         if not line_xs:
             continue
         # If all_rows_per_group is provided, use it for the markers trace; else fall
@@ -2536,12 +2536,12 @@ def _plotly_metric_panel_precomputed(
         if all_rows_per_group is not None:
             all_data = all_rows_per_group.get(str(gv), all_rows_per_group.get(gv))
         if all_data is None:
-            marker_xs, marker_ys, marker_sa = line_xs, line_ys, line_sa
+            marker_xs, marker_ys, marker_member = line_xs, line_ys, line_member
         else:
-            marker_xs, marker_ys, marker_sa = _extract_xyz(all_data)
+            marker_xs, marker_ys, marker_member = _extract_xyz(all_data)
             if not marker_xs:
                 # Empty all-rows fall back to line data for markers.
-                marker_xs, marker_ys, marker_sa = line_xs, line_ys, line_sa
+                marker_xs, marker_ys, marker_member = line_xs, line_ys, line_member
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
@@ -2552,8 +2552,8 @@ def _plotly_metric_panel_precomputed(
         # never arm-encoded.
         arm_dash = "solid"
         legend_name = _decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
-        # Build hover customdata + hybrid annotation text from sa_id provenance.
-        marker_customdata = _build_customdata(marker_sa)
+        # Build hover customdata + hybrid annotation text from member_id provenance.
+        marker_customdata = _build_customdata(marker_member)
         marker_text = None
         marker_mode = "markers"
         if is_hybrid_group and marker_customdata is not None and "n_omp_threads" in available_cfg_cols:
@@ -2594,7 +2594,7 @@ def _plotly_metric_panel_precomputed(
                 fig.add_trace(go.Scatter(**line_trace), row=row, col=col)
         # Markers trace — all-row points (or fall back to per-N-min if all-row not provided).
         # Every marker hollow, unconditionally (`_HOLLOW_FILL`). The per-point fill list
-        # this built from `n_rep_by_sa` is retired with the encoding it served.
+        # this built from `n_rep_by_member` is retired with the encoding it served.
         marker_kwargs = dict(
             x=marker_xs,
             y=marker_ys,

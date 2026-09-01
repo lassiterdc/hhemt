@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.metadata
 import socket
 from pathlib import Path  # module-scope: the `"Path"` parameter annotations below are
+
 # type-only (this module sets `from __future__ import annotations`), but ruff resolves
 # annotation names against module scope and reported F821 -- which is inside CI's gating
 # `--select=E9,F63,F7,F82` set. Function bodies keep their local `_Path` alias unchanged.
@@ -54,6 +55,8 @@ def _toolkit_git_sha() -> str:
     from hhemt.bundle._emit import _get_toolkit_git_sha
 
     return _get_toolkit_git_sha(strict=False)
+
+
 def _describe_version() -> str:
     """PEP-440 local version derived from `git describe`, not from the static pin.
 
@@ -235,7 +238,7 @@ def read_stage_provenance_history(analysis_dir: Path) -> dict[str, list[dict]]:
     return dict(out)
 
 
-def collect_plot_stamps(analysis_dir: "Path") -> tuple[set[tuple[str, str]], int]:
+def collect_plot_stamps(analysis_dir: Path) -> tuple[set[tuple[str, str]], int]:
     """Distinct (sha, dirty) keys across every figure sidecar, and the sidecar count.
 
     Reads ALL sidecars rather than one, because uniform-within-a-render is a measured
@@ -266,7 +269,7 @@ def collect_plot_stamps(analysis_dir: "Path") -> tuple[set[tuple[str, str]], int
     return keys, n
 
 
-def assert_plots_match_running_build(analysis_dir: "Path", *, declare_stale_plots: bool = False):
+def assert_plots_match_running_build(analysis_dir: Path, *, declare_stale_plots: bool = False):
     """Refuse a render whose figures were not produced by the build now running.
 
     The report-side operand is `producing_stamp()` computed IN-PROCESS, never a
@@ -296,10 +299,7 @@ def assert_plots_match_running_build(analysis_dir: "Path", *, declare_stale_plot
         return None
     else:
         (psha, pdirty) = next(iter(keys))
-        why = (
-            f"figures built at {psha[:12]} (dirty={pdirty}), report rendering at "
-            f"{mine[0][:12]} (dirty={mine[1]})"
-        )
+        why = f"figures built at {psha[:12]} (dirty={pdirty}), report rendering at " f"{mine[0][:12]} (dirty={mine[1]})"
     msg = (
         f"Report/figure build mismatch: {why}. The figures may not reflect the renderer "
         "code now producing this report. Re-render with force_rerun "
@@ -337,18 +337,18 @@ def _input_parts_from_case(cfg_case) -> list[dict]:
 
 
 def _iter_run_units(analysis):
-    """Yield (sa_id, event_id, model_type) per real invocation unit.
+    """Yield (member_id, event_id, model_type) per real invocation unit.
 
-    Regular analysis: sa_id is "" ; one unit per (event_iloc, enabled model_type).
+    Regular analysis: member_id is "" ; one unit per (event_iloc, enabled model_type).
     """
-    sa_id = str(getattr(analysis, "sa_id", "") or "")
+    member_id = str(getattr(analysis, "sa_id", "") or "")
     enabled = analysis._get_enabled_model_types()  # encapsulates self._system.cfg_system.toggle_* (analysis.py:1431)
     for event_iloc in analysis.df_sims.index:
         for model_type in enabled:
-            yield (sa_id, str(event_iloc), model_type)
+            yield (member_id, str(event_iloc), model_type)
 
 
-def _output_ids(analysis, sa_id, event_id, model_type) -> list[str]:
+def _output_ids(analysis, member_id, event_id, model_type) -> list[str]:
     """Per-output @ids for one run unit, derived from the per-model processing_log."""
     from hhemt.scenario import TRITONSWMM_scenario
 
@@ -403,12 +403,12 @@ def emit_provenance(
         emitted_vars=emitted_vars,
     )
 
-    for sa_id, event_id, model_type in _iter_run_units(analysis) if with_run_units else ():
-        out_ids = _output_ids(analysis, sa_id, event_id, model_type)
+    for member_id, event_id, model_type in _iter_run_units(analysis) if with_run_units else ():
+        out_ids = _output_ids(analysis, member_id, event_id, model_type)
         action = crate.add(
             ContextEntity(
                 crate,
-                f"#run-{sa_id}-{event_id}-{model_type}",
+                f"#run-{member_id}-{event_id}-{model_type}",
                 properties={
                     "@type": "CreateAction",
                     "name": f"TRITON-SWMM run {event_id} ({model_type})",

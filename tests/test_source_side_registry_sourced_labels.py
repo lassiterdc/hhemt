@@ -4,7 +4,7 @@
 as the two agree -- including when they agree because someone hand-wrote a matching
 copy. That is the state that decayed: `a43c2822` updated the registry and the bundle
 path, left the source-side copies behind, and the report the user reviews showed raw
-`event_id` / `sa_id` for a merged, approved feature.
+`event_id` / `member_id` for a merged, approved feature.
 
 This asserts the STRUCTURE the value-comparison cannot: the emitted Snakefile's per-sim
 `labels=` must call `_report_label_value`, so a future hand-written copy that drops the

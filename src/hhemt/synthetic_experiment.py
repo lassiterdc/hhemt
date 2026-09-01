@@ -14,7 +14,7 @@ Public surface:
                                      config _validate_caps guard also consumes it)
     build_experiment_matrix(cfg)  -> pandas.DataFrame
     write_clean_matrix_csv(path, *, rank_sweep=...)
-    write_resume_matrix_csv(path, *, runtime_min_by_sa=None, rank_sweep=..., ...)
+    write_resume_matrix_csv(path, *, runtime_min_by_member=None, rank_sweep=..., ...)
     generate_synthetic_experiment(cfg, dest_dir) -> Path   (build the synth case)
     size_resume_walltimes(clean_analysis) -> dict[str, int]  (FQ3 two-pass helper)
 """
@@ -36,9 +36,9 @@ _CLEAN_WALLTIME_MIN: int = 30  # generous single-allocation walltime for the cle
 #: The arms run as SIBLING sensitivity masters, never as one multi-model master:
 #: workflow.py::generate_master_snakefile_content raises
 #: ValueError("Sensitivity analysis does not support multi-model execution") on >1
-#: enabled model and threads a scalar model_type into every per-sa_id flag name.
+#: enabled model and threads a scalar model_type into every per-member_id flag name.
 #: Each arm's matrix is byte-identical; only the system toggles differ, so no matrix
-#: column is added and no per-sa_id input fingerprint is rewritten.
+#: column is added and no per-member_id input fingerprint is rewritten.
 _MODEL_ARMS: dict[str, dict[str, bool]] = {
     "tritonswmm": {
         "toggle_tritonswmm_model": True,
@@ -68,7 +68,7 @@ def model_arm_toggles(arm: str) -> dict[str, bool]:
 # (GPU hardware DERIVES from the partition's PartitionSpec, Gotcha 54); the
 # partition column is the canonical `hpc.partition` alias.
 _COLS = [
-    "sa_id",
+    "member_id",
     "run_mode",
     "n_nodes",
     "n_mpi_procs",
@@ -83,7 +83,7 @@ _COLS = [
 # Fixed non-mpi configs (partition-as-axis; tuple shape
 # (run_mode, n_nodes, n_mpi, n_omp, n_gpus, partition, mem_gb_per_cpu)). The mpi
 # rows are generated from rank_sweep and spliced in AFTER the openmp rows so the
-# GLOBAL enumerate index (and thus the sa_id) matches the historical baseline.
+# GLOBAL enumerate index (and thus the member_id) matches the historical baseline.
 _GPU_CONFIGS = [
     ("gpu", 1, 1, 1, 1, "gpu-a6000", 8),
     ("gpu", 1, 2, 1, 2, "gpu-a6000", 8),
@@ -126,7 +126,7 @@ def _configs(rank_sweep: tuple[int, ...]) -> list[tuple]:
 def _rows(configs: list[tuple], *, walltime_min: int | None, replicates: int = 2) -> list[dict]:
     """Expand configs x replicates into CSV row dicts.
 
-    ``sa_id = f"{run_mode}_{i}_r{rep}"`` where ``i`` is the GLOBAL enumerate index
+    ``member_id = f"{run_mode}_{i}_r{rep}"`` where ``i`` is the GLOBAL enumerate index
     into ``configs`` (not a per-run-mode counter) so same-run-mode configs stay
     unique; all tokens are charset-safe (``^[A-Za-z0-9_.]+$``). ``walltime_min=None``
     leaves ``hpc_time_min_per_sim`` blank for a per-row caller (resume sizing).
@@ -137,7 +137,7 @@ def _rows(configs: list[tuple], *, walltime_min: int | None, replicates: int = 2
         for rep in range(1, replicates + 1):
             rows.append(
                 {
-                    "sa_id": f"{run_mode}_{i}_r{rep}",
+                    "member_id": f"{run_mode}_{i}_r{rep}",
                     "run_mode": run_mode,
                     "n_nodes": n_nodes,
                     "n_mpi_procs": n_mpi,
@@ -171,9 +171,9 @@ def dem_resolution_matrix_rows(
     ONE fixed compute config (_DEM_FIXED_CONFIG) swept across N cell sizes, where
     the compute-config experiment is one fixed cell size swept across N configs.
 
-    ``sa_id = f"dem_{res_token}_r{rep}"`` where ``res_token`` is the cell size with
+    ``member_id = f"dem_{res_token}_r{rep}"`` where ``res_token`` is the cell size with
     '.' -> 'p' (charset-safe per ``^[A-Za-z0-9_.]+$``; '.' is legal but 'p' keeps the
-    sa_id readable as one token). The ladder comes from ``cfg.dem_resolution_ladder``,
+    member_id readable as one token). The ladder comes from ``cfg.dem_resolution_ladder``,
     which the config validates as divisor-only + constant-ratio.
 
     The FINEST rung is the reference (D3: each coarser rung is compared vs finest).
@@ -187,7 +187,7 @@ def dem_resolution_matrix_rows(
         for rep in range(1, replicates + 1):
             rows.append(
                 {
-                    "sa_id": f"dem_{res_token}_r{rep}",
+                    "member_id": f"dem_{res_token}_r{rep}",
                     "run_mode": run_mode,
                     "n_nodes": n_nodes,
                     "n_mpi_procs": n_mpi,
@@ -333,8 +333,8 @@ def write_resume_matrix_csv(
     as the clean sweep — the resume attempt always has budget to finish. The
     resume arm is distinguished from the clean arm ONLY by the analysis-config
     kill field (set in ``resume_case``), never by a short walltime. This retires
-    the old ``round(T_sa / kill_divisor)`` short-walltime sizing (and its
-    ``runtime_min_by_sa`` two-pass dependency), removing the thin-window
+    the old ``round(T_member / kill_divisor)`` short-walltime sizing (and its
+    ``runtime_min_by_member`` two-pass dependency), removing the thin-window
     fragility that stalled the R9 resume sweep.
     """
     rows = _rows(_configs(tuple(rank_sweep)), walltime_min=_CLEAN_WALLTIME_MIN)
@@ -342,12 +342,12 @@ def write_resume_matrix_csv(
 
 
 def size_resume_walltimes(clean_analysis) -> dict[str, int]:
-    """Two-pass (FQ3): read each clean-sweep sa_id's full-completion wallclock
+    """Two-pass (FQ3): read each clean-sweep member_id's full-completion wallclock
     (minutes) from the completed clean analysis, for feeding
-    ``write_resume_matrix_csv(runtime_min_by_sa=...)``.
+    ``write_resume_matrix_csv(runtime_min_by_member=...)``.
 
     Source: ``df_status['perf_Total']`` (cumulative wallclock in seconds -> /60),
-    max over each sa's rows. On the CLEAN run this equals SLURM ``Elapsed`` because
+    max over each member's rows. On the CLEAN run this equals SLURM ``Elapsed`` because
     clean is never resumed (perf_Total only exceeds Elapsed when resumes occurred).
     Run AFTER the clean sweep has completed.
     """
@@ -355,7 +355,7 @@ def size_resume_walltimes(clean_analysis) -> dict[str, int]:
     return (
         df.dropna(subset=["perf_Total"])
         .assign(_min=lambda d: d["perf_Total"] / 60.0)
-        .groupby("sa_id")["_min"]
+        .groupby("member_id")["_min"]
         .max()
         .round()
         .astype(int)

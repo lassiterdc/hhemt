@@ -14,8 +14,8 @@ Capture mechanism (structured comparison, not Snakefile-text regex): monkeypatch
 ``workflow._emit_plot_rule`` to record each emitted RuleSpec's
 ``rule_name -> report_kwargs["category"]`` while a source-side generator runs, then
 compare against the registry templates. Keying on ``rule_name`` (not
-``renderer_module``) is deliberate: the source ``per_sim_per_sa`` builder emits
-rules named ``plot_per_sim_per_sa_*`` but with ``renderer_module`` ``per_sim_*``,
+``renderer_module``) is deliberate: the source ``per_sim_per_member`` builder emits
+rules named ``plot_per_sim_per_member_*`` but with ``renderer_module`` ``per_sim_*``,
 so ``rule_name`` is the stable cross-reference.
 """
 
@@ -25,7 +25,6 @@ from collections.abc import Callable
 
 import hhemt.workflow as wf
 from hhemt.report_renderers._reporting_sets import get_reporting_set
-
 
 #: The report_kwargs keys the co-sourcing guard compares. `category` alone left
 #: `labels` and `caption` unguarded, and both are hand-maintained in TWO places
@@ -125,7 +124,7 @@ def test_benchmarking_set_category_co_sourced(synth_sensitivity_analysis):
     assert templates, "benchmarking set has no rule_spec_template figures"
     # Membership parity (Option I / iterate-selection guard) — see the default-set
     # test for the rationale. synth_sensitivity fires BOTH conditional predicates
-    # (sa_event_pairs + independent_vars), so the source emits the full
+    # (member_event_pairs + independent_vars), so the source emits the full
     # benchmarking figure set, making set-equality the correct assertion here.
     assert set(templates) == set(source), (
         "benchmarking-set membership parity broken: registry templates and "

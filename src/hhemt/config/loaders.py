@@ -1,12 +1,15 @@
 from __future__ import annotations
+
 from pathlib import Path
 from typing import TypeVar
+
 import yaml
-from hhemt.config.system import system_config
+
 from hhemt.config.analysis import analysis_config
 from hhemt.config.brand_theme import brand_theme
 from hhemt.config.globus import GlobusTransferSpec
 from hhemt.config.hpc_system import hpc_system_config
+from hhemt.config.system import system_config
 
 _M = TypeVar("_M")
 
@@ -59,7 +62,7 @@ def _load_config(cfg_yaml: Path, model_cls: type[_M]) -> _M:
         raise ValueError(
             f"YAML config at {cfg_yaml} parsed to None (file empty or top-level null). "
             "Under high parallel I/O this can indicate a concurrent-write race; "
-            "see sensitivity_analysis.py::_create_sub_analyses."
+            "see sensitivity_analysis.py::_create_members."
         )
     return model_cls.model_validate(raw)
 

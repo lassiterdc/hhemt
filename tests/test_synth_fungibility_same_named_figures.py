@@ -20,7 +20,7 @@ import pytest
 _SWMM_MARKERS = ("swmm", "hydraulics.inp", "hydro.inp", "swmm_link", "max_flow_cms", ".rpt", ".out")
 
 # Per-model status-flag sidecars, whose FILENAME embeds the model type by design:
-# `{c_run|d_process}_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag[.json]`
+# `{c_run|d_process}_{model_type}_member-{member_id}_evt-{event_id}_complete.flag[.json]`
 # (the builders in `src/hhemt/constants.py`; that grammar is called a "persistent
 # contract" there). `workflow_performance` declares every `_status/*.flag.json` it
 # read_text()s, as the Gotcha-53 declared-superset-of-actual invariant REQUIRES --

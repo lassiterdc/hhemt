@@ -336,7 +336,7 @@ class TRITONSWMM_analysis_post_processing:
         sum_child_sentinels(
             self._analysis.analysis_paths.analysis_dir,
             scope="analysis",
-            child_scope_dirs=["subanalyses", "sims"],
+            child_scope_dirs=["members", "sims"],
         )
 
         if verbose:
@@ -690,7 +690,7 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
         _TRITON_CHECKPOINT_READ_MARKER,
         _TRITON_COMPLETION_MARKER,
         _TRITON_REPLAY_MARKER,
-        _iter_subanalyses_or_self,
+        _iter_members_or_self,
     )
     from hhemt.run_simulation import model_logfile_for
 
@@ -704,7 +704,7 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
         cands = df[(df["model_type"] == "tritonswmm") & (n_res >= 1)]
         if len(cands) == 0:
             return
-        subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+        subs = {(str(k) if k is not None else None): v for k, v in _iter_members_or_self(analysis)}
         evidence: dict[str, dict[str, bool]] = {}
         for _, row in cands.iterrows():
             _sa = row.get("sa_id")
@@ -758,7 +758,7 @@ def ds_memory_req_MiB(ds):
     return ds.nbytes / 1024**2
 
 
-def make_sure_ds_are_compatible_for_concatenation(ds_ref, ds_comp, lst_common_dims=["x", "y"]):
+def make_sure_ds_are_compatible_for_concatenation(ds_ref, ds_comp, lst_common_dims=("x", "y")):
     all_problems = ""
     problems = check_matching_dimensions(ds_ref, ds_comp)
     matching_dim_problems = check_for_matching_dim_values(ds_ref, ds_comp, lst_common_dims)
@@ -785,7 +785,7 @@ def check_matching_dimensions(ds_ref, ds_comp):
     return problems
 
 
-def check_for_matching_dim_values(ds_ref, ds_comp, lst_common_dims=["x", "y"]):
+def check_for_matching_dim_values(ds_ref, ds_comp, lst_common_dims=("x", "y")):
     problems = ""
     f_ref = ds_ref.encoding["source"]
     f_comp = ds_comp.encoding["source"]

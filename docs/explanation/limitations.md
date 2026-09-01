@@ -1,7 +1,7 @@
 # Limitations and constraints
 
 What hhemt does not do, and what it constrains about how you work. Read this
-alongside [Capabilities](capabilities.md) — that page is what the toolkit is for,
+alongside [Capabilities](capabilities.md). That page is what the toolkit is for,
 this one is where it stops.
 
 This page covers **architectural and environmental** limits, which are properties
@@ -32,12 +32,12 @@ Three consequences follow, and they are the ones most likely to matter:
 ## Environment constraints
 
 **Python 3.11–3.12 only** (`requires-python = ">= 3.11, < 3.13"`). The upper
-bound is not a policy choice — it is forced by a transitive dependency that pins
+bound is not a policy choice: it is forced by a transitive dependency that pins
 an older pydantic with no wheel for 3.13. It lifts when that dependency relaxes.
 
 **The SWMM engine is version-gated at runtime.** Before executing SWMM the toolkit
 checks the installed `pyswmm` and `swmm-toolkit` against the pairing it certifies,
-and refuses rather than run against an engine build it cannot vouch for — silent
+and refuses rather than run against an engine build it cannot vouch for. Silent
 execution against an uncertified engine is the outcome that guard exists to
 prevent. `pyproject.toml` pins that pairing directly, so a pip install resolves a
 stack the guard accepts. There is an override, and using it means accepting a
@@ -79,7 +79,7 @@ from source instead.
 
 **This page does not tell you whether hhemt's results are valid for your study.**
 That question is about the coupled model's behaviour against observations in a
-domain like yours, and it is answered by validation work and its publications —
+domain like yours, and it is answered by validation work and its publications,
 not by the orchestration layer's documentation.
 
 If you are deciding whether to base published work on this toolkit, the citation surface in the
@@ -90,8 +90,8 @@ physics.
 
 ## See also
 
-- [Capabilities](capabilities.md) — what the toolkit is for.
-- [When and why re-runs happen](rerun-faq.md) — why a run you expected to be a
+- [Capabilities](capabilities.md): what the toolkit is for.
+- [When and why re-runs happen](rerun-faq.md): why a run you expected to be a
   no-op re-executed.
-- [Installation](../how-to/installation.md) — the environment contract and its
+- [Installation](../how-to/installation.md): the environment contract and its
   failure modes.

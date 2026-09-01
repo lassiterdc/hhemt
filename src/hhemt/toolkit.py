@@ -189,7 +189,7 @@ class Toolkit:
                "matrix_csv": Path | None, "model_dir": Path | None}``.
 
         Note:
-            This Phase-1 scaffold does NOT compose and run a full analysis ensemble;
+            This Phase-1 implementation does NOT compose and run a full analysis ensemble;
             that composition currently lives in
             ``scripts/experiments/synth_compute_config.py`` and is promoted into the
             framework in a later phase (see the deferred follow-up).

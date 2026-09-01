@@ -24,7 +24,6 @@ def _bundle_dir(tmp_path: Path, def_recipe: str) -> Path:
     (d / "containers" / "x.def").write_text("Bootstrap: docker\n")
     (d / "experiment.yaml").write_text(
         textwrap.dedent(f"""\
-        experiment_id: expt
         description: fixture
         system_config: configs/s.yaml
         analysis_config: configs/a.yaml

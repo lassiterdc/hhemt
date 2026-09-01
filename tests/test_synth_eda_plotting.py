@@ -19,7 +19,7 @@ def test_render_cross_sim_identity_emits_master_rooted_with_source(
     max_flow_cms + per-sub compute-config attrs -- no smaller per-plot summary zarr
     suffices), so it declares that tree (the primary consolidated output carried into
     every render bundle) rather than an eda/<plot_id>.zarr artifact."""
-    analysis = synthetic_sensitivity_completed.master_analysis  # NOT the wrapper (D4)
+    analysis = synthetic_sensitivity_completed.experiment  # NOT the wrapper (D4)
     # Run the calc first, mirroring analysis.eda()'s calc->plots order. The config-diff
     # plot itself reads the consolidated tree (not the calc's eda zarr), but the real
     # facade always runs calc before plots, so exercise that order here.
@@ -46,7 +46,7 @@ def test_unknown_eda_plot_kind_raises(synthetic_sensitivity_completed):
     """An unknown renderer-kind key fails fast at render_eda_plots."""
     import pytest
 
-    analysis = synthetic_sensitivity_completed.master_analysis
+    analysis = synthetic_sensitivity_completed.experiment
     root = Path(analysis.analysis_paths.analysis_dir)
     with pytest.raises(ValueError, match="unknown EDA plot kind"):
         render_eda_plots(root, cfg_analysis=analysis.cfg_analysis, eda_cfg=eda_config(enabled_plots=["nope"]))
@@ -115,7 +115,7 @@ def test_enumerated_config_diff_maps_emits_when_backing_artifact_absent(tmp_path
 
     Measured pre-fix failure (Rivanna smoke job 17609295): the b4b ReportingSet enumerates
     plots/eda/config_diff_maps.html unconditionally, check_cross_sim_identity skips at one
-    sub-analysis, render_eda_plots' absence gate skipped the kind, nothing was written, and
+    member, render_eda_plots' absence gate skipped the kind, nothing was written, and
     Snakemake raised MissingOutputException -> workflow FAILED.
 
     Entry is the ADAPTER (not render_eda_plots directly), because the adapter's `output_path`

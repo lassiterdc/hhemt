@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import re
 
-from hhemt.report_plot_ids import humanize_plot_id
 from hhemt.exceptions import ProcessingError
+from hhemt.report_plot_ids import humanize_plot_id
 
 # Historical default category order (used when no category_order is passed —
 # byte-identical for non-passing callers, mirroring navbar_text's None default).
@@ -62,10 +62,7 @@ _SHOW_CATEGORY_NEW = (
     "    }"
 )
 
-_GUARD_RENDER_OLD = (
-    "    render() {\n"
-    "        if (this.state.data.toggleLabels.size > 0) {"
-)
+_GUARD_RENDER_OLD = "    render() {\n" "        if (this.state.data.toggleLabels.size > 0) {"
 
 _GUARD_RENDER_NEW = (
     "    render() {\n"
@@ -160,10 +157,7 @@ function reportRenderGuardPanel(err, where) {
 # populated is byte-identical; when it is not, the row opens its own figure -- which is
 # the desired result for an unpaired entry. Idempotent: the old literals are gone after
 # the first pass.
-_TOGGLE_CELL_OLD = (
-    "            let entryPath = data.entries.get(arrayKey(entryLabels))"
-    ".get(arrayKey(toggleLabels));"
-)
+_TOGGLE_CELL_OLD = "            let entryPath = data.entries.get(arrayKey(entryLabels))" ".get(arrayKey(toggleLabels));"
 
 _TOGGLE_CELL_NEW = (
     "            let _cell = data.entries.get(arrayKey(entryLabels));\n"
@@ -247,7 +241,7 @@ def apply_post_process_surgery(
     bundle_mode: bool = False,
     navbar_text: str | None = None,
     category_order: list[str] | None = None,
-    sa_labels: dict[str, str] | None = None,
+    member_labels: dict[str, str] | None = None,
     event_labels: dict[str, str] | None = None,
 ) -> str:
     """Apply all React-bundle post-process replacements and return modified text.
@@ -367,10 +361,7 @@ def apply_post_process_surgery(
     # receiving an orphan <script>. Idempotent on both halves.
     if _GUARD_RENDER_NEW not in html_text:
         html_text = html_text.replace(_GUARD_RENDER_OLD, _GUARD_RENDER_NEW, 1)
-    if (
-        _GUARD_RENDER_NEW in html_text
-        and "class ReportRenderGuard extends React.Component" not in html_text
-    ):
+    if _GUARD_RENDER_NEW in html_text and "class ReportRenderGuard extends React.Component" not in html_text:
         _guard_body = html_text.rfind("</body>")
         if _guard_body != -1:
             html_text = html_text[:_guard_body] + _GUARD_DEFS + html_text[_guard_body:]
@@ -463,7 +454,7 @@ def apply_post_process_surgery(
     # intact so links/downloads keep working; the charset excludes "/" and ":" so paths/URLs
     # never match, and the base64 figure blob carries no plain `"name": "<stem>.ext"` fragment.
     def _humanize_card_name(m):
-        return '"name": "' + humanize_plot_id(m.group(1), sa_labels, event_labels) + '"'
+        return '"name": "' + humanize_plot_id(m.group(1), member_labels, event_labels) + '"'
 
     html_text = re.sub(r'"name": "([A-Za-z0-9_.]+\.(?:html|png|svg))"', _humanize_card_name, html_text)
 
@@ -492,7 +483,7 @@ def apply_post_process_surgery_to_zip(
     bundle_mode: bool = False,
     navbar_text: str | None = None,
     category_order: list[str] | None = None,
-    sa_labels: dict[str, str] | None = None,
+    member_labels: dict[str, str] | None = None,
     event_labels: dict[str, str] | None = None,
 ) -> None:
     """Apply post-process surgery to `analysis_report/report.html` inside a zip.
@@ -533,7 +524,7 @@ def apply_post_process_surgery_to_zip(
             bundle_mode=bundle_mode,
             navbar_text=navbar_text,
             category_order=category_order,
-            sa_labels=sa_labels,
+            member_labels=member_labels,
             event_labels=event_labels,
         )
         inner_html.write_text(modified)

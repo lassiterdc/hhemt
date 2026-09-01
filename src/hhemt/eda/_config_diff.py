@@ -17,7 +17,7 @@ Vocabulary (locked, /design-figure iteration 1): three distinct quantities —
 
 Config labels are DERIVED from each sub node's compute-config attrs
 (``run_mode``/``n_gpus``/``n_mpi_procs``/``n_omp_threads``/``n_nodes``) — never the
-``sa_id`` name string. Only one representative diff-set is rendered per byte-identical
+``member_id`` name string. Only one representative diff-set is rendered per byte-identical
 group; each group's panels carry a caption naming every member config.
 """
 
@@ -33,6 +33,7 @@ import xarray as xr
 from plotly.colors import sample_colorscale
 from plotly.subplots import make_subplots
 
+from hhemt.config_labels import _derive_config_label, _to_int
 from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption
 from hhemt.figure_panels import AXIS_BAND_PX, panel_geometry, side_table_columns, watershed_swatch
@@ -112,11 +113,7 @@ def _quantised_depth_cap(masked) -> float | None:
     """
     arr = np.asarray(masked, dtype=float)
     raw = float(np.nanmax(arr)) if np.isfinite(arr).any() else None
-    cap = (
-        float(np.ceil(raw / _DEPTH_CAP_STEP_M) * _DEPTH_CAP_STEP_M)
-        if raw is not None and raw > 0
-        else raw
-    )
+    cap = float(np.ceil(raw / _DEPTH_CAP_STEP_M) * _DEPTH_CAP_STEP_M) if raw is not None and raw > 0 else raw
     return cap if cap is not None and cap > 0 else None
 
 
@@ -127,7 +124,7 @@ _PANEL_H_PX = 350
 
 
 def _identity_labels(root: Path) -> dict[str, int] | None:
-    """sa_id -> byte-identity group label, read from the flat-summary-derived
+    """member_id -> byte-identity group label, read from the flat-summary-derived
     partition persisted by cross_sim_identity at eda/eda_cross_sim_identity.zarr.
 
     This is the ONLY identity source (Gotcha 44 / the `eda bit identity check reads
@@ -151,12 +148,12 @@ def _identity_labels(root: Path) -> dict[str, int] | None:
             stacklevel=2,
         )
         return None
-    labels = {str(sa): int(v) for sa, v in zip(ds["sa_id"].values, ds["identity_group"].values, strict=False)}
-    # The partition is persisted over the NON-reference sa_ids (matching the artifact's
+    labels = {str(member): int(v) for member, v in zip(ds["sa_id"].values, ds["identity_group"].values, strict=False)}
+    # The partition is persisted over the NON-reference member_ids (matching the artifact's
     # other vars' coord, so identity_group's addition is purely additive); the reference's
     # own group rides in the `reference_group` attr. Fold it back in so the reference is
     # grouped with its byte-identical peers rather than rendering "unknown".
-    ref = ds.attrs.get("reference_sa_id")
+    ref = ds.attrs.get("reference_member_id")
     ref_group = ds.attrs.get("reference_group")
     if ref is not None and ref_group is not None:
         labels[str(ref)] = int(ref_group)
@@ -209,13 +206,6 @@ def _identity_cell(identical, g: dict, serial_grp: dict, wad: float, fad: float)
     if identical:
         return "identical"
     return "differs (within-family; FP non-associativity)"
-
-
-def _to_int(attrs: dict, key: str) -> int:
-    try:
-        return int(float(attrs.get(key, 0)))
-    except (TypeError, ValueError):
-        return 0
 
 
 def _hw_family_key(g: dict) -> str:
@@ -344,46 +334,10 @@ def partition_groups_by_family(groups: list[dict]) -> dict[str, list[dict]]:
     return {fam: sorted(members, key=_panel_order_key) for fam, members in out.items()}
 
 
-def _gpu_hardware(attrs: dict) -> str:
-    """Hardware token derived from the ensemble partition (Gotcha 54: partition IS the
-    hardware axis). ``'gpu-a100-80' -> 'a100-80'``, ``'gpu-a6000' -> 'a6000'``. Empty
-    when no partition attr is present."""
-    part = str(attrs.get("hpc.partition", "") or "")
-    return part[len("gpu-") :] if part.startswith("gpu-") else part
-
-
-def _derive_config_label(attrs: dict) -> str:
-    """Deterministic compute-config label from config attrs (never the sa_id name).
-
-    CPU configs use ONE consistent form: ``{Mode} {ranks}r×{threads}t ({total} CPU)`` —
-    ``ranks`` = MPI processes, ``threads`` = OpenMP threads PER RANK, ``total`` = ranks ×
-    threads. This makes a Hybrid config legible (ranks + threads/rank + total CPUs) while
-    keeping Serial/OpenMP/MPI on the same axes: Serial 1r×1t (1 CPU), OpenMP 1r×8t (8 CPU),
-    MPI 8r×1t (8 CPU), Hybrid 2r×2t (4 CPU).
-
-    GPU configs are a distinct resource axis (GPUs, not CPUs): ``GPU ×{n} ({hardware})``,
-    with hardware from the ensemble partition so an a6000 1-GPU job and an a100 1-GPU job
-    are DISTINCT configs. Replicate suffixes (``_r1``/``_r2``) are NOT in the identity, so
-    replicates share one label.
-    """
-    rm = str(attrs.get("run_mode", "?"))
-    ng, nm, no, nn = (_to_int(attrs, k) for k in ("n_gpus", "n_mpi_procs", "n_omp_threads", "n_nodes"))
-    if rm == "gpu":
-        hw = _gpu_hardware(attrs)
-        label = f"GPU ×{ng} ({hw})" if hw else f"GPU ×{ng}"
-    else:
-        name = {"serial": "Serial", "openmp": "OpenMP", "mpi": "MPI", "hybrid": "Hybrid"}.get(rm, rm)
-        ranks, threads = max(nm, 1), max(no, 1)
-        label = f"{name} {ranks}r×{threads}t ({ranks * threads} CPU)"
-    if nn > 1:
-        label += f", {nn} nodes"
-    return label
-
-
-def _n_resumes_by_sa_id(root: Path) -> dict[str, int]:
-    """sa_id -> max n_resumes from the bundled scenario_status.csv (Q11: shipped data,
+def _n_resumes_by_member_id(root: Path) -> dict[str, int]:
+    """member_id -> max n_resumes from the bundled scenario_status.csv (Q11: shipped data,
     no re-run). Mirrors _combine._bundle_role_from_status's CSV read; keys normalized to
-    the bare sa_id (strips a leading 'sa_') to match _load_subs' sa_id convention."""
+    the bare member_id (strips a leading 'member_') to match _load_subs' member_id convention."""
     import csv
 
     out: dict[str, int] = {}
@@ -393,15 +347,15 @@ def _n_resumes_by_sa_id(root: Path) -> dict[str, int]:
     try:
         with p.open() as fh:
             for row in csv.DictReader(fh):
-                sa = str(row.get("sa_id") or "")
-                sa = sa[3:] if sa.startswith("sa_") else sa
-                if not sa:
+                member = str(row.get("sa_id") or "")
+                member = member[3:] if member.startswith("member_") else member
+                if not member:
                     continue
                 try:
                     n = int(float(row.get("n_resumes") or 0))
                 except (TypeError, ValueError):
                     n = 0
-                out[sa] = max(out.get(sa, 0), n)
+                out[member] = max(out.get(member, 0), n)
     except OSError:
         return {}
     return out
@@ -418,10 +372,10 @@ def _load_subs(root: Path, *, event_iloc: int = 0) -> dict[str, dict]:
     event 0 while looking like a pure refactor.
     """
     dt = xr.open_datatree(str(root / "sensitivity_datatree.zarr"), engine="zarr", consolidated=False)
-    n_res = _n_resumes_by_sa_id(root)  # b5: sa_id -> max n_resumes from scenario_status.csv
+    n_res = _n_resumes_by_member_id(root)  # b5: member_id -> max n_resumes from scenario_status.csv
     subs: dict[str, dict] = {}
     for g in dt.groups:
-        if g.count("/") != 1 or not g.startswith("/sa_"):
+        if g.count("/") != 1 or not g.startswith("/member_"):
             continue
         node = dt[g]
         # Model-aware node resolution: coupled masters store max_wlevel_m under
@@ -442,12 +396,12 @@ def _load_subs(root: Path, *, event_iloc: int = 0) -> dict[str, dict]:
             lnk = dt[g + "/tritonswmm/swmm_link"]
         except KeyError:
             lnk = None  # pure-TRITON: no coupled SWMM link tier
-        sa_id = str(node.attrs.get("sa_id", g[len("/sa_") :]))
-        subs[sa_id] = {
+        member_id = str(node.attrs.get("sa_id", g[len("/member_") :]))
+        subs[member_id] = {
             "attrs": dict(node.attrs),
             "label": _derive_config_label(node.attrs),
             "run_mode": str(node.attrs.get("run_mode", "")),
-            "n_resumes": int(n_res.get(sa_id, 0)),  # b5
+            "n_resumes": int(n_res.get(member_id, 0)),  # b5
             "wlevel": tri["max_wlevel_m"].isel(event_iloc=event_iloc),  # (y, x) with x/y coords
             "flow": (lnk["max_flow_cms"].isel(event_iloc=event_iloc) if lnk is not None else None),  # coupled-only
         }
@@ -463,22 +417,22 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
     its own singleton group and the summary column renders "unknown"."""
     labels = _identity_labels(root)
     groups: list[dict] = []
-    shapes = {sa_id: np.asarray(s["wlevel"].values).shape for sa_id, s in subs.items()}
+    shapes = {member_id: np.asarray(s["wlevel"].values).shape for member_id, s in subs.items()}
     if len(set(shapes.values())) > 1:
         raise ProcessingError(
             operation="config_diff_group_by_identity",
             filepath=None,
             reason=(
-                f"config_diff_maps requires a UNIFORM grid across sub-analyses; got "
-                f"max_wlevel_m shapes {shapes}. This figure subtracts sub-analyses "
+                f"config_diff_maps requires a UNIFORM grid across members; got "
+                f"max_wlevel_m shapes {shapes}. This figure subtracts members "
                 f"cell-wise and clusters them by byte-identity, both of which assume "
                 f"one grid. A mixed-resolution master needs the dem-resolution "
                 f"reporting set (which regrids), not config_diff_maps -- set "
-                f"report_config.reporting_set='dem-resolution' and "
+                f"report.reporting_set='dem-resolution' and "
                 f"eda.enabled_plots accordingly."
             ),
         )
-    for sa_id, s in subs.items():
+    for member_id, s in subs.items():
         w = np.asarray(s["wlevel"].values)
         f = np.asarray(s["flow"].values) if s["flow"] is not None else None
         for grp in groups:
@@ -487,10 +441,10 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
             # its own singleton group; we never fall back to a positional consolidated compare.
             if (
                 labels is not None
-                and labels.get(sa_id) is not None
-                and labels.get(sa_id) == labels.get(grp["members"][0])
+                and labels.get(member_id) is not None
+                and labels.get(member_id) == labels.get(grp["members"][0])
             ):
-                grp["members"].append(sa_id)
+                grp["members"].append(member_id)
                 grp["labels"].append(s["label"])
                 grp["run_modes"].append(s["run_mode"])
                 grp["n_resumes"].append(s["n_resumes"])  # b5
@@ -498,7 +452,7 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
         else:
             groups.append(
                 {
-                    "members": [sa_id],
+                    "members": [member_id],
                     "attrs": dict(s["attrs"]),  # Q5: representative config attrs for deterministic panel ordering
                     "labels": [s["label"]],
                     "run_modes": [s["run_mode"]],
@@ -562,7 +516,7 @@ def _load_conduit_geometry(root: Path) -> dict[str, tuple[tuple[float, float], t
     """link_id -> (inlet_xy, outlet_xy) from any sub's hydraulics.inp (geometry is shared)."""
     import swmmio
 
-    inps = sorted(root.glob("subanalyses/*/sims/*/swmm/hydraulics.inp"))
+    inps = sorted(root.glob("members/*/sims/*/swmm/hydraulics.inp"))
     if not inps:
         return {}
     model = swmmio.Model(str(inps[0]))
@@ -865,12 +819,10 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     subs = _load_subs(root)
     if not subs:
         return _config_diff_absent_panel(
-            headline="Config-diff maps unavailable (no comparable sub-analyses)",
-            observed=(
-                "The consolidated tree carries no sub-analysis with a TRITON node, so there is " "nothing to compare."
-            ),
+            headline="Config-diff maps unavailable (no comparable members)",
+            observed=("The consolidated tree carries no member with a TRITON node, so there is nothing to compare."),
             remedy=(
-                "The figure populates once the master carries sub-analyses whose processed "
+                "The figure populates once the master carries members whose processed "
                 "outputs include the TRITON depth tier."
             ),
         )
@@ -884,13 +836,13 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         return _config_diff_absent_panel(
             headline="Config-diff maps not applicable (single compute configuration)",
             observed=(
-                f"This master carries exactly one sub-analysis (<code>{_only}</code>), so no "
+                f"This master carries exactly one member (<code>{_only}</code>), so no "
                 "second compute configuration exists to difference against a reference and the "
                 "comparison is mathematically undefined."
             ),
             remedy=(
                 "This is what a one-simulation smoke run looks like. The figure populates "
-                "automatically once the master carries two or more sub-analyses spanning "
+                "automatically once the master carries two or more members spanning "
                 "distinct compute configurations."
             ),
         )
@@ -949,15 +901,15 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         # ALL derive from this, so they are deterministically in alignment. Alphabetical
         # ordering was the prior behaviour and put "OpenMP 1r×8t" above "OpenMP 1r×2t".
         by_label: dict[str, dict] = {}
-        for sa_id, lbl in zip(g["members"], g["labels"], strict=False):
-            by_label.setdefault(lbl, subs[sa_id]["attrs"])
+        for member_id, lbl in zip(g["members"], g["labels"], strict=False):
+            by_label.setdefault(lbl, subs[member_id]["attrs"])
         return sorted(by_label, key=lambda lbl: (_device_count(by_label[lbl]), lbl))
 
     # ---- summary table (absolute diff, table-only) ----
     # Serial-containing group FIRST (item: first table row is always the serial group).
     # `# configs` counts DISTINCT compute configs (len of the deduped label set) so it
     # equals the hand-countable comma-separated list in the "Compute-config group" cell —
-    # NOT len(members), which counts sa_ids incl. r1/r2 replicates.
+    # NOT len(members), which counts member_ids incl. r1/r2 replicates.
     ordered_groups = [serial_grp] + _non_serial_ordered  # Q5: table order == panel order
     table_rows = []
     for i, g in enumerate(ordered_groups):
@@ -1234,10 +1186,8 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         _cfg_col, _nr_col = side_table_columns(
             labels=g["labels"],
             members=g["members"],
-            attrs_by_sa={sa: subs[sa]["attrs"] for sa in g["members"] if sa in subs},
-            value_by_sa={
-                sa: int(nr) for sa, nr in zip(g["members"], g["n_resumes"], strict=False)
-            },
+            attrs_by_member={member: subs[member]["attrs"] for member in g["members"] if member in subs},
+            value_by_member={member: int(nr) for member, nr in zip(g["members"], g["n_resumes"], strict=False)},
             order_key=_device_count,
         )
         fig.add_trace(
@@ -1648,6 +1598,7 @@ def config_diff_source_paths(root: Path) -> list[Path]:
     srcs: list[Path] = [
         root / "sensitivity_datatree.zarr",
         root / "eda" / "eda_cross_sim_identity.zarr",
+        root / "eda" / "eda_cross_sim_identity.manifest.json",
         root / "scenario_status.csv",  # b5: n_resumes column in the per-panel config table
         # The watershed polygon: this figure otherwise free-rides on ANOTHER renderer's
         # declaration to get it into the bundle. Declaring it here makes the harvest file set
@@ -1655,7 +1606,7 @@ def config_diff_source_paths(root: Path) -> list[Path]:
         # excluded polygon stays safe.
         *([_wp] if (_wp := _cfg_system_watershed_path(root)) is not None and _wp.exists() else []),
     ]
-    inps = sorted(root.glob("subanalyses/*/sims/*/swmm/hydraulics.inp"))
+    inps = sorted(root.glob("members/*/sims/*/swmm/hydraulics.inp"))
     if inps:
         srcs.append(inps[0])
     return srcs

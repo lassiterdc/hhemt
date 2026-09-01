@@ -30,8 +30,6 @@ if TYPE_CHECKING:
     from hhemt.config.report import report_config
 
 
-
-
 #: Display vocabulary for the two `Check` tables ONLY -- the `system`-level and
 #: `resource`-level checks. Keyed on `CheckResult.name`, which stays the stable MACHINE
 #: key: `cross_experiment_errors_and_warnings.py` joins children across bundles on that
@@ -57,7 +55,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "Analysis summaries",
         "Every consolidated DataTree the analysis owes is present on disk — the "
         "analysis tree, and on a sensitivity master the master tree plus each "
-        "sub-analysis tree.",
+        "member tree.",
     ),
     "scenario_status.csv created": (
         "Scenario status export",
@@ -99,8 +97,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "invalidating-fix registry": (
         "Invalidating-fix registry",
-        "No calculation-invalidating fix in the registry applies to the toolkit build "
-        "that produced this analysis.",
+        "No calculation-invalidating fix in the registry applies to the toolkit build " "that produced this analysis.",
     ),
     "resume validity": (
         "Resume validity",
@@ -114,8 +111,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "Resume schedule honored": (
         "Resume schedule",
-        "Every resumed sim's realized resume count and boundary match the schedule its "
-        "configuration requested.",
+        "Every resumed sim's realized resume count and boundary match the schedule its " "configuration requested.",
     ),
     "EDA calc ran": (
         "EDA calculation",
@@ -124,7 +120,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "Cross-sim byte-identity": (
         "Cross-sim byte-identity",
-        "Sub-analyses differing only in compute configuration produce bit-identical tracked "
+        "Members differing only in compute configuration produce bit-identical tracked "
         "variables within each hardware family.",
     ),
     "Raw byte-for-byte identity": (
@@ -184,9 +180,7 @@ _UNDESCRIBED = "No description registered for this check."
 #: `Check` column, sourced from `_CHECK_VOCABULARY`. A `Details` cell that describes the
 #: check rather than this run's outcome re-creates the `Summary`-vs-`Check` redundancy
 #: that item 8 retired.
-_DETAILS_COLUMN_CONTRACT = (
-    "summary; optional precision qualifier; per-issue detail lines on failure"
-)
+_DETAILS_COLUMN_CONTRACT = "summary; optional precision qualifier; per-issue detail lines on failure"
 
 
 def _vocab(c: CheckResult) -> tuple[str, str]:
@@ -207,11 +201,7 @@ def _render_overall_banner(report: ValidationReport) -> str:
     # emits, so recomputing it here would be the redundancy item 7 removed.
     applicable = [c for c in report.checks if getattr(c, "applicable", True)]
     n_passed = sum(1 for c in applicable if c.passed)
-    n_qualified = sum(
-        1
-        for c in applicable
-        if c.passed and getattr(c, "instrument", None) not in (None, "raw_rasters")
-    )
+    n_qualified = sum(1 for c in applicable if c.passed and getattr(c, "instrument", None) not in (None, "raw_rasters"))
     if report.overall_passed:
         # Iter-11 item 7: the PROMINENT precision tally is retired. It spent the banner --
         # the one line every reader reads -- on a three-way split of a distinction that is
@@ -226,10 +216,7 @@ def _render_overall_banner(report: ValidationReport) -> str:
         # to the single omission caption `render()` emits once (item 7's "one economical
         # omission caption"), so it is stated in exactly one place on the page.
         cls = "pass" if not n_qualified else "info"
-        return (
-            f'<div class="banner {cls}">✓ {n_passed} of {len(applicable)} applicable '
-            "checks passed.</div>"
-        )
+        return f'<div class="banner {cls}">✓ {n_passed} of {len(applicable)} applicable ' "checks passed.</div>"
     n_failed = len(applicable) - n_passed
     return (
         f'<div class="banner fail">✗ {n_failed} of {len(applicable)} applicable '
@@ -415,9 +402,9 @@ def _render_granular_failures_table(granular: list[dict]) -> str:
         return ""
     rows = []
     for d in granular:
-        sa_id = d.get("sa_id", "")
+        member_id = d.get("sa_id", "")
         scenario = d.get("scenario", d.get("scenario_dir", ""))
-        scenario_label = f"{sa_id} / {scenario}" if sa_id else scenario
+        scenario_label = f"{member_id} / {scenario}" if member_id else scenario
         stage = d.get("stage", "")
         detail = d.get("detail", "")
         rows.append(f"<tr><td>{scenario_label}</td><td>{stage}</td><td>{detail}</td></tr>")
@@ -449,13 +436,8 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
     # emptied `by_level["resource"]`, deleting the per-scenario expected-vs-actual
     # detail table below on failure. The status table is the fix that keeps both.
     status_rows = "\n    ".join(
-        '<tr><td>{n}</td><td>{w}</td><td class="{cls}">{glyph}</td><td>{d}</td></tr>'.format(
-            n=_vocab(c)[0],
-            w=_vocab(c)[1],
-            cls=_status_of(c)[0],
-            glyph=_status_of(c)[1],
-            d=c.summary,
-        )
+        f"<tr><td>{_vocab(c)[0]}</td><td>{_vocab(c)[1]}</td>"
+        f'<td class="{_status_of(c)[0]}">{_status_of(c)[1]}</td><td>{c.summary}</td></tr>'
         for c in checks
     )
     status_table = (

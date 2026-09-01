@@ -451,18 +451,15 @@ class Local_TestCases:
     ):
         """Phase 1 R3 — row with both system_config_yaml AND system.* → ConfigurationError."""
         _require_cpu_cores_for_sensitivity()
-        dest_dir = (
-            slug_runs_root(worktree_slug())
-            / "_sensitivity_configs"
-        )
+        dest_dir = slug_runs_root(worktree_slug()) / "_sensitivity_configs"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        per_sa_yaml = dest_dir / "synth_mutex_violation_row0_system.yaml"
-        per_sa_yaml.write_text("# placeholder per-sa system YAML for mutex-violation test\n")
+        per_member_yaml = dest_dir / "synth_mutex_violation_row0_system.yaml"
+        per_member_yaml.write_text("# placeholder per-member system YAML for mutex-violation test\n")
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
             analysis_name="synth_sensitivity_mutex_violation",
             model_subset="all",
             extra_columns={
-                "system_config_yaml": [str(per_sa_yaml), "", "", ""],
+                "system_config_yaml": [str(per_member_yaml), "", "", ""],
                 "system.target_dem_resolution": [1.0, None, None, None],
             },
         )
@@ -767,7 +764,7 @@ class Local_TestCases:
         if model_subset in ("all", "triton"):
             df = pd.DataFrame(
                 {
-                    "sa_id": [0, 1, 2, 3],
+                    "member_id": [0, 1, 2, 3],
                     "run_mode": ["mpi", "openmp", "hybrid", "serial"],
                     "n_mpi_procs": [2, 1, 2, 1],
                     "n_omp_threads": [1, 2, 2, 1],
@@ -778,13 +775,13 @@ class Local_TestCases:
         elif model_subset == "swmm":
             df = pd.DataFrame(
                 {
-                    "sa_id": [0, 1, 2],
+                    "member_id": [0, 1, 2],
                     "run_mode": ["openmp", "openmp", "serial"],
                     "n_mpi_procs": [1, 1, 1],
                     # SWMM 5.2 clamps NumThreads=1 when Nobjects[LINK] < 4*NumThreads
                     # (project.c:269). The synth full SWMM model has 12 conduits, so it
                     # honors at most 3 threads (12 >= 4*3); 4 would silently clamp to 1
-                    # and fail the resource-match check. sa_0=3 gives a genuinely
+                    # and fail the resource-match check. member_0=3 gives a genuinely
                     # multithreaded run whose actual matches expected.
                     "n_omp_threads": [3, 2, 1],
                     "n_gpus": [0, 0, 0],
@@ -802,8 +799,8 @@ class Local_TestCases:
                 df[col_name] = col_values
         if drop_columns:
             df = df.drop(columns=[c for c in drop_columns if c in df.columns])
-        assert all(re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["sa_id"]), (
-            "sa_id values must match ^[A-Za-z0-9_.]+$"
-        )
+        assert all(
+            re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["member_id"]
+        ), "member_id values must match ^[A-Za-z0-9_.]+$"
         df.to_csv(csv_path, index=False)
         return csv_path
