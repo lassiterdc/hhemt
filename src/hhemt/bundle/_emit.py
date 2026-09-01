@@ -126,6 +126,7 @@ def _prune_undeclared_figures(analysis_dir: Path, plots_dir: Path) -> list[str]:
     if declared is None or not plots_dir.exists():
         return []
     removed: list[str] = []
+    _freed: dict[str, int] = {}
     for path in sorted(plots_dir.rglob("*")):
         if path.is_dir() or path.name.endswith(".manifest.json"):
             continue
@@ -134,8 +135,19 @@ def _prune_undeclared_figures(analysis_dir: Path, plots_dir: Path) -> list[str]:
         if _figure_stem(path.name) in declared:
             continue
         removed.append(str(path.relative_to(analysis_dir)))
-        path.unlink(missing_ok=True)
-        path.with_suffix(path.suffix + ".manifest.json").unlink(missing_ok=True)
+        _sidecar = path.with_suffix(path.suffix + ".manifest.json")
+        # Sizes BEFORE the unlink -- a post-unlink stat is impossible. This prune runs
+        # against the LIVE analysis tree (called at PRUNE-BEFORE-HARVEST, before
+        # _copy_supporting_files stages anything), so `bundle-root` would be the wrong
+        # ground: these are DU-counted `plots/` bytes.
+        _freed["plots"] = _freed.get("plots", 0) + (path.stat().st_size if path.exists() else 0)
+        _freed["plots"] = _freed.get("plots", 0) + (_sidecar.stat().st_size if _sidecar.exists() else 0)
+        path.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+        _sidecar.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+    if _freed.get("plots"):
+        from hhemt.du_sentinels import decrement_scope_sentinel
+
+        decrement_scope_sentinel(analysis_dir, scope="analysis", child_deltas=dict(_freed))
     return removed
 
 
@@ -271,9 +283,7 @@ def emit_bundle(
         # re-render from unchanged inputs leaves every input byte identical.
         render_sha = _render_sha(plots_dir)
         output_path = (
-            analysis_dir
-            / BUNDLE_OUTPUT_SUBDIR
-            / f"{analysis_id}_{git_sha}_{render_sha}_v{BUNDLE_SCHEMA_VERSION}.zip"
+            analysis_dir / BUNDLE_OUTPUT_SUBDIR / f"{analysis_id}_{git_sha}_{render_sha}_v{BUNDLE_SCHEMA_VERSION}.zip"
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -286,9 +296,7 @@ def emit_bundle(
     if isinstance(exclude_config, Path | str):
         import yaml
 
-        exclude_config = BundleExcludeConfig.model_validate(
-            yaml.safe_load(Path(exclude_config).read_text()) or {}
-        )
+        exclude_config = BundleExcludeConfig.model_validate(yaml.safe_load(Path(exclude_config).read_text()) or {})
 
     with _staging_dir(output_path.parent) as staging:
         declared_sources_absent = _harvest_and_copy_sources(sources_by_renderer, analysis_dir, staging)
@@ -442,9 +450,7 @@ def _copy_reference_outputs(analysis: TRITONSWMM_analysis, staging: Path) -> Non
                 shutil.copy2(summ, dest)
 
 
-def _copy_configs_with_relative_paths(
-    analysis: TRITONSWMM_analysis, staging: Path
-) -> dict[str, dict]:
+def _copy_configs_with_relative_paths(analysis: TRITONSWMM_analysis, staging: Path) -> dict[str, dict]:
     """Copy cfg_system.yaml and cfg_analysis.yaml with all Pydantic
     ``Path``-typed fields rewritten per the per-field policy table in
     ``_path_policy._PATH_FIELD_POLICY``. Returns a dict keyed by cfg
@@ -804,9 +810,7 @@ def _copy_declared_inputs(
                 src = src.resolve()
                 if not src.exists():
                     continue  # declared-but-absent: ingest fail-closed handles it
-                rel = _rewrite_absolute_to_relative(
-                    str(src), analysis_root=analysis_root, system_root=system_root
-                )
+                rel = _rewrite_absolute_to_relative(str(src), analysis_root=analysis_root, system_root=system_root)
                 if not isinstance(rel, str) or Path(rel).is_absolute():
                     continue  # unresolvable dest; leave for the ingest fail-closed gate
 
@@ -1004,9 +1008,7 @@ def _carry_source_tree(staging: Path) -> None:
     import tarfile
 
     root = _toolkit_repo_root()
-    dirty = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True
-    ).stdout.strip()
+    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True).stdout.strip()
     if dirty:
         warnings.warn(
             f"Emitting from a DIRTY toolkit tree at {root}. The bundle carries HEAD "
@@ -1057,9 +1059,7 @@ def _parse_def_labels(def_text: str) -> dict[str, str]:
     return labels
 
 
-def _emit_container_build(
-    analysis: TRITONSWMM_analysis, staging: Path, container_defs: list[Path]
-) -> list[dict]:
+def _emit_container_build(analysis: TRITONSWMM_analysis, staging: Path, container_defs: list[Path]) -> list[dict]:
     """Carry the pinned source tree ONCE + each rewritten .def; return a LIST of
     ``container_build`` blocks (one per arch). Multi-SIF (Option A). The .defs land at
     the BUNDLE ROOT so ``render_build_script``'s ``cd {def_path.parent}`` makes the
@@ -1070,9 +1070,7 @@ def _emit_container_build(
     for container_def in container_defs:
         def_text = Path(container_def).read_text()
         def_relpath = Path(container_def).name
-        (staging / def_relpath).write_text(
-            _rewrite_files_section(def_text, SOURCE_TREE_RELPATH)
-        )
+        (staging / def_relpath).write_text(_rewrite_files_section(def_text, SOURCE_TREE_RELPATH))
         labels = _parse_def_labels(def_text)
         block: dict = {
             "def_relpath": def_relpath,
@@ -1164,9 +1162,7 @@ def _matrix_required_arches(analysis: TRITONSWMM_analysis) -> set[str]:
                 _df = pd.read_csv(_ref)
                 for _col in ("hpc.partition", "analysis.hpc_ensemble_partition"):
                     if _col in _df.columns:
-                        partitions |= {
-                            str(v) for v in _df[_col].dropna().tolist() if str(v).strip()
-                        }
+                        partitions |= {str(v) for v in _df[_col].dropna().tolist() if str(v).strip()}
         except Exception:
             return set()  # cannot enumerate -> do not block emit; ingest guard backstops
     return {hw for hw in (resolve_gpu_target(cfg_hpc, p)[0] for p in partitions) if hw}
@@ -1256,9 +1252,7 @@ def reconstitute_runnable_config(
     return Path(target)
 
 
-def reconstitute_runnable_analysis_config(
-    bundle_root: Path, *, target_path: Path | None = None
-) -> Path:
+def reconstitute_runnable_analysis_config(bundle_root: Path, *, target_path: Path | None = None) -> Path:
     """Synthesize a runnable ``analysis_config.yaml`` from a reprex bundle — the
     analysis-side sibling of :func:`reconstitute_runnable_config`.
 
@@ -1286,16 +1280,11 @@ def reconstitute_runnable_analysis_config(
         if value is None:
             continue
         if isinstance(value, list):  # BUNDLE_RELATIVE_LIST (e.g. static_plot_configs)
-            out[name] = [
-                str((bundle_root / v).resolve()) if not Path(v).is_absolute() else v
-                for v in value
-            ]
+            out[name] = [str((bundle_root / v).resolve()) if not Path(v).is_absolute() else v for v in value]
             continue
         if isinstance(value, str) and not Path(value).is_absolute():
             out[name] = str((bundle_root / value).resolve())
-    target = (
-        target_path if target_path is not None else bundle_root / "analysis_config.yaml"
-    )
+    target = target_path if target_path is not None else bundle_root / "analysis_config.yaml"
     Path(target).write_text(yaml.safe_dump(out, sort_keys=False))
     return Path(target)
 
@@ -1404,9 +1393,7 @@ def _write_bundle_manifest(
         # so a native manifest is byte-identical to what it was before this feature —
         # same rule as input_deposit, and why BUNDLE_SCHEMA_VERSION does not bump (R9).
         manifest["container_build"] = container_build
-    (staging / BUNDLE_MANIFEST_FILENAME).write_text(
-        json.dumps(manifest, indent=2)
-    )
+    (staging / BUNDLE_MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2))
 
 
 def _emit_bundle_zip(staging: Path, output_path: Path) -> None:

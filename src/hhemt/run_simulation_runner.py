@@ -367,10 +367,10 @@ def main():
     try:
         # Import here to avoid import errors if dependencies are missing
         from hhemt.analysis import TRITONSWMM_analysis
+        from hhemt.config.hpc_system import resolve_additional_modules, resolve_gpu_target
+        from hhemt.config.loaders import load_hpc_system_config
         from hhemt.scenario import TRITONSWMM_scenario
         from hhemt.system import TRITONSWMM_system
-        from hhemt.config.loaders import load_hpc_system_config
-        from hhemt.config.hpc_system import resolve_gpu_target, resolve_additional_modules
 
         # Log workflow context for traceability
         log_workflow_context(logger)
@@ -488,7 +488,7 @@ def main():
             # start, where the only marker that can exist is a stale one. Doing this
             # in the finally instead would delete the marker THIS attempt's own
             # failure paths just wrote and stamp a failed sim completed.
-            (_failed_dir / f"{_marker_ctx.rule_token}.json").unlink(missing_ok=True)
+            (_failed_dir / f"{_marker_ctx.rule_token}.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
 
         # Verify scenario is prepared (check scenario prep log)
         scenario.log.refresh()
@@ -619,9 +619,7 @@ def main():
         # interruption is schedule[k]. Re-read the model log AFTER
         # prepare_simulation_command so the count reflects this attempt's baseline.
         _n_done = scenario.get_log(model_type).n_resumes.get() or 0
-        _arm_deterministic_kill = (
-            _schedule is not None and model_type != "swmm" and _n_done < len(_schedule)
-        )
+        _arm_deterministic_kill = _schedule is not None and model_type != "swmm" and _n_done < len(_schedule)
 
         start_time = time.time()
         model_logfile.parent.mkdir(parents=True, exist_ok=True)

@@ -946,9 +946,7 @@ class TRITONSWMM_analysis:
         from hhemt.bundle import emit_bundle
         from hhemt.bundle._reprex import extract_reprex_bundle
 
-        return extract_reprex_bundle(
-            emit_bundle(self, output_path, container_defs=container_defs)
-        )
+        return extract_reprex_bundle(emit_bundle(self, output_path, container_defs=container_defs))
 
     def publish(
         self,
@@ -2616,7 +2614,11 @@ class TRITONSWMM_analysis:
 
         # Orphan detection gate (sensitivity-only; non-sensitivity covered by
         # follow-up plan per D-EVENT-PARITY).
-        if not from_scratch and self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_experiment_member:
+        if (
+            not from_scratch
+            and self.cfg_analysis.toggle_sensitivity_analysis
+            and not self.cfg_analysis.is_experiment_member
+        ):
             from hhemt.exceptions import ConfigurationError as _CfgErr
 
             _dirs = self.sensitivity.find_orphan_member_dirs()
@@ -3106,9 +3108,6 @@ class TRITONSWMM_analysis:
         import subprocess
         import sys
 
-        from .exceptions import WorkflowError
-        from .workflow import _assert_snakefile_package_current
-
         # Build-match gate (VMS-17/18). Safe at the TOP because this method executes NO
         # rules: `snakemake --report` is a post-execution render, and when this runs as the
         # DAG's `rule render_report` every plot rule is already a completed input. So the
@@ -3117,9 +3116,10 @@ class TRITONSWMM_analysis:
         # rebuild happens in run()/_apply_force_rerun, a different method, strictly earlier.
         from hhemt.provenance import assert_plots_match_running_build
 
-        assert_plots_match_running_build(
-            self.analysis_paths.analysis_dir, declare_stale_plots=declare_stale_plots
-        )
+        from .exceptions import WorkflowError
+        from .workflow import _assert_snakefile_package_current
+
+        assert_plots_match_running_build(self.analysis_paths.analysis_dir, declare_stale_plots=declare_stale_plots)
 
         snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
         snakefile = self.analysis_paths.analysis_dir / snakefile_name
@@ -3687,9 +3687,7 @@ class TRITONSWMM_analysis:
             # zero preview yield and an unbounded cost.
             # Build-stamp reconciliation MUST precede the pre-delete: it can replace the
             # force-rerun value, and _apply_force_rerun is what acts on it.
-            override_force_rerun = self._reconcile_build_stamp_force(
-                override_force_rerun, dry_run=dry_run
-            )
+            override_force_rerun = self._reconcile_build_stamp_force(override_force_rerun, dry_run=dry_run)
             self._apply_force_rerun(override_force_rerun, dry_run=dry_run)
 
             # Fold the five kept override_* kwargs into one carrier at this facade
@@ -4139,9 +4137,7 @@ class TRITONSWMM_analysis:
         if not dry_run:
             # Same reconciliation as the submit_workflow site. `dry_run=False` is correct
             # and not a shortcut: this statement is already inside `if not dry_run:`.
-            override_force_rerun = self._reconcile_build_stamp_force(
-                override_force_rerun, dry_run=False
-            )
+            override_force_rerun = self._reconcile_build_stamp_force(override_force_rerun, dry_run=False)
             self._apply_force_rerun(override_force_rerun)
 
         # Processed-output deletion (Phase 3). The per-model PROCESSING-LOG
@@ -4617,9 +4613,20 @@ class TRITONSWMM_analysis:
             # re-run. Best-effort: a missing file is the normal case on a first restart.
             _simlogs = self.analysis_paths.simlog_directory
             for _log in _simlogs.glob(f"model_*_member_{member}_evt*.log"):
-                _log.unlink(missing_ok=True)  # EXEMPT-DU: runtime log
+                _log.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
                 _ledger = _simlogs / "_walltime" / f"{_log.stem}.jsonl"
-                _ledger.unlink(missing_ok=True)  # EXEMPT-DU: runtime log
+                _ledger.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+            # These bytes ARE DU-counted -- `simlog_directory` is `{analysis_dir}/logs/sims`,
+            # and `sum_child_sentinels`' own-files walk excludes only child-scope dirs and
+            # top-level `_status*`, so `logs/` is reached. The exemption marker previously
+            # here named a nonexistent runtime-log category and was a FALSE claim rather than a
+            # miscategorization -- these bytes were never exempt. ONE restamp AFTER the loop
+            # rather than one per unlink: a per-file restamp inside a delete loop re-walks the
+            # scope's children once per file and does not finish at ensemble scale, which is
+            # the recorded pathology behind the raw-SWMM-binaries reclaim.
+            from hhemt.du_sentinels import restamp_parent_sentinels as _restamp_simlogs
+
+            _restamp_simlogs(_simlogs, analysis_dir=self.analysis_paths.analysis_dir)
         self._workflow_builder._delete_flags_for_force_rerun(
             ResolvedForceRerunSpec(scope="member", tokens=tuple(restart_ids), stage="simulate")
         )
@@ -4702,11 +4709,7 @@ class TRITONSWMM_analysis:
         if not (_keys and _mine[0] and _keys != {_mine}):
             return override_force_rerun
 
-        _resolved = (
-            override_force_rerun
-            if override_force_rerun is not None
-            else self.cfg_analysis.force_rerun
-        )
+        _resolved = override_force_rerun if override_force_rerun is not None else self.cfg_analysis.force_rerun
         if not isinstance(_resolved, ForceRerunSpec):
             _resolved = ForceRerunSpec.model_validate(_resolved)
         # A render floor is the WEAKEST floor, so an existing simulate/process/consolidate
@@ -4782,6 +4785,7 @@ class TRITONSWMM_analysis:
         # "subject" and set(map(str, "all")) -> {'a','l'}. Coercing after it leaves the
         # CLI's json.loads dict — the ONLY form --override-force-rerun produces — broken.
         from hhemt.config.analysis import ForceRerunSpec
+
         from .exceptions import ConfigurationError
 
         if not isinstance(resolved, ForceRerunSpec):
@@ -4963,9 +4967,9 @@ class TRITONSWMM_analysis:
         # path from either would miss (wrong dir and/or doubled "member-member_" token),
         # silently breaking the rebuild. None/None => non-sensitivity: flags live
         # in THIS analysis's own _status/.
-        assert (member_id is None) == (master_dir is None), (
-            "member_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
-        )
+        assert (member_id is None) == (
+            master_dir is None
+        ), "member_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
         is_sub = member_id is not None
 
         reconciled: set[tuple[str, str]] = set()

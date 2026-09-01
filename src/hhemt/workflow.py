@@ -61,11 +61,11 @@ from hhemt.slurm_liveness import (  # noqa: F401
 from hhemt.summary_paths import (  # noqa: F401  (re-export shims under the historical private names)
     _SUMMARY_STEMS_BY_MODEL,
 )
-from hhemt.summary_paths import (  # noqa: F401  (re-export shim under the historical private name)
-    scenario_summaries_present as _scenario_summaries_present,
-)
 from hhemt.summary_paths import (
     analysis_summaries_complete as _analysis_summaries_complete,
+)
+from hhemt.summary_paths import (  # noqa: F401  (re-export shim under the historical private name)
+    scenario_summaries_present as _scenario_summaries_present,
 )
 from hhemt.utils import fast_rmtree
 
@@ -1803,9 +1803,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         if spec.scope not in ("all", "member", "event"):
             raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
         matched_flags: set[Path] = {
-            p
-            for p in status_dir.glob("*.flag")
-            if p.name.startswith(prefixes) and _subject_matches(p.name)
+            p for p in status_dir.glob("*.flag") if p.name.startswith(prefixes) and _subject_matches(p.name)
         }
 
         for flag_path in sorted(matched_flags):
@@ -1845,6 +1843,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # so every existing caller is byte-identical.
         if stage == "render" and not dry_run:
             plots_dir = self.analysis_paths.analysis_dir / "plots"
+            _freed_render: dict[str, int] = {}
             if plots_dir.exists():
                 for fig_path in sorted(plots_dir.rglob("*")):
                     if fig_path.is_dir() or fig_path.name.endswith(".manifest.json"):
@@ -1860,9 +1859,24 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                     if EDA_PLOTS_SUBDIR in fig_path.relative_to(plots_dir).parts:
                         continue
                     logger.info("force_rerun[stage=render]: deleting figure %s", fig_path)
-                    fig_path.unlink(missing_ok=True)
                     sidecar = fig_path.with_suffix(fig_path.suffix + ".manifest.json")
-                    sidecar.unlink(missing_ok=True)
+                    # Sizes BEFORE the unlink -- a post-unlink stat is impossible. Gotcha 38
+                    # names the render-path delete of known-size artifacts as an O(1)
+                    # decrement, explicitly NOT a restamp and explicitly NOT an exemption.
+                    _freed_render["plots"] = _freed_render.get("plots", 0) + (
+                        fig_path.stat().st_size if fig_path.exists() else 0
+                    )
+                    _freed_render["plots"] = _freed_render.get("plots", 0) + (
+                        sidecar.stat().st_size if sidecar.exists() else 0
+                    )
+                    fig_path.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+                    sidecar.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+            if _freed_render.get("plots"):
+                from hhemt.du_sentinels import decrement_scope_sentinel
+
+                decrement_scope_sentinel(
+                    self.analysis_paths.analysis_dir, scope="analysis", child_deltas=dict(_freed_render)
+                )
 
     def _cpu_sim_partition(self) -> str | None:
         """Resolve the SLURM partition for CPU-ONLY simulation rules (``run_swmm``).
@@ -2161,13 +2175,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # form (this is why the committed byte-identity goldens, captured from a
         # DIRECT generate_* call where the field stays None, need no regen).
         _runs_under_slurm = (
-            self.cfg_analysis.multi_sim_run_method != "local"
-            or self._resolved_execution_locus == "slurm"
+            self.cfg_analysis.multi_sim_run_method != "local" or self._resolved_execution_locus == "slurm"
         )
         _report_tail_partition = (
-            str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "")
-            if _runs_under_slurm
-            else ""
+            str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "") if _runs_under_slurm else ""
         )
         # Local import: keeps workflow.py's module-level import set unchanged and matches
         # this file's existing habit for report_renderers symbols (:486, :727, :808, :2697).
@@ -3539,7 +3550,7 @@ rule export_scenario_status:
         rainfall_datavar = self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
         storm_tide_datavar = self.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
 
-        helpers = f'''
+        helpers = f"""
 def _per_sim_event_page_sources(wildcards):
     from hhemt.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
@@ -3557,7 +3568,7 @@ def _per_sim_event_page_sources(wildcards):
             if _src not in out:
                 out.append(_src)
     return out
-'''
+"""
 
         page_spec = RuleSpec(
             rule_name="plot_per_sim_event_page",
@@ -3622,9 +3633,9 @@ def _per_sim_event_page_sources(wildcards):
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
         }
-        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
-            "local_cpu_cores_for_workflow must be specified for local runs"
-        )
+        assert isinstance(
+            self.cfg_analysis.local_cpu_cores_for_workflow, int
+        ), "local_cpu_cores_for_workflow must be specified for local runs"
         if mode == "local":
             config.update(
                 {
@@ -3646,9 +3657,9 @@ def _per_sim_event_page_sources(wildcards):
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
             max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
-            assert isinstance(max_concurrent, int), (
-                "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
-            )
+            assert isinstance(
+                max_concurrent, int
+            ), "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -3885,9 +3896,9 @@ echo ""
             # per-node count is required) — _resolve_gpus_per_node resolves an
             # absent value to 0, which is a misconfiguration in the GPU branch.
             gpus_per_node = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
-            assert isinstance(gpus_per_node, int) and gpus_per_node > 0, (
-                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
-            )
+            assert (
+                isinstance(gpus_per_node, int) and gpus_per_node > 0
+            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self._resolve_gpu_hardware(self.cfg_analysis.hpc_ensemble_partition)
             if gpu_hardware:
@@ -5637,8 +5648,18 @@ exit $snakemake_status
         try:
             r = subprocess.run(
                 [
-                    "sacct", "-X", "--parsable2", "--noheader", "--clusters", "all",
-                    "--name", run_uuid, "--starttime", starttime, "-o", "State",
+                    "sacct",
+                    "-X",
+                    "--parsable2",
+                    "--noheader",
+                    "--clusters",
+                    "all",
+                    "--name",
+                    run_uuid,
+                    "--starttime",
+                    starttime,
+                    "-o",
+                    "State",
                 ],
                 capture_output=True,
                 text=True,
@@ -5737,9 +5758,7 @@ exit $snakemake_status
         last_fp = self._status_progress_fingerprint()
         last_progress_t = time.monotonic()
         all_pending_since: float | None = None
-        queue_starved_seconds = (
-            float(getattr(self.cfg_analysis, "hpc_max_queue_wait_min", None) or 720.0) * 60.0
-        )
+        queue_starved_seconds = float(getattr(self.cfg_analysis, "hpc_max_queue_wait_min", None) or 720.0) * 60.0
         try:
             while True:
                 has_session_cmd = f"{module_load_prefix}tmux has-session -t {session_name}"
@@ -6887,9 +6906,7 @@ exit $snakemake_status
         """
         prefix = self._get_module_load_prefix()
         quoted = shlex.quote(session_name)
-        attempts = ([f"{prefix}tmux has-session -t {quoted}"] if prefix else []) + [
-            f"tmux has-session -t {quoted}"
-        ]
+        attempts = ([f"{prefix}tmux has-session -t {quoted}"] if prefix else []) + [f"tmux has-session -t {quoted}"]
         for cmd in attempts:
             try:
                 r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=30)
@@ -7086,9 +7103,7 @@ exit $snakemake_status
                 alive = None
 
             if alive:
-                live.append(
-                    f"{s.get('driver_id')} (mode={mode}, host={origin_host or 'unrecorded'}, liveness=ALIVE)"
-                )
+                live.append(f"{s.get('driver_id')} (mode={mode}, host={origin_host or 'unrecorded'}, liveness=ALIVE)")
                 continue
 
             if alive is None:
@@ -7770,9 +7785,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # (:6787), NOT the base builder's sys.executable, so falling back to the
         # base builder's resolved attribute would change native emission and
         # break the byte-identity goldens.
-        self._process_python_executable = (
-            self._base_builder._container_process_python or self.python_executable
-        )
+        self._process_python_executable = self._base_builder._container_process_python or self.python_executable
 
     def submit_delete_workflow_sensitivity(
         self,
@@ -7983,7 +7996,9 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # Used by `_build_plot_rule_block_per_sim_per_member` and the master `rule all`
         # via `expand(..., zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT)`.
         # Event IDs derived via the canonical slug helper used elsewhere in workflow.py.
-        member_event_pairs_member, member_event_pairs_evt = self._enumerate_member_event_pairs(context_label="sensitivity master")
+        member_event_pairs_member, member_event_pairs_evt = self._enumerate_member_event_pairs(
+            context_label="sensitivity master"
+        )
 
         # Auto-render — modeled as an explicit Snakemake rule (not an `onsuccess:`
         # hook). `onsuccess:` only fires when rules execute; on a fully up-to-date
@@ -8070,7 +8085,9 @@ onerror:
         # dependencies. Built once per Snakefile generation. Keys are coerced to
         # str to match members dict iteration keys regardless of source type.
         member_id_to_target_id: dict[str, int] = {
-            str(member_id): target.target_id for target in self.unique_system_targets for member_id in target.analysis_ids
+            str(member_id): target.target_id
+            for target in self.unique_system_targets
+            for member_id in target.analysis_ids
         }
 
         rule_all_inputs = [f'"{flag}"' for flag in setup_target_flags]
@@ -8118,9 +8135,7 @@ onerror:
                 member_event_pairs_member=member_event_pairs_member,
                 disabled=_disabled,
                 ext=_ext,
-                has_swmm_link_outputs=bool(
-                    {"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())
-                ),
+                has_swmm_link_outputs=bool({"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())),
                 set_carries_renderer=set_carries(_active_set, "per_sim_per_member"),
             )
         )
@@ -8253,8 +8268,7 @@ onerror:
             hpc_time = analysis.cfg_analysis.hpc_time_min_per_sim or 30
             mem_per_cpu = analysis.cfg_analysis.mem_gb_per_cpu or 2
             gpus_per_node_config = (
-                resolve_gpus_per_node(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition)
-                or 0
+                resolve_gpus_per_node(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition) or 0
             )
             cpus_per_sim = n_mpi * n_omp
             run_mode = analysis.cfg_analysis.run_mode
@@ -8301,9 +8315,7 @@ onerror:
             # gpu_hardware comes directly from the per-target cfg_system. Under the
             # prefixed-column overlay mechanism, `system.gpu_hardware` overlay values
             # already populated this field via the synthesized per-target YAML.
-            gpu_hw = resolve_gpu_target(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition)[
-                0
-            ]
+            gpu_hw = resolve_gpu_target(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition)[0]
             sim_resources_member = self._base_builder._build_resource_block(
                 partition=analysis.cfg_analysis.hpc_ensemble_partition,
                 runtime_min=hpc_time,
@@ -8546,9 +8558,7 @@ onerror:
                 "member_event_pairs_member": member_event_pairs_member,
                 "has_eda_artifact": _has_eda_artifact,
                 "has_preserved_raw_outputs": _has_preserved_raw_outputs,
-                "has_swmm_link_outputs": bool(
-                    {"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())
-                ),
+                "has_swmm_link_outputs": bool({"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())),
             },
             disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
@@ -8865,9 +8875,7 @@ onerror:
                 member_event_pairs_member=member_event_pairs_member,
                 disabled=_disabled,
                 ext=_ext,
-                has_swmm_link_outputs=bool(
-                    {"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())
-                ),
+                has_swmm_link_outputs=bool({"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())),
                 set_carries_renderer=set_carries(_active_set, "per_sim_per_member"),
             )
         )
@@ -8938,8 +8946,8 @@ onerror:
         # tracked as a follow-up refactor).
         from hhemt.constants import (
             consolidate_analysis_flag,
-            process_timeseries_flag_per_member,
             member_inputs_fingerprint_flag,
+            process_timeseries_flag_per_member,
         )
 
         # sim_run_flag_per_member is already imported at method scope (in the
@@ -9168,9 +9176,7 @@ onerror:
                 "member_event_pairs_member": member_event_pairs_member,
                 "has_eda_artifact": _has_eda_artifact,
                 "has_preserved_raw_outputs": _has_preserved_raw_outputs,
-                "has_swmm_link_outputs": bool(
-                    {"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())
-                ),
+                "has_swmm_link_outputs": bool({"tritonswmm", "swmm"} & set(self.experiment._get_enabled_model_types())),
             },
             disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(

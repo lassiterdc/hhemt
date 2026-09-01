@@ -232,11 +232,7 @@ def upgrade(ctx: MigrationContext) -> None:
         if new_text is not None:
             du_rewrites.append((du_path, new_text))
     status_dir = target_dir / "_status"
-    consolidation_flags = (
-        sorted(status_dir.glob("*consolidate*complete.flag"))
-        if status_dir.is_dir()
-        else []
-    )
+    consolidation_flags = sorted(status_dir.glob("*consolidate*complete.flag")) if status_dir.is_dir() else []
     config_renames: list[tuple[Path, Path]] = []
     for member in _member_dirs(target_dir):
         stem = member.name
@@ -275,11 +271,11 @@ def upgrade(ctx: MigrationContext) -> None:
         # engine raise "marked for report but does not exist" (Gotcha 39). Unlink
         # rather than rewrite: a migration that rewrites generated content owes a
         # second copy of the generator's grammar.
-        (target_dir / "Snakefile.reprocess").unlink(missing_ok=True)
+        (target_dir / "Snakefile.reprocess").unlink(missing_ok=True)  # EXEMPT-DU: migration-primitive
         # Consolidation is invalidated by SIGNAL, never by deleting the store:
         # consolidate_to_datatree fast_rmtree's and rebuilds when the log flag is
         # absent, so the rebuilt tree carries member_{id} node names.
         for flag in consolidation_flags:
-            flag.unlink(missing_ok=True)
+            flag.unlink(missing_ok=True)  # EXEMPT-DU: migration-primitive
 
     ctx.record_applied("V0019__member_vocabulary")
