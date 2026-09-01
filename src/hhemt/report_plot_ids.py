@@ -182,7 +182,7 @@ def member_labels_from_status(analysis_dir) -> dict[str, str]:
     import re as _re
     from pathlib import Path as _Path
 
-    from hhemt.eda._config_diff import _derive_config_label
+    from hhemt.config_labels import _derive_config_label
 
     path = _Path(analysis_dir) / "scenario_status.csv"
     if not path.exists():

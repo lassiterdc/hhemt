@@ -476,7 +476,6 @@ def _b4b_device_key(sub) -> tuple:
     )
 
 
-
 def _b4b_ref_key(member: tuple) -> tuple:
     """Within-family reference ordering for a (member_id, sub) member — deterministic under ties.
 
@@ -491,6 +490,7 @@ def _b4b_ref_key(member: tuple) -> tuple:
         str(_b4b_config_attrs(member[1]).get("hpc.partition", "")),
         str(member[0]),
     )
+
 
 def _b4b_dataset(
     per_config: dict[str, dict[str, tuple[xr.DataArray, xr.DataArray]]],
@@ -526,12 +526,18 @@ def _b4b_dataset(
         ds = xr.Dataset({"identical": xr.DataArray(np.array(np.nan, dtype="float64"))})
     else:
         cc = xr.DataArray(labels, dims="compute_config", name="compute_config")
-        identical = xr.concat(id_das, dim=cc, join="outer").transpose("compute_config", "raw_output_type", "timestep_min")
-        max_abs_diff = xr.concat(mad_das, dim=cc, join="outer").transpose("compute_config", "raw_output_type", "timestep_min")
+        identical = xr.concat(id_das, dim=cc, join="outer").transpose(
+            "compute_config", "raw_output_type", "timestep_min"
+        )
+        max_abs_diff = xr.concat(mad_das, dim=cc, join="outer").transpose(
+            "compute_config", "raw_output_type", "timestep_min"
+        )
         ds = xr.Dataset({"identical": identical, "max_abs_diff": max_abs_diff})
 
         def _sa(key):
-            return xr.DataArray([meta[c][key] for c in labels], dims="compute_config", coords={"compute_config": labels})
+            return xr.DataArray(
+                [meta[c][key] for c in labels], dims="compute_config", coords={"compute_config": labels}
+            )
 
         ds["config_label"] = _sa("config_label")
         ds["family"] = _sa("family")
@@ -665,7 +671,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     analysis_dir = Path(master.analysis_paths.analysis_dir)
     eda_dir = analysis_dir / "eda"
 
-    from hhemt.eda._config_diff import _derive_config_label
+    from hhemt.config_labels import _derive_config_label
 
     # gather: (member_id, sub, model, raw_bin_dir, n_resumes)
     subs: list[tuple] = []
@@ -725,9 +731,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         for s in members:
             if s is ref:
                 continue
-            tri = compare_triton_raw_timeseries(
-                ref[3], s[3], reporting_interval_s=interval, raw_out_type=raw_out_type
-            )
+            tri = compare_triton_raw_timeseries(ref[3], s[3], reporting_interval_s=interval, raw_out_type=raw_out_type)
             if tri:
                 per_config[s[0]] = tri
                 meta[s[0]] = _meta_for(s, family, False)

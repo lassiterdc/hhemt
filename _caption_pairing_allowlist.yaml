@@ -27,13 +27,19 @@ unpaired_allowlist:
       change needed.
   - renderer: cross_experiment_intercomparison_maps
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
-    renderer_sha256: ff198c8b87d5bbaf87cecc2a0962872ad17915143d03b1bbca5a1f0b74795dcc
+    renderer_sha256: 882640f7f4e440bddad564484d61b4dbe149cd60e25a83e564105459fddb2fc1
     justification: >-
       Iteration-8 annotation-carrier group (D3 annotation split and the
       title-collision fix), plus a whole-file ruff-format pass. Caption re-read:
       it describes diff-map semantics (resume minus clean over byte-identity
       classes), the RdBu direction convention, and the variable-dt SWMM
       final-period truncation. All three are data claims; the change moved
-      annotation anchoring only. Looked; no change needed. NOTE: the
+      annotation anchoring only. Looked; no change needed.
+      RE-RECORDED for the config-labels leaf extraction: the renderer's only
+      change is an import re-point of _derive_config_label from
+      hhemt.eda._config_diff to the new hhemt.config_labels leaf. The BOUND
+      NAME, both call sites and the function body are unchanged, so no panel,
+      table, colour scale or caveat this caption describes can move. Caption
+      re-read in full; no change needed. NOTE: the
       cross-experiment RESTRUCTURE is still open on a user question, so this
       exemption expires with the next renderer change by construction.

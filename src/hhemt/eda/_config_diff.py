@@ -33,6 +33,7 @@ import xarray as xr
 from plotly.colors import sample_colorscale
 from plotly.subplots import make_subplots
 
+from hhemt.config_labels import _derive_config_label, _to_int
 from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption
 from hhemt.figure_panels import AXIS_BAND_PX, panel_geometry, side_table_columns, watershed_swatch
@@ -207,13 +208,6 @@ def _identity_cell(identical, g: dict, serial_grp: dict, wad: float, fad: float)
     return "differs (within-family; FP non-associativity)"
 
 
-def _to_int(attrs: dict, key: str) -> int:
-    try:
-        return int(float(attrs.get(key, 0)))
-    except (TypeError, ValueError):
-        return 0
-
-
 def _hw_family_key(g: dict) -> str:
     """DEVICE-CLASS key ('cpu' | 'gpu') — the COARSE axis. See the stipulation
     "the three compute-config axes are run mode, hardware, and device class".
@@ -338,42 +332,6 @@ def partition_groups_by_family(groups: list[dict]) -> dict[str, list[dict]]:
     for g in groups:
         out.setdefault(_hw_family_key(g), []).append(g)
     return {fam: sorted(members, key=_panel_order_key) for fam, members in out.items()}
-
-
-def _gpu_hardware(attrs: dict) -> str:
-    """Hardware token derived from the ensemble partition (Gotcha 54: partition IS the
-    hardware axis). ``'gpu-a100-80' -> 'a100-80'``, ``'gpu-a6000' -> 'a6000'``. Empty
-    when no partition attr is present."""
-    part = str(attrs.get("hpc.partition", "") or "")
-    return part[len("gpu-") :] if part.startswith("gpu-") else part
-
-
-def _derive_config_label(attrs: dict) -> str:
-    """Deterministic compute-config label from config attrs (never the member_id name).
-
-    CPU configs use ONE consistent form: ``{Mode} {ranks}r×{threads}t ({total} CPU)`` —
-    ``ranks`` = MPI processes, ``threads`` = OpenMP threads PER RANK, ``total`` = ranks ×
-    threads. This makes a Hybrid config legible (ranks + threads/rank + total CPUs) while
-    keeping Serial/OpenMP/MPI on the same axes: Serial 1r×1t (1 CPU), OpenMP 1r×8t (8 CPU),
-    MPI 8r×1t (8 CPU), Hybrid 2r×2t (4 CPU).
-
-    GPU configs are a distinct resource axis (GPUs, not CPUs): ``GPU ×{n} ({hardware})``,
-    with hardware from the ensemble partition so an a6000 1-GPU job and an a100 1-GPU job
-    are DISTINCT configs. Replicate suffixes (``_r1``/``_r2``) are NOT in the identity, so
-    replicates share one label.
-    """
-    rm = str(attrs.get("run_mode", "?"))
-    ng, nm, no, nn = (_to_int(attrs, k) for k in ("n_gpus", "n_mpi_procs", "n_omp_threads", "n_nodes"))
-    if rm == "gpu":
-        hw = _gpu_hardware(attrs)
-        label = f"GPU ×{ng} ({hw})" if hw else f"GPU ×{ng}"
-    else:
-        name = {"serial": "Serial", "openmp": "OpenMP", "mpi": "MPI", "hybrid": "Hybrid"}.get(rm, rm)
-        ranks, threads = max(nm, 1), max(no, 1)
-        label = f"{name} {ranks}r×{threads}t ({ranks * threads} CPU)"
-    if nn > 1:
-        label += f", {nn} nodes"
-    return label
 
 
 def _n_resumes_by_member_id(root: Path) -> dict[str, int]:

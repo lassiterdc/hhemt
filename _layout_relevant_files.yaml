@@ -304,6 +304,15 @@ non_breaking_allowlist:
       _OUTPUT_EXT_BY_RENDERER, so the C-LAYOUT property this file is listed for
       (figure filenames) is untouched. Same class as the additive
       _OUTPUT_EXT_BY_RENDERER-key entry above.
+  - path: src/hhemt/report_plot_ids.py
+    justification: >-
+      config-label leaf extraction -- the function-local import inside
+      member_labels_from_status is re-pointed from hhemt.eda._config_diff to the new
+      hhemt.config_labels leaf module. The BOUND NAME and the call site are unchanged,
+      so behaviour is identical. Touches NO figure stem: it references neither
+      canonical_plot_id, plot_output_template, nor _OUTPUT_EXT_BY_RENDERER, so the
+      C-LAYOUT property this file is listed for (figure filenames) is untouched. Same
+      class as the two additive entries above.
   - path: src/hhemt/config/loaders.py
     justification: >-
       oe-a-node-local-preflight-guard Option F — message-only diagnostic wrapper

@@ -130,6 +130,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
+    from hhemt.config_labels import _derive_config_label
     from hhemt.eda._config_diff import (
         _CONFIG_DIFF_DEPTH_BAND_M,
         _CONFIG_DIFF_FLOW_BAND_CMS,
@@ -142,7 +143,6 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _align_to,
         _apply_mask,
         _conduit_traces,
-        _derive_config_label,
         _device_count_key,
         _group_by_identity,
         _heatmap,
@@ -225,9 +225,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     # is meaningful only on the coupled arm, and a fixed five-column header over a
     # pure-TRITON figure is a header-over-cells mismatch -- the defect that made the first
     # attempt at this table undeployable.
-    _summary_cols = (
-        ["Panel", "# configs in group", "byte-identical clean vs resume?", "max abs depth diff (m)"]
-        + (["max abs flow diff (cms)"] if has_coupled_arm else [])
+    _summary_cols = ["Panel", "# configs in group", "byte-identical clean vs resume?", "max abs depth diff (m)"] + (
+        ["max abs flow diff (cms)"] if has_coupled_arm else []
     )
 
     # A pair that differs ONLY in max_flow_cms still earns a panel: group by (model, config,
@@ -390,6 +389,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 model_groups = _group_by_identity(clean_subs, crates / clean_eid)
             except Exception:
                 model_groups = _fallback_groups(clean_subs)
+
             # DECLARED panel order. `_group_by_identity` returns its groups in the order it
             # happened to iterate `subs.items()`, i.e. the zarr store's group-traversal
             # order -- reproducible for a fixed store, but not derived from any stated rule,
@@ -406,11 +406,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             # happen to be correct and would break silently the moment the sort is deferred
             # or the loop advances first. Explicit capture is also what ruff's B023 asks for.
             def _group_order_key(gg, _cs=clean_subs):
-                _dev = (
-                    _device_count_key({"attrs": _cs[s].get("attrs", {})})
-                    for s in gg["members"]
-                    if s in _cs
-                )
+                _dev = (_device_count_key({"attrs": _cs[s].get("attrs", {})}) for s in gg["members"] if s in _cs)
                 return (
                     min(_dev, default=()),
                     sorted(gg["labels"])[0] if gg["labels"] else "",
@@ -658,17 +654,19 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _ps = [q for cid in sorted(_ids) for q in _pairs_by_cfg.get(cid, [])]
         _n_cfg = len({lbl for lbl in _grp["labels"]})
         _depth = [
-            q["max_abs_diff"] for q in _ps
-            if q.get("variable") == "max_wlevel_m" and q.get("max_abs_diff") is not None
+            q["max_abs_diff"] for q in _ps if q.get("variable") == "max_wlevel_m" and q.get("max_abs_diff") is not None
         ]
         _flow = [
-            q["max_abs_diff"] for q in _ps
-            if q.get("variable") == "max_flow_cms" and q.get("max_abs_diff") is not None
+            q["max_abs_diff"] for q in _ps if q.get("variable") == "max_flow_cms" and q.get("max_abs_diff") is not None
         ]
         _verdict = (
-            "no comparable pair" if not _ps
-            else ("identical" if all(q.get("identical", True) for q in _ps)
-                  else f"{sum(1 for q in _ps if not q.get('identical', True))} of {len(_ps)} differ")
+            "no comparable pair"
+            if not _ps
+            else (
+                "identical"
+                if all(q.get("identical", True) for q in _ps)
+                else f"{sum(1 for q in _ps if not q.get('identical', True))} of {len(_ps)} differ"
+            )
         )
         _row = [f"Panel {_letter}", _n_cfg, _verdict, f"{max(_depth):.4g}" if _depth else "—"]
         # The flow column exists only when the coupled arm does, so the row width tracks
@@ -805,13 +803,19 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                 return _device_count_key({"attrs": a})
 
             _clean_cfg, _clean_nr = side_table_columns(
-                labels=g_["labels"], members=_clean_members, attrs_by_member=_attrs,
+                labels=g_["labels"],
+                members=_clean_members,
+                attrs_by_member=_attrs,
                 value_by_member={_sa: int(ctx["fam_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in _clean_members},
                 order_key=_ordk,
             )
             _res_cfg, _res_nr = side_table_columns(
-                labels=g_["labels"], members=_resume_members, attrs_by_member=_attrs,
-                value_by_member={_sa: int(ctx["resume_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in _resume_members},
+                labels=g_["labels"],
+                members=_resume_members,
+                attrs_by_member=_attrs,
+                value_by_member={
+                    _sa: int(ctx["resume_subs"].get(_sa, {}).get("n_resumes", 0)) for _sa in _resume_members
+                },
                 order_key=_ordk,
             )
             # MEMBERSHIP MADE VISIBLE, not a count check and not a hard failure. The table
@@ -1243,11 +1247,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         # predicate the conduit block above tests -- so a pure-TRITON panel or a flow-less
         # base run cannot acquire a "Flow (cms)" title over an empty axis.
         _map_titles[(row, 1)] = _ROW_KIND_TITLE[_entry["kind"]]
-        if (
-            _ncols >= 2
-            and _entry["kind"] == "ref"
-            and _ctx["fam_subs"][_ctx["base_member"]].get("flow") is not None
-        ):
+        if _ncols >= 2 and _entry["kind"] == "ref" and _ctx["fam_subs"][_ctx["base_member"]].get("flow") is not None:
             _map_titles[(row, 2)] = "Flow (cms)"
     for (_tr_row, _tr_col), _title_text in _map_titles.items():
         _xa0, _xa1 = _layout.map_domains[_tr_col]
@@ -1309,16 +1309,13 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         if _eid and _eid not in _bases:
             _bases.append(_eid)
     _span = " vs ".join(_bases)
-    _page_title = (
-        f"{_span} — Clean vs resume spatial diff maps" if _span else "Clean vs resume spatial diff maps"
-    )
+    _page_title = f"{_span} — Clean vs resume spatial diff maps" if _span else "Clean vs resume spatial diff maps"
     fig.update_layout(
         height=plot_h + _T_MARGIN + b_px,
         width=_FIG_W,
         margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
         title=(
-            f"{_page_title}<br><sup>resumed alternates vs the clean reference within "
-            "each byte-identity class</sup>"
+            f"{_page_title}<br><sup>resumed alternates vs the clean reference within " "each byte-identity class</sup>"
         ),
         annotations=list(fig.layout.annotations) + annotations,
         showlegend=False,
