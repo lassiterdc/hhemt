@@ -29,7 +29,26 @@ non_breaking_allowlist:
       file passed Check B silently, including numeric-correctness edits to the
       per-scenario perf zarrs. Re-stamp layout_signature whenever a genuinely
       non-breaking change lands; a breaking one must bump LAYOUT_VERSION instead.
-    layout_signature: "e76709d8fdce45397bd3d0e9ed7d9328f4fb84eea5719d3f5adbae34563b4a72"
+    layout_signature: "0a364a83d9638df0a1b5f51c9c7b250bc1db331251a286e7c87f973478f13f8a"
+  - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
+    justification: >-
+      DU-sentinel gate closure — a one-character correction inside an existing
+      EXEMPT-DU annotation ("status flag" -> "status-flag", a space where the frozen
+      category set uses a hyphen). COMMENT-ONLY: the migration's applied operations,
+      its version_from/version_to and its upgrade() body are byte-unchanged, so no
+      on-disk state this migration produces can differ. Re-stamp layout_signature on
+      any further non-breaking edit; a change to the applied operations must bump
+      LAYOUT_VERSION instead.
+    layout_signature: "43cec8d0829441f1f0f84077f041588b1bd568c6bdc5f9f69d6b7dbbcad42d5e"
+  - path: src/hhemt/version_migration/versions/V0019__member_vocabulary.py
+    justification: >-
+      DU-sentinel gate closure — two "# EXEMPT-DU: migration-primitive" annotations
+      added to existing unlinks, plus one ruff-format reflow of a ternary that is
+      semantically identical. COMMENT-AND-FORMATTING-ONLY: no unlink, glob or write
+      changes, so the on-disk result of applying this migration is byte-unchanged.
+      Re-stamp layout_signature on any further non-breaking edit; a change to the
+      applied operations must bump LAYOUT_VERSION instead.
+    layout_signature: "e27854c6749b72a3c78e6771bad21be061bfe9c2b3cb89510c333e6d1b940b22"
   - path: src/hhemt/scenario.py
     justification: >-
       Two collapsed non-breaking changes. cleanup-rerun-delete-redesign Phase 3 —
