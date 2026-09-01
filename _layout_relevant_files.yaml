@@ -340,7 +340,16 @@ non_breaking_allowlist:
       binary) and are written only by a compile invocation that actually built that
       target. Same change class as this file's already-allowlisted additive n_resumes
       and raw_SWMM_binaries_reclaimed entries. No on-disk filename, zarr group, or
-      _version.json change.
+      _version.json change. AND ADR-19 (ii-a) — one more ADDITIVE LogField[str]
+      (sif_sha256) on the same model, same default_factory=LogField, carrying the digest
+      of the SIF an analysis RAN from setup to consolidation across two SLURM jobs. Same
+      class and same graceful-absent contract: a native run never sets it, a pre-existing
+      system_log.json deserialises unchanged, and absence reads as "no digest recorded"
+      rather than as a native run. NOTE for the next editor of this model: a new LogField
+      must ALSO be added to the two hand-maintained name lists on the class (the
+      _validate_string_fields validator and the _serialize_logfields serializer) — omitting
+      it from the serializer makes EVERY write of the whole log raise, and the error names
+      the TYPE rather than the missing field name.
   - path: src/hhemt/processing_analysis.py
     justification: >-
       version-provenance-four-axes — _stamp_triton_provenance additionally stamps the

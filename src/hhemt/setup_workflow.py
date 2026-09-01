@@ -26,15 +26,14 @@ Exit codes:
     2: Invalid arguments
 """
 
-import sys
 import argparse
-from pathlib import Path
-import traceback
 import logging
+import sys
+import traceback
+from pathlib import Path
 
 from hhemt.log_utils import log_workflow_context
 from hhemt.status_flags import emit_runner_flag as _emit_runner_flag
-
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -47,9 +46,7 @@ logger = logging.getLogger(__name__)
 
 def main() -> int:
     """Main entry point for workflow setup."""
-    parser = argparse.ArgumentParser(
-        description="Setup TRITON-SWMM workflow: process system inputs and compile"
-    )
+    parser = argparse.ArgumentParser(description="Setup TRITON-SWMM workflow: process system inputs and compile")
     parser.add_argument(
         "--system-config",
         type=Path,
@@ -155,11 +152,11 @@ def main() -> int:
 
     try:
         # Import here to avoid import errors if dependencies are missing
-        from hhemt.system import TRITONSWMM_system
         from hhemt.analysis import TRITONSWMM_analysis
-        from hhemt.config.loaders import load_hpc_system_config, load_analysis_config
-        from hhemt.config.hpc_system import resolve_gpu_target, resolve_additional_modules
+        from hhemt.config.hpc_system import resolve_additional_modules, resolve_gpu_target
+        from hhemt.config.loaders import load_analysis_config, load_hpc_system_config
         from hhemt.exceptions import ConfigurationError
+        from hhemt.system import TRITONSWMM_system
 
         # Log workflow context for traceability
         log_workflow_context(logger)
@@ -176,9 +173,7 @@ def main() -> int:
         # takes `system` as a constructor arg — so the flag is read directly here).
         # Drives BOTH the system's libstdc++ mode-guard injection and the compile-skip
         # gate below. False in native mode (byte-identical).
-        _exec_env_container = (
-            load_analysis_config(args.analysis_config).execution_environment == "container"
-        )
+        _exec_env_container = load_analysis_config(args.analysis_config).execution_environment == "container"
         system = TRITONSWMM_system(
             args.system_config,
             gpu_hardware=gpu_hardware,
@@ -211,13 +206,9 @@ def main() -> int:
                 ),
                 config_path=str(args.hpc_system_config) if args.hpc_system_config else None,
             )
-        any_compile = (
-            args.compile_triton_swmm or args.compile_triton_only or args.compile_swmm
-        )
+        any_compile = args.compile_triton_swmm or args.compile_triton_only or args.compile_swmm
         if (not any_compile) and not (args.process_system_inputs):
-            logger.info(
-                "No compilation or processing flags were passed. Doing nothing."
-            )
+            logger.info("No compilation or processing flags were passed. Doing nothing.")
             _emit_runner_flag(args)
             return 0
 
@@ -235,9 +226,7 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         else:
-            logger.info(
-                "Skipping system-level input processing (--process-system-inputs not specified)"
-            )
+            logger.info("Skipping system-level input processing (--process-system-inputs not specified)")
 
         # ADR-1/M-7 (SE Spec 6): in container mode the SIF carries the pre-compiled
         # binary (built off-site), so the on-cluster compile AND its enabled-but-not-
@@ -248,9 +237,7 @@ def main() -> int:
         # mode (byte-identical) and to a no-op in container mode.
         _native_compile = not _exec_env_container
         if not _native_compile:
-            logger.info(
-                "Container mode — skipping on-cluster compile (SIF carries the binary)"
-            )
+            logger.info("Container mode — skipping on-cluster compile (SIF carries the binary)")
             # Container-mode solver provenance. The native capture
             # (system.py::_capture_tritonswmm_provenance) is UNREACHABLE here: both of
             # its call sites (system.py:645, :1486) live inside the two compiles this
@@ -310,6 +297,43 @@ def main() -> int:
                 _image_error: str | None = None
                 if _cspec is not None and _cspec.sif_path:
                     _sif = Path(_cspec.sif_path)
+
+                    # ADR-19 (ii-a) — the SIF's own content digest, captured HERE.
+                    #
+                    # DELIBERATELY INDEPENDENT OF THE LABEL READ BELOW, and placed before
+                    # it, because the two have DIFFERENT failure modes and must not share
+                    # a fate: hashing needs no `apptainer` binary and no modulefile, so an
+                    # image whose labels cannot be read still yields a digest. Folding it
+                    # into the inspect branches would make a module problem silently cost
+                    # the digest too.
+                    #
+                    # GATED ON is_file() because `_sif` is a DIRECTORY in the sandbox
+                    # branch below (`.singularity.d/labels.json` is a plain file inside
+                    # it). A sandbox container has no single blob to digest, so no digest
+                    # is recorded and the absence reads as "not captured" downstream —
+                    # never as "native run".
+                    #
+                    # Reuses `_sha256_file` rather than adding an eighth streaming-sha256
+                    # implementation to this codebase: the case-manifest stipulation binds
+                    # every sha256 the toolkit emits or verifies to that 1 MiB-chunk form,
+                    # so emit-side and verify-side agree by construction. Function-local
+                    # import, matching this block's own idiom.
+                    if _sif.is_file():
+                        try:
+                            from hhemt.bundle._emit import _sha256_file
+
+                            _sif_digest = _sha256_file(_sif)
+                            system.log.sif_sha256.set(_sif_digest)
+                            system.log.write()
+                            logger.info(f"[Provenance] container SIF sha256 {_sif_digest[:12]}… ({_sif})")
+                        except Exception as _dexc:
+                            # Never fail setup on a provenance read. Absence is honest.
+                            logger.warning(
+                                f"Container mode: could not digest {_sif} ({_dexc}); the "
+                                "bundle will carry no SIF sha256 and a reprex round-trip "
+                                "will report it as unverifiable rather than verified."
+                            )
+
                     _sandbox_labels = _sif / ".singularity.d" / "labels.json"
                     if _sandbox_labels.is_file():
                         # Sandbox directory: labels are a plain file. No binary, no
@@ -321,9 +345,7 @@ def main() -> int:
                         _q_sif = _shlex.quote(str(_sif))
                         _inspect = f"apptainer inspect --json {_q_sif}"
                         _mod = getattr(_cspec, "apptainer_module", None)
-                        _attempts = (
-                            [f"module load {_shlex.quote(_mod)} && {_inspect}"] if _mod else []
-                        ) + [_inspect]
+                        _attempts = ([f"module load {_shlex.quote(_mod)} && {_inspect}"] if _mod else []) + [_inspect]
                         for _cmd in _attempts:
                             try:
                                 _r = _subprocess.run(
@@ -357,18 +379,12 @@ def main() -> int:
                                 # with two failure producers in series plus the tool, so it
                                 # needs one more term, not fewer.
                                 _err = f"{_r.stderr}".lower()
-                                if (
-                                    _r.returncode == 127
-                                    or "command not found" in _err
-                                    or "lmod has detected" in _err
-                                ):
+                                if _r.returncode == 127 or "command not found" in _err or "lmod has detected" in _err:
                                     continue
                                 # The tool ran and refused the image. Keep the first line
                                 # of its own diagnosis; it is more specific than anything
                                 # reconstructable from the return code.
-                                _image_error = (
-                                    f"{_r.stderr}".strip().splitlines() or ["(no stderr)"]
-                                )[0]
+                                _image_error = (f"{_r.stderr}".strip().splitlines() or ["(no stderr)"])[0]
                                 break
                             _inspect_ran = True
                             _labels = (
@@ -435,9 +451,7 @@ def main() -> int:
                         "container whose labels need no binary."
                     )
             except Exception as _prov_exc:  # never fail setup on a provenance read
-                logger.warning(
-                    f"Container-mode TRITON provenance capture failed: {_prov_exc}"
-                )
+                logger.warning(f"Container-mode TRITON provenance capture failed: {_prov_exc}")
 
         # Phase 1b: Compile TRITON-SWMM (coupled model)
         if _native_compile and args.compile_triton_swmm:
@@ -453,29 +467,18 @@ def main() -> int:
                     logger.error("TRITON-SWMM: No backends compiled successfully")
                     logger.error(f"CPU log:\n{system.retrieve_compilation_log('cpu')}")
                     if system.gpu_compilation_backend:
-                        logger.error(
-                            f"GPU log:\n{system.retrieve_compilation_log('gpu')}"
-                        )
+                        logger.error(f"GPU log:\n{system.retrieve_compilation_log('gpu')}")
                     return 1
-                logger.info(
-                    f"TRITON-SWMM available backends: {', '.join(system.available_backends)}"
-                )
+                logger.info(f"TRITON-SWMM available backends: {', '.join(system.available_backends)}")
             except Exception as e:
                 logger.error(f"Failed to compile TRITON-SWMM: {e}")
                 logger.error(traceback.format_exc())
                 return 1
         elif _native_compile:
-            logger.info(
-                "Skipping TRITON-SWMM compilation (--compile-triton-swmm not specified)"
-            )
+            logger.info("Skipping TRITON-SWMM compilation (--compile-triton-swmm not specified)")
             # Verify compilation if model is enabled
-            if (
-                system.cfg_system.toggle_tritonswmm_model
-                and not system.compilation_successful
-            ):
-                logger.error(
-                    "TRITON-SWMM is enabled but not compiled and --compile-triton-swmm not specified"
-                )
+            if system.cfg_system.toggle_tritonswmm_model and not system.compilation_successful:
+                logger.error("TRITON-SWMM is enabled but not compiled and --compile-triton-swmm not specified")
                 return 1
 
         # Phase 1c: Compile TRITON-only (no SWMM coupling)
@@ -498,10 +501,7 @@ def main() -> int:
                 if not system.compilation_triton_only_cpu_successful:
                     logger.error("TRITON-only CPU compilation failed")
                     return 1
-                if (
-                    system.gpu_compilation_backend
-                    and not system.compilation_triton_only_gpu_successful
-                ):
+                if system.gpu_compilation_backend and not system.compilation_triton_only_gpu_successful:
                     logger.error("TRITON-only GPU compilation failed")
                     return 1
                 logger.info("TRITON-only compiled successfully")
@@ -510,17 +510,10 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         elif _native_compile:
-            logger.info(
-                "Skipping TRITON-only compilation (--compile-triton-only not specified)"
-            )
+            logger.info("Skipping TRITON-only compilation (--compile-triton-only not specified)")
             # Verify compilation if model is enabled
-            if (
-                system.cfg_system.toggle_triton_model
-                and not system.compilation_triton_only_successful
-            ):
-                logger.error(
-                    "TRITON-only is enabled but not compiled and --compile-triton-only not specified"
-                )
+            if system.cfg_system.toggle_triton_model and not system.compilation_triton_only_successful:
+                logger.error("TRITON-only is enabled but not compiled and --compile-triton-only not specified")
                 return 1
 
         # Phase 1d: Compile standalone SWMM
@@ -544,13 +537,8 @@ def main() -> int:
         elif _native_compile:
             logger.info("Skipping SWMM compilation (--compile-swmm not specified)")
             # Verify compilation if model is enabled
-            if (
-                system.cfg_system.toggle_swmm_model
-                and not system.compilation_swmm_successful
-            ):
-                logger.error(
-                    "SWMM is enabled but not compiled and --compile-swmm not specified"
-                )
+            if system.cfg_system.toggle_swmm_model and not system.compilation_swmm_successful:
+                logger.error("SWMM is enabled but not compiled and --compile-swmm not specified")
                 return 1
 
         logger.info("Setup workflow completed successfully")

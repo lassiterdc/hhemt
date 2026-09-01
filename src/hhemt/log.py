@@ -1,13 +1,14 @@
-from hhemt.utils import write_json, write_json_exclusive
-from hhemt.exceptions import ProcessingError
-from hhemt._filelock_compat import resolve_filelock
-from filelock import Timeout
-from pathlib import Path
-from pydantic import BaseModel, Field, field_serializer, PrivateAttr, field_validator
 import json
-from typing import Type, Optional, Generic, TypeVar, Any, Dict
 import logging
+from pathlib import Path
+from typing import Any, Generic, TypeVar
 
+from filelock import Timeout
+from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_validator
+
+from hhemt._filelock_compat import resolve_filelock
+from hhemt.exceptions import ProcessingError
+from hhemt.utils import write_json, write_json_exclusive
 
 T = TypeVar("T")  # Generic type variable
 
@@ -30,16 +31,16 @@ class LogField(Generic[T]):
 
     def __init__(
         self,
-        value: Optional[T] = None,
-        expected_type: Optional[Type[T]] = None,
+        value: T | None = None,
+        expected_type: type[T] | None = None,
     ):
-        self.value: Optional[T] = value
+        self.value: T | None = value
         self._expected_type = expected_type
 
     def set_log(self, log: "TRITONSWMM_log"):
         self._log = log
 
-    def set_type(self, expected_type: Type[T]):
+    def set_type(self, expected_type: type[T]):
         self._expected_type = expected_type
 
     def set(self, new_value: T):
@@ -72,16 +73,27 @@ class LogField(Generic[T]):
         self.value = None
         self._log.write()
 
-    def get(self) -> Optional[T]:
+    def get(self) -> T | None:
         if self.value is None or self._expected_type is None:
             return self.value
 
         try:
             return self._expected_type(self.value)  # type: ignore
-        except Exception:
-            raise TypeError(
-                f"Cannot coerce {self.value!r} " f"to {self._expected_type.__name__}"
-            )
+        except Exception as err:
+            # `from err`, NOT `from None`, and the choice is deliberate. The message names
+            # WHAT was attempted (value -> type); the inner exception is the only thing that
+            # says WHY. `int("12.5")` and `int(None)` produce the SAME message here and
+            # different causes (ValueError: invalid literal / TypeError: int() argument
+            # must be...). The `except Exception` is deliberately broad — it also catches
+            # whatever a tuple/dict coercion or a custom expected_type raises — so the cause
+            # is the only description of the actual failure.
+            #
+            # This is a LOG-READ path: it fires on a HYDRATED log, i.e. on bytes some earlier
+            # run (possibly a different toolkit version) persisted. That is exactly when the
+            # underlying error matters and cannot be reconstructed from the repr — which for
+            # a nested tuple or dict field is opaque or truncated. `from None` is right when
+            # the inner error is noise; here it IS the diagnosis.
+            raise TypeError(f"Cannot coerce {self.value!r} to {self._expected_type.__name__}") from err
 
     def as_dict(self):
         return {"value": self.value}
@@ -100,23 +112,21 @@ class LogFieldDict(Generic[T]):
 
     _log: "TRITONSWMM_log" = PrivateAttr()
 
-    def __init__(
-        self, d: Optional[Dict[Any, T]] = None, expected_type: Optional[Type[T]] = None
-    ):
-        self.value: Dict[Any, T] = d or {}
+    def __init__(self, d: dict[Any, T] | None = None, expected_type: type[T] | None = None):
+        self.value: dict[Any, T] = d or {}
         self._expected_type = expected_type
 
     def set_log(self, log: "TRITONSWMM_log"):
         self._log = log
 
-    def set(self, new_dict: Dict[Any, Any]):
+    def set(self, new_dict: dict[Any, Any]):
         for k, v in new_dict.items():
             if self._expected_type:
                 v = self._expected_type(v)  # type: ignore
             self.value[k] = v
         self._log.write()
 
-    def get(self) -> Dict[Any, T]:
+    def get(self) -> dict[Any, T]:
         if self._expected_type:
             return {k: self._expected_type(v) for k, v in self.value.items()}  # type: ignore
         return self.value
@@ -142,7 +152,7 @@ class ProcessingEntry(BaseModel):
 
 class Processing(BaseModel):
     _log: "TRITONSWMM_log" = PrivateAttr()
-    outputs: Dict[str, ProcessingEntry] = Field(default_factory=dict)
+    outputs: dict[str, ProcessingEntry] = Field(default_factory=dict)
 
     def set_log(self, log: "TRITONSWMM_log"):
         self._log = log
@@ -155,7 +165,7 @@ class Processing(BaseModel):
 # ----------------------------
 # Helper function to create validators and serializers
 # ----------------------------
-def _create_logfield_validator(expected_type: Optional[Type] = None):
+def _create_logfield_validator(expected_type: type | None = None):
     """Creates a validator function for LogField with optional type coercion."""
 
     def validator(cls, v: Any):
@@ -166,7 +176,7 @@ def _create_logfield_validator(expected_type: Optional[Type] = None):
     return validator
 
 
-def _create_logfielddict_validator(expected_type: Optional[Type] = None):
+def _create_logfielddict_validator(expected_type: type | None = None):
     """Creates a validator function for LogFieldDict with optional type coercion."""
 
     def validator(cls, v: Any):
@@ -181,7 +191,7 @@ def _create_logfielddict_validator(expected_type: Optional[Type] = None):
 
 def _logfield_serializer(v):
     """Serializer for LogField and LogFieldDict."""
-    if isinstance(v, (LogField, LogFieldDict)):
+    if isinstance(v, LogField | LogFieldDict):
         return v.get()
     if isinstance(v, Path):
         return str(v)
@@ -286,9 +296,7 @@ class TRITONSWMM_log(BaseModel):
                         # so under concurrency the quarantine captured a different
                         # document than the one that failed, and the diagnostic lied
                         # about the only thing it exists to record.
-                        _quarantine = self.logfile.with_suffix(
-                            f"{self.logfile.suffix}.unreadable"
-                        )
+                        _quarantine = self.logfile.with_suffix(f"{self.logfile.suffix}.unreadable")
                         try:
                             _quarantine.write_bytes(_raw)
                         except OSError:
@@ -307,20 +315,14 @@ class TRITONSWMM_log(BaseModel):
                             ),
                         ) from exc
                 mine = self.as_dict()
-                changed_keys = {
-                    k for k, v in mine.items() if v != self._baseline.get(k)
-                }
+                changed_keys = {k for k, v in mine.items() if v != self._baseline.get(k)}
                 # Overlay disk's value for every field I did NOT change, so a
                 # concurrent writer's updates win on those fields; my changed
                 # fields and required fields (e.g. logfile) come from mine.
                 # `k in mine` (SE-F-I-1 Spec 2) drops undeclared keys so removed
                 # all_* fields are NOT resurrected on write — closes the
                 # resurrection vector for any future field removal.
-                overlay = {
-                    k: v
-                    for k, v in disk.items()
-                    if k not in changed_keys and k in mine
-                }
+                overlay = {k: v for k, v in disk.items() if k not in changed_keys and k in mine}
                 merged = {**mine, **overlay}
                 # A write must never turn a NON-NULL on-disk value into null/absent
                 # for a field this instance did not deliberately change. The overlay
@@ -332,9 +334,7 @@ class TRITONSWMM_log(BaseModel):
                 # field REMOVAL shipped with a migration also lands here; that is
                 # why this is a warning and never a raise.
                 _dropped = sorted(
-                    k
-                    for k, v in disk.items()
-                    if v is not None and k not in changed_keys and merged.get(k) is None
+                    k for k, v in disk.items() if v is not None and k not in changed_keys and merged.get(k) is None
                 )
                 if _dropped:
                     logging.getLogger(__name__).warning(
@@ -379,7 +379,7 @@ class TRITONSWMM_log(BaseModel):
             return {k: self._dict_for_json(v) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [self._dict_for_json(x) for x in obj]
-        elif isinstance(obj, (LogField, LogFieldDict)):
+        elif isinstance(obj, LogField | LogFieldDict):
             return self._dict_for_json(obj.get())
         elif isinstance(obj, Path):
             return str(obj)
@@ -433,7 +433,7 @@ class TRITONSWMM_log(BaseModel):
 
 class TRITONSWMM_scenario_log(TRITONSWMM_log):
     event_iloc: int = 0
-    event_idx: Dict = Field(default_factory=dict)
+    event_idx: dict = Field(default_factory=dict)
     simulation_folder: Path = Path(".")
     logfile: Path
 
@@ -445,32 +445,20 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     storm_tide_for_swmm: LogField[Path] = Field(default_factory=LogField)
     # scenario creation
     scenario_creation_complete: LogField[bool] = Field(default_factory=LogField)
-    inp_hydraulics_model_created_successfully: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    inp_full_model_created_successfully: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    inp_hydro_model_created_successfully: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    inp_hydraulics_model_created_successfully: LogField[bool] = Field(default_factory=LogField)
+    inp_full_model_created_successfully: LogField[bool] = Field(default_factory=LogField)
+    inp_hydro_model_created_successfully: LogField[bool] = Field(default_factory=LogField)
     hydro_swmm_sim_completed: LogField[bool] = Field(default_factory=LogField)
     extbc_tseries_created: LogField[bool] = Field(default_factory=LogField)
     extbc_loc_created: LogField[bool] = Field(default_factory=LogField)
     hyg_timeseries_created: LogField[bool] = Field(default_factory=LogField)
     hyg_locs_created: LogField[bool] = Field(default_factory=LogField)
-    inflow_nodes_in_hydraulic_inp_assigned: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    inflow_nodes_in_hydraulic_inp_assigned: LogField[bool] = Field(default_factory=LogField)
     triton_swmm_cfg_created: LogField[bool] = Field(default_factory=LogField)
-    triton_cfg_created: LogField[bool] = Field(
-        default_factory=LogField
-    )  # TRITON-only CFG
+    triton_cfg_created: LogField[bool] = Field(default_factory=LogField)  # TRITON-only CFG
     sim_tritonswmm_executable_copied: LogField[bool] = Field(default_factory=LogField)
     # Track which backend was used for this scenario
-    triton_backend_used: LogField[str] = Field(
-        default_factory=LogField
-    )  # "cpu" or "gpu"
+    triton_backend_used: LogField[str] = Field(default_factory=LogField)  # "cpu" or "gpu"
     # This log tracks scenario preparation state only.
 
     # ----------------------------
@@ -545,12 +533,17 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     Field population by model type:
     - Common fields (all): simulation_completed, sim_run_time_minutes, processing_log
     - Performance fields (triton, tritonswmm): performance_timeseries_written, performance_summary_written
-    - TRITON fields (triton, tritonswmm): TRITON_timeseries_written, TRITON_summary_written, raw_TRITON_outputs_cleared, full_TRITON_timeseries_cleared
-    - SWMM fields (swmm, tritonswmm): SWMM_node/link_timeseries_written, SWMM_node/link_summary_written, raw_SWMM_outputs_cleared, full_SWMM_timeseries_cleared, raw_SWMM_binaries_reclaimed, coupled_rpt_truncated, hydro_out_reclaimed
+    - TRITON fields (triton, tritonswmm): TRITON_timeseries_written,
+      TRITON_summary_written, raw_TRITON_outputs_cleared,
+      full_TRITON_timeseries_cleared
+    - SWMM fields (swmm, tritonswmm): SWMM_node/link_timeseries_written,
+      SWMM_node/link_summary_written, raw_SWMM_outputs_cleared,
+      full_SWMM_timeseries_cleared, raw_SWMM_binaries_reclaimed,
+      coupled_rpt_truncated, hydro_out_reclaimed
     """
 
     event_iloc: int = 0
-    event_idx: Dict = Field(default_factory=dict)
+    event_idx: dict = Field(default_factory=dict)
     simulation_folder: Path = Path(".")
     logfile: Path
 
@@ -571,46 +564,46 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     processing_log: Processing = Field(default_factory=Processing)
 
     # Performance timeseries (triton and tritonswmm only)
-    performance_timeseries_written: Optional[LogField[bool]] = None
-    performance_summary_written: Optional[LogField[bool]] = None
+    performance_timeseries_written: LogField[bool] | None = None
+    performance_summary_written: LogField[bool] | None = None
 
     # TRITON outputs (triton and tritonswmm only)
-    TRITON_timeseries_written: Optional[LogField[bool]] = None
-    TRITON_summary_written: Optional[LogField[bool]] = None
-    raw_TRITON_outputs_cleared: Optional[LogField[bool]] = None
-    full_TRITON_timeseries_cleared: Optional[LogField[bool]] = None
+    TRITON_timeseries_written: LogField[bool] | None = None
+    TRITON_summary_written: LogField[bool] | None = None
+    raw_TRITON_outputs_cleared: LogField[bool] | None = None
+    full_TRITON_timeseries_cleared: LogField[bool] | None = None
 
     # SWMM outputs (swmm and tritonswmm only)
-    SWMM_node_timeseries_written: Optional[LogField[bool]] = None
-    SWMM_link_timeseries_written: Optional[LogField[bool]] = None
-    SWMM_node_summary_written: Optional[LogField[bool]] = None
-    SWMM_link_summary_written: Optional[LogField[bool]] = None
-    raw_SWMM_outputs_cleared: Optional[LogField[bool]] = None
-    full_SWMM_timeseries_cleared: Optional[LogField[bool]] = None
+    SWMM_node_timeseries_written: LogField[bool] | None = None
+    SWMM_link_timeseries_written: LogField[bool] | None = None
+    SWMM_node_summary_written: LogField[bool] | None = None
+    SWMM_link_summary_written: LogField[bool] | None = None
+    raw_SWMM_outputs_cleared: LogField[bool] | None = None
+    full_SWMM_timeseries_cleared: LogField[bool] | None = None
     # Post-processing reclaim (analysis_config.remove_after_processing) of
     # out_tritonswmm/swmm/*.out -- the coupled-SWMM binary outputs, NEVER the .rpt, which
     # is a live completion predicate. Distinct from raw_SWMM_outputs_cleared, which records
     # the clear_raw pass over the RAW SIM tree; these are two axes and two records.
     # Additive + defaulted None, so every pre-existing log_{model}.json deserialises
     # unchanged and consumers coalesce None -> not reclaimed.
-    raw_SWMM_binaries_reclaimed: Optional[LogField[bool]] = None
+    raw_SWMM_binaries_reclaimed: LogField[bool] | None = None
     # Post-processing TRUNCATION of out_tritonswmm/swmm/hydraulics.rpt to its header,
     # continuity/summary tables and trailer. TRUNCATION, never deletion -- the file remains
     # the coupled-run completion signal (Gotcha 70).
-    coupled_rpt_truncated: Optional[LogField[bool]] = None
+    coupled_rpt_truncated: LogField[bool] | None = None
     # Post-processing reclaim of swmm/hydro.out, the SWMM hydrology output that
     # write_hydrograph_files reads. Distinct from raw_SWMM_outputs_cleared (the clear_raw
     # pass over the RAW SIM tree) and from raw_SWMM_binaries_reclaimed (out_tritonswmm/swmm
     # binaries): three axes, three records.
-    hydro_out_reclaimed: Optional[LogField[bool]] = None
+    hydro_out_reclaimed: LogField[bool] | None = None
     # Three ADDITIVE records for the regeneration-cost classes. Same change class as the
     # allowlisted additive fields above: Optional and defaulted None, so every
     # pre-existing log_{model}.json deserialises unchanged and consumers coalesce
     # None -> not reclaimed. These are NEW keys, never renames of existing ones --
     # renaming an on-disk log key is the break that WOULD owe a LAYOUT_VERSION bump.
-    prep_inputs_reclaimed: Optional[LogField[bool]] = None
-    hydrographs_reclaimed: Optional[LogField[bool]] = None
-    standalone_rpt_reclaimed: Optional[LogField[bool]] = None
+    prep_inputs_reclaimed: LogField[bool] | None = None
+    hydrographs_reclaimed: LogField[bool] | None = None
+    standalone_rpt_reclaimed: LogField[bool] | None = None
 
     # Validators for LogField types
     _validate_bool_fields = field_validator(
@@ -721,12 +714,8 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     mannings_shape: LogField[tuple] = Field(default_factory=LogField)
 
     # TRITON-SWMM compilation
-    compilation_tritonswmm_cpu_successful: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    compilation_tritonswmm_gpu_successful: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    compilation_tritonswmm_cpu_successful: LogField[bool] = Field(default_factory=LogField)
+    compilation_tritonswmm_gpu_successful: LogField[bool] = Field(default_factory=LogField)
 
     # TRITON-only compilation
     compilation_triton_cpu_successful: LogField[bool] = Field(default_factory=LogField)
@@ -757,6 +746,24 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     # edit can contradict. Retiring the two keys is safe on legacy logs: TRITONSWMM_log sets no
     # `extra` policy, so pydantic's default `ignore` absorbs them on from_json.
     triton_head_sha: LogField[str] = Field(default_factory=LogField)
+
+    # ADR-19 (ii-a): the sha256 of the SIF this analysis RAN, captured at SETUP against
+    # the file at `container.sif_path` and carried to consolidation on this same log —
+    # the identical cross-job carrier `triton_head_sha` above uses, and for the identical
+    # reason (setup and consolidation are different SLURM jobs on HPC).
+    #
+    # WHY SETUP AND NOT CONSOLIDATION. `emit_provenance` fires once per sub-analysis AND
+    # once for the master, so capturing there would pay O(sub-analyses) multi-GB reads
+    # across as many SLURM jobs to produce that many copies of one constant — 29 reads on
+    # a 28-row matrix. Setup opens the file once, already.
+    #
+    # WHAT IT MEANS: the image AS INSPECTED AT SETUP. That is the correct referent rather
+    # than a defect — setup is where binary identity is fixed for the run.
+    #
+    # ADDITIVE + graceful-absent, exactly like the quartet above: a native run never sets
+    # it, a legacy log deserialises unchanged, and every consumer treats absence as
+    # "no digest recorded" rather than as a native run.
+    sif_sha256: LogField[str] = Field(default_factory=LogField)
 
     # PER-BUILD-TARGET TRITON provenance (contract item i). `triton_head_sha` above is
     # RETAINED with its exact meaning and every one of its consumers is untouched --
@@ -797,9 +804,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     standalone_swmm_producing_sha: LogField[str] = Field(default_factory=LogField)
 
     # System-level DataTree consolidation
-    system_datatree_consolidation_complete: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    system_datatree_consolidation_complete: LogField[bool] = Field(default_factory=LogField)
     dem_crs_epsg: LogField[int] = Field(default_factory=LogField)
     vertical_crs_epsg: LogField[int] = Field(default_factory=LogField)
 
@@ -826,6 +831,13 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
 
     _validate_string_fields = field_validator(
         "triton_head_sha",
+        # A NEW LogField ON THIS MODEL MUST BE LISTED IN BOTH HAND-MAINTAINED NAME
+        # LISTS ON THIS CLASS — this validator AND the serializer below. Omitting it
+        # from the serializer raises `Unable to serialize unknown type: LogField` and
+        # fails EVERY write of the whole log; the message names the TYPE, not the
+        # missing name, so it points away from the omission. Measured while adding
+        # `sif_sha256`: caught by tests/test_bundle.py, 3 errors, on the first run.
+        "sif_sha256",
         "tritonswmm_producing_sha",
         "triton_only_producing_sha",
         "standalone_swmm_producing_version",
@@ -854,6 +866,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_swmm_successful",
         "system_datatree_consolidation_complete",
         "triton_head_sha",
+        "sif_sha256",
         "tritonswmm_producing_sha",
         "triton_only_producing_sha",
         "standalone_swmm_producing_version",
@@ -865,9 +878,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
 
 class TRITONSWMM_analysis_log(TRITONSWMM_log):
     # Hierarchical DataTree consolidation (Phase 2)
-    datatree_consolidation_complete: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    datatree_consolidation_complete: LogField[bool] = Field(default_factory=LogField)
     consolidation_version: LogField[int] = Field(default_factory=LogField)
     # Fingerprint of the inputs that determine the SHAPE of the consolidated tree
     # (see processing_analysis.py::_consolidation_inputs_fingerprint). The
@@ -876,9 +887,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     # invalidates an otherwise-complete tree without any operator action.
     consolidation_inputs_fingerprint: LogField[str] = Field(default_factory=LogField)
     # Sensitivity-level DataTree consolidation (Phase 3)
-    sensitivity_datatree_consolidation_complete: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    sensitivity_datatree_consolidation_complete: LogField[bool] = Field(default_factory=LogField)
     # Track which backends are available at analysis creation time
     cpu_backend_available: LogField[bool] = Field(default_factory=LogField)
     gpu_backend_available: LogField[bool] = Field(default_factory=LogField)

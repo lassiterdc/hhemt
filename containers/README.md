@@ -13,7 +13,28 @@ Each SIF carries a pre-built, SWMM-coupled `triton.exe` plus a standalone
 **skipped** in container mode (this is what dissolves the M-7 libstdc++/MPI
 reconciliation bug class). The signed, fetched SIF's **SHA-256 is the
 within-family identity carrier** — a byte-identical SquashFS rebuild is
-foreclosed (ADR-4), so the SIF is referenced by DOI + SHA-256, never embedded.
+foreclosed (ADR-4), so the SIF is never embedded in a bundle.
+
+**What a bundle actually carries today, stated precisely, because the previous
+sentence here promised more than the code delivered.** It read *"the SIF is
+referenced by DOI + SHA-256"*, and that was two claims welded into one:
+
+- **SHA-256 — PRESENT.** The digest of the image the analysis RAN is captured at
+  setup (against `container.sif_path`) and emitted into the bundle's RO-Crate as a
+  `SoftwareApplication` entity. `bundle.reprex()` verifies a target SIF against it
+  **fail-closed** — a mismatch raises. A bundle emitted before this landed carries no
+  digest and now reports `sif_verified=None` (*nothing was checked*) rather than a
+  vacuous pass.
+- **DOI / fetchable URL — ABSENT, by design and pending a decision.** No
+  `downloadUrl` is emitted, because there is no deposit target: a SIF is multi-GB per
+  arch and archiving one needs a host with a decade-scale commitment, which is a budget
+  question rather than a toolkit one. The documented recourse is unchanged — obtain the
+  SIF out of band and point `hpc_system_config.container.sif_path` at it.
+
+**The digest does real work without the URL**, which is why the two shipped
+separately: a reproducer who obtains the image by ANY route — the manual transfer
+above, a colleague's copy, a future deposit — can now verify it is the right one.
+Before this, nobody could, by any means.
 
 > **Build host — per cluster (NOT uniformly off-site).**
 > - **UVA Rivanna:** build IN PLACE on Rivanna. `apptainer build --fakeroot` works

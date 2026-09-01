@@ -361,6 +361,46 @@ def _output_ids(analysis, member_id, event_id, model_type) -> list[str]:
     return [f"sims/{scen.event_id}/processed/{name}" for name in sorted(outs)]
 
 
+def _sif_spec_from_system_log(analysis) -> dict | None:
+    """Build the crate's by-reference SIF entity from the digest captured at SETUP.
+
+    THE GAP THIS CLOSES. `metadata.build_analysis_crate` has carried a complete SIF
+    entity — `{@id, softwareVersion, sha256, downloadUrl}` — and `sif_spec` has been a
+    wired-through parameter, but NO production caller ever passed a non-None value: both
+    `processing_analysis` and `sensitivity_analysis` omit it. So the whole downstream
+    chain was dormant. `_reprex._verify_sif` is genuinely FAIL-CLOSED (it raises on a
+    digest mismatch) and never executed, because `_find_sif_entity` selects on an entity
+    nobody emitted. A fail-closed check that never runs reads as protective and is not;
+    this is the one wire that makes it run.
+
+    Mirrors `processing_analysis._stamp_triton_provenance`: read the system log, refresh
+    it first because setup and consolidation are different processes on HPC, and be
+    graceful-absent throughout. A native run, a sandbox container, a pre-fix toolkit, or a
+    failed digest read all yield None — and None means NO SIF ENTITY, which every consumer
+    already handles.
+
+    NO `downloadUrl`. There is no deposit target, so there is no URL to record, and
+    inventing one would be worse than omitting it. The digest still does real work without
+    it: a reproducer who obtains the SIF by ANY route — the documented ADR-2 manual
+    transfer, a colleague's copy, a future deposit — can now verify it is the right image.
+    Today they cannot, by any means.
+    """
+    _sys_log = getattr(getattr(analysis, "_system", None), "log", None)
+    if _sys_log is None:
+        return None
+    try:
+        _sys_log.refresh()  # pick up the setup-process write in the cross-process case
+    except Exception:
+        pass
+    try:
+        digest = _sys_log.sif_sha256.get()
+    except Exception:
+        return None
+    if not digest:
+        return None
+    return {"@id": f"#sif-{str(digest)[:12]}", "sha256": str(digest)}
+
+
 def _agent_id(node: str | None) -> str:
     return f"#agent-{node or socket.gethostname()}"
 
@@ -387,6 +427,8 @@ def emit_provenance(
     )  # resolve at call time (throw-on-absence; no import-time read)
     cfg_case = _resolve_case_manifest(analysis)
     input_parts = _input_parts_from_case(cfg_case)
+    if sif_spec is None:
+        sif_spec = _sif_spec_from_system_log(analysis)
     alog = analysis.log  # TRITONSWMM_analysis_log (read-only)
     crate = build_analysis_crate(
         analysis_id=str(analysis.cfg_analysis.analysis_id),

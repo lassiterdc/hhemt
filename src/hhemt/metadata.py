@@ -90,8 +90,8 @@ _EMBEDDED_PROV_KEYS: frozenset[str] = frozenset(
         # C8 Workflow-Run-Crate mainEntity (deterministic; bundle-side upgrade only,
         # NOT emitted at consolidation — see upgrade_doc_to_workflow_run_crate):
         "programmingLanguage",  # mainEntity ComputationalWorkflow runtime ref
-        "mainEntity",           # Root focus -> the workflow
-        "url",                  # ComputerLanguage.url (fixed vocab URI)
+        "mainEntity",  # Root focus -> the workflow
+        "url",  # ComputerLanguage.url (fixed vocab URI)
     }
 )
 # Keys that MUST never appear in the embedded core (wall-clock/host/jobid/run-ordinal).
@@ -194,9 +194,22 @@ def build_analysis_crate(
                 properties={
                     "@type": "SoftwareApplication",
                     "name": sif_spec.get("name", "TRITON-SWMM Apptainer container"),
-                    "softwareVersion": sif_spec["softwareVersion"],
+                    # sha256 is the ONLY REQUIRED field, and that is the ADR-19 (ii-a)
+                    # split: a digest is emittable today from the image the run used,
+                    # while a downloadUrl requires a deposit target that does not yet
+                    # exist. Requiring the URL would have made the digest unemittable —
+                    # `sif_spec["downloadUrl"]` raised KeyError on a digest-only spec, so
+                    # the two halves of "referenced by DOI + SHA-256" were welded into one
+                    # all-or-nothing feature and neither shipped.
+                    #
+                    # softwareVersion is likewise optional: reading it means an
+                    # `apptainer inspect` label read, and NO consumer requires it —
+                    # `_reprex._find_sif_entity` selects on `sha256` and `_verify_sif`
+                    # reads only `sha256`. Taking a binary dependency for an unread field
+                    # would be cost without a consumer.
                     "sha256": sif_spec["sha256"],
-                    "downloadUrl": sif_spec["downloadUrl"],
+                    **({"softwareVersion": sif_spec["softwareVersion"]} if sif_spec.get("softwareVersion") else {}),
+                    **({"downloadUrl": sif_spec["downloadUrl"]} if sif_spec.get("downloadUrl") else {}),
                 },
             )
         )
@@ -327,9 +340,7 @@ def upgrade_doc_to_workflow_run_crate(doc: dict, *, workflow_relpath: str) -> di
     if isinstance(existing, dict):
         existing = [existing]
     existing_ids = {c.get("@id") for c in existing if isinstance(c, dict)}
-    root["conformsTo"] = list(existing) + [
-        {"@id": p} for p in _WFRUN_ROOT_PROFILES if p not in existing_ids
-    ]
+    root["conformsTo"] = list(existing) + [{"@id": p} for p in _WFRUN_ROOT_PROFILES if p not in existing_ids]
     return doc
 
 

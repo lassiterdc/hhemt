@@ -64,13 +64,52 @@ class Amendment:
 class ReprexResult:
     """The outcome of a bundle round-trip runnability check against a target profile."""
 
-    sif_reference_present: bool  # False => native-run bundle (no SIF in the crate)
-    sif_verified: bool  # digest match, or vacuously True for a native bundle
+    # False means ONLY "the crate carries no SIF entity". It does NOT mean "native run".
+    # The comment here previously said `False => native-run bundle`, and that was wrong in
+    # exactly the case that mattered: a CONTAINER bundle emitted before the ADR-19 (ii-a)
+    # digest wire, or one whose SIF was a sandbox directory, or one whose setup-time digest
+    # read failed, ALSO lands False. Read `sif_container_mode` beside it to tell those apart.
+    sif_reference_present: bool
+    # TRI-STATE, and the third value is the point:
+    #   True  — a digest was present and MATCHED (`_verify_sif` fail-closed, so a mismatch raises)
+    #   None  — NOTHING WAS CHECKED: a container bundle carrying no digest
+    #   False — reserved; unreachable today, because a mismatch raises rather than returns
+    # The old `bool` could not express None, so an unverifiable container bundle reported
+    # `True` with the comment "vacuously True for a native bundle" — a pass over a check
+    # that never ran, on a bundle that was not native. That is the same vacuity class this
+    # thread has now found three times; here it is closed by making the state representable
+    # rather than by a comment asking the reader to remember.
+    sif_verified: bool | None
     sif_signature_ok: bool | None  # None => apptainer/key unavailable, or native
     runnable: bool  # True => no sensitivity row exceeds a target partition cap
+    # The discriminator that makes `sif_reference_present=False` legible. Sourced from the
+    # bundle's OWN manifest (`container_build` is emitted iff the analysis was container-mode,
+    # `_emit.py`), so it is a property of the bundle rather than an inference about it.
+    #   True  + reference_present False -> container bundle, digest MISSING  (unverifiable)
+    #   False + reference_present False -> genuinely native                  (nothing to verify)
+    sif_container_mode: bool = False
     problem_pairs: list[ValidationIssue] = field(default_factory=list)  # (member_id, column)
     amendments: list[Amendment] = field(default_factory=list)
     zero_user_info_leaks: list[str] = field(default_factory=list)  # informational (ADR-9)
+
+
+def _bundle_is_container_mode(bundle_root: Path) -> bool:
+    """Was the bundled analysis container-mode? Read from the bundle's own manifest.
+
+    `emit_bundle` writes a `container_build` block IFF
+    `execution_environment == "container"` and refuses to emit at all without a recipe, so
+    the block's presence is a fact ABOUT THE BUNDLE rather than an inference about it. That
+    is what lets `sif_reference_present=False` be split into "native, nothing to verify" and
+    "container, nothing to verify WITH" — two states the old boolean collapsed into a pass.
+    Absent/unreadable manifest reads False, which degrades to the prior behaviour.
+    """
+    manifest = bundle_root / "bundle_manifest.json"
+    if not manifest.is_file():
+        return False
+    try:
+        return bool(json.loads(manifest.read_text()).get("container_build"))
+    except (ValueError, OSError):
+        return False
 
 
 def _find_sif_entity(bundle_root: Path) -> dict | None:
@@ -174,13 +213,17 @@ def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
 
     # 1. SIF resolve + verify (container bundle) or native no-SIF path.
     sif_entity = _find_sif_entity(bundle_root)
+    sif_container_mode = _bundle_is_container_mode(bundle_root)
     if sif_entity is not None:
         sif_reference_present = True
         sif_verified, sif_signature_ok = _verify_sif(Path(reprex_cfg.sif_path), sif_entity["sha256"])
     else:
         sif_reference_present = False
-        sif_verified = True  # native bundle: nothing to verify (vacuous pass)
         sif_signature_ok = None
+        # THE SPLIT. A native bundle has nothing to verify, so True is honest. A CONTAINER
+        # bundle with no digest had nothing to verify WITH, which is a different fact and
+        # must not report as a pass — it is exactly the state a pre-(ii-a) toolkit emits.
+        sif_verified = None if sif_container_mode else True
 
     # 2. Load the bundle's configs and re-aim them at the target HPC profile. Both
     # sides use the SINGLE reconstitution helpers (reconstitute_runnable_config /
@@ -310,8 +353,7 @@ def _emit_amendments(
                 to_value=None,
                 status="advisory",
                 reason=(
-                    "HPC-execution field with no deterministic target-partition mapping; "
-                    "revise to match your cluster."
+                    "HPC-execution field with no deterministic target-partition mapping; revise to match your cluster."
                 ),
             )
         )
