@@ -572,14 +572,14 @@ class TestModelArmEncoding:
             for fig in (self._panel12_fig(arm), self._panel34_fig(arm)):
                 markers = self._marker_traces(fig)
                 assert markers, "expected at least one marker trace"
-                assert not any(str(t.marker.symbol).endswith("-open") for t in markers), (
-                    f"arm-conditioned open-fill survived for model_arm={arm!r}"
-                )
+                assert not any(
+                    str(t.marker.symbol).endswith("-open") for t in markers
+                ), f"arm-conditioned open-fill survived for model_arm={arm!r}"
                 lines = self._connector_lines(fig)
                 assert lines, "expected a connector line for the multi-point group"
-                assert all(t.line.dash == "solid" for t in lines), (
-                    f"connector dash is not the constant single-arm style for {arm!r}"
-                )
+                assert all(
+                    t.line.dash == "solid" for t in lines
+                ), f"connector dash is not the constant single-arm style for {arm!r}"
 
 
 def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=200.0):
@@ -617,7 +617,7 @@ def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=2
         _get_enabled_model_types=lambda: {"tritonswmm"},
     )
     return SimpleNamespace(
-        sensitivity=SimpleNamespace(analyses={"serial_6_r1": sub}),
+        sensitivity=SimpleNamespace(members={"serial_6_r1": sub}),
         analysis_paths=SimpleNamespace(
             sensitivity_datatree_zarr=tree_path,
             analysis_dir=tmp_path,
@@ -665,9 +665,9 @@ def test_collect_rows_result_is_unchanged_when_the_ledger_csv_is_absent(tmp_path
     with_csv, _ = _collect_rows(_stub_analysis(tmp_path / "a"), "performance.Total")
     without_csv, _ = _collect_rows(_stub_analysis(tmp_path / "b", write_csv=False), "performance.Total")
     assert with_csv[0]["value"] == pytest.approx(200.0)
-    assert without_csv[0]["value"] == pytest.approx(with_csv[0]["value"]), (
-        "the presence of scenario_status.csv must not influence any plotted value"
-    )
+    assert without_csv[0]["value"] == pytest.approx(
+        with_csv[0]["value"]
+    ), "the presence of scenario_status.csv must not influence any plotted value"
 
 
 def test_collect_rows_reads_simulation_from_datatree_like_every_other_column(tmp_path):
@@ -696,7 +696,7 @@ def test_collect_rows_reads_simulation_from_datatree_like_every_other_column(tmp
         _get_enabled_model_types=lambda: {"tritonswmm"},
     )
     analysis = SimpleNamespace(
-        sensitivity=SimpleNamespace(analyses={"serial_6_r1": sub}),
+        sensitivity=SimpleNamespace(members={"serial_6_r1": sub}),
         analysis_paths=SimpleNamespace(sensitivity_datatree_zarr=tree_path, analysis_dir=tmp_path),
     )
     rows, _ = _collect_rows(analysis, "performance.Simulation")
@@ -940,9 +940,9 @@ def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(indep
     # --- The two groups must be INDEPENDENT: no top-row axis may match a bottom-row axis.
     bottom_refs = {_ref(3), _ref(4)}
     for row in (1, 2):
-        assert (fig.get_subplot(row, 1).xaxis.matches or _ref(row)) not in bottom_refs, (
-            f"row {row} is linked to a scaling-panel axis; the top pair would be forced onto the n_devices range"
-        )
+        assert (
+            (fig.get_subplot(row, 1).xaxis.matches or _ref(row)) not in bottom_refs
+        ), f"row {row} is linked to a scaling-panel axis; the top pair would be forced onto the n_devices range"
 
 
 def test_matplotlib_panels_form_two_independent_shared_groups_with_their_own_labels():
@@ -983,8 +983,12 @@ def test_axis_split_does_not_change_the_scaling_computation():
     assert bottom.x_col == "n_devices"
     df = pd.DataFrame(
         [
-            dict(member_id="a", group_value="cpu", n_devices=1, wallclock_s=100.0),
-            dict(member_id="b", group_value="cpu", n_devices=4, wallclock_s=25.0),
+            # The identity column is `sa_id`, NOT `member_id`: the member-vocabulary rename
+            # deliberately left this column's NAME alone, because it interoperates BY VALUE
+            # with `df_status` / `scenario_status.csv` and the `override_force_rerun` API key.
+            # `sensitivity_benchmarking._MEMBER_KEY` is the single definition and it is "sa_id".
+            dict(sa_id="a", group_value="cpu", n_devices=1, wallclock_s=100.0),
+            dict(sa_id="b", group_value="cpu", n_devices=4, wallclock_s=25.0),
         ]
     )
     via_group = _compute_speedup_per_group(
@@ -1107,9 +1111,9 @@ def test_a_gpu_token_shares_colour_and_symbol_with_cpu_mpi():
 
     for gv in ("gpu (a6000)", "gpu (a100-80)"):
         assert _colour_of(gv) == _colour_of("mpi"), f"{gv} does not share CPU-MPI's colour"
-        assert _decomposition_symbol(gv, **_DECOMP_KW[gv]) == _decomposition_symbol("mpi", **_DECOMP_KW["mpi"]), (
-            f"{gv} does not share CPU-MPI's symbol"
-        )
+        assert _decomposition_symbol(gv, **_DECOMP_KW[gv]) == _decomposition_symbol(
+            "mpi", **_DECOMP_KW["mpi"]
+        ), f"{gv} does not share CPU-MPI's symbol"
 
 
 def test_every_decomposition_is_absolutely_set_independent():
@@ -1126,9 +1130,9 @@ def test_every_decomposition_is_absolutely_set_independent():
     from hhemt.report_renderers.sensitivity_benchmarking import _decomposition_color
 
     params = set(inspect.signature(_decomposition_color).parameters)
-    assert not (params & {"all_groups", "color_groups", "groups"}), (
-        f"_decomposition_color reacquired a group-set parameter: {sorted(params)}"
-    )
+    assert not (
+        params & {"all_groups", "color_groups", "groups"}
+    ), f"_decomposition_color reacquired a group-set parameter: {sorted(params)}"
 
 
 def test_a_palette_too_short_for_the_declared_indices_raises():
@@ -1166,9 +1170,9 @@ def test_reaching_a_weak_line_slot_is_announced():
         warnings.simplefilter("always")
         rendered = {_colour_of(g, pal=tuple(pal)) for g in _REAL_MATRIX_GROUPS}
     assert rendered & _WEAK, f"fixture no longer reaches a weak slot; rendered {sorted(rendered)}"
-    assert any("poor LINE colour" in str(w.message) for w in caught), (
-        f"weak slot reached with no warning; warnings seen: {[str(w.message) for w in caught]}"
-    )
+    assert any(
+        "poor LINE colour" in str(w.message) for w in caught
+    ), f"weak slot reached with no warning; warnings seen: {[str(w.message) for w in caught]}"
 
 
 def test_colour_axis_and_column_axis_are_deliberately_different_axes():
@@ -1183,6 +1187,7 @@ def test_colour_axis_and_column_axis_are_deliberately_different_axes():
 
     n_colours = len({_colour_of(g) for g in _REAL_MATRIX_GROUPS})
     n_hw = len({_hardware_family(g) for g in _REAL_MATRIX_GROUPS})
-    assert (n_colours, n_hw) == (4, 3), (
-        f"expected 4 decomposition colours over 3 hardware families; got {n_colours} and {n_hw}"
-    )
+    assert (n_colours, n_hw) == (
+        4,
+        3,
+    ), f"expected 4 decomposition colours over 3 hardware families; got {n_colours} and {n_hw}"
