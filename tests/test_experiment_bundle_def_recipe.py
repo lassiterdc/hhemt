@@ -42,8 +42,13 @@ def _bundle_dir(tmp_path: Path, def_recipe: str) -> Path:
 @pytest.mark.parametrize(
     "value",
     [
-        "/scratch/dcl3nd/containers/uva-cuda.def",  # literal absolute
-        "/home/dcl3nd/containers/uva-cuda.def",  # literal home-absolute
+        # The username here is SYNTHETIC on purpose. These are negative fixtures --
+        # shapes the validator must reject -- and the shape is what is under test, not
+        # the user. A real username would be indistinguishable to the ADR-14
+        # anonymization guard from an actual leak, and would fail it. Follow the
+        # ZZ-prefixed synthetic-identifier idiom used by tests/test_check_anonymization.py.
+        "/scratch/ZZTESTUSER/containers/uva-cuda.def",  # literal absolute
+        "/home/ZZTESTUSER/containers/uva-cuda.def",  # literal home-absolute
         "~/containers/uva-cuda.def",  # tilde-rooted: operator-specific, same as absolute
         "$HHEMT_CONTAINERS/uva-cuda.def",  # UNBRACED $VAR: the resolver only expands ${...}
     ],
