@@ -16,7 +16,7 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: 9af752907fa02320901e1e849a3fbeed61a94eefc7927bdf6686c3c7d87d30e1
+    renderer_sha256: 5e58a7d124e0907803e36994e67a823608a5974e04494f2dd6029a58f56db71a
     justification: >-
       Iteration-8 caption-geometry group (D1.2 width declaration, D1.3
       content_width_px adoption, R5.6 literal-subtraction retirement), plus a
@@ -25,6 +25,21 @@ unpaired_allowlist:
       stipulation, and makes no structural claim about panels, columns or
       caption geometry, so none of those changes falsifies it. Looked; no
       change needed.
+      RE-RECORDED for the sa_id identity-column repair: the renderer changes are
+      the .agg revert to _MEMBER_KEY, a _require_member_key boundary guard and
+      its three call sites, the first-party import block moved to the canonical
+      top position (four E402), four B007 loop-variable renames, and an
+      in-figure annotation repair. Caption RE-READ in full: it describes the
+      dependent variable, aggregation mode, SWMM-only routing, the
+      wallclock-reduction stipulation and the per-report axis auto-scaling. None
+      of those is touched -- the identity column carries member provenance for
+      hover and per-point recovery, not the plotted quantity, and no panel,
+      column or axis semantics moved. The one caption-shaped defect found while
+      re-reading was NOT in this .rst but in the renderer's own in-figure
+      _bench_caption, which told the reader the hybrid digit was the MPI rank
+      count while both builders emit n_omp_threads; that string is FIXED in this
+      same change rather than allowlisted. Looked; no change needed to this
+      file.
   - renderer: cross_experiment_intercomparison_maps
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
     renderer_sha256: 882640f7f4e440bddad564484d61b4dbe149cd60e25a83e564105459fddb2fc1

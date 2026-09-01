@@ -52,6 +52,12 @@ import plotly.io as pio
 import xarray as xr
 from plotly.subplots import make_subplots
 
+from hhemt.exceptions import ProcessingError
+from hhemt.figure_caption import add_figure_caption, content_width_px
+from hhemt.report_renderers._figure_emission import emit_plot_with_sources
+from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
+from hhemt.swmm_output_parser import parse_total_elapsed
+
 # COLOUR IS THE DECOMPOSITION AXIS. Hardware is carried by the COLUMN FACET and by
 # nothing else; colour and marker symbol are LOCKED one-to-one and both key the
 # decomposition (see `_DECOMPOSITION_STYLE`). A GPU MPI run therefore draws the SAME
@@ -122,12 +128,6 @@ _CFG_HOVER_LABELS: dict[str, str] = {
     "n_nodes": "Nodes",
     "n_replicates": "Runs of this config",
 }
-
-
-from hhemt.figure_caption import add_figure_caption, content_width_px
-from hhemt.report_renderers._figure_emission import emit_plot_with_sources
-from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
-from hhemt.swmm_output_parser import parse_total_elapsed
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -786,7 +786,13 @@ def render(
         # This scalar feeds ALL FOUR metric calls below -- speedup line, speedup markers,
         # efficiency line, efficiency markers -- so this one argument moves BOTH panels.
         _df_avg = df.groupby(["group_value", "n_devices", "config_id"], as_index=False).agg(
-            wallclock_s=("wallclock_s", "mean"), member_id=("sa_id", "first")
+            # Emit the identity column under `_MEMBER_KEY`, matching this frame's own
+            # constructor at :1824/:1844 (`rows.append({"sa_id": member_id, ...})` -- the
+            # COLUMN is sa_id, the VARIABLE is member_id). The `**{...}` form binds the
+            # emitted name AND the source column to one constant; a plain keyword would
+            # bind neither, because a kwarg NAME cannot be a variable in this syntax.
+            wallclock_s=("wallclock_s", "mean"),
+            **{_MEMBER_KEY: (_MEMBER_KEY, "first")},
         )
         family_baselines = _resolve_family_baselines(
             df,
@@ -1287,6 +1293,50 @@ def _resolve_serial_baseline(
     return t_baseline
 
 
+#: The per-member identity column on every frame the metric helpers below consume.
+#: It is STILL `sa_id` after the member-vocabulary rename, and that is a DECLARED
+#: deferral rather than an oversight: the column interoperates BY VALUE with
+#: `df_status` / `scenario_status.csv` and with the `override_force_rerun` API key,
+#: so renaming it here would break a contract that crosses this module's boundary.
+#:
+#: SCOPE, measured rather than asserted -- read this before treating the constant as a
+#: rename lever. It binds FOUR of the seventeen live `"sa_id"` literals in this module:
+#: the aggregation at `_df_avg` and the three metric-helper reads below. THIRTEEN remain
+#: literals, including the two row-builder writes that CONSTRUCT the frame. A rename is
+#: therefore fourteen edits, not one, and the constant's presence must not be read as
+#: making it one. What it does buy is real and narrower: producers bind it via
+#: `**{_MEMBER_KEY: (_MEMBER_KEY, "first")}` -- the plain keyword form CANNOT, because a
+#: kwarg name is not an expression -- so both sides of the ONE aggregation that feeds the
+#: metric helpers name the same constant. That is exactly the producer/consumer pair the
+#: `KeyError: 'sa_id'` defect spanned, and no wider claim is available from it.
+#:
+#: This is a PARTIAL adoption of the `EVENT_LABEL_COLUMN` pattern (report_plot_ids.py),
+#: not an instance of it: that constant works because EVERY consumer imports it, and this
+#: one does not reproduce that property. Binding the remaining thirteen is a static-check
+#: question, filed separately.
+_MEMBER_KEY = "sa_id"
+
+
+def _require_member_key(frame, *, caller: str) -> None:
+    """Raise a NAMED error when a frame reaches a metric helper without `_MEMBER_KEY`.
+
+    The failure this replaces was a bare `KeyError: 'sa_id'` raised inside a per-point
+    loop, which names neither the frame nor the producer that built it. Raising at the
+    boundary names the caller, so the next producer/consumer disagreement is diagnosable
+    from the traceback instead of requiring the reader to walk back to the aggregation.
+    """
+    if _MEMBER_KEY not in frame.columns:
+        raise ProcessingError(
+            operation=f"benchmarking: {caller} received a frame without the member identity column",
+            filepath=None,
+            reason=(
+                f"expected column {_MEMBER_KEY!r}; got {sorted(frame.columns)}. A producer "
+                f"upstream renamed or dropped it -- check any .agg(...) or .rename(columns=...) "
+                f"between the source frame and this call."
+            ),
+        )
+
+
 def _compute_speedup_per_group(
     df: pd.DataFrame,
     *,
@@ -1325,6 +1375,7 @@ def _compute_speedup_per_group(
         global_anchor = None
     if baseline_mode in ("global", "serial") and global_anchor is None:
         return {}
+    _require_member_key(df, caller="_compute_speedup_per_group")
     out: dict[str, list[tuple[float, float, str]]] = {}
     for group_value, sub in df.groupby(group_col):
         # Keep the wallclock-min row per N so we can recover member_id of the winning config.
@@ -1341,7 +1392,7 @@ def _compute_speedup_per_group(
         pts: list[tuple[float, float, str]] = []
         for n_val, row in per_n_min.iterrows():
             n = int(n_val) if float(n_val).is_integer() else float(n_val)
-            pts.append((n, anchor / float(row[t_col]), str(row["sa_id"])))
+            pts.append((n, anchor / float(row[t_col]), str(row[_MEMBER_KEY])))
         pts.sort(key=lambda r: r[0])
         out[str(group_value)] = pts
     return out
@@ -1380,6 +1431,7 @@ def _compute_efficiency_per_group(
         global_anchor = None
     if baseline_mode in ("global", "serial") and global_anchor is None:
         return {}
+    _require_member_key(df, caller="_compute_efficiency_per_group")
     out: dict[str, list[tuple[float, float, str]]] = {}
     for group_value, sub in df.groupby(group_col):
         min_rows = sub.loc[sub.groupby(indep_col)[t_col].idxmin()]
@@ -1402,7 +1454,7 @@ def _compute_efficiency_per_group(
                 eff = anchor / (n * tN)
             else:
                 eff = anchor / tN
-            pts.append((n, eff, str(row["sa_id"])))
+            pts.append((n, eff, str(row[_MEMBER_KEY])))
         pts.sort(key=lambda r: r[0])
         out[str(group_value)] = pts
     return out
@@ -1434,6 +1486,7 @@ def _compute_metric_all_rows_per_group(
         raise ValueError(f"kind must be 'speedup' or 'efficiency'; got {kind!r}")
     if df.empty or anchor is None or anchor <= 0:
         return {}
+    _require_member_key(df, caller="_compute_metric_all_rows_per_group")
     out: dict[str, list[tuple[float, float, str]]] = {}
     for group_value, sub in df.groupby(group_col):
         pts: list[tuple[float, float, str]] = []
@@ -1447,7 +1500,7 @@ def _compute_metric_all_rows_per_group(
                 y = anchor / tN
             else:
                 y = anchor / (n * tN)
-            pts.append((n, y, str(row["sa_id"])))
+            pts.append((n, y, str(row[_MEMBER_KEY])))
         pts.sort(key=lambda r: (r[0], r[1]))
         if pts:
             out[str(group_value)] = pts
@@ -1506,7 +1559,7 @@ def _draw_metric_panel(
         if "n_omp_threads" in df_min.columns
         else {}
     )
-    for i, gv in enumerate(groups):
+    for _i, gv in enumerate(groups):
         pts = metric_per_group[gv]
         if not pts:
             continue
@@ -1610,7 +1663,7 @@ def _draw_panel(
     # channel, and its only consumer was the branch below. The config field survives for
     # other consumers; leaving the binding would be an unused local (ruff F841).
     cpu_marker = static_cfg.cpu_marker if static_cfg is not None else sens_cfg.cpu_marker
-    for i, gv in enumerate(groups):
+    for _i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
@@ -2163,7 +2216,8 @@ def _build_sensitivity_benchmarking_figure(
     # hardware-column count grows -- which is why the middle column's long
     # "Number of Devices (CPUs or GPUs)" title is the one that reaches the block first.
     _bench_caption = (
-        "The number beside each hybrid point is its MPI rank count."
+        "The number beside each hybrid point is its OpenMP threads per rank."
+        " The x axis is total devices N = ranks x threads/rank, so ranks = N divided by that number."
         " Speedup and efficiency are measured against each hardware family's own"
         " minimum-device run (CPU → serial CPU; each GPU → its own 1-GPU run),"
         " so S = 1.0 denotes a different wall-clock on each curve."
@@ -2335,7 +2389,7 @@ def _plotly_metric_panel(
     # the row emits duplicate identical entries. The CALLER owns the set when the row is
     # faceted, so first-occurrence is computed across every column rather than per panel.
     _legend_seen = legend_seen if legend_seen is not None else set()
-    for i, gv in enumerate(groups):
+    for _i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
@@ -2523,7 +2577,7 @@ def _plotly_metric_panel_precomputed(
         except KeyError:
             return None
 
-    for i, gv in enumerate(groups):
+    for _i, gv in enumerate(groups):
         if str(gv) not in per_group_data and gv not in per_group_data:
             continue
         data = per_group_data.get(str(gv), per_group_data.get(gv))
