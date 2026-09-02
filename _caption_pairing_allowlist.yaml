@@ -100,23 +100,23 @@ unpaired_allowlist:
       change to this file rather than on arrival.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 5fccf9b946a2d380cc3feb1ab0f9f9149cba0636f42974ce3aa88b40d7841041
+    renderer_sha256: 5be0ac5dac378685c7b89cb2cc1c9b16dee6f151f71b9f0f46e83ce0c5b4aee3
     justification: >-
-      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
-      not by judgement. This renderer's abstract syntax tree, parsed from the working
-      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
-      merge took the other branch's version of this file wholesale). The only textual
-      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
-      commit. A formatting change cannot alter a column, a unit, a section, or any
-      other claim a caption can make, so this caption cannot have gone stale and a
-      re-read has no possible finding. The renderer's semantics were reviewed on the
-      branch that authored them. Reproduce with:
-      python -c "import ast,subprocess;
-      f='src/hhemt/report_renderers/metadata.py';
-      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
-      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
-      Digest recorded AFTER the reformat, so the exemption expires on the next real
-      change to this file rather than on arrival.
+      V0020 vocabulary rename (spec S7). Caption RE-READ in full, and the finding is
+      that it makes no claim this change can touch. S7 edits ONE object:
+      _RULE_PREFIX_TO_PURPOSE, the rule-name-to-purpose label map. It adds an
+      experiment_consolidation entry, RETAINS the retired master_consolidation entry
+      deliberately (two on-disk carriers keep producing that name and V0020 renames
+      neither), and points both at the same label. That map feeds only the
+      SLURM-efficiency table.
+      The caption describes three sections -- Provenance summary, Data availability,
+      and Reproduction guide -- and does not describe the SLURM-efficiency table, name
+      any rule, or name any purpose label. So no column, unit, section, or claim it
+      makes changes. Verify by reading the caption against the S7 diff:
+      git diff -- src/hhemt/report_renderers/metadata.py
+      This is a PAIRING discharge on a re-read, not a formatting exemption: the change
+      is semantic, and the re-read found the caption's scope disjoint from it. Digest
+      recorded after S7, so the exemption expires on the next change to this renderer.
   - renderer: per_analysis_summary
     caption: src/hhemt/report_templates/captions/per_analysis_summary_table.rst
     renderer_sha256: 5101456a3a8a06645385ef08bb0756c2f25677e5f275173b0862d9ed3dd505d8

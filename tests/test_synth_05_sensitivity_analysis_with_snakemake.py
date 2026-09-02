@@ -73,7 +73,7 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
         master_snakefile_content,
         [
             "all",
-            "master_consolidation",
+            "experiment_consolidation",
             "prepare_member",
             "simulation_member",
             "process_member",
@@ -490,11 +490,11 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
 
 
 @pytest.mark.slow
-def test_master_consolidation_tolerates_incomplete_analysis(synth_sensitivity_analysis):
+def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivity_analysis):
     """Regression (sensitivity-consolidation-tolerate-incomplete).
 
     Reproduces the FUNCTION-LEVEL crash behind the live uva_sensitivity_suite
-    master_consolidation FileNotFoundError: consolidate_sensitivity_datatree
+    experiment_consolidation FileNotFoundError: consolidate_sensitivity_datatree
     raising when one member is incomplete (its per-scenario summary was
     never produced, its analysis_datatree.zarr was never built, and its
     datatree_consolidation_complete log is False — the real never-consolidated

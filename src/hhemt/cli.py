@@ -599,7 +599,7 @@ def cleanup_orphans_command(
             if zarr_removed:
                 extras.append("sensitivity_datatree.zarr")
             if master_flag_removed:
-                extras.append("f_consolidate_master_complete.flag")
+                extras.append("f_consolidate_experiment_complete.flag")
             extras_msg = f" plus {' and '.join(extras)}" if extras else ""
             console.print(
                 f"[green]Deleted {n_dirs} orphan dir(s), {n_flags} status flag(s), "

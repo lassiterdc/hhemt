@@ -107,10 +107,26 @@ _SCENARIO_STATUS_FILENAME = "scenario_status.csv"
 
 # rule_name prefix -> human-readable purpose. Deterministic, not heuristic: these are the
 # rule-name stems `workflow.py` emits, and `status_flags.write_status_flag` records the stem
-# verbatim. Ordered longest-prefix-first so `master_consolidation` is not eaten by
+# verbatim. Ordered longest-prefix-first so `experiment_consolidation` is not eaten by
 # `consolidate`. An unmatched rule_name renders its raw stem rather than a guessed verb.
+# The retired `master_consolidation` entry is RETAINED, and it is NOT transitional.
+# (CORRECTED: an earlier draft justified this by render bundles carrying `_status/`. That is
+#  FALSE -- `bundle/_emit.py:735` carries ONLY the DU sentinel, measured on a real Norfolk
+#  emit. The real mechanism is below.)
+# `_purpose_for_rule` is fed by `status_flags.harvest_slurm_job_index`, which derives rule
+# identity from `.snakemake/slurm_logs/rule_{name}/` DIRECTORY NAMES, and by
+# `_status/_job_index.json`, which MERGES without eviction so an entry is permanent once
+# written. V0020 renames neither. The Tier-2 log path is NOT inert here: the generated
+# profile sets `slurm-keep-successful-logs: True` (workflow.py:3811), which resolves the
+# caveat at metadata.py:678-683. So a migrated tree keeps yielding `master_consolidation`
+# indefinitely, and dropping this entry renders a raw identifier into a PUBLISHED report's
+# SLURM-efficiency table.
+# It goes only if the render path gains a layout-version gate that refuses an un-migrated
+# tree -- NOT by renaming the log directories, which cannot reach a tree that never migrated
+# and which the executor's own log pruning would undo regardless.
 _RULE_PREFIX_TO_PURPOSE: tuple[tuple[str, str], ...] = (
-    ("master_consolidation", "consolidate (master)"),
+    ("experiment_consolidation", "consolidate (experiment)"),
+    ("master_consolidation", "consolidate (experiment)"),
     ("consolidate", "consolidate"),
     ("simulation", "simulate"),
     ("run_", "simulate"),

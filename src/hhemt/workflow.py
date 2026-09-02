@@ -35,6 +35,7 @@ from hhemt.config.hpc_system import (
     resolve_gpus_per_node,
     system_directory_bind,
 )
+from hhemt.constants import consolidate_experiment_flag
 from hhemt.exceptions import ConfigurationError, WorkflowError
 from hhemt.orchestration import resolve_execution_locus
 from hhemt.report_plot_ids import (
@@ -981,7 +982,7 @@ class _ReportingSetDispatchMixin:
         and in what order; each entry names a builder method (by key) and an
         optional predicate_key gating conditional renderers (benchmarking, per_member).
         `input_flag` is threaded per generator (multisim: e_consolidate_complete;
-        master/reprocess: f_consolidate_master_complete).
+        master/reprocess: f_consolidate_experiment_complete).
 
         `interleave_after_unconditional` (B-i hook) is a zero-arg callable flushed
         ONCE immediately before the first predicate-keyed entry — so the export
@@ -1900,9 +1901,9 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # bounded: a floor at `render` must never reach `d_process_*`, because with
         # clear_raw in play re-running process can destroy raw BIN rasters.
         _FLOOR_FLAG_PREFIXES: dict[str, tuple[str, ...]] = {
-            "simulate": ("c_run_", "d_process_", "e_consolidate_", "f_consolidate_master"),
-            "process": ("d_process_", "e_consolidate_", "f_consolidate_master"),
-            "consolidate": ("e_consolidate_", "f_consolidate_master"),
+            "simulate": ("c_run_", "d_process_", "e_consolidate_", "f_consolidate_experiment"),
+            "process": ("d_process_", "e_consolidate_", "f_consolidate_experiment"),
+            "consolidate": ("e_consolidate_", "f_consolidate_experiment"),
             "render": (),  # no completion flag exists for the plot/export/render family
         }
         # Direct attribute read, NOT getattr-with-default: the default could never fail on a
@@ -2347,7 +2348,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
 
         ``input_flag`` defaults to the regular multisim consolidation flag
         (`e_consolidate_complete`); the sensitivity master Snakefile passes
-        `f_consolidate_master_complete.flag` instead.
+        `f_consolidate_experiment_complete.flag` instead.
         """
         import os as _os
 
@@ -3407,7 +3408,7 @@ rule render_report:
 
         ``input_flag`` defaults to the regular multisim consolidation flag
         (`e_consolidate_complete`); the sensitivity master Snakefile passes
-        `f_consolidate_master_complete.flag` instead.
+        `f_consolidate_experiment_complete.flag` instead.
         """
         if ctx is None:
             ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
@@ -8471,7 +8472,7 @@ onerror:
 
         rule_all_inputs = [f'"{flag}"' for flag in setup_target_flags]
         rule_all_inputs.extend(f'"{flag}"' for flag in consolidation_flags)
-        rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
+        rule_all_inputs.append(f'"{consolidate_experiment_flag()}"')
         # System-overview at master scope: the DEM and SWMM topology are shared
         # across members, so a single system_overview.png in the master
         # report is the natural place to surface them. Per-analysis summary at
@@ -8888,11 +8889,15 @@ onerror:
 
 '''
 
-        # Generate master consolidation rule
-        snakefile_content += f'''rule master_consolidation:
+        # Generate experiment consolidation rule. The flag name comes from the CENTRAL
+        # builder, never a literal: this site hardcoded it while the reprocess site
+        # already used the builder, so a builder-only edit produced a production
+        # Snakefile naming the OLD flag and a reprocess Snakefile naming the NEW one.
+
+        snakefile_content += f'''rule experiment_consolidation:
     input: {", ".join([f'"{flag}"' for flag in analysis_flags])}
-    output: "_status/f_consolidate_master_complete.flag"
-    log: "{log_dir_str}/master_consolidation.log"
+    output: "{consolidate_experiment_flag()}"
+    log: "{log_dir_str}/experiment_consolidation.log"
     conda: "{conda_env_path}"
     resources:
 {
@@ -8914,7 +8919,7 @@ onerror:
             --which {which} \\
             --compression-level {compression_level} \\
             --flag-output {{output}} \\
-            --rule-name master_consolidation \\
+            --rule-name experiment_consolidation \\
             > {{log}} 2>&1
         """
 '''
@@ -8927,11 +8932,11 @@ onerror:
         # set-invariant non-figure rule (Option B — NOT a renderer_selection
         # entry); the B-i interleave hook flushes it BETWEEN the unconditional and
         # conditional renderers, byte-matching the pre-refactor emission order.
-        # Master uses f_consolidate_master_complete.flag (NOT the multisim
+        # Master uses f_consolidate_experiment_complete.flag (NOT the multisim
         # e_consolidate_complete flag).
         snakefile_content += self._emit_active_set_plot_rules(
             _active_set,
-            input_flag="_status/f_consolidate_master_complete.flag",
+            input_flag=consolidate_experiment_flag(),
             predicate_inputs={
                 "independent_vars": _independent_vars,
                 "member_event_pairs_member": member_event_pairs_member,
@@ -8941,7 +8946,7 @@ onerror:
             },
             disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
-                input_flag="_status/f_consolidate_master_complete.flag",
+                input_flag=consolidate_experiment_flag(),
             ),
         )
 
@@ -9014,8 +9019,8 @@ rule render_report:
           ``start_with='consolidate'`` or ``'render'``: no process rules
           emitted; consolidate consumes ``c_run_*`` flags directly and
           ``--allow-incomplete`` is not added (fail-fast preserved).
-        - ``rule master_consolidation`` aggregating the per-member flags into
-          ``f_consolidate_master_complete.flag`` (overwrite + allow-incomplete
+        - ``rule experiment_consolidation`` aggregating the per-member flags into
+          ``f_consolidate_experiment_complete.flag`` (overwrite + allow-incomplete
           baked).
         - The full plot + ``export_scenario_status`` + ``render_report`` rules,
           reusing the same helpers as the production master Snakefile so the
@@ -9222,7 +9227,7 @@ onerror:
                 completed_member_ids.append(str(member_id_check))
         consolidation_flags = [consolidate_analysis_flag(member_id) for member_id in completed_member_ids]
         rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
-        rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
+        rule_all_inputs.append(f'"{consolidate_experiment_flag()}"')
         # Phase 3: per-plot disable — mirrors the production-master rule_all_inputs
         # site: each common-renderer append gated by renderer_active so a disabled
         # key drops from rule all AND the derived render_report subset; _disabled
@@ -9509,12 +9514,11 @@ onerror:
         # Master consolidation — aggregates the EMITTED per-member flags into the
         # master flag + sensitivity_datatree.zarr; overwrite + allow-incomplete
         # baked. Uses the central flag-name builder for the master flag (Spec 1).
-        from hhemt.constants import consolidate_master_flag
 
-        snakefile_content += f'''rule master_consolidation:
+        snakefile_content += f'''rule experiment_consolidation:
     input: {", ".join([f'"{flag}"' for flag in analysis_flags])}
-    output: "{consolidate_master_flag()}"
-    log: "{log_dir_str}/master_consolidation.log"
+    output: "{consolidate_experiment_flag()}"
+    log: "{log_dir_str}/experiment_consolidation.log"
     conda: "{conda_env_path}"
     resources:
 {
@@ -9537,7 +9541,7 @@ onerror:
             --which {which} \\
             --compression-level {compression_level} \\
             --flag-output {{output}} \\
-            --rule-name master_consolidation \\
+            --rule-name experiment_consolidation \\
             > {{log}} 2>&1
         """
 '''
@@ -9549,7 +9553,7 @@ onerror:
         # historically hand-maintained "byte-equivalent" guarantee structural.
         snakefile_content += self._emit_active_set_plot_rules(
             _active_set,
-            input_flag="_status/f_consolidate_master_complete.flag",
+            input_flag=consolidate_experiment_flag(),
             predicate_inputs={
                 "independent_vars": _independent_vars,
                 "member_event_pairs_member": member_event_pairs_member,
@@ -9559,7 +9563,7 @@ onerror:
             },
             disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
-                input_flag="_status/f_consolidate_master_complete.flag",
+                input_flag=consolidate_experiment_flag(),
             ),
         )
 
@@ -9646,7 +9650,7 @@ rule render_report:
             spec = RuleSpec(
                 rule_name=tmpl.rule_name,
                 renderer_module=tmpl.renderer_module,
-                input_flags=("_status/f_consolidate_master_complete.flag",),
+                input_flags=(consolidate_experiment_flag(),),
                 output_path_template=tmpl.output_path_template,
                 source_paths=("sensitivity_datatree.zarr",),
                 wildcards=tmpl.wildcards,
@@ -9707,7 +9711,7 @@ def _sensitivity_source_paths(wildcards):
         spec = RuleSpec(
             rule_name="plot_sensitivity_benchmarking",
             renderer_module="sensitivity_benchmarking",
-            input_flags=("_status/f_consolidate_master_complete.flag",),
+            input_flags=(consolidate_experiment_flag(),),
             # scenario_status.csv carries the OBSERVED per-sim device identity this
             # figure groups on. It is written by the separate `export_scenario_status`
             # rule, so without it as a declared input the read is unordered -- the same
@@ -9803,7 +9807,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         flood_spec = RuleSpec(
             rule_name="plot_per_sim_per_member_peak_flood_depth",
             renderer_module="per_sim_per_member_peak_flood_depth",
-            input_flags=("_status/f_consolidate_master_complete.flag",),
+            input_flags=(consolidate_experiment_flag(),),
             output_path_template=_plot_output_template(
                 renderer_kind="peak_flood_depth",
                 subdir="plots/sensitivity/per_sim/member-{member_id}/{event_id}",
@@ -9835,7 +9839,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         conduit_spec = RuleSpec(
             rule_name="plot_per_sim_per_member_conduit_flow",
             renderer_module="per_sim_per_member_conduit_flow",
-            input_flags=("_status/f_consolidate_master_complete.flag",),
+            input_flags=(consolidate_experiment_flag(),),
             output_path_template=_plot_output_template(
                 renderer_kind="conduit_flow",
                 subdir="plots/sensitivity/per_sim/member-{member_id}/{event_id}",

@@ -19,7 +19,7 @@ their report-target enumeration on summary-existence via the shared
 helpers. The PRODUCTION generator ``generate_master_snakefile_content`` is
 intentionally DESCOPED (it generates before sims run, so a generation-time gate
 is harmful, and its render failure is unreachable in a single-DAG ``run()`` — the
-report branch is transitively gated behind ``master_consolidation``); it is NOT
+report branch is transitively gated behind ``experiment_consolidation``); it is NOT
 covered here. See the phase-doc descope note + the v2 research addendum.
 """
 

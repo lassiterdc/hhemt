@@ -41,12 +41,12 @@ onerror:
 
 rule all:
     input:
-        "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
+        "_status/f_consolidate_experiment_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
 
-rule master_consolidation:
+rule experiment_consolidation:
     input: 
-    output: "_status/f_consolidate_master_complete.flag"
-    log: "{PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/master_consolidation.log"
+    output: "_status/f_consolidate_experiment_complete.flag"
+    log: "{PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/experiment_consolidation.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -66,13 +66,13 @@ rule master_consolidation:
             --which both \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name master_consolidation \
+            --rule-name experiment_consolidation \
             > {log} 2>&1
         """
 
 rule plot_system_overview:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/system_overview.html",
@@ -98,7 +98,7 @@ rule plot_system_overview:
 rule plot_per_analysis_summary_table:
     input:
         "scenario_status.csv",
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/per_analysis/summary_table.html",
@@ -125,7 +125,7 @@ rule plot_per_analysis_summary_table:
 rule plot_scenario_status_appendix:
     input:
         "scenario_status.csv",
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/appendix/scenario_status.html",
@@ -153,7 +153,7 @@ rule plot_errors_and_warnings:
     input:
         "scenario_status.csv",
         "validation_report.json",
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/errors_and_warnings/validation_report.html",
@@ -179,7 +179,7 @@ rule plot_errors_and_warnings:
 
 rule plot_disk_utilization:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/disk_utilization.html",
@@ -204,7 +204,7 @@ rule plot_disk_utilization:
 
 rule plot_metadata:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/metadata.html",
@@ -229,7 +229,7 @@ rule plot_metadata:
 
 rule plot_workflow_performance:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/workflow_performance.html",
@@ -255,7 +255,7 @@ rule plot_workflow_performance:
 localrules: export_scenario_status
 
 rule export_scenario_status:
-    input: "_status/f_consolidate_master_complete.flag"
+    input: "_status/f_consolidate_experiment_complete.flag"
     output:
         csv = "scenario_status.csv",
         md  = "workflow_summary.md",
@@ -309,7 +309,7 @@ def _sensitivity_source_paths(wildcards):
 rule plot_sensitivity_benchmarking:
     input:
         "scenario_status.csv",
-        master = "_status/f_consolidate_master_complete.flag",
+        master = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html",

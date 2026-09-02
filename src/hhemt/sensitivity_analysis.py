@@ -646,8 +646,8 @@ class TRITONSWMM_sensitivity_analysis:
         start_with
             Stage to re-fire from. ``"consolidate"`` (default) deletes per-member
             ``e_consolidate_member-{id}_complete.flag`` files and the master
-            ``f_consolidate_master_complete.flag``, then re-runs the consolidate
-            + master_consolidation + plot/render rule chain. ``"render"``
+            ``f_consolidate_experiment_complete.flag``, then re-runs the consolidate
+            + experiment_consolidation + plot/render rule chain. ``"render"``
             invalidates only the report artifacts. ``"process"`` reconciles
             stale ``d_process`` flags against summary existence and re-emits the
             per-(member, event) rebuild rules (Gotcha 34/40); it does NOT collapse
@@ -750,7 +750,7 @@ class TRITONSWMM_sensitivity_analysis:
                 # EXEMPT-DU: status-flag
                 (status_dir / f"e_consolidate_member-{member_id}_complete.flag").unlink(missing_ok=True)
             # EXEMPT-DU: status-flag
-            (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
+            (status_dir / "f_consolidate_experiment_complete.flag").unlink(missing_ok=True)
             # R7 (D2 Option a) — consolidate-stage divergence preflight. Login-node
             # fail-fast that converts the SILENT-partial-master-tree hazard into a
             # clear ConfigurationError. On start_with="consolidate" the generator's
@@ -1795,7 +1795,7 @@ class TRITONSWMM_sensitivity_analysis:
         the D6 fold) + a bounded own-files walk excluding the child-scope dirs —
         NEVER a full-tree ``compute_and_write_scope_sentinel`` walk on the
         largest tree in the system. Ordering is structurally safe: the
-        ``master_consolidation`` rule fans in on every per-sub completion flag,
+        ``experiment_consolidation`` rule fans in on every per-sub completion flag,
         so all per-sub sentinels exist before this runs. Compare-and-write keeps
         the call idempotent (mtime preserved on unchanged bytes), so it is safe
         to invoke on the already-consolidated early-return path too.
@@ -2266,7 +2266,7 @@ class TRITONSWMM_sensitivity_analysis:
         When any orphan is detected and deletion proceeds, the entire
         ``sensitivity_datatree.zarr`` is removed (rebuild approach — see plan
         D-SURGICAL) and the master-consolidation status flag is also removed so
-        Snakemake re-runs the master_consolidation rule on the next workflow run.
+        Snakemake re-runs the experiment_consolidation rule on the next workflow run.
 
         Parameters
         ----------
@@ -2354,7 +2354,7 @@ class TRITONSWMM_sensitivity_analysis:
                     )
                 fast_rmtree(zarr_path, analysis_dir=experiment_dir)  # PATTERN A
                 result["sensitivity_datatree_removed"] = True
-            master_flag = self.analysis_paths.analysis_dir / "_status" / "f_consolidate_master_complete.flag"
+            master_flag = self.analysis_paths.analysis_dir / "_status" / "f_consolidate_experiment_complete.flag"
             if master_flag.exists():
                 if verbose:
                     print(

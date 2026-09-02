@@ -558,7 +558,7 @@ def induce_incomplete_analysis(sensitivity, member_id, *, delete_master_tree=Tru
       * the sub's consolidation log-success record (so completion is not
         falsely reported),
     and (when ``delete_master_tree``) the master ``sensitivity_datatree.zarr``
-    plus ``f_consolidate_master_complete.flag`` so the next reprocess rebuilds.
+    plus ``f_consolidate_experiment_complete.flag`` so the next reprocess rebuilds.
     Leaves the sub's ``d_process_*`` and ``c_run_*`` flags INTACT — that is the
     divergence state under test. Returns the list of deleted summary paths.
     """
@@ -599,5 +599,7 @@ def induce_incomplete_analysis(sensitivity, member_id, *, delete_master_tree=Tru
         mtree = master.analysis_paths.sensitivity_datatree_zarr
         if mtree is not None and mtree.exists():
             fast_rmtree(mtree)
-        (master.analysis_paths.analysis_dir / "_status" / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
+        (master.analysis_paths.analysis_dir / "_status" / "f_consolidate_experiment_complete.flag").unlink(
+            missing_ok=True
+        )
     return deleted

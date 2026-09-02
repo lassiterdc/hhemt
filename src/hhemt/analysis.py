@@ -3991,7 +3991,7 @@ class TRITONSWMM_analysis:
         # that consumes from `analysis_dir/sims/`, which for sensitivity layouts does
         # not exist — sims live under `members/member_*/sims/`. The sensitivity-master
         # generator (SensitivityAnalysisWorkflowBuilder.generate_reprocess_master_snakefile_content)
-        # emits per-member consolidate rules + a master_consolidation rule that consume
+        # emits per-member consolidate rules + a experiment_consolidation rule that consume
         # from the correct paths. Pattern mirrors analysis.py:683-801 property
         # dispatches and the bundle CLI dispatch at cli.py:1026.
         if self.cfg_analysis.toggle_sensitivity_analysis:
