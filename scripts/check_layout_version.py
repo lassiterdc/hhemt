@@ -332,6 +332,31 @@ def _load_allowlist(sentinel: dict) -> dict[str, AllowlistEntry]:
         sig = raw.get("layout_signature")
         if sig is not None and not isinstance(sig, str):
             raise SystemExit(f"check_layout_version: layout_signature for {raw['path']!r} must be a string")
+        # DUPLICATE PATHS ARE THE IDIOM, NOT A DEFECT. 10 of this file's 35 entries are
+        # duplicates, and each occurrence carries its own justification naming its own
+        # change. They are an append-LOG over a frequently-amended file and the
+        # justifications are the audit trail, so agreeing occurrences MERGE rather than
+        # being refused.
+        #
+        # A ROW THAT OMITS layout_signature IS NOT ASSERTING "never check this file again".
+        # It is a row whose author did not supply an optional field while recording their
+        # own change. Plain `out[path] = ...` is last-wins, so such a row silently converts
+        # an earlier change-scoped exemption into a PERMANENT one -- the file becomes exempt
+        # from check-b regardless of what it later becomes, and nothing in the yaml says so.
+        # Measured on report_plot_ids.py: three rows, signature-scoped first, and its
+        # signature was UNREACHABLE rather than stale.
+        #
+        # Keeping the signature is therefore the merge that matches what the rows mean. A
+        # DELIBERATE downgrade to permanently-exempt is still expressible, but it must be an
+        # EDIT -- delete the signature from the row that carries it -- not an append. That is
+        # the intended asymmetry: retiring a file's change-scoped governance should read as a
+        # deletion in review, never as an addition nobody notices.
+        #
+        # SCOPE: a path whose rows carry TWO OR MORE signatures is UNTOUCHED by this edit.
+        # Those remain last-wins, exactly as before.
+        prior = out.get(raw["path"])
+        if sig is None and prior is not None and prior.layout_signature is not None:
+            sig = prior.layout_signature
         out[raw["path"]] = AllowlistEntry(justification=just, layout_signature=sig)
     return out
 

@@ -29,7 +29,7 @@ non_breaking_allowlist:
       file passed Check B silently, including numeric-correctness edits to the
       per-scenario perf zarrs. Re-stamp layout_signature whenever a genuinely
       non-breaking change lands; a breaking one must bump LAYOUT_VERSION instead.
-    layout_signature: "0a364a83d9638df0a1b5f51c9c7b250bc1db331251a286e7c87f973478f13f8a"
+    layout_signature: "8b1695b1bfa3bf1081ddb6a9705eb10354bb87a5abc6b4c4db26e17da163eac5"
   - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
     justification: >-
       DU-sentinel gate closure — a one-character correction inside an existing
@@ -74,7 +74,7 @@ non_breaking_allowlist:
       path-keyed with no layout_signature, which made the exemption PERMANENT — every
       later edit to this file passed Check B silently. Re-stamp layout_signature whenever
       a genuinely non-breaking change lands; a breaking one must bump LAYOUT_VERSION. AND synthetic-event-window-padding [Q85] scrub — the union-of-finite trim and its n_finite==0 raise are REMOVED; the event window is now read from a user-declared CSV (or, absent one, the full time-coordinate extent) and the selection is clipped to it, with a zero-length guard, a CSV-gated endpoint-equality assertion, a property-side zero-length guard, and a rule-(1) forcing-completeness check. _assert_scenario_forcing_window_agreement moves from divisibility to equality over three independent sources. Provably non-breaking: only the LENGTH of the per-scenario sim_weather.nc changes. No path, filename, zarr group, log field, Snakemake rule, fingerprint payload, or _version.json value is added, removed, or renamed, and the clip is the identity on an unpadded no-CSV input. Re-stamped again after a COMMENT-ONLY correction to resolve_event_window's docstring, which claimed the function reads nothing but the window CSV; its no-CSV branch also opens cfg_analysis.weather_timeseries for the axis endpoints. No executable line changed.
-    layout_signature: "0dd035df7f7d0892262354864f6eafc85a44cb17f55e55d7914f9bd2e212a53d"
+    layout_signature: "47f6503ba38544fbdcefc1266687acad080eeafcb5e26b1c5badb594de550ec2"
   - path: src/hhemt/config/analysis.py
     justification: >-
       synthetic-event-window-padding [Q85] scrub — ADDITIVE optional fields
@@ -275,7 +275,16 @@ non_breaking_allowlist:
       CHANGE-SCOPED via layout_signature: this exemption covers ONLY the current file content;
       any future grammar/stem edit yields a different hash and re-fires Check B (preserving
       layout-relevance per _load_allowlist).
-    layout_signature: "b5bf538ace86855c8321e37c2429b7ee257bc67e860634363b7e20a3f7735dda"
+      RE-STAMPED 2026-09-01, and the digest CROSSES A BREAKING CHANGE, which is why this
+      sentence exists. The prior signature predated 8de0c4f5, which renamed the ADR-2 stem
+      grammar from `__sa.{sa_id}` to `__member.{member_id}` -- the stem IS the on-disk figure
+      filename, so that rename was genuinely breaking. It is legitimate to re-stamp past it
+      ONLY because V0019__member_vocabulary.py already migrated it (LAYOUT_VERSION 19). The
+      drift from V0019 to this digest is one commit, 1 insertion + 1 deletion, touching none
+      of canonical_plot_id / plot_output_template / _OUTPUT_EXT_BY_RENDERER and leaving the
+      grammar docstring unchanged. Without this note a reader seeing a digest jump across
+      8de0c4f5 has no way to tell a discharged breaking change from an undeclared one.
+    layout_signature: "a43e91a49d17c0c0d25035065a7ca95e54c4e1713af0c01dcf2c1498738b8f42"
   - path: src/hhemt/cf_conventions.py
     justification: >-
       q8-tracked-vars-naming-divergence — _CF_VARIABLE_MAP metadata-only edit: add the
@@ -288,7 +297,7 @@ non_breaking_allowlist:
       ONLY the current file content; cf_conventions.py also carries apply_grid_mapping /
       apply_provenance_core, whose future edits could be layout-bearing, so any content
       drift re-fires Check B rather than inheriting a path-permanent pass.
-    layout_signature: "5d987e2a3b81db9a27ba577199504add7e810fdb807fb7239df74fef65bf5662"
+    layout_signature: "18a7d3bf876819bae2f47e5b3111ad8b8bfa69f7b38a11a97ea48f3ff222ca09"
   - path: src/hhemt/config/experiment_bundle.py
     justification: >
       Input-schema module only (the estate's experiment.yaml descriptor). Adds no
