@@ -74,7 +74,7 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
         raise typer.BadParameter(
             f"--override-force-rerun expects 'all', 'none', a JSON subject dict like "
             f"'{{\"member_id\":[0,5]}}', or a JSON stage form like "
-            f"'{{\"subject\":\"all\",\"stage\":\"render\"}}'; got: {value!r} ({exc})"
+            f'\'{{"subject":"all","stage":"render"}}\'; got: {value!r} ({exc})'
         ) from exc
 
 
@@ -83,6 +83,8 @@ app = typer.Typer(
     help="H&H Ensemble Modeling Toolkit: Coupled hydrodynamic-stormwater simulation orchestration",
     no_args_is_help=True,
 )
+
+
 @app.callback()
 def _root(ctx: typer.Context) -> None:
     """Root callback: one worktree-resolution guard for every CLI invocation.
@@ -164,6 +166,18 @@ def run_command(
             "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
+    ),
+    override_live_driver: str = typer.Option(
+        None,
+        "--override-live-driver",
+        help=(
+            "Assert that ONE recorded orchestration driver is dead, naming its exact "
+            "driver_id. Not a force flag: any other live-or-indeterminate driver still "
+            "refuses. Read the id from a *.json under "
+            "{analysis_dir}/_status/_orchestrator/, or from "
+            "hpc/sentinel_ops/report_sentinel_state.py. Prefer re-running from the "
+            "sentinel's origin host, which yields a measurement instead of a belief."
+        ),
     ),
     resume: bool = typer.Option(
         True,
@@ -414,6 +428,7 @@ def run_command(
             verbose=verbose,
             override_clear_raw=override_clear_raw,
             override_force_rerun=override_force_rerun,
+            override_live_driver=override_live_driver,
         )
 
         # Check workflow result
@@ -1218,6 +1233,24 @@ def run_experiment_command(
         help="Override the bundle's declared hpc_system_config for this cluster.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Plan only; write nothing."),
+    mode: str = typer.Option(
+        "resume",
+        "--mode",
+        help=(
+            "resume (default) picks up where the last invocation left off; "
+            "fresh WIPES the analysis directory first; overwrite reruns existing "
+            "scenarios without a full reset."
+        ),
+    ),
+    override_wipe_nonempty: bool = typer.Option(
+        False,
+        "--override-wipe-nonempty",
+        help=(
+            "Permit --mode fresh to delete an analysis directory that still holds "
+            "completed simulations, consolidated output, or in-flight sentinels. "
+            "DISTINCT from --yes, which only accepts the override table."
+        ),
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -1249,6 +1282,8 @@ def run_experiment_command(
             hpc_system_config_yaml=hpc_system_config,
             assume_yes=yes,
             wait=wait,
+            mode=mode,
+            override_wipe_nonempty=override_wipe_nonempty,
         )
         message = getattr(result, "message", "") or ""
         if dry_run:
@@ -1256,7 +1291,11 @@ def run_experiment_command(
         else:
             success = getattr(result, "success", None)
             console.print(f"[green]run-experiment complete[/green] (success={success}). {message}")
-        raise typer.Exit(0)
+        # A refused submit must not read as success to the shell. tk.run RETURNS a WorkflowResult
+        # and does not raise, so exiting 0 unconditionally writes green over zero work -- measured
+        # on Irene job 18708464, and the reason the stochastic submit script hand-rolls this gate.
+        # dry_run has no success field to test, so it keeps the unconditional 0.
+        raise typer.Exit(0 if (dry_run or getattr(result, "success", None)) else 1)
     except typer.Exit:
         raise
     except ConfigurationError as e:
@@ -2017,8 +2056,7 @@ def _list_excludable_callback(value: bool) -> bool:
     for name, entry in sorted(_EXCLUDABLE_CATALOG.items()):
         if entry.excludable:
             console.print(
-                f"  [green]{name}[/green]\n      {entry.description}\n"
-                f"      cost: {entry.reproducibility_cost}"
+                f"  [green]{name}[/green]\n      {entry.description}\n" f"      cost: {entry.reproducibility_cost}"
             )
         else:
             console.print(
@@ -2117,6 +2155,20 @@ def bundle_command(
         is_eager=True,
         help="Print the excludable-input catalog and exit (no configs required).",
     ),
+    experiment_config: Path = typer.Option(
+        None,
+        "--experiment-config",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help=(
+            "Optional experiment bundle DIRECTORY (containing experiment.yaml). When "
+            "given, container.def_recipe supplies --container-defs; supplying both is "
+            "refused unless they agree. Single-arch: for ADR-19 multi-SIF, omit this "
+            "and pass --container-defs per arch."
+        ),
+    ),
 ) -> None:
     """Emit a portable render bundle for local renderer iteration.
 
@@ -2145,9 +2197,10 @@ def bundle_command(
         target = analysis.sensitivity.experiment
     else:
         target = analysis
-    bundle_path = emit_bundle(
-        target, output, exclude_config=exclude_config, container_defs=container_defs
-    )
+    from hhemt.experiment_bundle import resolve_container_defs
+
+    container_defs = resolve_container_defs(experiment_config, container_defs)
+    bundle_path = emit_bundle(target, output, exclude_config=exclude_config, container_defs=container_defs)
     if exclude_config is None:
         console.print(f"[green]Bundle emitted (self-contained):[/green] {bundle_path}")
     else:
@@ -2318,9 +2371,7 @@ def ingest_command(
 
     try:
         if not (doi or pid):
-            raise CLIValidationError(
-                "doi", "Provide at least one of --doi or --pid."
-            )
+            raise CLIValidationError("doi", "Provide at least one of --doi or --pid.")
         exp = TRITON_SWMM_experiment.from_doi(
             doi=doi,
             pid=pid,

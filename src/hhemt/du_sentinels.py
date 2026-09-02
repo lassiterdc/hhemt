@@ -123,9 +123,7 @@ def _walk_root_bytes(root: Path) -> tuple[int, int]:
             return root.stat().st_size, 0
         except OSError:
             return 0, 1
-    total, _per_child, walk_errors = _scandir_walk(
-        root, want_breakdown=False, skip_status_top=False
-    )
+    total, _per_child, walk_errors = _scandir_walk(root, want_breakdown=False, skip_status_top=False)
     return total, walk_errors
 
 
@@ -385,9 +383,7 @@ def restamp_parent_sentinels(removed_path: Path, *, analysis_dir: Path) -> None:
         sentinel = cur / "_status" / "_du.json"
         if sentinel.exists() or (cur / "_status").exists():
             scope: Scope = _infer_scope(cur, analysis_dir)
-            _child_dirs = (
-                ["sims"] if scope == "member" else (["members", "sims"] if scope == "analysis" else [])
-            )
+            _child_dirs = ["sims"] if scope == "member" else (["members", "sims"] if scope == "analysis" else [])
             if scope == "scenario" or not _child_dirs:
                 compute_and_write_scope_sentinel(cur, scope=scope)
             else:

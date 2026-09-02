@@ -1,9 +1,13 @@
 """Tests for the F2-introduced `analysis_config.report` field (R7, R12)."""
+
 from __future__ import annotations
+
 from pathlib import Path
-import yaml
+
 import pytest
+import yaml
 from pydantic import ValidationError
+
 from hhemt.config.analysis import analysis_config
 from hhemt.config.loaders import yaml_to_model
 
@@ -78,9 +82,7 @@ def test_analysis_config_rejects_missing_report(tmp_path, stubbed_paths):
     cfg_path.write_text(yaml.safe_dump(base))
     with pytest.raises(ValidationError) as excinfo:
         yaml_to_model(cfg_path, analysis_config)
-    missing = {
-        e["loc"][0] for e in excinfo.value.errors() if e["type"] == "missing"
-    }
+    missing = {e["loc"][0] for e in excinfo.value.errors() if e["type"] == "missing"}
     assert "report" in missing
 
 

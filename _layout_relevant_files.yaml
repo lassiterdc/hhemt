@@ -140,7 +140,15 @@ non_breaking_allowlist:
       thread) + run-honesty-orphan-dryrun-reportconfig Phase 1 (find_orphan_input_fingerprints
       + 4th cleanup class). Signature/read-delete behavior over the existing
       sa-{sa_id}_inputs.json fingerprint format; no on-disk fingerprint schema/path/
-      _version.json/datatree change.
+      _version.json/datatree change. AND driver-liveness-gate-on-submit — the
+      sensitivity-master submit path's bespoke orchestrator-sentinel WRITE is replaced
+      by a gate-and-claim call to SnakemakeWorkflowBuilder._acquire_submit_driver_claim
+      (the submit-path sibling of _acquire_reprocess_driver_claim), closing the
+      double-launch in which the submit path recorded a driver and never consulted the
+      record. Provably non-breaking: the _status/_orchestrator/{driver_id}.json payload
+      schema, its path, and its write/enrich/remove lifecycle are byte-unchanged — only
+      the decision to write it is now gated. No fingerprint, zarr group, log field,
+      Snakemake rule, figure stem, or _version.json change.
   - path: src/hhemt/config/viz_vocabulary.py
     justification: >-
       reporting-system frozen-viz-vocabulary — new frozen plotting-vocabulary module
@@ -320,6 +328,38 @@ non_breaking_allowlist:
       TYPE is unchanged and no caller's behaviour changes; adds no on-disk
       analysis-tree layout, no _version.json field and no consolidated-output
       variable. Same class as the case_manifest.py / reprex_config.py entries.
+  - path: src/hhemt/log.py
+    justification: >-
+      version-provenance-four-axes — ADDITIVE LogField[str] quartet on
+      TRITONSWMM_system_log (tritonswmm_producing_sha, triton_only_producing_sha,
+      standalone_swmm_producing_version, standalone_swmm_producing_sha), each
+      default_factory=LogField so every pre-existing system_log.json deserialises
+      unchanged and an unset field reads as INDETERMINATE. triton_head_sha is RETAINED
+      with its exact meaning and all 13 of its consumers across 6 modules are untouched;
+      the new fields answer a DIFFERENT question (which source state produced THIS
+      binary) and are written only by a compile invocation that actually built that
+      target. Same change class as this file's already-allowlisted additive n_resumes
+      and raw_SWMM_binaries_reclaimed entries. No on-disk filename, zarr group, or
+      _version.json change. AND ADR-19 (ii-a) — one more ADDITIVE LogField[str]
+      (sif_sha256) on the same model, same default_factory=LogField, carrying the digest
+      of the SIF an analysis RAN from setup to consolidation across two SLURM jobs. Same
+      class and same graceful-absent contract: a native run never sets it, a pre-existing
+      system_log.json deserialises unchanged, and absence reads as "no digest recorded"
+      rather than as a native run. NOTE for the next editor of this model: a new LogField
+      must ALSO be added to the two hand-maintained name lists on the class (the
+      _validate_string_fields validator and the _serialize_logfields serializer) — omitting
+      it from the serializer makes EVERY write of the whole log raise, and the error names
+      the TYPE rather than the missing field name.
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      version-provenance-four-axes — _stamp_triton_provenance additionally stamps the
+      four new per-target/standalone provenance values onto the consolidated-tree root.
+      They are PLAIN root attrs, deliberately kept out of metadata._EMBEDDED_PROV_KEYS,
+      so they never enter the Gotcha-63 byte-identity golden fixtures and cannot churn
+      them. Each is stamped independently and absence reads as INDETERMINATE downstream,
+      so an old tree lacking them classifies exactly as it does today and a new tree read
+      by an old toolkit shows them absent rather than wrong. Same class as the existing
+      triton_producing_sha stamp entry directly above.
   - path: src/hhemt/config/analysis.py
     justification: >-
       S8a stage-4 Round 2 (vocabulary rename) -- is_subanalysis -> is_experiment_member and

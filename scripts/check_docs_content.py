@@ -165,9 +165,7 @@ def generated_files(docs_dir: Path) -> list[Path]:
     do that -- it is read once, by whoever writes it.
     """
     return [
-        md
-        for md in sorted(docs_dir.rglob("*.md"))
-        if _is_generated(md.read_text(encoding="utf-8", errors="ignore"))
+        md for md in sorted(docs_dir.rglob("*.md")) if _is_generated(md.read_text(encoding="utf-8", errors="ignore"))
     ]
 
 

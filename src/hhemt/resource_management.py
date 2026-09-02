@@ -9,8 +9,10 @@ Classes:
 """
 
 import os
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
 import psutil
-from typing import TYPE_CHECKING, Mapping
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -87,9 +89,7 @@ class ResourceManager:
                 n_nodes = analysis.cfg_analysis.n_nodes or 1
 
                 cpus_per_sim = mpi_ranks * omp_threads
-                mem_mb_per_sim = (
-                    analysis.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
-                )
+                mem_mb_per_sim = analysis.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
 
                 max_nodes = max(max_nodes, n_nodes)
                 max_cpus = max(max_cpus, cpus_per_sim)
@@ -392,7 +392,7 @@ class ResourceManager:
         # Verbose logging
         # ----------------------------
         if verbose:
-            print(f"[SLURM] Resource Constraints:", flush=True)
+            print("[SLURM] Resource Constraints:", flush=True)
             print(f"  Nodes: {num_nodes}", flush=True)
             print(f"  CPUs per node: {cpus_on_node}", flush=True)
             print(f"  Total CPUs Allocated (SLURM): {slurm_total_cpus}", flush=True)

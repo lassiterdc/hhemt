@@ -27,10 +27,12 @@ import pytest
 GUARD_PATH = Path(__file__).resolve().parents[1] / "scripts" / "check_env_lock_consistency.py"
 
 # A minimal tree that is CLEAN under every pre-existing assertion (a)-(e):
-# environment.yaml declares every pyproject core dep except the exempt swmmio,
-# carries a conda swmm-toolkit pin, names no guarded package in its pip block;
-# the lock's swmm-toolkit minor matches, its pyswmm is 2.x, it has no
-# self-referential `hhemt==` entry and no `prefix:` key.
+# environment.yaml declares every pyproject core dep except the exempt swmmio /
+# swmm-toolkit / pyswmm, declares NO conda swmm-toolkit or pyswmm pin (the engine
+# is a post-create `pip install --no-deps` step since conda-forge's 0.15 line stops
+# at 0.15.2, below pyproject's >=0.15.3 floor), and names no guarded package in its
+# pip block; the lock likewise carries no conda swmm pin, has no self-referential
+# `hhemt==` entry and no `prefix:` key.
 _PYPROJECT = """\
 [project]
 name = "fixture"
@@ -44,8 +46,6 @@ dependencies = [
 _LOCK = """\
 name: fixture
 dependencies:
-  - swmm-toolkit=0.15.5=py311h0000000_0
-  - pyswmm=2.0.1=pyhd8ed1ab_0
   - pip:
       - tabulate
 """
@@ -58,8 +58,6 @@ name: fixture
 dependencies:
   - python=3.11
   - {pydantic_spec}
-  - swmm-toolkit=0.15.5
-  - pyswmm=2.0.1
   - pip:
       - tabulate
 """

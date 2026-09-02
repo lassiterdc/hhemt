@@ -59,10 +59,14 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     # it keeps a plain `cd containers && apptainer build --fakeroot out.sif uva-cuda.def`
     # working from any clean clone, with no out-of-band context-prep step. Measured on
     # the Rivanna build checkout 2026-07-19: no bundled TRITON clone, test_data 12 MB,
-    # .git 16 MB -- so the usual "`../` drags in the world" objection does not bind here.
-    # The one large item is a host-built .venv (1.6 GB when the estate provisioned one
-    # in-place); it is COPIED but never survives, because (2) below does `rm -rf .venv`
-    # before `uv sync`. Net cost is build-time scratch I/O only, not image size.
+    # .git 16 MB -- so on SIZE the usual "`../` drags in the world" objection is mild.
+    # SIZE IS NOT THE ONLY COST. `%files` has no ignore mechanism, so `../` also copies
+    # `.git` -- the full commit history, with author names and e-mail addresses -- into
+    # the image, where no working-tree anonymization guard can see it. TWO host-built
+    # artifacts are therefore removed in (2) below: the `.venv` (1.6 GB when the estate
+    # provisioned one in-place; it would otherwise break `uv sync`) and `.git` (an
+    # identity leak). Both are COPIED and neither survives. Net cost is build-time
+    # scratch I/O only, not image size.
     ../  /opt/hhemt-src
 
 %post
@@ -150,6 +154,18 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     # libs absent in the container -> `uv sync` would die querying it) so uv builds a
     # clean container-native venv from uv.lock.
     cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
+    # Strip the copied `.git` BEFORE it lands in the image. `%files` has NO ignore
+    # mechanism -- there is no `.apptainerignore`, and `.dockerignore` is a Docker-only
+    # build-context filter -- so `../` copies the repo's full history: author names,
+    # e-mail addresses, branch names, and any secret ever committed. Nothing else here
+    # removes it, and `scripts/check_anonymization.py` cannot see it, because that guard
+    # enumerates `git ls-files` in a WORKING TREE and never reads image contents.
+    # Safe to remove: the toolkit version is static (`pyproject.toml` version = "0.1.0",
+    # setuptools, no setuptools_scm), and `org.hhemt.hhemt_sha` is stamped HOST-side by
+    # `build_sifs_uva.sh` (`git -C "$TOOLKIT" rev-parse HEAD` + `sed` into a derived
+    # .def) BEFORE the build -- so no in-image consumer needs `.git`. Removed AFTER
+    # `uv sync` so the install path is unaffected regardless.
+    rm -rf /opt/hhemt-src/.git
     export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
 
     # --- (3) TRITON-SWMM at a PINNED COMMIT (OE-3), Kokkos-CUDA, the PROVEN flags.

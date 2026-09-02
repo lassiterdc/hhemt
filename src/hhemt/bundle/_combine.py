@@ -776,9 +776,7 @@ class CombinedBundle:
         """
         return self._root
 
-    def regenerate_report(
-        self, *, format: Literal["html", "zip"] = "zip", declare_stale_plots: bool = False
-    ) -> Path:
+    def regenerate_report(self, *, format: Literal["html", "zip"] = "zip", declare_stale_plots: bool = False) -> Path:
         """Regenerate the combined report from the bundled data (mirrors Bundle.regenerate_report).
 
         Re-invokes the SAME render path against the bundle root — a REAL

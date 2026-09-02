@@ -131,16 +131,15 @@ def render(
     if _renders_swmm:
         hydro_rel = os.path.relpath(str(Path(hydro_inp).resolve()), analysis_root)
         hydraulics_rel = os.path.relpath(
-            str(Path(hydraulics_inp).resolve()), analysis_root,
+            str(Path(hydraulics_inp).resolve()),
+            analysis_root,
         )
     dem_rel = os.path.relpath(str(Path(sys_paths.dem_processed).resolve()), analysis_root)
     mannings_rel = os.path.relpath(
-        str(Path(sys_paths.mannings_processed).resolve()), analysis_root,
+        str(Path(sys_paths.mannings_processed).resolve()),
+        analysis_root,
     )
-    bc_rel = (
-        os.path.relpath(str(Path(bc_path).resolve()), analysis_root)
-        if bc_path is not None else None
-    )
+    bc_rel = os.path.relpath(str(Path(bc_path).resolve()), analysis_root) if bc_path is not None else None
 
     # ---- Load each model independently so swmmio's empty-section warnings
     # are scoped (hydraulics has no [POLYGONS]; hydro has no populated
@@ -161,7 +160,10 @@ def render(
         system_dir = Path(sys_paths.dem_processed).parent
         gis_dir = system_dir / "gis"
         export_swmm_gis_layers(
-            hydro_model, hydraulics_model, gis_dir, target_crs=target_crs,
+            hydro_model,
+            hydraulics_model,
+            gis_dir,
+            target_crs=target_crs,
         )
 
     # Source-paths and manifest-data are shared across both branches. Q4: the SWMM .inp
@@ -192,21 +194,35 @@ def render(
         # Plotly branch does the same so the colorbar range reflects ground
         # elevations rather than the building-elevation plateau.
         building_height = getattr(
-            analysis._system.cfg_system, "dem_building_height", None,
+            analysis._system.cfg_system,
+            "dem_building_height",
+            None,
         )
         outside_watershed_height = getattr(
-            analysis._system.cfg_system, "dem_outside_watershed_height", None,
+            analysis._system.cfg_system,
+            "dem_outside_watershed_height",
+            None,
         )
         return _render_plotly_branch(
             output_path=output_path,
             source_paths=source_paths,
             analysis_dir=analysis.analysis_paths.analysis_dir,
-            dem=dem, dem_bounds=dem_bounds,
-            mannings=mannings, mannings_rel=mannings_rel, mannings_res=mannings_res,
-            hydro_model=hydro_model, hydraulics_model=hydraulics_model,
-            hydro_rel=hydro_rel, hydraulics_rel=hydraulics_rel, dem_rel=dem_rel,
-            bc_path=bc_path, bc_rel=bc_rel, target_crs=target_crs,
-            map_cfg=map_cfg, manifest_data=manifest_data, prov=prov,
+            dem=dem,
+            dem_bounds=dem_bounds,
+            mannings=mannings,
+            mannings_rel=mannings_rel,
+            mannings_res=mannings_res,
+            hydro_model=hydro_model,
+            hydraulics_model=hydraulics_model,
+            hydro_rel=hydro_rel,
+            hydraulics_rel=hydraulics_rel,
+            dem_rel=dem_rel,
+            bc_path=bc_path,
+            bc_rel=bc_rel,
+            target_crs=target_crs,
+            map_cfg=map_cfg,
+            manifest_data=manifest_data,
+            prov=prov,
             plotly_js_mode=report_cfg.interactive.plotly_js_mode,
             dem_building_height=building_height,
             dem_outside_watershed_height=outside_watershed_height,
@@ -225,9 +241,12 @@ def render(
         # derivation. The publication emit uses bbox_inches=None so the saved
         # figure is exactly this size (subplots_adjust below is preserved).
         fig, _axes = plt.subplots(
-            _nrows_mpl, _ncols_mpl,
+            _nrows_mpl,
+            _ncols_mpl,
             figsize=(static_cfg.figure_width_inches, static_cfg.figure_height_inches),
-            sharex=True, sharey=True, squeeze=False,
+            sharex=True,
+            sharey=True,
+            squeeze=False,
         )
     else:
         _, h = map_cfg.figsize_inches
@@ -239,8 +258,12 @@ def render(
             h * map_cfg.fig_width_min_factor,
         )
         fig, _axes = plt.subplots(
-            _nrows_mpl, _ncols_mpl, figsize=(fig_width, h * _nrows_mpl),
-            sharex=True, sharey=True, squeeze=False,
+            _nrows_mpl,
+            _ncols_mpl,
+            figsize=(fig_width, h * _nrows_mpl),
+            sharex=True,
+            sharey=True,
+            squeeze=False,
         )
     fig.subplots_adjust(**map_cfg.subplots_adjust)
 
@@ -249,8 +272,15 @@ def render(
     ax_dem = _axes[0][0]
     ax_mannings = _axes[0][1]
     _draw_elevation_panel(
-        ax_dem, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
-        prov, dem_source=dem_rel,
+        ax_dem,
+        dem,
+        dem_bounds,
+        bc_path,
+        bc_rel,
+        target_crs,
+        map_cfg,
+        prov,
+        dem_source=dem_rel,
         vertical_crs_epsg=analysis._system.cfg_system.crs.vertical_epsg,
         dem_cmap_override=(static_cfg.dem_cmap if static_cfg is not None else None),
         dem_over_color_override=(static_cfg.dem_over_color if static_cfg is not None else None),
@@ -258,19 +288,32 @@ def render(
     # Mannings panel reuses the existing static plotter (viridis raster + watershed
     # overlay + "Mannings ({res}m)" title) — the SAME artist the publication path uses.
     from hhemt.plot_system import TRITONSWMM_system_plotting
+
     TRITONSWMM_system_plotting(analysis._system).processed_mannings(ax=ax_mannings)
     if _renders_swmm:
         # Bottom row (coupled only): Hydrology (col 0) + Hydraulics (col 1).
         ax_hydro, ax_hydraulics = _axes[1][0], _axes[1][1]
         _draw_hydrology_panel(
-            ax_hydro, hydro_model, hydro_rel, dem_bounds, map_cfg, prov,
+            ax_hydro,
+            hydro_model,
+            hydro_rel,
+            dem_bounds,
+            map_cfg,
+            prov,
         )
         _draw_hydraulics_panel(
-            ax_hydraulics, hydraulics_model, hydraulics_rel, dem_bounds, map_cfg, prov,
+            ax_hydraulics,
+            hydraulics_model,
+            hydraulics_rel,
+            dem_bounds,
+            map_cfg,
+            prov,
         )
 
     return emit_plot_with_sources(
-        fig, output_path, source_paths,
+        fig,
+        output_path,
+        source_paths,
         analysis_dir=analysis.analysis_paths.analysis_dir,
         dpi=(static_cfg.savefig_dpi if static_cfg is not None else report_cfg.figure_defaults.savefig_dpi),
         output_format=(static_cfg.output_format if static_cfg is not None else "png"),
@@ -282,8 +325,11 @@ def render(
 
 
 def _build_manifest_data(
-    analysis_id, dem_bounds,
-    hydro_model, hydraulics_model, bc_present: bool,
+    analysis_id,
+    dem_bounds,
+    hydro_model,
+    hydraulics_model,
+    bc_present: bool,
     mannings_res=None,
 ) -> dict:
     panel_extents = {
@@ -296,45 +342,50 @@ def _build_manifest_data(
     if hydro_model is not None and hydraulics_model is not None:
         polygons_df = getattr(hydro_model.inp, "polygons", None)
         n_subcatchments = (
-            int(len(polygons_df.index.unique()))
-            if polygons_df is not None and len(polygons_df) > 0 else 0
+            int(len(polygons_df.index.unique())) if polygons_df is not None and len(polygons_df) > 0 else 0
         )
-        panels.append({
-            "name": "hydrology",
-            "title": "Hydrology",
+        panels.append(
+            {
+                "name": "hydrology",
+                "title": "Hydrology",
+                "axis_extents": panel_extents,
+                "element_counts": {
+                    "subcatchments_with_polygons": n_subcatchments,
+                    "subcatchment_rows": int(len(hydro_model.inp.subcatchments)),
+                },
+                "legend_labels": (["Subcatchments", "Drains to"] if n_subcatchments else []),
+            }
+        )
+        panels.append(
+            {
+                "name": "hydraulics",
+                "title": "Hydraulics",
+                "axis_extents": panel_extents,
+                "element_counts": {
+                    "junctions": int(len(hydraulics_model.inp.junctions)),
+                    "outfalls": int(len(hydraulics_model.inp.outfalls)),
+                    "conduits": int(len(hydraulics_model.inp.conduits)),
+                },
+                "legend_labels": ["SWMM conduits", "SWMM junction"],
+            }
+        )
+    panels.append(
+        {
+            "name": "triton_dem",
+            "title": "TRITON DEM",
             "axis_extents": panel_extents,
-            "element_counts": {
-                "subcatchments_with_polygons": n_subcatchments,
-                "subcatchment_rows": int(len(hydro_model.inp.subcatchments)),
-            },
-            "legend_labels": (
-                ["Subcatchments", "Drains to"] if n_subcatchments else []
-            ),
-        })
-        panels.append({
-            "name": "hydraulics",
-            "title": "Hydraulics",
-            "axis_extents": panel_extents,
-            "element_counts": {
-                "junctions": int(len(hydraulics_model.inp.junctions)),
-                "outfalls": int(len(hydraulics_model.inp.outfalls)),
-                "conduits": int(len(hydraulics_model.inp.conduits)),
-            },
-            "legend_labels": ["SWMM conduits", "SWMM junction"],
-        })
-    panels.append({
-        "name": "triton_dem",
-        "title": "TRITON DEM",
-        "axis_extents": panel_extents,
-        "dem_bounds": [float(b) for b in dem_bounds],
-        "legend_labels": ["Storm tide BC"] if bc_present else [],
-    })
+            "dem_bounds": [float(b) for b in dem_bounds],
+            "legend_labels": ["Storm tide BC"] if bc_present else [],
+        }
+    )
     # Q4 Phase-2: the Manning's-n panel is present for both arms (system input).
-    panels.append({
-        "name": "mannings",
-        "title": (f"Mannings ({mannings_res}m)" if mannings_res is not None else "Mannings"),
-        "axis_extents": panel_extents,
-    })
+    panels.append(
+        {
+            "name": "mannings",
+            "title": (f"Mannings ({mannings_res}m)" if mannings_res is not None else "Mannings"),
+            "axis_extents": panel_extents,
+        }
+    )
     return {"analysis_id": str(analysis_id), "panels": panels}
 
 
@@ -344,7 +395,12 @@ def _build_manifest_data(
 
 
 def _draw_hydrology_panel(
-    ax, hydro_model, hydro_rel: str, dem_bounds, map_cfg, prov,
+    ax,
+    hydro_model,
+    hydro_rel: str,
+    dem_bounds,
+    map_cfg,
+    prov,
 ) -> None:
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
@@ -360,49 +416,84 @@ def _draw_hydrology_panel(
 
     if polygons_df is not None and len(polygons_df) > 0:
         drew_any_subcatchment = _draw_subcatchments_and_drainage_lines(
-            ax, polygons_df, subcatch_df, coords_df, hp, prov,
-            axes_id="ax_hydro", swmm_inp_rel=hydro_rel,
+            ax,
+            polygons_df,
+            subcatch_df,
+            coords_df,
+            hp,
+            prov,
+            axes_id="ax_hydro",
+            swmm_inp_rel=hydro_rel,
             outlets_drawn=outlets_drawn,
         )
     if drew_any_subcatchment:
         legend_handles.append(
-            Patch(facecolor="none", edgecolor=hp.subcatchment_edge_color, hatch=hp.subcatchment_hatch,
-                  label="Subcatchments")
+            Patch(
+                facecolor="none",
+                edgecolor=hp.subcatchment_edge_color,
+                hatch=hp.subcatchment_hatch,
+                label="Subcatchments",
+            )
         )
         legend_handles.append(
-            Line2D([], [], color=hp.drainage_line_color, linestyle=hp.drainage_line_style,
-                   linewidth=hp.drainage_line_width, label="Drains to")
+            Line2D(
+                [],
+                [],
+                color=hp.drainage_line_color,
+                linestyle=hp.drainage_line_style,
+                linewidth=hp.drainage_line_width,
+                label="Drains to",
+            )
         )
 
     if outlets_drawn:
-        ox = [float(coords_df.at[n, _ss.COORDS_X]) for n in sorted(outlets_drawn)
-              if n in coords_df.index]
-        oy = [float(coords_df.at[n, _ss.COORDS_Y]) for n in sorted(outlets_drawn)
-              if n in coords_df.index]
+        ox = [float(coords_df.at[n, _ss.COORDS_X]) for n in sorted(outlets_drawn) if n in coords_df.index]
+        oy = [float(coords_df.at[n, _ss.COORDS_Y]) for n in sorted(outlets_drawn) if n in coords_df.index]
         if ox:
             with prov.artist(
-                axes_id="ax_hydro", kind="scatter",
+                axes_id="ax_hydro",
+                kind="scatter",
                 note=f"subcatchment outlet markers ({len(ox)})",
             ) as a:
                 a.add_swmm_channel("x", swmm_inp=hydro_rel, kind="outlet_node_coords")
                 a.add_swmm_channel("y", swmm_inp=hydro_rel, kind="outlet_node_coords")
-                ax.scatter(ox, oy, marker="o", s=hp.outlet_marker_size,
-                           color=hp.outlet_marker_fill,
-                           edgecolor="black", linewidths=hp.outlet_marker_edgewidth, zorder=6)
+                ax.scatter(
+                    ox,
+                    oy,
+                    marker="o",
+                    s=hp.outlet_marker_size,
+                    color=hp.outlet_marker_fill,
+                    edgecolor="black",
+                    linewidths=hp.outlet_marker_edgewidth,
+                    zorder=6,
+                )
 
     ax.set_aspect("equal")
     ax.set_xlim(dem_bounds[0], dem_bounds[2])
     ax.set_ylim(dem_bounds[1], dem_bounds[3])
     ax.set_title("Hydrology")
     if legend_handles:
-        ax.legend(handles=legend_handles,
-                  loc=map_cfg.legend_loc, bbox_to_anchor=map_cfg.legend_bbox_to_anchor,
-                  ncol=2, fontsize=map_cfg.legend_fontsize, framealpha=map_cfg.legend_framealpha)
+        ax.legend(
+            handles=legend_handles,
+            loc=map_cfg.legend_loc,
+            bbox_to_anchor=map_cfg.legend_bbox_to_anchor,
+            ncol=2,
+            fontsize=map_cfg.legend_fontsize,
+            framealpha=map_cfg.legend_framealpha,
+        )
 
 
 def _draw_subcatchments_and_drainage_lines(
-    ax, polygons_df, subcatch_df, coords_df, hp, prov,
-    *, axes_id: str, swmm_inp_rel: str, outlets_drawn: set[str],
+    ax,
+    polygons_df,
+    subcatch_df,
+    coords_df,
+    hp,
+    prov,
+    *,
+    axes_id: str,
+    swmm_inp_rel: str,
+    outlets_drawn: set[str],
 ) -> bool:
     from matplotlib.patches import Polygon as MplPolygon
 
@@ -413,18 +504,23 @@ def _draw_subcatchments_and_drainage_lines(
         if len(verts) < 3:
             continue
         with prov.artist(
-            axes_id=axes_id, kind="patch",
+            axes_id=axes_id,
+            kind="patch",
             note=f"subcatchment polygon {sc_name}",
         ) as a:
-            a.add_swmm_channel("x", swmm_inp=swmm_inp_rel,
-                               kind="subcatchment_polygon", node_id=str(sc_name))
-            a.add_swmm_channel("y", swmm_inp=swmm_inp_rel,
-                               kind="subcatchment_polygon", node_id=str(sc_name))
-            ax.add_patch(MplPolygon(
-                verts, closed=True,
-                facecolor="none", edgecolor=hp.subcatchment_edge_color, linewidth=hp.subcatchment_linewidth,
-                hatch=hp.subcatchment_hatch, zorder=2,
-            ))
+            a.add_swmm_channel("x", swmm_inp=swmm_inp_rel, kind="subcatchment_polygon", node_id=str(sc_name))
+            a.add_swmm_channel("y", swmm_inp=swmm_inp_rel, kind="subcatchment_polygon", node_id=str(sc_name))
+            ax.add_patch(
+                MplPolygon(
+                    verts,
+                    closed=True,
+                    facecolor="none",
+                    edgecolor=hp.subcatchment_edge_color,
+                    linewidth=hp.subcatchment_linewidth,
+                    hatch=hp.subcatchment_hatch,
+                    zorder=2,
+                )
+            )
         drew = True
         if subcatch_df is None or sc_name not in subcatch_df.index:
             continue
@@ -436,18 +532,20 @@ def _draw_subcatchments_and_drainage_lines(
         ox = float(coords_df.at[outlet_name, _ss.COORDS_X])
         oy = float(coords_df.at[outlet_name, _ss.COORDS_Y])
         with prov.artist(
-            axes_id=axes_id, kind="line2d",
+            axes_id=axes_id,
+            kind="line2d",
             note=f"drainage line: {sc_name} → {outlet_name}",
         ) as a:
-            a.add_swmm_channel("x", swmm_inp=swmm_inp_rel,
-                               kind="subcatchment_outlet",
-                               node_id=str(sc_name))
-            a.add_swmm_channel("y", swmm_inp=swmm_inp_rel,
-                               kind="subcatchment_outlet",
-                               node_id=str(sc_name))
-            ax.plot([cx, ox], [cy, oy],
-                    color=hp.drainage_line_color, linestyle=hp.drainage_line_style, linewidth=hp.drainage_line_width,
-                    zorder=3)
+            a.add_swmm_channel("x", swmm_inp=swmm_inp_rel, kind="subcatchment_outlet", node_id=str(sc_name))
+            a.add_swmm_channel("y", swmm_inp=swmm_inp_rel, kind="subcatchment_outlet", node_id=str(sc_name))
+            ax.plot(
+                [cx, ox],
+                [cy, oy],
+                color=hp.drainage_line_color,
+                linestyle=hp.drainage_line_style,
+                linewidth=hp.drainage_line_width,
+                zorder=3,
+            )
         outlets_drawn.add(str(outlet_name))
     return drew
 
@@ -458,7 +556,12 @@ def _draw_subcatchments_and_drainage_lines(
 
 
 def _draw_hydraulics_panel(
-    ax, hydraulics_model, hydraulics_rel: str, dem_bounds, map_cfg, prov,
+    ax,
+    hydraulics_model,
+    hydraulics_rel: str,
+    dem_bounds,
+    map_cfg,
+    prov,
 ) -> None:
     from matplotlib.lines import Line2D
 
@@ -472,42 +575,73 @@ def _draw_hydraulics_panel(
     connected_nodes = _collect_connected_nodes(conduits_df)
 
     _draw_conduits_with_slope_labels(
-        ax, conduits_df, junctions_df, outfalls_df, coords_df, hp,
-        prov, hydraulics_rel,
+        ax,
+        conduits_df,
+        junctions_df,
+        outfalls_df,
+        coords_df,
+        hp,
+        prov,
+        hydraulics_rel,
     )
     if len(conduits_df) > 0:
         legend_handles.append(
-            Line2D([], [], color=hp.conduit_color, linewidth=hp.conduit_linewidth,
-                   label="SWMM conduits")
+            Line2D([], [], color=hp.conduit_color, linewidth=hp.conduit_linewidth, label="SWMM conduits")
         )
 
     if len(junctions_df):
         jx = [float(coords_df.at[n, _ss.COORDS_X]) for n in junctions_df.index]
         jy = [float(coords_df.at[n, _ss.COORDS_Y]) for n in junctions_df.index]
         with prov.artist(
-            axes_id="ax_hydraulics", kind="scatter",
+            axes_id="ax_hydraulics",
+            kind="scatter",
             note=f"junctions ({len(junctions_df)})",
         ) as a:
             a.add_swmm_channel("x", swmm_inp=hydraulics_rel, kind="junction_coords")
             a.add_swmm_channel("y", swmm_inp=hydraulics_rel, kind="junction_coords")
-            ax.scatter(jx, jy, marker="o", s=hp.junction_marker_size, color=hp.junction_fill,
-                       edgecolor="black", linewidths=hp.junction_marker_edgewidth, zorder=6)
+            ax.scatter(
+                jx,
+                jy,
+                marker="o",
+                s=hp.junction_marker_size,
+                color=hp.junction_fill,
+                edgecolor="black",
+                linewidths=hp.junction_marker_edgewidth,
+                zorder=6,
+            )
         legend_handles.append(
-            Line2D([], [], color=hp.junction_fill, marker="o", linestyle="None",
-                   markersize=8, markeredgecolor="black", label="SWMM junction")
+            Line2D(
+                [],
+                [],
+                color=hp.junction_fill,
+                marker="o",
+                linestyle="None",
+                markersize=8,
+                markeredgecolor="black",
+                label="SWMM junction",
+            )
         )
 
     if len(outfalls_df):
         ox = [float(coords_df.at[n, _ss.COORDS_X]) for n in outfalls_df.index]
         oy = [float(coords_df.at[n, _ss.COORDS_Y]) for n in outfalls_df.index]
         with prov.artist(
-            axes_id="ax_hydraulics", kind="scatter",
+            axes_id="ax_hydraulics",
+            kind="scatter",
             note=f"outfalls ({len(outfalls_df)})",
         ) as a:
             a.add_swmm_channel("x", swmm_inp=hydraulics_rel, kind="outfall_coords")
             a.add_swmm_channel("y", swmm_inp=hydraulics_rel, kind="outfall_coords")
-            ax.scatter(ox, oy, marker=hp.outfall_marker, s=hp.outfall_marker_size, color=hp.outfall_fill,
-                       edgecolor="black", linewidths=hp.outfall_marker_edgewidth, zorder=7)
+            ax.scatter(
+                ox,
+                oy,
+                marker=hp.outfall_marker,
+                s=hp.outfall_marker_size,
+                color=hp.outfall_fill,
+                edgecolor="black",
+                linewidths=hp.outfall_marker_edgewidth,
+                zorder=7,
+            )
 
     _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes, hp)
 
@@ -515,13 +649,19 @@ def _draw_hydraulics_panel(
     ax.set_xlim(dem_bounds[0], dem_bounds[2])
     ax.set_ylim(dem_bounds[1], dem_bounds[3])
     ax.set_title("Hydraulics")
-    ax.legend(handles=legend_handles,
-              loc=map_cfg.legend_loc, bbox_to_anchor=map_cfg.legend_bbox_to_anchor,
-              ncol=2, fontsize=map_cfg.legend_fontsize, framealpha=map_cfg.legend_framealpha)
+    ax.legend(
+        handles=legend_handles,
+        loc=map_cfg.legend_loc,
+        bbox_to_anchor=map_cfg.legend_bbox_to_anchor,
+        ncol=2,
+        fontsize=map_cfg.legend_fontsize,
+        framealpha=map_cfg.legend_framealpha,
+    )
 
 
-def _draw_conduits_with_slope_labels(ax, conduits_df, junctions_df, outfalls_df,
-                                     coords_df, hp, prov, swmm_inp_rel: str):
+def _draw_conduits_with_slope_labels(
+    ax, conduits_df, junctions_df, outfalls_df, coords_df, hp, prov, swmm_inp_rel: str
+):
     inverts: dict[str, float] = {}
     for name, row in junctions_df.iterrows():
         inverts[name] = float(row[_ss.JUNC_INVERT_ELEV])
@@ -531,20 +671,22 @@ def _draw_conduits_with_slope_labels(ax, conduits_df, junctions_df, outfalls_df,
     for row in conduits_df.itertuples():
         if row.InletNode not in coords_df.index or row.OutletNode not in coords_df.index:
             continue
-        p_in = (float(coords_df.at[row.InletNode, _ss.COORDS_X]),
-                float(coords_df.at[row.InletNode, _ss.COORDS_Y]))
-        p_out = (float(coords_df.at[row.OutletNode, _ss.COORDS_X]),
-                 float(coords_df.at[row.OutletNode, _ss.COORDS_Y]))
+        p_in = (float(coords_df.at[row.InletNode, _ss.COORDS_X]), float(coords_df.at[row.InletNode, _ss.COORDS_Y]))
+        p_out = (float(coords_df.at[row.OutletNode, _ss.COORDS_X]), float(coords_df.at[row.OutletNode, _ss.COORDS_Y]))
         with prov.artist(
-            axes_id="ax_hydraulics", kind="line2d",
+            axes_id="ax_hydraulics",
+            kind="line2d",
             note=f"conduit {row.Index}: {row.InletNode} → {row.OutletNode}",
         ) as a:
-            a.add_swmm_channel("x", swmm_inp=swmm_inp_rel,
-                               kind="conduit_coords", link_id=str(row.Index))
-            a.add_swmm_channel("y", swmm_inp=swmm_inp_rel,
-                               kind="conduit_coords", link_id=str(row.Index))
-            ax.plot([p_in[0], p_out[0]], [p_in[1], p_out[1]],
-                    color=hp.conduit_color, linewidth=hp.conduit_linewidth, zorder=4)
+            a.add_swmm_channel("x", swmm_inp=swmm_inp_rel, kind="conduit_coords", link_id=str(row.Index))
+            a.add_swmm_channel("y", swmm_inp=swmm_inp_rel, kind="conduit_coords", link_id=str(row.Index))
+            ax.plot(
+                [p_in[0], p_out[0]],
+                [p_in[1], p_out[1]],
+                color=hp.conduit_color,
+                linewidth=hp.conduit_linewidth,
+                zorder=4,
+            )
         length_m = float(getattr(row, "Length", 0.0))
         inv_in = inverts.get(row.InletNode)
         inv_out = inverts.get(row.OutletNode)
@@ -554,10 +696,12 @@ def _draw_conduits_with_slope_labels(ax, conduits_df, junctions_df, outfalls_df,
             my = (p_in[1] + p_out[1]) / 2.0
             ax.annotate(
                 f"{row.Index}\nSlope: {slope_pct:.2f}%",
-                xy=(mx, my), xytext=(5, 5), textcoords="offset points",
-                fontsize=hp.slope_label_fontsize, zorder=5,
-                bbox=dict(boxstyle="round,pad=0.15", facecolor="white",
-                          edgecolor="none", alpha=0.8),
+                xy=(mx, my),
+                xytext=(5, 5),
+                textcoords="offset points",
+                fontsize=hp.slope_label_fontsize,
+                zorder=5,
+                bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.8),
             )
 
 
@@ -595,10 +739,12 @@ def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes,
             label_text = f"{name}\nInv: {invert:.2f}"
         ax.annotate(
             label_text,
-            xy=(x, y), xytext=(dx, dy), textcoords="offset points",
-            fontsize=hp.node_label_fontsize, zorder=8,
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
-                      edgecolor="none", alpha=0.75),
+            xy=(x, y),
+            xytext=(dx, dy),
+            textcoords="offset points",
+            fontsize=hp.node_label_fontsize,
+            zorder=8,
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="none", alpha=0.75),
         )
 
 
@@ -607,11 +753,20 @@ def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes,
 # ---------------------------------------------------------------------------
 
 
-def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
-                          prov, dem_source: str,
-                          vertical_crs_epsg: int | None = None,
-                          dem_cmap_override: str | None = None,
-                          dem_over_color_override: str | None = None):
+def _draw_elevation_panel(
+    ax,
+    dem,
+    dem_bounds,
+    bc_path,
+    bc_rel,
+    target_crs,
+    map_cfg,
+    prov,
+    dem_source: str,
+    vertical_crs_epsg: int | None = None,
+    dem_cmap_override: str | None = None,
+    dem_over_color_override: str | None = None,
+):
     from matplotlib.lines import Line2D
 
     dem_squeezed = dem.squeeze()
@@ -649,22 +804,34 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
     cmap = plt.get_cmap(_dem_cmap_name).copy()
     cmap.set_over(_dem_over_color)
     with prov.artist(
-        axes_id="ax_dem", kind="image", note="DEM elevation raster",
+        axes_id="ax_dem",
+        kind="image",
+        note="DEM elevation raster",
     ) as a:
         a.add_xarray_channel(
-            "z", dem_squeezed, source_path=dem_source,
+            "z",
+            dem_squeezed,
+            source_path=dem_source,
             transform="modeled-area vmin/vmax clipping (walls → set_over grey)",
         )
         a.add_xarray_channel(
-            "color", dem_squeezed, source_path=dem_source,
+            "color",
+            dem_squeezed,
+            source_path=dem_source,
             transform="modeled-area vmin/vmax clipping (walls → set_over grey)",
-            cmap=_dem_cmap_name, vmin=vmin, vmax=vmax, set_over=_dem_over_color,
+            cmap=_dem_cmap_name,
+            vmin=vmin,
+            vmax=vmax,
+            set_over=_dem_over_color,
         )
         im = ax.imshow(
             arr,
-            cmap=cmap, vmin=vmin, vmax=vmax,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
             extent=(dem_bounds[0], dem_bounds[2], dem_bounds[1], dem_bounds[3]),
-            origin="upper", aspect="equal",
+            origin="upper",
+            aspect="equal",
         )
     cbar = plt.colorbar(im, ax=ax, shrink=ep.cbar_shrink, pad=ep.cbar_pad, extend="max")
     cbar.set_label(units.dem_elev_label(vertical_crs_epsg))
@@ -678,11 +845,7 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
 
         bc_gdf = gpd.read_file(bc_path)
         if bc_gdf.crs is not None:
-            target_crs_str = (
-                target_crs.to_string()
-                if hasattr(target_crs, "to_string")
-                else str(target_crs)
-            )
+            target_crs_str = target_crs.to_string() if hasattr(target_crs, "to_string") else str(target_crs)
             bc_ref = ProvenanceRef(
                 source_path=bc_rel if bc_rel is not None else str(bc_path),
                 variable="storm_tide_boundary",
@@ -690,24 +853,31 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
                 transform=f"reproject to {target_crs_str}",
             )
             with prov.artist(
-                axes_id="ax_dem", kind="line2d",
+                axes_id="ax_dem",
+                kind="line2d",
                 note="storm tide boundary line",
             ) as a:
                 a.add_channel("x", bc_ref)
                 a.add_channel("y", bc_ref)
                 bc_gdf.to_crs(target_crs).plot(
-                    ax=ax, color=map_cfg.bc_color, linewidth=ep.bc_line_width,
+                    ax=ax,
+                    color=map_cfg.bc_color,
+                    linewidth=ep.bc_line_width,
                 )
             legend_handles.append(
-                Line2D([], [], color=map_cfg.bc_color, linewidth=ep.bc_line_width,
-                       label="Storm tide BC")
+                Line2D([], [], color=map_cfg.bc_color, linewidth=ep.bc_line_width, label="Storm tide BC")
             )
 
     ax.set_title("TRITON DEM")
     if legend_handles:
-        ax.legend(handles=legend_handles,
-                  loc=map_cfg.legend_loc, bbox_to_anchor=map_cfg.legend_bbox_to_anchor,
-                  ncol=1, fontsize=map_cfg.legend_fontsize, framealpha=map_cfg.legend_framealpha)
+        ax.legend(
+            handles=legend_handles,
+            loc=map_cfg.legend_loc,
+            bbox_to_anchor=map_cfg.legend_bbox_to_anchor,
+            ncol=1,
+            fontsize=map_cfg.legend_fontsize,
+            framealpha=map_cfg.legend_framealpha,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -745,15 +915,14 @@ def _resolve_inp_sources(analysis: TRITONSWMM_analysis) -> tuple[Path, Path]:
     cleanly but their `source_path` provenance entries cite the same
     file.
     """
+
     def _pick(scenario_paths) -> tuple[Path, Path]:
         full = getattr(scenario_paths, "swmm_full_inp", None)
         full_path = Path(full) if full and Path(full).exists() else None
         hydro = getattr(scenario_paths, "swmm_hydro_inp", None)
         hydro_path = Path(hydro) if hydro and Path(hydro).exists() else None
         hydraulics = getattr(scenario_paths, "swmm_hydraulics_inp", None)
-        hydraulics_path = (
-            Path(hydraulics) if hydraulics and Path(hydraulics).exists() else None
-        )
+        hydraulics_path = Path(hydraulics) if hydraulics and Path(hydraulics).exists() else None
         if hydro_path is not None and hydraulics_path is not None:
             return hydro_path, hydraulics_path
         if full_path is not None:
@@ -776,14 +945,16 @@ def _resolve_inp_sources(analysis: TRITONSWMM_analysis) -> tuple[Path, Path]:
 
 def _apply_rcparams(report_cfg: report_config) -> None:
     fd = report_cfg.figure_defaults
-    plt.rcParams.update({
-        "font.family": fd.font_family,
-        "font.size": fd.font_size,
-        "figure.dpi": fd.dpi,
-        "savefig.dpi": fd.savefig_dpi,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-    })
+    plt.rcParams.update(
+        {
+            "font.family": fd.font_family,
+            "font.size": fd.font_size,
+            "figure.dpi": fd.dpi,
+            "savefig.dpi": fd.savefig_dpi,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+        }
+    )
 
 
 # ===========================================================================
@@ -841,8 +1012,12 @@ def _build_system_overview_figure(
     _nrows = 2 if _coupled else 1
     _ncols = 2
     fig = make_subplots(
-        rows=_nrows, cols=_ncols, shared_xaxes=True, shared_yaxes=True,
-        horizontal_spacing=0.13, vertical_spacing=0.12,
+        rows=_nrows,
+        cols=_ncols,
+        shared_xaxes=True,
+        shared_yaxes=True,
+        horizontal_spacing=0.13,
+        vertical_spacing=0.12,
         subplot_titles=tuple(name for _, _, name in _cells),
     )
     fig.update_layout(
@@ -857,18 +1032,18 @@ def _build_system_overview_figure(
     # Axis titles label the projected CRS so readers can identify the
     # seven-digit easting/northing values; the CRS authority string is
     # appended to the DEM cell's x-title to show once across the figure.
-    crs_authority = (
-        target_crs.to_string() if hasattr(target_crs, "to_string")
-        else str(target_crs)
-    )
+    crs_authority = target_crs.to_string() if hasattr(target_crs, "to_string") else str(target_crs)
     # Panel bounds: square + padded + encompass all SWMM nodes so left-edge
     # nodes (e.g., upstream-most subcatchment outfalls) are not clipped.
     # compute_padded_square_bounds tolerates None models (pure-TRITON): it reduces to a
     # padded square around the DEM extent alone.
     panel_bounds = compute_padded_square_bounds(
-        dem_bounds, hydro_model, hydraulics_model, padding_frac=0.02,
+        dem_bounds,
+        hydro_model,
+        hydraulics_model,
+        padding_frac=0.02,
     )
-    for (_pr, col, _name) in _cells:
+    for _pr, col, _name in _cells:
         # Plotly numbers subplot axes row-major: (1,1)->x1, (1,2)->x2, (2,1)->x3, (2,2)->x4.
         _axis_idx = (_pr - 1) * _ncols + col
         _is_dem = _pr == 1 and col == 1
@@ -876,7 +1051,8 @@ def _build_system_overview_figure(
         x_kwargs = dict(
             range=[panel_bounds[0], panel_bounds[2]],
             title_text=x_title,
-            row=_pr, col=col,
+            row=_pr,
+            col=col,
         )
         # Defensively link x-axes via `matches="x"` so pan/zoom on any panel
         # synchronizes the others (Plotly's `shared_xaxes=True` in
@@ -892,10 +1068,12 @@ def _build_system_overview_figure(
         fig.update_xaxes(**x_kwargs)
         fig.update_yaxes(
             range=[panel_bounds[1], panel_bounds[3]],
-            scaleanchor=f"x{_axis_idx}", scaleratio=1.0,
+            scaleanchor=f"x{_axis_idx}",
+            scaleratio=1.0,
             constrain="domain",
             title_text="Northing (m)" if col == 1 else None,
-            row=_pr, col=col,
+            row=_pr,
+            col=col,
         )
 
     # Top row: DEM (1,1) + Mannings (1,2) — both arms. Bottom row (coupled only):
@@ -907,23 +1085,54 @@ def _build_system_overview_figure(
     _top_cbar_y = 0.79 if _coupled else None
     _top_cbar_len = 0.42 if _coupled else 0.9
     _draw_elevation_panel_plotly(
-        fig, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
-        prov, dem_source=dem_rel, col=1, row=1,
-        cbar_x=0.44, cbar_y=_top_cbar_y, cbar_len=_top_cbar_len,
+        fig,
+        dem,
+        dem_bounds,
+        bc_path,
+        bc_rel,
+        target_crs,
+        map_cfg,
+        prov,
+        dem_source=dem_rel,
+        col=1,
+        row=1,
+        cbar_x=0.44,
+        cbar_y=_top_cbar_y,
+        cbar_len=_top_cbar_len,
         dem_building_height=dem_building_height,
         dem_outside_watershed_height=dem_outside_watershed_height,
         vertical_crs_epsg=vertical_crs_epsg,
     )
     _draw_mannings_panel_plotly(
-        fig, mannings, mannings_rel, mannings_res, prov, row=1, col=2,
-        cbar_x=1.01, cbar_y=_top_cbar_y, cbar_len=_top_cbar_len,
+        fig,
+        mannings,
+        mannings_rel,
+        mannings_res,
+        prov,
+        row=1,
+        col=2,
+        cbar_x=1.01,
+        cbar_y=_top_cbar_y,
+        cbar_len=_top_cbar_len,
     )
     if _coupled:
         _draw_hydrology_panel_plotly(
-            fig, hydro_model, hydro_rel, map_cfg, prov, col=1, row=2,
+            fig,
+            hydro_model,
+            hydro_rel,
+            map_cfg,
+            prov,
+            col=1,
+            row=2,
         )
         _draw_hydraulics_panel_plotly(
-            fig, hydraulics_model, hydraulics_rel, map_cfg, prov, col=2, row=2,
+            fig,
+            hydraulics_model,
+            hydraulics_rel,
+            map_cfg,
+            prov,
+            col=2,
+            row=2,
         )
 
     # Filter the default Plotly modebar to the buttons that map onto the
@@ -936,17 +1145,29 @@ def _build_system_overview_figure(
         "displayModeBar": True,
         "displaylogo": False,
         "modeBarButtonsToRemove": [
-            "lasso2d", "select2d", "autoScale2d",
-            "hoverCompareCartesian", "hoverClosestCartesian",
+            "lasso2d",
+            "select2d",
+            "autoScale2d",
+            "hoverCompareCartesian",
+            "hoverClosestCartesian",
             "toggleSpikelines",
         ],
         "toImageButtonOptions": {
-            "format": "svg", "filename": "system_overview", "scale": 2,
+            "format": "svg",
+            "filename": "system_overview",
+            "scale": 2,
         },
     }
     return (
-        fig, emit_plot_with_sources, plotly_config, output_path,
-        source_paths, analysis_dir, manifest_data, prov, plotly_js_mode,
+        fig,
+        emit_plot_with_sources,
+        plotly_config,
+        output_path,
+        source_paths,
+        analysis_dir,
+        manifest_data,
+        prov,
+        plotly_js_mode,
     )
 
 
@@ -977,8 +1198,15 @@ def _render_plotly_branch(
     vertical_crs_epsg: int | None = None,
 ) -> Path:
     (
-        fig, emit_plot_with_sources, plotly_config, output_path,
-        source_paths, analysis_dir, manifest_data, prov, plotly_js_mode,
+        fig,
+        emit_plot_with_sources,
+        plotly_config,
+        output_path,
+        source_paths,
+        analysis_dir,
+        manifest_data,
+        prov,
+        plotly_js_mode,
     ) = _build_system_overview_figure(
         output_path,
         source_paths,
@@ -1005,7 +1233,9 @@ def _render_plotly_branch(
         vertical_crs_epsg=vertical_crs_epsg,
     )
     html_text = pio.to_html(
-        fig, include_plotlyjs=plotly_js_mode, full_html=True,
+        fig,
+        include_plotlyjs=plotly_js_mode,
+        full_html=True,
         config=plotly_config,
     )
     # Inject an accessible <title> tag so screen-readers narrating the
@@ -1020,9 +1250,7 @@ def _render_plotly_branch(
     )
     html_text = html_text.replace(
         '<head><meta charset="utf-8" /></head>',
-        '<head><meta charset="utf-8" />'
-        f'<title>System overview — {_title_panels}</title>'
-        '</head>',
+        '<head><meta charset="utf-8" />' f"<title>System overview — {_title_panels}</title>" "</head>",
         1,
     )
 
@@ -1031,22 +1259,27 @@ def _render_plotly_branch(
     # missing, log and continue; the HTML deliverable remains valid.
     try:
         # Q4 Phase-2: the coupled 2×2 grid is taller than the pure-TRITON 1×2 row.
-        _svg_height = (
-            1000 if (hydro_model is not None and hydraulics_model is not None) else 600
-        )
+        _svg_height = 1000 if (hydro_model is not None and hydraulics_model is not None) else 600
         fig.write_image(
             output_path.with_suffix(".svg"),
-            engine="kaleido", width=1200, height=_svg_height, scale=1,
+            engine="kaleido",
+            width=1200,
+            height=_svg_height,
+            scale=1,
         )
     except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
         import logging
+
         logging.getLogger(__name__).warning(
             "Kaleido SVG export skipped for %s: %s",
-            output_path.with_suffix(".svg"), exc,
+            output_path.with_suffix(".svg"),
+            exc,
         )
 
     return emit_plot_with_sources(
-        html_text, output_path, source_paths,
+        html_text,
+        output_path,
+        source_paths,
         analysis_dir=analysis_dir,
         output_format="html",
         manifest_data=manifest_data,
@@ -1055,7 +1288,14 @@ def _render_plotly_branch(
 
 
 def _draw_hydrology_panel_plotly(
-    fig, hydro_model, hydro_rel: str, map_cfg, prov, *, col: int, row: int = 1,
+    fig,
+    hydro_model,
+    hydro_rel: str,
+    map_cfg,
+    prov,
+    *,
+    col: int,
+    row: int = 1,
 ) -> None:
     _prow = row  # capture the panel row before any iterrows/itertuples loop shadows `row`
     hp = map_cfg.hydrology_panel
@@ -1075,24 +1315,31 @@ def _draw_hydrology_panel_plotly(
     if polygons_df is not None and len(polygons_df) > 0:
         for sc_name in polygons_df.index.unique():
             rows = polygons_df.loc[[sc_name]]
-            verts = list(zip(
-                rows[_ss.COORDS_X].astype(float),
-                rows[_ss.COORDS_Y].astype(float),
-                strict=True,
-            ))
+            verts = list(
+                zip(
+                    rows[_ss.COORDS_X].astype(float),
+                    rows[_ss.COORDS_Y].astype(float),
+                    strict=True,
+                )
+            )
             if len(verts) < 3:
                 continue
             with prov.artist(
-                axes_id="ax_hydro_plotly", kind="scatter_path",
+                axes_id="ax_hydro_plotly",
+                kind="scatter_path",
                 note=f"subcatchment polygon {sc_name}",
             ) as a:
                 a.add_swmm_channel(
-                    "x", swmm_inp=hydro_rel,
-                    kind="subcatchment_polygon", node_id=str(sc_name),
+                    "x",
+                    swmm_inp=hydro_rel,
+                    kind="subcatchment_polygon",
+                    node_id=str(sc_name),
                 )
                 a.add_swmm_channel(
-                    "y", swmm_inp=hydro_rel,
-                    kind="subcatchment_polygon", node_id=str(sc_name),
+                    "y",
+                    swmm_inp=hydro_rel,
+                    kind="subcatchment_polygon",
+                    node_id=str(sc_name),
                 )
                 # Close polygon by repeating first vertex.
                 xs = [v[0] for v in verts] + [verts[0][0], None]
@@ -1111,16 +1358,21 @@ def _draw_hydrology_panel_plotly(
             ox = float(coords_df.at[outlet_name, _ss.COORDS_X])
             oy = float(coords_df.at[outlet_name, _ss.COORDS_Y])
             with prov.artist(
-                axes_id="ax_hydro_plotly", kind="scatter_path",
+                axes_id="ax_hydro_plotly",
+                kind="scatter_path",
                 note=f"drainage line: {sc_name} → {outlet_name}",
             ) as a:
                 a.add_swmm_channel(
-                    "x", swmm_inp=hydro_rel,
-                    kind="subcatchment_outlet", node_id=str(sc_name),
+                    "x",
+                    swmm_inp=hydro_rel,
+                    kind="subcatchment_outlet",
+                    node_id=str(sc_name),
                 )
                 a.add_swmm_channel(
-                    "y", swmm_inp=hydro_rel,
-                    kind="subcatchment_outlet", node_id=str(sc_name),
+                    "y",
+                    swmm_inp=hydro_rel,
+                    kind="subcatchment_outlet",
+                    node_id=str(sc_name),
                 )
                 drainage_x.extend([cx, ox, None])
                 drainage_y.extend([cy, oy, None])
@@ -1131,12 +1383,15 @@ def _draw_hydrology_panel_plotly(
 
     if drew_any:
         with prov.artist(
-            axes_id="ax_hydro_plotly", kind="scatter_path",
+            axes_id="ax_hydro_plotly",
+            kind="scatter_path",
             note="subcatchment polygons (consolidated trace; per-polygon channels registered in inner loop)",
         ):
             fig.add_trace(
                 go.Scatter(
-                    x=polygon_x, y=polygon_y, mode="lines",
+                    x=polygon_x,
+                    y=polygon_y,
+                    mode="lines",
                     line=dict(
                         color=hp.subcatchment_edge_color,
                         width=hp.subcatchment_linewidth,
@@ -1145,15 +1400,19 @@ def _draw_hydrology_panel_plotly(
                     legendgroup="hydrology",
                     hoverinfo="skip",
                 ),
-                row=_prow, col=col,
+                row=_prow,
+                col=col,
             )
         with prov.artist(
-            axes_id="ax_hydro_plotly", kind="scatter_path",
+            axes_id="ax_hydro_plotly",
+            kind="scatter_path",
             note="drainage lines (consolidated trace; per-line channels registered in inner loop)",
         ):
             fig.add_trace(
                 go.Scatter(
-                    x=drainage_x, y=drainage_y, mode="lines",
+                    x=drainage_x,
+                    y=drainage_y,
+                    mode="lines",
                     line=dict(
                         color=hp.drainage_line_color,
                         width=hp.drainage_line_width,
@@ -1163,18 +1422,22 @@ def _draw_hydrology_panel_plotly(
                     legendgroup="hydrology",
                     hoverinfo="skip",
                 ),
-                row=_prow, col=col,
+                row=_prow,
+                col=col,
             )
     if outlet_xs:
         with prov.artist(
-            axes_id="ax_hydro_plotly", kind="scatter",
+            axes_id="ax_hydro_plotly",
+            kind="scatter",
             note=f"subcatchment outlet markers ({len(outlet_xs)})",
         ) as a:
             a.add_swmm_channel("x", swmm_inp=hydro_rel, kind="outlet_node_coords")
             a.add_swmm_channel("y", swmm_inp=hydro_rel, kind="outlet_node_coords")
             fig.add_trace(
                 go.Scatter(
-                    x=outlet_xs, y=outlet_ys, mode="markers",
+                    x=outlet_xs,
+                    y=outlet_ys,
+                    mode="markers",
                     marker=dict(
                         symbol="circle",
                         size=_plotly_junction_marker_size(map_cfg),
@@ -1191,7 +1454,8 @@ def _draw_hydrology_panel_plotly(
                     ),
                     showlegend=False,
                 ),
-                row=_prow, col=col,
+                row=_prow,
+                col=col,
             )
 
 
@@ -1203,7 +1467,7 @@ def _plotly_node_marker_size(map_cfg) -> int:
     Derived from `hydrology_panel.outlet_marker_size` so a single cfg knob
     governs every node marker in the Plotly system_overview.
     """
-    return max(int(map_cfg.hydrology_panel.outlet_marker_size ** 0.5 * 2), 4)
+    return max(int(map_cfg.hydrology_panel.outlet_marker_size**0.5 * 2), 4)
 
 
 def _plotly_junction_marker_size(map_cfg) -> int:
@@ -1217,7 +1481,14 @@ def _plotly_junction_marker_size(map_cfg) -> int:
 
 
 def _draw_hydraulics_panel_plotly(
-    fig, hydraulics_model, hydraulics_rel: str, map_cfg, prov, *, col: int, row: int = 1,
+    fig,
+    hydraulics_model,
+    hydraulics_rel: str,
+    map_cfg,
+    prov,
+    *,
+    col: int,
+    row: int = 1,
 ) -> None:
     _prow = row  # capture the panel row before any iterrows/itertuples loop shadows `row`
     hp = map_cfg.hydraulics_panel
@@ -1251,10 +1522,7 @@ def _draw_hydraulics_panel_plotly(
     midpoint_customdata: list[list] = []
 
     for row in conduits_df.itertuples():
-        if (
-            row.InletNode not in coords_df.index
-            or row.OutletNode not in coords_df.index
-        ):
+        if row.InletNode not in coords_df.index or row.OutletNode not in coords_df.index:
             continue
         p_in = (
             float(coords_df.at[row.InletNode, _ss.COORDS_X]),
@@ -1265,16 +1533,21 @@ def _draw_hydraulics_panel_plotly(
             float(coords_df.at[row.OutletNode, _ss.COORDS_Y]),
         )
         with prov.artist(
-            axes_id="ax_hydraulics_plotly", kind="scatter_path",
+            axes_id="ax_hydraulics_plotly",
+            kind="scatter_path",
             note=f"conduit {row.Index}: {row.InletNode} → {row.OutletNode}",
         ) as a:
             a.add_swmm_channel(
-                "x", swmm_inp=hydraulics_rel,
-                kind="conduit_coords", link_id=str(row.Index),
+                "x",
+                swmm_inp=hydraulics_rel,
+                kind="conduit_coords",
+                link_id=str(row.Index),
             )
             a.add_swmm_channel(
-                "y", swmm_inp=hydraulics_rel,
-                kind="conduit_coords", link_id=str(row.Index),
+                "y",
+                swmm_inp=hydraulics_rel,
+                kind="conduit_coords",
+                link_id=str(row.Index),
             )
             conduit_x.extend([p_in[0], p_out[0], None])
             conduit_y.extend([p_in[1], p_out[1], None])
@@ -1292,37 +1565,46 @@ def _draw_hydraulics_panel_plotly(
             slope_pct = float("nan")
         midpoint_xs.append(mid_x)
         midpoint_ys.append(mid_y)
-        midpoint_customdata.append([
-            str(row.Index),
-            slope_pct,
-            length_m,
-            float(inv_in) if inv_in is not None else float("nan"),
-            float(inv_out) if inv_out is not None else float("nan"),
-        ])
+        midpoint_customdata.append(
+            [
+                str(row.Index),
+                slope_pct,
+                length_m,
+                float(inv_in) if inv_in is not None else float("nan"),
+                float(inv_out) if inv_out is not None else float("nan"),
+            ]
+        )
 
     if conduit_x:
         with prov.artist(
-            axes_id="ax_hydraulics_plotly", kind="scatter_path",
+            axes_id="ax_hydraulics_plotly",
+            kind="scatter_path",
             note="SWMM conduit lines (consolidated trace; per-conduit channels registered in inner loop)",
         ):
             fig.add_trace(
                 go.Scatter(
-                    x=conduit_x, y=conduit_y, mode="lines",
+                    x=conduit_x,
+                    y=conduit_y,
+                    mode="lines",
                     line=dict(color=hp.conduit_color, width=hp.conduit_linewidth),
                     name="Conduits",
                     legendgroup="hydraulics",
                     hoverinfo="skip",
                 ),
-                row=_prow, col=col,
+                row=_prow,
+                col=col,
             )
     if midpoint_xs:
         with prov.artist(
-            axes_id="ax_hydraulics_plotly", kind="scatter",
+            axes_id="ax_hydraulics_plotly",
+            kind="scatter",
             note="conduit midpoint hover markers (consolidated trace; per-conduit channels registered in inner loop)",
         ):
             fig.add_trace(
                 go.Scatter(
-                    x=midpoint_xs, y=midpoint_ys, mode="markers",
+                    x=midpoint_xs,
+                    y=midpoint_ys,
+                    mode="markers",
                     marker=dict(size=6, color="rgba(0,0,0,0)"),
                     customdata=midpoint_customdata,
                     hovertemplate=(
@@ -1337,7 +1619,8 @@ def _draw_hydraulics_panel_plotly(
                     legendgroup="hydraulics",
                     showlegend=False,
                 ),
-                row=_prow, col=col,
+                row=_prow,
+                col=col,
             )
     if slope_xs:
         # Hidden by default (legend-toggleable) — the 1000+ text labels overlap
@@ -1345,12 +1628,15 @@ def _draw_hydraulics_panel_plotly(
         # entry "Conduit slopes" to show them. /design-figure Phase C iteration
         # will likely replace these with hover-only display.
         with prov.artist(
-            axes_id="ax_hydraulics_plotly", kind="text",
+            axes_id="ax_hydraulics_plotly",
+            kind="text",
             note="conduit slope text labels (consolidated trace; per-conduit channels registered in inner loop)",
         ):
             fig.add_trace(
                 go.Scatter(
-                    x=slope_xs, y=slope_ys, mode="text",
+                    x=slope_xs,
+                    y=slope_ys,
+                    mode="text",
                     text=slope_texts,
                     textposition="top right",
                     textfont=dict(size=hp.slope_label_fontsize),
@@ -1360,7 +1646,8 @@ def _draw_hydraulics_panel_plotly(
                     showlegend=True,
                     visible="legendonly",
                 ),
-                row=_prow, col=col,
+                row=_prow,
+                col=col,
             )
 
     if len(junctions_df):
@@ -1372,14 +1659,17 @@ def _draw_hydraulics_panel_plotly(
             maxd = float(junctions_df.at[n, _ss.JUNC_MAX_DEPTH])
             j_customdata.append([str(n), inv_j, inv_j + maxd])
         with prov.artist(
-            axes_id="ax_hydraulics_plotly", kind="scatter",
+            axes_id="ax_hydraulics_plotly",
+            kind="scatter",
             note=f"junctions ({len(junctions_df)})",
         ) as a:
             a.add_swmm_channel("x", swmm_inp=hydraulics_rel, kind="junction_coords")
             a.add_swmm_channel("y", swmm_inp=hydraulics_rel, kind="junction_coords")
             fig.add_trace(
                 go.Scatter(
-                    x=jx, y=jy, mode="markers",
+                    x=jx,
+                    y=jy,
+                    mode="markers",
                     marker=dict(
                         symbol="circle",
                         size=hp_junction_size,
@@ -1399,25 +1689,26 @@ def _draw_hydraulics_panel_plotly(
                         "<extra></extra>"
                     ),
                 ),
-                row=_prow, col=col,
+                row=_prow,
+                col=col,
             )
 
     if len(outfalls_df):
         ox = [float(coords_df.at[n, _ss.COORDS_X]) for n in outfalls_df.index]
         oy = [float(coords_df.at[n, _ss.COORDS_Y]) for n in outfalls_df.index]
-        o_customdata = [
-            [str(n), float(outfalls_df.at[n, _ss.OUTFALL_INVERT_ELEV])]
-            for n in outfalls_df.index
-        ]
+        o_customdata = [[str(n), float(outfalls_df.at[n, _ss.OUTFALL_INVERT_ELEV])] for n in outfalls_df.index]
         with prov.artist(
-            axes_id="ax_hydraulics_plotly", kind="scatter",
+            axes_id="ax_hydraulics_plotly",
+            kind="scatter",
             note=f"outfalls ({len(outfalls_df)})",
         ) as a:
             a.add_swmm_channel("x", swmm_inp=hydraulics_rel, kind="outfall_coords")
             a.add_swmm_channel("y", swmm_inp=hydraulics_rel, kind="outfall_coords")
             fig.add_trace(
                 go.Scatter(
-                    x=ox, y=oy, mode="markers",
+                    x=ox,
+                    y=oy,
+                    mode="markers",
                     marker=dict(
                         # Explicit `triangle-up` (equivalent to the matplotlib
                         # `"^"` marker). Plotly's `triangle-up` is an
@@ -1434,12 +1725,11 @@ def _draw_hydraulics_panel_plotly(
                     legendgroup="hydraulics_outfalls",
                     customdata=o_customdata,
                     hovertemplate=(
-                        "<b>Outfall %{customdata[0]}</b><br>"
-                        "Invert: %{customdata[1]:.2f} m"
-                        "<extra></extra>"
+                        "<b>Outfall %{customdata[0]}</b><br>" "Invert: %{customdata[1]:.2f} m" "<extra></extra>"
                     ),
                 ),
-                row=_prow, col=col,
+                row=_prow,
+                col=col,
             )
 
     # Per-node Rim/Inv labels (matplotlib branch annotates each node).
@@ -1465,12 +1755,15 @@ def _draw_hydraulics_panel_plotly(
         # Hidden by default (legend-toggleable) — see "Conduit slopes" above for
         # rationale. Click the legend entry "Node Rim/Inv labels" to show them.
         with prov.artist(
-            axes_id="ax_hydraulics_plotly", kind="text",
+            axes_id="ax_hydraulics_plotly",
+            kind="text",
             note="node Rim/Inv text labels (consolidated trace; per-node channels registered in inner loop)",
         ):
             fig.add_trace(
                 go.Scatter(
-                    x=label_xs, y=label_ys, mode="text",
+                    x=label_xs,
+                    y=label_ys,
+                    mode="text",
                     text=label_texts,
                     textposition="bottom right",
                     textfont=dict(size=hp.node_label_fontsize),
@@ -1480,13 +1773,23 @@ def _draw_hydraulics_panel_plotly(
                     showlegend=True,
                     visible="legendonly",
                 ),
-                row=_prow, col=col,
+                row=_prow,
+                col=col,
             )
 
 
 def _draw_mannings_panel_plotly(
-    fig, mannings, mannings_rel: str, mannings_res, prov, *, row: int, col: int,
-    cbar_x: float = 1.005, cbar_y: float | None = None, cbar_len: float | None = None,
+    fig,
+    mannings,
+    mannings_rel: str,
+    mannings_res,
+    prov,
+    *,
+    row: int,
+    col: int,
+    cbar_x: float = 1.005,
+    cbar_y: float | None = None,
+    cbar_len: float | None = None,
 ) -> None:
     """Manning's-n panel (Q4 Phase-2): a viridis ``go.Heatmap`` on the processed
     Manning's raster, pinned to the same panel bounds + equal-aspect treatment as the
@@ -1506,10 +1809,7 @@ def _draw_mannings_panel_plotly(
     # origin="upper": y vector starts at y1 (top) and decreases, matching the DEM panel.
     ys = np.linspace(y1, y0, n_y)
 
-    res_label = (
-        f"Manning's n<br>({mannings_res} m)" if mannings_res is not None
-        else "Manning's n"
-    )
+    res_label = f"Manning's n<br>({mannings_res} m)" if mannings_res is not None else "Manning's n"
     _cbar = dict(title=res_label, x=cbar_x)
     if cbar_len is not None:
         _cbar["len"] = cbar_len
@@ -1517,36 +1817,55 @@ def _draw_mannings_panel_plotly(
         _cbar["y"] = cbar_y
         _cbar["yanchor"] = "middle"
     with prov.artist(
-        axes_id="ax_mannings_plotly", kind="image", note="Manning's-n raster",
+        axes_id="ax_mannings_plotly",
+        kind="image",
+        note="Manning's-n raster",
     ) as a:
         a.add_xarray_channel(
-            "z", m, source_path=mannings_rel,
+            "z",
+            m,
+            source_path=mannings_rel,
             transform="viridis; vmin/vmax over finite cells",
         )
         fig.add_trace(
             go.Heatmap(
                 z=arr,
-                x0=float(xs[0]), dx=float(xs[1] - xs[0]),
-                y0=float(ys[0]), dy=float(ys[1] - ys[0]),
+                x0=float(xs[0]),
+                dx=float(xs[1] - xs[0]),
+                y0=float(ys[0]),
+                dy=float(ys[1] - ys[0]),
                 colorscale="Viridis",
-                zmin=vmin, zmax=vmax, zauto=False,
+                zmin=vmin,
+                zmax=vmax,
+                zauto=False,
                 showscale=True,
                 colorbar=_cbar,
                 name="Manning's n",
                 hovertemplate=(
-                    "Manning's n: %{z:.3f}<br>"
-                    "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m"
-                    "<extra></extra>"
+                    "Manning's n: %{z:.3f}<br>" "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m" "<extra></extra>"
                 ),
             ),
-            row=_prow, col=col,
+            row=_prow,
+            col=col,
         )
 
 
 def _draw_elevation_panel_plotly(
-    fig, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
-    prov, *, dem_source: str, col: int, row: int = 1,
-    cbar_x: float = 1.005, cbar_y: float | None = None, cbar_len: float | None = None,
+    fig,
+    dem,
+    dem_bounds,
+    bc_path,
+    bc_rel,
+    target_crs,
+    map_cfg,
+    prov,
+    *,
+    dem_source: str,
+    col: int,
+    row: int = 1,
+    cbar_x: float = 1.005,
+    cbar_y: float | None = None,
+    cbar_len: float | None = None,
     dem_building_height: float | None = None,
     dem_outside_watershed_height: float | None = None,
     vertical_crs_epsg: int | None = None,
@@ -1562,14 +1881,13 @@ def _draw_elevation_panel_plotly(
     # so the colorbar range reflects ground elevations only. The walls and
     # bathtub fill are handled separately by the over-color overlay below.
     if dem_building_height is not None:
-        valid_for_range = arr[
-            np.isfinite(arr) & (arr != dem_building_height)
-        ]
+        valid_for_range = arr[np.isfinite(arr) & (arr != dem_building_height)]
     else:
         valid_for_range = arr[np.isfinite(arr)]
     if valid_for_range.size:
         vmin, vmax, wall_threshold = _resolve_dem_color_range(
-            valid_for_range, ep,
+            valid_for_range,
+            ep,
         )
     else:
         vmin, vmax, wall_threshold = 0.0, 1.0, 1.0
@@ -1580,10 +1898,7 @@ def _draw_elevation_panel_plotly(
     # minimum of the two sentinel heights — building height assigned to the
     # building-footprint cells, and the outside-watershed bathtub elevation —
     # is recolored to `ep.over_color` (white) by the walls-overlay Heatmap.
-    cfg_sentinels = [
-        h for h in (dem_building_height, dem_outside_watershed_height)
-        if h is not None
-    ]
+    cfg_sentinels = [h for h in (dem_building_height, dem_outside_watershed_height) if h is not None]
     if cfg_sentinels:
         # Subtract `ep.wall_threshold_buffer_m` so coarsened-but-still-building
         # cells (DEM cells whose elevation falls below the strict sentinel due
@@ -1601,7 +1916,10 @@ def _draw_elevation_panel_plotly(
     # Build x/y coordinate vectors for the heatmap (cell centers).
     n_y, n_x = arr.shape
     x0, y0, x1, y1 = (
-        dem_bounds[0], dem_bounds[1], dem_bounds[2], dem_bounds[3],
+        dem_bounds[0],
+        dem_bounds[1],
+        dem_bounds[2],
+        dem_bounds[3],
     )
     xs = np.linspace(x0, x1, n_x)
     # DEM is origin="upper" in matplotlib; for Plotly Heatmap with explicit
@@ -1611,24 +1929,37 @@ def _draw_elevation_panel_plotly(
 
     cmap_plotly = _matplotlib_cmap_to_plotly_colorscale(ep.cmap)
     with prov.artist(
-        axes_id="ax_dem_plotly", kind="image", note="DEM elevation raster",
+        axes_id="ax_dem_plotly",
+        kind="image",
+        note="DEM elevation raster",
     ) as a:
         a.add_xarray_channel(
-            "z", dem_squeezed, source_path=dem_source,
+            "z",
+            dem_squeezed,
+            source_path=dem_source,
             transform="modeled-area vmin/vmax clipping (walls → grey overlay)",
         )
         a.add_xarray_channel(
-            "color", dem_squeezed, source_path=dem_source,
+            "color",
+            dem_squeezed,
+            source_path=dem_source,
             transform="modeled-area vmin/vmax clipping (walls → grey overlay)",
-            cmap=ep.cmap, vmin=vmin, vmax=vmax, set_over=ep.over_color,
+            cmap=ep.cmap,
+            vmin=vmin,
+            vmax=vmax,
+            set_over=ep.over_color,
         )
         fig.add_trace(
             go.Heatmap(
                 z=arr_modeled,
-                x0=float(xs[0]), dx=float(xs[1] - xs[0]),
-                y0=float(ys[0]), dy=float(ys[1] - ys[0]),
+                x0=float(xs[0]),
+                dx=float(xs[1] - xs[0]),
+                y0=float(ys[0]),
+                dy=float(ys[1] - ys[0]),
                 colorscale=cmap_plotly,
-                zmin=vmin, zmax=vmax, zauto=False,
+                zmin=vmin,
+                zmax=vmax,
+                zauto=False,
                 showscale=True,
                 colorbar=dict(
                     title=units.dem_elev_label(vertical_crs_epsg),
@@ -1638,30 +1969,32 @@ def _draw_elevation_panel_plotly(
                 ),
                 name="DEM elevation (modeled area)",
                 hovertemplate=(
-                    "Elevation: %{z:.2f} m<br>"
-                    "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m"
-                    "<extra></extra>"
+                    "Elevation: %{z:.2f} m<br>" "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m" "<extra></extra>"
                 ),
             ),
-            row=_prow, col=col,
+            row=_prow,
+            col=col,
         )
         fig.add_trace(
             go.Heatmap(
                 z=arr_walls,
-                x0=float(xs[0]), dx=float(xs[1] - xs[0]),
-                y0=float(ys[0]), dy=float(ys[1] - ys[0]),
+                x0=float(xs[0]),
+                dx=float(xs[1] - xs[0]),
+                y0=float(ys[0]),
+                dy=float(ys[1] - ys[0]),
                 colorscale=[[0, ep.over_color], [1, ep.over_color]],
-                zmin=0.0, zmax=1.0, zauto=False,
+                zmin=0.0,
+                zmax=1.0,
+                zauto=False,
                 showscale=False,
                 showlegend=False,
                 name="DEM walls",
                 hovertemplate=(
-                    "Wall / out-of-range cell<br>"
-                    "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m"
-                    "<extra></extra>"
+                    "Wall / out-of-range cell<br>" "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m" "<extra></extra>"
                 ),
             ),
-            row=_prow, col=col,
+            row=_prow,
+            col=col,
         )
 
     # Black bounding box around the TRITON DEM modeled-area extent (per Round 2
@@ -1669,15 +2002,24 @@ def _draw_elevation_panel_plotly(
     # the Heatmaps but BELOW the BC line + watershed polygon so the user can
     # always see where the gridded modeled region begins/ends.
     with prov.artist(
-        axes_id="ax_dem_plotly", kind="scatter_path",
+        axes_id="ax_dem_plotly",
+        kind="scatter_path",
         note="TRITON DEM modeled-extent bounding box",
     ) as a:
-        a.add_channel("x", ref=ProvenanceRef(
-            source_path=dem_source, transform="rio.bounds[xmin..xmax]",
-        ))
-        a.add_channel("y", ref=ProvenanceRef(
-            source_path=dem_source, transform="rio.bounds[ymin..ymax]",
-        ))
+        a.add_channel(
+            "x",
+            ref=ProvenanceRef(
+                source_path=dem_source,
+                transform="rio.bounds[xmin..xmax]",
+            ),
+        )
+        a.add_channel(
+            "y",
+            ref=ProvenanceRef(
+                source_path=dem_source,
+                transform="rio.bounds[ymin..ymax]",
+            ),
+        )
         fig.add_trace(
             go.Scatter(
                 x=[dem_bounds[0], dem_bounds[2], dem_bounds[2], dem_bounds[0], dem_bounds[0]],
@@ -1688,7 +2030,8 @@ def _draw_elevation_panel_plotly(
                 showlegend=False,
                 hoverinfo="skip",
             ),
-            row=_prow, col=col,
+            row=_prow,
+            col=col,
         )
 
     if bc_path is not None:
@@ -1698,10 +2041,7 @@ def _draw_elevation_panel_plotly(
 
         bc_gdf = gpd.read_file(bc_path)
         if bc_gdf.crs is not None:
-            target_crs_str = (
-                target_crs.to_string()
-                if hasattr(target_crs, "to_string") else str(target_crs)
-            )
+            target_crs_str = target_crs.to_string() if hasattr(target_crs, "to_string") else str(target_crs)
             bc_ref = ProvenanceRef(
                 source_path=bc_rel if bc_rel is not None else str(bc_path),
                 variable="storm_tide_boundary",
@@ -1709,7 +2049,8 @@ def _draw_elevation_panel_plotly(
                 transform=f"reproject to {target_crs_str}",
             )
             with prov.artist(
-                axes_id="ax_dem_plotly", kind="scatter_path",
+                axes_id="ax_dem_plotly",
+                kind="scatter_path",
                 note="storm tide boundary line",
             ) as a:
                 a.add_channel("x", bc_ref)
@@ -1735,7 +2076,9 @@ def _draw_elevation_panel_plotly(
                         bc_y.append(None)
                 fig.add_trace(
                     go.Scatter(
-                        x=bc_x, y=bc_y, mode="lines",
+                        x=bc_x,
+                        y=bc_y,
+                        mode="lines",
                         line=dict(
                             color=map_cfg.bc_color,
                             width=ep.bc_line_width,
@@ -1743,12 +2086,11 @@ def _draw_elevation_panel_plotly(
                         name="Storm tide BC",
                         legendgroup="dem",
                         hovertemplate=(
-                            "Storm tide boundary<br>"
-                            "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m"
-                            "<extra></extra>"
+                            "Storm tide boundary<br>" "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m" "<extra></extra>"
                         ),
                     ),
-                    row=_prow, col=col,
+                    row=_prow,
+                    col=col,
                 )
 
 
@@ -1774,7 +2116,8 @@ def _matplotlib_marker_to_plotly(matplotlib_marker: str) -> str:
 
 
 def _matplotlib_cmap_to_plotly_colorscale(
-    cmap_name: str, n_samples: int = 32,
+    cmap_name: str,
+    n_samples: int = 32,
 ) -> list[list]:
     """Sample a matplotlib named colormap into a Plotly colorscale list.
 
@@ -1792,14 +2135,13 @@ def _matplotlib_cmap_to_plotly_colorscale(
     colorscale: list[list] = []
     for t in ts:
         r, g, b, _ = cmap(float(t))
-        colorscale.append(
-            [float(t), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"]
-        )
+        colorscale.append([float(t), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"])
     return colorscale
 
 
 def _resolve_dem_color_range(
-    valid_values: np.ndarray, ep,
+    valid_values: np.ndarray,
+    ep,
     vmax_percentile: float = 90.0,
 ) -> tuple[float, float, float]:
     """Resolve (vmin, vmax, overlay_threshold) for the DEM heatmap.
@@ -1836,9 +2178,7 @@ def _resolve_dem_color_range(
         # All cells lie in the upper half — pathological for a DEM. Fall
         # back to `arr_max * wall_threshold_fraction` for symmetry with the
         # matplotlib branch's defensive default.
-        wall_threshold = (
-            arr_max * ep.wall_threshold_fraction if arr_max > 0 else 1.0
-        )
+        wall_threshold = arr_max * ep.wall_threshold_fraction if arr_max > 0 else 1.0
         modeled = valid_values[valid_values < wall_threshold]
         if modeled.size > 0:
             return float(modeled.min()), float(modeled.max()), wall_threshold

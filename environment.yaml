@@ -15,9 +15,11 @@
     # conda env create -f environment.yaml
     # conda (or source) activate hhemt
 # IMPORTANT: after creating the environment, run BOTH post-create steps, in order:
-  # pip install --no-deps "swmmio==0.8.2"
+  # pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
   # pip install -e . --no-deps
-  # (both required — without them, imports of hhemt fail AND pyswmm is downgraded)
+  # (both required — without them the env has NO SWMM engine and imports of hhemt fail.
+  #  All three SWMM packages are post-create because conda-forge cannot satisfy pyproject's
+  #  swmm-toolkit>=0.15.3 floor — its 0.15 line stops at 0.15.2. See the SWMM block below.)
 #
 # WHY swmmio is installed here with --no-deps instead of in the `pip:` block below:
 #   `--no-deps` prevents `pip install -U` from touching the conda graph at all. conda runs
@@ -108,25 +110,33 @@ dependencies:
   - ipykernel
   - pip
   - "setuptools<78"  # hsclient uses pkg_resources, removed from setuptools>=78
-  # SWMM Python engine from conda-forge, NOT the PyPI wheel: the PyPI
-  # swmm-toolkit 0.17.0 wheel heap-corrupts in pyswmm Simulation.execute()
-  # (free(): tcache 2 / SIGABRT) on modern glibc, and 0.17.0 also has an
-  # Output.node_series "Input Error 422" reader regression. conda-forge
-  # swmm-toolkit 0.15.x is clean on both; pyswmm=2.0.1 is the matching pin.
+  # SWMM Python engine: installed POST-CREATE with `pip install --no-deps`, NOT declared
+  # as a conda dependency here. This is the same treatment `swmmio` already gets, for a
+  # sharper reason: conda-forge CANNOT satisfy pyproject's floor at all.
   #
-  # The pin is EXACT, not a range: `_conda_name_version` in
-  # scripts/check_env_lock_consistency.py partitions on the first `=`, so a spec like
-  # `swmm-toolkit>=0.15.3,<0.16` parses its name as `swmm-toolkit>` and silently
-  # disables assertion (b). It is also >=0.15.3 because pyproject requires that
-  # (earliest release with a cp312 wheel) and assertion (f) enforces containment.
+  #   pyproject.toml requires  swmm-toolkit>=0.15.3,<0.16
+  #   conda-forge's 0.15 line  stops at 0.15.2  (`conda search -c conda-forge
+  #                            --override-channels "swmm-toolkit=0.15"`)
   #
-  # INVARIANT (enforced by scripts/check_env_lock_consistency.py): NOTHING in the
-  # `pip:` block below may name or depend on pyswmm / swmm-toolkit / swmmio. conda
-  # runs the whole `pip:` block as a single `pip install -U -r`, and any pip spec
-  # that constrains pyswmm will silently uninstall the conda one. swmmio is
-  # therefore installed post-create with --no-deps (see header).
-  - swmm-toolkit=0.15.5
-  - pyswmm=2.0.1
+  # The intersection is EMPTY, so any conda spec here is either unsolvable (>=0.15.3) or
+  # below the declared floor (=0.15 -> 0.15.2). It was `=0.15.5` from 790ccb10 until this
+  # change, which made `conda env create -f environment.yaml` fail outright with
+  # PackagesNotFoundError on EVERY host -- the documented Option-A install path in
+  # docs/how-to/installation.md. Before 790ccb10 it was `=0.15`, which solved and then
+  # silently installed 0.15.2 under the floor, because the runtime guard
+  # _assert_validated_swmm_stack only tests startswith("0.15.") and is looser than pyproject.
+  #
+  # Do NOT "fix" this by restoring a conda pin in either direction. The engine is not
+  # conda-exclusive: pyproject.toml states so directly ("The validated engine is NOT
+  # conda-exclusive"), the pre-abi3 PyPI 0.15.x wheel is the same engine
+  # (swmm_get_version 52004), and abi3 lands at 0.16.1 -- so 0.16.2/0.17.0 are the flagged
+  # free()/SIGABRT teardown lineage and 0.15.x is not.
+  #
+  # INVARIANT (enforced by scripts/check_env_lock_consistency.py): NOTHING in the `pip:`
+  # block below may name or depend on pyswmm / swmm-toolkit / swmmio. conda runs the whole
+  # `pip:` block as a single `pip install -U -r`, and any pip spec that constrains pyswmm
+  # will silently uninstall a conda-managed one. All three are therefore installed
+  # post-create with --no-deps (see the header block at the top of this file).
   - pip:
       - hsclient
       # !=0.2.1.post1: the .post1 re-upload ships only an armv7l wheel; PEP 440

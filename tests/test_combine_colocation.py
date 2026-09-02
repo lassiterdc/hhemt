@@ -274,9 +274,9 @@ def test_distinct_child_categories_excludes_chrome_only_categories(tmp_path) -> 
     _write_child(bundle_root, "expA_tritonswmm", "maps_fig", _TS_HTML)
     _write_child(bundle_root, "expA_triton", "maps_fig", _TRI_HTML)
     cats = _distinct_child_categories(bundle_root)
-    assert "Simulation Health (placeholder)" not in cats, (
-        f"chrome-only reserved slot leaked into the combined sidebar order: {cats}"
-    )
+    assert (
+        "Simulation Health (placeholder)" not in cats
+    ), f"chrome-only reserved slot leaked into the combined sidebar order: {cats}"
     assert cats, "no per-experiment categories survived the filter"
 
 
@@ -286,9 +286,9 @@ def test_distinct_child_categories_no_model_token_shape(tmp_path) -> None:
     _write_child(bundle_root, "synth_multi_sim", "maps_fig", _TS_HTML)
     _write_child(bundle_root, "synth_multi_sim__1__b4b", "maps_fig", _TRI_HTML)
     cats = _distinct_child_categories(bundle_root)
-    assert "Simulation Health (placeholder)" not in cats, (
-        f"chrome-only reserved slot leaked into the combined sidebar order: {cats}"
-    )
+    assert (
+        "Simulation Health (placeholder)" not in cats
+    ), f"chrome-only reserved slot leaked into the combined sidebar order: {cats}"
 
 
 def test_combined_order_suppresses_placeholder_in_surgered_html(tmp_path) -> None:
@@ -323,9 +323,7 @@ def test_composed_page_stem_is_the_bare_plot_id(tmp_path) -> None:
     assert len(paired) == 1
     rel = PurePosixPath(paired[0].output_path_template)
 
-    assert rel.stem == "config_diff_maps", (
-        f"composed-page stem must be the bare plot id, got {rel.stem!r} from {rel!s}"
-    )
+    assert rel.stem == "config_diff_maps", f"composed-page stem must be the bare plot id, got {rel.stem!r} from {rel!s}"
     # the base is not lost -- it is the directory
     assert rel.parent.name == "synth_cc_clean", f"base experiment not carried by the directory: {rel!s}"
     assert rel.parts[0] == "paired_figures"

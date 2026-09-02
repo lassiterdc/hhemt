@@ -339,6 +339,15 @@ class RunOverrides:
     cfg_system); a concrete value overrides the config for this invocation
     only. Carried as one argument through the submit_workflow facade chain
     instead of five individual keyword params.
+
+    ONE FIELD DEPARTS FROM THAT CONVENTION AND THE EXCEPTION IS DELIBERATE.
+    ``live_driver`` bridges no config field: it is a per-invocation operator
+    ASSERTION that one specific orchestration driver is dead, consumed once by
+    ``_acquire_submit_driver_claim`` and never read from config. It rides this
+    carrier anyway because D4 made the builder and sensitivity layers
+    overrides-only, and adding a sixth individual keyword to the sensitivity
+    facade would re-open the shape D4 closed. Carrying the exception in writing
+    is preferred to a structural regression that leaves no trace.
     """
 
     clear_raw: "ClearRawValue | None" = None
@@ -346,6 +355,7 @@ class RunOverrides:
     hpc_total_nodes: int | None = None
     hpc_restart_times_simulate: int | None = None
     hpc_restart_times_other: int | None = None
+    live_driver: str | None = None
 
 
 def translate_mode(mode: Literal["fresh", "resume"]) -> dict:

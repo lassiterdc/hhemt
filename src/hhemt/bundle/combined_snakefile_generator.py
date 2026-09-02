@@ -163,13 +163,19 @@ _MODEL_STACK_CSS = """
 .model-stack{display:flex;flex-direction:column;margin:1.5rem 0;}
 .model-stack>.model-section{width:100%;padding:1rem 0;}
 .model-stack>.model-section[data-model="tritonswmm"]{order:0;}
-.model-stack>.model-section[data-model="triton"]{order:1;border-top:2px solid var(--uva-medium-gray,#cccccc);margin-top:.5rem;}
+.model-stack>.model-section[data-model="triton"]{order:1;
+border-top:2px solid var(--uva-medium-gray,#cccccc);margin-top:.5rem;}
 .model-stack>.model-section[data-model]::before{display:block;font-weight:bold;color:var(--uva-blue,#1a1a1a);margin-bottom:.5rem;font-size:1.05rem;}
 .model-stack>.model-section[data-model="tritonswmm"]::before{content:"TRITON-SWMM";}
 .model-stack>.model-section[data-model="triton"]::before{content:"TRITON";}
-.model-stack>.model-section img,.model-stack>.model-section iframe,.model-stack>.model-section svg,.model-stack>.model-section table{max-width:100%;}
+.model-stack>.model-section img,.model-stack>.model-section iframe,
+.model-stack>.model-section svg,.model-stack>.model-section table{max-width:100%;}
 .model-arm-frame{width:100%;height:900px;border:0;overflow:auto;}
-.model-stack>.model-section[data-model-absent],.model-stack>.model-section.model-absent{color:var(--uva-text-gray,#6b7280);background:var(--uva-light-gray,#f1f3f5);border:1px dashed var(--uva-medium-gray,#cccccc);border-radius:4px;padding:.75rem 1rem;font-style:italic;}
+.model-stack>.model-section[data-model-absent],
+.model-stack>.model-section.model-absent{color:var(--uva-text-gray,#6b7280);
+background:var(--uva-light-gray,#f1f3f5);
+border:1px dashed var(--uva-medium-gray,#cccccc);
+border-radius:4px;padding:.75rem 1rem;font-style:italic;}
 """
 
 #: Iter-13 defect 2. The arm frame used to be sized ONCE, from its own `onload` handler, as
@@ -370,7 +376,9 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         continue
                     claimed.add(fpath)
                     sidecar = fpath.with_suffix(".manifest.json")
-                    plot_id = _json.loads(sidecar.read_text()).get("plot_id", fpath.stem) if sidecar.exists() else fpath.stem
+                    plot_id = (
+                        _json.loads(sidecar.read_text()).get("plot_id", fpath.stem) if sidecar.exists() else fpath.stem
+                    )
                     rk = tmpl.report_kwargs
                     out.append((plot_id, rk.get("category", "Other"), rk.get("subcategory", ""), rel, fpath, sidecar))
         for fpath in sorted(child.glob("plots/**/*.html")):
@@ -413,8 +421,8 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
         # campaign) has neither, and falling through to `continue` harvested ZERO figures for
         # it silently. Such a base renders its single section alone, exactly as a coupled-only
         # figure does.
-        primary_eid = ts_eid or tri_eid or next(
-            (arms[k] for k in sorted(arms) if k not in ("tritonswmm", "triton")), None
+        primary_eid = (
+            ts_eid or tri_eid or next((arms[k] for k in sorted(arms) if k not in ("tritonswmm", "triton")), None)
         )
         if primary_eid is None:
             warnings.warn(
@@ -426,7 +434,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
             continue
         # pure-TRITON counterpart figures by plot_id, only when the primary IS the coupled arm
         counterpart = {f[0]: f for f in _figures_of(tri_eid)} if (ts_eid and tri_eid) else {}
-        for plot_id, category, subcategory, rel, fpath, sidecar in _figures_of(primary_eid):
+        for plot_id, category, subcategory, _rel, fpath, sidecar in _figures_of(primary_eid):
             ts_html = fpath.read_text(encoding="utf-8", errors="replace")
             cf = counterpart.get(plot_id)
             tri_html = cf[4].read_text(encoding="utf-8", errors="replace") if cf is not None else None
@@ -452,7 +460,8 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
             specs.append(
                 RuleSpec(
                     rule_name=rn,
-                    renderer_module="cross_experiment_compatibility",  # any keyed renderer; shell inert (page pre-composed)
+                    # any keyed renderer; shell inert (page pre-composed)
+                    renderer_module="cross_experiment_compatibility",
                     input_flags=(),
                     output_path_template=page_rel,
                     source_paths=tuple(srcs),
@@ -580,9 +589,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                                 # the React `name` field in `_react_surgery`) are never
                                 # re-expanded and would show doubled braces to the reader. The
                                 # escape therefore belongs at THIS call, not inside the humanizer.
-                                "figure": escape_label_braces(
-                                    humanize_plot_id(plot_id, _member_labels, _event_labels)
-                                ),
+                                "figure": escape_label_braces(humanize_plot_id(plot_id, _member_labels, _event_labels)),
                                 **_plot_id_facets(
                                     plot_id,
                                     models=(

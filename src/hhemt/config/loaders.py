@@ -1,12 +1,15 @@
 from __future__ import annotations
+
 from pathlib import Path
 from typing import TypeVar
+
 import yaml
-from hhemt.config.system import system_config
+
 from hhemt.config.analysis import analysis_config
 from hhemt.config.brand_theme import brand_theme
 from hhemt.config.globus import GlobusTransferSpec
 from hhemt.config.hpc_system import hpc_system_config
+from hhemt.config.system import system_config
 
 _M = TypeVar("_M")
 

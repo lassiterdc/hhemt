@@ -603,7 +603,7 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     invocations reuse the materialized analysis from the test-case cache.
 
     Returns the ``TRITONSWMM_sensitivity_analysis`` object (master analysis
-    accessible via ``.master_analysis``). Stale ``.snakemake/locks/`` /
+    accessible via ``.experiment``). Stale ``.snakemake/locks/`` /
     ``.snakemake/incomplete/`` (and the reprocess-side
     ``.snakemake_reprocess/.snakemake/locks/`` /
     ``.snakemake_reprocess/.snakemake/incomplete/``) directories from prior
@@ -612,7 +612,7 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
 
     Canonical EDA-loop fixture (ADR-9/ADR-10). EDA functions
     (check_cross_sim_identity, analysis.eda()) take a TRITONSWMM_analysis;
-    pass synthetic_sensitivity_completed.master_analysis (NOT the fixture object
+    pass synthetic_sensitivity_completed.experiment (NOT the fixture object
     itself, which is the sensitivity wrapper). Warm-cache precondition: the first
     session invocation against a clean cache pays the full compile + run +
     consolidate cost; a cold-cache run appears to hang for minutes.

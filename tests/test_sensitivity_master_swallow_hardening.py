@@ -43,7 +43,9 @@ def test_enumerate_member_event_pairs_happy_path(synth_sensitivity_builder) -> N
     assert len(member) == len(evt) == n_events
 
 
-def test_enumerate_member_event_pairs_warns_and_empties_on_failure(synth_sensitivity_builder, monkeypatch, caplog) -> None:
+def test_enumerate_member_event_pairs_warns_and_empties_on_failure(
+    synth_sensitivity_builder, monkeypatch, caplog
+) -> None:
     """R13/D10 (production caller label): an enumeration failure logs a WARNING
     naming the exception type AND returns two EMPTY lists."""
     builder = _builder(synth_sensitivity_builder)

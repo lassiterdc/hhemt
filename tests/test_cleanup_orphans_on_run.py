@@ -9,9 +9,9 @@ Covers:
 - analysis.run(cleanup_orphans=True) deletes orphans then proceeds to submit_workflow
 - CLI cleanup-orphans --apply --force deletes all three artifact classes
 """
+
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -155,9 +155,7 @@ def test_run_dry_run_preserves_all_orphans(sensitivity_analysis_with_orphans):
     analysis_dir = analysis.analysis_paths.analysis_dir
     status_dir = analysis_dir / "_status"
     zarr_path = analysis.analysis_paths.sensitivity_datatree_zarr
-    zarr_group = (
-        zarr_path / "member_999" if (zarr_path is not None and zarr_path.exists()) else None
-    )
+    zarr_group = zarr_path / "member_999" if (zarr_path is not None and zarr_path.exists()) else None
     with patch("hhemt.config.report.validate_sensitivity_independent_vars"):
         with patch.object(
             analysis,
@@ -178,7 +176,11 @@ def test_run_cleans_when_flag_true(sensitivity_analysis_with_orphans):
     # "cleans when flag true" intent is the APPLY path — dry_run=False.
     analysis = sensitivity_analysis_with_orphans
     with patch("hhemt.config.report.validate_sensitivity_independent_vars"):
-        with patch.object(analysis, "submit_workflow", return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"}):
+        with patch.object(
+            analysis,
+            "submit_workflow",
+            return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"},
+        ):
             analysis.run(cleanup_orphans=True, dry_run=False, verbose=False)
     analysis_dir = analysis.analysis_paths.analysis_dir
     assert not (analysis_dir / "members" / "member_999").exists()
@@ -187,7 +189,11 @@ def test_run_cleans_when_flag_true(sensitivity_analysis_with_orphans):
 def test_run_no_orphans_proceeds_silently(norfolk_sensitivity_analysis_cached):
     analysis = norfolk_sensitivity_analysis_cached
     with patch("hhemt.config.report.validate_sensitivity_independent_vars"):
-        with patch.object(analysis, "submit_workflow", return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"}):
+        with patch.object(
+            analysis,
+            "submit_workflow",
+            return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"},
+        ):
             # Should not raise even though cleanup_orphans=False (default)
             analysis.run(dry_run=True, verbose=False)
 
@@ -198,5 +204,9 @@ def test_run_cleanup_orphans_is_noop_on_non_sensitivity(norfolk_multi_sim_analys
     """
     analysis = norfolk_multi_sim_analysis_cached
     assert not analysis.cfg_analysis.toggle_sensitivity_analysis
-    with patch.object(analysis, "submit_workflow", return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"}):
+    with patch.object(
+        analysis,
+        "submit_workflow",
+        return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"},
+    ):
         analysis.run(cleanup_orphans=True, dry_run=True, verbose=False)

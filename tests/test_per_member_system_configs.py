@@ -106,11 +106,10 @@ def _make_member_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, t
     # Also patch the in-method import target (the method imports lazily via
     # `from hhemt.system import TRITONSWMM_system`).
     import hhemt.system as system_mod
+
     monkeypatch.setattr(system_mod, "TRITONSWMM_system", fake_constructor)
 
-    instance._system = _make_stub_system(
-        10.0, None, None, Path("/fake/master_cfg_system.yaml").resolve()
-    )
+    instance._system = _make_stub_system(10.0, None, None, Path("/fake/master_cfg_system.yaml").resolve())
     return instance
 
 
@@ -125,7 +124,7 @@ def test_build_unique_system_targets_dedups_by_compile_tuple(monkeypatch, tmp_pa
     yaml_to_attrs = {
         yaml_a: (10.0, None, None),
         yaml_b: (10.0, None, None),  # same tuple as A → collapse
-        yaml_c: (5.0, None, None),   # different tuple → its own target
+        yaml_c: (5.0, None, None),  # different tuple → its own target
     }
     instance = _make_member_instance_for_unit_test(monkeypatch, yaml_to_attrs, tmp_path)
 
@@ -202,12 +201,8 @@ def test_backward_compat_no_system_config_yaml_column(monkeypatch):
     The fallback creates exactly one UniqueSystemTarget aggregating every member_id.
     """
     instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    master_system = _make_stub_system(
-        10.0, None, None, Path("/fake/master_cfg_system.yaml").resolve()
-    )
-    df_setup_full = pd.DataFrame(
-        {"sa_id": ["0", "1", "2"], "run_mode": ["mpi", "openmp", "serial"]}
-    ).set_index("sa_id")
+    master_system = _make_stub_system(10.0, None, None, Path("/fake/master_cfg_system.yaml").resolve())
+    df_setup_full = pd.DataFrame({"sa_id": ["0", "1", "2"], "run_mode": ["mpi", "openmp", "serial"]}).set_index("sa_id")
 
     # Emulate the __init__ fallback branch directly.
     instance._system = master_system
@@ -270,18 +265,10 @@ def test_compile_and_preprocess_all_targets_iterates_unique_targets():
         verbose=False,
     )
 
-    sys_a.process_system_level_inputs.assert_called_once_with(
-        overwrite_outputs_if_already_created=True, verbose=False
-    )
-    sys_a.compile_TRITON_SWMM.assert_called_once_with(
-        recompile_if_already_done_successfully=False, verbose=False
-    )
-    sys_c.process_system_level_inputs.assert_called_once_with(
-        overwrite_outputs_if_already_created=True, verbose=False
-    )
-    sys_c.compile_TRITON_SWMM.assert_called_once_with(
-        recompile_if_already_done_successfully=False, verbose=False
-    )
+    sys_a.process_system_level_inputs.assert_called_once_with(overwrite_outputs_if_already_created=True, verbose=False)
+    sys_a.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=False, verbose=False)
+    sys_c.process_system_level_inputs.assert_called_once_with(overwrite_outputs_if_already_created=True, verbose=False)
+    sys_c.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=False, verbose=False)
     instance._update_experiment_log.assert_called_once()
 
 
@@ -297,16 +284,10 @@ def test_compile_TRITON_SWMM_for_sensitivity_analysis_iterates_unique_targets():
     ]
     instance._update_experiment_log = MagicMock()
 
-    instance.compile_TRITON_SWMM_for_sensitivity_analysis(
-        verbose=False, recompile_if_already_done_successfully=True
-    )
+    instance.compile_TRITON_SWMM_for_sensitivity_analysis(verbose=False, recompile_if_already_done_successfully=True)
 
-    sys_a.compile_TRITON_SWMM.assert_called_once_with(
-        recompile_if_already_done_successfully=True, verbose=False
-    )
-    sys_c.compile_TRITON_SWMM.assert_called_once_with(
-        recompile_if_already_done_successfully=True, verbose=False
-    )
+    sys_a.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=True, verbose=False)
+    sys_c.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=True, verbose=False)
     instance._system.compile_TRITON_SWMM.assert_not_called()
     instance._update_experiment_log.assert_called_once()
 
@@ -322,9 +303,7 @@ def test_attributes_varied_filters_system_config_yaml():
     are recognized as analysis_config fields.
     """
     instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    instance._df_setup_full = pd.DataFrame(
-        columns=["run_mode", "n_omp_threads", "system_config_yaml"]
-    )
+    instance._df_setup_full = pd.DataFrame(columns=["run_mode", "n_omp_threads", "system_config_yaml"])
     keys = instance.analysis_independent_vars
     assert "system_config_yaml" not in keys
     assert "run_mode" in keys
@@ -386,9 +365,7 @@ def test_phase3_member_id_to_target_id_map_reverses_target_membership():
         UniqueSystemTarget(1, Path("/c.yaml"), object(), ["2"]),
     ]
     member_id_to_target_id = {
-        str(member_id): target.target_id
-        for target in targets
-        for member_id in target.analysis_ids
+        str(member_id): target.target_id for target in targets for member_id in target.analysis_ids
     }
     assert member_id_to_target_id == {"0": 0, "1": 0, "2": 1}
 
@@ -450,9 +427,7 @@ def _master_system_for_test(tmp_path: Path = None) -> object:
     # Use a one-shot tmp file; the helper only runs Pydantic validation, no I/O.
     import tempfile
 
-    with tempfile.NamedTemporaryFile(
-        suffix=".yaml", mode="w", delete=False
-    ) as fh:
+    with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as fh:
         yaml.safe_dump(_minimal_system_dict(), fh)
         fpath = Path(fh.name)
     try:
@@ -463,18 +438,14 @@ def _master_system_for_test(tmp_path: Path = None) -> object:
 
 def _cfg_analysis_stub(csv_path: Path) -> SimpleNamespace:
     """Minimal analysis-config stub for _validate_per_member_system_configs."""
-    return SimpleNamespace(
-        toggle_sensitivity_analysis=True, sensitivity_analysis=csv_path
-    )
+    return SimpleNamespace(toggle_sensitivity_analysis=True, sensitivity_analysis=csv_path)
 
 
 def test_phase4_validator_skips_when_sensitivity_analysis_off(tmp_path):
     """No CSV read, no errors when toggle_sensitivity_analysis=False."""
     result = ValidationResult(context="test")
     cfg_system = _master_system_for_test()
-    cfg_analysis = SimpleNamespace(
-        toggle_sensitivity_analysis=False, sensitivity_analysis=tmp_path / "irrelevant.csv"
-    )
+    cfg_analysis = SimpleNamespace(toggle_sensitivity_analysis=False, sensitivity_analysis=tmp_path / "irrelevant.csv")
     _validate_per_member_system_configs(cfg_system, cfg_analysis, result)
     assert result.is_valid
     assert result.issue_count == 0
@@ -485,22 +456,16 @@ def test_phase4_validator_skips_when_no_system_config_yaml_column(tmp_path):
     csv_path = tmp_path / "no_col.csv"
     csv_path.write_text("member_id,run_mode\n0,mpi\n1,openmp\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(
-        _master_system_for_test(), _cfg_analysis_stub(csv_path), result
-    )
+    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
     assert result.is_valid
 
 
 def test_phase4_validator_flags_missing_yaml(tmp_path):
     """A non-existent system_config_yaml path produces a structured error."""
     csv_path = tmp_path / "missing.csv"
-    csv_path.write_text(
-        f"member_id,system_config_yaml\n0,{tmp_path / 'does_not_exist.yaml'}\n"
-    )
+    csv_path.write_text(f"member_id,system_config_yaml\n0,{tmp_path / 'does_not_exist.yaml'}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(
-        _master_system_for_test(), _cfg_analysis_stub(csv_path), result
-    )
+    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
     assert not result.is_valid
     errors = [str(e) for e in result.errors]
     assert any("does not exist" in msg for msg in errors)
@@ -514,9 +479,7 @@ def test_phase4_validator_flags_invalid_yaml_via_pydantic(tmp_path):
     csv_path = tmp_path / "bad.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{bad_yaml}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(
-        _master_system_for_test(), _cfg_analysis_stub(csv_path), result
-    )
+    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
     assert not result.is_valid
     assert any("Failed to load" in str(e) for e in result.errors)
 
@@ -534,24 +497,18 @@ def test_phase4_validator_flags_model_toggle_mismatch(tmp_path):
     csv_path = tmp_path / "toggles.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{sub_yaml}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(
-        _master_system_for_test(), _cfg_analysis_stub(csv_path), result
-    )
+    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
     assert not result.is_valid
     assert any("model toggles" in str(e).lower() for e in result.errors)
 
 
 def test_phase4_validator_passes_when_toggles_match_master(tmp_path):
     """A member YAML with matching toggles + different DEM resolution is valid."""
-    sub_yaml = _write_system_yaml(
-        tmp_path / "sub_dem20.yaml", target_dem_resolution=20.0
-    )
+    sub_yaml = _write_system_yaml(tmp_path / "sub_dem20.yaml", target_dem_resolution=20.0)
     csv_path = tmp_path / "valid.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{sub_yaml}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(
-        _master_system_for_test(), _cfg_analysis_stub(csv_path), result
-    )
+    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
     assert result.is_valid, [str(e) for e in result.errors]
 
 
@@ -573,17 +530,11 @@ def test_phase4_validator_flags_canonical_yaml_divergence_post_dedup(tmp_path):
         constant_mannings=0.040,  # diverges
     )
     csv_path = tmp_path / "dedup_divergence.csv"
-    csv_path.write_text(
-        f"member_id,system_config_yaml\n0,{yaml_a}\n1,{yaml_b}\n"
-    )
+    csv_path.write_text(f"member_id,system_config_yaml\n0,{yaml_a}\n1,{yaml_b}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(
-        _master_system_for_test(), _cfg_analysis_stub(csv_path), result
-    )
+    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
     assert not result.is_valid
-    assert any(
-        "collapse to the same compile target" in str(e) for e in result.errors
-    )
+    assert any("collapse to the same compile target" in str(e) for e in result.errors)
 
 
 def test_phase4_validator_dedup_allows_identical_non_key_fields(tmp_path):
@@ -591,13 +542,9 @@ def test_phase4_validator_dedup_allows_identical_non_key_fields(tmp_path):
     yaml_a = _write_system_yaml(tmp_path / "a.yaml", target_dem_resolution=10.0)
     yaml_b = _write_system_yaml(tmp_path / "b.yaml", target_dem_resolution=10.0)
     csv_path = tmp_path / "dedup_ok.csv"
-    csv_path.write_text(
-        f"member_id,system_config_yaml\n0,{yaml_a}\n1,{yaml_b}\n"
-    )
+    csv_path.write_text(f"member_id,system_config_yaml\n0,{yaml_a}\n1,{yaml_b}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(
-        _master_system_for_test(), _cfg_analysis_stub(csv_path), result
-    )
+    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
     assert result.is_valid, [str(e) for e in result.errors]
 
 
@@ -612,15 +559,9 @@ def test_phase4_validator_two_resolutions_no_dedup_collision(tmp_path):
     yaml_10 = _write_system_yaml(tmp_path / "sys_10m.yaml", target_dem_resolution=10.0)
     yaml_20 = _write_system_yaml(tmp_path / "sys_20m.yaml", target_dem_resolution=20.0)
     csv_path = tmp_path / "two_res.csv"
-    csv_path.write_text(
-        "member_id,run_mode,system_config_yaml\n"
-        f"0,mpi,{yaml_10}\n"
-        f"1,openmp,{yaml_20}\n"
-    )
+    csv_path.write_text("member_id,run_mode,system_config_yaml\n" f"0,mpi,{yaml_10}\n" f"1,openmp,{yaml_20}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(
-        _master_system_for_test(), _cfg_analysis_stub(csv_path), result
-    )
+    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
     assert result.is_valid, [str(e) for e in result.errors]
 
 
@@ -650,16 +591,10 @@ def test_phase4_preflight_invokes_per_member_validator(tmp_path, monkeypatch):
 
     # preflight_validate now threads cfg_hpc_system=... into validate_analysis_config;
     # absorb new kwargs so the monkeypatched stubs stay forward-compatible.
-    monkeypatch.setattr(
-        vmod, "validate_analysis_config", lambda cfg, **_kw: ValidationResult()
-    )
-    monkeypatch.setattr(
-        vmod, "validate_data_consistency", lambda cs, ca, **_kw: ValidationResult()
-    )
+    monkeypatch.setattr(vmod, "validate_analysis_config", lambda cfg, **_kw: ValidationResult())
+    monkeypatch.setattr(vmod, "validate_data_consistency", lambda cs, ca, **_kw: ValidationResult())
     result = vmod.preflight_validate(cfg_system, cfg_analysis_stub)
     assert not result.is_valid
     assert any(
-        "does not exist" in str(e)
-        and "sensitivity_analysis.system_config_yaml" in e.field
-        for e in result.errors
+        "does not exist" in str(e) and "sensitivity_analysis.system_config_yaml" in e.field for e in result.errors
     )

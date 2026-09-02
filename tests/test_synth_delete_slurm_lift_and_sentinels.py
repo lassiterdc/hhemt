@@ -20,14 +20,12 @@ so the tests do not require real on-disk analysis trees.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from hhemt.exceptions import ConfigurationError
-
 
 # ---------------------------------------------------------------------------
 # V-P3.1 — _resolve_delete_mode_from_method
@@ -51,7 +49,8 @@ def test_resolve_delete_mode_from_method_recognized_values(method, expected):
     # Instance is unused by this pure method — call as an unbound function
     # via the class to avoid needing a fully-constructed analysis.
     result = SnakemakeWorkflowBuilder._resolve_delete_mode_from_method(
-        None, method  # type: ignore[arg-type]
+        None,
+        method,  # type: ignore[arg-type]
     )
     assert result == expected
 
@@ -62,7 +61,8 @@ def test_resolve_delete_mode_from_method_unknown_raises():
 
     with pytest.raises(ConfigurationError):
         SnakemakeWorkflowBuilder._resolve_delete_mode_from_method(
-            None, "bogus_mode"  # type: ignore[arg-type]
+            None,
+            "bogus_mode",  # type: ignore[arg-type]
         )
 
 
@@ -79,28 +79,20 @@ def slurm_env(monkeypatch):
     yield
 
 
-def _assert_sentinel_written_and_cleaned(
-    sentinel_path: Path, *, expect_cleaned: bool = True
-) -> None:
+def _assert_sentinel_written_and_cleaned(sentinel_path: Path, *, expect_cleaned: bool = True) -> None:
     """Walk the parent dir; assert sentinel does not exist post-finally."""
     if expect_cleaned:
-        assert not sentinel_path.exists(), (
-            f"Sentinel not cleaned by finally block: {sentinel_path}"
-        )
+        assert not sentinel_path.exists(), f"Sentinel not cleaned by finally block: {sentinel_path}"
 
 
-def test_delete_scenario_runner_writes_and_cleans_sentinel_on_success(
-    tmp_path, slurm_env
-):
+def test_delete_scenario_runner_writes_and_cleans_sentinel_on_success(tmp_path, slurm_env):
     """Happy path: sentinel written at entry, deleted in finally on clean return."""
     from hhemt import delete_scenario_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "sims" / "scen_a").mkdir(parents=True)
 
-    rc = runner.main(
-        ["--event-id", "scen_a", "--analysis-dir", str(analysis_dir)]
-    )
+    rc = runner.main(["--event-id", "scen_a", "--analysis-dir", str(analysis_dir)])
     assert rc == 0
 
     sentinel = analysis_dir / "_status" / "_submitted" / "delete_scenario_scen_a.json"
@@ -116,9 +108,7 @@ def test_delete_scenario_runner_cleans_sentinel_on_exception(tmp_path, slurm_env
 
     with patch.object(runner, "fast_rmtree", side_effect=RuntimeError("boom")):
         with pytest.raises(RuntimeError, match="boom"):
-            runner.main(
-                ["--event-id", "scen_a", "--analysis-dir", str(analysis_dir)]
-            )
+            runner.main(["--event-id", "scen_a", "--analysis-dir", str(analysis_dir)])
 
     sentinel = analysis_dir / "_status" / "_submitted" / "delete_scenario_scen_a.json"
     _assert_sentinel_written_and_cleaned(sentinel)
@@ -134,27 +124,21 @@ def test_delete_scenario_runner_no_op_without_slurm_job_id(tmp_path, monkeypatch
     runner.main(["--event-id", "scen_a", "--analysis-dir", str(analysis_dir)])
 
     submitted_dir = analysis_dir / "_status" / "_submitted"
-    assert not submitted_dir.exists() or not any(submitted_dir.iterdir()), (
-        "Local-run path should not write any submission sentinels"
-    )
+    assert not submitted_dir.exists() or not any(
+        submitted_dir.iterdir()
+    ), "Local-run path should not write any submission sentinels"
 
 
-def test_delete_analysis_runner_writes_and_cleans_sentinel_on_success(
-    tmp_path, slurm_env
-):
+def test_delete_analysis_runner_writes_and_cleans_sentinel_on_success(tmp_path, slurm_env):
     from hhemt import delete_member_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "members" / "member_3").mkdir(parents=True)
 
-    rc = runner.main(
-        ["--member-id", "3", "--analysis-dir", str(analysis_dir)]
-    )
+    rc = runner.main(["--member-id", "3", "--analysis-dir", str(analysis_dir)])
     assert rc == 0
 
-    sentinel = (
-        analysis_dir / "_status" / "_submitted" / "delete_member_member-3.json"
-    )
+    sentinel = analysis_dir / "_status" / "_submitted" / "delete_member_member-3.json"
     _assert_sentinel_written_and_cleaned(sentinel)
 
 
@@ -166,19 +150,13 @@ def test_delete_analysis_runner_cleans_sentinel_on_exception(tmp_path, slurm_env
 
     with patch.object(runner, "fast_rmtree", side_effect=RuntimeError("boom-member")):
         with pytest.raises(RuntimeError, match="boom-member"):
-            runner.main(
-                ["--member-id", "3", "--analysis-dir", str(analysis_dir)]
-            )
+            runner.main(["--member-id", "3", "--analysis-dir", str(analysis_dir)])
 
-    sentinel = (
-        analysis_dir / "_status" / "_submitted" / "delete_member_member-3.json"
-    )
+    sentinel = analysis_dir / "_status" / "_submitted" / "delete_member_member-3.json"
     _assert_sentinel_written_and_cleaned(sentinel)
 
 
-def test_delete_consolidation_runner_writes_and_cleans_sentinel_on_success(
-    tmp_path, slurm_env
-):
+def test_delete_consolidation_runner_writes_and_cleans_sentinel_on_success(tmp_path, slurm_env):
     from hhemt import delete_consolidation_runner as runner
 
     analysis_dir = tmp_path / "analysis"
@@ -191,15 +169,11 @@ def test_delete_consolidation_runner_writes_and_cleans_sentinel_on_success(
     # _status/_submitted/ dir holding its own sentinel) as part of its
     # primary task; the finally unlink uses missing_ok=True so the post-
     # condition is the same — no sentinel remains.
-    sentinel = (
-        analysis_dir / "_status" / "_submitted" / "delete_analysis_consolidation.json"
-    )
+    sentinel = analysis_dir / "_status" / "_submitted" / "delete_analysis_consolidation.json"
     _assert_sentinel_written_and_cleaned(sentinel)
 
 
-def test_delete_consolidation_runner_cleans_sentinel_on_exception(
-    tmp_path, slurm_env
-):
+def test_delete_consolidation_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
     from hhemt import delete_consolidation_runner as runner
 
     analysis_dir = tmp_path / "analysis"
@@ -212,7 +186,5 @@ def test_delete_consolidation_runner_cleans_sentinel_on_exception(
         with pytest.raises(RuntimeError, match="boom-consol"):
             runner.main(["--analysis-dir", str(analysis_dir)])
 
-    sentinel = (
-        analysis_dir / "_status" / "_submitted" / "delete_analysis_consolidation.json"
-    )
+    sentinel = analysis_dir / "_status" / "_submitted" / "delete_analysis_consolidation.json"
     _assert_sentinel_written_and_cleaned(sentinel)

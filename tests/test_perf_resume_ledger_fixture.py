@@ -50,7 +50,15 @@ EXPECTED_RESUME = {"Total": 409.30, "Init": 0.19931}
 # Every metric the perf schema tracks, per the header line of performance{N}.txt.
 # Constraint A: coverage is the full schema, not the subset the benchmarking figure plots.
 TRACKED_METRICS = [
-    "Compute", "MPI", "IO", "Resize", "SWMM", "Other", "Simulation", "Init", "Total",
+    "Compute",
+    "MPI",
+    "IO",
+    "Resize",
+    "SWMM",
+    "Other",
+    "Simulation",
+    "Init",
+    "Total",
 ]
 
 
@@ -61,9 +69,7 @@ def test_resume_arm_applies_every_ledger_reset_at_any_reporting_scale(min_per_ts
     Pre-fix this FAILS at 10.0 and passes at 1.0 — that asymmetry is the whole defect,
     and a single-scale test cannot see it.
     """
-    ds = _aggregate_perf_summary(
-        RESUME_PERF, min_per_tstep, resume_steps=RESUME_STEPS
-    )
+    ds = _aggregate_perf_summary(RESUME_PERF, min_per_tstep, resume_steps=RESUME_STEPS)
     for name, expected in EXPECTED_RESUME.items():
         got = float(ds[name].values.ravel()[0])
         assert got == pytest.approx(expected, rel=1e-4), (
@@ -101,9 +107,7 @@ def test_clean_arm_is_invariant_across_reporting_scale_for_every_tracked_metric(
     for name in TRACKED_METRICS:
         a = float(at_1[name].values.ravel()[0])
         b = float(at_10[name].values.ravel()[0])
-        assert a == pytest.approx(b, rel=1e-9), (
-            f"clean {name} changed with reporting scale: {a} at 1.0 vs {b} at 10.0."
-        )
+        assert a == pytest.approx(b, rel=1e-9), f"clean {name} changed with reporting scale: {a} at 1.0 vs {b} at 10.0."
 
 
 @pytest.mark.parametrize("min_per_tstep", SCALES)

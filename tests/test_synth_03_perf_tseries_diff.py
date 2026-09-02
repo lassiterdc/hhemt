@@ -19,6 +19,7 @@ The helpers are called directly (no analysis-instance harness needed) per Spec 8
 architectural constraint that V0008 + this regression test share one source of truth
 with the production aggregator.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -67,18 +68,13 @@ def test_zero_byte_perf_file_is_skipped(synthetic_perf_dir):
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        ds = _aggregate_perf_tseries(
-            synthetic_perf_dir, resume_steps=[]
-        )  # raises EmptyDataError pre-fix
+        ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])  # raises EmptyDataError pre-fix
 
     # The empty file is skipped: the series covers exactly the 10 valid checkpoints.
     assert ds.sizes["timestep_min"] == 10
     # A UserWarning naming the skipped empty file(s) was emitted (mirrors the
     # existing perfs-with-negatives warning pattern).
-    assert any(
-        issubclass(w.category, UserWarning) and "empty" in str(w.message).lower()
-        for w in caught
-    )
+    assert any(issubclass(w.category, UserWarning) and "empty" in str(w.message).lower() for w in caught)
 
 
 def test_malformed_perf_file_is_skipped(synthetic_perf_dir):
@@ -124,30 +120,20 @@ def test_malformed_perf_file_is_skipped(synthetic_perf_dir):
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        ds = _aggregate_perf_tseries(
-            synthetic_perf_dir, resume_steps=[]
-        )  # raises ValueError / IndexError pre-fix
+        ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])  # raises ValueError / IndexError pre-fix
 
     # Both malformed files are skipped: the series covers exactly the 10 valid
     # checkpoints built by the fixture.
     assert ds.sizes["timestep_min"] == 10
     # The skipped checkpoints do not leak into the reset-row join's iloc set: the
     # per-rank sum still telescopes to the final cumulative of checkpoint 10.
-    assert ds["Total"].sum(dim="timestep_min").max(dim="Rank").item() == pytest.approx(
-        160.0, rel=1e-6
-    )
+    assert ds["Total"].sum(dim="timestep_min").max(dim="Rank").item() == pytest.approx(160.0, rel=1e-6)
     # A UserWarning naming the malformed file(s) was emitted, and it carries the
     # DIAGNOSIS (concurrent writers), not merely the fact of a skip -- this artifact is
     # the only place duplicate execution is visible, so a generic message would read as
     # noise and delete the detector.
-    assert any(
-        issubclass(w.category, UserWarning) and "malformed" in str(w.message).lower()
-        for w in caught
-    )
-    assert any(
-        issubclass(w.category, UserWarning) and "concurrent" in str(w.message).lower()
-        for w in caught
-    )
+    assert any(issubclass(w.category, UserWarning) and "malformed" in str(w.message).lower() for w in caught)
+    assert any(issubclass(w.category, UserWarning) and "concurrent" in str(w.message).lower() for w in caught)
 
 
 def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
@@ -166,12 +152,12 @@ def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
         "Rank-1 cumulative Total at checkpoint 10 is 160s; max(Rank).sum(timestep_min) "
         "of correctly-diffed deltas must equal this."
     )
-    assert summary["Compute"].item() == pytest.approx(120.0, rel=1e-6), (
-        "Rank-1 Compute at checkpoint 10 is 120s; max(Rank) selects rank-1."
-    )
-    assert summary["SWMM"].item() == pytest.approx(50.0, rel=1e-6), (
-        "Rank-0 SWMM = 50s; max(Rank) selects rank-0 because rank-0 > rank-1 SWMM."
-    )
+    assert summary["Compute"].item() == pytest.approx(
+        120.0, rel=1e-6
+    ), "Rank-1 Compute at checkpoint 10 is 120s; max(Rank) selects rank-1."
+    assert summary["SWMM"].item() == pytest.approx(
+        50.0, rel=1e-6
+    ), "Rank-0 SWMM = 50s; max(Rank) selects rank-0 because rank-0 > rank-1 SWMM."
 
 
 def test_corrected_reconstruction_matches_final_performance_txt(synthetic_perf_dir):
@@ -181,12 +167,12 @@ def test_corrected_reconstruction_matches_final_performance_txt(synthetic_perf_d
     ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])
     rank0_total = ds["Total"].sel(Rank=0).sum(dim="timestep_min").item()
     rank1_total = ds["Total"].sel(Rank=1).sum(dim="timestep_min").item()
-    assert rank0_total == pytest.approx(150.0, rel=1e-6), (
-        "rank-0 final Total at checkpoint 10 = 15s/checkpoint × 10 = 150s"
-    )
-    assert rank1_total == pytest.approx(160.0, rel=1e-6), (
-        "rank-1 final Total at checkpoint 10 = 16s/checkpoint × 10 = 160s"
-    )
+    assert rank0_total == pytest.approx(
+        150.0, rel=1e-6
+    ), "rank-0 final Total at checkpoint 10 = 15s/checkpoint × 10 = 150s"
+    assert rank1_total == pytest.approx(
+        160.0, rel=1e-6
+    ), "rank-1 final Total at checkpoint 10 = 16s/checkpoint × 10 = 160s"
 
 
 def _write_resume_boundary(perf_dir):

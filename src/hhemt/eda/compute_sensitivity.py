@@ -415,7 +415,8 @@ def _artifact_vars(labeled_records: list[tuple[str, list[dict]]]) -> dict[str, x
     """Build the plottable-artifact variables from labeled comparison records."""
     ds_vars: dict[str, xr.DataArray] = {}
     identical = _scalar_grid(
-        [(member, [{**r, "identical": float(r["identical"])} for r in recs]) for member, recs in labeled_records], "identical"
+        [(member, [{**r, "identical": float(r["identical"])} for r in recs]) for member, recs in labeled_records],
+        "identical",
     )
     if identical is not None:
         ds_vars["identical"] = identical

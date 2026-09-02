@@ -508,12 +508,7 @@ def test_required_axes_derivation_matches_template_wildcards():
     # member_id / event_id index the (member, event) product, not a sensitivity axis.
     non_axis = {"member_id", "event_id"}
     for name, rset in REPORTING_SETS.items():
-        wildcards = {
-            w
-            for sel in rset.renderer_selection
-            for tmpl in sel.rule_spec_template
-            for w in tmpl.wildcards
-        }
+        wildcards = {w for sel in rset.renderer_selection for tmpl in sel.rule_spec_template for w in tmpl.wildcards}
         has_axis_figure = bool(wildcards - non_axis)
         assert bool(rset.required_axes) == has_axis_figure, (
             f"reporting set {name!r}: required_axes={rset.required_axes!r} but its templates "

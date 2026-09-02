@@ -2,6 +2,7 @@
 + Mannings panels (no SWMM hydrology/hydraulics), a coupled/swmm master adds the SWMM panels
 in a 2×2 grid. The gate is _master_renders_swmm over the enabled model types (unioned across
 sensitivity subs); Phase-2 adds the Manning's panel to BOTH arms."""
+
 import types
 
 from hhemt.report_renderers.system_overview import (
@@ -42,8 +43,12 @@ def test_manifest_pure_triton_has_dem_and_mannings_only():
     Mannings panels (no SWMM), and the Mannings panel names its resolution. The
     pure-TRITON path needs no swmmio models, so the manifest is unit-testable directly."""
     md = _build_manifest_data(
-        analysis_id="a", dem_bounds=(0.0, 0.0, 10.0, 10.0),
-        hydro_model=None, hydraulics_model=None, bc_present=False, mannings_res=10.0,
+        analysis_id="a",
+        dem_bounds=(0.0, 0.0, 10.0, 10.0),
+        hydro_model=None,
+        hydraulics_model=None,
+        bc_present=False,
+        mannings_res=10.0,
     )
     names = [p["name"] for p in md["panels"]]
     assert names == ["triton_dem", "mannings"], names
@@ -55,8 +60,11 @@ def test_manifest_mannings_present_without_resolution_label():
     """The Manning's panel is present even when the resolution is unknown (falls back
     to a bare 'Mannings' title) — it never depends on a SWMM model being loaded."""
     md = _build_manifest_data(
-        analysis_id="a", dem_bounds=(0.0, 0.0, 1.0, 1.0),
-        hydro_model=None, hydraulics_model=None, bc_present=False,
+        analysis_id="a",
+        dem_bounds=(0.0, 0.0, 1.0, 1.0),
+        hydro_model=None,
+        hydraulics_model=None,
+        bc_present=False,
     )
     mannings = [p for p in md["panels"] if p["name"] == "mannings"]
     assert len(mannings) == 1 and mannings[0]["title"] == "Mannings"

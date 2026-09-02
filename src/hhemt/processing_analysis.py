@@ -634,6 +634,26 @@ def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
     if _sha is not None:
         tree.attrs["triton_producing_sha"] = str(_sha)
 
+    # Contract axes 2/3 (per-target TRITON) and 4 (standalone SWMM), same carrier and same
+    # graceful-absent rule as the clone-level sha above: captured at compile time onto the
+    # system log by the invocation that ACTUALLY built each target, stamped here as
+    # PLAIN root attrs so no _EMBEDDED_PROV_KEYS change and therefore no Gotcha-63 golden
+    # regeneration and no LAYOUT_VERSION bump. Each field is stamped independently --
+    # container mode supplies a version and no sha, and a half-present record is the
+    # honest one. Absence reads as INDETERMINATE downstream, never as agreement.
+    for _attr, _field in (
+        ("tritonswmm_producing_sha", "tritonswmm_producing_sha"),
+        ("triton_only_producing_sha", "triton_only_producing_sha"),
+        ("standalone_swmm_producing_version", "standalone_swmm_producing_version"),
+        ("standalone_swmm_producing_sha", "standalone_swmm_producing_sha"),
+    ):
+        try:
+            _val = getattr(_sys_log, _field).get()
+        except Exception:
+            continue
+        if _val is not None:
+            tree.attrs[_attr] = str(_val)
+
 
 def _parse_replay_t(text: str, marker: str) -> "float | None":
     """Parse the numeric ``t=`` value from the LAST replay marker in a model log.
@@ -738,7 +758,7 @@ def ds_memory_req_MiB(ds):
     return ds.nbytes / 1024**2
 
 
-def make_sure_ds_are_compatible_for_concatenation(ds_ref, ds_comp, lst_common_dims=["x", "y"]):
+def make_sure_ds_are_compatible_for_concatenation(ds_ref, ds_comp, lst_common_dims=("x", "y")):
     all_problems = ""
     problems = check_matching_dimensions(ds_ref, ds_comp)
     matching_dim_problems = check_for_matching_dim_values(ds_ref, ds_comp, lst_common_dims)
@@ -765,7 +785,7 @@ def check_matching_dimensions(ds_ref, ds_comp):
     return problems
 
 
-def check_for_matching_dim_values(ds_ref, ds_comp, lst_common_dims=["x", "y"]):
+def check_for_matching_dim_values(ds_ref, ds_comp, lst_common_dims=("x", "y")):
     problems = ""
     f_ref = ds_ref.encoding["source"]
     f_comp = ds_comp.encoding["source"]

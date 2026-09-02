@@ -131,9 +131,9 @@ _ENDS = "Simulation ends\n"
 # Producing shas that stand in for the retired per-defect booleans. Each is a REAL commit whose
 # ancestry the registry resolved at authoring time, so these exercise the production read path
 # (no clone, cached sets) rather than a path production never takes.
-_SHA_PRE_REPLAY = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"   # replay PRESENT  (Arm A)
+_SHA_PRE_REPLAY = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"  # replay PRESENT  (Arm A)
 _SHA_PRE_SCATTER = "b3820a448f304b3f732f4b6fac5564adf86ac333"  # replay absent, scatter PRESENT (Arm C)
-_SHA_POST_ALL = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"     # replay + scatter both absent (Arm B)
+_SHA_POST_ALL = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"  # replay + scatter both absent (Arm B)
 
 
 def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None):
@@ -724,9 +724,7 @@ def _triton_arm_b_stub(df):
     """Pure-TRITON (Arm B) analysis stub: no sensitivity, so _iter_members_or_self
     yields (None, analysis) and the schedule is read off analysis.cfg_analysis."""
     return SimpleNamespace(
-        _system=SimpleNamespace(
-            cfg_system=SimpleNamespace(toggle_tritonswmm_model=False, toggle_triton_model=True)
-        ),
+        _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=False, toggle_triton_model=True)),
         cfg_analysis=SimpleNamespace(
             toggle_sensitivity_analysis=False,
             resume_interruption_schedule=(36, 72, 108),
@@ -750,17 +748,15 @@ def test_resume_schedule_honored_surfaces_unverifiable_when_no_realized_boundari
     from hhemt.analysis_validation import check_resume_schedule_honored
 
     # n_resumes == len(schedule) (count check passes) and NO resume_reporting_tsteps.
-    df = pd.DataFrame(
-        [{"model_type": "triton", "n_resumes": 3, "scenario_directory": "sim_0"}]
-    )
+    df = pd.DataFrame([{"model_type": "triton", "n_resumes": 3, "scenario_directory": "sim_0"}])
     res = check_resume_schedule_honored(_triton_arm_b_stub(df))
 
-    assert any("CANNOT BE VERIFIED" in d["detail"] for d in res.details), (
-        "a resumed sim with no realized boundaries must be surfaced, not silently passed"
-    )
-    assert any("start_from_scratch" in d["detail"] for d in res.details), (
-        "the detail must name the operational cause a reader can act on"
-    )
+    assert any(
+        "CANNOT BE VERIFIED" in d["detail"] for d in res.details
+    ), "a resumed sim with no realized boundaries must be surfaced, not silently passed"
+    assert any(
+        "start_from_scratch" in d["detail"] for d in res.details
+    ), "the detail must name the operational cause a reader can act on"
 
 
 def test_resume_schedule_honored_is_quiet_when_realized_boundaries_match():
@@ -839,7 +835,6 @@ def test_armc_quiet_when_scatter_fix_present(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is True
     assert res.details == []
-
 
 
 # --- EW-2b: a check that EXAMINED NOTHING has not applied (P7 generalized). ------------
@@ -983,9 +978,7 @@ def test_clean_pin_with_resumed_sims_passes_positively(monkeypatch):
     "28 resumed coupled sim(s) ... lack the exchange-replay marker".
     """
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: SHA_EXTBC_GHOST_RING_FIX)
-    res = check_coupled_resume_validity(
-        _analysis_stub(coupled=False, df=_resumed_df(model_type="triton"))
-    )
+    res = check_coupled_resume_validity(_analysis_stub(coupled=False, df=_resumed_df(model_type="triton")))
     assert res.passed is True, f"got passed={res.passed!r} summary={res.summary!r}"
     assert res.applicable is True, "a clean pin with resumed sims is a POSITIVE pass, not N/A"
     assert "no known resume defect" in res.summary
@@ -999,9 +992,7 @@ def test_affected_pin_with_resumed_sims_still_selects(monkeypatch):
     status filter narrows selection without disabling it.
     """
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
-    res = check_coupled_resume_validity(
-        _analysis_stub(coupled=False, df=_resumed_df(model_type="triton"))
-    )
-    assert "no known resume defect" not in res.summary, (
-        "the positive-PASS branch fired on a pin carrying a PRESENT defect"
-    )
+    res = check_coupled_resume_validity(_analysis_stub(coupled=False, df=_resumed_df(model_type="triton")))
+    assert (
+        "no known resume defect" not in res.summary
+    ), "the positive-PASS branch fired on a pin carrying a PRESENT defect"

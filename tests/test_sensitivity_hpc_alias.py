@@ -23,10 +23,7 @@ def test_hpc_alias_recognizer_maps_partition_and_rejects_gpu_hardware():
     assert _is_hpc_overlay_column("hpc.partition")
     assert _is_hpc_overlay_column("hpc.setup_partition")
     assert _resolve_hpc_alias_to_analysis_field("hpc.partition") == "hpc_ensemble_partition"
-    assert (
-        _resolve_hpc_alias_to_analysis_field("hpc.setup_partition")
-        == "hpc_setup_and_analysis_processing_partition"
-    )
+    assert _resolve_hpc_alias_to_analysis_field("hpc.setup_partition") == "hpc_setup_and_analysis_processing_partition"
     # DQ4: gpu_hardware is derived-only — never a free alias.
     assert not _is_hpc_overlay_column("hpc.gpu_hardware")
     assert "gpu_hardware" not in _HPC_ALIAS_TO_ANALYSIS_FIELD
@@ -39,8 +36,7 @@ def test_hpc_partition_alias_resolves_on_each_sub(synth_sensitivity_multi_partit
     expected = {"0": "gpu-a6000", "1": "gpu-a100", "2": "gpu-a6000", "3": "gpu-a100"}
     for member_id, sub in sensitivity.members.items():
         assert sub.cfg_analysis.hpc_ensemble_partition == expected[str(member_id)], (
-            f"member_id={member_id}: hpc.partition alias did not resolve to the analysis "
-            f"selector"
+            f"member_id={member_id}: hpc.partition alias did not resolve to the analysis " f"selector"
         )
 
 

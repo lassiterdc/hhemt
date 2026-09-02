@@ -23,9 +23,7 @@ def test_skip_placeholder_html_output_is_valid_html(tmp_path):
     """.html target emits a self-contained HTML doc carrying the message
     (pre-fix: ValueError: Format 'html' is not supported)."""
     out = tmp_path / "sub" / "conduit_flow__member.serial_0_r1__evt.0.html"
-    result = _emit_model_type_skip_placeholder(
-        out, "conduit_flow not applicable for triton-only analyses", dpi=150
-    )
+    result = _emit_model_type_skip_placeholder(out, "conduit_flow not applicable for triton-only analyses", dpi=150)
     assert result == out
     assert out.exists() and out.stat().st_size > 0
     text = out.read_text(encoding="utf-8")
@@ -90,9 +88,7 @@ def test_render_guard_is_purely_additive(shape):
     assert "class ReportRenderGuard extends React.Component" in once
 
     kinds = _opcode_kinds(src, once)
-    assert kinds <= {"equal", "insert"}, (
-        f"surgery is not purely additive on {shape}: opcode kinds {sorted(kinds)}"
-    )
+    assert kinds <= {"equal", "insert"}, f"surgery is not purely additive on {shape}: opcode kinds {sorted(kinds)}"
 
 
 @pytest.mark.parametrize("shape", sorted(_GUARD_FIXTURES))
@@ -132,6 +128,7 @@ def test_toggle_guard_raises_on_drift_but_stays_inert_without_the_machinery():
     lookup literal moved (fatal), and VMS-5's fixtures take the fatal branch.
     """
     import pytest
+
     from hhemt.exceptions import ProcessingError
     from hhemt.report_renderers._react_surgery import apply_post_process_surgery
 

@@ -466,9 +466,9 @@ def test_run_submit_uses_mtime_only_rerun_triggers(synthetic_multisim_builder, m
         f"so a post-death resume cannot re-fire completed sims via the `input` "
         f"trigger; got {config['rerun-triggers']!r}"
     )
-    assert "input" not in config["rerun-triggers"], (
-        f"mode={mode}: `input` must be absent from run-path rerun-triggers (Phase 1)"
-    )
+    assert (
+        "input" not in config["rerun-triggers"]
+    ), f"mode={mode}: `input` must be absent from run-path rerun-triggers (Phase 1)"
 
 
 def test_one_job_script_inherits_mtime_only_via_profile(synthetic_multisim_builder):

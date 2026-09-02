@@ -135,6 +135,18 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     # libs absent in the container -> `uv sync` would die querying it) so uv builds a
     # clean container-native venv from uv.lock.
     cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
+    # Strip the copied `.git` BEFORE it lands in the image. `%files` has NO ignore
+    # mechanism -- there is no `.apptainerignore`, and `.dockerignore` is a Docker-only
+    # build-context filter -- so `../` copies the repo's full history: author names,
+    # e-mail addresses, branch names, and any secret ever committed. Nothing else here
+    # removes it, and `scripts/check_anonymization.py` cannot see it, because that guard
+    # enumerates `git ls-files` in a WORKING TREE and never reads image contents.
+    # Safe to remove: the toolkit version is static (`pyproject.toml` version = "0.1.0",
+    # setuptools, no setuptools_scm), and `org.hhemt.hhemt_sha` is stamped HOST-side by
+    # `build_sifs_uva.sh` (`git -C "$TOOLKIT" rev-parse HEAD` + `sed` into a derived
+    # .def) BEFORE the build -- so no in-image consumer needs `.git`. Removed AFTER
+    # `uv sync` so the install path is unaffected regardless.
+    rm -rf /opt/hhemt-src/.git
     export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
 
     # --- (3) TRITON-SWMM at a PINNED COMMIT (OE-3), Kokkos-CUDA, the PROVEN flags.

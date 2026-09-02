@@ -26,7 +26,6 @@ from collections.abc import Callable
 import hhemt.workflow as wf
 from hhemt.report_renderers._reporting_sets import get_reporting_set
 
-
 #: The report_kwargs keys the co-sourcing guard compares. `category` alone left
 #: `labels` and `caption` unguarded, and both are hand-maintained in TWO places
 #: (workflow.py's generators and _reporting_sets.py's templates) with nothing

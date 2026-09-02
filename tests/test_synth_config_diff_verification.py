@@ -134,9 +134,9 @@ def test_synth_master_compliant_equals_positional(synthetic_sensitivity_complete
                     if e is not None and e not in _events(cmp_var):
                         continue
                     cmp_da = _at_event(cmp_var, e)
-                    assert _three_guard(ref_da, cmp_da)[0] == _positional(ref_da, cmp_da), (
-                        f"{sub.name}:{var}[event={e}] compliant/positional disagree on aligned synth data"
-                    )
+                    assert _three_guard(ref_da, cmp_da)[0] == _positional(
+                        ref_da, cmp_da
+                    ), f"{sub.name}:{var}[event={e}] compliant/positional disagree on aligned synth data"
                     checked += 1
     assert checked > 0, "no (sub, variable) pairs were compared"
 

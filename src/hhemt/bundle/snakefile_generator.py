@@ -236,8 +236,7 @@ def _harvest_rule_specs(
     _cfg_system = yaml.safe_load(_sys_path.read_text()) if _sys_path.is_file() else {}
     _predicate_inputs = {
         "has_swmm_link_outputs": bool(
-            (_cfg_system or {}).get("toggle_tritonswmm_model")
-            or (_cfg_system or {}).get("toggle_swmm_model")
+            (_cfg_system or {}).get("toggle_tritonswmm_model") or (_cfg_system or {}).get("toggle_swmm_model")
         ),
     }
 
@@ -306,8 +305,7 @@ def _build_preamble() -> str:
         "    from importlib.metadata import version as _pkg_version\n"
         '    _toolkit_version = _pkg_version("hhemt")\n'
         "except Exception:\n"
-        '    _toolkit_version = "unknown"\n'
-        + LABEL_GLOBALS_BLOCK
+        '    _toolkit_version = "unknown"\n' + LABEL_GLOBALS_BLOCK
     )
 
 

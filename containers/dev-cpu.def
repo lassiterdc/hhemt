@@ -61,6 +61,18 @@ From: ubuntu:24.04
     sh /tmp/uv-installer.sh && rm /tmp/uv-installer.sh
     export PATH=/root/.local/bin:${PATH}
     cd /opt/hhemt-src && uv sync --frozen --no-dev
+    # Strip the copied `.git` BEFORE it lands in the image. `%files` has NO ignore
+    # mechanism -- there is no `.apptainerignore`, and `.dockerignore` is a Docker-only
+    # build-context filter -- so `../` copies the repo's full history: author names,
+    # e-mail addresses, branch names, and any secret ever committed. Nothing else here
+    # removes it, and `scripts/check_anonymization.py` cannot see it, because that guard
+    # enumerates `git ls-files` in a WORKING TREE and never reads image contents.
+    # Safe to remove: the toolkit version is static (`pyproject.toml` version = "0.1.0",
+    # setuptools, no setuptools_scm), and `org.hhemt.hhemt_sha` is stamped HOST-side by
+    # `build_sifs_uva.sh` (`git -C "$TOOLKIT" rev-parse HEAD` + `sed` into a derived
+    # .def) BEFORE the build -- so no in-image consumer needs `.git`. Removed AFTER
+    # `uv sync` so the install path is unaffected regardless.
+    rm -rf /opt/hhemt-src/.git
     export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:${PATH}
 
     # --- (3) TRITON-SWMM at the SAME pinned commit as uva-cuda.def (15eb18a5), but
@@ -130,6 +142,7 @@ From: ubuntu:24.04
     # `hhemt` resolves outside this root. Must match the `%files ../ <dest>` target.
     org.hhemt.toolkit_root /opt/hhemt-src
     org.hhemt.role        dev-cpu-container-seam-test
+    org.hhemt.hhemt_sha   HHEMT_SHA_UNSET
     org.hhemt.backend     kokkos-openmp-serial
     org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
     org.hhemt.openmpi     5.0.7-pmix5

@@ -20,16 +20,10 @@ def test_humanize_known_renderer_kinds():
 
 def test_humanize_benchmarking_descriptor_and_extension_strip():
     # the leaked stem, with the .html extension stripped and the descriptor humanized
-    assert (
-        humanize_plot_id("benchmarking__n_devices.vs.total.html")
-        == "Benchmarking: n devices vs total runtime"
-    )
+    assert humanize_plot_id("benchmarking__n_devices.vs.total.html") == "Benchmarking: n devices vs total runtime"
     # a DIFFERENT independent_var humanizes via the same rule with no code edit (the
     # generalization the hardcoded band-aid could not do).
-    assert (
-        humanize_plot_id("benchmarking__compute_config.vs.total")
-        == "Benchmarking: compute config vs total runtime"
-    )
+    assert humanize_plot_id("benchmarking__compute_config.vs.total") == "Benchmarking: compute config vs total runtime"
 
 
 def test_humanize_unknown_kind_falls_back_to_readable():
@@ -48,8 +42,7 @@ def test_react_surgery_humanizes_any_card_name():
     # the generalized 8b pass rewrites EVERY figure-card "name" via the grammar humanizer,
     # not just the hardcoded n_devices string. A non-n_devices card must be rewritten.
     html = (
-        '<html><body>{"name": "benchmarking__compute_config.vs.total.html", '
-        '"filename": "keep.html"}</body></html>'
+        '<html><body>{"name": "benchmarking__compute_config.vs.total.html", ' '"filename": "keep.html"}</body></html>'
     )
     out = apply_post_process_surgery(html)
     assert '"name": "Benchmarking: compute config vs total runtime"' in out
@@ -91,9 +84,7 @@ def test_event_arm_uses_a_supplied_label():
 
     stem = "peak_flood_depth__evt.year.9"
     labels = {"year.9": "2009-11-11 07:10 - Ida remnant"}
-    assert humanize_plot_id(stem, None, labels) == (
-        "Peak flood depth: 2009-11-11 07:10 - Ida remnant"
-    )
+    assert humanize_plot_id(stem, None, labels) == ("Peak flood depth: 2009-11-11 07:10 - Ida remnant")
 
 
 def test_event_arm_falls_back_to_the_slug_when_no_map_is_supplied():

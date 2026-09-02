@@ -15,7 +15,6 @@ regression check previously gated on ``gpu_hardware_override`` and then on the
 """
 
 
-
 def _sim_rule_block(snakefile_text: str, member_id: str) -> str:
     """Return the rule body for `simulation_member_{member_id}_evt_*` (first match)."""
     member_id_rule = str(member_id).replace(".", "_").replace("-", "_")
@@ -44,9 +43,7 @@ def test_per_sub_partition_resolves_gres_hardware(synth_sensitivity_with_partiti
     for sub in sensitivity.members.values():
         sub.cfg_analysis.n_gpus = 1
 
-    master = sensitivity._workflow_builder.generate_master_snakefile_content(
-        which="both", compression_level=5
-    )
+    master = sensitivity._workflow_builder.generate_master_snakefile_content(which="both", compression_level=5)
 
     for member_id, sub in sensitivity.members.items():
         partition = sub.cfg_analysis.hpc_ensemble_partition

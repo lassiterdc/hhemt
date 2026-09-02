@@ -79,6 +79,18 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     # container) -> `uv sync` would query that broken interpreter and die (exit 127).
     # Remove it so uv builds a clean container-native venv from uv.lock.
     cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
+    # Strip the copied `.git` BEFORE it lands in the image. `%files` has NO ignore
+    # mechanism -- there is no `.apptainerignore`, and `.dockerignore` is a Docker-only
+    # build-context filter -- so `../` copies the repo's full history: author names,
+    # e-mail addresses, branch names, and any secret ever committed. Nothing else here
+    # removes it, and `scripts/check_anonymization.py` cannot see it, because that guard
+    # enumerates `git ls-files` in a WORKING TREE and never reads image contents.
+    # Safe to remove: the toolkit version is static (`pyproject.toml` version = "0.1.0",
+    # setuptools, no setuptools_scm), and `org.hhemt.hhemt_sha` is stamped HOST-side by
+    # `build_sifs_uva.sh` (`git -C "$TOOLKIT" rev-parse HEAD` + `sed` into a derived
+    # .def) BEFORE the build -- so no in-image consumer needs `.git`. Removed AFTER
+    # `uv sync` so the install path is unaffected regardless.
+    rm -rf /opt/hhemt-src/.git
     export PATH=/opt/hhemt-src/.venv/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
 
     # --- (3) TRITON-SWMM at a PINNED COMMIT (not the moving TRITONSWMM_branch_key
@@ -171,6 +183,7 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     # `hhemt` resolves outside this root. Must match the `%files ../ <dest>` target.
     org.hhemt.toolkit_root /opt/hhemt-src
     org.hhemt.role        frontier-rocm-production
+    org.hhemt.hhemt_sha   HHEMT_SHA_UNSET
     org.hhemt.base_digest sha256-recorded-in-SIF-lockfile-post-build
     org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
     org.hhemt.rocm        6.4.3-complete

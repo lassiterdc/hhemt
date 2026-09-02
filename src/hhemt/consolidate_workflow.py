@@ -465,10 +465,7 @@ def main() -> int:
                         scope="member",
                         include_breakdown=True,
                     )
-                    logger.info(
-                        f"Member DU sentinel written at "
-                        f"{analysis_dir}/_status/_du.json"
-                    )
+                    logger.info(f"Member DU sentinel written at " f"{analysis_dir}/_status/_du.json")
             except Exception as e:
                 logger.error(f"Failed to consolidate to DataTree: {e}")
                 logger.error(traceback.format_exc())

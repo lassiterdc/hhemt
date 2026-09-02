@@ -104,9 +104,7 @@ def _parse_metadata_dir(metadata_dir: Path) -> tuple[list[tuple[str, int, float]
             continue
         version = obj.get("record_format_version", 0)
         if version < MIN_RECORD_VERSION:
-            warnings.append(
-                f"legacy metadata format v{version} at {path.name} — parser may misread fields"
-            )
+            warnings.append(f"legacy metadata format v{version} at {path.name} — parser may misread fields")
             continue
         if version > MAX_VALIDATED_VERSION:
             warnings.append(
@@ -163,15 +161,17 @@ def harvest(tmp_path_root: Path) -> tuple[list[HarvestedRule], HarvestDiagnostic
             durations = list(jobs.values())
             if not durations:
                 continue
-            out.append(HarvestedRule(
-                rule=rule,
-                rule_normalized=normalize_rule(rule),
-                job_count=len(durations),
-                total_s=sum(durations),
-                mean_s=sum(durations) / len(durations),
-                min_s=min(durations),
-                max_s=max(durations),
-                zero_duration_job_count=sum(1 for d in durations if d <= _ZERO_DURATION_THRESHOLD),
-                test_origin=origin,
-            ))
+            out.append(
+                HarvestedRule(
+                    rule=rule,
+                    rule_normalized=normalize_rule(rule),
+                    job_count=len(durations),
+                    total_s=sum(durations),
+                    mean_s=sum(durations) / len(durations),
+                    min_s=min(durations),
+                    max_s=max(durations),
+                    zero_duration_job_count=sum(1 for d in durations if d <= _ZERO_DURATION_THRESHOLD),
+                    test_origin=origin,
+                )
+            )
     return out, diagnostics

@@ -146,8 +146,7 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
     "landuse_raster": ExcludableInput(
         description="Landuse raster the spatially-varying Manning's n grid is built from.",
         reproducibility_cost=(
-            "Large. Excluding it blocks Manning's preprocessing when "
-            "toggle_use_constant_mannings=False."
+            "Large. Excluding it blocks Manning's preprocessing when " "toggle_use_constant_mannings=False."
         ),
     ),
     "landuse_lookup_file": ExcludableInput(

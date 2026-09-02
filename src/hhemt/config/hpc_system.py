@@ -134,7 +134,9 @@ class PartitionSpec(BaseModel):
     # --- EXTENSION (no native PartitionLimits field) ---
     gpus_per_node: int | None = Field(
         None,
-        description="GPUs physically present per node; decides whether a multi-GPU request takes a whole node or a strict subset.",
+        description="GPUs physically present per node; decides whether a multi-GPU request takes a whole node or a "
+        "strict "
+        "subset.",
     )  # node topology
     cpus_per_node: int | None = Field(
         None,
@@ -187,12 +189,14 @@ class hpc_system_config(BaseModel):
     )
     max_concurrent_jobs: int | None = Field(
         None,
-        description="Caps how many jobs the workflow keeps in flight at once, bounding queue pressure on a shared cluster.",
+        description="Caps how many jobs the workflow keeps in flight at once, bounding queue pressure on a shared "
+        "cluster.",
     )  # EXTENSION (D-D): cluster-throughput cap; new home
     #                                          for the retired analysis_config.hpc_max_simultaneous_sims
     partitions: dict[str, PartitionSpec] = Field(
         ...,
-        description="The partitions a run may select by name, each with the caps preflight validates a request against.",
+        description="The partitions a run may select by name, each with the caps preflight "
+        "validates a request against.",
     )
     executor_profile_extras: dict = Field(
         default_factory=dict,

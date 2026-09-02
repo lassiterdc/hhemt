@@ -492,9 +492,7 @@ def assert_model_outputs_processed(
         # assert_model_outputs_exist already carries rather than introducing a second,
         # parallel one on the same axis.
         if not check_timeseries:
-            required_paths = [
-                (desc, path) for (desc, path) in required_paths if "timeseries" not in desc.lower()
-            ]
+            required_paths = [(desc, path) for (desc, path) in required_paths if "timeseries" not in desc.lower()]
 
         # Check each required path exists
         for desc, path in required_paths:

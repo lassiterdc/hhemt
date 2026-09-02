@@ -39,9 +39,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Main entry point for scenario preparation subprocess."""
-    parser = argparse.ArgumentParser(
-        description="Prepare a TRITON-SWMM scenario in a subprocess"
-    )
+    parser = argparse.ArgumentParser(description="Prepare a TRITON-SWMM scenario in a subprocess")
     parser.add_argument(
         "--event-iloc",
         type=int,
@@ -154,18 +152,13 @@ def main():
         # always per-single-member, so the ensemble partition is unambiguous and read
         # directly from the loaded analysis config — no Snakefile thread needed. The helper
         # returns (None, None) for null selectors, so CPU/local prepares are byte-identical.
-        cfg_hpc = (
-            load_hpc_system_config(args.hpc_system_config) if args.hpc_system_config else None
-        )
+        cfg_hpc = load_hpc_system_config(args.hpc_system_config) if args.hpc_system_config else None
         # The Snakefile's prepare rule carries --target-partition (the shared
         # UniqueSystemTarget's canonical partition) just like setup/sim — prefer it; fall
         # back to the per-member config's hpc_ensemble_partition for direct CLI use
         # or a target without an explicit partition. resolve_gpu_target returns (None, None)
         # for null selectors, so CPU/local prepares stay byte-identical.
-        _partition = (
-            args.target_partition
-            or load_analysis_config(args.analysis_config).hpc_ensemble_partition
-        )
+        _partition = args.target_partition or load_analysis_config(args.analysis_config).hpc_ensemble_partition
         gpu_hardware, gpu_compilation_backend = resolve_gpu_target(cfg_hpc, _partition)
         system = TRITONSWMM_system(
             args.system_config,
@@ -199,9 +192,7 @@ def main():
             _emit_runner_flag(args)
             return 0
         else:
-            logger.error(
-                f"Scenario {args.event_iloc} preparation failed (log indicates incomplete)"
-            )
+            logger.error(f"Scenario {args.event_iloc} preparation failed (log indicates incomplete)")
             return 1
 
     except Exception as e:

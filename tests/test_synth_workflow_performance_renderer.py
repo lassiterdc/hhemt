@@ -226,9 +226,9 @@ def test_absent_slurm_csv_degrades_gracefully(tmp_path):
     # form would forbid a declaration the convention requires. `_render` never writes a
     # scenario_status.csv, so the R7 guarantee this test exists for -- the absent-SLURM
     # path declares no efficiency CSV -- is preserved exactly.
-    assert not any(
-        "efficiency_report" in p for p in manifest["source_paths_relative"]
-    ), manifest["source_paths_relative"]
+    assert not any("efficiency_report" in p for p in manifest["source_paths_relative"]), manifest[
+        "source_paths_relative"
+    ]
 
 
 def test_slurm_report_path_is_a_directory_not_a_file(tmp_path):

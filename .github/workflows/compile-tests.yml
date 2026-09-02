@@ -76,7 +76,7 @@ jobs:
         # --no-deps now guards only against PyPI wheels displacing conda's
         # numpy/pandas. swmmio's real runtime deps (geojson / pyshp / networkx /
         # numpy / pandas / pyproj / ...) come from conda.
-        run: pip install --no-deps "swmmio==0.8.2"
+        run: pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
 
       - name: Install project (editable, test extras)
         # `--no-deps`: the conda env (environment.yaml) already provides the full

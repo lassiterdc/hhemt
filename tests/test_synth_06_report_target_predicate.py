@@ -129,9 +129,9 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     master_dir = analysis.analysis_paths.analysis_dir
 
     member_items = list(analysis.sensitivity.members.items())
-    assert len(member_items) >= 2, (
-        f"parity test needs >=2 members (one to break, one to keep); fixture produced {len(member_items)}"
-    )
+    assert (
+        len(member_items) >= 2
+    ), f"parity test needs >=2 members (one to break, one to keep); fixture produced {len(member_items)}"
     target_member_key, target_sub = member_items[0]
     complete_member_key, _complete_sub = member_items[1]
     target_member = str(target_member_key)
@@ -176,9 +176,9 @@ def test_report_target_predicate_excludes_summary_absent_sub(
         f"equality holds and the sub is excluded: {target_consolidate_flag}"
     )
     # Sanity: a COMPLETE sub IS still enumerated (the fix is not over-filtering).
-    assert complete_consolidate_flag in content, (
-        f"complete sub's consolidate flag must remain enumerated: {complete_consolidate_flag}"
-    )
+    assert (
+        complete_consolidate_flag in content
+    ), f"complete sub's consolidate flag must remain enumerated: {complete_consolidate_flag}"
 
     # Per-sim plot targets are enumerated via the MEMBER_EVENT_PAIRS_MEMBER list (the plot
     # rule path is wildcarded `member-{member_id}/{event_id}` + `zip` expand over the
@@ -186,12 +186,12 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     m = re.search(r"^MEMBER_EVENT_PAIRS_MEMBER = (\[.*?\])\s*$", content, re.MULTILINE)
     assert m is not None, "MEMBER_EVENT_PAIRS_MEMBER assignment not found in generated reprocess content"
     member_event_pairs_member = ast.literal_eval(m.group(1))
-    assert target_member not in member_event_pairs_member, (
-        f"incomplete sub {target_member!r} must be excluded from MEMBER_EVENT_PAIRS_MEMBER={member_event_pairs_member}"
-    )
-    assert complete_member in member_event_pairs_member, (
-        f"complete sub {complete_member!r} must remain in MEMBER_EVENT_PAIRS_MEMBER={member_event_pairs_member}"
-    )
+    assert (
+        target_member not in member_event_pairs_member
+    ), f"incomplete sub {target_member!r} must be excluded from MEMBER_EVENT_PAIRS_MEMBER={member_event_pairs_member}"
+    assert (
+        complete_member in member_event_pairs_member
+    ), f"complete sub {complete_member!r} must remain in MEMBER_EVENT_PAIRS_MEMBER={member_event_pairs_member}"
 
     # ── (a)/(b) non-sensitivity per-event predicate excludes ONLY the divergent
     # event. ────────────────────────────────────────────────────────────────────

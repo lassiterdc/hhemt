@@ -17,6 +17,7 @@ at master ``__init__`` — before this wipe fires — and is read by the prepare
 prepare aborts with "[ERROR] Analysis config not found". The config-preservation assertion
 below is what pins that behaviour: it fails against any variant that removes the whole dir.
 """
+
 from __future__ import annotations
 
 import types
@@ -72,21 +73,21 @@ def test_clean_restart_wipe_removes_only_named_subs_and_delegates_flag_delete(tm
     # assertion: a whole-dir removal deletes member_1.yaml, snakemake skips setup because
     # a_setup_target_N_complete.flag survives, and prepare aborts "Analysis config not found".
     assert member_1.is_dir(), "the member dir must survive the wipe"
-    assert (member_1 / "member_1.yaml").read_text(encoding="utf-8") == "member: 1\n", (
-        "the setup-generated per-sub config must survive the wipe byte-intact"
-    )
+    assert (member_1 / "member_1.yaml").read_text(
+        encoding="utf-8"
+    ) == "member: 1\n", "the setup-generated per-sub config must survive the wipe byte-intact"
 
     # The named sub's analysis-level model log and its _walltime ledger sibling are gone.
     # Leaving the log behind would reproduce, at member granularity, the stale-evidence skip that
     # motivated the model_logfile_for relocation: model_run_completed's raw-marker fallback
     # would find this "Simulation ends" and skip the sim whose outputs were just cleared.
     # Leaving the ledger behind would double-count into wall_clock_ledger_s on the re-run.
-    assert not (simlogs / "model_tritonswmm_member_1_evt0.log").exists(), (
-        "the named sub's model log must be removed, else the re-run skips on stale evidence"
-    )
-    assert not (simlogs / "_walltime" / "model_tritonswmm_member_1_evt0.jsonl").exists(), (
-        "the walltime ledger must go with its log, else the re-run double-counts"
-    )
+    assert not (
+        simlogs / "model_tritonswmm_member_1_evt0.log"
+    ).exists(), "the named sub's model log must be removed, else the re-run skips on stale evidence"
+    assert not (
+        simlogs / "_walltime" / "model_tritonswmm_member_1_evt0.jsonl"
+    ).exists(), "the walltime ledger must go with its log, else the re-run double-counts"
 
     # The good sub (member_2) is wholly untouched — including its log and ledger, which share
     # the master's one logs/sims/ directory with member_1's. This is what pins the SCOPING:

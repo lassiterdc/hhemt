@@ -644,7 +644,10 @@ class TRITONSWMM_system:
         # git checkout.
         self._capture_tritonswmm_provenance(verbose=verbose)
 
-        # Compile each backend sequentially
+        # Compile each backend sequentially. `_built` collects the build-executed signal
+        # each helper now returns, so the per-target provenance stamp below fires only
+        # when this invocation actually produced a binary.
+        _built: list[bool] = []
         for backend in backends:
             if verbose:
                 print(f"\n{'=' * 60}", flush=True)
@@ -652,7 +655,7 @@ class TRITONSWMM_system:
                 print("=" * 60, flush=True)
 
             if backend == "cpu":
-                self._compile_backend(
+                _built.append(self._compile_backend(
                     backend="cpu",
                     build_dir=self.sys_paths.TRITONSWMM_build_dir_cpu,
                     compilation_script=self.sys_paths.compilation_script_cpu,
@@ -660,7 +663,7 @@ class TRITONSWMM_system:
                     cmake_backend_flag="-DKokkos_ENABLE_OPENMP=ON",
                     recompile=recompile_if_already_done_successfully,
                     verbose=verbose,
-                )
+                ))
             elif backend == "gpu":
                 if self.gpu_compilation_backend is None:
                     raise ConfigurationError(
@@ -682,7 +685,7 @@ class TRITONSWMM_system:
                         config_path=self.system_config_yaml,
                     )
 
-                self._compile_backend(
+                _built.append(self._compile_backend(
                     backend="gpu",
                     build_dir=self.sys_paths.TRITONSWMM_build_dir_gpu,  # type: ignore
                     compilation_script=self.sys_paths.compilation_script_gpu,  # type: ignore
@@ -690,12 +693,15 @@ class TRITONSWMM_system:
                     cmake_backend_flag=cmake_backend_flag,
                     recompile=recompile_if_already_done_successfully,
                     verbose=verbose,
-                )
+                ))
             else:
                 raise ConfigurationError(
                     field="backends",
                     message=f"Unknown backend '{backend}'. Must be 'cpu' or 'gpu'.",
                 )
+
+        if any(_built):
+            self._capture_target_producing_sha("tritonswmm_producing_sha", verbose=verbose)
 
     def _download_tritonswmm_source(self, verbose: bool = True):
         """Download TRITON-SWMM source code from git repository."""
@@ -914,6 +920,97 @@ class TRITONSWMM_system:
         if verbose:
             print(f"[Provenance] TRITON producing sha {head_sha}", flush=True)
 
+    def _capture_target_producing_sha(self, log_field: str, verbose: bool = True):
+        """Record the clone HEAD against ONE build target, for a target that ACTUALLY built.
+
+        The per-target counterpart to `_capture_tritonswmm_provenance`, and deliberately
+        NOT a replacement for it: that method records WHAT SOURCE this analysis came from
+        and runs at compile entry; this one records WHICH SOURCE STATE PRODUCED THIS
+        BINARY and runs only when a build executed. `triton_head_sha` keeps its meaning
+        and all of its consumers.
+
+        Callers pass `log_field` as either "tritonswmm_producing_sha" or
+        "triton_only_producing_sha" and gate the call on at least one backend having
+        returned True from its compile helper. A target skipped by the log-marker gate
+        must NOT re-stamp: the persisted system log already carries the sha of the run
+        that built it, and overwriting that with the current clone HEAD is precisely the
+        "skipped, carrying an older artifact" fabrication `provenance.producing_stamp`'s
+        corollary forbids. The two slots diverging is the signal, not a defect.
+
+        Graceful-absent and never raises: no clone, no `.git`, or an unresolvable HEAD
+        leaves the field unset, which downstream reads as INDETERMINATE.
+        """
+        d = self.cfg_system.TRITONSWMM_software_directory
+        if d is None or not (d / ".git").exists():
+            return
+        head = subprocess.run(
+            ["git", "-C", str(d), "rev-parse", "--verify", "HEAD^{commit}"],
+            capture_output=True,
+            text=True,
+        )
+        if head.returncode != 0 or not head.stdout.strip():
+            return
+        getattr(self.log, log_field).set(head.stdout.strip())
+        self.log.write()
+        if verbose:
+            print(f"[Provenance] {log_field} {head.stdout.strip()}", flush=True)
+
+    def _capture_swmm_provenance(self, swmm_source_dir, verbose: bool = True):
+        """Capture the STANDALONE SWMM provenance onto the system log (contract axis 4).
+
+        Called from the SUCCESS branch of `_compile_SWMM_locked` -- after the build, not
+        at compile entry. That placement is the point: `provenance.producing_stamp`'s
+        corollary forbids stamping a stage that did not execute, and the already-compiled
+        gate returns early above this call, so a skipped build keeps the persisted stamp
+        from the run that actually produced the binary.
+
+        MEASURED, never declared. Reads the CMakeLists `VERSION` of the tree that was
+        just compiled and that tree's git HEAD -- never `cfg_system.SWMM_tag_key`, which
+        is a CLAIM about what was asked for. The version is normalized by stripping a
+        leading "v" so it is the same KIND as the container-mode `org.hhemt.swmm_version`
+        label, which is tag-shaped. Graceful-absent throughout: an unparseable
+        CMakeLists or a missing .git leaves the corresponding field unset (INDETERMINATE)
+        and never raises -- a provenance capture that can fail a compile is worse than
+        the absence it would report.
+
+        This is the STANDALONE SWMM only. The COUPLED model's SWMM is vendored inside
+        TRITON at external/swmm and travels with the TRITON pin, so it is covered by
+        triton_head_sha and is deliberately NOT a separate axis.
+        """
+        import re as _re
+
+        try:
+            src = Path(swmm_source_dir)
+        except Exception:
+            return
+
+        cml = src / "CMakeLists.txt"
+        if cml.is_file():
+            try:
+                m = _re.search(r"^\s*VERSION\s+([0-9][0-9A-Za-z.\-+]*)\s*$", cml.read_text(), _re.M)
+            except Exception:
+                m = None
+            if m:
+                self.log.standalone_swmm_producing_version.set(m.group(1).lstrip("vV"))
+
+        if (src / ".git").exists():
+            head = subprocess.run(
+                ["git", "-C", str(src), "rev-parse", "--verify", "HEAD^{commit}"],
+                capture_output=True,
+                text=True,
+            )
+            if head.returncode == 0 and head.stdout.strip():
+                self.log.standalone_swmm_producing_sha.set(head.stdout.strip())
+
+        self.log.write()
+        if verbose:
+            print(
+                f"[Provenance] standalone SWMM version "
+                f"{self.log.standalone_swmm_producing_version.get()} "
+                f"sha {self.log.standalone_swmm_producing_sha.get()}",
+                flush=True,
+            )
+
     def _emit_libstdcpp_ld_preamble_lines(self) -> list:
         # Container mode (M-7): the SIF's %post build owns its own self-consistent
         # toolchain, so no host conda-lib runtime preamble is emitted (the empty
@@ -1112,7 +1209,7 @@ class TRITONSWMM_system:
         )
         try:
             with lock:
-                self._compile_backend_locked(
+                return self._compile_backend_locked(
                     backend=backend,
                     build_dir=build_dir,
                     compilation_script=compilation_script,
@@ -1169,7 +1266,13 @@ class TRITONSWMM_system:
                     f"[{backend.upper()}] Already compiled successfully (skipping)",
                     flush=True,
                 )
-            return
+            # BUILD-EXECUTED SIGNAL. Both paths of this helper returned None, so "did this
+            # target actually build?" was unobservable to the caller -- which is why the
+            # TRITON provenance capture had to run at compile ENTRY and therefore stamped
+            # the clone's HEAD whether or not that HEAD produced the binary. Returning the
+            # fact makes the per-target capture possible and is what turns the two
+            # producing-sha slots into a measurement rather than one value written twice.
+            return False
 
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
 
@@ -1338,6 +1441,7 @@ class TRITONSWMM_system:
                 logfile=compilation_logfile,
                 return_code=1,  # Subprocess didn't fail, but build markers missing
             )
+        return True  # this invocation actually built; see the skip path's note
 
     def retrieve_compilation_log(self, backend: str) -> str:
         """
@@ -1485,7 +1589,10 @@ class TRITONSWMM_system:
         # git checkout.
         self._capture_tritonswmm_provenance(verbose=verbose)
 
-        # Compile each backend sequentially
+        # Compile each backend sequentially. See the sibling loop in compile_TRITON_SWMM:
+        # `_built` carries the build-executed signal so the per-target stamp below fires
+        # only for a target this invocation actually produced.
+        _built: list[bool] = []
         for backend in backends:
             if verbose:
                 print(f"\n{'=' * 60}", flush=True)
@@ -1493,26 +1600,29 @@ class TRITONSWMM_system:
                 print("=" * 60, flush=True)
 
             if backend == "cpu":
-                self._compile_triton_only_backend(
+                _built.append(self._compile_triton_only_backend(
                     backend="cpu",
                     build_dir=self.sys_paths.TRITON_build_dir_cpu,
                     recompile=recompile_if_already_done_successfully,
                     verbose=verbose,
-                )
+                ))
             elif backend == "gpu":
                 if self.gpu_compilation_backend is None:
                     raise ValueError("GPU backend requested but gpu_compilation_backend not set in config.")
-                self._compile_triton_only_backend(
+                _built.append(self._compile_triton_only_backend(
                     backend="gpu",
                     build_dir=self.sys_paths.TRITON_build_dir_gpu,  # type: ignore
                     recompile=recompile_if_already_done_successfully,
                     verbose=verbose,
-                )
+                ))
             else:
                 raise ConfigurationError(
                     field="backends",
                     message=f"Unknown backend '{backend}'. Must be 'cpu' or 'gpu'.",
                 )
+
+        if any(_built):
+            self._capture_target_producing_sha("triton_only_producing_sha", verbose=verbose)
 
     def _compile_triton_only_backend(
         self,
@@ -1536,7 +1646,7 @@ class TRITONSWMM_system:
         )
         try:
             with lock:
-                self._compile_triton_only_backend_locked(
+                return self._compile_triton_only_backend_locked(
                     backend=backend,
                     build_dir=build_dir,
                     recompile=recompile,
@@ -1579,7 +1689,7 @@ class TRITONSWMM_system:
                     f"[TRITON-only {backend.upper()}] Already compiled successfully (skipping)",
                     flush=True,
                 )
-            return
+            return False  # build-executed signal; see the TRITON-SWMM sibling's note
 
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
         logfile = build_dir / "compilation.log"
@@ -1737,6 +1847,7 @@ class TRITONSWMM_system:
                 logfile=logfile,
                 return_code=1,  # Subprocess didn't fail, but build markers missing
             )
+        return True  # build-executed signal; see the TRITON-SWMM sibling's note
 
     @property
     def compilation_triton_only_cpu_successful(self) -> bool:
@@ -2007,6 +2118,7 @@ class TRITONSWMM_system:
         self.log.write()
 
         if success:
+            self._capture_swmm_provenance(swmm_source_dir, verbose=verbose)
             if verbose:
                 print("[SWMM] ✓ Compilation successful!", flush=True)
                 print(f"[SWMM]   Executable: {self.swmm_executable}", flush=True)

@@ -9,9 +9,7 @@ token). No real network I/O — urllib is mocked and the registry seams are monk
 
 from __future__ import annotations
 
-import re
 import urllib.error
-from pathlib import Path
 
 import yaml
 
@@ -19,6 +17,8 @@ from hhemt import invalidating_fixes_skew as skew
 from hhemt.config.invalidating_fixes import InvalidatingFixRegistry
 from hhemt.invalidating_fixes_skew import (
     _REGISTRY_RAW_URL,
+    _REGISTRY_REMOTE_OWNER,
+    _REGISTRY_REMOTE_REPO,
     SkewResult,
     discover_version_skew,
     fetch_remote_registry,
@@ -150,17 +150,31 @@ def test_skew_malformed_remote_is_unreachable(monkeypatch):
 # --------------------------------------------------------------------------- #
 # Anonymization (git Q4 / ADR-14): the constructed raw URL carries no blocklisted token.
 # --------------------------------------------------------------------------- #
-def test_registry_raw_url_has_no_blocklisted_token():
-    blocklist_path = Path(__file__).resolve().parent.parent / "scripts" / "anonymization_blocklist.txt"
-    tokens = [
-        line.strip()
-        for line in blocklist_path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-    assert tokens, "blocklist should be non-empty"
-    for token in tokens:
-        assert re.search(rf"\b{re.escape(token)}\b", _REGISTRY_RAW_URL) is None, (
-            f"blocklisted token {token!r} leaked into the pinned registry URL {_REGISTRY_RAW_URL!r}"
-        )
-    # Sanity: the URL uses the PUBLIC owner handle, not a private one.
-    assert "lassiterdc" in _REGISTRY_RAW_URL
+def test_registry_raw_url_targets_the_public_repo():
+    """ADR-14 anonymization: the pinned raw URL targets the PUBLIC repo.
+
+    This deliberately does NOT loop the blocklist, and the omission is the point rather
+    than an oversight. The URL is composed only from the four module-level literals plus
+    fixed text, and no blocklist token contains "/" (measured: 0 of 8), so no token can
+    span a component boundary -- the composed URL can therefore carry a token only if one
+    of those literals already carries it, in this same file. scripts/check_anonymization.py
+    scans this file against INDEPENDENT ground truth and does not self-exclude it, so it
+    already catches that case. Re-deriving the check here bought no coverage and made this
+    module hard-depend on a carrier that is being relocated out of the repository.
+
+    A whole-URL equality assertion was considered and REJECTED. Its expected value would be
+    co-maintained by the same edit that changes the URL, so a deliberate change to a private
+    handle would be "fixed" by updating the literal, silently removing the property -- the
+    same failure the blocklist's own independence invariant exists to prevent. What remains
+    here is the one thing the guard cannot see: that the URL points at the intended PUBLIC
+    target at all. Enforcement of the anonymization property itself is the guard's.
+    """
+    assert _REGISTRY_REMOTE_OWNER == "lassiterdc", (
+        f"registry owner is {_REGISTRY_REMOTE_OWNER!r}, not the public handle"
+    )
+    assert _REGISTRY_REMOTE_REPO == "hhemt", (
+        f"registry repo is {_REGISTRY_REMOTE_REPO!r}, not the public repository"
+    )
+    assert _REGISTRY_RAW_URL.startswith(
+        "https://raw.githubusercontent.com/lassiterdc/hhemt/"
+    ), f"pinned registry URL does not target the public repo: {_REGISTRY_RAW_URL!r}"

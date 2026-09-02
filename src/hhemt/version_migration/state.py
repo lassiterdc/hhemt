@@ -14,7 +14,7 @@ import re
 import tempfile
 import warnings
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from hhemt._filelock_compat import resolve_filelock
@@ -63,7 +63,7 @@ class VersionState:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _toolkit_version() -> str:

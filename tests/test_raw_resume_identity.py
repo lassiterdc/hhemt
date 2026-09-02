@@ -49,9 +49,7 @@ def test_b4b_clean_identity_reason_distinguishes_no_clean_subs_from_raw_cleared(
     _write_bin_raster(raw_bin / "H0", np.zeros((2, 2)))
 
     sub = types.SimpleNamespace(
-        analysis_paths=types.SimpleNamespace(
-            analysis_dir=tmp_path, simulation_directory=tmp_path / "sims"
-        )
+        analysis_paths=types.SimpleNamespace(analysis_dir=tmp_path, simulation_directory=tmp_path / "sims")
     )
     master = types.SimpleNamespace(analysis_paths=types.SimpleNamespace(analysis_dir=tmp_path))
 
@@ -136,10 +134,12 @@ def test_compare_variable_exact_object_dtype_no_raise():
     assert fr["identical"] is True and fr["max_abs_diff"] == 0.0
 
     # mixed float+object Dataset (the parsed-SWMM shape) collapses to one measured bool
-    ds1 = xr.Dataset({
-        "depth": ("node_id", np.array([1.0, 2.0])),
-        "type": ("node_id", np.array(["JUNCTION", "OUTFALL"], dtype=object)),
-    })
+    ds1 = xr.Dataset(
+        {
+            "depth": ("node_id", np.array([1.0, 2.0])),
+            "type": ("node_id", np.array(["JUNCTION", "OUTFALL"], dtype=object)),
+        }
+    )
     assert _ds_all_identical(ds1, ds1.copy(deep=True)) is True
     ds2 = ds1.copy(deep=True)
     ds2["type"] = ("node_id", np.array(["JUNCTION", "STORAGE"], dtype=object))
@@ -162,12 +162,16 @@ def test_read_sub_resume_context_cache_split(tmp_path):
     )
     sub_dir = tmp_path / "scratch" / "members" / member_id
     sub_dir.mkdir(parents=True)
-    (sub_dir / f"{member_id}.yaml").write_text(yaml.safe_dump({
-        "analysis_id": member_id,
-        "is_experiment_member": True,
-        "TRITON_reporting_timestep_s": 600.0,
-        "experiment_cfg_yaml": str(master_root / "analysis_config.yaml"),
-    }))
+    (sub_dir / f"{member_id}.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "analysis_id": member_id,
+                "is_experiment_member": True,
+                "TRITON_reporting_timestep_s": 600.0,
+                "experiment_cfg_yaml": str(master_root / "analysis_config.yaml"),
+            }
+        )
+    )
 
     log, interval, schedule = read_sub_resume_context(sub_dir, member_id, iloc)
     assert interval == 600.0
@@ -196,11 +200,15 @@ def test_read_sub_resume_context_returns_schedule(tmp_path):
     member_id, iloc = "member_gpu_0_r1", 0
     sub_dir = tmp_path / "members" / member_id
     sub_dir.mkdir(parents=True)
-    (sub_dir / f"{member_id}.yaml").write_text(yaml.safe_dump({
-        "analysis_id": member_id,
-        "TRITON_reporting_timestep_s": 600.0,
-        "resume_interruption_schedule": [25, 50, 75],
-    }))
+    (sub_dir / f"{member_id}.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "analysis_id": member_id,
+                "TRITON_reporting_timestep_s": 600.0,
+                "resume_interruption_schedule": [25, 50, 75],
+            }
+        )
+    )
     log, interval, schedule = read_sub_resume_context(sub_dir, member_id, iloc)
     assert interval == 600.0
     assert schedule == (25, 50, 75)
@@ -221,9 +229,7 @@ def test_build_binary_timestep_figure_k_vlines_and_clean_vs_clean():
         )
     }
     # K=3 requested boundaries -> exactly 3 vline shapes (pure-TRITON arm: no marker needed)
-    fig = build_binary_timestep_figure(
-        b4b, config_label="gpu_1", resume_timesteps_min=[250.0, 500.0, 750.0]
-    )
+    fig = build_binary_timestep_figure(b4b, config_label="gpu_1", resume_timesteps_min=[250.0, 500.0, 750.0])
     assert len([s for s in fig.layout.shapes if s.type == "line"]) == 3
     # clean-vs-clean pair -> default () -> zero vlines
     fig0 = build_binary_timestep_figure(b4b, config_label="cpu_vs_cpu")
@@ -238,9 +244,7 @@ class _N3Cfg:
     # 'hpc.partition'; setting it anywhere else makes the pre-N3 hardware lookup return
     # empty, which the retired `or "gpu"` fallback then collapses to "gpu" — producing a
     # permanently-green test that cannot tell the two rules apart.
-    def __init__(
-        self, run_mode, n_gpus=0, n_mpi_procs=0, n_omp_threads=0, n_nodes=0, partition=""
-    ):
+    def __init__(self, run_mode, n_gpus=0, n_mpi_procs=0, n_omp_threads=0, n_nodes=0, partition=""):
         self.run_mode = run_mode
         self.n_gpus = n_gpus
         self.n_mpi_procs = n_mpi_procs
@@ -268,9 +272,9 @@ def test_b4b_family_key_collapses_every_gpu_hardware_to_one_family():
     assert _b4b_family_key(a6000) == "gpu"
     assert _b4b_family_key(a100) == "gpu"
     # The property that matters is that they are the SAME family, not the token's spelling.
-    assert _b4b_family_key(a6000) == _b4b_family_key(a100), (
-        "two GPU hardwares in different families -> cross-hardware divergence is unfalsifiable"
-    )
+    assert _b4b_family_key(a6000) == _b4b_family_key(
+        a100
+    ), "two GPU hardwares in different families -> cross-hardware divergence is unfalsifiable"
 
 
 def test_b4b_family_key_keeps_cpu_separate_from_gpu():
@@ -412,9 +416,7 @@ def test_collapse_replicates_does_not_manufacture_divergence_at_a_base_only_time
 
     per_config = {
         # r1 reached t=30; r2 stopped at t=20.
-        "serial_0_r1": {
-            "wlevel_m": _b4b_pair([0.0, 10.0, 20.0, 30.0], [True] * 4, [0.0] * 4)
-        },
+        "serial_0_r1": {"wlevel_m": _b4b_pair([0.0, 10.0, 20.0, 30.0], [True] * 4, [0.0] * 4)},
         "serial_0_r2": {"wlevel_m": _b4b_pair([0.0, 10.0, 20.0], [True] * 3, [0.0] * 3)},
     }
     meta = {"serial_0_r1": _b4b_meta("serial"), "serial_0_r2": _b4b_meta("serial")}
@@ -449,9 +451,7 @@ def _b4b_caption(ds) -> str:
     """The caption annotation `_b4b_faceted_figure` attaches to the rendered figure."""
     from hhemt.eda._plotting import _b4b_faceted_figure
 
-    fig = _b4b_faceted_figure(
-        ds, ds["identical"], title="t", baseline_caption="BASE.", show_boundaries=False
-    )
+    fig = _b4b_faceted_figure(ds, ds["identical"], title="t", baseline_caption="BASE.", show_boundaries=False)
     texts = [a.text for a in fig.layout.annotations if a.text and a.text.startswith("BASE.")]
     assert len(texts) == 1, f"expected exactly one caption annotation, got {len(texts)}"
     return texts[0]

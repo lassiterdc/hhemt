@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import re
 
-from hhemt.report_plot_ids import humanize_plot_id
 from hhemt.exceptions import ProcessingError
+from hhemt.report_plot_ids import humanize_plot_id
 
 # Historical default category order (used when no category_order is passed —
 # byte-identical for non-passing callers, mirroring navbar_text's None default).
@@ -62,10 +62,7 @@ _SHOW_CATEGORY_NEW = (
     "    }"
 )
 
-_GUARD_RENDER_OLD = (
-    "    render() {\n"
-    "        if (this.state.data.toggleLabels.size > 0) {"
-)
+_GUARD_RENDER_OLD = "    render() {\n" "        if (this.state.data.toggleLabels.size > 0) {"
 
 _GUARD_RENDER_NEW = (
     "    render() {\n"
@@ -160,10 +157,7 @@ function reportRenderGuardPanel(err, where) {
 # populated is byte-identical; when it is not, the row opens its own figure -- which is
 # the desired result for an unpaired entry. Idempotent: the old literals are gone after
 # the first pass.
-_TOGGLE_CELL_OLD = (
-    "            let entryPath = data.entries.get(arrayKey(entryLabels))"
-    ".get(arrayKey(toggleLabels));"
-)
+_TOGGLE_CELL_OLD = "            let entryPath = data.entries.get(arrayKey(entryLabels))" ".get(arrayKey(toggleLabels));"
 
 _TOGGLE_CELL_NEW = (
     "            let _cell = data.entries.get(arrayKey(entryLabels));\n"
@@ -367,10 +361,7 @@ def apply_post_process_surgery(
     # receiving an orphan <script>. Idempotent on both halves.
     if _GUARD_RENDER_NEW not in html_text:
         html_text = html_text.replace(_GUARD_RENDER_OLD, _GUARD_RENDER_NEW, 1)
-    if (
-        _GUARD_RENDER_NEW in html_text
-        and "class ReportRenderGuard extends React.Component" not in html_text
-    ):
+    if _GUARD_RENDER_NEW in html_text and "class ReportRenderGuard extends React.Component" not in html_text:
         _guard_body = html_text.rfind("</body>")
         if _guard_body != -1:
             html_text = html_text[:_guard_body] + _GUARD_DEFS + html_text[_guard_body:]

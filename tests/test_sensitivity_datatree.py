@@ -7,7 +7,6 @@ Validates that ``build_sensitivity_datatree()`` produces an ``xr.DataTree`` with
 - Each member subtree reproduces the per-analysis tree structure
 """
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -57,12 +56,8 @@ def test_build_sensitivity_datatree_structure(tmp_path):
     # site makes on each sub (added by the log-write-race-fix compute-on-read change);
     # the stub provides a no-op so the structural test does not depend on a real log.
     analyses = {
-        "0": SimpleNamespace(
-            process=_FakeProcess(_build_fake_sub_tree()), _refresh_log=lambda: None
-        ),
-        "1": SimpleNamespace(
-            process=_FakeProcess(_build_fake_sub_tree()), _refresh_log=lambda: None
-        ),
+        "0": SimpleNamespace(process=_FakeProcess(_build_fake_sub_tree()), _refresh_log=lambda: None),
+        "1": SimpleNamespace(process=_FakeProcess(_build_fake_sub_tree()), _refresh_log=lambda: None),
     }
 
     master = SimpleNamespace(

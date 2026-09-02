@@ -125,9 +125,7 @@ def test_system_overview_inherits_and_extends():
     # (non-blocking) warning on construction; suppress it for the field-default asserts.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", CvdAdvisoryWarning)
-        cfg = SystemOverviewStaticConfig(
-            plot_id=_SYSOV_PLOT_ID, renderer_kind=_SYSOV_RENDERER_KIND
-        )
+        cfg = SystemOverviewStaticConfig(plot_id=_SYSOV_PLOT_ID, renderer_kind=_SYSOV_RENDERER_KIND)
     assert cfg.bbox_inches_tight is False  # inherited base default
     assert cfg.output_format == "pdf"  # inherited base default
     assert cfg.dem_cmap == "terrain"  # added content knob
@@ -136,9 +134,7 @@ def test_system_overview_inherits_and_extends():
 
 def test_system_overview_default_cmap_fires_cvd_advisory():
     with pytest.warns(CvdAdvisoryWarning):
-        SystemOverviewStaticConfig(
-            plot_id=_SYSOV_PLOT_ID, renderer_kind=_SYSOV_RENDERER_KIND
-        )
+        SystemOverviewStaticConfig(plot_id=_SYSOV_PLOT_ID, renderer_kind=_SYSOV_RENDERER_KIND)
 
 
 # Phase 3 — per_sim_conduit_flow per-function model + registry entry
@@ -173,9 +169,7 @@ def test_conduit_flow_default_cmaps_are_cvd_safe_silent():
 
 def test_conduit_flow_peak_flow_vmax_rejects_negative():
     with pytest.raises(ValidationError):
-        ConduitFlowStaticConfig(
-            plot_id=_CONDUIT_PLOT_ID, renderer_kind=_CONDUIT_RENDERER_KIND, peak_flow_vmax=-1.0
-        )
+        ConduitFlowStaticConfig(plot_id=_CONDUIT_PLOT_ID, renderer_kind=_CONDUIT_RENDERER_KIND, peak_flow_vmax=-1.0)
 
 
 # Phase 4 — sensitivity_benchmarking per-function model + registry entry

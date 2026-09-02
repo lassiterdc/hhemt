@@ -67,28 +67,26 @@ def _bindings_in_scope(scope: ast.AST) -> dict[str, int]:
 
     def visit(node: ast.AST, is_root: bool) -> None:
         if not is_root and isinstance(node, _SCOPE_NODES):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 record(node.name, node.lineno)
             return
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store | ast.Del):
             record(node.id, node.lineno)
         elif isinstance(node, ast.arg):
             record(node.arg, node.lineno)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        elif isinstance(node, ast.Import | ast.ImportFrom):
             for alias in node.names:
                 record((alias.asname or alias.name).split(".")[0], node.lineno)
         elif isinstance(node, ast.ExceptHandler) and node.name:
             record(node.name, node.lineno)
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+        elif isinstance(node, ast.Global | ast.Nonlocal):
             for n in node.names:
                 record(n, node.lineno)
         for child in ast.iter_child_nodes(node):
             visit(child, False)
 
-    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        for arg in (
-            scope.args.posonlyargs + scope.args.args + scope.args.kwonlyargs
-        ):
+    if isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+        for arg in scope.args.posonlyargs + scope.args.args + scope.args.kwonlyargs:
             record(arg.arg, arg.lineno)
         for extra in (scope.args.vararg, scope.args.kwarg):
             if extra is not None:

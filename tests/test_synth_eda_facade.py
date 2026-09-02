@@ -24,9 +24,9 @@ def test_analysis_eda_end_to_end(synthetic_sensitivity_completed_isolated):
     # aggregate HTML export (which may no-op in CI).
     eda_html_plots = [p for p in result.plot_paths if p.suffix == ".html"]
     assert eda_html_plots, "no plots/eda/*.html artifact produced"
-    assert any(("plotly-graph-div" in p.read_text() or "Plotly.newPlot" in p.read_text()) for p in eda_html_plots), (
-        "no plots/eda/*.html artifact carries a rendered Plotly figure"
-    )
+    assert any(
+        ("plotly-graph-div" in p.read_text() or "Plotly.newPlot" in p.read_text()) for p in eda_html_plots
+    ), "no plots/eda/*.html artifact carries a rendered Plotly figure"
     # Retained: when the best-effort aggregate HTML also exists, it too must carry a figure.
     if result.report_path is not None:
         html = result.report_path.read_text()

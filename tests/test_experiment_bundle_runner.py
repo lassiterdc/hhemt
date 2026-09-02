@@ -266,10 +266,10 @@ def test_build_case_from_bundle_expands_config_vars(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "wait_arg, dry_run, slurm_job_id, expected_wait",
     [
-        (None, False, "12345", True),   # inside sbatch -> block so the outer alloc hosts the tmux
-        (None, False, None, False),     # login node -> fire-and-forget (tmux persists independently)
-        (None, True, "12345", False),   # dry-run never blocks even inside an allocation
-        (True, False, None, True),      # explicit --wait overrides the auto-detect
+        (None, False, "12345", True),  # inside sbatch -> block so the outer alloc hosts the tmux
+        (None, False, None, False),  # login node -> fire-and-forget (tmux persists independently)
+        (None, True, "12345", False),  # dry-run never blocks even inside an allocation
+        (True, False, None, True),  # explicit --wait overrides the auto-detect
         (False, False, "12345", False),  # explicit --no-wait overrides the auto-detect
     ],
 )

@@ -451,10 +451,7 @@ class Local_TestCases:
     ):
         """Phase 1 R3 — row with both system_config_yaml AND system.* → ConfigurationError."""
         _require_cpu_cores_for_sensitivity()
-        dest_dir = (
-            slug_runs_root(worktree_slug())
-            / "_sensitivity_configs"
-        )
+        dest_dir = slug_runs_root(worktree_slug()) / "_sensitivity_configs"
         dest_dir.mkdir(parents=True, exist_ok=True)
         per_member_yaml = dest_dir / "synth_mutex_violation_row0_system.yaml"
         per_member_yaml.write_text("# placeholder per-member system YAML for mutex-violation test\n")
@@ -802,8 +799,8 @@ class Local_TestCases:
                 df[col_name] = col_values
         if drop_columns:
             df = df.drop(columns=[c for c in drop_columns if c in df.columns])
-        assert all(re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["member_id"]), (
-            "member_id values must match ^[A-Za-z0-9_.]+$"
-        )
+        assert all(
+            re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["member_id"]
+        ), "member_id values must match ^[A-Za-z0-9_.]+$"
         df.to_csv(csv_path, index=False)
         return csv_path

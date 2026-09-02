@@ -92,11 +92,11 @@ class PanelBudget:
     """Pixel budget for a stacked-panel figure. All fields are px."""
 
     map_h: int = PANEL_H_PX
-    gap_within: int = 24      # between rows INSIDE one panel (diff -> pct)
-    gap_top: int = 26         # above a panel's first map (subplot title + outline top)
-    gap_footer: int = 62      # below a panel's last map (ticks + title + outline bottom)
-    gap_inter: int = 30       # between panels
-    gap_table: int = 16       # below the summary table
+    gap_within: int = 24  # between rows INSIDE one panel (diff -> pct)
+    gap_top: int = 26  # above a panel's first map (subplot title + outline top)
+    gap_footer: int = 62  # below a panel's last map (ticks + title + outline bottom)
+    gap_inter: int = 30  # between panels
+    gap_table: int = 16  # below the summary table
     top_margin: int = 80
 
 
@@ -107,10 +107,10 @@ class PanelLayout:
     plot_h: float
     fig_width: int
     row_ydom: dict[int, list[float]]
-    map_domains: dict[int, list[float]]     # column index -> [x0, x1]
-    colorbar_x: dict[int, float]            # column index -> paper-x
+    map_domains: dict[int, list[float]]  # column index -> [x0, x1]
+    colorbar_x: dict[int, float]  # column index -> paper-x
     colorbar_len: float
-    table_domain: dict[str, list[float]]    # {"x": [...], "y": [...]}
+    table_domain: dict[str, list[float]]  # {"x": [...], "y": [...]}
     side_table_x: list[float]
     panel_spans: list[tuple[int, int]] = field(default_factory=list)
     #: panel index -> [y_bot, y_top] of a band reserved ABOVE that panel by

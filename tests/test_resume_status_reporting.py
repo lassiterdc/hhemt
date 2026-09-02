@@ -8,6 +8,7 @@ These exercise the methods directly with lightweight ``SimpleNamespace`` stubs
 assertions the plan's Validation Plan names but which require the C++ build
 (unrunnable in this worktree — pre-existing environment limit).
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -92,9 +93,7 @@ def test_print_resume_status_first_run_silent(capsys, tmp_path):
 
 def test_print_resume_status_sensitivity_count_and_attempt_budget(capsys, tmp_path):
     """Sensitivity path counts member completion flags; prints aligned N/M + budget."""
-    stub, status_dir = _resume_stub(
-        tmp_path, sensitivity=True, nsims=3, hpc_restart_times_simulate=2
-    )
+    stub, status_dir = _resume_stub(tmp_path, sensitivity=True, nsims=3, hpc_restart_times_simulate=2)
     (status_dir / "c_run_tritonswmm_member-0_evt-0_complete.flag").write_text("")
     (status_dir / "c_run_tritonswmm_member-1_evt-0_complete.flag").write_text("")
     TRITONSWMM_analysis._print_resume_status(stub)  # type: ignore[arg-type]

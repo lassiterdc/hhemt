@@ -143,10 +143,7 @@ def _assert_lint_clean(markdown: str) -> None:
             if pat.search(line):
                 findings.append(f"{code} at generated line {lineno}: {line.strip()}")
     if findings:
-        raise RuntimeError(
-            "generated config reference violates docs-content rules:\n  "
-            + "\n  ".join(findings)
-        )
+        raise RuntimeError("generated config reference violates docs-content rules:\n  " + "\n  ".join(findings))
 
 
 # --- Step 3: rendering ------------------------------------------------------
@@ -172,9 +169,7 @@ def _type_cell(record: dict[str, Any]) -> str:
     parts = [f"<code>{_cell(record['type'])}</code>"]
     options = record["options"]
     if options:
-        rendered = "<br>".join(
-            f"`{_cell(k)}` {_cell(v)}" for k, v in options.items()
-        )
+        rendered = "<br>".join(f"`{_cell(k)}` {_cell(v)}" for k, v in options.items())
         parts.append(f"<br>{rendered}")
     return "".join(parts)
 
@@ -249,7 +244,7 @@ def _render() -> str:
         "at documentation build time. Nothing on this page is hand-maintained, so it",
         "cannot fall behind the code.",
         "",
-        "All config models set `extra=\"forbid\"`, so an unrecognised key is an error and",
+        'All config models set `extra="forbid"`, so an unrecognised key is an error and',
         "a mistyped one is caught at load rather than at dispatch.",
         "",
         "Start from the in-repo templates:",
@@ -274,7 +269,7 @@ def _render() -> str:
         "",
         "## HPC-system config",
         "",
-        "--8<-- \"hpc-system-config-role.md\"",
+        '--8<-- "hpc-system-config-role.md"',
         "",
         _table(hpc_system_config),
         "",
@@ -291,7 +286,8 @@ def _render() -> str:
         "- [Reporting sets](reporting-sets.md): choosing which figures and tables a report contains.",
         "- [Fill in your configuration](../how-to/config-filling.md): the task-oriented path through these fields.",
         "- [HPC-profile setup](../how-to/hpc-profile-setup.md): the third config, describing your cluster.",
-        "- [When and why re-runs happen](../explanation/rerun-faq.md): why editing the derived sensitivity CSV does not work.",
+        "- [When and why re-runs happen](../explanation/rerun-faq.md): why editing the derived sensitivity CSV does "
+        "not work.",
         "",
     ]
     return "\n".join(sections)

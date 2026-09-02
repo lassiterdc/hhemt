@@ -555,7 +555,8 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = _SWEEP_SELECTION + (
                     # `, "models": "TRITON-SWMM"` / `, "models": "TRITON"`, or to NOTHING on a
                     # master carrying neither TRITON arm. `models` is the same key the combined
                     # report already emits, so the two surfaces name one facet, not two synonyms.
-                    "labels": '{"independent_var": "{independent_var}", "figure": "vs Total runtime"__MODEL_ARM_LABEL__}',
+                    "labels": '{"independent_var": "{independent_var}", '
+                    '"figure": "vs Total runtime"__MODEL_ARM_LABEL__}',
                 },
                 wildcards=("independent_var",),
                 resources_yaml="mem_mb=4000, time_min=10",
@@ -796,6 +797,7 @@ def set_carries(reporting_set: ReportingSet, builder_key: str) -> bool:
     than via membership.
     """
     return any(sel.builder_key == builder_key for sel in reporting_set.renderer_selection)
+
 
 def eda_rule_spec_templates(reporting_set: ReportingSet) -> tuple[RuleSpecTemplate, ...]:
     """Return ``reporting_set``'s ``eda_compute_sensitivity`` rule_spec_templates, or ().

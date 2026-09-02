@@ -45,6 +45,7 @@ import re
 import sys
 from pathlib import Path
 
+
 def _load_retired_tokens() -> tuple[str, ...]:
     """The retired-vocabulary forms, read from the versioned single source.
 
@@ -54,9 +55,7 @@ def _load_retired_tokens() -> tuple[str, ...]:
     """
     import yaml
 
-    doc = yaml.safe_load(
-        (Path(__file__).resolve().parent / "vocabulary_retired.yaml").read_text(encoding="utf-8")
-    )
+    doc = yaml.safe_load((Path(__file__).resolve().parent / "vocabulary_retired.yaml").read_text(encoding="utf-8"))
     return tuple(f["pattern"] for f in doc["forms"])
 
 
@@ -114,7 +113,7 @@ def scan_module(path: Path, tokens: tuple[str, ...]) -> list[tuple[int, str, str
         hit = _tainted_const(node, tokens)
         if hit is not None:
             findings.append((node.lineno, "DIRECT", hit, lines[node.lineno - 1].strip()))
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+        if isinstance(node, ast.Assign | ast.AnnAssign | ast.AugAssign):
             value = getattr(node, "value", None)
             if value is None:
                 continue
@@ -125,7 +124,7 @@ def scan_module(path: Path, tokens: tuple[str, ...]) -> list[tuple[int, str, str
             for tgt in targets:
                 for name in _target_names(tgt):
                     tainted_names.setdefault(name, tok)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             defaults = list(node.args.defaults) + [d for d in node.args.kw_defaults if d is not None]
             for default in defaults:
                 tok = _subtree_taint(default, tokens)

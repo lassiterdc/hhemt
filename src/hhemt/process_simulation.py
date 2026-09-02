@@ -1995,6 +1995,31 @@ class TRITONSWMM_sim_post_processing:
             # T0 -- regenerable by prepare_scenario template-fill, no solver. No capture
             # gate: nothing is lost that a re-prep cannot rebuild from persistent inputs.
             if "prep_inputs" in classes:
+                # PRECONDITION: every enabled model must have RUN. These three paths are
+                # scenario-scoped inputs consumed at RUN time (dats/ and extbc/ are read
+                # by the solver, not by prepare), but this branch is selected by which
+                # model is PROCESSING. The `model_type == "tritonswmm"` guard above stops
+                # three models racing to unlink the same file; it does NOT stop a model
+                # whose simulation has not started yet from losing its inputs. run_swmm
+                # and process_tritonswmm hang off prepare_scenario independently -- there
+                # is no DAG edge between them -- so "processed before the other model ran"
+                # is unconstrained, and it is what emptied dats/ for 123 scenarios whose
+                # standalone SWMM then aborted with seven ERROR 361s.
+                # This reads RUN completion rather than PROCESS completion because the
+                # consumer is the solver. It depends on model_run_completed being sound
+                # for SWMM, which is what Spec 12 repairs -- an ordering dependency, not
+                # a circular one: Spec 12 never reads this guard.
+                _unrun = [m for m in self._run.model_types_enabled if not self._scenario.model_run_completed(m)]
+                if _unrun:
+                    print(
+                        f"[reclaim] scenario {self._scenario.event_iloc}: 'prep_inputs' is "
+                        f"elected but {_unrun} have not completed their runs -- declining. "
+                        "These inputs are consumed at RUN time; removing them now would "
+                        "leave those models pointing at absent files.",
+                        flush=True,
+                    )
+                    classes = tuple(c for c in classes if c != "prep_inputs")
+            if "prep_inputs" in classes:
                 for _p in (
                     self.scen_paths.dir_weather_datfiles,
                     self.scen_paths.extbc_tseries.parent,

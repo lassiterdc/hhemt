@@ -90,8 +90,8 @@ _EMBEDDED_PROV_KEYS: frozenset[str] = frozenset(
         # C8 Workflow-Run-Crate mainEntity (deterministic; bundle-side upgrade only,
         # NOT emitted at consolidation — see upgrade_doc_to_workflow_run_crate):
         "programmingLanguage",  # mainEntity ComputationalWorkflow runtime ref
-        "mainEntity",           # Root focus -> the workflow
-        "url",                  # ComputerLanguage.url (fixed vocab URI)
+        "mainEntity",  # Root focus -> the workflow
+        "url",  # ComputerLanguage.url (fixed vocab URI)
     }
 )
 # Keys that MUST never appear in the embedded core (wall-clock/host/jobid/run-ordinal).
@@ -107,9 +107,23 @@ _VOLATILE_PROV_KEYS: frozenset[str] = frozenset(
         "identifier",
     }
 )
-# Volatile keys excluded from the sidecar compare-and-write. Empty by Option-B payload
-# discipline (the co-located sidecar carries the deterministic core only); keep in
-# lockstep with the graph schema if a timestamp is ever added to the sidecar.
+# Volatile keys excluded from the sidecar compare-and-write.
+#
+# CORRECTED: this previously read "the co-located sidecar carries the deterministic core
+# only". That is FALSE and the error is load-bearing, because it inverts the analysis of
+# whether a new graph key can perturb the sidecar. `emit_provenance` returns
+# `canonical_jsonld(crate)` -- the FULL graph -- as the sidecar, and the CreateAction
+# entities it builds carry `startTime` and `agent`, both members of _VOLATILE_PROV_KEYS.
+# The core-only document is the OTHER return value, produced by partition_core_vs_sidecar.
+#
+# So this set being EMPTY makes `_strip_volatile` a no-op and the compare-and-write below
+# run over the full document, volatile keys included. That is currently SAFE, and the
+# reason is worth stating because it is a property rather than an accident: every value in
+# the graph is a stable function of the RUN'S LOG, not of emit time -- `startTime` reads
+# the persisted `workflow_submission_time` LogField and `agent` reads
+# `workflow_submission_node`, so an idempotent re-consolidation regenerates byte-identical
+# content and Gotcha-59 R4 holds. Add ANY emit-time clock read to the graph and R4 breaks
+# immediately; the remedy then is to name that key here, which is what this set is for.
 _VOLATILE_GRAPH_KEYS: set[str] = set()
 
 
@@ -180,9 +194,22 @@ def build_analysis_crate(
                 properties={
                     "@type": "SoftwareApplication",
                     "name": sif_spec.get("name", "TRITON-SWMM Apptainer container"),
-                    "softwareVersion": sif_spec["softwareVersion"],
+                    # sha256 is the ONLY REQUIRED field, and that is the ADR-19 (ii-a)
+                    # split: a digest is emittable today from the image the run used,
+                    # while a downloadUrl requires a deposit target that does not yet
+                    # exist. Requiring the URL would have made the digest unemittable —
+                    # `sif_spec["downloadUrl"]` raised KeyError on a digest-only spec, so
+                    # the two halves of "referenced by DOI + SHA-256" were welded into one
+                    # all-or-nothing feature and neither shipped.
+                    #
+                    # softwareVersion is likewise optional: reading it means an
+                    # `apptainer inspect` label read, and NO consumer requires it —
+                    # `_reprex._find_sif_entity` selects on `sha256` and `_verify_sif`
+                    # reads only `sha256`. Taking a binary dependency for an unread field
+                    # would be cost without a consumer.
                     "sha256": sif_spec["sha256"],
-                    "downloadUrl": sif_spec["downloadUrl"],
+                    **({"softwareVersion": sif_spec["softwareVersion"]} if sif_spec.get("softwareVersion") else {}),
+                    **({"downloadUrl": sif_spec["downloadUrl"]} if sif_spec.get("downloadUrl") else {}),
                 },
             )
         )
@@ -313,9 +340,7 @@ def upgrade_doc_to_workflow_run_crate(doc: dict, *, workflow_relpath: str) -> di
     if isinstance(existing, dict):
         existing = [existing]
     existing_ids = {c.get("@id") for c in existing if isinstance(c, dict)}
-    root["conformsTo"] = list(existing) + [
-        {"@id": p} for p in _WFRUN_ROOT_PROFILES if p not in existing_ids
-    ]
+    root["conformsTo"] = list(existing) + [{"@id": p} for p in _WFRUN_ROOT_PROFILES if p not in existing_ids]
     return doc
 
 

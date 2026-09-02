@@ -1,13 +1,19 @@
 """Assert that historical migration vocabulary is still PRESENT.
 
 ## Script Metadata
-description: Inverted-assertion guard over the vocabulary freeze. Every other check in the rename stage asserts that the NEW vocabulary is everywhere; this one asserts the OLD vocabulary is still present in the frozen set, so a rename sweep that reached a forward-only migration turns it red. Reads scripts/vocabulary_freeze.yaml.
+description: Inverted-assertion guard over the vocabulary freeze. Every other check in the
+  rename stage asserts that the NEW vocabulary is everywhere; this one asserts the OLD
+  vocabulary is still present in the frozen set, so a rename sweep that reached a
+  forward-only migration turns it red. Reads scripts/vocabulary_freeze.yaml.
 created: '2026-08-28'
 last_edited: '2026-08-28'
 last_edit_description: Initial implementation per the S8a stage-4 Round-0 design.
 known_risks: |
-  - A literal substring scan cannot tell a live code token from one inside a comment. That is deliberate: a comment describing a v0 tree is part of the historical record and is frozen too.
-  - The undeclared-file check keys on `retired_tokens`. A future rename introducing a token not in that list would not be caught until the list is extended.
+  - A literal substring scan cannot tell a live code token from one inside a comment.
+    That is deliberate: a comment describing a v0 tree is part of the historical record
+    and is frozen too.
+  - The undeclared-file check keys on `retired_tokens`. A future rename introducing a
+    token not in that list would not be caught until the list is extended.
 
 WHY THE ASSERTION IS INVERTED. Migrations are forward-only: a tree at layout v0
 runs V0001 .. V0019 in sequence, so historical modules execute against trees

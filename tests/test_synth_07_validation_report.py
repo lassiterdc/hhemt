@@ -38,7 +38,6 @@ from hhemt.report_renderers.errors_and_warnings import (
     _render_system_level_table,
     render,
 )
-
 from tests._failing_fixture_helpers import (
     construct_analysis_from_paths,
     inject_multi_sim_failures_at_paths,
@@ -56,56 +55,88 @@ pytestmark = pytest.mark.requires_snakemake_subprocess
 
 def _synthetic_report() -> ValidationReport:
     """Build a ValidationReport covering every failure mode + a passing one."""
-    return ValidationReport(checks=[
-        CheckResult(
-            name="System setup",
-            level="system",
-            passed=False,
-            summary="System setup FAILED (1 issue(s))",
-            details=[{"detail": "TRITON-SWMM compilation failed"}],
-        ),
-        CheckResult(
-            name="Scenarios setup",
-            level="aggregate",
-            passed=False,
-            summary="Scenario setup failed for 1 of 3 scenarios",
-            details=[{"sa_id": "member_0", "scenario": "event_index.0", "scenario_dir": "/path", "detail": "scenario not created"}],
-        ),
-        CheckResult(
-            name="Scenarios ran",
-            level="aggregate",
-            passed=False,
-            summary="Simulation failed for 1 of 3 scenarios",
-            details=[{"sa_id": "member_1", "scenario": "event_index.0", "scenario_dir": "/path", "detail": "simulation did not complete"}],
-        ),
-        CheckResult(
-            name="Timeseries processed",
-            level="aggregate",
-            passed=False,
-            summary="Timeseries processing failed for 1 entries",
-            details=[{"sa_id": "member_2", "scenario": "event_index.0", "scenario_dir": "/path", "detail": "TRITON ts not processed"}],
-        ),
-        CheckResult(
-            name="Analysis summaries created",
-            level="system",
-            passed=False,
-            summary="Analysis summaries missing (1 item(s))",
-            details=[{"detail": "TRITONSWMM TRITON summary missing"}],
-        ),
-        CheckResult(
-            name="scenario_status.csv created",
-            level="system",
-            passed=True,
-            summary="scenario_status.csv OK (3 rows)",
-        ),
-        CheckResult(
-            name="Resource usage matches config",
-            level="resource",
-            passed=False,
-            summary="Resource mismatches in 1 scenario(s)",
-            details=[{"scenario": "member_3 / event_index.0", "scenario_dir": "/path", "resource": "OMP threads", "expected": 4, "actual": 1, "detail": "OMP threads: expected 4, actual 1"}],
-        ),
-    ])
+    return ValidationReport(
+        checks=[
+            CheckResult(
+                name="System setup",
+                level="system",
+                passed=False,
+                summary="System setup FAILED (1 issue(s))",
+                details=[{"detail": "TRITON-SWMM compilation failed"}],
+            ),
+            CheckResult(
+                name="Scenarios setup",
+                level="aggregate",
+                passed=False,
+                summary="Scenario setup failed for 1 of 3 scenarios",
+                details=[
+                    {
+                        "sa_id": "member_0",
+                        "scenario": "event_index.0",
+                        "scenario_dir": "/path",
+                        "detail": "scenario not created",
+                    }
+                ],
+            ),
+            CheckResult(
+                name="Scenarios ran",
+                level="aggregate",
+                passed=False,
+                summary="Simulation failed for 1 of 3 scenarios",
+                details=[
+                    {
+                        "sa_id": "member_1",
+                        "scenario": "event_index.0",
+                        "scenario_dir": "/path",
+                        "detail": "simulation did not complete",
+                    }
+                ],
+            ),
+            CheckResult(
+                name="Timeseries processed",
+                level="aggregate",
+                passed=False,
+                summary="Timeseries processing failed for 1 entries",
+                details=[
+                    {
+                        "sa_id": "member_2",
+                        "scenario": "event_index.0",
+                        "scenario_dir": "/path",
+                        "detail": "TRITON ts not processed",
+                    }
+                ],
+            ),
+            CheckResult(
+                name="Analysis summaries created",
+                level="system",
+                passed=False,
+                summary="Analysis summaries missing (1 item(s))",
+                details=[{"detail": "TRITONSWMM TRITON summary missing"}],
+            ),
+            CheckResult(
+                name="scenario_status.csv created",
+                level="system",
+                passed=True,
+                summary="scenario_status.csv OK (3 rows)",
+            ),
+            CheckResult(
+                name="Resource usage matches config",
+                level="resource",
+                passed=False,
+                summary="Resource mismatches in 1 scenario(s)",
+                details=[
+                    {
+                        "scenario": "member_3 / event_index.0",
+                        "scenario_dir": "/path",
+                        "resource": "OMP threads",
+                        "expected": 4,
+                        "actual": 1,
+                        "detail": "OMP threads: expected 4, actual 1",
+                    }
+                ],
+            ),
+        ]
+    )
 
 
 def test_synthetic_report_overall_passed_false():
@@ -232,9 +263,7 @@ def test_renders_full_html_doc(tmp_path):
     # persist_validation_report shape) and point the fake analysis_dir at it.
     fake_analysis.analysis_paths.analysis_dir = tmp_path
     report = _synthetic_report()
-    (tmp_path / _VALIDATION_REPORT_FILENAME).write_text(
-        json.dumps({"checks": [asdict(c) for c in report.checks]})
-    )
+    (tmp_path / _VALIDATION_REPORT_FILENAME).write_text(json.dumps({"checks": [asdict(c) for c in report.checks]}))
 
     out_path = tmp_path / "ew.html"
     render(fake_analysis, DEFAULT_REPORT_CONFIG, out_path)
@@ -255,9 +284,7 @@ def test_renders_full_html_doc(tmp_path):
 
 
 @pytest.fixture
-def failing_synth_multi_sim_analysis(
-    tritonswmm_cpu_compiled, synth_multi_sim_analysis_cached, tmp_path
-):
+def failing_synth_multi_sim_analysis(tritonswmm_cpu_compiled, synth_multi_sim_analysis_cached, tmp_path):
     """Clone synth_multi_sim cached fixture, inject failures BEFORE construction.
 
     Gated on ``tritonswmm_cpu_compiled``: the cached analysis must have been RUN
@@ -270,9 +297,7 @@ def failing_synth_multi_sim_analysis(
 
 
 @pytest.fixture
-def failing_synth_sensitivity_analysis(
-    tritonswmm_cpu_compiled, synth_sensitivity_analysis_cached, tmp_path
-):
+def failing_synth_sensitivity_analysis(tritonswmm_cpu_compiled, synth_sensitivity_analysis_cached, tmp_path):
     """Clone synth_sensitivity cached fixture, inject failures BEFORE construction.
     Compile-tier gated; see ``failing_synth_multi_sim_analysis``."""
     paths = prepare_clone_dir(synth_sensitivity_analysis_cached, tmp_path)
@@ -396,9 +421,7 @@ def test_eda_calc_ran_is_not_applicable_when_the_set_enumerates_no_targets(tmp_p
     """
     from hhemt.analysis_validation import check_eda_calc_ran
 
-    result = check_eda_calc_ran(
-        _eda_stub(tmp_path, ["config_diff_maps"], reporting_set="benchmarking")
-    )
+    result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], reporting_set="benchmarking"))
 
     assert result.passed is True
     assert "N/A" in result.summary
@@ -413,9 +436,7 @@ def test_eda_calc_ran_is_not_applicable_to_a_multisim(tmp_path):
     """
     from hhemt.analysis_validation import check_eda_calc_ran
 
-    result = check_eda_calc_ran(
-        _eda_stub(tmp_path, ["config_diff_maps"], sensitivity=False, reporting_set="b4b")
-    )
+    result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], sensitivity=False, reporting_set="b4b"))
 
     assert result.passed is True
     assert "N/A" in result.summary
@@ -432,6 +453,8 @@ def test_eda_rule_spec_templates_pins_the_sets_check_eda_calc_ran_depends_on():
     enumerating = {n for n, s in REPORTING_SETS.items() if eda_rule_spec_templates(s)}
 
     assert enumerating == {"b4b", "compute-sensitivity", "dem-resolution"}
+
+
 def test_resume_validity_is_applicable_on_a_pure_triton_resumed_arm():
     """VMS-9: the widened check evaluates the pure-TRITON resume arm instead of
     returning N/A on the coupled toggle.
@@ -451,9 +474,7 @@ def test_resume_validity_is_applicable_on_a_pure_triton_resumed_arm():
     )
     both_arms = [d for d in REGISTRY if d.trigger == "resumed_any"]
     verdicts = [resolve(d, resume_sha) for d in both_arms]
-    assert all(v.status == "absent" for v in verdicts), [
-        (v.defect_id, v.status, v.rule) for v in verdicts
-    ]
+    assert all(v.status == "absent" for v in verdicts), [(v.defect_id, v.status, v.rule) for v in verdicts]
 
 
 def test_clean_arm_carries_an_affected_build_but_stays_not_applicable():

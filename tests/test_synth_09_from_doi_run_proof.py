@@ -89,9 +89,7 @@ def _reprex_bundle_zip(rendered_synth_multi_sim, tmp_path) -> Path:
     return rendered_synth_multi_sim.bundle_report_data(out / "bundle.zip")
 
 
-def test_from_doi_reconstituted_bundle_runs_locally(
-    _reprex_bundle_zip, _prebuilt_software_dir, monkeypatch, tmp_path
-):
+def test_from_doi_reconstituted_bundle_runs_locally(_reprex_bundle_zip, _prebuilt_software_dir, monkeypatch, tmp_path):
     """emit -> from_doi (fetch mocked) -> analysis.test() proves a RECONSTITUTED
     bundle RUNS end to end, network-free and without a recompile."""
     # Mock the network fetch: return the pre-built zip; from_doi still runs the

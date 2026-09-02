@@ -315,9 +315,9 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
                 f"validation_report.json; got {_csv_created[0]}"
             )
 
-    assert diagnostic_log_path.exists(), (
-        f"SnakemakeDiagnostics log_path was not honored — expected {diagnostic_log_path}"
-    )
+    assert (
+        diagnostic_log_path.exists()
+    ), f"SnakemakeDiagnostics log_path was not honored — expected {diagnostic_log_path}"
     log_text = diagnostic_log_path.read_text()
     # snakemake 8/9 emits per-job rerun reasons automatically when --verbose
     # is set (the standalone --reason flag was removed in snakemake 8).
@@ -326,9 +326,9 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
     # mode signal (either explicit "reason:" annotations or, on workflows
     # where every job runs from scratch, the verbose-mode "Job " markers
     # for executing jobs).
-    assert "reason:" in log_text.lower() or "job " in log_text.lower(), (
-        f"expected --verbose-mode rerun-reason annotations in diagnostic log; got log of length {len(log_text)} chars"
-    )
+    assert (
+        "reason:" in log_text.lower() or "job " in log_text.lower()
+    ), f"expected --verbose-mode rerun-reason annotations in diagnostic log; got log of length {len(log_text)} chars"
 
     tst_ut.assert_analysis_workflow_completed_successfully(analysis)
 
@@ -354,16 +354,16 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
         if paths.swmm_hydro_inp.exists():
             with open(paths.swmm_hydro_inp) as fp:
                 content = fp.read()
-                assert f"THREADS              {expected_threads}" in content, (
-                    f"hydro.inp for event {event_iloc} should have THREADS={expected_threads}"
-                )
+                assert (
+                    f"THREADS              {expected_threads}" in content
+                ), f"hydro.inp for event {event_iloc} should have THREADS={expected_threads}"
 
         if paths.swmm_full_inp.exists():
             with open(paths.swmm_full_inp) as fp:
                 content = fp.read()
-                assert f"THREADS              {expected_threads}" in content, (
-                    f"full.inp for event {event_iloc} should have THREADS={expected_threads}"
-                )
+                assert (
+                    f"THREADS              {expected_threads}" in content
+                ), f"full.inp for event {event_iloc} should have THREADS={expected_threads}"
 
     if "swmm" in enabled_models and "tritonswmm" in enabled_models:
         for event_iloc in analysis.df_sims.index:
@@ -661,17 +661,17 @@ def test_synth_render_report_interactive_html(synth_multi_sim_analysis_cached):
         r'"data:text/html;charset=utf8;filename=([^;]+);base64,([A-Za-z0-9+/=]+)"',
         html,
     )
-    assert len(data_uris) >= 6, (
-        f"Expected >= 6 data:text/html figure URIs, got {len(data_uris)}: {[name for name, _ in data_uris]}"
-    )
+    assert (
+        len(data_uris) >= 6
+    ), f"Expected >= 6 data:text/html figure URIs, got {len(data_uris)}: {[name for name, _ in data_uris]}"
     marker_hits = 0
     for _name, payload in data_uris:
         inner = base64.b64decode(payload).decode("utf-8", errors="replace")
         if ("Plotly.newPlot" in inner) or ("new Tabulator" in inner):
             marker_hits += 1
-    assert marker_hits >= 6, (
-        f"Expected >= 6 figures with Plotly/Tabulator markers in decoded payload, got {marker_hits} of {len(data_uris)}"
-    )
+    assert (
+        marker_hits >= 6
+    ), f"Expected >= 6 figures with Plotly/Tabulator markers in decoded payload, got {marker_hits} of {len(data_uris)}"
 
     plots_dir = analysis.analysis_paths.analysis_dir / "plots"
     html_files = list(plots_dir.rglob("*.html"))
@@ -873,9 +873,9 @@ def test_scenario_status_csv_disk_utilization_column(synth_multi_sim_analysis_ca
         reader = csv.DictReader(f)
         rows = list(reader)
         assert reader.fieldnames is not None
-        assert "disk_utilization_bytes" in reader.fieldnames, (
-            f"disk_utilization_bytes missing from columns: {reader.fieldnames}"
-        )
+        assert (
+            "disk_utilization_bytes" in reader.fieldnames
+        ), f"disk_utilization_bytes missing from columns: {reader.fieldnames}"
 
     # At least one row should have a non-empty integer-valued cell.
     int_cells = [r["disk_utilization_bytes"] for r in rows if r.get("disk_utilization_bytes") not in ("", None)]
@@ -909,7 +909,9 @@ def test_render_report_includes_disk_utilization_card(synth_multi_sim_analysis_c
     # Either the populated table or the missing-sentinel banner is a valid
     # rendered output (both are emitted by the same renderer). On a
     # successful end-to-end run the analysis-level sentinel must be present.
-    assert 'id="disk-utilization"' in du_html, f"Disk Utilization card did not render the populated table; got: {du_html[:200]!r}"
+    assert (
+        'id="disk-utilization"' in du_html
+    ), f"Disk Utilization card did not render the populated table; got: {du_html[:200]!r}"
 
 
 def _set_batch_job_fields(cfg_analysis):
@@ -1064,9 +1066,9 @@ def test_render_survives_missing_backing_file(
         returned = mod.render(analysis, DEFAULT_REPORT_CONFIG, out)
         assert returned == out and out.exists()
         manifest = json.loads((out.parent / f"{out.stem}.manifest.json").read_text())
-        assert any(backing_file_relpath in s for s in manifest["source_paths_relative"]), (
-            f"{renderer_module}: manifest dropped the expected source after deletion"
-        )
+        assert any(
+            backing_file_relpath in s for s in manifest["source_paths_relative"]
+        ), f"{renderer_module}: manifest dropped the expected source after deletion"
     finally:
         if had_file:
             backing.parent.mkdir(parents=True, exist_ok=True)

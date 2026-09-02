@@ -61,9 +61,9 @@ _MATRIX = _REPO_ROOT / "tests/fixtures/doi_emitter_and_ingestion_verification/ma
 # The 3 per-arch build recipes carried in the bundle. Each .def self-describes its arch via
 # %labels org.hhemt.gpu_hardware (a100 / a6000 / none-for-CPU); from_doi builds one SIF each.
 _CONTAINER_DEFS = [
-    _REPO_ROOT / "containers/uva-cuda.def",        # a100  / AMPERE80
+    _REPO_ROOT / "containers/uva-cuda.def",  # a100  / AMPERE80
     _REPO_ROOT / "containers/uva-cuda-a6000.def",  # a6000 / AMPERE86
-    _REPO_ROOT / "containers/uva-cpu.def",         # CPU   / no gpu_hardware label
+    _REPO_ROOT / "containers/uva-cpu.def",  # CPU   / no gpu_hardware label
 ]
 
 # In-tree anonymized COPY-ME template — the operator reconstructs the real config in the
@@ -172,9 +172,7 @@ def build_case(
         toggle_use_swmm_for_hydrology=True,  # P3 — coupled SWMM hydrology exercised in-SIF
         start_from_scratch=start_from_scratch,
         hpc_system_config_yaml=cfg_path,
-        additional_system_configs=(
-            {"system_directory": system_directory} if system_directory else {}
-        ),
+        additional_system_configs=({"system_directory": system_directory} if system_directory else {}),
         additional_analysis_configs={
             "multi_sim_run_method": "local",  # P1 — dispatch-family; execution_mode pins locus
             "execution_environment": "container",  # base container-mode (CSV reaffirms per row)
@@ -265,9 +263,7 @@ def provision_producer_sifs(
         # Land the rewritten .def beside the staged source so `cd {def.parent}` + the rewritten
         # `%files hhemt_src` resolve to the clean tree (mirrors _emit_container_build).
         staged_def = _build_ctx / container_def.name
-        staged_def.write_text(
-            _rewrite_files_section(container_def.read_text(), SOURCE_TREE_RELPATH)
-        )
+        staged_def.write_text(_rewrite_files_section(container_def.read_text(), SOURCE_TREE_RELPATH))
         built = build_sif(
             def_path=staged_def,
             sif_out=_PRODUCER_SIF_DIR / f"{container_def.stem}.sif",
@@ -304,8 +300,8 @@ def provision_producer_sifs(
         )
 
     container = dict(_hpc.get("container") or {})
-    container["sif_path"] = str(cpu_sif)                 # CPU rows + arch-agnostic process rung
-    container["sif_paths_by_arch"] = sif_paths_by_arch   # {a100: ..., a6000: ...}
+    container["sif_path"] = str(cpu_sif)  # CPU rows + arch-agnostic process rung
+    container["sif_paths_by_arch"] = sif_paths_by_arch  # {a100: ..., a6000: ...}
     _hpc["container"] = container
     derived = _PRODUCER_SIF_DIR / "hpc_system_config.producer.yaml"
     write_yaml(_hpc, derived)
@@ -463,8 +459,10 @@ def verify(
 
     # FQ2 (R9): prove the build-on-ingest actually happened (3 fresh content-addressed SIFs).
     _post = sorted(_cache.glob("hhemt-*.sif"))
-    print(f"[verify] build-on-ingest: {len(_post)} SIF(s) freshly built in {_cache}: "
-          f"{[p.name for p in _post]}", flush=True)
+    print(
+        f"[verify] build-on-ingest: {len(_post)} SIF(s) freshly built in {_cache}: " f"{[p.name for p in _post]}",
+        flush=True,
+    )
     if len(_post) < 3:
         raise RuntimeError(
             f"FALSE-GREEN GUARD: expected >=3 freshly-built SIFs in {_cache} after from_doi, "
@@ -512,9 +510,15 @@ def _compare_group_against_reference(analysis, ref_sim_dir: Path) -> tuple[list,
         # NOTE: returns the full 3-tuple — the caller unpacks (problems, n_cmp, n_signal).
         # A bare-list early return here would raise ValueError at the call site and turn a
         # clean "reference missing" diagnostic into a crash.
-        return ([f"reference_outputs summaries ABSENT under {ref_sim_dir} — nothing to compare "
-                 f"(did the producer run analysis.test() before emit so _copy_reference_outputs "
-                 f"could carry them?)"], 0, 0)
+        return (
+            [
+                f"reference_outputs summaries ABSENT under {ref_sim_dir} — nothing to compare "
+                f"(did the producer run analysis.test() before emit so _copy_reference_outputs "
+                f"could carry them?)"
+            ],
+            0,
+            0,
+        )
     repro = _read_combined_by_mode(analysis, analysis.analysis_paths.simulation_directory)
     import numpy as np
 
@@ -567,21 +571,27 @@ def _assert_sif_builds(expected: int = 3, since: str = "now-1day") -> bool:
 
     try:
         out = subprocess.run(
-            ["sacct", "--name", "hhemt_sif_build", "--starttime", since,
-             "--noheader", "-P", "-o", "JobID,State"],
-            capture_output=True, text=True, timeout=60,
+            ["sacct", "--name", "hhemt_sif_build", "--starttime", since, "--noheader", "-P", "-o", "JobID,State"],
+            capture_output=True,
+            text=True,
+            timeout=60,
         ).stdout
     except Exception as exc:  # noqa: BLE001 — sacct unavailable is non-fatal for REQ-2
         print(f"  REQ-2: sacct unavailable ({exc}); skipping the {expected}-build assertion.")
         return True
-    states = [ln.split("|")[-1].strip() for ln in out.splitlines()
-              if ln.strip() and not ln.split("|")[0].endswith((".batch", ".extern"))]
+    states = [
+        ln.split("|")[-1].strip()
+        for ln in out.splitlines()
+        if ln.strip() and not ln.split("|")[0].endswith((".batch", ".extern"))
+    ]
     completed = sum(1 for s in states if s.startswith("COMPLETED"))
     failed = sum(1 for s in states if s.startswith(("FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL")))
-    print(f"  REQ-2: hhemt_sif_build -> {completed} COMPLETED, {failed} failed "
-          f"since {since} (expect >= {expected} COMPLETED on a COLD cache; a warm "
-          f"sif_cache_root skips builds). The window matters: without --starttime, a PRIOR "
-          f"cycle's builds satisfy this run's threshold.")
+    print(
+        f"  REQ-2: hhemt_sif_build -> {completed} COMPLETED, {failed} failed "
+        f"since {since} (expect >= {expected} COMPLETED on a COLD cache; a warm "
+        f"sif_cache_root skips builds). The window matters: without --starttime, a PRIOR "
+        f"cycle's builds satisfy this run's threshold."
+    )
     return failed == 0 and completed >= expected
 
 
@@ -606,16 +616,20 @@ def _adjudicate_per_arch_pass(exp, result) -> bool:
     # Layer-2 per-arch routing is asserted from the per-rule sim logs (apptainer exec line)
     # by the [Q8] operator runbook's log-scan (namespace-agnostic: it names the SIF file,
     # hhemt-a6000-*.sif vs hhemt-a100-*.sif vs the CPU SIF). Reported here as the gate.
-    print("  (per-arch SIF routing: adjudicate each sim log's `apptainer exec {sif}` Command "
-          "line against its row's arch SIF per the [Q8] runbook two-layer PASS)")
+    print(
+        "  (per-arch SIF routing: adjudicate each sim log's `apptainer exec {sif}` Command "
+        "line against its row's arch SIF per the [Q8] runbook two-layer PASS)"
+    )
 
     # REQ-1: per-arch within-family producer-vs-reproducer EXACT equality of the flat summaries.
     bundle_root = getattr(exp, "bundle_root", None) or exp.analysis.analysis_paths.analysis_dir
     ref_root = Path(bundle_root) / "reference_outputs"
     if not ref_root.is_dir():
-        print(f"  REQ-1 FAIL: no reference_outputs/ under {bundle_root} — cannot verify per-arch "
-              f"reproduction (the producer must run analysis.test() before emit so the truncated "
-              f"reference is carried).")
+        print(
+            f"  REQ-1 FAIL: no reference_outputs/ under {bundle_root} — cannot verify per-arch "
+            f"reproduction (the producer must run analysis.test() before emit so the truncated "
+            f"reference is carried)."
+        )
         all_ok = False
     else:
         for sub in subs:
@@ -624,13 +638,17 @@ def _adjudicate_per_arch_pass(exp, result) -> bool:
             problems, n_cmp, n_signal = _compare_group_against_reference(sub.analysis, ref_sim_dir)
             if problems:
                 all_ok = False
-                print(f"  REQ-1 {group_name}: per-arch within-family reproduction FAIL "
-                      f"({n_cmp} comparisons, {n_signal} with signal):")
+                print(
+                    f"  REQ-1 {group_name}: per-arch within-family reproduction FAIL "
+                    f"({n_cmp} comparisons, {n_signal} with signal):"
+                )
                 for p in problems:
                     print(f"      - {p}")
             else:
-                print(f"  REQ-1 {group_name}: per-arch within-family bit-identical PASS "
-                      f"({n_cmp} comparisons, {n_signal} with signal)")
+                print(
+                    f"  REQ-1 {group_name}: per-arch within-family bit-identical PASS "
+                    f"({n_cmp} comparisons, {n_signal} with signal)"
+                )
 
     # REQ-2: the 3 per-arch SIFs were built on ingest (cold-cache).
     if not _assert_sif_builds(expected=len(_CONTAINER_DEFS)):
@@ -672,6 +690,4 @@ if __name__ == "__main__":
             raise SystemExit("verify needs a DOI: ... verify <DOI>")
         _sys.exit(0 if verify(_sys.argv[2]) else 1)
     else:
-        raise SystemExit(
-            f"unknown stage {stage!r} (expected 'emit-bundle', 'deposit', or 'verify')"
-        )
+        raise SystemExit(f"unknown stage {stage!r} (expected 'emit-bundle', 'deposit', or 'verify')")

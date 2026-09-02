@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
@@ -734,6 +734,106 @@ _COMMENT_RULE_PREFIXES: tuple[str, ...] = ("rule_run_", "rule_simulation_member_
 # so every reference below resolves unchanged. They were extracted so the
 # lightweight wait_for_sentinel_runner.py subprocess can import them without
 # importing this Snakemake-builder surface.
+
+
+def _write_snakefile_atomic(path: Path, content: str) -> Path:
+    """Write a generated Snakefile atomically, preserving the displaced one.
+
+    Two properties, each answering a measured 2026-08-31 failure, and NEITHER
+    depending on an orchestrator-liveness verdict.
+
+    ATOMIC -- temp + ``os.replace``, so a concurrent reader (another driver's
+    DAG construction, a ``snakemake --report``, an operator) never observes a
+    half-written Snakefile. The same idiom
+    ``orchestrator_sentinels.write_orchestrator_sentinel`` and
+    ``status_flags.write_status_flag`` already use, for the same stated reason.
+
+    ARCHIVING -- the displaced file is renamed to ``{name}.prev`` first, so the
+    previous generation survives exactly one overwrite. On 2026-08-31 a second
+    driver overwrote a live driver's Snakefile with an 11,394-wait-rule variant.
+    The running process had already parsed its own copy and was unaffected, but
+    the artifact the tree's NEXT reader parses no longer matched the running
+    DAG, and reconstructing what had been displaced cost a diagnosis turn.
+    ``diff Snakefile Snakefile.prev`` answers it. One deep, deliberately: an
+    N-deep rotation accumulates in a DU-counted tree and would need a retention
+    policy, while ``.prev`` answers the question that was actually asked.
+
+    NOT gated on the liveness verdict, and the redundancy argument is recorded
+    so it is not re-added. A REFUSED submit never reaches a write, and a
+    PERMITTED-or-OVERRIDDEN submit carries a verdict a second gate would honour
+    identically -- so a verdict-gated write changes no outcome in either branch,
+    while leaving the actual harm (an artifact that disagrees with the running
+    DAG) intact in every case it permits.
+
+    Used by EVERY generated-Snakefile writer in the toolkit -- the production
+    ``Snakefile`` (three multisim + three sensitivity-master branches), the
+    ``Snakefile.reprocess`` pair, the three ``Snakefile.delete`` /
+    ``Snakefile.reprocess_delete`` writers, and ``Snakefile.static``. The
+    reprocess pair matters most after the production file: per Gotcha 39,
+    ``render_report(reprocess=True)`` runs ``snakemake --report`` against
+    ``Snakefile.reprocess``, so a clobber there reaches a RENDERED REPORT rather
+    than only an operator's diagnosis.
+    """
+    import os
+    import tempfile
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            path.replace(path.with_name(path.name + ".prev"))
+        except OSError:
+            pass  # archiving is best-effort and must never block a submit
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(content)
+        os.replace(tmp_name, path)
+    except BaseException:
+        # EXEMPT-DU: transient-intermediate
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+    return path
+
+
+def _resolve_snakefile_path(analysis_dir: Path, *, dry_run: bool) -> Path:
+    """Resolve the production-Snakefile destination for one submit.
+
+    THE INVARIANT: **a dry run never DISPLACES a Snakefile; it may CREATE one.**
+
+    Why displacement is the harm and not merely the overwrite. The production
+    Snakefile's content is NOT invariant -- ``generate_snakefile_content`` takes
+    ``alive_by_token`` from a live ``_reconcile_inflight_submissions``, so the
+    same call executed while an arm is in flight generates the WAIT-RULE form.
+    Measured 2026-08-31: 11,394 wait rules in place of three wildcarded run
+    rules. A bare ``--dry-run`` against a live arm therefore installs that form
+    over the good one with NO second driver and NO override involved, and the
+    ``.prev`` archive recovers it only if someone thinks to look -- which an
+    operator running a diagnostic is the least likely person to do. Routing the
+    rehearsal to ``Snakefile.dryrun`` removes the question instead of answering
+    it, and costs no parameter threading: every dry-run branch already returns
+    before submission, so the local variable is the only consumer.
+
+    Why the ``exists()`` condition, which is a rule and not a special case.
+    Displacement is only possible where there is something to displace. On a
+    fresh tree the legacy behaviour is strictly BETTER than a redirect: it
+    leaves the operator, ``Analysis.df_status``, ``df_snakemake_allocations``
+    (both parse ``analysis_dir/"Snakefile"`` by literal name) and
+    ``tests/test_workflow_1job_dry_run.py``'s explicit "Snakefile should be
+    generated even in dry-run" assertion with a file to read. So the redirect
+    fires only when the production file already exists.
+
+    Scoped to the production ``Snakefile`` deliberately. The reprocess, delete
+    and static generators consume no reconcile state and emit no wait rules, so
+    their content IS stable across a dry run and the ``.prev`` archive in
+    ``_write_snakefile_atomic`` is sufficient for them. Widening this redirect
+    to those writers would require threading ``dry_run`` into
+    ``write_reprocess_snakefile`` and friends to buy nothing.
+    """
+    production = Path(analysis_dir) / "Snakefile"
+    if dry_run and production.exists():
+        return production.with_name("Snakefile.dryrun")
+    return production
 
 
 def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int:
@@ -1451,7 +1551,18 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         if not pending_tokens:
             return []
         queued_dir = base_dir / "_status" / "_queued"
-        cap_min = _max_plausible_job_lifetime_min(self.cfg_analysis)
+        # NOT _max_plausible_job_lifetime_min. That helper is documented as an upper
+        # bound on how long a sim could RUN (hpc_total_job_duration_min + 30), and a
+        # _queued/ sentinel by definition names a job that has NOT started -- its age
+        # is QUEUE time, which is unrelated to and routinely far exceeds run time.
+        # Measured 2026-08-29: the Frontier benchmarking arm sets
+        # hpc_total_job_duration_min=360, giving a 390-min age-out against observed
+        # ~3-day queue waits, so every surviving queued job would have been dropped
+        # here and RE-SUBMITTED -- the double submission this mechanism exists to
+        # prevent, caused by this mechanism. The correct bound is the operator's own
+        # give-up ceiling, which is also the wait-rule's poll cap, so the reconcile
+        # and the rule it emits cannot disagree.
+        cap_min = self.cfg_analysis.hpc_max_wait_for_inflight_min
         max_plausible_s = cap_min * 60
 
         # Read each payload's allocation jobid (None = executor-owns / unreadable).
@@ -2789,7 +2900,7 @@ rule consolidate_scenario:
         # Output processing: I/O bound (1-2 CPUs for compression)
         process_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-            runtime_min=120,
+            runtime_min=self.cfg_analysis.hpc_runtime_min_for_sim_output_processing,
             mem_mb=self.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
             nodes=1,
             tasks=1,
@@ -4684,6 +4795,8 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
         extra_sbatch_args: list[str] | None = None,
+        *,
+        on_launch: "Callable[[str | None], None] | None" = None,
     ) -> dict:
         """
         Submit workflow as a single SLURM batch job.
@@ -4803,6 +4916,16 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                 "script_path": script_path,
                 "message": f"Single-job workflow submitted (Job ID: {job_id})",
             }
+
+            # mechanism (b) PENDING-recovery record -- see the sibling note in
+            # _submit_tmux_workflow. Written at launch-success, before the optional
+            # blocking wait, because the caller's post-return site cannot distinguish
+            # submission-success from completion-success and is never reached at all
+            # when the driver dies mid-wait. toolkit-owns-sbatch => the allocation
+            # jobid is recorded so the wait-runner's in-loop liveness probe (R8) has
+            # a job to probe.
+            if on_launch is not None:
+                on_launch(job_id)
 
             # E2: persist orchestrator identity so a live single-job driver is
             # detectable by the reprocess orchestration-liveness gate (Phase 2).
@@ -5153,6 +5276,9 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
         snakefile_path: Path,
         wait_for_completion: bool = False,
         verbose: bool = True,
+        *,
+        on_launch: "Callable[[str | None], None] | None" = None,
+        adopted_token_count: int = 0,
     ) -> dict:
         """
         Submit Snakemake workflow in detached tmux session.
@@ -5471,12 +5597,27 @@ exit $snakemake_status
                 "message": f"Tmux workflow submitted (session: {session_name})",
             }
 
+            # mechanism (b) PENDING-recovery record, written HERE and not at the
+            # caller. The caller's post-return site cannot express "the launch
+            # succeeded": under wait_for_completion=True this method blocks for the
+            # WHOLE run and then overwrites success with COMPLETION-success below, so
+            # a caller-side `result.get("success")` guard reads a different predicate
+            # than the one it names, and a driver killed mid-wait (walltime, node
+            # fault, scancel, the queue-starvation guard) never returns here at all --
+            # leaving _status/_queued/ empty for exactly the window it exists to
+            # cover. This IS still write-after-launch: SLURM has accepted the
+            # submission by the time result_dict is built, so a pre-launch exception
+            # still leaves no orphan. executor-owns-sbatch => jobid None.
+            if on_launch is not None:
+                on_launch(None)
+
             if wait_for_completion:
                 if verbose:
                     print("[Snakemake] Waiting for workflow completion...", flush=True)
                 completion_info = self._wait_for_tmux_session_completion(
                     session_name=session_name,
                     verbose=verbose,
+                    adopted_token_count=adopted_token_count,
                 )
                 result_dict.update(completion_info)
                 result_dict["success"] = completion_info["completed"]
@@ -5643,7 +5784,40 @@ exit $snakemake_status
         matches = re.findall(r"SLURM run ID:\s*([0-9a-fA-F-]{36})", text)
         return matches[-1] if matches else None
 
-    def _workflow_has_live_slurm_jobs(self, *, timeout_s: float = 20.0) -> set[str]:
+    def _tmux_slurm_run_uuids(self) -> tuple[str, ...]:
+        """Every ``SLURM run ID`` uuid this analysis has run under, newest-first.
+
+        The plural form exists so the liveness query is correct BY CONSTRUCTION
+        rather than by read ordering. A resumed driver's adopted sims carry the
+        PREVIOUS driver's uuid as their sbatch ``--job-name``; sourcing that uuid at
+        the call site works only because the capture happens before the new tmux log
+        is created, and nothing in the code expresses that constraint. Reading the
+        whole log SET removes it: the prior driver's log is on disk either way, so no
+        read order produces a wrong answer.
+
+        Over-inclusion is inert, not merely tolerable. ``_workflow_has_live_slurm_jobs``
+        returns ``states - _SACCT_DEAD_STATES``, so a long-dead uuid contributes only
+        terminal rows and cannot inflate the live set. The list grows by one 36-byte
+        uuid per prior driver invocation, which is why no cap is imposed.
+        """
+        log_dir = self.analysis_paths.analysis_log_directory
+        try:
+            candidates = sorted(log_dir.glob("tmux_session_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        except OSError:
+            return ()
+        seen: dict[str, None] = {}
+        for path in candidates:
+            try:
+                text = path.read_text(errors="replace")
+            except OSError:
+                continue
+            for uuid in reversed(re.findall(r"SLURM run ID:\s*([0-9a-fA-F-]{36})", text)):
+                seen.setdefault(uuid, None)
+        return tuple(seen)
+
+    def _workflow_has_live_slurm_jobs(
+        self, *, timeout_s: float = 20.0, extra_run_uuids: tuple[str, ...] = ()
+    ) -> set[str]:
         """The set of non-terminal SLURM states this workflow run still owns.
 
         Liveness gate for the stall watchdog. On an executor-owns-sbatch site the
@@ -5658,8 +5832,32 @@ exit $snakemake_status
         only DELAY a stall kill, never cause one. Truthiness is preserved, so callers
         that only test liveness are unaffected by the widening.
         """
-        run_uuid = self._tmux_slurm_run_uuid()
-        if run_uuid is None:
+        run_uuids = self._tmux_slurm_run_uuids()
+        # A RESUMED driver's adopted sims were submitted by the PREVIOUS driver and
+        # carry ITS run_uuid as their sbatch --job-name, so a query naming only the
+        # current uuid returns zero rows and this method's fail-open turns that into
+        # {"PENDING"} -- the driver is blind to the very jobs it is waiting for.
+        # Measured 2026-08-29: the three surviving a100 PENDING jobs carry JobName
+        # cb4cc5fb-b338-409e-8a54-4aba886c3284, the dead driver's uuid. Per-token
+        # jobids cannot close this on an executor-owns-sbatch site -- the _queued/
+        # payload records null there by construction -- but the uuid SET can, because
+        # the plugin sets --job-name to the run_uuid precisely to make --name
+        # filtering work. Union-querying attributes no row to any token, so the
+        # Gotcha-47 srun-step aliasing hazard does not arise here.
+        #
+        # The uuid set is read from ALL tmux logs, NOT captured by the caller before
+        # the new log is created. A caller-side capture is correct only by read
+        # ORDERING -- an edit that moves the log creation earlier, or that adds a
+        # second call site after it, silently returns the current uuid alone and
+        # restores exactly the blindness described above. extra_run_uuids is retained
+        # as the seam for a future toolkit-minted identity (F1-O1); no production
+        # caller sets it.
+        _seen: dict[str, None] = {}
+        for _u in (*run_uuids, *extra_run_uuids):
+            if _u:
+                _seen.setdefault(_u, None)
+        _names = list(_seen)
+        if not _names:
             return {"PENDING"}
         starttime = (datetime.datetime.now() - datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:00")
         try:
@@ -5672,7 +5870,7 @@ exit $snakemake_status
                     "--clusters",
                     "all",
                     "--name",
-                    run_uuid,
+                    ",".join(_names),
                     "--starttime",
                     starttime,
                     "-o",
@@ -5721,6 +5919,9 @@ exit $snakemake_status
         verbose: bool = True,
         poll_interval_s: int = 5,
         no_progress_timeout_min: float | None = None,
+        *,
+        adopted_run_uuid: str | None = None,
+        adopted_token_count: int = 0,
     ) -> dict:
         """
         Wait for the tmux workflow session, with a no-progress watchdog.
@@ -5810,7 +6011,9 @@ exit $snakemake_status
                 if fp != last_fp:
                     last_fp = fp
                     last_progress_t = now
-                elif live_states := self._workflow_has_live_slurm_jobs():
+                elif live_states := self._workflow_has_live_slurm_jobs(
+                    extra_run_uuids=(adopted_run_uuid,) if adopted_run_uuid else ()
+                ):
                     # A queue wait is fingerprint-silent: _status/ is written by
                     # WORKERS at process start/finish, so a SLURM-accepted-but-
                     # PENDING job contributes no evidence of progress. Live SLURM
@@ -5823,7 +6026,36 @@ exit $snakemake_status
                     # timer indefinitely, so a partition that never schedules this
                     # work would wait forever. Track how long the live set has been
                     # continuously ALL-PENDING; any RUNNING observation resets it.
-                    if live_states == {"PENDING"}:
+                    # The queue-starvation clock must not run while this driver is
+                    # tracking ADOPTED work. Its two consumers read one value with
+                    # OPPOSITE safe directions: for the stall watchdog the fail-open
+                    # {"PENDING"} correctly means "assume live, do not kill", while
+                    # here the same value starts a countdown to a kill. On a resumed
+                    # driver whose sims are all wait-rules that inversion is fatal --
+                    # abandoning an adopted queue position is exactly what the cap is
+                    # now meant to prevent. Death detection for adopted jobs is not
+                    # lost by this: a terminal union-query result empties live_states
+                    # and control falls to the stall timer below.
+                    #
+                    # RESIDUAL, disclosed rather than fixed. _workflow_has_live_slurm_jobs
+                    # fails OPEN to {"PENDING"}, so a PERSISTENT sacct outage on a driver
+                    # tracking adopted work disarms BOTH watchdogs at once: live_states is
+                    # truthy every poll (resetting the stall timer) and this branch
+                    # suppresses the starvation cap. The loop still terminates on session
+                    # exit -- the first branch above -- so the driver is not stuck; what is
+                    # disarmed is the ability to KILL a genuinely hung session while sacct
+                    # is down. Do NOT price the driver's own walltime as the backstop: the
+                    # documented batch_job deployment runs this tmux orchestrator on a
+                    # LOGIN NODE, where no allocation walltime exists. The residual is
+                    # accepted because its failure direction is "waits too long", which
+                    # PRESERVES the adopted queue positions this whole mechanism exists to
+                    # protect. The durable fix is to make the fail-open {"PENDING"}
+                    # distinguishable from a real PENDING, so this arm can decline to
+                    # suppress on an outage while the stall watchdog keeps its assume-live
+                    # reading; that is a return-contract change and is tracked separately.
+                    if adopted_token_count:
+                        all_pending_since = None
+                    elif live_states == {"PENDING"}:
                         if all_pending_since is None:
                             all_pending_since = now
                         elif now - all_pending_since > queue_starved_seconds:
@@ -5838,10 +6070,16 @@ exit $snakemake_status
                                     f"PENDING (never RUNNING) for {(now - all_pending_since) / 60:.0f} min, "
                                     f"exceeding the {queue_starved_seconds / 60:.0f} min queue-wait cap. "
                                     f"This is partition contention, NOT a hung workflow — check partition "
-                                    f"load or re-target the partition. The session was killed, which "
-                                    f"cancels the queued jobs (the SLURM executor runs scancel on "
-                                    f"interrupt), so their queue positions are lost and the sweep must "
-                                    f"be RESUMED (from_scratch=False) rather than re-run from scratch."
+                                    f"load or re-target the partition. Last observed SLURM state set for "
+                                    f"this run: {sorted(live_states)}. Killing the tmux session does NOT "
+                                    f"cancel those jobs: tmux kill-session delivers SIGHUP, and Snakemake "
+                                    f"registers a handler only for SIGTERM (job_scheduler.py), so the "
+                                    f"executor's scancel path is never reached — measured 2026-08-29, "
+                                    f"three queued jobs survived with their original submit times. Their "
+                                    f"queue positions are INTACT and are recorded under "
+                                    f"_status/_queued/, so RESUME (from_scratch=False) and the driver "
+                                    f"will ADOPT them via wait-rules instead of re-submitting. Do NOT "
+                                    f"re-run from scratch — that double-submits every still-queued sim."
                                 ),
                             }
                     else:
@@ -6027,8 +6265,8 @@ exit $snakemake_status
             )
 
             # Write Snakefile to disk
-            snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-            snakefile_path.write_text(snakefile_content)
+            snakefile_path = _resolve_snakefile_path(self.analysis_paths.analysis_dir, dry_run=dry_run)
+            _write_snakefile_atomic(snakefile_path, snakefile_content)
 
             if verbose:
                 print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
@@ -6053,6 +6291,13 @@ exit $snakemake_status
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 extra_sbatch_args=extra_sbatch_args,
+                # mechanism (b) -- see the sibling note at the batch_job call site.
+                # 1_job_many_srun_tasks is toolkit-owns-sbatch, so the allocation
+                # jobid is recorded and the wait-runner's in-loop liveness probe
+                # (R8) has a job to probe.
+                on_launch=lambda jid: self._write_queued_sentinels(
+                    self._planned_sim_tokens(), jid, self.analysis_paths.analysis_dir
+                ),
             )
 
             # Sweep permanently-failed rules ONLY when we actually waited on the
@@ -6062,15 +6307,6 @@ exit $snakemake_status
             # false-clean (the detached-mode hazard — captured follow-up otherwise).
             if wait_for_completion:
                 result = self._augment_result_with_partial_failures(result)
-
-            # mechanism (b): record the planned sim-token set under _status/_queued/
-            # AFTER the submit returned success (write-after-launch). 1_job_many_srun_tasks
-            # is toolkit-owns-sbatch — the allocation jobid enables the wait-runner in-loop
-            # liveness probe (R8) for a PENDING-recovered wait-rule.
-            if isinstance(result, dict) and result.get("success", True):
-                self._write_queued_sentinels(
-                    self._planned_sim_tokens(), result.get("job_id"), self.analysis_paths.analysis_dir
-                )
 
             self.analysis._refresh_log()
             return result
@@ -6101,8 +6337,8 @@ exit $snakemake_status
                 alive_by_token=alive_by_token,
             )
 
-            snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-            snakefile_path.write_text(snakefile_content)
+            snakefile_path = _resolve_snakefile_path(self.analysis_paths.analysis_dir, dry_run=dry_run)
+            _write_snakefile_atomic(snakefile_path, snakefile_content)
 
             if verbose:
                 print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
@@ -6129,14 +6365,21 @@ exit $snakemake_status
                 snakefile_path=snakefile_path,
                 wait_for_completion=wait_for_completion,
                 verbose=verbose,
+                # mechanism (b): the _queued/ record is now written INSIDE the helper
+                # at launch-success, before the optional blocking wait. It cannot be
+                # written here: this call BLOCKS for the whole run under
+                # wait_for_completion=True and never returns at all when the driver
+                # is killed mid-wait. batch_job is executor-owns-sbatch, so the
+                # per-rule jobids are never visible and the payload jobid is null.
+                on_launch=lambda _jid: self._write_queued_sentinels(
+                    self._planned_sim_tokens(), None, self.analysis_paths.analysis_dir
+                ),
+                # The queue-starvation cap must not run against work this driver
+                # ADOPTED rather than submitted. alive_by_token is the same
+                # reconcile result that drove the run-vs-wait rule substitution
+                # above, so the cap and the DAG cannot disagree.
+                adopted_token_count=len(alive_by_token),
             )
-
-            # mechanism (b): record the planned sim-token set under _status/_queued/
-            # AFTER submit-success. batch_job is executor-owns-sbatch — the executor
-            # assigns per-rule ids the toolkit never sees, so jobid is null and the
-            # token is held on PRESENCE bounded by the mtime fail-safe (F1-O3, R12).
-            if isinstance(result, dict) and result.get("success", True):
-                self._write_queued_sentinels(self._planned_sim_tokens(), None, self.analysis_paths.analysis_dir)
 
             self.analysis._refresh_log()
             return result
@@ -6181,8 +6424,8 @@ exit $snakemake_status
         )
 
         # Write Snakefile to disk
-        snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-        snakefile_path.write_text(snakefile_content)
+        snakefile_path = _resolve_snakefile_path(self.analysis_paths.analysis_dir, dry_run=dry_run)
+        _write_snakefile_atomic(snakefile_path, snakefile_content)
 
         if verbose:
             print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
@@ -7008,11 +7251,130 @@ exit $snakemake_status
         self._reprocess_claim_driver_id = driver_id
         return driver_id
 
+    def _acquire_submit_driver_claim(
+        self,
+        analysis_dir: Path | None = None,
+        *,
+        workflow_submission_mode: str,
+        dry_run: bool,
+        override_live_driver: str | None = None,
+    ) -> str | None:
+        """Gate, then CLAIM, before run()/submit_workflow() launches a driver.
+
+        The submit path has WRITTEN an orchestrator sentinel since Phase 2 of
+        the reprocess concurrency gate and has never READ one. Writing is not
+        gating: every ``_orchestrator_liveness_gate`` call site was a reprocess
+        or static-plots entry, so two ``run()`` drivers stacked on one analysis
+        tree with nothing refusing. Measured 2026-08-31 on the
+        ``norfolk_stochastic`` arm: three drivers stacked. The at-most-once SIM
+        guard HELD -- the second driver's reconcile emitted 11,394 ``wait_for_``
+        rules instead of run rules and zero duplicate simulations were
+        dispatched -- but the second driver OVERWROTE the shared ``Snakefile``,
+        and a healthy driver was twice diagnosed dead by an operator with no
+        instrument to consult.
+
+        Gate and claim are ONE step, for the reason
+        ``_acquire_reprocess_driver_claim`` states directly above: a read-only
+        gate hoisted apart from its claim leaves a window in which a second
+        driver appears between the check and the write. This is that method's
+        sibling. Two differences, both deliberate: the submit path records its
+        REAL ``workflow_submission_mode`` (so the gate's sacct/tmux arms can
+        probe it once enriched) rather than a synthetic ``local``; and it
+        accepts a per-invocation operator assertion.
+
+        ``override_live_driver`` is an ASSERTION, not a force flag. The operator
+        names the exact ``driver_id`` they determined is dead; that one sentinel
+        is reclaimed, and any OTHER live-or-indeterminate driver still refuses.
+        A bare boolean was rejected because the failure mode this gate exists to
+        prevent IS an operator who believes a live driver is dead, and a flag
+        requiring no evidence is passed by exactly that operator. The decisive
+        property is that the id CANNOT BE TYPED WITHOUT READING A SENTINEL,
+        which makes it a positive identification rather than an assertion --
+        the same discipline this project imposes on ``scancel`` and on ``kill``
+        (name the thing you are acting on; never filter around it). A typo'd id
+        RAISES rather than no-ops: an unmatched assertion that silently
+        proceeded would read to the operator as an override that was honoured,
+        the same class of false signal as the defect.
+
+        Returns ``None`` on ``dry_run`` -- a dry run submits nothing, allocates
+        nothing and writes no zarr, mirroring the ``if not dry_run`` sentinel
+        suppression already at both facades and the carve-out
+        ``_acquire_reprocess_driver_claim`` makes. A dry run DOES still write a
+        Snakefile; that is handled by ``_resolve_snakefile_path`` (which routes
+        a rehearsal to ``Snakefile.dryrun`` rather than displacing the live
+        one) and ``_write_snakefile_atomic``, NOT by this gate.
+
+        Raises ``WorkflowError`` when a live-or-indeterminate driver exists.
+        """
+        from hhemt import orchestrator_sentinels as _osent
+
+        if dry_run:
+            return None
+        base = analysis_dir if analysis_dir is not None else self.analysis_paths.analysis_dir
+        if override_live_driver:
+            # Reclaim the named sentinel BEFORE gating, rather than passing it to
+            # exclude_driver_id. exclude_driver_id would leave the file on disk to be
+            # re-encountered by the NEXT submit, so the assertion would have to be
+            # repeated indefinitely; unlinking records the assertion as an act.
+            target = _osent.orchestrator_dir(base) / f"{override_live_driver}.json"
+            if not target.exists():
+                raise WorkflowError(
+                    phase="submit pre-submission orchestrator-liveness gate",
+                    return_code=1,
+                    stderr=(
+                        f"override_live_driver={override_live_driver!r} names no sentinel under "
+                        f"{_osent.orchestrator_dir(base)}. The assertion must name an existing "
+                        "driver_id exactly -- read it from the `driver_id` field of a *.json "
+                        "there, or run hpc/sentinel_ops/report_sentinel_state.py. Refusing "
+                        "rather than proceeding: a typo'd assertion that silently no-opped "
+                        "would read as an override that was honoured."
+                    ),
+                )
+            # EXEMPT-DU: status-flag
+            target.unlink(missing_ok=True)
+            print(
+                f"[orchestrator-gate] operator asserted driver {override_live_driver} dead; reclaimed {target}",
+                file=sys.stderr,
+                flush=True,
+            )
+        driver_id = _osent.new_driver_id()
+        gate_err = self._orchestrator_liveness_gate(
+            analysis_dir=base, exclude_driver_id=driver_id, phase_label="submit"
+        )
+        if gate_err is not None:
+            raise WorkflowError(
+                phase=gate_err.phase,
+                return_code=1,
+                stderr=(
+                    f"{gate_err.stderr}\n\n"
+                    "NEXT STEPS, in order of preference:\n"
+                    "  1. Run hpc/sentinel_ops/report_sentinel_state.py --analysis-dir <dir>. "
+                    "It names each sentinel's ORIGIN HOST.\n"
+                    "  2. For an entry reported UNKNOWN: ssh to that origin host (ssh to the "
+                    "cluster load-balances, so retry until `hostname` matches) and re-run "
+                    "there. The probe is host-local; from the origin host it returns a real "
+                    "answer and NO assertion is needed. This is strictly better than step 3 "
+                    "because it produces a measurement instead of a belief.\n"
+                    "  3. Only if that host is unreachable, and only after determining the "
+                    "driver is gone, pass override_live_driver='<driver_id>' "
+                    "(CLI: --override-live-driver) naming that exact driver.\n"
+                    "An unresolved driver is NOT a dead driver. On 2026-08-31 that inference "
+                    "was made twice about a healthy driver holding 1,004 real simulations."
+                ),
+            )
+        _osent.write_orchestrator_sentinel(
+            base,
+            driver_id=driver_id,
+            workflow_submission_mode=workflow_submission_mode,
+        )
+        return driver_id
+
     def _orchestrator_liveness_gate(
         self,
         analysis_dir: Path | None = None,
         *,
         exclude_driver_id: str | None = None,
+        phase_label: str = "reprocess",
     ) -> "WorkflowError | None":
         """Return a WorkflowError if a LIVE-or-INDETERMINATE orchestration driver
         exists for this analysis, else None. Reclaims dead/stale sentinels in
@@ -7152,12 +7514,12 @@ exit $snakemake_status
 
         if live:
             return WorkflowError(
-                phase="reprocess pre-submission orchestrator-liveness gate",
+                phase=f"{phase_label} pre-submission orchestrator-liveness gate",
                 return_code=1,
                 stderr=(
-                    "Refusing reprocess: a live-or-indeterminate orchestration driver for "
-                    f"this analysis exists ({'; '.join(live)}). reprocess coexists with "
-                    "queued/running SLURM sim workers but must not run concurrently with a "
+                    f"Refusing {phase_label}: a live-or-indeterminate orchestration driver "
+                    f"for this analysis exists ({'; '.join(live)}). A {phase_label} coexists "
+                    "with queued/running SLURM sim workers but must not run concurrently with a "
                     "live run()/reprocess DRIVER (unarbitrated concurrent consolidate-zarr "
                     "write). Entries marked liveness=UNKNOWN/held could NOT be probed from "
                     "this host — the sentinel's origin host differs from this one, its "
@@ -7577,7 +7939,7 @@ exit $snakemake_status
         self._pre_delete_guards(override_in_flight=override_in_flight)
 
         snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
-        snakefile_path.write_text(self._build_delete_snakefile_content())
+        _write_snakefile_atomic(snakefile_path, self._build_delete_snakefile_content())
         return self._submit_delete_snakemake(
             snakefile_path,
             override_multi_sim_run_method=override_multi_sim_run_method,
@@ -7719,7 +8081,7 @@ exit $snakemake_status
             # EXEMPT-DU: status-dir-cleanup
             fast_rmtree(stale)
         snakefile = self.analysis_paths.analysis_dir / "Snakefile.reprocess_delete"
-        snakefile.write_text(self._build_reprocess_delete_snakefile_content(start_with=start_with))
+        _write_snakefile_atomic(snakefile, self._build_reprocess_delete_snakefile_content(start_with=start_with))
         return self._submit_delete_snakemake(
             snakefile,
             override_multi_sim_run_method=override_multi_sim_run_method,
@@ -7742,7 +8104,7 @@ exit $snakemake_status
         self._pre_delete_guards(override_in_flight=override_in_flight)
 
         snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
-        snakefile_path.write_text(self._build_delete_sensitivity_snakefile_content(member_ids))
+        _write_snakefile_atomic(snakefile_path, self._build_delete_sensitivity_snakefile_content(member_ids))
         return self._submit_delete_snakemake(
             snakefile_path,
             override_multi_sim_run_method=override_multi_sim_run_method,
@@ -8349,7 +8711,7 @@ onerror:
 
             process_resources_member = self._base_builder._build_resource_block(
                 partition=analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=240,
+                runtime_min=analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing,
                 mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                 nodes=1,
                 tasks=1,
@@ -8994,7 +9356,7 @@ onerror:
             # column convention.
             process_resources_member = self._base_builder._build_resource_block(
                 partition=analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=240,
+                runtime_min=analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing,
                 mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                 nodes=1,
                 tasks=1,
@@ -9716,8 +10078,10 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 alive_token_to_dir=alive_token_to_dir,
             )
 
-            master_snakefile_path = self.experiment.analysis_paths.analysis_dir / "Snakefile"
-            master_snakefile_path.write_text(master_snakefile_content)
+            master_snakefile_path = _resolve_snakefile_path(
+                self.experiment.analysis_paths.analysis_dir, dry_run=dry_run
+            )
+            _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
 
             if verbose:
                 print(
@@ -9751,14 +10115,13 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 wait_for_completion=wait_for_completion,
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 extra_sbatch_args=extra_sbatch_args,
+                # mechanism (b): written at launch-success inside the helper, not
+                # here -- this call blocks for the whole run under
+                # wait_for_completion=True. _write_queued_sentinels_sensitivity
+                # already has the (str | None) -> None shape, so it is passed by
+                # reference with no lambda.
+                on_launch=self._write_queued_sentinels_sensitivity,
             )
-
-            # mechanism (b): record the planned per-sub sim-token set under each sub's
-            # _status/_queued/ AFTER submit-success. 1_job_many_srun_tasks is
-            # toolkit-owns-sbatch — the master allocation jobid enables the wait-runner
-            # in-loop probe (R8) for PENDING-recovered sensitivity wait-rules.
-            if isinstance(result, dict) and result.get("success", True):
-                self._write_queued_sentinels_sensitivity(result.get("job_id"))
 
             self.sensitivity_analysis._update_experiment_log()
             return result
@@ -9790,8 +10153,10 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 alive_token_to_dir=alive_token_to_dir,
             )
 
-            master_snakefile_path = self.experiment.analysis_paths.analysis_dir / "Snakefile"
-            master_snakefile_path.write_text(master_snakefile_content)
+            master_snakefile_path = _resolve_snakefile_path(
+                self.experiment.analysis_paths.analysis_dir, dry_run=dry_run
+            )
+            _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
 
             if verbose:
                 print(
@@ -9825,13 +10190,14 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
                 wait_for_completion=wait_for_completion,
+                # mechanism (b): written at launch-success inside the helper. The
+                # sensitivity writer records a null jobid on the executor-owns-sbatch
+                # path, so the argument the helper passes is ignored by design.
+                on_launch=self._write_queued_sentinels_sensitivity,
+                # Same contract as the multisim site: alive_by_token is the reconcile
+                # result that drove this Snakefile's wait-rule substitution.
+                adopted_token_count=len(alive_by_token),
             )
-
-            # mechanism (b): record the planned per-sub sim-token set under each sub's
-            # _status/_queued/ AFTER submit-success. batch_job is executor-owns-sbatch —
-            # jobid null, held on PRESENCE bounded by the mtime fail-safe (F1-O3, R12).
-            if isinstance(result, dict) and result.get("success", True):
-                self._write_queued_sentinels_sensitivity(None)
 
             self.sensitivity_analysis._update_experiment_log()
             return result
@@ -9883,8 +10249,8 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             alive_token_to_dir=alive_token_to_dir,
         )
 
-        master_snakefile_path = self.experiment.analysis_paths.analysis_dir / "Snakefile"
-        master_snakefile_path.write_text(master_snakefile_content)
+        master_snakefile_path = _resolve_snakefile_path(self.experiment.analysis_paths.analysis_dir, dry_run=dry_run)
+        _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
 
         if verbose:
             print(
@@ -10048,7 +10414,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
         self.analysis_paths.analysis_log_directory.mkdir(parents=True, exist_ok=True)
         (self.analysis_paths.analysis_log_directory / "sims").mkdir(parents=True, exist_ok=True)
-        snakefile_path.write_text(snakefile_content)
+        _write_snakefile_atomic(snakefile_path, snakefile_content)
         if verbose:
             print(
                 f"[Snakemake] Reprocess master Snakefile generated: {snakefile_path}",

@@ -69,9 +69,9 @@ def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sens
     master_dir = member.experiment.analysis_paths.analysis_dir
     html = master_dir / "analysis_report.html"
     zf = master_dir / "analysis_report.zip"
-    assert html.exists() or zf.exists(), (
-        f"Default sensitivity reprocess must re-render the master report; none found at {master_dir}."
-    )
+    assert (
+        html.exists() or zf.exists()
+    ), f"Default sensitivity reprocess must re-render the master report; none found at {master_dir}."
 
 
 def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_sensitivity_completed_isolated):
@@ -214,8 +214,7 @@ def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensiti
     sub_zarrs = [
         s.analysis_paths.analysis_datatree_zarr
         for s in member.members.values()
-        if s.analysis_paths.analysis_datatree_zarr is not None
-        and s.analysis_paths.analysis_datatree_zarr.exists()
+        if s.analysis_paths.analysis_datatree_zarr is not None and s.analysis_paths.analysis_datatree_zarr.exists()
     ]
     assert sub_zarrs, "fixture precondition: at least one member zarr present"
     # Establish a known master-scope _du.json so the no-restamp assertion is
@@ -326,9 +325,9 @@ def test_reprocess_conditional_emit_over_partial_state(synth_partial_state_analy
     path fires only for the incomplete sub; complete subs are untouched)."""
     member, target_member_id = synth_partial_state_analysis
     result = member.reprocess(start_with="process", regenerate_existing=True, execution_mode="local")
-    assert result["success"], (
-        f"conditional-emit reprocess over partial state must succeed; got {result.get('message')!r}"
-    )
+    assert result[
+        "success"
+    ], f"conditional-emit reprocess over partial state must succeed; got {result.get('message')!r}"
     mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "master sensitivity_datatree.zarr must be rebuilt after partial-state reprocess"
 
@@ -445,8 +444,7 @@ def test_failed_scoped_delete_raises_instead_of_consolidating_stale(
     msg = str(excinfo.value)
     # The message must point at the executor-INDEPENDENT capture Edit 4 creates.
     assert "logs/delete_reprocess/" in msg, (
-        "the WorkflowError must name the toolkit-owned per-rule log directory; "
-        f"got: {msg!r}"
+        "the WorkflowError must name the toolkit-owned per-rule log directory; " f"got: {msg!r}"
     )
     assert "NOT invalidated" in msg, "the message must state that the trees survived"
 

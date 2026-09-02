@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
 
 
-def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) -> dict:
+def prepare_clone_dir(cached_analysis: TRITONSWMM_analysis, tmp_path: Path) -> dict:
     """Copy the cached analysis's system_directory to tmp_path; write modified
     YAML configs that point at the copy. Does NOT construct the analysis.
 
@@ -114,7 +114,7 @@ def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) ->
     }
 
 
-def construct_analysis_from_paths(paths: dict) -> "TRITONSWMM_analysis":
+def construct_analysis_from_paths(paths: dict) -> TRITONSWMM_analysis:
     """Construct fresh TRITONSWMM_system + TRITONSWMM_analysis from cloned configs."""
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.system import TRITONSWMM_system
@@ -124,7 +124,7 @@ def construct_analysis_from_paths(paths: dict) -> "TRITONSWMM_analysis":
     return analysis
 
 
-def clone_analysis_to_tmp(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) -> "TRITONSWMM_analysis":
+def clone_analysis_to_tmp(cached_analysis: TRITONSWMM_analysis, tmp_path: Path) -> TRITONSWMM_analysis:
     """Convenience: clone + construct in one shot (no on-disk mutation between).
 
     For tests that need pre-construction mutation, use ``prepare_clone_dir``

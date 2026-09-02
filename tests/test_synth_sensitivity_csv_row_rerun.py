@@ -170,9 +170,7 @@ def test_one_row_edit_triggers_only_that_chain(synth_member_two_row):
     stdout = Path(dry_run_log).read_text() if Path(dry_run_log).exists() else ""
 
     # Snakemake's --dry-run output names the rules that would run
-    assert "simulation_member_1" in stdout, (
-        "Expected member_1 simulation rule to be queued; full output:\n" + stdout
-    )
+    assert "simulation_member_1" in stdout, "Expected member_1 simulation rule to be queued; full output:\n" + stdout
     assert "simulation_member_0" not in stdout, (
         "Did not expect member_0 simulation rule to be queued; full output:\n" + stdout
     )

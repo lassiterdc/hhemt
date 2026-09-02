@@ -99,23 +99,17 @@ def _first_carried_input_in_bundle(bundle_root: Path) -> tuple[str, Path]:
     )
 
 
-def test_from_doi_happy_path_is_runnable_and_self_contained(
-    self_contained_bundle, monkeypatch, tmp_path
-):
+def test_from_doi_happy_path_is_runnable_and_self_contained(self_contained_bundle, monkeypatch, tmp_path):
     zip_path, _ = self_contained_bundle
     _patch_fetch(monkeypatch, zip_path)
 
-    exp = TRITON_SWMM_experiment.from_doi(
-        doi="10.5281/zenodo.123456", host="zenodo", target_dir=tmp_path / "ingest"
-    )
+    exp = TRITON_SWMM_experiment.from_doi(doi="10.5281/zenodo.123456", host="zenodo", target_dir=tmp_path / "ingest")
 
     # R1: a runnable experiment (system + analysis constructed).
     assert exp.system is not None
     assert exp.analysis is not None
     # analysis_dir resolves to bundle_root (NOT the caller's CWD).
-    assert (
-        exp.analysis.analysis_paths.analysis_dir.resolve() == exp.bundle_root.resolve()
-    )
+    assert exp.analysis.analysis_paths.analysis_dir.resolve() == exp.bundle_root.resolve()
 
     # R10: every reconstituted CARRIED input Path resolves under bundle_root AND exists
     # on disk (self-contained). Toolkit-owned build dirs (IS_NONE_ACCEPTABLE, set to a
@@ -138,15 +132,11 @@ def test_from_doi_happy_path_is_runnable_and_self_contained(
             for elem in value if isinstance(value, list) else [value]:
                 if isinstance(elem, str):
                     checked_any = True
-                    assert Path(
-                        elem
-                    ).exists(), f"reconstituted input {name} does not exist: {elem}"
+                    assert Path(elem).exists(), f"reconstituted input {name} does not exist: {elem}"
     assert checked_any, "no carried input was checked — self-containment not exercised"
 
 
-def test_from_doi_no_main_entity_fails_closed(
-    self_contained_bundle, monkeypatch, tmp_path
-):
+def test_from_doi_no_main_entity_fails_closed(self_contained_bundle, monkeypatch, tmp_path):
     _, bundle_root = self_contained_bundle
     tampered = tmp_path / "no_main_entity"
     shutil.copytree(bundle_root, tampered)
@@ -160,14 +150,10 @@ def test_from_doi_no_main_entity_fails_closed(
     _patch_fetch(monkeypatch, zip_path)
 
     with pytest.raises(ProcessingError, match="mainEntity"):
-        TRITON_SWMM_experiment.from_doi(
-            doi="10.5281/zenodo.1", host="zenodo", target_dir=tmp_path / "ing_b"
-        )
+        TRITON_SWMM_experiment.from_doi(doi="10.5281/zenodo.1", host="zenodo", target_dir=tmp_path / "ing_b")
 
 
-def test_from_doi_missing_input_fails_closed(
-    self_contained_bundle, monkeypatch, tmp_path
-):
+def test_from_doi_missing_input_fails_closed(self_contained_bundle, monkeypatch, tmp_path):
     _, bundle_root = self_contained_bundle
     field_name, victim = _first_carried_input_in_bundle(bundle_root)
     tampered = tmp_path / "missing_input"
@@ -178,9 +164,7 @@ def test_from_doi_missing_input_fails_closed(
     _patch_fetch(monkeypatch, zip_path)
 
     with pytest.raises(ProcessingError) as excinfo:
-        TRITON_SWMM_experiment.from_doi(
-            doi="10.5281/zenodo.2", host="zenodo", target_dir=tmp_path / "ing_c"
-        )
+        TRITON_SWMM_experiment.from_doi(doi="10.5281/zenodo.2", host="zenodo", target_dir=tmp_path / "ing_c")
     msg = str(excinfo.value)
     assert "do not exist on disk" in msg
     assert field_name in msg  # the gate names the missing field
@@ -201,20 +185,14 @@ def _hpc_cfg(partition_name, gpu_hardware):
 
     return hpc_system_config(
         system_name="test",
-        partitions={
-            partition_name: PartitionSpec(
-                gpu_hardware=gpu_hardware, gpu_compilation_backend="CUDA"
-            )
-        },
+        partitions={partition_name: PartitionSpec(gpu_hardware=gpu_hardware, gpu_compilation_backend="CUDA")},
     )
 
 
 def _analysis_cfg(tmp_path, partition_name):
     # Minimal non-sensitivity analysis config: the matrix is the single ensemble partition.
     p = tmp_path / "analysis_config.yaml"
-    p.write_text(
-        f"hpc_ensemble_partition: {partition_name}\ntoggle_sensitivity_analysis: false\n"
-    )
+    p.write_text(f"hpc_ensemble_partition: {partition_name}\ntoggle_sensitivity_analysis: false\n")
     return p
 
 
@@ -284,9 +262,7 @@ def test_build_unavailable_raises_no_silent_transfer(tmp_path, monkeypatch):
     bundle_root.mkdir()
     (bundle_root / "recipe.def").write_text("Bootstrap: docker\nFrom: x\n")
     (bundle_root / "bundle_manifest.json").write_text(
-        json.dumps(
-            {"container_build": {"def_relpath": "recipe.def", "target_arch": "a100"}}
-        )
+        json.dumps({"container_build": {"def_relpath": "recipe.def", "target_arch": "a100"}})
     )
 
     def _raise(**kw):
@@ -383,9 +359,7 @@ def test_matrix_required_arches_cross_hardware_sensitivity(tmp_path):
         system_name="t",
         partitions={
             "gpu-a100": PartitionSpec(gpu_hardware="a100", gpu_compilation_backend="CUDA"),
-            "gpu-a6000": PartitionSpec(
-                gpu_hardware="a6000", gpu_compilation_backend="CUDA"
-            ),
+            "gpu-a6000": PartitionSpec(gpu_hardware="a6000", gpu_compilation_backend="CUDA"),
             "standard": PartitionSpec(),
         },
     )
@@ -410,9 +384,7 @@ def _minimal_reproducer_hpc_cfg(tmp_path: Path) -> Path:
     RESOLVES the path (existence), it does not validate content, and the defect-8 guard fires
     before any content validation — so the ingest merely needs a real file here."""
     p = tmp_path / "reproducer_hpc.yaml"
-    p.write_text(
-        "system_name: test\ndefault_account: test_acct\npartitions:\n  standard: {}\n"
-    )
+    p.write_text("system_name: test\ndefault_account: test_acct\npartitions:\n  standard: {}\n")
     return p
 
 
@@ -428,9 +400,7 @@ def _container_flipped_bundle_zip(bundle_root: Path, dest_dir: Path, tag: str) -
     return _rezip(src, dest_dir / f"container_bundle_{tag}.zip")
 
 
-def test_from_doi_node_local_build_context_fails_closed(
-    self_contained_bundle, monkeypatch, tmp_path
-):
+def test_from_doi_node_local_build_context_fails_closed(self_contained_bundle, monkeypatch, tmp_path):
     """defect-8: a container-mode ingest whose bundle_root lands under the node-local system
     temp dir on a SLURM host must fail LOUD before submitting the compute-node `sbatch --wait`
     SIF build (which would `cd` into the invisible bundle_root and die with a cryptic
@@ -455,9 +425,7 @@ def test_from_doi_node_local_build_context_fails_closed(
         )
 
 
-def test_from_doi_node_local_guard_inert_on_non_slurm(
-    self_contained_bundle, monkeypatch, tmp_path
-):
+def test_from_doi_node_local_guard_inert_on_non_slurm(self_contained_bundle, monkeypatch, tmp_path):
     """The defect-8 guard is inert on a non-SLURM host: a same-node local build sees the
     node-local bundle_root fine, so the guard must NOT fire even though bundle_root is under
     the system temp dir. from_doi proceeds past the guard and fails later for an unrelated
@@ -479,6 +447,6 @@ def test_from_doi_node_local_guard_inert_on_non_slurm(
         )
     # Lowercase both sides: the guard's message says "SHARED filesystem", so a case-SENSITIVE
     # check here would pass vacuously (it could never fail) and would not actually test the guard.
-    assert "shared filesystem" not in str(
-        exc_info.value
-    ).lower(), "the defect-8 guard fired on a non-SLURM host (false positive)"
+    assert (
+        "shared filesystem" not in str(exc_info.value).lower()
+    ), "the defect-8 guard fired on a non-SLURM host (false positive)"

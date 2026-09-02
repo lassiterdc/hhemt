@@ -136,9 +136,9 @@ def test_simulate_floor_deletes_flags_as_before(synth_sensitivity_analysis):
     analysis._apply_force_rerun(ForceRerunSpec(subject="all", stage="simulate"))
 
     for name in flags:
-        assert not (status_dir / name).exists(), (
-            f"{name} survived a simulate floor -- the historical default path changed"
-        )
+        assert not (
+            status_dir / name
+        ).exists(), f"{name} survived a simulate floor -- the historical default path changed"
 
 
 def test_raw_two_axis_dict_from_the_cli_is_coerced(synth_sensitivity_analysis):
@@ -156,9 +156,9 @@ def test_raw_two_axis_dict_from_the_cli_is_coerced(synth_sensitivity_analysis):
     analysis._apply_force_rerun({"subject": "all", "stage": "render"})
 
     for name in flags:
-        assert (status_dir / name).exists(), (
-            f"{name} was deleted — the raw dict was not coerced before the floor resolved"
-        )
+        assert (
+            status_dir / name
+        ).exists(), f"{name} was deleted — the raw dict was not coerced before the floor resolved"
     assert not snakemake_fig.exists()
 
 
@@ -214,9 +214,7 @@ def _seed_and_stop_at_builder(analysis, monkeypatch):
     def _raise(*_a, **_k):
         raise _StopBeforeSnakemake
 
-    monkeypatch.setattr(
-        analysis.sensitivity._workflow_builder, "submit_workflow", _raise
-    )
+    monkeypatch.setattr(analysis.sensitivity._workflow_builder, "submit_workflow", _raise)
     return seeded
 
 
@@ -236,9 +234,7 @@ def test_render_floor_dry_run_preserves_figures(synth_sensitivity_analysis, monk
     assertion and never the discriminator.
     """
     analysis = synth_sensitivity_analysis
-    _status_dir, _flags, snakemake_fig, eda_fig = _seed_and_stop_at_builder(
-        analysis, monkeypatch
-    )
+    _status_dir, _flags, snakemake_fig, eda_fig = _seed_and_stop_at_builder(analysis, monkeypatch)
 
     with pytest.raises(_StopBeforeSnakemake):
         analysis.submit_workflow(
@@ -273,9 +269,7 @@ def test_simulate_floor_dry_run_still_deletes_flags(synth_sensitivity_analysis, 
     covering both would not say which half regressed.
     """
     analysis = synth_sensitivity_analysis
-    status_dir, flags, _snakemake_fig, _eda_fig = _seed_and_stop_at_builder(
-        analysis, monkeypatch
-    )
+    status_dir, flags, _snakemake_fig, _eda_fig = _seed_and_stop_at_builder(analysis, monkeypatch)
 
     with pytest.raises(_StopBeforeSnakemake):
         analysis.submit_workflow(

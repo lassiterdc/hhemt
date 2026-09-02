@@ -12,12 +12,12 @@ import dask.array as da
 import numpy as np
 import pytest
 import xarray as xr
+
 from hhemt.processing_analysis import (
     TRITONSWMM_analysis_post_processing,
-    prev_power_of_two,
     ds_memory_req_MiB,
+    prev_power_of_two,
 )
-
 
 # ========== Helper Functions ==========
 
@@ -234,9 +234,7 @@ class TestChunkMemoryConstraint:
         ds = create_spatial_dataset_2d(n_events=10, nx=256, ny=256, n_vars=1)
 
         max_mem = 50  # 50 MiB limit
-        chunks = proc._chunk_for_writing(
-            ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem
-        )
+        chunks = proc._chunk_for_writing(ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem)
 
         # Test actual memory usage
         test_slice = {coord: slice(0, chunks[coord]) for coord in chunks}
@@ -251,9 +249,7 @@ class TestChunkMemoryConstraint:
         ds = create_sensitivity_dataset()
 
         max_mem = 200  # 200 MiB limit
-        chunks = proc._chunk_for_writing(
-            ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem
-        )
+        chunks = proc._chunk_for_writing(ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem)
 
         # Test actual memory usage
         test_slice = {coord: slice(0, chunks[coord]) for coord in chunks}
@@ -302,9 +298,7 @@ class TestChunkingEdgeCases:
         # Use large event count to force chunking
         ds = create_spatial_dataset_2d(n_events=1000, nx=256, ny=256, n_vars=1)
 
-        chunks = proc._chunk_for_writing(
-            ds, spatial_coords=["x", "y"], max_mem_usage_MiB=100
-        )
+        chunks = proc._chunk_for_writing(ds, spatial_coords=["x", "y"], max_mem_usage_MiB=100)
 
         # When a dimension is chunked (not using full length), it should be power of 2
         event_chunk = chunks["event_iloc"]
@@ -342,9 +336,7 @@ class TestChunkingEdgeCases:
         )
 
         max_mem = 100
-        chunks = proc._chunk_for_writing(
-            ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem
-        )
+        chunks = proc._chunk_for_writing(ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem)
 
         # Verify chunks respect memory limit
         test_slice = {coord: slice(0, chunks[coord]) for coord in chunks}
@@ -357,9 +349,7 @@ class TestChunkingEdgeCases:
 
         # Set unreasonably small memory limit (should still produce valid chunks)
         max_mem = 10  # 10 MiB
-        chunks = proc._chunk_for_writing(
-            ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem
-        )
+        chunks = proc._chunk_for_writing(ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem)
 
         # Verify chunks still respect the limit
         test_slice = {coord: slice(0, chunks[coord]) for coord in chunks}
@@ -367,7 +357,7 @@ class TestChunkingEdgeCases:
         assert chunk_mem <= max_mem
 
         # All chunk sizes should be at least 1
-        for coord, size in chunks.items():
+        for _coord, size in chunks.items():
             assert size >= 1
 
     def test_spatial_chunk_size_target(self, proc):

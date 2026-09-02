@@ -1,12 +1,12 @@
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, Optional
+
 from hhemt.plot_utils import print_json_file_tree
 
 
 @dataclass
 class MainDataClass:
-    def as_dict(self) -> Dict[str, Path]:
+    def as_dict(self) -> dict[str, Path]:
         """
         Return the dataclass fields as a dictionary.
         """
@@ -26,26 +26,26 @@ class SysPaths(MainDataClass):
 
     # Split build directories by backend
     TRITONSWMM_build_dir_cpu: Path  # Always present
-    TRITONSWMM_build_dir_gpu: Optional[Path]  # Only if GPU configured
+    TRITONSWMM_build_dir_gpu: Path | None  # Only if GPU configured
 
     # Split build directories by backend
     TRITON_build_dir_cpu: Path  # Always present
-    TRITON_build_dir_gpu: Optional[Path]  # Only if GPU configured
+    TRITON_build_dir_gpu: Path | None  # Only if GPU configured
 
-    SWMM_build_dir: Optional[Path]
+    SWMM_build_dir: Path | None
 
     # Split compilation artifacts by backend
     compilation_script_cpu: Path
-    compilation_script_gpu: Optional[Path]
+    compilation_script_gpu: Path | None
     compilation_logfile_cpu: Path
-    compilation_logfile_gpu: Optional[Path]
+    compilation_logfile_gpu: Path | None
 
     # Backwards compatibility aliases (point to CPU versions)
-    TRITON_build_dir: Optional[Path] = None
-    compilation_script: Optional[Path] = None
-    compilation_logfile: Optional[Path] = None
+    TRITON_build_dir: Path | None = None
+    compilation_script: Path | None = None
+    compilation_logfile: Path | None = None
 
-    system_datatree_zarr: Optional[Path] = None
+    system_datatree_zarr: Path | None = None
 
 
 @dataclass
@@ -57,26 +57,26 @@ class AnalysisPaths(MainDataClass):
     simlog_directory: Path
 
     # TRITON-SWMM Coupled Model consolidated outputs
-    output_tritonswmm_triton_summary: Optional[Path] = None
-    output_tritonswmm_node_summary: Optional[Path] = None
-    output_tritonswmm_link_summary: Optional[Path] = None
-    output_tritonswmm_performance_summary: Optional[Path] = None
+    output_tritonswmm_triton_summary: Path | None = None
+    output_tritonswmm_node_summary: Path | None = None
+    output_tritonswmm_link_summary: Path | None = None
+    output_tritonswmm_performance_summary: Path | None = None
 
     # TRITON-only consolidated outputs
-    output_triton_only_summary: Optional[Path] = None
-    output_triton_only_performance_summary: Optional[Path] = None
+    output_triton_only_summary: Path | None = None
+    output_triton_only_performance_summary: Path | None = None
 
     # SWMM-only consolidated outputs
-    output_swmm_only_node_summary: Optional[Path] = None
-    output_swmm_only_link_summary: Optional[Path] = None
+    output_swmm_only_node_summary: Path | None = None
+    output_swmm_only_link_summary: Path | None = None
 
     # Hierarchical DataTree zarr — aggregates all enabled modes into one store.
-    analysis_datatree_zarr: Optional[Path] = None
+    analysis_datatree_zarr: Path | None = None
 
     # Sensitivity-level hierarchical DataTree zarr (aggregates member trees).
-    sensitivity_datatree_zarr: Optional[Path] = None
+    sensitivity_datatree_zarr: Path | None = None
 
-    bash_script_path: Optional[Path] = None
+    bash_script_path: Path | None = None
 
 
 @dataclass
@@ -87,10 +87,10 @@ class ScenarioPaths(MainDataClass):
     dir_weather_datfiles: Path
     swmm_hydro_inp: Path
     swmm_hydraulics_inp: Path
-    swmm_hydraulics_rpt: Optional[Path]
+    swmm_hydraulics_rpt: Path | None
     swmm_full_inp: Path
-    swmm_full_rpt_file: Optional[Path]
-    swmm_full_out_file: Optional[Path]
+    swmm_full_rpt_file: Path | None
+    swmm_full_out_file: Path | None
     extbc_tseries: Path
     extbc_loc: Path
     hyg_timeseries: Path
@@ -98,14 +98,14 @@ class ScenarioPaths(MainDataClass):
 
     # Model-specific CFG files
     triton_swmm_cfg: Path  # TRITON-SWMM coupled model CFG
-    triton_cfg: Optional[Path] = None  # TRITON-only CFG (no SWMM)
+    triton_cfg: Path | None = None  # TRITON-only CFG (no SWMM)
 
     # Centralized logs directory
-    logs_dir: Optional[Path] = None
+    logs_dir: Path | None = None
 
     # Model-specific output directories
-    out_triton: Optional[Path] = None  # TRITON-only outputs
-    out_tritonswmm: Optional[Path] = None  # Coupled model outputs
+    out_triton: Path | None = None  # TRITON-only outputs
+    out_tritonswmm: Path | None = None  # Coupled model outputs
 
     # Model-specific log files: RETIRED. `log_run_triton` / `log_run_tritonswmm` /
     # `log_run_swmm` declared `{sim_folder}/logs/run_{model}.log` — a path NOTHING has
@@ -119,28 +119,28 @@ class ScenarioPaths(MainDataClass):
     # reads as ground truth to authors and reviewers alike; do not reintroduce one.
 
     # Executables
-    sim_tritonswmm_executable: Optional[Path] = None  # Coupled model executable
-    sim_triton_executable: Optional[Path] = None  # TRITON-only executable
-    sim_swmm_executable: Optional[Path] = None  # SWMM standalone executable
+    sim_tritonswmm_executable: Path | None = None  # Coupled model executable
+    sim_triton_executable: Path | None = None  # TRITON-only executable
+    sim_swmm_executable: Path | None = None  # SWMM standalone executable
 
     # Outputs - TRITON-SWMM Coupled Model
-    output_tritonswmm_performance_timeseries: Optional[Path] = None
-    output_tritonswmm_performance_summary: Optional[Path] = None
-    output_tritonswmm_triton_timeseries: Optional[Path] = None
-    output_tritonswmm_triton_summary: Optional[Path] = None
-    output_tritonswmm_link_time_series: Optional[Path] = None
-    output_tritonswmm_link_summary: Optional[Path] = None
-    output_tritonswmm_node_time_series: Optional[Path] = None
-    output_tritonswmm_node_summary: Optional[Path] = None
+    output_tritonswmm_performance_timeseries: Path | None = None
+    output_tritonswmm_performance_summary: Path | None = None
+    output_tritonswmm_triton_timeseries: Path | None = None
+    output_tritonswmm_triton_summary: Path | None = None
+    output_tritonswmm_link_time_series: Path | None = None
+    output_tritonswmm_link_summary: Path | None = None
+    output_tritonswmm_node_time_series: Path | None = None
+    output_tritonswmm_node_summary: Path | None = None
 
     # Outputs - TRITON-only Model
-    output_triton_only_performance_timeseries: Optional[Path] = None
-    output_triton_only_performance_summary: Optional[Path] = None
-    output_triton_only_timeseries: Optional[Path] = None
-    output_triton_only_summary: Optional[Path] = None
+    output_triton_only_performance_timeseries: Path | None = None
+    output_triton_only_performance_summary: Path | None = None
+    output_triton_only_timeseries: Path | None = None
+    output_triton_only_summary: Path | None = None
 
     # Outputs - SWMM-only Standalone Model
-    output_swmm_only_link_time_series: Optional[Path] = None
-    output_swmm_only_link_summary: Optional[Path] = None
-    output_swmm_only_node_time_series: Optional[Path] = None
-    output_swmm_only_node_summary: Optional[Path] = None
+    output_swmm_only_link_time_series: Path | None = None
+    output_swmm_only_link_summary: Path | None = None
+    output_swmm_only_node_time_series: Path | None = None
+    output_swmm_only_node_summary: Path | None = None

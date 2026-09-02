@@ -163,9 +163,7 @@ def test_analysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm_en
     sub_dir = tmp_path / "members" / "member_3"
     _seed_analysis(sub_dir)
 
-    rc = runner.main(
-        ["--member-id", "3", "--analysis-dir", str(sub_dir), "--delete-processed"]
-    )
+    rc = runner.main(["--member-id", "3", "--analysis-dir", str(sub_dir), "--delete-processed"])
     assert rc == 0
     assert not (sub_dir / "sims" / "evt_1" / "processed").exists()
     assert not (sub_dir / "sims" / "evt_2" / "processed").exists()
@@ -200,9 +198,7 @@ def test_analysis_reprocess_runner_cleans_sentinel_on_exception(tmp_path, slurm_
 
     with patch.object(runner, "fast_rmtree", side_effect=RuntimeError("boom")):
         with pytest.raises(RuntimeError, match="boom"):
-            runner.main(
-                ["--member-id", "3", "--analysis-dir", str(sub_dir), "--delete-processed"]
-            )
+            runner.main(["--member-id", "3", "--analysis-dir", str(sub_dir), "--delete-processed"])
 
     sentinel = sub_dir / "_status" / "_submitted" / "delete_member_reprocess_3.json"
     assert not sentinel.exists()
@@ -292,12 +288,10 @@ def test_delete_rules_declare_a_log_and_redirect_into_it(norfolk_multi_sim_analy
     assert content.count("    log:\n") >= 2, "delete rules must declare `log:`"
     assert "logs/delete_reprocess/" in content, "log path must be toolkit-owned, not executor-owned"
     # ...and every rule must redirect into the Snakemake-managed {log}, literally.
-    assert "> {log} 2>&1" in content, (
-        "shell must redirect into {log}; a `log:` directive alone captures nothing"
-    )
-    assert content.count("> {log} 2>&1") == content.count("    log:\n"), (
-        "every rule declaring a log must also redirect into it"
-    )
+    assert "> {log} 2>&1" in content, "shell must redirect into {log}; a `log:` directive alone captures nothing"
+    assert content.count("> {log} 2>&1") == content.count(
+        "    log:\n"
+    ), "every rule declaring a log must also redirect into it"
 
 
 def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivity_analysis):
@@ -314,9 +308,7 @@ def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivi
 
     # exactly one per-sub rule per member (Option C granularity)
     n_sub_rules = content.count("rule delete_member_reprocess_")
-    assert n_sub_rules == len(sub_ids), (
-        f"expected one per-sub rule per sub ({len(sub_ids)}), got {n_sub_rules}"
-    )
+    assert n_sub_rules == len(sub_ids), f"expected one per-sub rule per sub ({len(sub_ids)}), got {n_sub_rules}"
     assert "hhemt.delete_member_reprocess_runner" in content
     # start_with='process' threads --delete-processed into the per-sub runner
     assert "--delete-processed" in content

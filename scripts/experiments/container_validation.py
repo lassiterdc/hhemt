@@ -23,6 +23,11 @@ are copy-me templates the operator reconstructs into the estate once per cluster
 
 from __future__ import annotations
 
+# Make the repo root importable so `tests.fixtures...` resolves regardless of how this
+# file is invoked (`python scripts/experiments/container_validation.py` puts the SCRIPT
+# dir on sys.path, not the repo root). Mirrors validate_uva.py's `sys.path.insert(0, ROOT)`.
+import os
+import sys as _sys
 from pathlib import Path
 
 # Initialize GDAL (rasterio/rioxarray) BEFORE the synthetic-model chain pulls in
@@ -30,17 +35,16 @@ from pathlib import Path
 # allocator and aborts ("free(): invalid pointer"). Must precede tests.fixtures.
 import rioxarray  # noqa: F401  (import-order guard — see synth_compute_config.py)
 
-# Make the repo root importable so `tests.fixtures...` resolves regardless of how this
-# file is invoked (`python scripts/experiments/container_validation.py` puts the SCRIPT
-# dir on sys.path, not the repo root). Mirrors validate_uva.py's `sys.path.insert(0, ROOT)`.
-import os
-import sys as _sys
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_REPO_ROOT))
 
-from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+# noqa: E402 -- this import MUST follow the _sys.path.insert above: `tests.fixtures`
+# is not importable until the repo root is on sys.path. Hoisting it to the top of the
+# file (the naive E402 fix) breaks this script at import time. Do not 'clean this up'.
+from tests.fixtures.test_case_builder import (  # noqa: E402
+    retrieve_synth_TRITON_SWMM_test_case,
+)
 
 # ABSOLUTE paths (rooted at the repo) — the Snakemake SUBPROCESS rules re-read the
 # hpc-system-config from the run dir (~/.cache/.../<analysis>), NOT the repo root, so a
@@ -72,8 +76,15 @@ _CLUSTER = {
     # to the GPU partition is rejected by Rivanna's `gpu` QOS (QOSMinGRES requires >=1 GPU).
     # UVA -> "standard" (CPU-only). Frontier runs in local mode so this value is inert, but set
     # it to "batch" (Frontier's one partition) for correctness if it ever runs per-rule.
-    "uva": dict(gpu_partition="gpu", cpu_partition="standard", multi_sim_run_method="batch_job", execution_mode="slurm"),
-    "frontier": dict(gpu_partition="batch", cpu_partition="batch", multi_sim_run_method="1_job_many_srun_tasks", execution_mode="local"),
+    "uva": dict(
+        gpu_partition="gpu", cpu_partition="standard", multi_sim_run_method="batch_job", execution_mode="slurm"
+    ),
+    "frontier": dict(
+        gpu_partition="batch",
+        cpu_partition="batch",
+        multi_sim_run_method="1_job_many_srun_tasks",
+        execution_mode="local",
+    ),
 }
 
 
@@ -233,9 +244,7 @@ def run_and_verdict(cluster: str, *, start_from_scratch: bool = True, hpc_system
     # with an "N/A — no … summaries" verdict when the sims produced NOTHING to compare
     # (a rule failed upstream). That is NOT a real native≡container result.
     details = v.details or []
-    summaries_absent = any(
-        "summaries absent" in str(d.get("detail", "")) for d in details if isinstance(d, dict)
-    )
+    summaries_absent = any("summaries absent" in str(d.get("detail", "")) for d in details if isinstance(d, dict))
     no_data = (
         bool(getattr(result, "skipped", False))
         or ("N/A" in (v.summary or ""))
@@ -243,7 +252,10 @@ def run_and_verdict(cluster: str, *, start_from_scratch: bool = True, hpc_system
         or summaries_absent
     )
     if no_data:
-        print("OVERALL: NO-DATA — sims produced no summaries; not a real native=container comparison (run failed upstream)")
+        print(
+            "OVERALL: NO-DATA — sims produced no summaries; not a real native=container comparison (run failed "
+            "upstream)"
+        )
         return False
     real_pass = bool(v.passed)
     print("OVERALL:", "native=container within-family" if real_pass else "DIVERGED")

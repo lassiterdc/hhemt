@@ -39,8 +39,8 @@ import pytest
 import xarray as xr
 
 from hhemt.constants import (
-    process_timeseries_flag_per_member,
     member_inputs_fingerprint_flag,
+    process_timeseries_flag_per_member,
     sim_run_flag_per_member,
 )
 from hhemt.exceptions import ProcessingError
@@ -139,10 +139,10 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitiv
         seeded[member_str] = per_sub
 
     # Precondition sanity: flags + log entries exist before reprocess.
-    for member_str, per_sub in seeded.items():
-        assert list(status_dir.glob(f"d_process_*_member-{member_str}_*")), (
-            f"precondition: d_process flags must exist for member {member_str}"
-        )
+    for member_str, _per_sub in seeded.items():
+        assert list(
+            status_dir.glob(f"d_process_*_member-{member_str}_*")
+        ), f"precondition: d_process flags must exist for member {member_str}"
 
     sensitivity.reprocess(
         start_with="process",
@@ -240,9 +240,9 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivit
         for event_iloc in analysis.df_sims.index:
             event_id = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
             d_process_rel = process_timeseries_flag_per_member(model_type, member_str, event_id)
-            assert f'"{d_process_rel}"' in content, (
-                f"per-member consolidate input must include d_process flag {d_process_rel!r}"
-            )
+            assert (
+                f'"{d_process_rel}"' in content
+            ), f"per-member consolidate input must include d_process flag {d_process_rel!r}"
 
     # The generated Snakefile must PARSE — write it and run a Snakemake dry-run.
     snakefile = analysis_dir / "Snakefile.reprocess"
@@ -362,7 +362,7 @@ def test_reprocess_consolidate_inprocess_preserves_processed(norfolk_sensitivity
 
     # Seed each sub's per-scenario processed/ dir on disk (the rebuild source).
     seeded_procs: list[Path] = []
-    for member_id, analysis in sensitivity.members.items():
+    for _member_id, analysis in sensitivity.members.items():
         for event_iloc in range(len(analysis.df_sims)):
             scen = TRITONSWMM_scenario(event_iloc, analysis)
             proc = scen.scen_paths.sim_folder / "processed"

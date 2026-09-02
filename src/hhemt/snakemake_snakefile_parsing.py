@@ -147,7 +147,8 @@ def parse_sensitivity_analysis_workflow_model_allocations(
 
     if not allocations_by_member:
         raise SnakefileParsingError(
-            "No sensitivity simulation rules found. Expected rules matching 'simulation_member-{member_id}_evt-{event_id}'."
+            "No sensitivity simulation rules found. Expected rules matching "
+            "'simulation_member-{member_id}_evt-{event_id}'."
         )
 
     if expected_analysis_ids is not None and strict:

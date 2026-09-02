@@ -821,15 +821,31 @@ class _HtmlTableStyleBase(cfgBaseModel):
 
 
 _ERRORS_AND_WARNINGS_EXTRA_CSS = """\
-h2 {{ color: {primary_color}; border-bottom: {h2_border_width_px}px solid {primary_color}; padding-bottom: {h2_padding_bottom_px}px; margin-top: 0; }}
+h2 {{ color: {primary_color};
+    border-bottom: {h2_border_width_px}px solid {primary_color};
+    padding-bottom: {h2_padding_bottom_px}px;
+    margin-top: 0; }}
 h3 {{ color: {primary_color}; margin-top: {h3_margin_top_px}px; margin-bottom: {h3_margin_bottom_px}px; }}
 table {{ margin-bottom: {table_margin_bottom_px}px; }}
-td.pass {{ color: {pass_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
-td.fail {{ color: {fail_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
-td.na {{ color: {na_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
-td.pass-qualified {{ color: {qualified_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
+td.pass {{ color: {pass_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
+td.fail {{ color: {fail_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
+td.na {{ color: {na_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
+td.pass-qualified {{ color: {qualified_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
 span.floor-note {{ color: {na_text_color}; font-weight: 400; font-style: italic; }}
-.banner {{ padding: {banner_padding_v_px}px {banner_padding_h_px}px; border-radius: {banner_border_radius_px}px; margin: 10px 0 18px;
+.banner {{ padding: {banner_padding_v_px}px {banner_padding_h_px}px;
+    border-radius: {banner_border_radius_px}px; margin: 10px 0 18px;
           font-weight: {th_font_weight}; font-size: {banner_font_size_px}px; }}
 .banner.pass {{ background-color: {pass_bg_color}; color: {pass_text_color}; border: 1px solid {pass_text_color}; }}
 .banner.fail {{ background-color: {fail_bg_color}; color: {fail_text_color}; border: 1px solid {fail_text_color}; }}
@@ -893,9 +909,7 @@ class ScenarioStatusAppendixConfig(_HtmlTableStyleBase):
     )
 
     def render_inline_css(self) -> str:
-        return _HTML_TABLE_STYLE_TEMPLATE.format(
-            **self.model_dump(exclude={"interactive", "hide_constant_columns"})
-        )
+        return _HTML_TABLE_STYLE_TEMPLATE.format(**self.model_dump(exclude={"interactive", "hide_constant_columns"}))
 
 
 class report_config(cfgBaseModel):
@@ -1167,8 +1181,7 @@ def validate_active_reporting_set(
             _fits = sorted(
                 n
                 for n, s in REPORTING_SETS.items()
-                if s.shape == _analysis_shape
-                and not [f for f in s.required_axes if not (set(f) & varied_axes)]
+                if s.shape == _analysis_shape and not [f for f in s.required_axes if not (set(f) & varied_axes)]
             )
             raise ConfigurationError(
                 field="reporting_set",

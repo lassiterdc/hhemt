@@ -241,9 +241,9 @@ def test_identity_group_partition_persisted(synthetic_sensitivity_completed):
     if result.verdict.passed:
         labels = set(int(v) for v in ds["identity_group"].values)
         labels.add(int(ds.attrs["reference_group"]))
-        assert labels == {int(ds.attrs["reference_group"])}, (
-            f"bit-identical master must be one identity group, got labels {labels}"
-        )
+        assert labels == {
+            int(ds.attrs["reference_group"])
+        }, f"bit-identical master must be one identity group, got labels {labels}"
 
 
 def test_tracked_vars_are_actually_emitted_names() -> None:
@@ -326,8 +326,7 @@ def test_reference_rank_selects_serial_over_lexicographically_earlier_gpu():
     ]
     ordered = sorted(items, key=_ref_rank)
     assert ordered[0][0] == "z_serial_0_r1", (
-        "reference must be the serial-CPU sub even when its member_id sorts last; "
-        f"got {ordered[0][0]}"
+        "reference must be the serial-CPU sub even when its member_id sorts last; " f"got {ordered[0][0]}"
     )
     # Pre-fix control: member_id-only ordering picks the GPU sub, so the two rules disagree on
     # this fixture. Without this the test could not distinguish "serial won" from "serial
@@ -355,6 +354,7 @@ def test_reference_rank_tiebreaks_are_ordered_as_documented():
         ("a_gpu_1", _StubSub(_StubCfg("gpu", n_gpus=1))),
     ]
     assert [member for member, _ in sorted(tied, key=_ref_rank)] == ["a_gpu_1", "z_gpu_1"]
+
 
 # ---- EW-4: per-family reference selection (strict path) ----
 #

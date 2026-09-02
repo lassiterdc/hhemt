@@ -75,10 +75,14 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
     # set would let Python's hash ordering decide which side gets marked -- a
     # nondeterministic report. Marking is stable either way, because with an even split
     # "differs from the others" is true of whichever side carries the marker.
-    _minority = min(
-        _solvers,
-        key=lambda s: (sum(1 for row in rows if str(row.get("solver_sha")) == s), s),
-    ) if _split else None
+    _minority = (
+        min(
+            _solvers,
+            key=lambda s: (sum(1 for row in rows if str(row.get("solver_sha")) == s), s),
+        )
+        if _split
+        else None
+    )
 
     def _sv(row) -> str:
         raw = row.get("solver_sha")
@@ -100,10 +104,14 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
     # minority and `min` over a set would let hash ordering pick a side, making the
     # rendered bytes nondeterministic across re-renders -- which would also make every
     # re-bundle look like a content change to _render_sha.
-    _build_minority = min(
-        _builds,
-        key=lambda b: (sum(1 for row in rows if str(row.get("toolkit_version")) == b), b),
-    ) if _build_split else None
+    _build_minority = (
+        min(
+            _builds,
+            key=lambda b: (sum(1 for row in rows if str(row.get("toolkit_version")) == b), b),
+        )
+        if _build_split
+        else None
+    )
 
     def _bv(row) -> str:
         raw = row.get("toolkit_version")
@@ -113,8 +121,7 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
         return f"{shown} *" if _build_split and str(raw) == _build_minority else shown
 
     body = "\n".join(
-        "<tr><td>{e}</td><td>{r}</td><td>{m}</td><td>{n}</td>"
-        "<td>{s}</td><td>{tv}</td><td>{sv}</td></tr>".format(
+        "<tr><td>{e}</td><td>{r}</td><td>{m}</td><td>{n}</td>" "<td>{s}</td><td>{tv}</td><td>{sv}</td></tr>".format(
             e=_html.escape(str(row.get("experiment_id"))),
             r=_html.escape(str(row.get("role"))),
             m=_html.escape(str(row.get("model"))),
@@ -140,8 +147,7 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
         _notes.append("Solver sha is identical across every row.")
     if _build_split:
         _notes.append(
-            "* on the hhemt build column marks an experiment produced by a different "
-            "hhemt build than the others."
+            "* on the hhemt build column marks an experiment produced by a different " "hhemt build than the others."
         )
     elif rows:
         _notes.append(
@@ -219,6 +225,8 @@ def _derive_version_from_sha(sha: str) -> str | None:
     if not gsha.startswith("g") or not sha.startswith(gsha[1:]):
         return None  # derived sha does not match the input -- refuse rather than guess
     return f"{tag.lstrip('v')}+{n}.g{sha}"
+
+
 def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
     """One deterministic provenance row per combined child crate. Each field is derived from
     a bundled, deterministic source (no HPC re-run): experiment_id from the dir name; role
@@ -319,9 +327,7 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
 #: The model-toggle fields ALONE. Kept separate from the expected-set below because
 #: `_divergence_message`'s first branch is keyed on it and renders "these bundles are
 #: the two model arms of one experiment" -- a sentence that is TRUE only for a toggle.
-_MODEL_TOGGLE_FIELDS = frozenset(
-    {"toggle_triton_model", "toggle_tritonswmm_model", "toggle_swmm_model"}
-)
+_MODEL_TOGGLE_FIELDS = frozenset({"toggle_triton_model", "toggle_tritonswmm_model", "toggle_swmm_model"})
 
 #: Identity fields whose divergence IS the combine's intended structure. The model
 #: toggles differ because the bundles are the two model arms of one experiment.
@@ -343,9 +349,7 @@ _MODEL_TOGGLE_FIELDS = frozenset(
 #: render (`bundle/_combine.py:131`). An UNdeclared split therefore never reaches a
 #: renderer at all -- so the presence of this field here IS the declaration, and the
 #: renderer needs no access to the flag.
-_EXPECTED_IDENTITY_FIELDS = _MODEL_TOGGLE_FIELDS | frozenset(
-    {"sensitivity_analysis", "TRITONSWMM_branch_key"}
-)
+_EXPECTED_IDENTITY_FIELDS = _MODEL_TOGGLE_FIELDS | frozenset({"sensitivity_analysis", "TRITONSWMM_branch_key"})
 
 
 def _divergence_is_expected(d: dict) -> bool:
@@ -388,10 +392,7 @@ def _divergence_message(d: dict) -> str:
             "environment is not part of experiment identity."
         )
     if field == "schemaVersion":
-        return (
-            "Layout-version skew between bundles; figures render, but cross-bundle field "
-            "semantics may differ."
-        )
+        return "Layout-version skew between bundles; figures render, but cross-bundle field " "semantics may differ."
     # Must precede the `bucket == "experiment" and severity == "warning"` catch-all: a
     # solver-sha divergence carries exactly that bucket/severity pair, so without its own
     # branch it printed "the two bundles sweep different rows or columns of the compute
@@ -405,18 +406,15 @@ def _divergence_message(d: dict) -> str:
             "makes a bit-identical result evidence for both."
         )
     if bucket == "experiment" and severity == "warning":
-        return (
-            "Sensitivity-axis divergence: the two bundles sweep different rows or columns "
-            "of the compute matrix."
-        )
+        return "Sensitivity-axis divergence: the two bundles sweep different rows or columns " "of the compute matrix."
     return f"Divergence in `{field}` ({bucket} bucket, {severity})."
 
 
 def _render_compatibility_html(source: Path, prov_rows: list[dict] | None = None) -> str:
     if source.exists():
-        payload = _json.loads(source.read_text())
+        payload = _json.loads(source.read_text())  # noqa: F841 -- see the note below:
     else:  # combine may not have run; render an honest placeholder
-        payload = {"is_compatible": True, "divergences": []}
+        payload = {"is_compatible": True, "divergences": []}  # noqa: F841
     # CP-4: the identity-field section is removed at the user's request and the heading
     # below is reframed as data provenance. What it reported was not actionable: a
     # BLOCKING divergence aborts combine_bundle before any render, so only non-blocking
@@ -455,7 +453,5 @@ def _render_compatibility_html(source: Path, prov_rows: list[dict] | None = None
         "table.compat th{background-color:#232D4B;color:white;font-weight:600}"
         "table.compat tbody tr:nth-child(even){background-color:#F1F1EF}"
         "</style>"
-        "<h2>What Was Combined (data provenance)</h2>"
-        + _provenance_table_html(prov_rows)
-        + "</section>"
+        "<h2>What Was Combined (data provenance)</h2>" + _provenance_table_html(prov_rows) + "</section>"
     )

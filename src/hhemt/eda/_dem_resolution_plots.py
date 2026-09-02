@@ -1472,9 +1472,7 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
         data=[
             go.Table(
                 # iter 12 item {2} — see the sibling tables above; equal `columnwidth` kept.
-                header=dict(
-                    **plotly_table_header(headers), fill_color="#eef2f7", font=dict(size=11)
-                ),
+                header=dict(**plotly_table_header(headers), fill_color="#eef2f7", font=dict(size=11)),
                 columnwidth=[1] * len(headers),  # distribute across the full domain
                 cells=dict(
                     values=list(zip(*rows, strict=False)) if rows else [[]], align="left", font=dict(size=11), height=30

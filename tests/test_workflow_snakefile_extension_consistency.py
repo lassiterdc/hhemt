@@ -16,8 +16,6 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-import pytest
-
 _RULE_BLOCK_RE = re.compile(r"^rule\s+([A-Za-z_][A-Za-z0-9_]*):", re.MULTILINE)
 _INPUT_PATH_LINE_RE = re.compile(r'"([^"]+\.(?:png|svg|html))"')
 _PLOT_EXT_RE = re.compile(r"\.(png|svg|html|zip)(?=$|\b)")
@@ -104,11 +102,30 @@ def _parse_rule_outputs(snakefile_text: str) -> dict[str, str]:
     return rule_outputs
 
 
-_SECTION_KEYWORDS = frozenset({
-    "input", "output", "params", "log", "conda", "resources", "shell", "run",
-    "threads", "priority", "retries", "message", "benchmark", "cache",
-    "wildcard_constraints", "group", "envmodules", "container", "notebook", "script",
-})
+_SECTION_KEYWORDS = frozenset(
+    {
+        "input",
+        "output",
+        "params",
+        "log",
+        "conda",
+        "resources",
+        "shell",
+        "run",
+        "threads",
+        "priority",
+        "retries",
+        "message",
+        "benchmark",
+        "cache",
+        "wildcard_constraints",
+        "group",
+        "envmodules",
+        "container",
+        "notebook",
+        "script",
+    }
+)
 
 
 def _parse_rule_inputs(snakefile_text: str, rule_name: str) -> list[str]:
@@ -133,14 +150,14 @@ def _parse_rule_inputs(snakefile_text: str, rule_name: str) -> list[str]:
     # 2. Walk forward from the header until the next top-level boundary.
     in_input = False
     inputs: list[str] = []
-    for line in lines[header_idx + 1:]:
+    for line in lines[header_idx + 1 :]:
         if line.startswith("rule ") or line.startswith("onsuccess:") or line.startswith("onerror:"):
             break  # next rule / hook — end of this rule's body
         stripped = line.strip()
         if not in_input:
             if stripped.startswith("input:"):
                 in_input = True
-                after = stripped[len("input:"):].strip()
+                after = stripped[len("input:") :].strip()
                 if after:
                     inputs.extend(_INPUT_PATH_LINE_RE.findall(after))
             continue
@@ -222,29 +239,30 @@ def _assert_multisim_symmetry(target: str, builder, monkeypatch) -> None:
     extension-agnostic rule structure equality, (c) only `extension_swap`
     diffs between the two backends."""
     snakefiles = {b: _generate_multisim_snakefile_text(builder, b, monkeypatch) for b in _BACKENDS}
-    for backend, text in snakefiles.items():
+    for _backend, text in snakefiles.items():
         _assert_symmetry(text, consumer_rule=target)
     assert _rule_structure(snakefiles["matplotlib"]) == _rule_structure(snakefiles["plotly"]), (
-        "multisim Snakefile rule_structure (extension-stripped) differs across "
-        "static backends"
+        "multisim Snakefile rule_structure (extension-stripped) differs across " "static backends"
     )
-    non_ext_swap = [d for d in _structural_diff(snakefiles["matplotlib"], snakefiles["plotly"]) if d.kind != "extension_swap"]
-    assert not non_ext_swap, (
-        "multisim Snakefile structural diffs include non-extension-swap kinds:\n  "
-        + "\n  ".join(f"{d.rule_name}: {d.kind} ({d.detail})" for d in non_ext_swap)
+    non_ext_swap = [
+        d for d in _structural_diff(snakefiles["matplotlib"], snakefiles["plotly"]) if d.kind != "extension_swap"
+    ]
+    assert not non_ext_swap, "multisim Snakefile structural diffs include non-extension-swap kinds:\n  " + "\n  ".join(
+        f"{d.rule_name}: {d.kind} ({d.detail})" for d in non_ext_swap
     )
 
 
 def _assert_sensitivity_master_symmetry(target: str, builder, monkeypatch) -> None:
     """As `_assert_multisim_symmetry` but for the sensitivity-master Snakefile."""
     snakefiles = {b: _generate_sensitivity_master_snakefile_text(builder, b, monkeypatch) for b in _BACKENDS}
-    for backend, text in snakefiles.items():
+    for _backend, text in snakefiles.items():
         _assert_symmetry(text, consumer_rule=target)
     assert _rule_structure(snakefiles["matplotlib"]) == _rule_structure(snakefiles["plotly"]), (
-        "sensitivity-master Snakefile rule_structure (extension-stripped) differs "
-        "across static backends"
+        "sensitivity-master Snakefile rule_structure (extension-stripped) differs " "across static backends"
     )
-    non_ext_swap = [d for d in _structural_diff(snakefiles["matplotlib"], snakefiles["plotly"]) if d.kind != "extension_swap"]
+    non_ext_swap = [
+        d for d in _structural_diff(snakefiles["matplotlib"], snakefiles["plotly"]) if d.kind != "extension_swap"
+    ]
     assert not non_ext_swap, (
         "sensitivity-master Snakefile structural diffs include non-extension-swap kinds:\n  "
         + "\n  ".join(f"{d.rule_name}: {d.kind} ({d.detail})" for d in non_ext_swap)
@@ -274,6 +292,7 @@ def test_plotly_chart_renderers_emit_html_extension():
     # extension here would dispatch via <img> (image/svg+xml) and fail to
     # parse the Plotly HTML content as SVG XML.
     from hhemt.workflow import _OUTPUT_EXT_BY_RENDERER
+
     for renderer, exts in _OUTPUT_EXT_BY_RENDERER.items():
         mpl_ext = exts["matplotlib"]
         plotly_ext = exts["plotly"]

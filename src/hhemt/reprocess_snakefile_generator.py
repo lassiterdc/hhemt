@@ -434,7 +434,14 @@ def write_reprocess_snakefile(
     normal ``Snakefile`` so the two can coexist). Overwrites any existing
     file at that path.
     """
+    from hhemt.workflow import _write_snakefile_atomic
+
     text = generate_reprocess_snakefile(builder, start_with=start_with)
     out = builder.analysis_paths.analysis_dir / "Snakefile.reprocess"
-    out.write_text(text)
+    # Atomic + one-deep archive. Gotcha 39: render_report(reprocess=True) runs
+    # `snakemake --report` against THIS file, so a clobber here reaches a
+    # rendered report rather than only an operator diagnosis. Function-local
+    # import: this module is imported BY workflow.py, so a module-top import
+    # would be circular.
+    _write_snakefile_atomic(out, text)
     return out

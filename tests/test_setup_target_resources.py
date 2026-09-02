@@ -101,6 +101,17 @@ def _fake_swmm_self(tmp_path, modules):
         lambda: TRITONSWMM_system._emit_libstdcpp_ld_preamble_lines(fake)
     )
     fake._emit_module_load_lines = lambda m: TRITONSWMM_system._emit_module_load_lines(fake, m)
+    # No-op, and the no-op is the point. `_compile_SWMM_locked` calls
+    # `_capture_swmm_provenance` in its `if success:` branch to record the standalone-SWMM
+    # version (the fourth version-provenance axis). These three tests measure the emitted
+    # compile_swmm.sh TEXT, and that text is written at system.py:2090 -- BEFORE the
+    # subprocess at :2099 and the capture at :2121 -- so the capture cannot influence what
+    # they assert on. A recording double would let a script-content test assert on
+    # provenance behaviour, conflating two concerns in the module least suited to either.
+    #
+    # The capture's OWN behaviour is deliberately not covered here. That gap is real and is
+    # recorded as a follow-up rather than papered over by an assertion in this file.
+    fake._capture_swmm_provenance = lambda *_a, **_k: None
     return fake
 
 

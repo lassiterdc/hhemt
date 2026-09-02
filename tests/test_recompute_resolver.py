@@ -71,14 +71,8 @@ def test_scope_clear_raw_action_table_all_8_cells(key, expected):
 def test_load_bearing_cell_scenario_processing_raw_cleared_escalates_to_re_run():
     # When raw outputs are cleared, reprocess-from-raw is impossible, so a
     # scenario-processing bug must escalate to a full RE_RUN (encoded IN the table).
-    assert (
-        resolve_recompute_action(RecomputeScope.SCENARIO_PROCESSING, True)
-        is RecomputeAction.RE_RUN
-    )
-    assert (
-        resolve_recompute_action(RecomputeScope.SCENARIO_PROCESSING, False)
-        is RecomputeAction.REPROCESS_SCENARIO
-    )
+    assert resolve_recompute_action(RecomputeScope.SCENARIO_PROCESSING, True) is RecomputeAction.RE_RUN
+    assert resolve_recompute_action(RecomputeScope.SCENARIO_PROCESSING, False) is RecomputeAction.REPROCESS_SCENARIO
 
 
 # --------------------------------------------------------------------------- #
@@ -180,9 +174,7 @@ def test_semver_fallback_invalid_specifier_is_none():
 # Scoped override_force_rerun emission shape (D4 — surgical, never from_scratch).
 # --------------------------------------------------------------------------- #
 def _fake_analysis(*, sensitivity: bool):
-    return SimpleNamespace(
-        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity)
-    )
+    return SimpleNamespace(cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity))
 
 
 def test_emit_re_run_non_sensitivity_uses_event_iloc_ints():

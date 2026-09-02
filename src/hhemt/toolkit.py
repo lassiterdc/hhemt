@@ -232,6 +232,7 @@ class Toolkit:
         report_config: Path | None = None,
         override_force_rerun=None,
         wait_for_completion: bool | None = None,
+        override_wipe_nonempty: bool = False,
     ) -> WorkflowResult:
         """Run TRITON-SWMM workflow.
 
@@ -314,6 +315,7 @@ class Toolkit:
         # passes an explicit value so a batch_job hosted inside an sbatch blocks.
         return self.analysis.run(
             from_scratch=from_scratch,
+            override_wipe_nonempty=override_wipe_nonempty,
             events=events,
             execution_mode=execution_mode,
             dry_run=dry_run,

@@ -81,9 +81,7 @@ def _inject_sif(bundle_dir: Path, *, sif_bytes: bytes = b"REFERENCE-SIF-BYTES") 
     return sif_path
 
 
-def test_reprex_roundtrip_native_problem_pairs_and_amendments(
-    rendered_synth_sensitivity, tmp_path: Path
-) -> None:
+def test_reprex_roundtrip_native_problem_pairs_and_amendments(rendered_synth_sensitivity, tmp_path: Path) -> None:
     """R14-R17: emit a reprex bundle from the sensitivity master, then round-trip it.
 
     The native fixture has no SIF in its crate (sif_reference_present is False, verify is
@@ -96,9 +94,7 @@ def test_reprex_roundtrip_native_problem_pairs_and_amendments(
 
     _seed_resource_exceeding_row(bundle_dir)
 
-    result = Bundle.from_directory(bundle_dir).reprex(
-        _reprex_cfg(tmp_path / "unused.sif"), _target_profile(max_gpu=1)
-    )
+    result = Bundle.from_directory(bundle_dir).reprex(_reprex_cfg(tmp_path / "unused.sif"), _target_profile(max_gpu=1))
 
     # Native bundle: nothing to verify, vacuous pass.
     assert result.sif_reference_present is False
@@ -120,9 +116,7 @@ def test_reprex_roundtrip_native_problem_pairs_and_amendments(
     assert isinstance(result.zero_user_info_leaks, list)
 
 
-def test_reprex_sif_digest_match_and_mismatch(
-    rendered_synth_sensitivity, tmp_path: Path
-) -> None:
+def test_reprex_sif_digest_match_and_mismatch(rendered_synth_sensitivity, tmp_path: Path) -> None:
     """R14: when the crate references a SIF (container bundle), reprex does a mandatory
     fail-closed sha256 digest match; PGP warns (sif_signature_ok is None) when apptainer
     is absent. A digest mismatch raises ProcessingError before any validation."""
@@ -145,19 +139,13 @@ def test_reprex_sif_digest_match_and_mismatch(
         bundle.reprex(_reprex_cfg(wrong), _target_profile())
 
 
-def test_analysis_reprex_bundle_degenerate_dispatch(
-    rendered_synth_multi_sim, tmp_path: Path
-) -> None:
+def test_analysis_reprex_bundle_degenerate_dispatch(rendered_synth_multi_sim, tmp_path: Path) -> None:
     """R18: the flat single-analysis facade dispatches; the zero-sensitivity degenerate
     case has no rows to cap-scan, so it is runnable with no problem pairs."""
-    bundle_dir = rendered_synth_multi_sim.reprex_bundle(
-        output_path=tmp_path / "reprex_single.zip"
-    )
+    bundle_dir = rendered_synth_multi_sim.reprex_bundle(output_path=tmp_path / "reprex_single.zip")
     assert bundle_dir.is_dir()
 
-    result = Bundle.from_directory(bundle_dir).reprex(
-        _reprex_cfg(tmp_path / "unused.sif"), _target_profile()
-    )
+    result = Bundle.from_directory(bundle_dir).reprex(_reprex_cfg(tmp_path / "unused.sif"), _target_profile())
     assert result.sif_reference_present is False
     assert result.problem_pairs == []
     assert result.runnable is True

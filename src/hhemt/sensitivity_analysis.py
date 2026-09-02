@@ -535,13 +535,17 @@ class TRITONSWMM_sensitivity_analysis:
         # premise a dry run never satisfies.
         _master_dir = self.experiment.analysis_paths.analysis_dir
         _eff_mode = self.experiment.cfg_analysis.multi_sim_run_method
-        _driver_id = None if dry_run else _osent.new_driver_id()
-        if _driver_id is not None:
-            _osent.write_orchestrator_sentinel(
-                _master_dir,
-                driver_id=_driver_id,
-                workflow_submission_mode=_eff_mode,
-            )
+        # GATE-AND-CLAIM (see the twin in analysis.py::submit_workflow). The
+        # claim is keyed on the MASTER analysis_dir and routed through the
+        # master's own base builder, whose cfg_analysis is what
+        # _max_plausible_job_lifetime_min must read. Dry-run suppression now
+        # lives inside the helper, so the shape is equivalent for a rehearsal.
+        _driver_id = self.experiment._workflow_builder._acquire_submit_driver_claim(
+            _master_dir,
+            workflow_submission_mode=_eff_mode,
+            dry_run=dry_run,
+            override_live_driver=overrides.live_driver,
+        )
         try:
             result = self._workflow_builder.submit_workflow(
                 mode=mode,
@@ -1273,9 +1277,7 @@ class TRITONSWMM_sensitivity_analysis:
         from hhemt.bundle import emit_bundle
         from hhemt.bundle._reprex import extract_reprex_bundle
 
-        return extract_reprex_bundle(
-            emit_bundle(self, output_path, container_defs=container_defs)
-        )
+        return extract_reprex_bundle(emit_bundle(self, output_path, container_defs=container_defs))
 
     def publish(
         self,
@@ -2203,7 +2205,8 @@ class TRITONSWMM_sensitivity_analysis:
         return sorted(orphans)
 
     def find_orphan_input_fingerprints(self) -> list[Path]:
-        """Return _status/member-{member_id}_inputs.json fingerprint files whose member_id is absent from df_setup.index.
+        """Return _status/member-{member_id}_inputs.json fingerprint files whose
+        member_id is absent from df_setup.index.
 
         The per-member_id input-fingerprint files (Gotcha 17) are written by
         ``SensitivityAnalysisWorkflowBuilder`` at Snakefile-build time and named
@@ -2437,7 +2440,8 @@ class TRITONSWMM_sensitivity_analysis:
                     raise ConfigurationError(
                         field=f"sensitivity_analysis.row[{member_id_str}]",
                         message=(
-                            f"member_id={member_id_str}: system.* overlay-column values failed SystemConfig validation: {exc}"
+                            f"member_id={member_id_str}: system.* overlay-column values "
+                            f"failed SystemConfig validation: {exc}"
                         ),
                         config_path=sensitivity_csv,
                     ) from exc
@@ -2459,9 +2463,7 @@ class TRITONSWMM_sensitivity_analysis:
             # partitions collapse to one build target) — NOT partition-name-keyed —
             # but the hardware now derives from each row's partition, so a6000 + a100
             # rows produce DISTINCT build targets.
-            _row_partition = _resolve_row_ensemble_partition(
-                row, self.experiment.cfg_analysis.hpc_ensemble_partition
-            )
+            _row_partition = _resolve_row_ensemble_partition(row, self.experiment.cfg_analysis.hpc_ensemble_partition)
             _gpu_hardware, _gpu_backend = resolve_gpu_target(
                 self.experiment.cfg_hpc_system,
                 _row_partition,
@@ -2745,9 +2747,7 @@ class TRITONSWMM_sensitivity_analysis:
         df = self.experiment.sensitivity._df_setup_full
         overlay_col_names = [c for c in df.columns if _is_system_overlay_column(c)]
         if overlay_col_names:
-            member_id_str = analysis.cfg_analysis.analysis_id.removeprefix(
-                self.experiment.sensitivity.member_prefix
-            )
+            member_id_str = analysis.cfg_analysis.analysis_id.removeprefix(self.experiment.sensitivity.member_prefix)
             overlay_cells = {
                 _strip_system_prefix(c): df.loc[member_id_str, c]
                 for c in overlay_col_names
@@ -2969,9 +2969,9 @@ class TRITONSWMM_sensitivity_analysis:
         status_frames = []
 
         for member_id, analysis in self.members.items():
-            assert analysis.cfg_analysis.is_experiment_member, (
-                "is_experiment_member attribute not true in member.cfg_analysis.is_experiment_member"
-            )
+            assert (
+                analysis.cfg_analysis.is_experiment_member
+            ), "is_experiment_member attribute not true in member.cfg_analysis.is_experiment_member"
             sub_df_status = analysis.df_status.copy()
 
             setup_row = self.df_setup.loc[member_id, :]
@@ -3047,9 +3047,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_SWMM_timeseries_processed = True
         for _key, analysis in self.members.items():
-            all_SWMM_timeseries_processed = (
-                all_SWMM_timeseries_processed and analysis._all_SWMM_timeseries_processed
-            )
+            all_SWMM_timeseries_processed = all_SWMM_timeseries_processed and analysis._all_SWMM_timeseries_processed
         return all_SWMM_timeseries_processed is True
 
     @property
@@ -3133,9 +3131,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_raw_TRITON_outputs_cleared = True
         for _key, analysis in self.members.items():
-            all_raw_TRITON_outputs_cleared = (
-                all_raw_TRITON_outputs_cleared and analysis._all_raw_TRITON_outputs_cleared
-            )
+            all_raw_TRITON_outputs_cleared = all_raw_TRITON_outputs_cleared and analysis._all_raw_TRITON_outputs_cleared
         return all_raw_TRITON_outputs_cleared is True
 
     @property

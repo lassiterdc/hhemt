@@ -46,13 +46,10 @@ def test_all_du_sentinels_walk_errors_zero(synthetic_sensitivity_completed):
         payload = read_du_sentinel(s)
         assert payload is not None, f"corrupt/absent sentinel: {s}"
         assert payload["walk_errors"] == 0, (
-            f"{s} reports walk_errors={payload['walk_errors']} -> "
-            f"disk_utilization_bytes is a PARTIAL total"
+            f"{s} reports walk_errors={payload['walk_errors']} -> " f"disk_utilization_bytes is a PARTIAL total"
         )
         scopes_seen.add(payload["scope"])
-    assert {"member", "analysis"} <= scopes_seen, (
-        f"expected member + analysis scopes present, saw {scopes_seen}"
-    )
+    assert {"member", "analysis"} <= scopes_seen, f"expected member + analysis scopes present, saw {scopes_seen}"
 
 
 def test_delete_dry_run_no_fallback_walk_warning(synthetic_sensitivity_completed, capsys):
@@ -68,6 +65,6 @@ def test_delete_dry_run_no_fallback_walk_warning(synthetic_sensitivity_completed
     sensitivity = synthetic_sensitivity_completed
     _print_delete_dry_run_summary(sensitivity.experiment)
     captured = capsys.readouterr()
-    assert "DU sentinel absent" not in captured.err, (
-        "delete dry-run fell back to a tree walk -> a parent _du.json is missing/stale"
-    )
+    assert (
+        "DU sentinel absent" not in captured.err
+    ), "delete dry-run fell back to a tree walk -> a parent _du.json is missing/stale"

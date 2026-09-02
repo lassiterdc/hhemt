@@ -72,9 +72,7 @@ def test_discover_analysis_dirs(tmp_path):
 
 def test_collect_corpus_parses_nodeids(monkeypatch):
     fake_stdout = (
-        "tests/test_a.py::test_one\n"
-        "tests/test_a.py::test_two[a-1]\n"
-        "tests/test_b.py::TestClass::test_method\n"
+        "tests/test_a.py::test_one\n" "tests/test_a.py::test_two[a-1]\n" "tests/test_b.py::TestClass::test_method\n"
     )
     fake_stderr = "ERROR collecting tests/test_broken.py\n"
 

@@ -264,6 +264,7 @@ span.units { white-space: nowrap; }
 span.expr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 """
 
+
 def _esc(value: Any) -> str:
     """HTML-escape any dynamic value before interpolation.
 
@@ -361,8 +362,6 @@ def _grid_table(headers: list[str], rows: list[list[str]]) -> str:
         f"  <thead><tr>{head}</tr></thead>\n"
         "  <tbody>\n    " + body + "\n  </tbody>\n</table>\n</div>"
     )
-
-
 
 
 # --- RO-Crate @graph navigation helpers --------------------------------------
@@ -922,13 +921,11 @@ def _path_tree_html(paths: list[str]) -> str:
     if not collapsed:
         return tree_html
     members = "; ".join(
-        f"<strong>{_esc(label)}</strong> = " + ", ".join(_code(n) for n in names)
-        for label, names in collapsed
+        f"<strong>{_esc(label)}</strong> = " + ", ".join(_code(n) for n in names) for label, names in collapsed
     )
     total = sum(len(names) for _, names in collapsed)
     return (
-        tree_html
-        + f"<details><summary class='note'>Collapsed runs — show the {_esc(total)} member name(s)"
+        tree_html + f"<details><summary class='note'>Collapsed runs — show the {_esc(total)} member name(s)"
         "</summary><p class='note'>Membership is decided by comparing each sibling's subtree, "
         "never inferred from its name. " + members + "</p></details>"
     )
@@ -971,9 +968,7 @@ def _consolidated_group_paths(
                 return [f"{tree_path.name}/{g}" for g in groups], True
     from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as _pp
 
-    declared = sorted(
-        set(_pp._MODE_TO_TREE_PATH.values()) | set(_pp._TIMESERIES_MODE_TO_TREE_PATH.values())
-    )
+    declared = sorted(set(_pp._MODE_TO_TREE_PATH.values()) | set(_pp._TIMESERIES_MODE_TO_TREE_PATH.values()))
     return [f"analysis_datatree.zarr/{g}" for g in declared], False
 
 
@@ -1246,7 +1241,6 @@ def _build_provenance_html(
     )
 
 
-
 class _MountedTable(NamedTuple):
     """A Tabulator table split into page markup and a document-level fragment.
 
@@ -1362,9 +1356,7 @@ def _provenance_timeline(payloads: list[dict]) -> _MountedTable | None:
     # `[Q160]`(7): promoted from a `<h4>5b.` sub-block of `5. Process` on the Metadata
     # page to a top-level section of the Workflow performance page, so the jump-nav
     # anchor resolves. `_heading` is what mints that anchor.
-    return _MountedTable(
-        _heading("Run timeline") + "\n" + note + mounted.html, mounted.fragment
-    )
+    return _MountedTable(_heading("Run timeline") + "\n" + note + mounted.html, mounted.fragment)
 
 
 # --- (2) Reproduction guide --------------------------------------------------
@@ -1504,9 +1496,7 @@ def _config_field_tooltips() -> dict[str, str]:
     return out
 
 
-def _df_for(
-    headers: list[str], rows: list[list[str]], tips: dict[str, list[str]]
-) -> pd.DataFrame:
+def _df_for(headers: list[str], rows: list[list[str]], tips: dict[str, list[str]]) -> pd.DataFrame:
     """Reshape a (headers, rows) pair into Tabulator's row-dict model.
 
     The (headers, rows) shape is inherited from the deleted `_sortable_grid_table` shim; the
@@ -1960,9 +1950,7 @@ def _build_reprex_guide_html(
             _vi = headers.index("Value used")
             tip_columns["Value used"] = [value_tips[i] for i in range(len(rows))]
         df_full = _df_for(headers, rows, tip_columns)
-        columns_spec = build_columns_spec(
-            df_full[headers], visible_columns_default=None, header_filter=True
-        )
+        columns_spec = build_columns_spec(df_full[headers], visible_columns_default=None, header_filter=True)
         for col_spec in columns_spec:
             # Cells are pre-escaped HTML fragments, not plain text.
             col_spec["formatter"] = "html"
@@ -1973,35 +1961,38 @@ def _build_reprex_guide_html(
                 # attribute selectors cannot reach these cells; the class can.
                 col_spec["cssClass"] = "trf-has-tip"
         fragments.append(
-            (f"reprex-{bucket}", build_table_fragment(
-                container_id=f"reprex-{bucket}",
-                options=build_options_dict(
-                    df_full,
-                    columns_spec=columns_spec,
-                    # Iter-13. Bounded exactly as `div.table-scroll` is bounded by the
-                    # `max-height: min(70vh, 640px)` rule above, and for the same reason
-                    # recorded there: `vh` resolves against the IFRAME's height, and the
-                    # combined report sets that height IMPERATIVELY ONCE, from the arm
-                    # frame's own onload handler (`scrollHeight + 24`). Tabulator reads
-                    # options.height ONCE at construction (config/report.py, table_height
-                    # field description), so a post-construction frame grow re-resolves the
-                    # CSS box while the render window stays fixed at its pre-grow size --
-                    # two one-shot measurements that cannot agree. A fixed ceiling makes
-                    # that divergence unreachable, because a re-resolved `vh` cannot move
-                    # the box past it. The Iter-11 item-24 height bound is preserved: 70vh
-                    # still governs wherever it is the smaller of the two.
-                    table_height="min(70vh, 640px)",
-                    pagination_size=0,
-                    persistence_id=f"reprex-{bucket}",
-                    extra_options={"resizableColumns": True},
+            (
+                f"reprex-{bucket}",
+                build_table_fragment(
+                    container_id=f"reprex-{bucket}",
+                    options=build_options_dict(
+                        df_full,
+                        columns_spec=columns_spec,
+                        # Iter-13. Bounded exactly as `div.table-scroll` is bounded by the
+                        # `max-height: min(70vh, 640px)` rule above, and for the same reason
+                        # recorded there: `vh` resolves against the IFRAME's height, and the
+                        # combined report sets that height IMPERATIVELY ONCE, from the arm
+                        # frame's own onload handler (`scrollHeight + 24`). Tabulator reads
+                        # options.height ONCE at construction (config/report.py, table_height
+                        # field description), so a post-construction frame grow re-resolves the
+                        # CSS box while the render window stays fixed at its pre-grow size --
+                        # two one-shot measurements that cannot agree. A fixed ceiling makes
+                        # that divergence unreachable, because a re-resolved `vh` cannot move
+                        # the box past it. The Iter-11 item-24 height bound is preserved: 70vh
+                        # still governs wherever it is the smaller of the two.
+                        table_height="min(70vh, 640px)",
+                        pagination_size=0,
+                        persistence_id=f"reprex-{bucket}",
+                        extra_options={"resizableColumns": True},
+                    ),
+                    # Inert here by contract (see build_table_fragment): the cdn/inline
+                    # switch is applied once per document in `_wrap_html_doc`. Passed for
+                    # symmetry with the page's actual mode rather than a stale literal.
+                    js_mode=_TABULATOR_JS_MODE,
+                    renderer_name="metadata",
+                    column_panel=False,
                 ),
-                # Inert here by contract (see build_table_fragment): the cdn/inline
-                # switch is applied once per document in `_wrap_html_doc`. Passed for
-                # symmetry with the page's actual mode rather than a stale literal.
-                js_mode=_TABULATOR_JS_MODE,
-                renderer_name="metadata",
-                column_panel=False,
-            ))
+            )
         )
         parts.append(f'<div id="reprex-{bucket}-mount"></div>')
 
@@ -2496,8 +2487,7 @@ def _reduction_caption() -> str:
     return (
         "<h4>How each column was reduced</h4>"
         "<p class='note'>Every column header carries its reduction's symbol, and hovering "
-        "a header or a value repeats nothing — both read this same declaration.</p>"
-        + "".join(blocks)
+        "a header or a value repeats nothing — both read this same declaration.</p>" + "".join(blocks)
     )
 
 
@@ -3077,9 +3067,7 @@ def _build_slurm_efficiency_html(
     scen_joined = sum(1 for r in rows if r.get("_scen_joined"))
     # The ledger's attempt resolution, read ONCE during enrichment and carried here so the
     # roster renders that resolution instead of re-deriving one from step suffixes.
-    attempt_by_step: dict[str, int] = {
-        s.get("JobID", ""): s["_attempt_n"] for s in step_rows if "_attempt_n" in s
-    }
+    attempt_by_step: dict[str, int] = {s.get("JobID", ""): s["_attempt_n"] for s in step_rows if "_attempt_n" in s}
 
     def _cell(row: dict[str, Any], col: _EffColumn) -> str:
         """One cell, carrying its own provenance as a native `title` tooltip.
@@ -3396,10 +3384,7 @@ _JUMP_NAV_JS = """
 
 
 def _jump_nav(section_titles: tuple[str, ...] = _SECTION_TITLES) -> str:
-    links = " &middot; ".join(
-        f'<a href="#{_anchor(t)}" data-jump="{_anchor(t)}">{_esc(t)}</a>'
-        for t in section_titles
-    )
+    links = " &middot; ".join(f'<a href="#{_anchor(t)}" data-jump="{_anchor(t)}">{_esc(t)}</a>' for t in section_titles)
     return f'<nav class="jump-nav">{links}</nav>'
 
 
@@ -3466,15 +3451,10 @@ def _wrap_html_doc(
     # table outside the reproduction guide could mount. Generalising it is what lets the
     # run-timeline and SLURM tables become fragments on the sibling page.
     frag_mounts = "".join(
-        f'<template data-trf-mount="{container_id}">{f.markup}</template>'
-        for container_id, f in frags
+        f'<template data-trf-mount="{container_id}">{f.markup}</template>' for container_id, f in frags
     )
     frag_scripts = (
-        "<script>"
-        + _TRF_MOUNT_JS
-        + tabulator_shared_js()
-        + "".join(f.script for _, f in frags)
-        + "</script>"
+        "<script>" + _TRF_MOUNT_JS + tabulator_shared_js() + "".join(f.script for _, f in frags) + "</script>"
         if frags
         else ""
     )

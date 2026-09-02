@@ -124,9 +124,7 @@ class retrieve_TRITON_SWMM_test_case:
             setattr(self.system.cfg_system, key, val)
 
         # update system directory
-        self.system.cfg_system.system_directory = (
-            self.system.cfg_system.system_directory.parent / test_system_dirname
-        )
+        self.system.cfg_system.system_directory = self.system.cfg_system.system_directory.parent / test_system_dirname
         anlysys_dir = self.system.cfg_system.system_directory / analysis_name
 
         if start_from_scratch and anlysys_dir.exists():
@@ -198,8 +196,7 @@ class retrieve_TRITON_SWMM_test_case:
         if cfg_analysis.toggle_sensitivity_analysis:
             self.analysis.sensitivity.export_sensitivity_definition_csv()
 
-        self.system.process_system_level_inputs(
-        )
+        self.system.process_system_level_inputs()
 
     # create weather time series dataset
     def create_short_intense_weather_timeseries(
@@ -228,16 +225,10 @@ class retrieve_TRITON_SWMM_test_case:
             storm_tide: Water level (m) - default 3m
         """
         wlevel_name = self.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
-        tstep_coord_name = (
-            self.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
-        )
-        rain_spatial_mean_name = (
-            self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
-        )
+        tstep_coord_name = self.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
+        rain_spatial_mean_name = self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
         df_raingage_mapping = pd.read_csv(self.system.cfg_system.subcatchment_raingage_mapping)  # type: ignore
-        gage_colname = (
-            self.system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
-        )
+        gage_colname = self.system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
         gages = df_raingage_mapping[gage_colname].unique()
 
         reporting_tstep_sec = self.analysis.cfg_analysis.TRITON_reporting_timestep_s
@@ -262,9 +253,7 @@ class retrieve_TRITON_SWMM_test_case:
             df[event_index_name] = event_idx
             lst_df.append(df)
         df_tseries = pd.concat(lst_df)
-        df_tseries = df_tseries.reset_index().set_index(
-            [event_index_name, tstep_coord_name]
-        )
+        df_tseries = df_tseries.reset_index().set_index([event_index_name, tstep_coord_name])
 
         ds_weather_tseries = df_tseries.to_xarray()
         ds_weather_tseries.to_netcdf(f_out)
@@ -336,9 +325,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # out from under the reaper's, which is a delete-the-wrong-tree bug, not
         # a style problem.
         _slug_runs_root = slug_runs_root(worktree_slug())
-        _runs_root_override = runs_root_override or os.environ.get(
-            _TEST_RUNS_ROOT_OVERRIDE_ENV
-        )
+        _runs_root_override = runs_root_override or os.environ.get(_TEST_RUNS_ROOT_OVERRIDE_ENV)
         if _runs_root_override is not None:
             runs_root = Path(_runs_root_override) / "synthetic_test_runs"
         else:
@@ -416,9 +403,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # differs from the previous case's re-provisions (borrower_is_healthy is
         # False against the other sha); post-canonical that costs ~61 MB, not a
         # full clone, which is the same argument master Risk X3 makes.
-        _effective_pin = (additional_system_configs or {}).get(
-            "TRITONSWMM_branch_key", TRITON_PIN
-        )
+        _effective_pin = (additional_system_configs or {}).get("TRITONSWMM_branch_key", TRITON_PIN)
         # PROVISION THE CONFIGURED TREE, never a fixed `_software/triton`.
         # `_write_configs` applies `additional_system_configs` LAST
         # (`system_cfg.update(kwargs["additional_system_configs"])`, :501), so a
@@ -434,13 +419,9 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # wrote the same path from another node. The `.triton.provision.lock` did
         # not serialize them: job 18864835 measured two nodes acquiring one
         # resolve_filelock lock on this GPFS home at t+0.00s each.
-        _effective_software_dir = (additional_system_configs or {}).get(
-            "TRITONSWMM_software_directory"
-        )
+        _effective_software_dir = (additional_system_configs or {}).get("TRITONSWMM_software_directory")
         provision_borrower(
-            Path(_effective_software_dir)
-            if _effective_software_dir is not None
-            else self._software_root / "triton",
+            Path(_effective_software_dir) if _effective_software_dir is not None else self._software_root / "triton",
             pin=_effective_pin,
         )
 
@@ -468,14 +449,11 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # system_directory and re-writes configs; only the run-side preprocessing
         # is gated. See A6 verification in the Phase 2 plan doc.
         if start_from_scratch and not skip_run:
-            self.system.process_system_level_inputs( verbose=False
-            )
+            self.system.process_system_level_inputs(verbose=False)
 
     def _write_configs(self, **kwargs):
         events_csv = self.system_directory / "weather_events_to_simulate.csv"
-        pd.DataFrame({"event_index": list(range(kwargs["n_events"]))}).to_csv(
-            events_csv, index=False
-        )
+        pd.DataFrame({"event_index": list(range(kwargs["n_events"]))}).to_csv(events_csv, index=False)
 
         params = kwargs["params"]
         system_cfg = {
@@ -483,9 +461,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "watershed_gis_polygon": str(self.artifacts.watershed),
             "DEM_fullres": str(self.artifacts.dem),
             "SWMM_hydraulics": str(self.artifacts.swmm_hydraulics),
-            "TRITONSWMM_software_directory": str(
-                self._software_root / "triton"
-            ),
+            "TRITONSWMM_software_directory": str(self._software_root / "triton"),
             # SINGLE-SOURCED with the provisioner. A literal here and a different literal
             # in `_triton_source_cache.py` lets a re-point half-land: the provisioner
             # clones one remote while this config declares the other, and
@@ -494,9 +470,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "TRITONSWMM_git_URL": TRITON_GIT_URL,
             "TRITONSWMM_branch_key": TRITON_PIN,
             "SWMM_software_directory": str(self._software_root / "swmm"),
-            "triton_swmm_configuration_template": str(
-                self.artifacts.tritonswmm_cfg
-            ),
+            "triton_swmm_configuration_template": str(self.artifacts.tritonswmm_cfg),
             "toggle_tritonswmm_model": kwargs["toggle_tritonswmm_model"],
             "toggle_triton_model": kwargs["toggle_triton_model"],
             "toggle_swmm_model": kwargs["toggle_swmm_model"],
@@ -519,9 +493,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             system_cfg.update(
                 {
                     "SWMM_hydrology": str(self.artifacts.swmm_hydrology),
-                    "subcatchment_raingage_mapping": str(
-                        self.artifacts.subcatchment_raingage_mapping
-                    ),
+                    "subcatchment_raingage_mapping": str(self.artifacts.subcatchment_raingage_mapping),
                     "subcatchment_raingage_mapping_gage_id_colname": "raingage_id",
                 }
             )
@@ -564,9 +536,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             # run() validates the INLINE report block (Post-F2 R1), NOT a standalone
             # report_config.yaml. Emitting an empty inline block + an unread standalone
             # file tripped validate_sensitivity_independent_vars() at run() entry (D2).
-            _report_src = (
-                Path(__file__).resolve().parent / "synthetic_model" / "report_config_synth_sensitivity.yaml"
-            )
+            _report_src = Path(__file__).resolve().parent / "synthetic_model" / "report_config_synth_sensitivity.yaml"
             analysis_cfg["report"] = yaml.safe_load(_report_src.read_text())
         analysis_cfg.update(kwargs["additional_analysis_configs"])
 

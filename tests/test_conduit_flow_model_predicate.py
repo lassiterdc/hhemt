@@ -31,8 +31,8 @@ def _conduit_counts(snakefile: str) -> tuple[int, int]:
 @pytest.mark.parametrize(
     ("model_types", "expect_present"),
     [
-        (["tritonswmm", "triton"], True),   # coupled: SWMM link outputs exist
-        (["triton"], False),                # TRITON-only: they do not
+        (["tritonswmm", "triton"], True),  # coupled: SWMM link outputs exist
+        (["triton"], False),  # TRITON-only: they do not
     ],
     ids=["coupled-emits-conduit", "triton-only-omits-conduit"],
 )
@@ -50,9 +50,7 @@ def test_conduit_flow_emission_and_enumeration_agree(
         assert rule_defs > 0, "coupled analysis must emit the conduit_flow rule"
         assert rule_all_entries > 0, "coupled analysis must enumerate conduit_flow in rule all"
     else:
-        assert rule_defs == 0, (
-            "TRITON-only analysis emitted a conduit_flow rule; the emission gate did not fire"
-        )
+        assert rule_defs == 0, "TRITON-only analysis emitted a conduit_flow rule; the emission gate did not fire"
         assert rule_all_entries == 0, (
             "TRITON-only analysis still enumerates conduit_flow in rule all — emission and "
             "enumeration have DESYNCED, which is MissingInputException at parse time"
@@ -61,6 +59,6 @@ def test_conduit_flow_emission_and_enumeration_agree(
     # peak_flood_depth is model-agnostic and must survive BOTH arms. This is what
     # catches an over-firing gate that drops the whole per_member selection rather than
     # the one SWMM-derived template.
-    assert re.search(r"^rule plot_per_sim_per_member_peak_flood_depth:", generated, re.M), (
-        "peak_flood_depth must be emitted regardless of model type"
-    )
+    assert re.search(
+        r"^rule plot_per_sim_per_member_peak_flood_depth:", generated, re.M
+    ), "peak_flood_depth must be emitted regardless of model type"

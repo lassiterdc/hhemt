@@ -6,7 +6,6 @@ Per cleanup-rerun-delete-redesign Phase 4.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -50,7 +49,7 @@ def test_override_force_rerun_member_id_on_non_sensitivity_fails(synth_multi_sim
 
 
 def test_build_force_rerun_spec_all_none():
-    """"all"/"none" map directly to scope tokens with no token list."""
+    """ "all"/"none" map directly to scope tokens with no token list."""
     from hhemt.analysis import TRITONSWMM_analysis  # noqa: F401
 
     # Pure dataclass shape test — no analysis fixture needed.
@@ -172,9 +171,7 @@ def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivit
     scen = TRITONSWMM_scenario(0, sub)
     model_type = scen.run.model_types_enabled[0]
     log_before = scen.get_log(model_type)
-    assert len(log_before.processing_log.outputs) > 0, (
-        "expected at least one processing-log entry after completed run"
-    )
+    assert len(log_before.processing_log.outputs) > 0, "expected at least one processing-log entry after completed run"
 
     # Invoke the force-rerun helper directly (no Snakemake side effects).
     analysis._apply_force_rerun({"sa_id": [first_member_id]})
@@ -197,6 +194,7 @@ def test_override_force_rerun_does_not_clear_other_member_processing_log(synthet
     member_ids = list(sensitivity.members.keys())
     if len(member_ids) < 2:
         import pytest as _pytest
+
         _pytest.skip("requires >= 2 members for cross-member isolation check")
 
     target_member, other_member = member_ids[0], member_ids[1]
@@ -224,6 +222,7 @@ def test_override_force_rerun_event_iloc_invalidates_only_named_events(synthetic
     n_sims = len(analysis.df_sims)
     if n_sims < 2:
         import pytest as _pytest
+
         _pytest.skip("requires >= 2 sims for cross-event isolation check")
 
     target_iloc = 1
@@ -240,9 +239,6 @@ def test_override_force_rerun_event_iloc_invalidates_only_named_events(synthetic
     target_log_after = target_scen2.get_log(model_type).processing_log.outputs
     other_log_after = dict(other_scen2.get_log(model_type).processing_log.outputs)
     assert target_log_after == {}, (
-        f"target event_iloc={target_iloc} log must be invalidated; got "
-        f"{list(target_log_after.keys())}"
+        f"target event_iloc={target_iloc} log must be invalidated; got " f"{list(target_log_after.keys())}"
     )
-    assert other_log_before == other_log_after, (
-        f"non-target event_iloc={other_iloc} log must be unchanged"
-    )
+    assert other_log_before == other_log_after, f"non-target event_iloc={other_iloc} log must be unchanged"

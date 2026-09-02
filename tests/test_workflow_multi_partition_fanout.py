@@ -15,7 +15,6 @@ DQ7b ``--target-partition`` threading. Snakefile generation only (no compile).
 """
 
 
-
 def _setup_rule_block(snakefile_text: str, target_id: int) -> str:
     needle = f"rule setup_target_{target_id}:"
     idx = snakefile_text.find(needle)
@@ -61,9 +60,9 @@ def test_multi_partition_fanout_two_targets_distinct_emission(
     emitted_setup_partitions = set()
     for t in targets:
         block = _setup_rule_block(master, t.target_id)
-        assert f"--target-partition {t.target_partition}" in block, (
-            f"setup_target_{t.target_id} missing '--target-partition {t.target_partition}'"
-        )
+        assert (
+            f"--target-partition {t.target_partition}" in block
+        ), f"setup_target_{t.target_id} missing '--target-partition {t.target_partition}'"
         emitted_setup_partitions.add(t.target_partition)
     assert emitted_setup_partitions == {"gpu-a6000", "gpu-a100"}
 
@@ -74,9 +73,9 @@ def test_multi_partition_fanout_two_targets_distinct_emission(
         gpu_hw = resolve_gpu_target(sub.cfg_hpc_system, partition)[0]
         assert gpu_hw in {"a6000", "a100"}, (member_id, partition, gpu_hw)
         block = _sim_rule_block(master, member_id)
-        assert (f"gpu:{gpu_hw}" in block) or (f'gpu_model="{gpu_hw}"' in block), (
-            f"member_id={member_id}: partition-derived hardware {gpu_hw!r} not found in the sim rule GPU directive."
-        )
+        assert (f"gpu:{gpu_hw}" in block) or (
+            f'gpu_model="{gpu_hw}"' in block
+        ), f"member_id={member_id}: partition-derived hardware {gpu_hw!r} not found in the sim rule GPU directive."
         seen_hw.add(gpu_hw)
     # Both hardwares appear across the members (genuine cross-hardware fan-out).
     assert seen_hw == {"a6000", "a100"}, seen_hw

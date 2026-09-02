@@ -473,11 +473,7 @@ def test_reprex_guide_rows_default_to_required_first_then_alphabetical(tmp_path,
     assert tiers == sorted(tiers), f"clause (a): required rows must come first; tiers={tiers}"
 
     for tier in (0, 1):
-        names = [
-            metadata._strip_code(r[0]).lower()
-            for r, t in zip(rows, tiers, strict=True)
-            if t == tier
-        ]
+        names = [metadata._strip_code(r[0]).lower() for r, t in zip(rows, tiers, strict=True) if t == tier]
         assert names == sorted(names), f"clause (b): tier {tier} not alphabetical: {names}"
 
 
@@ -624,9 +620,9 @@ def test_a_constant_sweep_column_returns_the_same_shape_as_a_varied_one():
     # 1. The return shape is UNIFORM across both branches -- this is the invariant.
     for label, out in (("constant", constant), ("varied", varied)):
         cell_tip = out["analysis_config.run_mode"]
-        assert isinstance(cell_tip, tuple) and len(cell_tip) == 2, (
-            f"{label} column returned {type(cell_tip).__name__}, not a (cell, tooltip) 2-tuple"
-        )
+        assert (
+            isinstance(cell_tip, tuple) and len(cell_tip) == 2
+        ), f"{label} column returned {type(cell_tip).__name__}, not a (cell, tooltip) 2-tuple"
 
     # A constant column is NOT a varied parameter: it shows its value, with no hover.
     cell, tip = constant["analysis_config.run_mode"]
@@ -726,14 +722,12 @@ def test_option_glossary_drift_is_refused_at_class_definition_time():
     with pytest.raises(TypeError, match="options keys"):
 
         class _Drifted(cfgBaseModel):
-            m: Literal["a", "b", "c"] = Field(
-                "a", json_schema_extra=field_meta(options={"a": "A", "b": "B"})
-            )
+            m: Literal["a", "b", "c"] = Field("a", json_schema_extra=field_meta(options={"a": "A", "b": "B"}))
 
 
 def test_required_when_falls_back_to_the_triggers_declared_default():
     """A YAML that omits the trigger must still be judged against its default."""
-    from typing import Literal, Optional
+    from typing import Literal
 
     import pytest
     from pydantic import Field
@@ -742,9 +736,7 @@ def test_required_when_falls_back_to_the_triggers_declared_default():
 
     class _M(cfgBaseModel):
         mode: Literal["local", "batch_job"] = "local"
-        dur: Optional[int] = Field(
-            None, json_schema_extra=field_meta(required_when=[when("mode", "batch_job")])
-        )
+        dur: int | None = Field(None, json_schema_extra=field_meta(required_when=[when("mode", "batch_job")]))
 
     assert _M().dur is None  # trigger absent -> default "local" -> not required
     assert _M(mode="batch_job", dur=90).dur == 90
@@ -919,15 +911,18 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
         "111": {
             "job": {"JobID": "111", "Elapsed": "00:00:23", "NNodes": "1", "NCPUS": "1"},
             # No recorded CPU usage at all -> not measured -> em-dash.
-            "batch": {"JobID": "111.batch", "TotalCPU": "00:00:00", "MaxRSS": "700K",
-                      "TRESUsageInTot": ""},
+            "batch": {"JobID": "111.batch", "TotalCPU": "00:00:00", "MaxRSS": "700K", "TRESUsageInTot": ""},
         },
         "222": {
             "job": {"JobID": "222", "Elapsed": "00:01:40", "NNodes": "1", "NCPUS": "1"},
             # A genuine measurement -> the number must survive. The numerator moved off
             # `TotalCPU`, which reads zero for srun-step work, onto the recorded usage.
-            "batch": {"JobID": "222.batch", "TotalCPU": "00:00:00", "MaxRSS": "512K",
-                      "TRESUsageInTot": "cpu=00:00:00,energy=0,mem=512K"},
+            "batch": {
+                "JobID": "222.batch",
+                "TotalCPU": "00:00:00",
+                "MaxRSS": "512K",
+                "TRESUsageInTot": "cpu=00:00:00,energy=0,mem=512K",
+            },
             "0": {"JobID": "222.0", "TRESUsageInTot": "cpu=00:01:31,energy=0,mem=512K"},
         },
     }
@@ -1175,9 +1170,9 @@ def test_bucket_heading_does_not_repeat_badge_verb(bucket):
     badge_text = re.sub(r"<[^>]+>", "", metadata._bucket_badge(bucket)).strip()
     verb = metadata._BUCKET_VERB[bucket]
     assert badge_text == verb, "precondition: the badge renders the verb"
-    assert not metadata._BUCKET_HEADING[bucket].startswith(verb), (
-        f"heading repeats the badge verb {verb!r} immediately after it"
-    )
+    assert not metadata._BUCKET_HEADING[bucket].startswith(
+        verb
+    ), f"heading repeats the badge verb {verb!r} immediately after it"
 
 
 def test_table_interaction_note_is_single_sourced():
@@ -1213,9 +1208,7 @@ def test_reader_visible_prose_uses_one_dash_convention():
     """
     prose = re.sub(r"<[^>]+>", "", metadata._EFF_UNCAPTURED_NOTE)
     ascii_dash = re.findall(r"(?<![-<!])--(?!>)", prose)
-    assert not ascii_dash, (
-        f"{len(ascii_dash)} ASCII '--' in prose that elsewhere uses an em dash"
-    )
+    assert not ascii_dash, f"{len(ascii_dash)} ASCII '--' in prose that elsewhere uses an em dash"
 
 
 def test_scenario_status_registers_the_scenario_directory_slug(tmp_path):
@@ -1381,8 +1374,7 @@ def test_every_closed_set_field_declares_its_option_glossary():
                 if declared(fi, "options") is None:
                     missing.append(f"{label}.{name}")
     assert not missing, (
-        "closed-set fields rendered in the Reproduction Guide with no option "
-        f"glossary: {sorted(missing)}"
+        "closed-set fields rendered in the Reproduction Guide with no option " f"glossary: {sorted(missing)}"
     )
 
 
@@ -1410,20 +1402,18 @@ def test_varied_values_cell_carries_the_tooltip_affordance_as_one_rule():
     # td[title], span[title], abbr[title]`), so the pattern captures the whole selector
     # list and requires `strong.tip-affordance` to be a member of it. A bare substring
     # test would pass over an empty match set and certify nothing.
-    match = re.search(
-        r"(?:^|\}|\n)\s*([^{}]*\bstrong\.tip-affordance\b[^{}]*)\{([^}]*)\}", css
-    )
+    match = re.search(r"(?:^|\}|\n)\s*([^{}]*\bstrong\.tip-affordance\b[^{}]*)\{([^}]*)\}", css)
     assert match is not None, f"no strong.tip-affordance rule in the emitted CSS:\n{css}"
-    assert "strong.tip-affordance" in match.group(1), (
-        f"strong.tip-affordance is not a member of the matched selector list: {match.group(1)!r}"
-    )
+    assert "strong.tip-affordance" in match.group(
+        1
+    ), f"strong.tip-affordance is not a member of the matched selector list: {match.group(1)!r}"
     block = match.group(2)
 
     assert "cursor: help" in block, f"affordance rule lacks the help cursor: {block!r}"
     assert re.search(r"border-bottom:\s*1px\s+dotted", block), f"affordance rule lacks the dotted underline: {block!r}"
-    assert re.search(rf"(?<!-)color:\s*{re.escape(expected_color)}", block), (
-        f"affordance colour is not the resolved brand colour {expected_color!r}: {block!r}"
-    )
+    assert re.search(
+        rf"(?<!-)color:\s*{re.escape(expected_color)}", block
+    ), f"affordance colour is not the resolved brand colour {expected_color!r}: {block!r}"
 
 
 def test_varied_values_affordance_is_absent_from_the_single_value_branch():
@@ -1533,9 +1523,7 @@ def test_queue_column_falls_back_to_slurm_planned_and_discloses_its_source():
     csv = _EFF_HEADER + row
 
     def queue_cell(recovery, scenario_map):
-        mounted = metadata._build_slurm_efficiency_html(
-            [("r", csv)], {}, scenario_map, lambda p: "", recovery
-        )
+        mounted = metadata._build_slurm_efficiency_html([("r", csv)], {}, scenario_map, lambda p: "", recovery)
         rows = _tabulator_rows(mounted)
         assert rows, "no data row rendered"
         assert "Queue, this job (s)" in rows[0], f"queue header absent; got {sorted(rows[0])}"

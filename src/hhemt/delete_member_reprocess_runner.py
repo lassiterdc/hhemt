@@ -20,25 +20,35 @@ from hhemt.utils import fast_rmtree
 
 logger = logging.getLogger(__name__)
 
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--member-id", required=True)
     parser.add_argument("--analysis-dir", type=Path, required=True, help="The SUB-analysis dir.")
-    parser.add_argument("--delete-processed", action="store_true",
-                        help="Also delete sims/*/processed/ (set when start_with=='process').")
+    parser.add_argument(
+        "--delete-processed",
+        action="store_true",
+        help="Also delete sims/*/processed/ (set when start_with=='process').",
+    )
     return parser.parse_args(argv)
+
 
 def _write_submission_sentinel(sentinel_path: Path, *, rule_token: str, slurm_job_id: str, member_id: str) -> None:
     sentinel_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = sentinel_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({
-        "slurm_jobid": slurm_job_id,
-        "run_uuid": os.environ.get("SLURM_JOB_NAME"),
-        "rule_token": rule_token,
-        "sa_id": member_id,
-        "submitted_at": datetime.datetime.now().isoformat(),
-    }))
+    tmp.write_text(
+        json.dumps(
+            {
+                "slurm_jobid": slurm_job_id,
+                "run_uuid": os.environ.get("SLURM_JOB_NAME"),
+                "rule_token": rule_token,
+                "sa_id": member_id,
+                "submitted_at": datetime.datetime.now().isoformat(),
+            }
+        )
+    )
     os.replace(tmp, sentinel_path)
+
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
@@ -48,7 +58,9 @@ def main(argv: list[str] | None = None) -> int:
     if _slurm_jobid:
         _rule_token = f"delete_member_reprocess_{args.member_id}"
         _sentinel = sub_dir / "_status" / "_submitted" / f"{_rule_token}.json"
-        _write_submission_sentinel(_sentinel, rule_token=_rule_token, slurm_job_id=_slurm_jobid, member_id=args.member_id)
+        _write_submission_sentinel(
+            _sentinel, rule_token=_rule_token, slurm_job_id=_slurm_jobid, member_id=args.member_id
+        )
     try:
         if args.delete_processed:
             for processed_dir in sorted(sub_dir.glob("sims/*/processed")):
@@ -72,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         if _sentinel is not None:
             # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     sys.exit(main())
