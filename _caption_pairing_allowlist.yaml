@@ -196,3 +196,41 @@ unpaired_allowlist:
       Digest recorded AFTER the reformat, so the exemption expires on the next real
       change to this file rather than on arrival. This renderer was the one the
       authoring branch's own sweep missed; its siblings are allowlisted above.
+  - renderer: cross_experiment_intercomparison
+    caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison.rst
+    renderer_sha256: 801a266b2893eda088131064678016e7b0837823448d2462203cc61f5dde5b49
+    justification: >-
+      Tree-wide ruff pass over the merged file set. IMPORT-ONLY -- discharged by
+      measurement, not by judgement. The sibling entries in this file prove
+      formatting-only changes via whole-AST equivalence; that instrument cannot be
+      used here, because REMOVING an import necessarily changes the AST. The
+      correct proof is two-part and both parts were run. (1) The only imported name
+      that changed is `_html` (F401, `import html as _html`), REMOVED, and it has
+      ZERO references in the module: an ast.walk finds 0 Name nodes and 0 Attribute
+      value-nodes bearing that identifier. Note that a plain `grep -c _html`
+      returns 7 and is the WRONG instrument -- every hit is a substring of a
+      different identifier (`build_html_document`, `_build_intercomparison_html`,
+      `_plain_html`, `body_heading_html`), none of them the bare alias. (2) With
+      imports stripped from every body list, the module's AST is IDENTICAL to its
+      AST at HEAD, so no rendering statement moved. A caption cannot be falsified
+      by the removal of a name nothing reads. Digest recorded AFTER the
+      ruff-format pass riding this same commit, so the exemption expires on the
+      next real change to this renderer rather than on arrival.
+
+  - renderer: per_sim_peak_flood_depth
+    caption: src/hhemt/report_templates/captions/per_sim_peak_flood_depth.rst
+    renderer_sha256: 5f2f050945fddd676c792d3bc3ba6153c0bd677ae66b01cf8caafdf96496c181
+    justification: >-
+      Tree-wide ruff pass over the merged file set. IMPORT-ONLY -- discharged by
+      measurement, not by judgement. The change is an I001 REORDER of one
+      function-local import (`report_renderers._model_arms.resolve_arm_group`)
+      within its own block, so whole-AST equivalence cannot hold (node order moved)
+      even though nothing semantic did. Two measurements discharge it. (1) The SET
+      of imported names is identical before and after -- zero added, zero removed
+      -- so no name this module binds has changed. (2) With imports stripped from
+      every body list, the module's AST is IDENTICAL to its AST at HEAD, so no
+      panel, colour scale, tick derivation or emitted string moved. The caption
+      describes the three-panel depth / WSE / event-hydrology figure and its data
+      sources; none of that is reachable by reordering an import. Digest recorded
+      AFTER the ruff-format pass riding this same commit, so the exemption expires
+      on the next real change to this renderer rather than on arrival.

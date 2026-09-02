@@ -6,6 +6,7 @@ with dynamic concurrency (no --ntasks, using --exclusive instead).
 """
 
 import pytest
+
 import tests.fixtures.test_case_catalog as cases
 
 pytestmark = pytest.mark.requires_snakemake_subprocess
@@ -14,9 +15,7 @@ pytestmark = pytest.mark.requires_snakemake_subprocess
 @pytest.fixture
 def norfolk_1job_cpu_only():
     """Norfolk test case configured for 1-job mode (CPU-only)."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False
-    )
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode with CPU-only
@@ -45,9 +44,7 @@ def norfolk_1job_cpu_only():
 @pytest.fixture
 def norfolk_1job_with_gpus():
     """Norfolk test case configured for 1-job mode with GPUs."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False
-    )
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode with GPUs
@@ -63,9 +60,7 @@ def norfolk_1job_with_gpus():
         system_name="test-cluster",
         default_account="test_account",
         max_concurrent_jobs=10,
-        partitions={
-            "test_partition": PartitionSpec(max_runtime=120, gpu_hardware="a100", gpus_per_node=8)
-        },
+        partitions={"test_partition": PartitionSpec(max_runtime=120, gpu_hardware="a100", gpus_per_node=8)},
     )
     analysis.cfg_analysis.n_gpus = 1  # Use GPUs
     analysis.cfg_analysis.n_mpi_procs = 1
@@ -93,9 +88,7 @@ def test_1job_sbatch_script_cpu_only(norfolk_1job_cpu_only):
     snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
 
     # Generate SBATCH script
-    script_path = workflow_builder._generate_single_job_submission_script(
-        snakefile_path, config_dir
-    )
+    script_path = workflow_builder._generate_single_job_submission_script(snakefile_path, config_dir)
 
     # Read the generated script
     assert script_path.exists(), "SBATCH script should be created"
@@ -104,42 +97,24 @@ def test_1job_sbatch_script_cpu_only(norfolk_1job_cpu_only):
     # Verify correct SBATCH directives
     assert "--exclusive" in script_content, "Should use --exclusive"
     assert "--nodes=2" in script_content, "Should request 2 nodes"
-    assert (
-        "--ntasks" not in script_content
-    ), "Should NOT have --ntasks (dynamic concurrency)"
-    assert (
-        "--cpus-per-task" not in script_content
-    ), "Should NOT have --cpus-per-task (dynamic concurrency)"
-    assert (
-        "--mem=0" not in script_content
-    ), "Should NOT have --mem=0 (redundant with --exclusive)"
+    assert "--ntasks" not in script_content, "Should NOT have --ntasks (dynamic concurrency)"
+    assert "--cpus-per-task" not in script_content, "Should NOT have --cpus-per-task (dynamic concurrency)"
+    assert "--mem=0" not in script_content, "Should NOT have --mem=0 (redundant with --exclusive)"
 
     # Verify dynamic CPU calculation
     assert (
         "TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))" in script_content
     ), "Should calculate TOTAL_CPUS dynamically"
-    assert (
-        "--cores $TOTAL_CPUS" in script_content
-    ), "Should pass dynamic cores to Snakemake"
+    assert "--cores $TOTAL_CPUS" in script_content, "Should pass dynamic cores to Snakemake"
 
     # Verify GPU directive NOT present for CPU-only
-    assert (
-        "--gres=gpu:" not in script_content
-    ), "Should not have GPU directive for CPU-only"
-    assert (
-        "TOTAL_GPUS" not in script_content
-    ), "Should not calculate TOTAL_GPUS for CPU-only"
-    assert (
-        "--resources gpu=" not in script_content
-    ), "Should not pass GPU resources for CPU-only"
+    assert "--gres=gpu:" not in script_content, "Should not have GPU directive for CPU-only"
+    assert "TOTAL_GPUS" not in script_content, "Should not calculate TOTAL_GPUS for CPU-only"
+    assert "--resources gpu=" not in script_content, "Should not pass GPU resources for CPU-only"
 
     # Verify error handling for missing SLURM env vars
-    assert (
-        'if [ -z "$SLURM_CPUS_ON_NODE" ]' in script_content
-    ), "Should check for SLURM_CPUS_ON_NODE"
-    assert (
-        "Cannot determine CPU allocation" in script_content
-    ), "Should have error message"
+    assert 'if [ -z "$SLURM_CPUS_ON_NODE" ]' in script_content, "Should check for SLURM_CPUS_ON_NODE"
+    assert "Cannot determine CPU allocation" in script_content, "Should have error message"
     assert "exit 1" in script_content, "Should exit with error code"
 
     # Verify other standard directives
@@ -163,17 +138,13 @@ def test_1job_sbatch_script_with_gpus(norfolk_1job_with_gpus):
     snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
 
     # Generate SBATCH script
-    script_path = workflow_builder._generate_single_job_submission_script(
-        snakefile_path, config_dir
-    )
+    script_path = workflow_builder._generate_single_job_submission_script(snakefile_path, config_dir)
 
     # Read the generated script
     script_content = script_path.read_text()
 
     # Verify GPU directive is present in SBATCH
-    assert (
-        "--gres=gpu:a100:8" in script_content
-    ), "Should request 8 a100 GPUs per node with --gres"
+    assert "--gres=gpu:a100:8" in script_content, "Should request 8 a100 GPUs per node with --gres"
 
     # Verify GPU calculation in bash script
     assert (
@@ -181,9 +152,7 @@ def test_1job_sbatch_script_with_gpus(norfolk_1job_with_gpus):
     ), "Should calculate TOTAL_GPUS dynamically (2 nodes × 8 GPUs/node = 16 total)"
 
     # Verify GPU resources passed via CLI
-    assert (
-        "--resources gpu=$TOTAL_GPUS" in script_content
-    ), "Should pass GPU resources via CLI argument"
+    assert "--resources gpu=$TOTAL_GPUS" in script_content, "Should pass GPU resources via CLI argument"
 
     # Verify still has other correct directives
     assert "--exclusive" in script_content
@@ -203,9 +172,7 @@ def test_1job_sbatch_script_error_if_cpus_not_set(norfolk_1job_cpu_only):
     config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
     snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
 
-    script_path = workflow_builder._generate_single_job_submission_script(
-        snakefile_path, config_dir
-    )
+    script_path = workflow_builder._generate_single_job_submission_script(snakefile_path, config_dir)
 
     script_content = script_path.read_text()
 
@@ -230,9 +197,7 @@ def test_1job_sbatch_requires_hpc_total_nodes(norfolk_1job_cpu_only):
 
     # Should raise assertion error
     with pytest.raises(AssertionError, match="hpc_total_nodes required"):
-        workflow_builder._generate_single_job_submission_script(
-            snakefile_path, config_dir
-        )
+        workflow_builder._generate_single_job_submission_script(snakefile_path, config_dir)
 
 
 def test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus(norfolk_1job_with_gpus):
@@ -258,12 +223,8 @@ def test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus(norfolk_1job_wit
     snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
 
     # Should raise assertion error during SBATCH script generation
-    with pytest.raises(
-        AssertionError, match="hpc_gpus_per_node required when using GPUs"
-    ):
-        workflow_builder._generate_single_job_submission_script(
-            snakefile_path, config_dir
-        )
+    with pytest.raises(AssertionError, match="hpc_gpus_per_node required when using GPUs"):
+        workflow_builder._generate_single_job_submission_script(snakefile_path, config_dir)
 
 
 def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
@@ -277,28 +238,21 @@ def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
     config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
     snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
 
-    script_path = workflow_builder._generate_single_job_submission_script(
-        snakefile_path, config_dir
-    )
+    script_path = workflow_builder._generate_single_job_submission_script(snakefile_path, config_dir)
 
     script_content = script_path.read_text()
 
     # Verify conda initialization logic is present
-    assert (
-        "Initialize conda for non-interactive shell" in script_content
-    ), "Should include conda initialization comment"
+    assert "Initialize conda for non-interactive shell" in script_content, "Should include conda initialization comment"
     assert (
         'if [ -f "${CONDA_PREFIX}/../etc/profile.d/conda.sh" ]' in script_content
     ), "Should check for conda.sh using CONDA_PREFIX"
     assert (
         'source "${CONDA_PREFIX}/../etc/profile.d/conda.sh"' in script_content
     ), "Should source conda.sh from CONDA_PREFIX path"
+    assert 'eval "$(${CONDA_EXE} shell.bash hook)' in script_content, "Should use using CONDA_EXE"
     assert (
-        'eval "$(${CONDA_EXE} shell.bash hook)' in script_content
-    ), "Should use using CONDA_EXE"
-    assert (
-        "ERROR: Cannot find conda initialization. CONDA_EXE and CONDA_PREFIX are both unset"
-        in script_content
+        "ERROR: Cannot find conda initialization. CONDA_EXE and CONDA_PREFIX are both unset" in script_content
     ), "Should warn if conda.sh not found"
 
     # Verify conda initialization happens BEFORE conda activate
@@ -306,9 +260,7 @@ def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
     activate_pos = script_content.find("conda activate hhemt")
     assert init_pos > 0, "Conda initialization should be present"
     assert activate_pos > 0, "Conda activation should be present"
-    assert (
-        init_pos < activate_pos
-    ), "Conda initialization must come before conda activate"
+    assert init_pos < activate_pos, "Conda initialization must come before conda activate"
 
 
 def test_override_hpc_total_nodes(norfolk_1job_cpu_only):
@@ -454,9 +406,7 @@ def test_1job_sbatch_account_from_cfg_hpc_system(norfolk_1job_cpu_only):
     config = workflow_builder.generate_snakemake_config(mode="single_job")
     config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
     snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
-    script_path = workflow_builder._generate_single_job_submission_script(
-        snakefile_path, config_dir
-    )
+    script_path = workflow_builder._generate_single_job_submission_script(snakefile_path, config_dir)
     script_content = script_path.read_text()
 
     assert "#SBATCH --account=hpc_sys_account" in script_content
@@ -477,18 +427,14 @@ def test_1job_sbatch_gpus_per_node_from_partition_spec(norfolk_1job_with_gpus):
     analysis.cfg_hpc_system = hpc_system_config(
         system_name="test-cluster",
         default_account="hpc_sys_account",
-        partitions={
-            "test_partition": PartitionSpec(max_runtime=120, gpus_per_node=4, gpu_hardware="a100")
-        },
+        partitions={"test_partition": PartitionSpec(max_runtime=120, gpus_per_node=4, gpu_hardware="a100")},
     )
 
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
     config = workflow_builder.generate_snakemake_config(mode="single_job")
     config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
     snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
-    script_path = workflow_builder._generate_single_job_submission_script(
-        snakefile_path, config_dir
-    )
+    script_path = workflow_builder._generate_single_job_submission_script(snakefile_path, config_dir)
     script_content = script_path.read_text()
 
     assert "--gres=gpu:a100:4" in script_content, "per-node count must come from PartitionSpec (4)"

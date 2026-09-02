@@ -21,7 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median, quantiles
 from typing import TYPE_CHECKING
@@ -35,6 +35,7 @@ _ARCHIVE_SUBDIR = "previous_run_archives"
 @dataclass
 class _SnakemakeRollup:
     """Per-(rule, origin) accumulator for cross-rep median rollup."""
+
     job_count: int
     total_s: float
     mean_s: float
@@ -79,7 +80,7 @@ def _archive_previous_run(output_path: Path, fingerprint_sha: str) -> Path | Non
         return None
     archive_dir = output_path.parent / _ARCHIVE_SUBDIR
     archive_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     target = archive_dir / f"{fingerprint_sha}_{stamp}.md"
     target.write_text(prior)
     return target
@@ -88,7 +89,7 @@ def _archive_previous_run(output_path: Path, fingerprint_sha: str) -> Path | Non
 def emit(
     *,
     env_fingerprint: dict[str, str],
-    runs: list["RunArtifacts"],
+    runs: list[RunArtifacts],
     top_n: int,
     findings_top_k: int,
     output_path: Path,
@@ -208,7 +209,10 @@ def emit(
         )
         lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|:---:|")
     else:
-        lines.append("| Node ID | Setup (s) | Call (s) | Teardown (s) | Total (s, median) | Child CPU (s) | Outlier flag | Outcome |")
+        lines.append(
+            "| Node ID | Setup (s) | Call (s) | Teardown (s) | Total (s, median) |"
+            " Child CPU (s) | Outlier flag | Outcome |"
+        )
         lines.append("|---|---:|---:|---:|---:|---:|:---:|:---:|")
     all_nodeids = sorted({n for r in runs for n in r.per_test})
     setup_medians: list[float] = []
@@ -222,10 +226,21 @@ def emit(
         t_med, t_p25, t_p75 = _aggregate([p.teardown_s for p in per_rep])
         tot_med, tot_p25, tot_p75 = _aggregate([p.total_s for p in per_rep])
         cpu_med, _, _ = _aggregate([p.child_cpu_seconds for p in per_rep])
-        rows.append((
-            nid, s_med, s_p75 - s_p25, c_med, c_p75 - c_p25,
-            t_med, t_p75 - t_p25, tot_med, tot_p75 - tot_p25, cpu_med, per_rep[0].outcome,
-        ))
+        rows.append(
+            (
+                nid,
+                s_med,
+                s_p75 - s_p25,
+                c_med,
+                c_p75 - c_p25,
+                t_med,
+                t_p75 - t_p25,
+                tot_med,
+                tot_p75 - tot_p25,
+                cpu_med,
+                per_rep[0].outcome,
+            )
+        )
         setup_medians.append(s_med)
     setup_population_median = median(setup_medians) if setup_medians else 0.0
     rows.sort(key=lambda r: r[7], reverse=True)
@@ -238,9 +253,7 @@ def emit(
                 f"{cpu:.3f} | {outlier} | {outcome} |"
             )
         else:
-            lines.append(
-                f"| `{nid}` | {s:.3f} | {c:.3f} | {t:.3f} | {tot:.3f} | {cpu:.3f} | {outlier} | {outcome} |"
-            )
+            lines.append(f"| `{nid}` | {s:.3f} | {c:.3f} | {t:.3f} | {tot:.3f} | {cpu:.3f} | {outlier} | {outcome} |")
     lines.append("")
 
     # Per-fixture wall-clock
@@ -255,9 +268,7 @@ def emit(
             durations, first_consumer = fixture_acc.get(key, ([], f.consumer_nodeid))
             durations.append(f.duration_s)
             fixture_acc[key] = (durations, first_consumer)
-    for (name, scope), (durations, consumer) in sorted(
-        fixture_acc.items(), key=lambda kv: (-median(kv[1][0]), kv[0])
-    ):
+    for (name, scope), (durations, consumer) in sorted(fixture_acc.items(), key=lambda kv: (-median(kv[1][0]), kv[0])):
         lines.append(f"| `{name}` | {scope} | {median(durations):.3f} | `{consumer}` |")
     lines.append("")
 
@@ -272,10 +283,7 @@ def emit(
     lines.append("| Conftest | Self time (s, median) |")
     lines.append("|---|---:|")
     conftest_keys = sorted({k for r in runs for k in r.conftest_import_times})
-    conftest_rows = [
-        (k, median([r.conftest_import_times.get(k, 0.0) for r in runs]))
-        for k in conftest_keys
-    ]
+    conftest_rows = [(k, median([r.conftest_import_times.get(k, 0.0) for r in runs])) for k in conftest_keys]
     for k, v in sorted(conftest_rows, key=lambda kv: (-kv[1], kv[0])):
         lines.append(f"| `{k}` | {v:.3f} |")
     lines.append("")
@@ -296,16 +304,23 @@ def emit(
         for w in sorted(set(diag.parser_warnings)):
             lines.append(f"    - {w}")
     lines.append("")
-    lines.append("| Rule (verbatim) | Rule (normalized) | Jobs | Total (s) | Mean (s) | Min (s) | Max (s) | Zero-duration jobs | Origin |")
+    lines.append(
+        "| Rule (verbatim) | Rule (normalized) | Jobs | Total (s) | Mean (s) |"
+        " Min (s) | Max (s) | Zero-duration jobs | Origin |"
+    )
     lines.append("|---|---|---:|---:|---:|---:|---:|---:|---|")
     sm_acc: dict[tuple[str, str], list[_SnakemakeRollup]] = {}
     for r in runs:
         for sr in r.snakemake_rules:
             sm_acc.setdefault((sr.rule, sr.test_origin), []).append(
                 _SnakemakeRollup(
-                    job_count=sr.job_count, total_s=sr.total_s, mean_s=sr.mean_s,
-                    min_s=sr.min_s, max_s=sr.max_s,
-                    zero_jobs=sr.zero_duration_job_count, normalized=sr.rule_normalized,
+                    job_count=sr.job_count,
+                    total_s=sr.total_s,
+                    mean_s=sr.mean_s,
+                    min_s=sr.min_s,
+                    max_s=sr.max_s,
+                    zero_jobs=sr.zero_duration_job_count,
+                    normalized=sr.rule_normalized,
                 )
             )
     sm_sorted = sorted(
@@ -350,10 +365,7 @@ def emit(
     lines.append("## Findings")
     lines.append("")
     total_corpus_wallclock = sum(rec.total_s for rec in primary.per_test.values())
-    lines.append(
-        f"Total corpus wall-clock (median across kept reps): "
-        f"**{total_corpus_wallclock:.3f} s**."
-    )
+    lines.append(f"Total corpus wall-clock (median across kept reps): " f"**{total_corpus_wallclock:.3f} s**.")
     lines.append("")
 
     # Findings A
@@ -366,10 +378,14 @@ def emit(
         findings_a.append((f"fixture `{name}`", median(durs), 1, "fixture"))
     for (rule, origin), rollups in sm_acc.items():
         med_total = median([d.total_s for d in rollups])
-        findings_a.append((
-            f"snakemake rule `{rule}` @ `{origin}`",
-            med_total, rollups[0].job_count, "rule",
-        ))
+        findings_a.append(
+            (
+                f"snakemake rule `{rule}` @ `{origin}`",
+                med_total,
+                rollups[0].job_count,
+                "rule",
+            )
+        )
     for label, ct, nc in primary.global_hot_functions[:findings_top_k]:
         findings_a.append((f"function `{label}`", ct, nc, "function"))
     findings_a.sort(key=lambda f: (-f[1], f[0]))

@@ -49,6 +49,7 @@ _SELF_EXCLUDE = frozenset(
     }
 )
 
+
 @dataclass(frozen=True)
 class Hit:
     path: str  # repo-relative
@@ -57,6 +58,7 @@ class Hit:
 
     def render(self) -> str:
         return f"{self.path}:{self.line}: blocklisted token {self.token!r}"
+
 
 _MIN_EXPECTED_TOKENS = 8
 _ABSOLUTE_MIN_TOKENS = 1
@@ -172,9 +174,11 @@ def load_blocklist(blocklist_path: Path) -> list[str]:
         )
     return tokens
 
+
 def compile_patterns(tokens: list[str]) -> list[tuple[str, re.Pattern[str]]]:
     """(token, whole-word case-insensitive literal pattern) per token."""
     return [(t, re.compile(r"\b" + re.escape(t) + r"\b", re.IGNORECASE)) for t in tokens]
+
 
 def tracked_files(root: Path) -> list[str]:
     """Repo-relative paths of the git-tracked set (NUL-delimited, space-safe)."""
@@ -190,10 +194,10 @@ def tracked_files(root: Path) -> list[str]:
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode("utf-8", "replace").strip() if exc.stderr else ""
         raise SystemExit(
-            f"check_anonymization: 'git ls-files' failed in {root!r} "
-            f"(not a git repository?): {stderr}"
+            f"check_anonymization: 'git ls-files' failed in {root!r} " f"(not a git repository?): {stderr}"
         ) from exc
     return [p for p in proc.stdout.decode("utf-8").split("\0") if p]
+
 
 def _read_text_or_none(path: Path) -> str | None:
     """Return decoded text, or None for a binary / absent / unreadable file (skip)."""
@@ -210,6 +214,7 @@ def _read_text_or_none(path: Path) -> str | None:
     except UnicodeDecodeError:
         return None
 
+
 def scan(root: Path, blocklist_path: Path) -> list[Hit]:
     patterns = compile_patterns(load_blocklist(blocklist_path))
     hits: list[Hit] = []
@@ -224,6 +229,7 @@ def scan(root: Path, blocklist_path: Path) -> list[Hit]:
                 if pat.search(line):
                     hits.append(Hit(rel, lineno, token))
     return hits
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -267,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {h.render()}", file=sys.stderr)
         return 1
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -14,9 +14,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import pytest
-
-from hhemt.du_sentinels import write_du_sentinel, read_du_sentinel
+from hhemt.du_sentinels import read_du_sentinel, write_du_sentinel
 
 
 def _write(tmp_path: Path, **overrides) -> bool:
@@ -47,9 +45,9 @@ def test_idempotent_write_preserves_mtime(tmp_path: Path) -> None:
     # Second write — same bytes-affecting fields, must skip and preserve mtime.
     rewrote_second = _write(tmp_path)
     assert rewrote_second is False, "write_du_sentinel returned True on unchanged payload"
-    assert sentinel.stat().st_mtime == first_mtime, (
-        "mtime advanced on idempotent re-write — compare-and-write contract violated"
-    )
+    assert (
+        sentinel.stat().st_mtime == first_mtime
+    ), "mtime advanced on idempotent re-write — compare-and-write contract violated"
 
 
 def test_payload_change_bumps_mtime(tmp_path: Path) -> None:
@@ -98,9 +96,7 @@ def test_walk_errors_field_in_compare(tmp_path: Path) -> None:
     time.sleep(1.1)
 
     rewrote_second = _write(tmp_path, walk_errors=3)
-    assert rewrote_second is True, (
-        "write_du_sentinel skipped a walk_errors change — precision contract violated"
-    )
+    assert rewrote_second is True, "write_du_sentinel skipped a walk_errors change — precision contract violated"
     assert sentinel.stat().st_mtime > first_mtime
 
     payload_after = read_du_sentinel(sentinel)

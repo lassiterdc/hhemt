@@ -10,8 +10,8 @@ All executors follow the ExecutionStrategy protocol.
 """
 
 import time
-from typing import TYPE_CHECKING, List, Optional, Protocol, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -22,10 +22,10 @@ class ExecutionStrategy(Protocol):
 
     def execute_simulations(
         self,
-        launch_functions: List[Tuple],
-        max_concurrent: Optional[int],
+        launch_functions: list[tuple],
+        max_concurrent: int | None,
         verbose: bool,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Execute simulations and return completion statuses.
 
@@ -63,10 +63,10 @@ class SerialExecutor:
 
     def execute_simulations(
         self,
-        launch_functions: List[Tuple],
-        max_concurrent: Optional[int] = None,
+        launch_functions: list[tuple],
+        max_concurrent: int | None = None,
         verbose: bool = True,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Execute simulations sequentially (one at a time).
 
@@ -135,10 +135,10 @@ class LocalConcurrentExecutor:
 
     def execute_simulations(
         self,
-        launch_functions: List[Tuple],
-        max_concurrent: Optional[int] = None,
+        launch_functions: list[tuple],
+        max_concurrent: int | None = None,
         verbose: bool = True,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Run simulations concurrently on a desktop/local machine.
 
@@ -172,8 +172,7 @@ class LocalConcurrentExecutor:
             # ----------------------------
             if use_gpu:
                 raise ValueError(
-                    "Currently desktop-based simulations are not designed to use GPUs. "
-                    "Feature must be built out."
+                    "Currently desktop-based simulations are not designed to use GPUs. " "Feature must be built out."
                 )
 
             # ----------------------------
@@ -205,8 +204,7 @@ class LocalConcurrentExecutor:
 
         with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
             futures = [
-                executor.submit(execute_sim, launcher, finalize_sim)
-                for launcher, finalize_sim in launch_functions
+                executor.submit(execute_sim, launcher, finalize_sim) for launcher, finalize_sim in launch_functions
             ]
 
             for idx, future in enumerate(as_completed(futures)):
@@ -244,10 +242,10 @@ class SlurmExecutor:
 
     def execute_simulations(
         self,
-        launch_functions: List[Tuple],
-        max_concurrent: Optional[int] = None,
+        launch_functions: list[tuple],
+        max_concurrent: int | None = None,
         verbose: bool = True,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Launch simulations concurrently on an HPC system using SLURM.
 
@@ -298,9 +296,7 @@ class SlurmExecutor:
         # ----------------------------
         # Get SLURM resource constraints
         # ----------------------------
-        constraints = self.analysis._resource_manager._get_slurm_resource_constraints(
-            verbose=verbose
-        )
+        constraints = self.analysis._resource_manager._get_slurm_resource_constraints(verbose=verbose)
         num_nodes = constraints["num_nodes"]
         total_cpus = constraints["total_cpus"]
         total_gpus = constraints["total_gpus"]
@@ -319,15 +315,11 @@ class SlurmExecutor:
 
         if n_nodes_per_sim > num_nodes:  # type: ignore
             raise RuntimeError(
-                f"Each simulation requires {n_nodes_per_sim} node(s), "
-                f"but job only has {num_nodes}."  # type: ignore
+                f"Each simulation requires {n_nodes_per_sim} node(s), " f"but job only has {num_nodes}."  # type: ignore
             )
 
         if cpus_per_sim > total_cpus:
-            raise RuntimeError(
-                f"Each simulation requires {cpus_per_sim} CPUs, "
-                f"but job only has {total_cpus}."
-            )
+            raise RuntimeError(f"Each simulation requires {cpus_per_sim} CPUs, " f"but job only has {total_cpus}.")
 
         if self.analysis.cfg_analysis.run_mode == "gpu":
             if total_gpus == 0:
@@ -343,21 +335,16 @@ class SlurmExecutor:
 
         if verbose:
             print(
-                f"[SLURM] Running {len(launch_functions)} simulations "
-                f"(max {max_concurrent} concurrent tasks)",
+                f"[SLURM] Running {len(launch_functions)} simulations " f"(max {max_concurrent} concurrent tasks)",
                 flush=True,
             )
 
         # ----------------------------
         # Process polling-based concurrent execution
         # ----------------------------
-        results: List[str] = []
-        running_processes: dict = (
-            {}
-        )  # {proc: (finalize_sim, start_time, sim_logfile, lf)}
-        pending_launchers = list(
-            launch_functions
-        )  # Queue of (launcher, finalize_sim) tuples
+        results: list[str] = []
+        running_processes: dict = {}  # {proc: (finalize_sim, start_time, sim_logfile, lf)}
+        pending_launchers = list(launch_functions)  # Queue of (launcher, finalize_sim) tuples
 
         # Launch initial batch up to max_concurrent
         while len(running_processes) < max_concurrent and pending_launchers:

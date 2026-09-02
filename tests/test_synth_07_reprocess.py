@@ -1,6 +1,7 @@
 """Phase 2 reprocess tests — analysis-level reprocess re-fires downstream only.
 
-Plan: ``library/docs/planning/projects/hhemt/features/reprocess_downstream_stages/2 analysis level reprocess cli scoped snakefile generator.md``.
+Plan: ``library/docs/planning/projects/hhemt/features/reprocess_downstream_stages/
+2 analysis level reprocess cli scoped snakefile generator.md``.
 
 R6: ``c_run_*`` simulation completion flags must be untouched by a reprocess —
 the reprocess driver never re-fires simulations.
@@ -14,6 +15,7 @@ sentinels with no live ``_orchestrator/`` driver, REFUSES fast on a live
 ``_orchestrator/`` driver, and NEVER reaches the interactive ``input()``
 prompt (``skip_lock_check=True`` bypass).
 """
+
 from __future__ import annotations
 
 import json
@@ -62,9 +64,7 @@ def test_reprocess_consolidate_default_preserves_zarr(synthetic_multisim_complet
         "fixture state is incomplete."
     )
     dt = a.analysis_paths.analysis_datatree_zarr
-    assert dt is not None and dt.exists(), (
-        f"Expected analysis_datatree_zarr to exist after fixture setup; got {dt!r}."
-    )
+    assert dt is not None and dt.exists(), f"Expected analysis_datatree_zarr to exist after fixture setup; got {dt!r}."
     mtime_target = _zarr_mtime_target(dt)
     mtime0 = mtime_target.stat().st_mtime
 
@@ -112,9 +112,7 @@ def test_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_multi
     mtime_target = _zarr_mtime_target(dt)
     mtime0 = mtime_target.stat().st_mtime
 
-    result = a.reprocess(
-        start_with="consolidate", execution_mode="local", regenerate_existing=True, verbose=False
-    )
+    result = a.reprocess(start_with="consolidate", execution_mode="local", regenerate_existing=True, verbose=False)
     assert result.get("success"), (
         f"reprocess(consolidate, regenerate_existing=True) failed: "
         f"{result.get('message','(no message)')}. Snakemake log: {result.get('snakemake_logfile')}"
@@ -156,9 +154,9 @@ def test_consolidate_to_datatree_rebuilds_when_log_incomplete(synthetic_multisim
     )
     # Rebuild re-stamps the completion signal.
     a._refresh_log()
-    assert a.log.datatree_consolidation_complete.get() is True, (
-        "rebuild must re-set datatree_consolidation_complete=True"
-    )
+    assert (
+        a.log.datatree_consolidation_complete.get() is True
+    ), "rebuild must re-set datatree_consolidation_complete=True"
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
@@ -178,8 +176,7 @@ def test_reprocess_render_only(synthetic_multisim_completed_isolated):
     html = analysis_dir / "analysis_report.html"
     zipfile = analysis_dir / "analysis_report.zip"
     assert html.exists() or zipfile.exists(), (
-        "Expected reprocess(render) to materialize analysis_report.{html,zip}. "
-        f"Neither found at {analysis_dir}."
+        "Expected reprocess(render) to materialize analysis_report.{html,zip}. " f"Neither found at {analysis_dir}."
     )
 
 
@@ -328,9 +325,7 @@ def test_reprocess_never_calls_input_even_with_stale_lock(synthetic_multisim_com
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_dry_run_submit_workflow_leaves_no_orchestrator_sentinel(
-    synthetic_multisim_completed_isolated, monkeypatch
-):
+def test_dry_run_submit_workflow_leaves_no_orchestrator_sentinel(synthetic_multisim_completed_isolated, monkeypatch):
     """TWO-ARM DIFFERENTIAL: dry_run leaves NO orchestrator sentinel; a real
     detached run leaves exactly one.
 

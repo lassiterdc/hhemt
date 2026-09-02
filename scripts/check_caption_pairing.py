@@ -40,6 +40,7 @@ The renderer <-> caption pairing is read from the EXISTING registry: every
 No second registry is introduced. The registry is parsed with `ast` rather than
 imported so the check has no runtime dependency on the hhemt package.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -61,7 +62,10 @@ ALLOWLIST_PATH = REPO_ROOT / "_caption_pairing_allowlist.yaml"
 def _changed_files(base_ref: str) -> set[str]:
     out = subprocess.run(
         ["git", "diff", "--name-only", base_ref],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     return {line.strip() for line in out.splitlines() if line.strip()}
 
@@ -87,14 +91,11 @@ def _pairs_from_registry() -> list[tuple[str, str]]:
             if kw.arg == "renderer_module" and isinstance(kw.value, ast.Constant):
                 module = kw.value.value
             elif kw.arg == "report_kwargs" and isinstance(kw.value, ast.Dict):
-                for k, v in zip(kw.value.keys, kw.value.values):
-                    if (
-                        isinstance(k, ast.Constant) and k.value == "caption"
-                        and isinstance(v, ast.Constant)
-                    ):
+                for k, v in zip(kw.value.keys, kw.value.values, strict=False):
+                    if isinstance(k, ast.Constant) and k.value == "caption" and isinstance(v, ast.Constant):
                         caption = v.value
         if module and caption and caption.startswith("report/captions/"):
-            stem = caption[len("report/captions/"):]
+            stem = caption[len("report/captions/") :]
             pairs.add((module, (CAPTION_DIR / stem).as_posix()))
     return sorted(pairs)
 
@@ -117,10 +118,7 @@ def _allowlist() -> dict[tuple[str, str], dict]:
     if not ALLOWLIST_PATH.exists():
         return {}
     raw = yaml.safe_load(ALLOWLIST_PATH.read_text()) or {}
-    return {
-        (e["renderer"], e["caption"]): e
-        for e in (raw.get("unpaired_allowlist") or [])
-    }
+    return {(e["renderer"], e["caption"]): e for e in (raw.get("unpaired_allowlist") or [])}
 
 
 def main() -> int:

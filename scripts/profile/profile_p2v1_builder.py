@@ -68,7 +68,7 @@ def main() -> None:
         snakefiles[backend] = text
 
     t_check = time.perf_counter()
-    for backend, text in snakefiles.items():
+    for _backend, text in snakefiles.items():
         _assert_symmetry(text, consumer_rule="all")
     elapsed_assert = time.perf_counter() - t_check
     print(f"[profile_p2v1_builder] _assert_symmetry x 2: {elapsed_assert:.3f}s")

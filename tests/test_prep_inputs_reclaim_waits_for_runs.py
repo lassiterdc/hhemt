@@ -52,9 +52,7 @@ def _probe(tmp_path: Path, *, unrun: tuple[str, ...]):
     )
     fake._reclaim_classes = _P._reclaim_classes
     fake._resolve_clear_raw = lambda *_a, **_k: "none"
-    fake._remove_reclaimed = lambda p, ad, v: (
-        __import__("shutil").rmtree(p) if Path(p).is_dir() else Path(p).unlink()
-    )
+    fake._remove_reclaimed = lambda p, ad, v: (__import__("shutil").rmtree(p) if Path(p).is_dir() else Path(p).unlink())
     fake._reclaim_paths = lambda *a, **k: []
     _P.remove_after_processing(fake, model_type="tritonswmm", which="both", verbose=False)
     return dats, extbc_dir, weather

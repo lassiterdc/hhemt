@@ -283,6 +283,7 @@ def render(
         emit_plot_with_sources,
         per_sim_map_ticks,
     )
+    from hhemt.report_renderers._model_arms import resolve_arm_group
     from hhemt.report_renderers._provenance import (
         ProvenanceLog,
         ProvenanceRef,
@@ -290,7 +291,6 @@ def render(
     from hhemt.report_renderers.per_sim_conduit_flow import (
         _emit_model_type_skip_placeholder,
     )
-    from hhemt.report_renderers._model_arms import resolve_arm_group
     from hhemt.report_renderers.system_overview import _apply_rcparams
 
     _apply_rcparams(report_cfg)

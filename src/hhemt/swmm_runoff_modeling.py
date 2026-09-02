@@ -8,12 +8,13 @@ that serve as inputs to TRITON-SWMM. This includes:
 - Extracting runoff hydrographs from SWMM output for TRITON-SWMM input
 """
 
-import pandas as pd
 import sys
 from pathlib import Path
-from pyswmm import Simulation, Output
-from swmm.toolkit.shared_enum import NodeAttribute
 from typing import TYPE_CHECKING
+
+import pandas as pd
+from pyswmm import Output, Simulation
+from swmm.toolkit.shared_enum import NodeAttribute
 
 from hhemt.exceptions import ProcessingError
 
@@ -108,10 +109,8 @@ class SWMMRunoffModeler:
         for SWMM input. Files are written to the scenario's weather data directory.
         Updates the scenario log with paths to created files.
         """
-        weather_event_indexers = self.scenario.weather_event_indexers
-        subcatchment_raingage_mapping = (
-            self.system.cfg_system.subcatchment_raingage_mapping
-        )
+        _weather_event_indexers = self.scenario.weather_event_indexers
+        subcatchment_raingage_mapping = self.system.cfg_system.subcatchment_raingage_mapping
         subcatchment_raingage_mapping_gage_id_colname = (
             self.system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
         )
@@ -123,9 +122,7 @@ class SWMMRunoffModeler:
         # retreieve dataframe of rainfall time series
         df_allrain = (
             self.scenario.ds_event_ts[
-                df_sub_raingage_mapping[subcatchment_raingage_mapping_gage_id_colname]
-                .unique()
-                .astype(str)
+                df_sub_raingage_mapping[subcatchment_raingage_mapping_gage_id_colname].unique().astype(str)
             ]
             .reset_coords(drop=True)
             .to_dataframe()
@@ -142,16 +139,12 @@ class SWMMRunoffModeler:
                 )
             )
             # define filepaths and write
-            fname_raindat = "grid-ind{}.dat".format(gage)
-            f_out_swmm_rainfall = (
-                self.scenario.scen_paths.dir_weather_datfiles / fname_raindat
-            )
+            fname_raindat = f"grid-ind{gage}.dat"
+            f_out_swmm_rainfall = self.scenario.scen_paths.dir_weather_datfiles / fname_raindat
             with open(f_out_swmm_rainfall, "w+") as file:
                 file.write(f";;rain gage {gage} for sim {sim_id_str} \n")
                 file.write(f";;Rainfall ({rainfall_units})\n")
-            df_rain.to_csv(
-                f_out_swmm_rainfall, sep="\t", index=False, header=False, mode="a"
-            )
+            df_rain.to_csv(f_out_swmm_rainfall, sep="\t", index=False, header=False, mode="a")
             dic_rain_paths[str(gage)] = f_out_swmm_rainfall
 
         self.scenario.log.swmm_rainfall_dat_files.set(dic_rain_paths)
@@ -165,24 +158,18 @@ class SWMMRunoffModeler:
         for SWMM input. Updates the scenario log with the path to the created file.
         """
         storm_tide_units = self.cfg_analysis.storm_tide_units
-        weather_time_series_storm_tide_datavar = (
-            self.cfg_analysis.weather_time_series_storm_tide_datavar
-        )
-        weather_event_indexers = self.scenario.weather_event_indexers
+        weather_time_series_storm_tide_datavar = self.cfg_analysis.weather_time_series_storm_tide_datavar
+        _weather_event_indexers = self.scenario.weather_event_indexers
 
         sim_id_str = self.scenario.sim_id_str
 
         s_wlevel = (
-            self.scenario.ds_event_ts[weather_time_series_storm_tide_datavar]
-            .reset_coords(drop=True)
-            .to_dataframe()
+            self.scenario.ds_event_ts[weather_time_series_storm_tide_datavar].reset_coords(drop=True).to_dataframe()
         )[weather_time_series_storm_tide_datavar]
 
         fname_wleveldat = "waterlevel.dat"
 
-        f_out_swmm_wlevel = (
-            self.scenario.scen_paths.dir_weather_datfiles / fname_wleveldat
-        )
+        f_out_swmm_wlevel = self.scenario.scen_paths.dir_weather_datfiles / fname_wleveldat
 
         # create data frame with proper formatting to be read in SWMM
         df_wlevel = pd.DataFrame(
@@ -197,15 +184,11 @@ class SWMMRunoffModeler:
             file.write(f";;water level for sim {sim_id_str}\n")
             file.write(f";;Water Level ({storm_tide_units})\n")
 
-        df_wlevel.to_csv(
-            f_out_swmm_wlevel, sep="\t", index=False, header=False, mode="a"
-        )
+        df_wlevel.to_csv(f_out_swmm_wlevel, sep="\t", index=False, header=False, mode="a")
         self.scenario.log.storm_tide_for_swmm.set(f_out_swmm_wlevel)
         return
 
-    def create_hydrology_model_from_template(
-        self, swmm_model_template, destination: Path
-    ) -> None:
+    def create_hydrology_model_from_template(self, swmm_model_template, destination: Path) -> None:
         """
         Create SWMM hydrology-only model from template file.
 
@@ -224,9 +207,7 @@ class SWMMRunoffModeler:
         create_swmm_inp_from_template(self.scenario, swmm_model_template, destination)
         return
 
-    def run_swmm_hydro_model(
-        self, rerun_if_exists: bool = False, verbose: bool = False
-    ) -> None:
+    def run_swmm_hydro_model(self, rerun_if_exists: bool = False, verbose: bool = False) -> None:
         """
         Execute SWMM hydrology-only model to generate runoff hydrographs.
 
@@ -321,7 +302,8 @@ class SWMMRunoffModeler:
         ds = ds.assign_coords(event_iloc=self.scenario.event_iloc).expand_dims("event_iloc")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         ds.to_zarr(out_path, mode="w")
-        restamp_parent_sentinels(out_path, analysis_dir=self.scenario._analysis.analysis_paths.analysis_dir)  # PATTERN B
+        # PATTERN B
+        restamp_parent_sentinels(out_path, analysis_dir=self.scenario._analysis.analysis_paths.analysis_dir)
 
     def write_hydrograph_files(self) -> None:
         """
@@ -335,6 +317,7 @@ class SWMMRunoffModeler:
         Updates the scenario log to indicate files were created successfully.
         """
         import rioxarray as rxr
+
         from .scenario import return_df_of_nodes_grouped_by_DEM_gridcell
 
         if hydrograph_outputs_gate(self.scenario) == "skipped":
@@ -363,18 +346,14 @@ class SWMMRunoffModeler:
             inflow_second_line = f"%Time(hr) Discharge ({flow_units})\n"
             need_to_create_time_series = True
             for coords, group in df_node_locs.groupby(["dem_x_coord", "dem_y_coord"]):
-                keys = list(
-                    group.node_key
-                )  # list of node ids that fall within a single gridcell
+                keys = list(group.node_key)  # list of node ids that fall within a single gridcell
                 d_flows = {}
                 for key in keys:
                     if key not in lst_outfalls:
                         d_inflow = pd.Series(
                             out.node_series(key, NodeAttribute.TOTAL_INFLOW)  # type: ignore
                         )
-                        if (
-                            need_to_create_time_series
-                        ):  # create first column with time in hours
+                        if need_to_create_time_series:  # create first column with time in hours
                             # .dt.seconds wraps on a >= 24 h gap; use total_seconds().
                             tseries = (
                                 pd.Series(d_inflow.index).diff().dt.total_seconds() / 60 / 60  # type: ignore
@@ -422,7 +401,7 @@ class SWMMRunoffModeler:
                         continue
                     x = col[0]
                     y = col[1]
-                    f.write("{},{}\n".format(x, y))
+                    f.write(f"{x},{y}\n")
             self.scenario.log.hyg_locs_created.set(True)
             self._write_node_inflow_capture(
                 d_node_capture,
@@ -433,9 +412,7 @@ class SWMMRunoffModeler:
             # verifying that all nodes are within the DEM
             xllcorner = rds_dem.x.values.min()  # type: ignore
             yllcorner = rds_dem.y.values.min()  # type: ignore
-            df_xylocs = pd.read_csv(
-                self.scenario.scen_paths.hyg_locs, header=0, names=["x", "y"]
-            )
+            df_xylocs = pd.read_csv(self.scenario.scen_paths.hyg_locs, header=0, names=["x", "y"])
             if df_xylocs.x.min() < xllcorner:
                 print("problem with x's")
             elif df_xylocs.y.min() < yllcorner:
@@ -444,14 +421,10 @@ class SWMMRunoffModeler:
                 pass
             # check to make sure dimensions are correct
             df_hyg_loc = pd.read_csv(self.scenario.scen_paths.hyg_locs)
-            df_hyg_test = pd.read_csv(
-                self.scenario.scen_paths.hyg_timeseries, skiprows=2
-            )
+            df_hyg_test = pd.read_csv(self.scenario.scen_paths.hyg_timeseries, skiprows=2)
             if ((df_hyg_test.shape[1] - 1) - df_hyg_loc.shape[0]) != 0:
                 print("ERROR ENCOUNTERED IN SETTING UP INPUTS")
-                print(
-                    "The shapes of the hydrograph file and the hydrograph location file do not match up."
-                )
+                print("The shapes of the hydrograph file and the hydrograph location file do not match up.")
                 print(f"{Path(self.scenario.scen_paths.hyg_locs).parent}")
                 print("df_hyg_test.shape")
                 print(df_hyg_test.shape)
@@ -463,7 +436,6 @@ class SWMMRunoffModeler:
                 print(df_hyg_loc.head())
                 sys.exit()
         return
-
 
 
 #: Storage dtype for the per-node inflow capture. float32 is EXACTLY LOSSLESS here
@@ -515,14 +487,8 @@ def hydrograph_outputs_gate(scenario) -> str:
     # regenerate from. After it, a log-only gate that skipped on a missing strmflow/ would
     # hand TRITON a sim with no inflow inputs and nothing on disk to rebuild them -- silent
     # and permanent.
-    _hyg_logged = bool(
-        scenario.log.hyg_timeseries_created.get()
-        and scenario.log.hyg_locs_created.get()
-    )
-    _hyg_present = (
-        scenario.scen_paths.hyg_timeseries.exists()
-        and scenario.scen_paths.hyg_locs.exists()
-    )
+    _hyg_logged = bool(scenario.log.hyg_timeseries_created.get() and scenario.log.hyg_locs_created.get())
+    _hyg_present = scenario.scen_paths.hyg_timeseries.exists() and scenario.scen_paths.hyg_locs.exists()
     if _hyg_logged and _hyg_present:
         return "skipped"
     if not _hyg_present:

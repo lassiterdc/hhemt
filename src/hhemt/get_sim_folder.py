@@ -14,10 +14,10 @@ Output:
     Prints the absolute path to the simulation folder to stdout
 """
 
-import sys
 import argparse
-from pathlib import Path
 import logging
+import sys
+from pathlib import Path
 
 # Configure logging to stderr (so stdout is clean for the path)
 logging.basicConfig(
@@ -30,9 +30,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Main entry point for retrieving simulation folder."""
-    parser = argparse.ArgumentParser(
-        description="Get the simulation folder path for a given event_iloc"
-    )
+    parser = argparse.ArgumentParser(description="Get the simulation folder path for a given event_iloc")
     parser.add_argument(
         "--event-iloc",
         type=int,
@@ -70,9 +68,9 @@ def main():
 
     try:
         # Import here to avoid import errors if dependencies are missing
-        from hhemt.system import TRITONSWMM_system
         from hhemt.analysis import TRITONSWMM_analysis
         from hhemt.scenario import TRITONSWMM_scenario
+        from hhemt.system import TRITONSWMM_system
 
         system = TRITONSWMM_system(args.system_config)
         analysis = TRITONSWMM_analysis(

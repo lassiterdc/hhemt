@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from hhemt.model_defects import (
     REGISTRY_BY_ID,
     SHA_DEPTH_SCATTER_FIX,

@@ -31,18 +31,14 @@ Note: the system_log JSON does not include `vertical_crs_epsg` in
 legacy v7 fixtures — the field is optional (LogField default-factory)
 and reads as None on legacy logs. No on-disk fixup needed.
 """
-from __future__ import annotations
 
-from pathlib import Path
+from __future__ import annotations
 
 from hhemt.version_migration.context import MigrationContext
 
 version_from: int = 8
 version_to: int = 9
-description: str = (
-    "Composite CRSConfig submodel under cfg_system.crs; vertical_crs_epsg "
-    "field on system_log"
-)
+description: str = "Composite CRSConfig submodel under cfg_system.crs; vertical_crs_epsg " "field on system_log"
 
 
 def upgrade(ctx: MigrationContext) -> None:

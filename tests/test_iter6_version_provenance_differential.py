@@ -240,9 +240,9 @@ def test_s12_check_provenance_completeness_constructs_and_is_registered():
     from hhemt import analysis_validation as av
 
     src = inspect.getsource(av.validate_analysis)
-    assert "check_provenance_completeness(analysis)" in src, (
-        "check_provenance_completeness is not registered in validate_analysis"
-    )
+    assert (
+        "check_provenance_completeness(analysis)" in src
+    ), "check_provenance_completeness is not registered in validate_analysis"
 
 
 def test_s13_controlled_pair_mixed_build_fails_uniform_build_passes(monkeypatch):
@@ -273,9 +273,9 @@ def test_s14_summary_discloses_its_denominator(monkeypatch):
 
     monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: dict.fromkeys(_PROVENANCE_STAGES))
     res = av.check_provenance_completeness(object())
-    assert f"/{len(_PROVENANCE_STAGES)}" in res.summary, (
-        "the summary must name how many stages were examined, not only how many were clean"
-    )
+    assert (
+        f"/{len(_PROVENANCE_STAGES)}" in res.summary
+    ), "the summary must name how many stages were examined, not only how many were clean"
     assert res.level == "aggregate"
 
 
@@ -307,9 +307,9 @@ def test_s16_stage_carriers_are_pairwise_distinct_paths():
     src = inspect.getsource(av._collect_stage_stamps)
     for carrier in ("bundle_manifest.json", "combined_bundle_manifest.json", "report_manifest.json"):
         assert carrier == carrier and src.count(f'"{carrier}"') >= 1, f"{carrier} no longer read"
-    assert '"plots"' in src and "hhemt_producing_sha" in src, (
-        "the plots and consolidate carriers must remain separate reads"
-    )
+    assert (
+        '"plots"' in src and "hhemt_producing_sha" in src
+    ), "the plots and consolidate carriers must remain separate reads"
 
 
 # ---- S17-S20 append-only stage provenance history (FQ3 deliverable 2) ------ #

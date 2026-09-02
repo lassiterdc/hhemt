@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from hhemt import experiments as ex
 from hhemt import generate_case_manifest as gcm
@@ -41,7 +42,7 @@ def test_casemanifest_full():
 
 def test_casemanifest_rejects_unknown_key():
     # R1: extra="forbid".
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CaseManifest.model_validate({"case_name": "x", "res_identifier": "y", "bogus": 1})
 
 
@@ -154,6 +155,7 @@ def test_connect_uses_env_credentials_for_private_resource(monkeypatch):
 def test_verify_manifest_raises_on_mismatch(tmp_path):
     # R4: a non-empty manifest with a wrong sha256 raises ProcessingError.
     from hhemt.exceptions import ProcessingError
+
     bag = tmp_path / "bagroot"
     (bag / "data" / "contents").mkdir(parents=True)
     f = bag / "data" / "contents" / "a.txt"
@@ -170,6 +172,7 @@ def test_verify_manifest_raises_on_mismatch(tmp_path):
 def test_verify_manifest_raises_on_absent_file(tmp_path):
     # R4: a manifest entry naming an absent file raises ProcessingError.
     from hhemt.exceptions import ProcessingError
+
     bag = tmp_path / "bagroot"
     bag.mkdir()
     with pytest.raises(ProcessingError):
@@ -189,7 +192,7 @@ def test_manifest_generation_verification_parity(tmp_path):
     (bag / "data" / "contents").mkdir(parents=True)
     (bag / "data" / "contents" / "a.txt").write_bytes(b"x")
     (bag / "bagit.txt").write_bytes(b"BagIt-Version: 0.97")
-    manifest = gcm.compute_manifest(bag)            # keys relative to bag root
+    manifest = gcm.compute_manifest(bag)  # keys relative to bag root
     ex.TRITON_SWMM_experiment._verify_manifest(bag, manifest)  # must not raise
 
 
@@ -198,9 +201,7 @@ def test_casemanifest_zenodo_requires_doi_or_pid():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        CaseManifest.model_validate(
-            {"case_name": "x", "res_identifier": "y", "host": "zenodo"}
-        )
+        CaseManifest.model_validate({"case_name": "x", "res_identifier": "y", "host": "zenodo"})
 
 
 def test_casemanifest_zenodo_with_doi_or_pid_validates():
@@ -210,9 +211,7 @@ def test_casemanifest_zenodo_with_doi_or_pid_validates():
     )
     assert by_doi.host == "zenodo"
     assert by_doi.doi == "10.5281/zenodo.1"
-    by_pid = CaseManifest.model_validate(
-        {"case_name": "x", "res_identifier": "y", "host": "zenodo", "pid": "1234567"}
-    )
+    by_pid = CaseManifest.model_validate({"case_name": "x", "res_identifier": "y", "host": "zenodo", "pid": "1234567"})
     assert by_pid.pid == "1234567"
 
 

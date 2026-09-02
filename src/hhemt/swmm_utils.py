@@ -8,6 +8,7 @@ These functions are used across multiple SWMM model creation modules to avoid co
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
+
 import hhemt.utils as utils
 
 if TYPE_CHECKING:
@@ -44,20 +45,13 @@ def create_swmm_inp_from_template(
         If required template keys are missing from the mapping
     """
     cfg_analysis = scenario._analysis.cfg_analysis
-    weather_time_series_timestep_dimension_name = (
-        cfg_analysis.weather_time_series_timestep_dimension_name
-    )
+    weather_time_series_timestep_dimension_name = cfg_analysis.weather_time_series_timestep_dimension_name
 
     ds_event_ts = scenario.ds_event_ts
 
     # Calculate timestep interval
     tstep_seconds = (
-        ds_event_ts[weather_time_series_timestep_dimension_name]
-        .to_series()
-        .diff()
-        .mode()
-        .iloc[0]
-        .total_seconds()  # type:ignore
+        ds_event_ts[weather_time_series_timestep_dimension_name].to_series().diff().mode().iloc[0].total_seconds()  # type:ignore
     )
     interval = scenario.seconds_to_hhmmss(tstep_seconds)
 
@@ -83,9 +77,7 @@ def create_swmm_inp_from_template(
 
     # Add storm tide boundary if enabled
     if cfg_analysis.toggle_storm_tide_boundary:
-        lst_tseries_section.append(
-            f'water_level FILE "{scenario.log.storm_tide_for_swmm.get()}"'
-        )
+        lst_tseries_section.append(f'water_level FILE "{scenario.log.storm_tide_for_swmm.get()}"')
 
     # Build template mapping
     mapping = dict()
@@ -109,16 +101,12 @@ def create_swmm_inp_from_template(
     mapping["REPORT_START_TIME"] = mapping["START_TIME"]
     mapping["END_DATE"] = last_tstep.strftime("%m/%d/%Y")
     mapping["END_TIME"] = last_tstep.strftime("%H:%M:%S")
-    mapping["REPORT_STEP"] = scenario.seconds_to_hhmmss(
-        cfg_analysis.TRITON_reporting_timestep_s
-    )
+    mapping["REPORT_STEP"] = scenario.seconds_to_hhmmss(cfg_analysis.TRITON_reporting_timestep_s)
 
     # Validate all template keys are present
     missing_keys = [key for key in template_keys if key not in mapping.keys()]
     if missing_keys:
-        print(
-            f"One or more keys were not found in the dictionary defining template fill values."
-        )
+        print("One or more keys were not found in the dictionary defining template fill values.")
         print(f"Missing keys: {missing_keys}")
         print(f"All expected keys: {template_keys}")
         print(f"All keys accounted for: {mapping.keys()}")

@@ -33,7 +33,9 @@ from __future__ import annotations
 import pytest
 
 from hhemt.config.analysis import analysis_config
+from hhemt.exceptions import ProcessingError
 from hhemt.process_simulation import TRITONSWMM_sim_post_processing as _Proc
+from hhemt.swmm_runoff_modeling import hydrograph_outputs_gate as _run_gate
 
 # The ScenarioPaths attr names of the preserve set, keyed identically to
 # summary_paths._SUMMARY_STEMS_BY_MODEL. Kept here (not imported) deliberately: this is the
@@ -70,9 +72,9 @@ def test_reclaim_drop_set_is_disjoint_from_preserve_set(model_type):
     """
     preserve = set(_SUMMARY_ATTRS_BY_MODEL[model_type])
     drop = set(_Proc._reclaim_attrs(model_type, policy="all"))
-    assert preserve & drop == set(), (
-        f"reclaim would remove preserved artifact(s) for {model_type}: {sorted(preserve & drop)}"
-    )
+    assert (
+        preserve & drop == set()
+    ), f"reclaim would remove preserved artifact(s) for {model_type}: {sorted(preserve & drop)}"
 
 
 @pytest.mark.parametrize("model_type", _MODEL_TYPES)
@@ -84,9 +86,9 @@ def test_preserve_and_drop_sets_are_one_to_one_paired(model_type):
     """
     preserve = _SUMMARY_ATTRS_BY_MODEL[model_type]
     drop = _Proc._reclaim_attrs(model_type, policy="all")
-    assert len(drop) == len(preserve), (
-        f"{model_type}: {len(drop)} timeseries attr(s) paired against {len(preserve)} summary attr(s)"
-    )
+    assert len(drop) == len(
+        preserve
+    ), f"{model_type}: {len(drop)} timeseries attr(s) paired against {len(preserve)} summary attr(s)"
 
 
 @pytest.mark.parametrize("model_type", _MODEL_TYPES)
@@ -155,11 +157,14 @@ def test_reclaim_classes_normalization():
     assert _Proc._reclaim_classes(["timeseries"]) == ("timeseries",)
 
 
-@pytest.mark.parametrize("which,expected_swmm,expected_triton", [
-    ("both", True, True),
-    ("TRITON", False, True),
-    ("SWMM", True, False),
-])
+@pytest.mark.parametrize(
+    "which,expected_swmm,expected_triton",
+    [
+        ("both", True, True),
+        ("TRITON", False, True),
+        ("SWMM", True, False),
+    ],
+)
 def test_which_restricts_the_drop_set(which, expected_swmm, expected_triton):
     """`which` narrows the drop set the same way it narrows the processing it follows."""
     attrs = _Proc._reclaim_attrs("tritonswmm", policy="all", which=which)
@@ -212,9 +217,7 @@ def test_data_availability_check_is_registered_and_graceful_absent():
     tree = ast.parse(textwrap.dedent(inspect.getsource(analysis_validation.check_data_availability)))
     fn = tree.body[0]
     body = fn.body[1:] if isinstance(fn.body[0], ast.Expr) else fn.body  # drop the docstring
-    names = {
-        n.attr for stmt in body for n in ast.walk(stmt) if isinstance(n, ast.Attribute)
-    } | {
+    names = {n.attr for stmt in body for n in ast.walk(stmt) if isinstance(n, ast.Attribute)} | {
         n.value for stmt in body for n in ast.walk(stmt) if isinstance(n, ast.Constant) and isinstance(n.value, str)
     }
     assert "remove_after_processing" not in names, (
@@ -267,8 +270,6 @@ def test_summary_export_validates_timeseries_below_the_already_written_return():
 # --------------------------------------------------------------------------
 # Surface 2 — hydrograph already-written gate (Spec H).
 # --------------------------------------------------------------------------
-from hhemt.exceptions import ProcessingError
-from hhemt.swmm_runoff_modeling import hydrograph_outputs_gate as _run_gate
 
 
 class _FakeScenario:
@@ -339,11 +340,7 @@ def test_rename_accepts_the_new_key_and_rejects_the_old_one():
     # drift as required fields change. Required fields stay absent, so the raise
     # is guaranteed -- which is exactly why `match=` is load-bearing: it pins the
     # failure to the RETIRED KEY rather than to the missing required fields.
-    _payload = {
-        name: f.default
-        for name, f in analysis_config.model_fields.items()
-        if not f.is_required()
-    }
+    _payload = {name: f.default for name, f in analysis_config.model_fields.items() if not f.is_required()}
     with _pytest.raises(ValidationError, match="reclaim_after_processing"):
         analysis_config.model_validate({**_payload, "reclaim_after_processing": "all"})
 
@@ -374,9 +371,16 @@ def _parser_markers() -> list[str]:
 
     from hhemt import swmm_output_parser as sop
 
-    wanted = ("Element Count", "Flow Units", "Flow Routing Continuity",
-              "Continuity Error", "Flooding Loss", "Analysis ended on",
-              "Summary", "Time Series Results")
+    wanted = (
+        "Element Count",
+        "Flow Units",
+        "Flow Routing Continuity",
+        "Continuity Error",
+        "Flooding Loss",
+        "Analysis ended on",
+        "Summary",
+        "Time Series Results",
+    )
     found: set[str] = set()
     for fn in (sop._scan_metadata_and_summaries, sop.parse_rpt_single_pass):
         tree = ast.parse(inspect.getsource(fn).lstrip())
@@ -386,9 +390,7 @@ def _parser_markers() -> list[str]:
         # words the scrape keys on ("Summary", "Time Series Results") while being prose,
         # not a marker, so leaving it in makes the guard demand that truncation preserve a
         # paragraph of documentation.
-        if body and isinstance(body[0], ast.Expr) and isinstance(
-            getattr(body[0], "value", None), ast.Constant
-        ):
+        if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0], "value", None), ast.Constant):
             body = body[1:]
         for stmt in body:
             for node in ast.walk(stmt):
@@ -411,8 +413,15 @@ def _synthetic_rpt(tmp_path, *, n_body_lines: int, n_nodes: int = 5, trailer: bo
     p = tmp_path / "hydraulics.rpt"
     lines = ["  EPA STORM WATER MANAGEMENT MODEL", "", "  Element Count", ""]
     lines += [f"  Node {i} ................ 0.00" for i in range(n_nodes)]
-    lines += ["", "  Flow Units ............ CFS", "", "  Flow Routing Continuity",
-              "  Flooding Loss ......... 0.000", "  Continuity Error (%) .. 0.000", ""]
+    lines += [
+        "",
+        "  Flow Units ............ CFS",
+        "",
+        "  Flow Routing Continuity",
+        "  Flooding Loss ......... 0.000",
+        "  Continuity Error (%) .. 0.000",
+        "",
+    ]
     for table in ("Node Inflow Summary", "Node Flooding Summary", "Link Flow Summary"):
         lines += [f"  {table}", ""]
         lines += [f"  row {i} for {table}" for i in range(n_nodes)]
@@ -457,9 +466,9 @@ def test_truncation_preserves_every_parser_needed_marker(tmp_path):
     _truncate(p)
     truncated = p.read_text()
     survivors = _markers_that_must_survive()
-    assert len(survivors) == len(_parser_markers()) - 1, (
-        "exactly one marker (the body-start sentinel) may be consumed by truncation"
-    )
+    assert (
+        len(survivors) == len(_parser_markers()) - 1
+    ), "exactly one marker (the body-start sentinel) may be consumed by truncation"
     for marker in survivors:
         assert marker in truncated, f"truncation dropped a parser-needed marker: {marker}"
 

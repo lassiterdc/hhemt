@@ -4,12 +4,12 @@ Process monitoring utilities for regression testing.
 Helps detect process explosion bugs by tracking process counts during test execution.
 """
 
-import psutil
 import os
 import time
-from threading import Thread, Event
-from typing import Dict, List, Tuple
 from collections import defaultdict
+from threading import Event, Thread
+
+import psutil
 
 
 class ProcessMonitor:
@@ -25,12 +25,7 @@ class ProcessMonitor:
         assert monitor.max_processes <= 10, f"Process explosion: {monitor.max_processes} processes"
     """
 
-    def __init__(
-        self,
-        max_expected: int,
-        sample_interval: float = 0.1,
-        process_name_filter: str | None = None
-    ):
+    def __init__(self, max_expected: int, sample_interval: float = 0.1, process_name_filter: str | None = None):
         """
         Initialize process monitor.
 
@@ -48,8 +43,8 @@ class ProcessMonitor:
         self.process_name_filter = process_name_filter
 
         self.max_processes = 0
-        self.process_counts: List[int] = []
-        self.timestamps: List[float] = []
+        self.process_counts: list[int] = []
+        self.timestamps: list[float] = []
 
         self._stop_event = Event()
         self._monitor_thread: Thread | None = None
@@ -59,15 +54,15 @@ class ProcessMonitor:
         current_user = os.getuid()
         count = 0
 
-        for proc in psutil.process_iter(['pid', 'name', 'uids']):
+        for proc in psutil.process_iter(["pid", "name", "uids"]):
             try:
                 # Only count processes owned by current user
-                if proc.info['uids'].real != current_user:
+                if proc.info["uids"].real != current_user:
                     continue
 
                 # Apply name filter if specified
                 if self.process_name_filter:
-                    if self.process_name_filter not in proc.info['name']:
+                    if self.process_name_filter not in proc.info["name"]:
                         continue
 
                 count += 1
@@ -116,7 +111,7 @@ class ProcessMonitor:
             f"(expected ≤ {self.max_expected}, threshold with margin: {threshold})"
         )
 
-    def get_report(self) -> Dict:
+    def get_report(self) -> dict:
         """Get summary report of monitoring results."""
         return {
             "max_processes": self.max_processes,
@@ -160,11 +155,11 @@ class RunnerConcurrencyMonitor:
         self.sample_interval = sample_interval
 
         # Track runner-specific counts over time
-        self.runner_counts_timeline: List[Dict[str, int]] = []
-        self.timestamps: List[float] = []
+        self.runner_counts_timeline: list[dict[str, int]] = []
+        self.timestamps: list[float] = []
 
         # Track maximum concurrent runners by type
-        self.max_concurrent: Dict[str, int] = defaultdict(int)
+        self.max_concurrent: dict[str, int] = defaultdict(int)
 
         # Track total maximum
         self.max_total_runners = 0
@@ -173,7 +168,7 @@ class RunnerConcurrencyMonitor:
         self._monitor_thread: Thread | None = None
         self._start_time = 0.0
 
-    def _count_runners(self) -> Dict[str, int]:
+    def _count_runners(self) -> dict[str, int]:
         """
         Count active runner processes by type.
 
@@ -192,27 +187,27 @@ class RunnerConcurrencyMonitor:
         counts = defaultdict(int)
 
         runner_patterns = [
-            'prepare_scenario_runner',
-            'run_simulation_runner',
-            'process_timeseries_runner',
-            'consolidate_workflow',
-            'setup_workflow'
+            "prepare_scenario_runner",
+            "run_simulation_runner",
+            "process_timeseries_runner",
+            "consolidate_workflow",
+            "setup_workflow",
         ]
 
-        for proc in psutil.process_iter(['pid', 'cmdline', 'uids', 'name']):
+        for proc in psutil.process_iter(["pid", "cmdline", "uids", "name"]):
             try:
                 # Only count processes owned by current user
-                if proc.info['uids'].real != current_user:
+                if proc.info["uids"].real != current_user:
                     continue
 
                 # Check if it's a Python process running a runner script
-                cmdline = proc.info.get('cmdline') or []
-                cmdline_str = ' '.join(cmdline)
+                cmdline = proc.info.get("cmdline") or []
+                cmdline_str = " ".join(cmdline)
 
                 for pattern in runner_patterns:
                     if pattern in cmdline_str:
                         counts[pattern] += 1
-                        counts['total'] += 1
+                        counts["total"] += 1
                         break  # Don't double-count
 
             except (psutil.NoSuchProcess, psutil.AccessDenied, TypeError):
@@ -235,7 +230,7 @@ class RunnerConcurrencyMonitor:
                     self.max_concurrent[runner_type] = count
 
             # Track total maximum
-            total = counts.get('total', 0)
+            total = counts.get("total", 0)
             if total > self.max_total_runners:
                 self.max_total_runners = total
 
@@ -255,7 +250,7 @@ class RunnerConcurrencyMonitor:
         if self._monitor_thread:
             self._monitor_thread.join(timeout=1.0)
 
-    def get_detailed_report(self) -> Dict:
+    def get_detailed_report(self) -> dict:
         """
         Get detailed concurrency report.
 
@@ -269,14 +264,14 @@ class RunnerConcurrencyMonitor:
             - samples: Number of samples collected
             - duration_seconds: Total monitoring duration
         """
-        total_counts = [counts.get('total', 0) for counts in self.runner_counts_timeline]
+        total_counts = [counts.get("total", 0) for counts in self.runner_counts_timeline]
 
         return {
-            'max_concurrent': dict(self.max_concurrent),
-            'max_total_runners': self.max_total_runners,
-            'avg_total_runners': sum(total_counts) / len(total_counts) if total_counts else 0,
-            'samples': len(self.runner_counts_timeline),
-            'duration_seconds': self.timestamps[-1] if self.timestamps else 0,
+            "max_concurrent": dict(self.max_concurrent),
+            "max_total_runners": self.max_total_runners,
+            "avg_total_runners": sum(total_counts) / len(total_counts) if total_counts else 0,
+            "samples": len(self.runner_counts_timeline),
+            "duration_seconds": self.timestamps[-1] if self.timestamps else 0,
         }
 
     def export_timeline(self, filepath: str) -> None:
@@ -294,35 +289,35 @@ class RunnerConcurrencyMonitor:
         all_runner_types = set()
         for counts in self.runner_counts_timeline:
             all_runner_types.update(counts.keys())
-        all_runner_types.discard('total')  # Will compute this separately
+        all_runner_types.discard("total")  # Will compute this separately
         all_runner_types = sorted(all_runner_types)
 
-        with open(filepath, 'w', newline='') as f:
+        with open(filepath, "w", newline="") as f:
             writer = csv.writer(f)
 
             # Header
-            writer.writerow(['timestamp_s'] + all_runner_types + ['total'])
+            writer.writerow(["timestamp_s"] + all_runner_types + ["total"])
 
             # Data rows
-            for timestamp, counts in zip(self.timestamps, self.runner_counts_timeline):
-                row: List[str | int] = [f"{timestamp:.2f}"]
+            for timestamp, counts in zip(self.timestamps, self.runner_counts_timeline, strict=False):
+                row: list[str | int] = [f"{timestamp:.2f}"]
                 for rt in all_runner_types:
                     row.append(counts.get(rt, 0))
-                row.append(counts.get('total', 0))
+                row.append(counts.get("total", 0))
                 writer.writerow(row)
 
     def print_summary(self) -> None:
         """Print a human-readable summary of concurrency."""
         report = self.get_detailed_report()
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Runner Concurrency Summary")
-        print("="*60)
+        print("=" * 60)
         print(f"Duration: {report['duration_seconds']:.1f}s ({report['samples']} samples)")
         print(f"\nMax Total Concurrent Runners: {report['max_total_runners']}")
         print(f"Avg Total Concurrent Runners: {report['avg_total_runners']:.1f}")
         print("\nMax Concurrent by Type:")
-        for runner_type, max_count in sorted(report['max_concurrent'].items()):
-            if runner_type != 'total':
+        for runner_type, max_count in sorted(report["max_concurrent"].items()):
+            if runner_type != "total":
                 print(f"  {runner_type:30s}: {max_count}")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")

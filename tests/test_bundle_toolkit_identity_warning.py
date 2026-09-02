@@ -66,9 +66,9 @@ def test_drifted_producing_toolkit_warns(tmp_path: Path) -> None:
     local = _local_sha()
     assert not local.startswith(FOREIGN_SHA), "test constant collides with the live sha"
     messages = _warnings_from_open(_bundle_with_sha(tmp_path, FOREIGN_SHA))
-    assert any(FOREIGN_SHA in m and local in m for m in messages), (
-        f"expected a provenance warning naming both {FOREIGN_SHA} and {local}; got {messages}"
-    )
+    assert any(
+        FOREIGN_SHA in m and local in m for m in messages
+    ), f"expected a provenance warning naming both {FOREIGN_SHA} and {local}; got {messages}"
 
 
 # --------------------------------------------------------------------------- #

@@ -11,12 +11,13 @@ The ScenarioInputGenerator class coordinates:
 4. Full SWMM model creation (optional, via SWMMFullModelBuilder)
 """
 
-import pandas as pd
-import numpy as np
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import numpy as np
+import pandas as pd
 import swmmio
 from scipy.stats import rankdata
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .scenario import TRITONSWMM_scenario
@@ -56,9 +57,7 @@ class ScenarioInputGenerator:
         self.cfg_analysis = scenario._analysis.cfg_analysis
         self.system = scenario._system
 
-    def create_hydraulics_model_from_template(
-        self, swmm_model_template, destination: Path
-    ) -> None:
+    def create_hydraulics_model_from_template(self, swmm_model_template, destination: Path) -> None:
         """
         Create SWMM hydraulics model from template - direct input to TRITON-SWMM.
 
@@ -81,9 +80,7 @@ class ScenarioInputGenerator:
         create_swmm_inp_from_template(self.scenario, swmm_model_template, destination)
         return
 
-    def update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
-        self, verbose: bool = False
-    ) -> None:
+    def update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(self, verbose: bool = False) -> None:
         """
         Update SWMM hydraulics model structure to match DEM grid for TRITON-SWMM coupling.
 
@@ -97,7 +94,7 @@ class ScenarioInputGenerator:
         verbose : bool, optional
             If True, print detailed progress messages (default: False)
         """
-        from .scenario import return_df_of_nodes_grouped_by_DEM_gridcell, calc_area
+        from .scenario import calc_area, return_df_of_nodes_grouped_by_DEM_gridcell
 
         dem_processed = self.system.sys_paths.dem_processed
 
@@ -106,18 +103,14 @@ class ScenarioInputGenerator:
         )
         lst_grps_more_than_1_node = []
         count = -1
-        for coords, group in df_node_locs.groupby(["dem_x_coord", "dem_y_coord"]):
+        for _coords, group in df_node_locs.groupby(["dem_x_coord", "dem_y_coord"]):
             keys = list(group.node_key)
             if len(group) > 1:
                 count += 1
                 group["grid_id"] = count
                 lst_grps_more_than_1_node.append(group)
         if verbose:
-            print(
-                "There are {} gridcells with more than 1 node.".format(
-                    len(lst_grps_more_than_1_node)
-                )
-            )
+            print(f"There are {len(lst_grps_more_than_1_node)} gridcells with more than 1 node.")
         if not lst_grps_more_than_1_node:
             # No DEM-cell overlap to resolve; nothing to update.
             return
@@ -128,7 +121,7 @@ class ScenarioInputGenerator:
         inflows = model.inp.inflows
         all_upstream_nodes_to_drop = []
         lst_ambiguous_nodes = []
-        for grid_id, group in df_overlapping_nodes.groupby(["grid_id"]):
+        for _grid_id, group in df_overlapping_nodes.groupby(["grid_id"]):
             keys = list(group.node_key)
             downstream_links = links[links.InletNode.isin(keys)]
             upstream_nodes_to_drop = []
@@ -146,9 +139,9 @@ class ScenarioInputGenerator:
                         if verbose:
                             print("###########################################")
                             print(
-                                "Warning: node selection ambiguous for nodes {} even after trying to select based on the lowest invert elevation. Choose the first node in the list...".format(
-                                    list(node_to_keep)
-                                )
+                                f"Warning: node selection ambiguous for nodes {list(node_to_keep)} even after"
+                                " trying to select based on the lowest invert elevation."
+                                " Choose the first node in the list..."
                             )
                             print("###########################################")
                         if node_to_keep not in lst_ambiguous_nodes:
@@ -158,7 +151,7 @@ class ScenarioInputGenerator:
                 keys = list(downstream_links.InletNode)
                 # compute link area
                 lst_areas = []
-                for id, row in downstream_links.iterrows():
+                for _id, row in downstream_links.iterrows():
                     lst_areas.append(calc_area(row))
                 # rank pipe area
                 ranks = rankdata(lst_areas, method="min")
@@ -171,12 +164,8 @@ class ScenarioInputGenerator:
                 if df_rank_counts.loc[max(ranks), "count"] > 1:
                     downstream_links_tied = downstream_links[ranks == max(ranks)]
                     # if a node appears as an outlet node, drop it
-                    downstream_links_w_outlets = downstream_links_tied[
-                        downstream_links_tied.OutletNode.isin(keys)
-                    ]
-                    upstream_nodes_to_drop += list(
-                        downstream_links_w_outlets.InletNode.values
-                    )
+                    downstream_links_w_outlets = downstream_links_tied[downstream_links_tied.OutletNode.isin(keys)]
+                    upstream_nodes_to_drop += list(downstream_links_w_outlets.InletNode.values)
                     # remove nodes that don't have an outlet node
                     remaining_dwnstrm_links = downstream_links_tied[
                         ~downstream_links_tied.InletNode.isin(upstream_nodes_to_drop)
@@ -188,9 +177,9 @@ class ScenarioInputGenerator:
                             if verbose:
                                 print("###########################################")
                                 print(
-                                    "Warning: node selection ambiguous for nodes {} even after trying to select based on the lowest invert elevation. Choose the first node in the list...".format(
-                                        list(node_to_keep)
-                                    )
+                                    f"Warning: node selection ambiguous for nodes {list(node_to_keep)} even after"
+                                    " trying to select based on the lowest invert elevation."
+                                    " Choose the first node in the list..."
                                 )
                                 print("###########################################")
                         node_to_keep = node_to_keep[0]
@@ -203,13 +192,11 @@ class ScenarioInputGenerator:
                     upstream_nodes_to_drop = downstream_links[
                         downstream_links.InletNode != node_to_keep
                     ].InletNode.values
-            all_upstream_nodes_to_drop = all_upstream_nodes_to_drop + list(
-                upstream_nodes_to_drop
-            )
+            all_upstream_nodes_to_drop = all_upstream_nodes_to_drop + list(upstream_nodes_to_drop)
         if verbose:
-            print("Removing {} inflow nodes.".format(len(all_upstream_nodes_to_drop)))
+            print(f"Removing {len(all_upstream_nodes_to_drop)} inflow nodes.")
         # write new swmm model, removing outflow that won't be used by TRITON-SWMM
-        with open(self.scenario.scen_paths.swmm_hydraulics_inp, "r") as fp:
+        with open(self.scenario.scen_paths.swmm_hydraulics_inp) as fp:
             lines = fp.readlines()
         for idx_line, line in enumerate(lines):
             if "[INFLOWS]" in line:
@@ -218,9 +205,7 @@ class ScenarioInputGenerator:
                 inflows_section_last_line_num = idx_line
         line_nums_to_remove = []
         lines_to_remove = []
-        for inflow_line in np.arange(
-            inflows_section_first_line_num, inflows_section_last_line_num + 1
-        ):
+        for inflow_line in np.arange(inflows_section_first_line_num, inflows_section_last_line_num + 1):
             line = lines[inflow_line]
             node_id = line.split("    ")[0]
             if node_id in all_upstream_nodes_to_drop:
@@ -255,12 +240,12 @@ class ScenarioInputGenerator:
         """
         n_threads = self.cfg_analysis.n_omp_threads
 
-        with open(inp_file_path, "r") as fp:
+        with open(inp_file_path) as fp:
             lines = fp.readlines()
 
         # Find and replace THREADS line in [OPTIONS] section
         in_options_section = False
-        threads_found = False
+        _threads_found = False
 
         for idx, line in enumerate(lines):
             # Track when we enter/exit OPTIONS section
@@ -275,7 +260,7 @@ class ScenarioInputGenerator:
             if in_options_section and line.strip().startswith("THREADS"):
                 # Preserve spacing format: "THREADS              {value}"
                 lines[idx] = f"THREADS              {n_threads}\n"
-                threads_found = True
+                _threads_found = True
                 break
 
         # Write back modified file
@@ -295,29 +280,26 @@ class ScenarioInputGenerator:
 
         Updates the scenario log to indicate files were created successfully.
         """
-        import rioxarray as rxr
         import geopandas as gpd
+        import rioxarray as rxr
+
         from .scenario import (
             extract_vertex_coordinates,
-            infer_side,
             find_closest_dem_coord,
+            infer_side,
         )
 
-        weather_event_indexers = self.scenario.weather_event_indexers
-        weather_time_series_storm_tide_datavar = (
-            self.cfg_analysis.weather_time_series_storm_tide_datavar
-        )
-        simulation_folders = self.scenario._analysis.analysis_paths.simulation_directory
+        _weather_event_indexers = self.scenario.weather_event_indexers
+        weather_time_series_storm_tide_datavar = self.cfg_analysis.weather_time_series_storm_tide_datavar
+        _simulation_folders = self.scenario._analysis.analysis_paths.simulation_directory
         storm_tide_units = self.cfg_analysis.storm_tide_units
 
         dem_processed = self.system.sys_paths.dem_processed
         storm_tide_boundary_line_gis = self.cfg_analysis.storm_tide_boundary_line_gis
         ds_event_ts = self.scenario.ds_event_ts
-        df_water_levels = (
-            ds_event_ts[weather_time_series_storm_tide_datavar]
-            .reset_coords(drop=True)
-            .to_dataframe()
-        )[weather_time_series_storm_tide_datavar].to_frame()
+        df_water_levels = (ds_event_ts[weather_time_series_storm_tide_datavar].reset_coords(drop=True).to_dataframe())[
+            weather_time_series_storm_tide_datavar
+        ].to_frame()
 
         # .dt.seconds is the SECONDS COMPONENT (0-86399) and silently wraps on a
         # gap of >= 24 h; .dt.total_seconds() is the non-wrapping form. Contiguous
@@ -342,9 +324,7 @@ class ScenarioInputGenerator:
         with open(self.scenario.scen_paths.extbc_tseries, "w") as f:
             f.write(wlevel_first_line + wlevel_second_line)
 
-        df_water_levels.to_csv(
-            self.scenario.scen_paths.extbc_tseries, mode="a", header=False
-        )
+        df_water_levels.to_csv(self.scenario.scen_paths.extbc_tseries, mode="a", header=False)
 
         self.scenario.log.extbc_tseries_created.set(True)
         # write external boundary condition location file

@@ -20,6 +20,7 @@ guard is an INERT backstop in production today — its set/clear wiring is defer
 (see the plan follow-up) — so these tests drive the field directly rather than
 through a real two-allocation ``batch_job`` run (unrunnable in this worktree).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,7 +30,6 @@ import pytest
 
 from hhemt.process_simulation import (
     TRITONSWMM_sim_post_processing,
-    _CLEAR_RAW_DELETE_SUBDIRS,
 )
 
 
@@ -110,19 +110,22 @@ def _make_proc(
     # _clear_raw_outputs guard reads via self._analysis.log.
     proc._analysis = SimpleNamespace(
         analysis_paths=SimpleNamespace(analysis_dir=out_dir_path.parent),
-        log=SimpleNamespace(
-            multi_allocation_in_progress=_GetLogField(multi_allocation_in_progress)
-        ),
+        log=SimpleNamespace(multi_allocation_in_progress=_GetLogField(multi_allocation_in_progress)),
     )
     return proc
 
 
-@pytest.mark.parametrize("out_attr,model_type", [
-    ("out_tritonswmm", "tritonswmm"),
-    ("out_triton", "triton"),
-])
+@pytest.mark.parametrize(
+    "out_attr,model_type",
+    [
+        ("out_tritonswmm", "tritonswmm"),
+        ("out_triton", "triton"),
+    ],
+)
 def test_clear_raw_outputs_deletes_subdirs_preserves_files_and_swmm(
-    tmp_path: Path, out_attr: str, model_type: str,
+    tmp_path: Path,
+    out_attr: str,
+    model_type: str,
 ):
     """For TRITON/TRITON-SWMM: deletes H/QX/QY/MH/bin/cfg/performance/ but
     preserves top-level files and the ``swmm/`` subdir (per user-corrected
@@ -146,9 +149,9 @@ def test_clear_raw_outputs_deletes_subdirs_preserves_files_and_swmm(
     # assertion below holds for both out_tritonswmm and out_triton seeds
     # even though only the coupled tritonswmm path uses the .rpt downstream.
     assert (out_dir / "swmm").exists(), "swmm/ subdir must be preserved"
-    assert (out_dir / "swmm" / "hydraulics.rpt").exists(), (
-        "out_tritonswmm/swmm/hydraulics.rpt must survive _clear_raw_outputs"
-    )
+    assert (
+        out_dir / "swmm" / "hydraulics.rpt"
+    ).exists(), "out_tritonswmm/swmm/hydraulics.rpt must survive _clear_raw_outputs"
 
 
 def test_clear_raw_outputs_swmm_deletes_only_out_file(tmp_path: Path):
@@ -189,9 +192,7 @@ def test_clear_raw_outputs_preserves_unknown_subdirs(tmp_path: Path):
     for sub in ("H", "QX", "QY", "MH", "bin", "cfg", "performance"):
         assert not (out_dir / sub).exists(), f"{sub}/ should be deleted"
     # Unknown subdir survives.
-    assert (out_dir / "diagnostics_future").exists(), (
-        "unknown subdirs must be preserved (allowlist semantics)"
-    )
+    assert (out_dir / "diagnostics_future").exists(), "unknown subdirs must be preserved (allowlist semantics)"
     assert (out_dir / "diagnostics_future" / "marker.bin").exists()
 
 
@@ -208,24 +209,24 @@ def test_clear_raw_outputs_rejects_unknown_model_type(tmp_path: Path):
         TRITONSWMM_sim_post_processing._clear_raw_outputs(proc, "bogus")  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("resolved,model_type,expected", [
-    ("none", "tritonswmm", False),
-    ("none", "triton", False),
-    ("none", "swmm", False),
-    ("all", "tritonswmm", True),
-    ("all", "triton", True),
-    ("all", "swmm", True),
-    (["tritonswmm"], "tritonswmm", True),
-    (["tritonswmm"], "triton", False),
-    (["tritonswmm", "swmm"], "swmm", True),
-    (["tritonswmm", "swmm"], "triton", False),
-])
+@pytest.mark.parametrize(
+    "resolved,model_type,expected",
+    [
+        ("none", "tritonswmm", False),
+        ("none", "triton", False),
+        ("none", "swmm", False),
+        ("all", "tritonswmm", True),
+        ("all", "triton", True),
+        ("all", "swmm", True),
+        (["tritonswmm"], "tritonswmm", True),
+        (["tritonswmm"], "triton", False),
+        (["tritonswmm", "swmm"], "swmm", True),
+        (["tritonswmm", "swmm"], "triton", False),
+    ],
+)
 def test_should_clear_raw_for_model(resolved, model_type, expected):
     """``_should_clear_raw_for_model`` honors the three ``clear_raw`` shapes."""
-    assert (
-        TRITONSWMM_sim_post_processing._should_clear_raw_for_model(resolved, model_type)
-        is expected
-    )
+    assert TRITONSWMM_sim_post_processing._should_clear_raw_for_model(resolved, model_type) is expected
 
 
 # ---------------------------------------------------------------------------

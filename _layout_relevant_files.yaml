@@ -29,7 +29,50 @@ non_breaking_allowlist:
       file passed Check B silently, including numeric-correctness edits to the
       per-scenario perf zarrs. Re-stamp layout_signature whenever a genuinely
       non-breaking change lands; a breaking one must bump LAYOUT_VERSION instead.
-    layout_signature: "0a364a83d9638df0a1b5f51c9c7b250bc1db331251a286e7c87f973478f13f8a"
+      RE-RECORDED for the reclaim guard that arrived with merge 9bde88dc
+      (origin/sidequest-clearing-08-30). ASSERTED POST-HOC BY A REVIEWER, NOT BY THE
+      CHANGE'S AUTHOR -- stated explicitly because this entry's own history above
+      records that a path-keyed exemption on this file once concealed
+      numeric-correctness edits to the per-scenario perf zarrs, and a non-author
+      re-stamp is the nearest available thing to re-creating that blanket. The
+      reviewer is named in the commit that carries this change.
+      THE CHANGE: 25 insertions inside the model_type == "tritonswmm" branch adding
+      an `if "prep_inputs" in classes:` guard that computes
+      `_unrun = [m for m in self._run.model_types_enabled
+                 if not self._scenario.model_run_completed(m)]`
+      and, when non-empty, drops "prep_inputs" from the reclaim classes. Net effect
+      is strictly FEWER deletions: dats/ and extbc/ survive when a model has not run.
+      WHY NON-BREAKING, by measurement rather than by the direction of the change
+      (the "more files retained must be safe" argument is UNSOUND in general, because
+      absence is observable, and it is not the argument relied on here):
+      (1) `grep -rn "dats\|extbc" src/hhemt/version_migration/ tests/fixtures/legacy_layouts/`
+          returns ZERO. Neither token appears in the migration package or in any
+          golden-fixture tree, so no V{NNNN} module can act on these paths and the
+          golden sweep -- the instrument a bump exists to satisfy -- is blind to this
+          change by construction. A V0020 would have no assertion to make.
+      (2) The MigrationContext primitive set is 48 methods and every data-touching one
+          renames, reshapes, adds-a-field-with-a-default, regenerates a derived file,
+          or removes. NONE creates a data artifact from nothing, so "a file that used
+          to be deleted now survives" is not a class this machinery can express.
+      (3) Consumers enumerated rather than assumed. scenario.py
+          _assert_scenario_forcing_window_agreement is permissively gated -- absence
+          causes it to SKIP and is never read as a signal. analysis_validation.py
+          _RECLAIM_LOG_FIELDS sees a log VALUE change; the field and its schema are
+          untouched, and none of log_add_field / log_rename_field / log_transform_field
+          is engaged.
+      DEPENDENCY CONFIRMED: the guard's own comment declares a dependency on Spec 12
+      repairing model_run_completed soundness for SWMM. Spec 12 rode this same merge
+      (run_simulation.py, +63 lines, "adjudicate sim completion from the run artifact"),
+      so the guard does not rest on an unsound predicate.
+      KNOWN RESIDUAL, recorded because it is real and is NOT a layout matter: because
+      the forcing-window observer is permissively gated, retention makes it RUN where
+      it previously SKIPPED, so a re-prep whose dats/ survive may raise ProcessingError
+      where the pre-9bde88dc code was silent. That is the fail-loud direction and is a
+      RUNTIME risk, not a layout one -- no migration could prevent it, and its remedy is
+      a test on the re-prep path. It belongs to the authoring session's review.
+      SCOPE OF THIS ATTESTATION: process_simulation.py only. check-b named one file and
+      one file was adjudicated; this says nothing about the rest of merge 9bde88dc.
+    layout_signature: "8b1695b1bfa3bf1081ddb6a9705eb10354bb87a5abc6b4c4db26e17da163eac5"
   - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
     justification: >-
       DU-sentinel gate closure — a one-character correction inside an existing

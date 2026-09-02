@@ -27,8 +27,11 @@ def worktree_slug() -> str:
     return "main"
 
 
-from tests.fixtures.test_case_builder import retrieve_TRITON_SWMM_test_case
-from tests.fixtures.test_case_catalog import GetTS_TestCases
+# noqa: E402 justified — test_case_builder and test_case_catalog both do
+# `from tests.fixtures import worktree_slug`, so that name must be BOUND before these
+# imports run. Hoisting them to the top raises ImportError on a circular import.
+from tests.fixtures.test_case_builder import retrieve_TRITON_SWMM_test_case  # noqa: E402
+from tests.fixtures.test_case_catalog import GetTS_TestCases  # noqa: E402
 
 __all__ = [
     "retrieve_TRITON_SWMM_test_case",

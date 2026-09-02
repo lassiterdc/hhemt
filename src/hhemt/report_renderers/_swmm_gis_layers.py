@@ -61,19 +61,29 @@ def export_swmm_gis_layers(
     paths: dict[str, Path] = {}
 
     paths["subcatchments"] = _write_subcatchments(
-        hydro_model, output_dir / "subcatchments.geojson", target_crs,
+        hydro_model,
+        output_dir / "subcatchments.geojson",
+        target_crs,
     )
     paths["drainage_lines"] = _write_drainage_lines(
-        hydro_model, output_dir / "drainage_lines.geojson", target_crs,
+        hydro_model,
+        output_dir / "drainage_lines.geojson",
+        target_crs,
     )
     paths["junctions"] = _write_junctions(
-        hydraulics_model, output_dir / "junctions.geojson", target_crs,
+        hydraulics_model,
+        output_dir / "junctions.geojson",
+        target_crs,
     )
     paths["outfalls"] = _write_outfalls(
-        hydraulics_model, output_dir / "outfalls.geojson", target_crs,
+        hydraulics_model,
+        output_dir / "outfalls.geojson",
+        target_crs,
     )
     paths["conduits"] = _write_conduits(
-        hydraulics_model, output_dir / "conduits.geojson", target_crs,
+        hydraulics_model,
+        output_dir / "conduits.geojson",
+        target_crs,
     )
     return paths
 
@@ -85,9 +95,13 @@ def _write_subcatchments(model, path: Path, crs) -> Path:
     if polygons_df is not None and len(polygons_df) > 0:
         for sc_name in polygons_df.index.unique():
             rows = polygons_df.loc[[sc_name]]
-            verts = list(zip(
-                rows["X"].astype(float), rows["Y"].astype(float), strict=True,
-            ))
+            verts = list(
+                zip(
+                    rows["X"].astype(float),
+                    rows["Y"].astype(float),
+                    strict=True,
+                )
+            )
             if len(verts) < 3:
                 continue
             geom = Polygon(verts)
@@ -107,11 +121,7 @@ def _write_drainage_lines(model, path: Path, crs) -> Path:
     subcatch_df = getattr(model.inp, "subcatchments", None)
     coords_df = model.inp.coordinates
     records: list[dict[str, Any]] = []
-    if (
-        polygons_df is not None
-        and len(polygons_df) > 0
-        and subcatch_df is not None
-    ):
+    if polygons_df is not None and len(polygons_df) > 0 and subcatch_df is not None:
         for sc_name in polygons_df.index.unique():
             if sc_name not in subcatch_df.index:
                 continue
@@ -119,20 +129,26 @@ def _write_drainage_lines(model, path: Path, crs) -> Path:
             if outlet_name not in coords_df.index:
                 continue
             rows = polygons_df.loc[[sc_name]]
-            verts = list(zip(
-                rows["X"].astype(float), rows["Y"].astype(float), strict=True,
-            ))
+            verts = list(
+                zip(
+                    rows["X"].astype(float),
+                    rows["Y"].astype(float),
+                    strict=True,
+                )
+            )
             if not verts:
                 continue
             cx = sum(v[0] for v in verts) / len(verts)
             cy = sum(v[1] for v in verts) / len(verts)
             ox = float(coords_df.at[outlet_name, "X"])
             oy = float(coords_df.at[outlet_name, "Y"])
-            records.append({
-                "geometry": LineString([(cx, cy), (ox, oy)]),
-                "subcatchment": str(sc_name),
-                "outlet": str(outlet_name),
-            })
+            records.append(
+                {
+                    "geometry": LineString([(cx, cy), (ox, oy)]),
+                    "subcatchment": str(sc_name),
+                    "outlet": str(outlet_name),
+                }
+            )
     _write_geojson(records, path, crs)
     return path
 
@@ -226,16 +242,20 @@ def _write_conduits(model, path: Path, crs) -> Path:
                 props["slope_pct"] = 100.0 * (inv_in - inv_out) / float(length)
             except (TypeError, ZeroDivisionError):
                 pass
-        records.append({
-            "geometry": LineString([p_in, p_out]),
-            **props,
-        })
+        records.append(
+            {
+                "geometry": LineString([p_in, p_out]),
+                **props,
+            }
+        )
     _write_geojson(records, path, crs)
     return path
 
 
 def _write_geojson(
-    records: list[dict[str, Any]], path: Path, crs: Any | None,
+    records: list[dict[str, Any]],
+    path: Path,
+    crs: Any | None,
 ) -> None:
     if records:
         gdf = gpd.GeoDataFrame(records, geometry="geometry", crs=crs)
@@ -250,7 +270,7 @@ def _coerce(value: Any) -> Any:
     """Best-effort scalar coercion for GeoJSON property serialization."""
     if value is None:
         return None
-    if isinstance(value, (int, float, str, bool)):
+    if isinstance(value, int | float | str | bool):
         return value
     try:
         # pandas / numpy scalars

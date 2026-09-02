@@ -58,12 +58,7 @@ class WipeCost:
     @property
     def is_empty(self) -> bool:
         """True when the wipe would destroy nothing this gate can see."""
-        return not (
-            self.completed_sims
-            or self.consolidated_trees
-            or self.in_flight
-            or self.orchestrator_sentinels
-        )
+        return not (self.completed_sims or self.consolidated_trees or self.in_flight or self.orchestrator_sentinels)
 
     def describe(self) -> str:
         """Human-readable enumeration -- the refusal must NAME what it found."""
@@ -105,9 +100,7 @@ def summarize_wipe_cost(analysis_dir: str | Path) -> WipeCost:
     )
 
 
-def assert_wipe_is_deliberate(
-    analysis_dir: str | Path, *, override_wipe_nonempty: bool = False
-) -> WipeCost:
+def assert_wipe_is_deliberate(analysis_dir: str | Path, *, override_wipe_nonempty: bool = False) -> WipeCost:
     """Refuse a full-tree wipe that would destroy existing work.
 
     Returns the computed :class:`WipeCost` so a caller may log it. Raises
@@ -121,8 +114,7 @@ def assert_wipe_is_deliberate(
         return cost
     if override_wipe_nonempty:
         print(
-            f"[wipe-guard] override_wipe_nonempty set — DESTROYING {cost.describe()} "
-            f"under {analysis_dir}",
+            f"[wipe-guard] override_wipe_nonempty set — DESTROYING {cost.describe()} " f"under {analysis_dir}",
             flush=True,
         )
         return cost

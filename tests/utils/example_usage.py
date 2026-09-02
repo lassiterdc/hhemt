@@ -13,8 +13,8 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tests.utils.process_monitor import RunnerConcurrencyMonitor
 import tests.utils_for_testing as tst
+from tests.utils.process_monitor import RunnerConcurrencyMonitor
 
 
 def main():
@@ -56,9 +56,7 @@ def main():
     monitor.print_summary()
 
     # Export timeline
-    timeline_path = (
-        analysis.analysis_paths.analysis_dir / "runner_concurrency_timeline.csv"
-    )
+    timeline_path = analysis.analysis_paths.analysis_dir / "runner_concurrency_timeline.csv"
     monitor.export_timeline(str(timeline_path))
     print(f"\n📊 Timeline exported to: {timeline_path}")
     print("   Open in Excel or Python/pandas for visualization\n")
@@ -70,47 +68,47 @@ def main():
 
     cores = analysis.cfg_analysis.local_cpu_cores_for_workflow
 
-    print(f"\n1. Maximum concurrent prepare_scenario_runner processes:")
+    print("\n1. Maximum concurrent prepare_scenario_runner processes:")
     max_prepare = report["max_concurrent"].get("prepare_scenario_runner", 0)
     print(f"   {max_prepare} (configured cores: {cores})")
     if max_prepare <= cores:
         print("   ✅ Respects core limit")
     else:
-        print(f"   ⚠️  Briefly exceeded cores (normal during phase transitions)")
+        print("   ⚠️  Briefly exceeded cores (normal during phase transitions)")
 
-    print(f"\n2. Maximum concurrent run_simulation_runner processes:")
+    print("\n2. Maximum concurrent run_simulation_runner processes:")
     max_run = report["max_concurrent"].get("run_simulation_runner", 0)
     print(f"   {max_run} (configured cores: {cores})")
     if max_run <= cores:
         print("   ✅ Respects core limit")
     else:
-        print(f"   ⚠️  Briefly exceeded cores (normal during phase transitions)")
+        print("   ⚠️  Briefly exceeded cores (normal during phase transitions)")
 
-    print(f"\n3. Maximum concurrent process_timeseries_runner processes:")
+    print("\n3. Maximum concurrent process_timeseries_runner processes:")
     max_process = report["max_concurrent"].get("process_timeseries_runner", 0)
     print(f"   {max_process} (configured cores: {cores})")
     if max_process <= cores:
         print("   ✅ Respects core limit")
     else:
-        print(f"   ⚠️  Briefly exceeded cores (normal during phase transitions)")
+        print("   ⚠️  Briefly exceeded cores (normal during phase transitions)")
 
-    print(f"\n4. Maximum TOTAL concurrent runners:")
+    print("\n4. Maximum TOTAL concurrent runners:")
     print(f"   {report['max_total_runners']}")
     if report["max_total_runners"] > cores * 2:
-        print(f"   ⚠️  Exceeded 2x cores - may indicate a problem")
+        print("   ⚠️  Exceeded 2x cores - may indicate a problem")
     elif report["max_total_runners"] > cores:
-        print(f"   ℹ️  Briefly exceeded cores (normal during phase transitions)")
+        print("   ℹ️  Briefly exceeded cores (normal during phase transitions)")
     else:
         print("   ✅ Well within limits")
 
-    print(f"\n5. Average concurrent runners over time:")
+    print("\n5. Average concurrent runners over time:")
     print(f"   {report['avg_total_runners']:.1f}")
     if report["avg_total_runners"] <= cores:
-        print(f"   ✅ Average respects core limit (expected for steady-state)")
+        print("   ✅ Average respects core limit (expected for steady-state)")
     else:
-        print(f"   ⚠️  Average exceeds cores - unusual pattern")
+        print("   ⚠️  Average exceeds cores - unusual pattern")
 
-    print(f"\n6. Duration and sample count:")
+    print("\n6. Duration and sample count:")
     print(f"   Duration: {report['duration_seconds']:.1f}s")
     print(f"   Samples: {report['samples']}")
     print(f"   Sample rate: {report['samples']/report['duration_seconds']:.1f} Hz")

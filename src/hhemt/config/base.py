@@ -1,12 +1,12 @@
+from pathlib import Path
+from typing import Any, get_args
+
+import pandas as pd
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic_core import PydanticUndefined
-from typing import get_args
-from typing import List, Dict, Any, Optional, Tuple
-from pathlib import Path
-import pandas as pd
 from tabulate import tabulate
-from hhemt.plot_utils import print_json_file_tree
 
+from hhemt.plot_utils import print_json_file_tree
 
 # --- Declarative field metadata: ONE declaration, TWO consumers --------------
 #
@@ -33,7 +33,7 @@ from hhemt.plot_utils import print_json_file_tree
 # with `field_meta()`.
 
 
-def when(field: str, *values: Any) -> Dict[str, Any]:
+def when(field: str, *values: Any) -> dict[str, Any]:
     """One trigger clause: `field` holds one of `values`.
 
     A LIST, not a scalar equality, because five of the conditional fields in
@@ -45,11 +45,11 @@ def when(field: str, *values: Any) -> Dict[str, Any]:
 
 def field_meta(
     *,
-    applies_when: Optional[List[Dict[str, Any]]] = None,
-    required_when: Optional[List[Dict[str, Any]]] = None,
-    options: Optional[Dict[str, str]] = None,
+    applies_when: list[dict[str, Any]] | None = None,
+    required_when: list[dict[str, Any]] | None = None,
+    options: dict[str, str] | None = None,
     **passthrough: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a field's whole `json_schema_extra` payload.
 
     `applies_when` and `required_when` are DELIBERATELY separate keys, not one
@@ -60,7 +60,7 @@ def field_meta(
     `passthrough` carries any pre-existing key (today: `toolkit_owned_output`)
     so one payload can hold both without stacking.
     """
-    extra: Dict[str, Any] = dict(passthrough)
+    extra: dict[str, Any] = dict(passthrough)
     if applies_when:
         extra["applies_when"] = applies_when
     if required_when:
@@ -81,19 +81,15 @@ def declared(field_info: Any, key: str) -> Any:
     return extra.get(key) if isinstance(extra, dict) else None
 
 
-def render_clauses(clauses: List[Dict[str, Any]]) -> str:
+def render_clauses(clauses: list[dict[str, Any]]) -> str:
     """Human-readable rendering of trigger clauses, for the report table.
 
     `multi_sim_run_method is batch_job` / `run_mode is one of gpu, hybrid`.
     """
-    parts: List[str] = []
+    parts: list[str] = []
     for clause in clauses:
         values = clause["in"]
-        joined = (
-            str(values[0])
-            if len(values) == 1
-            else "one of " + ", ".join(str(v) for v in values)
-        )
+        joined = str(values[0]) if len(values) == 1 else "one of " + ", ".join(str(v) for v in values)
         parts.append(f"{clause['field']} is {joined}")
     return "; ".join(parts)
 
@@ -103,10 +99,7 @@ class cfgBaseModel(BaseModel):
 
     @staticmethod
     def _get_field_descriptions(model_cls):
-        data = {
-            field_name: field_info.description or ""
-            for field_name, field_info in model_cls.model_fields.items()
-        }
+        data = {field_name: field_info.description or "" for field_name, field_info in model_cls.model_fields.items()}
         sr = pd.Series(data)  # type: ignore
         sr.index.name = "attr_name"  # type: ignore
         sr.name = "desc"  # type: ignore
@@ -127,9 +120,7 @@ class cfgBaseModel(BaseModel):
         return sr
 
     def cfg_dic_to_df(self):
-        s_vals = pd.DataFrame(self, columns=["attr_name", "val"]).set_index(
-            "attr_name"
-        )["val"]
+        s_vals = pd.DataFrame(self, columns=["attr_name", "val"]).set_index("attr_name")["val"]
         s_descs = self._get_field_descriptions(self.__class__)
         df_vars = pd.concat([s_descs, s_vals], axis=1)
         return df_vars
@@ -146,9 +137,7 @@ class cfgBaseModel(BaseModel):
                 str(idx),
                 str(row.desc),
                 (  # even coerced as strings, True and False cause line splitting to fail so they need to be modified
-                    str(row.val).lower()
-                    if str(row.val) in ["True", "False"]
-                    else str(row.val)
+                    str(row.val).lower() if str(row.val) in ["True", "False"] else str(row.val)
                 ),
             ]
             lst_rows.append(vals_as_list)
@@ -165,11 +154,11 @@ class cfgBaseModel(BaseModel):
     # VALIDATION
     @staticmethod
     def validate_from_toggle(
-        values: Dict[str, Any],
+        values: dict[str, Any],
         toggle_varname: str,
-        lst_rqrd_if_true: List[str],
-        lst_rqrd_if_false: List[str],
-    ) -> Tuple[List[str], List[str]]:
+        lst_rqrd_if_true: list[str],
+        lst_rqrd_if_false: list[str],
+    ) -> tuple[list[str], list[str]]:
         """
         Validate that required fields are provided depending on a toggle.
 
@@ -179,17 +168,15 @@ class cfgBaseModel(BaseModel):
             failing_vars: list of field names that failed
             errors: list of error messages
         """
-        failing_vars: List[str] = []
-        errors: List[str] = []
+        failing_vars: list[str] = []
+        errors: list[str] = []
         toggle = values.get(toggle_varname)
         required_fields = lst_rqrd_if_true if toggle else lst_rqrd_if_false
         for var in required_fields:
             val = values.get(var)
             # Check for presence
             if val is None:
-                errors.append(
-                    f"{var} must be provided if {toggle_varname} is {'True' if toggle else 'False'}"
-                )
+                errors.append(f"{var} must be provided if {toggle_varname} is {'True' if toggle else 'False'}")
                 failing_vars.append(var)
                 continue
             # Check if Path exists
@@ -253,7 +240,7 @@ class cfgBaseModel(BaseModel):
         """
         if not isinstance(values, dict):
             return values
-        errors: List[str] = []
+        errors: list[str] = []
         for name, field_info in cls.model_fields.items():
             clauses = declared(field_info, "required_when")
             if not clauses:
@@ -266,15 +253,12 @@ class cfgBaseModel(BaseModel):
                     trigger_field = cls.model_fields.get(trigger_name)
                     if trigger_field is None:
                         raise TypeError(
-                            f"{cls.__name__}.{name}: required_when names an unknown "
-                            f"field {trigger_name!r}"
+                            f"{cls.__name__}.{name}: required_when names an unknown " f"field {trigger_name!r}"
                         )
                     default = trigger_field.default
                     trigger = None if default is PydanticUndefined else default
                 if trigger in clause["in"] and values.get(name) is None:
-                    errors.append(
-                        f"{name} is required when {render_clauses([clause])}"
-                    )
+                    errors.append(f"{name} is required when {render_clauses([clause])}")
         if errors:
             raise ValueError("; ".join(errors))
         return values

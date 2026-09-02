@@ -43,7 +43,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Import the test-case catalog from the toolkit's test fixtures package.
@@ -51,21 +51,15 @@ TESTS_ROOT = Path(__file__).resolve().parents[2]
 if str(TESTS_ROOT) not in sys.path:
     sys.path.insert(0, str(TESTS_ROOT.parent))
 
-from tests.fixtures import test_case_catalog as cases  # noqa: E402
-
 from hhemt.bundle._emit import (  # noqa: E402
     _copy_configs_with_relative_paths,
-)
-from hhemt.bundle._path_policy import (  # noqa: E402
-    _PATH_FIELD_POLICY,
-    enumerate_path_fields,
 )
 from hhemt.version_migration.constants import (  # noqa: E402
     BUNDLE_MANIFEST_FILENAME,
     BUNDLE_SCHEMA_VERSION,
     LAYOUT_VERSION,
 )
-
+from tests.fixtures import test_case_catalog as cases  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).resolve().parent
 
@@ -89,9 +83,7 @@ def _build_one(case_name: str, fixture_subdir: str, analysis) -> Path:
         "source_paths_by_renderer": {},
         "bundle_root_invariants": invariants,
     }
-    (out / BUNDLE_MANIFEST_FILENAME).write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n"
-    )
+    (out / BUNDLE_MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
     # Minimal plots/ mirror — copy only *.manifest.json sidecars if present.
     src_plots = analysis.analysis_paths.analysis_dir / "plots"
@@ -107,17 +99,11 @@ def _build_one(case_name: str, fixture_subdir: str, analysis) -> Path:
 
 
 def main() -> int:
-    case_multi = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
-        start_from_scratch=False
-    )
-    out_multi = _build_one(
-        "synth_multi_sim", "multi_sim", case_multi.analysis
-    )
+    case_multi = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
+    out_multi = _build_one("synth_multi_sim", "multi_sim", case_multi.analysis)
     print(f"Built {out_multi}")
 
-    case_sens = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
-        start_from_scratch=False
-    )
+    case_sens = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(start_from_scratch=False)
     # The case's .analysis is the TRITONSWMM_analysis configured with
     # toggle_sensitivity_analysis=True; bundle_report_data on the master
     # is what produces the sensitivity-master bundle.
@@ -127,7 +113,7 @@ def main() -> int:
         case_sens.analysis,
     )
     print(f"Built {out_sens}")
-    print(f"Fixtures regenerated at {datetime.now(timezone.utc).isoformat()}")
+    print(f"Fixtures regenerated at {datetime.now(UTC).isoformat()}")
     return 0
 
 

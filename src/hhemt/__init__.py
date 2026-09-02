@@ -4,24 +4,23 @@ __author__ = """Daniel Lassiter"""
 __email__ = "daniel.lassiter@outlook.com"
 
 # Export high-level API
-from .toolkit import Toolkit
-
 # Export version_migration subpackage
 from hhemt import version_migration  # noqa: F401
 
 # Export custom exceptions for convenient access
 from .exceptions import (
-    TRITONSWMMError,
-    ConfigurationError,
-    CompilationError,
-    SimulationError,
-    ProcessingError,
-    WorkflowError,
-    SLURMError,
-    ResourceAllocationError,
     CLIValidationError,
+    CompilationError,
+    ConfigurationError,
+    ProcessingError,
+    ResourceAllocationError,
+    SimulationError,
+    SLURMError,
+    TRITONSWMMError,
+    WorkflowError,
     WorkflowPlanningError,
 )
+from .toolkit import Toolkit
 
 __all__ = [
     "Toolkit",

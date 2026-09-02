@@ -1,28 +1,29 @@
 # %%
-import pandas as pd
-import rioxarray as rxr
-import numpy as np
-import xarray as xr
 import sys
-import swmmio
+import threading
 import warnings
-import hhemt.utils as utils
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
+
+import numpy as np
+import pandas as pd
+import rioxarray as rxr
+import swmmio
+import xarray as xr
+
+import hhemt.utils as utils
 from hhemt.exceptions import CompilationError, ConfigurationError, ProcessingError
 from hhemt.log import (
-    TRITONSWMM_scenario_log,
-    TRITONSWMM_model_log,
     LogField,
+    TRITONSWMM_model_log,
+    TRITONSWMM_scenario_log,
 )
 from hhemt.paths import ScenarioPaths
-from typing import TYPE_CHECKING, Literal, Optional
-import threading
-from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.scenario_inputs import ScenarioInputGenerator
-from hhemt.swmm_runoff_modeling import SWMMRunoffModeler
+from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.swmm_full_model import SWMMFullModelBuilder
-
+from hhemt.swmm_runoff_modeling import SWMMRunoffModeler
 
 lock = threading.Lock()
 
@@ -81,9 +82,7 @@ def _assert_scenario_forcing_window_agreement(scenario) -> None:
     # why this layer caught 67 of 67 when the preflight built to catch the same thing
     # reported the file as unpadded. Do NOT re-derive either of the first two from the
     # clipped coordinate: that collapses this guard into "a uniform axis is uniform".
-    with xr.open_dataset(
-        scenario.scen_paths.weather_timeseries, engine="h5netcdf"
-    ) as _wx:
+    with xr.open_dataset(scenario.scen_paths.weather_timeseries, engine="h5netcdf") as _wx:
         step_s = _weather_step_seconds(
             _wx,
             scenario._analysis.cfg_analysis.weather_time_series_timestep_dimension_name,
@@ -131,17 +130,11 @@ def _forcing_variables(cfg_analysis, cfg_system) -> list[str]:
     import pandas as pd
 
     out: list[str] = []
-    if (
-        getattr(cfg_system, "toggle_use_swmm_for_hydrology", False)
-        and cfg_system.subcatchment_raingage_mapping
-    ):
+    if getattr(cfg_system, "toggle_use_swmm_for_hydrology", False) and cfg_system.subcatchment_raingage_mapping:
         col = cfg_system.subcatchment_raingage_mapping_gage_id_colname
         df = pd.read_csv(cfg_system.subcatchment_raingage_mapping)
         out.extend(str(g) for g in df[col].unique())
-    if (
-        cfg_analysis.toggle_storm_tide_boundary
-        and cfg_analysis.weather_time_series_storm_tide_datavar
-    ):
+    if cfg_analysis.toggle_storm_tide_boundary and cfg_analysis.weather_time_series_storm_tide_datavar:
         out.append(cfg_analysis.weather_time_series_storm_tide_datavar)
     return out
 
@@ -337,8 +330,7 @@ def resolve_event_window(cfg_analysis, weather_event_indexers, cache=None):
         raise ConfigurationError(
             field="analysis.weather_event_windows_csv",
             message=(
-                f"{csv} matched {len(rows)} rows for event "
-                f"{weather_event_indexers}; exactly one is required."
+                f"{csv} matched {len(rows)} rows for event " f"{weather_event_indexers}; exactly one is required."
             ),
             fix_hint="One row per simulated event, keyed on weather_event_indices.",
         )
@@ -371,9 +363,7 @@ class TRITONSWMM_scenario:
         self.event_iloc = event_iloc
         self._analysis = analysis
         self._system = analysis._system
-        self.weather_event_indexers = (
-            self._analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
-        )
+        self.weather_event_indexers = self._analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         from hhemt.run_simulation import TRITONSWMM_run
 
         # define sim specific filepaths
@@ -396,9 +386,7 @@ class TRITONSWMM_scenario:
 
         # Model-specific output directories
         out_triton = sim_folder / "out_triton" if cfg_sys.toggle_triton_model else None
-        out_tritonswmm = (
-            sim_folder / "out_tritonswmm" if cfg_sys.toggle_tritonswmm_model else None
-        )
+        out_tritonswmm = sim_folder / "out_tritonswmm" if cfg_sys.toggle_tritonswmm_model else None
         out_swmm = sim_folder / "out_swmm" if cfg_sys.toggle_swmm_model else None
         if out_swmm:
             out_swmm.mkdir(parents=True, exist_ok=True)
@@ -411,29 +399,22 @@ class TRITONSWMM_scenario:
             dir_weather_datfiles=sim_folder / "dats",
             # swmm-related
             swmm_hydro_inp=swmm_folder / "hydro.inp",  # runoff input generation
-            swmm_hydraulics_inp=swmm_folder
-            / "hydraulics.inp",  # TRITON-SWMM .inp for modeling hydraulics
+            swmm_hydraulics_inp=swmm_folder / "hydraulics.inp",  # TRITON-SWMM .inp for modeling hydraulics
             swmm_hydraulics_rpt=(
                 out_tritonswmm / "swmm" / "hydraulics.rpt" if out_tritonswmm else None
             ),  # runoff generation output
             swmm_full_inp=swmm_folder / "full.inp",  # full SWMM model
-            swmm_full_rpt_file=(
-                out_swmm / "full.rpt" if out_swmm else None
-            ),  # full swmm RPT
-            swmm_full_out_file=(
-                out_swmm / "full.out" if out_swmm else None
-            ),  # full swmm binary output file
+            swmm_full_rpt_file=(out_swmm / "full.rpt" if out_swmm else None),  # full swmm RPT
+            swmm_full_out_file=(out_swmm / "full.out" if out_swmm else None),  # full swmm binary output file
             # external boundary conditions
-            extbc_tseries=sim_folder / "extbc" / f"tseries.txt",
-            extbc_loc=sim_folder / "extbc" / f"loc.extbc",
+            extbc_tseries=sim_folder / "extbc" / "tseries.txt",
+            extbc_loc=sim_folder / "extbc" / "loc.extbc",
             # inflow hydrographs
             hyg_timeseries=sim_folder / "strmflow" / "tseries.hyg",
             hyg_locs=sim_folder / "strmflow" / "loc.txt",
             # Model-specific CFG files
             triton_swmm_cfg=sim_folder / "TRITONSWMM.cfg",
-            triton_cfg=(
-                sim_folder / "TRITON.cfg" if cfg_sys.toggle_triton_model else None
-            ),
+            triton_cfg=(sim_folder / "TRITON.cfg" if cfg_sys.toggle_triton_model else None),
             # Centralized logs
             logs_dir=logs_dir,
             # Model-specific output directories
@@ -444,14 +425,8 @@ class TRITONSWMM_scenario:
             # analysis-level; resolve it via `run_simulation.model_logfile_for`.
             # Executables
             sim_tritonswmm_executable=sim_folder / "build" / "triton.exe",
-            sim_triton_executable=(
-                sim_folder / "build_triton" / "triton.exe"
-                if cfg_sys.toggle_triton_model
-                else None
-            ),
-            sim_swmm_executable=(
-                self._system.swmm_executable if cfg_sys.toggle_swmm_model else None
-            ),
+            sim_triton_executable=(sim_folder / "build_triton" / "triton.exe" if cfg_sys.toggle_triton_model else None),
+            sim_swmm_executable=(self._system.swmm_executable if cfg_sys.toggle_swmm_model else None),
             # TRITON-SWMM Coupled Model Outputs
             output_tritonswmm_performance_timeseries=(
                 processed_output_folder / f"TRITONSWMM_perf_tseries.{out_type}"
@@ -505,42 +480,28 @@ class TRITONSWMM_scenario:
                 else None
             ),
             output_triton_only_timeseries=(
-                processed_output_folder / f"TRITON_only_tseries.{out_type}"
-                if cfg_sys.toggle_triton_model
-                else None
+                processed_output_folder / f"TRITON_only_tseries.{out_type}" if cfg_sys.toggle_triton_model else None
             ),
             output_triton_only_summary=(
-                processed_output_folder / f"TRITON_only_summary.{out_type}"
-                if cfg_sys.toggle_triton_model
-                else None
+                processed_output_folder / f"TRITON_only_summary.{out_type}" if cfg_sys.toggle_triton_model else None
             ),
             # SWMM-only Standalone Model Outputs (in swmm/ folder)
             output_swmm_only_link_time_series=(
-                processed_output_folder / f"SWMM_only_link_tseries.{out_type}"
-                if cfg_sys.toggle_swmm_model
-                else None
+                processed_output_folder / f"SWMM_only_link_tseries.{out_type}" if cfg_sys.toggle_swmm_model else None
             ),
             output_swmm_only_link_summary=(
-                processed_output_folder / f"SWMM_only_link_summary.{out_type}"
-                if cfg_sys.toggle_swmm_model
-                else None
+                processed_output_folder / f"SWMM_only_link_summary.{out_type}" if cfg_sys.toggle_swmm_model else None
             ),
             output_swmm_only_node_time_series=(
-                processed_output_folder / f"SWMM_only_node_tseries.{out_type}"
-                if cfg_sys.toggle_swmm_model
-                else None
+                processed_output_folder / f"SWMM_only_node_tseries.{out_type}" if cfg_sys.toggle_swmm_model else None
             ),
             output_swmm_only_node_summary=(
-                processed_output_folder / f"SWMM_only_node_summary.{out_type}"
-                if cfg_sys.toggle_swmm_model
-                else None
+                processed_output_folder / f"SWMM_only_node_summary.{out_type}" if cfg_sys.toggle_swmm_model else None
             ),
         )
         self._create_directories()
         if self.scen_paths.scenario_prep_log.exists():
-            self.log = TRITONSWMM_scenario_log.from_json(
-                self.scen_paths.scenario_prep_log
-            )
+            self.log = TRITONSWMM_scenario_log.from_json(self.scen_paths.scenario_prep_log)
         else:
             self.log = TRITONSWMM_scenario_log(
                 event_iloc=self.event_iloc,
@@ -555,9 +516,7 @@ class TRITONSWMM_scenario:
         self._runoff_modeler = SWMMRunoffModeler(self)
         self._full_model_builder = SWMMFullModelBuilder(self)
 
-    def get_log(
-        self, model_type: Literal["triton", "tritonswmm", "swmm"]
-    ) -> TRITONSWMM_model_log:
+    def get_log(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> TRITONSWMM_model_log:
         """
         Get the log for a specific model type.
 
@@ -632,9 +591,7 @@ class TRITONSWMM_scenario:
         """Return the scenario-level DU sentinel value, or None if absent."""
         from hhemt.du_sentinels import read_du_sentinel
 
-        payload = read_du_sentinel(
-            self.scen_paths.sim_folder / "_status" / "_du.json"
-        )
+        payload = read_du_sentinel(self.scen_paths.sim_folder / "_status" / "_du.json")
         if payload is None or "disk_utilization_bytes" not in payload:
             return None
         return int(payload["disk_utilization_bytes"])
@@ -652,9 +609,7 @@ class TRITONSWMM_scenario:
             enabled.append("swmm")
         return enabled
 
-    def model_run_completed(
-        self, model_type: Literal["triton", "tritonswmm", "swmm"]
-    ) -> bool:
+    def model_run_completed(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> bool:
         """Check completion status for a specific model type.
 
         Parameters
@@ -764,13 +719,9 @@ class TRITONSWMM_scenario:
         mannings_processed = self._system.sys_paths.mannings_processed
         constant_mannings = self._system.cfg_system.constant_mannings
         hydraulic_timestep_s = self._analysis.cfg_analysis.hydraulic_timestep_s
-        TRITON_reporting_timestep_s = (
-            self._analysis.cfg_analysis.TRITON_reporting_timestep_s
-        )
+        TRITON_reporting_timestep_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         open_boundaries = self._analysis.cfg_analysis.open_boundaries
-        triton_swmm_configuration_template = (
-            self._system.cfg_system.triton_swmm_configuration_template
-        )
+        triton_swmm_configuration_template = self._system.cfg_system.triton_swmm_configuration_template
 
         if use_constant_mannings:
             const_man_toggle = ""
@@ -783,12 +734,8 @@ class TRITONSWMM_scenario:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             sim_options = swmmmodel.inp.options
-        start_datetime = pd.to_datetime(
-            sim_options.Value.START_DATE + " " + sim_options.Value.START_TIME
-        )
-        end_datetime = pd.to_datetime(
-            sim_options.Value.END_DATE + " " + sim_options.Value.END_TIME
-        )
+        start_datetime = pd.to_datetime(sim_options.Value.START_DATE + " " + sim_options.Value.START_TIME)
+        end_datetime = pd.to_datetime(sim_options.Value.END_DATE + " " + sim_options.Value.END_TIME)
         sim_dur_s = int((end_datetime - start_datetime) / np.timedelta64(1, "s"))
 
         df_extbc_loc = pd.read_csv(self.scen_paths.extbc_loc)
@@ -820,17 +767,13 @@ class TRITONSWMM_scenario:
             REPORTING_TSTEP_S=TRITON_reporting_timestep_s,
             OPEN_BOUNDARIES=open_boundaries,
         )
-        utils.create_from_template(
-            triton_swmm_configuration_template, mapping, self.scen_paths.triton_swmm_cfg
-        )
+        utils.create_from_template(triton_swmm_configuration_template, mapping, self.scen_paths.triton_swmm_cfg)
 
         # Post-process to add output_folder for TRITON-SWMM outputs
         cfg_content = self.scen_paths.triton_swmm_cfg.read_text()
         if "output_folder" not in cfg_content:
             # Insert after dem_filename line
-            cfg_content = cfg_content.replace(
-                "\ndem_filename=", f'\noutput_folder="out_tritonswmm"\ndem_filename='
-            )
+            cfg_content = cfg_content.replace("\ndem_filename=", '\noutput_folder="out_tritonswmm"\ndem_filename=')
             self.scen_paths.triton_swmm_cfg.write_text(cfg_content)
 
         self.log.triton_swmm_cfg_created.set(True)
@@ -855,13 +798,9 @@ class TRITONSWMM_scenario:
         mannings_processed = self._system.sys_paths.mannings_processed
         constant_mannings = self._system.cfg_system.constant_mannings
         hydraulic_timestep_s = self._analysis.cfg_analysis.hydraulic_timestep_s
-        TRITON_reporting_timestep_s = (
-            self._analysis.cfg_analysis.TRITON_reporting_timestep_s
-        )
+        TRITON_reporting_timestep_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         open_boundaries = self._analysis.cfg_analysis.open_boundaries
-        triton_swmm_configuration_template = (
-            self._system.cfg_system.triton_swmm_configuration_template
-        )
+        triton_swmm_configuration_template = self._system.cfg_system.triton_swmm_configuration_template
 
         if use_constant_mannings:
             const_man_toggle = ""
@@ -875,12 +814,8 @@ class TRITONSWMM_scenario:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             sim_options = swmmmodel.inp.options
-        start_datetime = pd.to_datetime(
-            sim_options.Value.START_DATE + " " + sim_options.Value.START_TIME
-        )
-        end_datetime = pd.to_datetime(
-            sim_options.Value.END_DATE + " " + sim_options.Value.END_TIME
-        )
+        start_datetime = pd.to_datetime(sim_options.Value.START_DATE + " " + sim_options.Value.START_TIME)
+        end_datetime = pd.to_datetime(sim_options.Value.END_DATE + " " + sim_options.Value.END_TIME)
         sim_dur_s = int((end_datetime - start_datetime) / np.timedelta64(1, "s"))
 
         df_extbc_loc = pd.read_csv(self.scen_paths.extbc_loc)
@@ -915,9 +850,7 @@ class TRITONSWMM_scenario:
         )
 
         # Create CFG from template
-        utils.create_from_template(
-            triton_swmm_configuration_template, mapping, self.scen_paths.triton_cfg
-        )
+        utils.create_from_template(triton_swmm_configuration_template, mapping, self.scen_paths.triton_cfg)
 
         # Post-process to comment out inp_filename line and add output_folder
         cfg_content = self.scen_paths.triton_cfg.read_text()
@@ -929,9 +862,7 @@ class TRITONSWMM_scenario:
         # Add output_folder for TRITON-only outputs
         if "output_folder" not in cfg_content:
             # Insert after dem_filename line
-            cfg_content = cfg_content.replace(
-                "\ndem_filename=", f'\noutput_folder="out_triton"\ndem_filename='
-            )
+            cfg_content = cfg_content.replace("\ndem_filename=", '\noutput_folder="out_triton"\ndem_filename=')
 
         self.scen_paths.triton_cfg.write_text(cfg_content)
 
@@ -967,9 +898,7 @@ class TRITONSWMM_scenario:
 
         # Verify source exists and compilation successful
         if not src_build_fpath.exists():
-            raise FileNotFoundError(
-                f"{self.backend.upper()} build directory not found: {src_build_fpath}"
-            )
+            raise FileNotFoundError(f"{self.backend.upper()} build directory not found: {src_build_fpath}")
 
         if self.backend == "cpu" and not self._system.compilation_cpu_successful:
             raise CompilationError(
@@ -1026,9 +955,7 @@ class TRITONSWMM_scenario:
             )
 
         if not src_build_fpath.exists():
-            raise FileNotFoundError(
-                f"TRITON-only build directory not found: {src_build_fpath}"
-            )
+            raise FileNotFoundError(f"TRITON-only build directory not found: {src_build_fpath}")
 
         if not compiled_ok:
             raise CompilationError(
@@ -1086,9 +1013,7 @@ class TRITONSWMM_scenario:
 
         # Fail loud if symlink is not present or points somewhere unexpected.
         if not target_link.is_symlink():
-            raise RuntimeError(
-                f"Expected {label} target to be a symlink, but it is not: {target_link}"
-            )
+            raise RuntimeError(f"Expected {label} target to be a symlink, but it is not: {target_link}")
 
         resolved_target = target_link.resolve(strict=True)
         resolved_source = source_dir.resolve(strict=True)
@@ -1114,13 +1039,9 @@ class TRITONSWMM_scenario:
         # FORCING-READ: choke-point
         weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
-        tdim = (
-            self._analysis.cfg_analysis.weather_time_series_timestep_dimension_name
-        )
+        tdim = self._analysis.cfg_analysis.weather_time_series_timestep_dimension_name
         with lock:
-            with xr.open_dataset(
-                weather_timeseries, engine="h5netcdf"
-            ) as ds_event_weather_series:
+            with xr.open_dataset(weather_timeseries, engine="h5netcdf") as ds_event_weather_series:
                 ds_event_ts = ds_event_weather_series.sel(weather_event_indexers).load()
                 # THE TOOLKIT DOES NOT DECIDE THIS WINDOW. It reads the one the user
                 # declared and clips to it. The retired code inferred a window from
@@ -1224,10 +1145,7 @@ class TRITONSWMM_scenario:
             Force specific backend ("cpu" or "gpu"). If None, auto-selects based on run_mode.
         """
         # Halt if scenario already complete
-        if (
-            self.log.scenario_creation_complete.get()
-            and not overwrite_scenario_if_already_set_up
-        ):
+        if self.log.scenario_creation_complete.get() and not overwrite_scenario_if_already_set_up:
             print(  # type: ignore
                 "Simulation already successfully created. "
                 "If you wish to overwrite it, re-run with overwrite_scenario_if_already_set_up=True.",
@@ -1268,9 +1186,7 @@ class TRITONSWMM_scenario:
                 self.scen_paths.swmm_full_inp,
             )
             # Update THREADS parameter to match n_omp_threads configuration
-            self._input_generator.update_swmm_threads_in_inp_file(
-                self.scen_paths.swmm_full_inp
-            )
+            self._input_generator.update_swmm_threads_in_inp_file(self.scen_paths.swmm_full_inp)
             self.log.inp_full_model_created_successfully.set(True)
 
         # SWMM hydrology for runoff generation
@@ -1280,9 +1196,7 @@ class TRITONSWMM_scenario:
                 self.scen_paths.swmm_hydro_inp,
             )
             # Update THREADS parameter to match n_omp_threads configuration
-            self._input_generator.update_swmm_threads_in_inp_file(
-                self.scen_paths.swmm_hydro_inp
-            )
+            self._input_generator.update_swmm_threads_in_inp_file(self.scen_paths.swmm_hydro_inp)
             self._runoff_modeler.run_swmm_hydro_model(
                 rerun_if_exists=rerun_swmm_hydro_if_outputs_exist,
                 verbose=False,
@@ -1302,9 +1216,7 @@ class TRITONSWMM_scenario:
         # this is a restriction to the reachable domain, not a behavior change.
         if self._system.cfg_system.toggle_use_swmm_for_hydrology:
             self._runoff_modeler.write_hydrograph_files()
-        self._input_generator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
-            verbose=False
-        )
+        self._input_generator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(verbose=False)
 
         # Generate model-specific CFG files
         self._generate_TRITON_SWMM_cfg()  # Coupled model CFG
@@ -1535,12 +1447,8 @@ def return_tstep_in_hrs(time_indexed_pd_obj):
     return tstep_sim_tseries_h
 
 
-def return_tstep_in_hrs_for_weather_time_series(
-    ds_tseries, weather_time_series_timestep_dimension_name
-):
-    time_indexed_pd_obj = ds_tseries[
-        weather_time_series_timestep_dimension_name
-    ].to_dataframe()
+def return_tstep_in_hrs_for_weather_time_series(ds_tseries, weather_time_series_timestep_dimension_name):
+    time_indexed_pd_obj = ds_tseries[weather_time_series_timestep_dimension_name].to_dataframe()
     return return_tstep_in_hrs(time_indexed_pd_obj)
 
 
@@ -1614,15 +1522,14 @@ def find_lowest_inv(node_to_keep, nodes):
 def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=False):
     rds_dem = rxr.open_rasterio(dem_processed)
     model = swmmio.Model(str(f_inp))
-    warnings.filterwarnings(
-        "ignore", category=UserWarning, module=r"swmmio\.utils\.dataframes"
-    )
+    warnings.filterwarnings("ignore", category=UserWarning, module=r"swmmio\.utils\.dataframes")
     node_coords = model.nodes.geodataframe["geometry"]
     dem_xs = rds_dem.x.values  # type: ignore
     dem_ys = rds_dem.y.values  # type: ignore
     d_node_locs = dict(node_key=[], dem_x_coord=[], dem_y_coord=[])
     lst_outfalls = list(model.nodes.geodataframe["OutfallType"].dropna().index)
-    ## creating a row for each group of nodes associated with a single DEM cell (this is to make sure there is only 1 inflow node per gridcell)
+    ## creating a row for each group of nodes associated with a single DEM cell
+    ## (this is to make sure there is only 1 inflow node per gridcell)
     for node_id in node_coords.index:
         # verify that the node is within the dem
         node = node_coords[node_id]
@@ -1634,20 +1541,14 @@ def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=Fal
         d_node_locs["dem_x_coord"].append(dem_xs[closest_dem_cell_x_ind])
         d_node_locs["dem_y_coord"].append(dem_ys[closest_dem_cell_y_ind])
         lst_out_of_bounds_nodes = []
-        if (
-            (x_coord < dem_xs.min())
-            or (x_coord > dem_xs.max())
-            or (y_coord < dem_ys.min())
-            or (y_coord > dem_ys.max())
-        ):
+        if (x_coord < dem_xs.min()) or (x_coord > dem_xs.max()) or (y_coord < dem_ys.min()) or (y_coord > dem_ys.max()):
             if verbose:
-                print("WARNING: node out bounds. Node ID: {}".format(node_id))
+                print(f"WARNING: node out bounds. Node ID: {node_id}")
                 print(
-                    "dem lower left: ({},{}) | dem upper right: ({}, {})".format(
-                        dem_xs.min(), dem_ys.min(), dem_xs.max(), dem_ys.max()
-                    )
+                    f"dem lower left: ({dem_xs.min()},{dem_ys.min()}) | "
+                    f"dem upper right: ({dem_xs.max()}, {dem_ys.max()})"
                 )
-                print("node coords: {}, {}".format(x_coord, y_coord))
+                print(f"node coords: {x_coord}, {y_coord}")
             lst_out_of_bounds_nodes.append(node_id)
     ## create dataframe with node key and associated dem x and y coordinate for grouping
     df_node_locs = pd.DataFrame(d_node_locs)
@@ -1661,7 +1562,8 @@ def calc_area(row):
         h = row.Geom1
         w = row.Geom2
         area = h * w
-        # print("Encountered arch cross sectional shape. Currently calculating a rectangular area assuming it's close enough.")
+        # print("Encountered arch cross sectional shape. Currently calculating a
+        # rectangular area assuming it's close enough.")
         return area * row.Barrels
     elif row.Shape in [
         "CIRCULAR",

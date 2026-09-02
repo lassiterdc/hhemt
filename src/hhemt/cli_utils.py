@@ -4,24 +4,21 @@ This module provides helper functions for CLI implementation,
 including exception-to-exit-code mapping and argument validation.
 """
 
-from typing import Type
-from .exceptions import (
-    BundleSchemaError,
-    CLIValidationError,
-    ConfigurationError,
-    CompilationError,
-    SimulationError,
-    ProcessingError,
-    WorkflowError,
-    WorkflowPlanningError,
-)
-
 # ADR-19's build-unavailable signal lives in container_build (not exceptions.py) because
 # it is a structured branch signal rather than an error taxonomy member. Imported here so
 # EXIT_CODE_MAP can give it an explicit code; container_build imports only
 # hhemt._filelock_compat + hhemt.exceptions, so this introduces no cycle (verified).
 from .container_build import SifBuildUnavailable as _SifBuildUnavailable
-
+from .exceptions import (
+    BundleSchemaError,
+    CLIValidationError,
+    CompilationError,
+    ConfigurationError,
+    ProcessingError,
+    SimulationError,
+    WorkflowError,
+    WorkflowPlanningError,
+)
 
 # Exit code mapping per CLI specification
 # Exit codes:
@@ -34,7 +31,7 @@ from .container_build import SifBuildUnavailable as _SifBuildUnavailable
 #   7: SIF build unavailable on this host (ADR-19 rootless-fakeroot preflight FAIL)
 #  10+: unexpected internal errors
 
-EXIT_CODE_MAP: dict[Type[Exception] | str, int] = {
+EXIT_CODE_MAP: dict[type[Exception] | str, int] = {
     "success": 0,
     CLIValidationError: 2,
     ConfigurationError: 2,

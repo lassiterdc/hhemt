@@ -37,10 +37,7 @@ def test_libstdcpp_ld_preamble_lines_content():
     # Gotcha 64: CONDA_LIB is captured BEFORE `module purge` clears CONDA_PREFIX
     # (Frontier's miniforge Lmod modulefile unsets it), with ${CONDA_PREFIX}/lib as
     # the local-dev fallback. The conda lib dir must come FIRST on LD_LIBRARY_PATH.
-    assert (
-        'export LD_LIBRARY_PATH="${CONDA_LIB:-${CONDA_PREFIX}/lib}:${LD_LIBRARY_PATH:-}"'
-        in text
-    )
+    assert 'export LD_LIBRARY_PATH="${CONDA_LIB:-${CONDA_PREFIX}/lib}:${LD_LIBRARY_PATH:-}"' in text
     assert "libstdc++ ABI fix" in text or "libstdc++ABI fix" in text or "libgdal" in text
 
 
@@ -89,17 +86,13 @@ def _fake_swmm_self(tmp_path, modules):
         additional_modules=modules,
         compilation_swmm_successful=True,
         swmm_executable=tmp_path / "runswmm",
-        cfg_system=SimpleNamespace(
-            SWMM_tag_key=None, SWMM_git_URL="https://example.invalid/swmm.git"
-        ),
+        cfg_system=SimpleNamespace(SWMM_tag_key=None, SWMM_git_URL="https://example.invalid/swmm.git"),
         log=SimpleNamespace(
             compilation_swmm_successful=SimpleNamespace(set=lambda _v: None),
             write=lambda: None,
         ),
     )
-    fake._emit_libstdcpp_ld_preamble_lines = (
-        lambda: TRITONSWMM_system._emit_libstdcpp_ld_preamble_lines(fake)
-    )
+    fake._emit_libstdcpp_ld_preamble_lines = lambda: TRITONSWMM_system._emit_libstdcpp_ld_preamble_lines(fake)
     fake._emit_module_load_lines = lambda m: TRITONSWMM_system._emit_module_load_lines(fake, m)
     # No-op, and the no-op is the point. `_compile_SWMM_locked` calls
     # `_capture_swmm_provenance` in its `if success:` branch to record the standalone-SWMM
@@ -136,9 +129,7 @@ def _generate_swmm_script(tmp_path, modules, monkeypatch):
 
 
 def test_swmm_compile_script_pins_the_module_compiler(tmp_path, monkeypatch):
-    text = _generate_swmm_script(
-        tmp_path, "gompi/14.2.0_5.0.7 miniforge/24.3.0-py3.11", monkeypatch
-    )
+    text = _generate_swmm_script(tmp_path, "gompi/14.2.0_5.0.7 miniforge/24.3.0-py3.11", monkeypatch)
     assert "module purge" in text
     assert 'export CC="$(command -v gcc)"' in text
     assert 'export CXX="$(command -v g++)"' in text
@@ -149,9 +140,7 @@ def test_swmm_compile_script_pins_the_module_compiler(tmp_path, monkeypatch):
 def test_swmm_compile_script_produces_conda_lib_before_consuming_it(tmp_path, monkeypatch):
     """W4/W5: the script consumed ${CONDA_LIB} while never calling its only
     producer. Assert producer-before-consumer, not merely that both appear."""
-    text = _generate_swmm_script(
-        tmp_path, "gompi/14.2.0_5.0.7 miniforge/24.3.0-py3.11", monkeypatch
-    )
+    text = _generate_swmm_script(tmp_path, "gompi/14.2.0_5.0.7 miniforge/24.3.0-py3.11", monkeypatch)
     producer = 'CONDA_LIB="${CONDA_PREFIX:+${CONDA_PREFIX}/lib}"'
     consumer = 'export LD_LIBRARY_PATH="${CONDA_LIB:-${CONDA_PREFIX}/lib}'
     assert producer in text
@@ -262,7 +251,7 @@ def _extract_first_rule_block(snakefile_text: str, rule_header: str) -> str:
     """Return the substring spanning `rule_header` through the next `rule ` start
     (or end of file)."""
     start = snakefile_text.index(rule_header)
-    rest = snakefile_text[start + len(rule_header):]
+    rest = snakefile_text[start + len(rule_header) :]
     nxt = re.search(r"\nrule \w+:", rest)
     end = start + len(rule_header) + (nxt.start() if nxt else len(rest))
     return snakefile_text[start:end]

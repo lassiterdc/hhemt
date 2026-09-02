@@ -33,9 +33,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
-from statistics import median
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -51,6 +50,8 @@ def _resolve_default_output() -> Path:
             "to your agentic-workspace repo root and retry, or pass --output explicitly."
         )
     return Path(aw) / "library/knowledge/triton-swmm-toolkit/routine test profile results.md"
+
+
 DEFAULT_TOP_N = 20
 DEFAULT_FINDINGS_TOP_K = 10
 DEFAULT_REPETITIONS = 1
@@ -109,6 +110,7 @@ class SnakemakeDiagnosticsRecord:
 @dataclass
 class RunArtifacts:
     """All intermediate data from a single repetition."""
+
     corpus: list[CorpusEntry]
     import_times: dict[str, float]
     conftest_import_times: dict[str, float]
@@ -142,14 +144,16 @@ def _build_isolation_env(tmp_root: Path) -> dict[str, str]:
       subprocess-launched filesystem operations.
     """
     env = os.environ.copy()
-    env.update({
-        "XDG_CACHE_HOME": str(tmp_root / "xdg_cache"),
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "PYTHONPYCACHEPREFIX": str(tmp_root / "pycache"),
-        "HYPOTHESIS_DATABASE_FILE": ":memory:",
-        "CI": "1",
-        "TMPDIR": str(tmp_root / "tmp"),
-    })
+    env.update(
+        {
+            "XDG_CACHE_HOME": str(tmp_root / "xdg_cache"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPYCACHEPREFIX": str(tmp_root / "pycache"),
+            "HYPOTHESIS_DATABASE_FILE": ":memory:",
+            "CI": "1",
+            "TMPDIR": str(tmp_root / "tmp"),
+        }
+    )
     (tmp_root / "xdg_cache").mkdir(parents=True, exist_ok=True)
     (tmp_root / "pycache").mkdir(parents=True, exist_ok=True)
     (tmp_root / "tmp").mkdir(parents=True, exist_ok=True)
@@ -175,11 +179,23 @@ def _collect_corpus(env: dict[str, str]) -> list[CorpusEntry]:
     parser uses returned content, not exit code, as the source of truth.
     """
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q",
-         "-m", "not slow", "--continue-on-collection-errors",
-         "-p", "no:cacheprovider"],
-        env=env, cwd=str(REPO_ROOT),
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-m",
+            "not slow",
+            "--continue-on-collection-errors",
+            "-p",
+            "no:cacheprovider",
+        ],
+        env=env,
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
     )
     entries: list[CorpusEntry] = []
     err_re = re.compile(r"ERROR collecting (\S+)")
@@ -192,11 +208,13 @@ def _collect_corpus(env: dict[str, str]) -> list[CorpusEntry]:
             entries.append(CorpusEntry(nodeid=stripped, status="collected"))
     for line in proc.stderr.splitlines():
         if m := err_re.search(line):
-            entries.append(CorpusEntry(
-                nodeid=m.group(1),
-                status="collection-failed",
-                error=line.strip(),
-            ))
+            entries.append(
+                CorpusEntry(
+                    nodeid=m.group(1),
+                    status="collection-failed",
+                    error=line.strip(),
+                )
+            )
     return entries
 
 
@@ -206,10 +224,23 @@ def _measure_import_time(env: dict[str, str]) -> tuple[dict[str, float], dict[st
     t0 = time.perf_counter()
     with importtime_log.open("w") as f:
         subprocess.run(
-            [sys.executable, "-X", "importtime", "-m", "pytest", "--collect-only",
-             "-m", "not slow", "-p", "no:cacheprovider"],
-            env=env, cwd=str(REPO_ROOT),
-            stdout=subprocess.DEVNULL, stderr=f, check=False,
+            [
+                sys.executable,
+                "-X",
+                "importtime",
+                "-m",
+                "pytest",
+                "--collect-only",
+                "-m",
+                "not slow",
+                "-p",
+                "no:cacheprovider",
+            ],
+            env=env,
+            cwd=str(REPO_ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=f,
+            check=False,
         )
     elapsed = time.perf_counter() - t0
     per_package: dict[str, float] = {}
@@ -231,13 +262,31 @@ def _run_pyspy_pass(env: dict[str, str], tmp_root: Path) -> tuple[Path, Path]:
     plugin_out = tmp_root / "plugin_pyspy.json"
     env = {**env, PLUGIN_ENV_VAR: str(plugin_out)}
     subprocess.run(
-        ["py-spy", "record", "--subprocesses", "--format", "speedscope", "-o", str(speedscope),
-         "--", sys.executable, "-m", "pytest", "-m", "not slow",
-         "-p", "no:cacheprovider",
-         "-p", "scripts.profile._pytest_plugin",
-         "--continue-on-collection-errors",
-         "--durations=0", "--durations-min=0"],
-        env=env, cwd=str(REPO_ROOT), check=False,
+        [
+            "py-spy",
+            "record",
+            "--subprocesses",
+            "--format",
+            "speedscope",
+            "-o",
+            str(speedscope),
+            "--",
+            sys.executable,
+            "-m",
+            "pytest",
+            "-m",
+            "not slow",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "scripts.profile._pytest_plugin",
+            "--continue-on-collection-errors",
+            "--durations=0",
+            "--durations-min=0",
+        ],
+        env=env,
+        cwd=str(REPO_ROOT),
+        check=False,
     )
     return speedscope, plugin_out
 
@@ -248,12 +297,25 @@ def _run_cprofile_pass(env: dict[str, str], tmp_root: Path) -> tuple[Path, Path]
     plugin_out = tmp_root / "plugin_cprofile.json"
     env = {**env, PLUGIN_ENV_VAR: str(plugin_out)}
     subprocess.run(
-        [sys.executable, "-m", "cProfile", "-o", str(pstats_path),
-         "-m", "pytest", "-m", "not slow",
-         "-p", "no:cacheprovider",
-         "-p", "scripts.profile._pytest_plugin",
-         "--continue-on-collection-errors"],
-        env=env, cwd=str(REPO_ROOT), check=False,
+        [
+            sys.executable,
+            "-m",
+            "cProfile",
+            "-o",
+            str(pstats_path),
+            "-m",
+            "pytest",
+            "-m",
+            "not slow",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "scripts.profile._pytest_plugin",
+            "--continue-on-collection-errors",
+        ],
+        env=env,
+        cwd=str(REPO_ROOT),
+        check=False,
     )
     return pstats_path, plugin_out
 
@@ -280,6 +342,7 @@ def _extract_hot_functions(pstats_path: Path, top_n: int) -> list[tuple[str, flo
     non-deterministic. ``stats.fcn_list`` is the correct iteration target.
     """
     import pstats
+
     if not pstats_path.exists() or pstats_path.stat().st_size == 0:
         return []
     stats = pstats.Stats(str(pstats_path))
@@ -365,8 +428,11 @@ def _env_fingerprint(repetitions: int) -> dict[str, str]:
     except OSError:
         pass
     git_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=str(REPO_ROOT),
-        capture_output=True, text=True, check=False,
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
     ).stdout.strip()
 
     governor = _read_cpu_governor()
@@ -393,6 +459,7 @@ def _env_fingerprint(repetitions: int) -> dict[str, str]:
     filterwarnings = ""
     try:
         import tomllib  # Python 3.11+
+
         with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
             ini = tomllib.load(fh).get("tool", {}).get("pytest", {}).get("ini_options", {})
             filterwarnings = "\n".join(ini.get("filterwarnings", []))
@@ -401,12 +468,16 @@ def _env_fingerprint(repetitions: int) -> dict[str, str]:
 
     plugin_list = subprocess.run(
         [sys.executable, "-m", "pytest", "--version", "-V"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     ).stdout.strip()
     if not plugin_list:
         plugin_list = subprocess.run(
             [sys.executable, "-m", "pytest", "--version"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         ).stdout.strip()
 
     self_sha = ""
@@ -439,12 +510,12 @@ def _parse_args() -> argparse.Namespace:
         description="Profile the hhemt routine test corpus.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N,
-                        help="Top-N hot functions (global)")
-    parser.add_argument("--findings-top-k", type=int, default=DEFAULT_FINDINGS_TOP_K,
-                        help="Top-K findings to surface")
+    parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N, help="Top-N hot functions (global)")
+    parser.add_argument("--findings-top-k", type=int, default=DEFAULT_FINDINGS_TOP_K, help="Top-K findings to surface")
     parser.add_argument(
-        "--repetitions", type=int, default=DEFAULT_REPETITIONS,
+        "--repetitions",
+        type=int,
+        default=DEFAULT_REPETITIONS,
         help=(
             "Number of profile runs to retain. Default 1 for doc refresh. "
             "Use 5 for optimization-measurement work. Use 10 for borderline (<10%%) "
@@ -452,16 +523,19 @@ def _parse_args() -> argparse.Namespace:
             "See hpc-perf research §4 for rationale (Hager-Wellein 2011 §2.1)."
         ),
     )
-    parser.add_argument("--output", type=Path, default=None,
-                        help="Output doc path (overwritten); default = $AGENTIC_WORKSPACE/library/knowledge/triton-swmm-toolkit/routine test profile results.md")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Output doc path (overwritten); default = $AGENTIC_WORKSPACE/library/knowledge"
+        "/triton-swmm-toolkit/routine test profile results.md",
+    )
     parser.add_argument("--cprofile", dest="cprofile", action="store_true", default=True)
     parser.add_argument("--no-cprofile", dest="cprofile", action="store_false")
     parser.add_argument("--pyspy", dest="pyspy", action="store_true", default=True)
     parser.add_argument("--no-pyspy", dest="pyspy", action="store_false")
-    parser.add_argument("--snakemake-harvest", dest="snakemake_harvest",
-                        action="store_true", default=True)
-    parser.add_argument("--no-snakemake-harvest", dest="snakemake_harvest",
-                        action="store_false")
+    parser.add_argument("--snakemake-harvest", dest="snakemake_harvest", action="store_true", default=True)
+    parser.add_argument("--no-snakemake-harvest", dest="snakemake_harvest", action="store_false")
     return parser.parse_args()
 
 
@@ -469,13 +543,12 @@ def main() -> int:
     args = _parse_args()
     if args.output is None:
         args.output = _resolve_default_output()
-    from scripts.profile._snakemake_harvest import harvest as snakemake_harvest
     from scripts.profile._emitter import emit
+    from scripts.profile._snakemake_harvest import harvest as snakemake_harvest
 
     tmp_root = _make_tmp_root()
     print(
-        f"[profile] PID={os.getpid()} output={args.output} repetitions={args.repetitions} "
-        f"tmp_root={tmp_root}",
+        f"[profile] PID={os.getpid()} output={args.output} repetitions={args.repetitions} " f"tmp_root={tmp_root}",
         flush=True,
     )
 
@@ -506,8 +579,7 @@ def main() -> int:
         plugin_payload: dict = {}
         if args.pyspy:
             print(
-                f"[profile] {tag}: py-spy pass starting "
-                "(slowest stage; --subprocesses ptraces every fork)...",
+                f"[profile] {tag}: py-spy pass starting " "(slowest stage; --subprocesses ptraces every fork)...",
                 flush=True,
             )
             pyspy_path, plugin_json_path = _run_pyspy_pass(per_rep_env, per_rep_root)
@@ -533,8 +605,7 @@ def main() -> int:
         if args.snakemake_harvest:
             tmp_paths = plugin_payload.get("tmp_paths", [])
             print(
-                f"[profile] {tag}: harvesting Snakemake metadata "
-                f"from {len(tmp_paths)} tmp_paths...",
+                f"[profile] {tag}: harvesting Snakemake metadata " f"from {len(tmp_paths)} tmp_paths...",
                 flush=True,
             )
             for tmp_path_str in tmp_paths:
@@ -543,17 +614,19 @@ def main() -> int:
                     continue
                 rules, diag = snakemake_harvest(tmp_path)
                 for r in rules:
-                    snakemake_rules.append(SnakemakeRuleRecord(
-                        rule=r.rule,
-                        rule_normalized=r.rule_normalized,
-                        job_count=r.job_count,
-                        total_s=r.total_s,
-                        mean_s=r.mean_s,
-                        min_s=r.min_s,
-                        max_s=r.max_s,
-                        zero_duration_job_count=r.zero_duration_job_count,
-                        test_origin=r.test_origin,
-                    ))
+                    snakemake_rules.append(
+                        SnakemakeRuleRecord(
+                            rule=r.rule,
+                            rule_normalized=r.rule_normalized,
+                            job_count=r.job_count,
+                            total_s=r.total_s,
+                            mean_s=r.mean_s,
+                            min_s=r.min_s,
+                            max_s=r.max_s,
+                            zero_duration_job_count=r.zero_duration_job_count,
+                            test_origin=r.test_origin,
+                        )
+                    )
                 snakemake_diag.snakefiles_found += diag.snakefiles_found
                 snakemake_diag.snakefiles_with_metadata += diag.snakefiles_with_metadata
                 snakemake_diag.snakefiles_dry_run_only += diag.snakefiles_dry_run_only
@@ -584,32 +657,35 @@ def main() -> int:
 
         fixtures = [
             FixtureRecord(
-                name=f["name"], scope=f["scope"],
-                duration_s=f["duration_s"], consumer_nodeid=f["consumer_nodeid"],
+                name=f["name"],
+                scope=f["scope"],
+                duration_s=f["duration_s"],
+                consumer_nodeid=f["consumer_nodeid"],
             )
             for f in plugin_payload.get("fixtures", [])
         ]
 
-        runs.append(RunArtifacts(
-            corpus=corpus,
-            import_times=per_pkg_import,
-            conftest_import_times=conftest_import,
-            collection_total_s=collection_total,
-            per_test=per_test,
-            fixtures=fixtures,
-            snakemake_rules=snakemake_rules,
-            snakemake_diagnostics=snakemake_diag,
-            global_hot_functions=global_hot,
-            pyspy_speedscope_path=pyspy_path,
-            cprofile_pstats_path=cprofile_path,
-        ))
+        runs.append(
+            RunArtifacts(
+                corpus=corpus,
+                import_times=per_pkg_import,
+                conftest_import_times=conftest_import,
+                collection_total_s=collection_total,
+                per_test=per_test,
+                fixtures=fixtures,
+                snakemake_rules=snakemake_rules,
+                snakemake_diagnostics=snakemake_diag,
+                global_hot_functions=global_hot,
+                pyspy_speedscope_path=pyspy_path,
+                cprofile_pstats_path=cprofile_path,
+            )
+        )
 
     # Discard warmup rep when N>=3 (pyperformance/asv convention; cold-cache
     # cost biases the median upward when measured N times).
     if args.repetitions >= 3:
         print(
-            f"[profile] discarding rep 1 as warmup; emitting median across "
-            f"reps 2..{args.repetitions}",
+            f"[profile] discarding rep 1 as warmup; emitting median across " f"reps 2..{args.repetitions}",
             flush=True,
         )
         runs = runs[1:]

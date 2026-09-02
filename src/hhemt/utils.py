@@ -1,18 +1,19 @@
+import datetime
+import importlib.util
 import json
 import os
-import warnings
-from pathlib import Path
-import importlib.util
-from platformdirs import user_data_dir
-from string import Template
 import re
-import datetime
-import yaml
-import xarray as xr
 import shutil
-from typing import Any
 import subprocess
-from typing import Optional, Literal, Callable
+import warnings
+from collections.abc import Callable
+from pathlib import Path
+from string import Template
+from typing import Any, Literal
+
+import xarray as xr
+import yaml
+from platformdirs import user_data_dir
 
 
 class BatchJobSubmissionError(Exception):
@@ -29,7 +30,7 @@ class BatchJobSubmissionError(Exception):
         command: list,
         return_code: int,
         stderr: str,
-        dependent_job_id: Optional[int | str | list] = None,
+        dependent_job_id: int | str | list | None = None,
         dependency_type: str = "afterok",
     ):
         self.script_path = script_path
@@ -71,8 +72,8 @@ def fast_rmtree(
     path: str | Path,
     *,
     missing_ok: bool = True,
-    onerror: Optional[Callable] = None,
-    analysis_dir: Optional[str | Path] = None,
+    onerror: Callable | None = None,
+    analysis_dir: str | Path | None = None,
 ) -> None:
     """Fast, cross-platform directory delete.
 
@@ -132,9 +133,7 @@ def fast_rmtree(
     _restamp_after_mutation(path, analysis_dir)
 
 
-def _restamp_after_mutation(
-    path: Path, analysis_dir: Optional[str | Path]
-) -> None:
+def _restamp_after_mutation(path: Path, analysis_dir: str | Path | None) -> None:
     """Re-stamp parent DU sentinels for `path` under `analysis_dir`.
 
     No-op when `analysis_dir` is None, when `path == analysis_dir` (root-wipe
@@ -154,6 +153,7 @@ def _restamp_after_mutation(
     if not analysis_resolved.exists():
         return
     from hhemt.du_sentinels import restamp_parent_sentinels
+
     restamp_parent_sentinels(Path(path), analysis_dir=analysis_resolved)
 
 
@@ -199,7 +199,7 @@ def fix_line_endings(file_path, target_ending="\n"):
 
 def run_bash_script(
     bash_script: Path,
-    dependent_job_id: Optional[int | str | list] = None,
+    dependent_job_id: int | str | list | None = None,
     dependency_type: Literal["afterok", "afterany"] = "afterok",
     verbose: bool = True,
 ):
@@ -211,9 +211,7 @@ def run_bash_script(
         cmd.append(
             f"--dependency={dependency_type}:{dependent_job_id}",
         )
-        dpdndncy = (
-            f"\n dependent on job {dependent_job_id} using dependency={dependency_type}"
-        )
+        dpdndncy = f"\n dependent on job {dependent_job_id} using dependency={dependency_type}"
     cmd.append(str(bash_script))
 
     try:
@@ -248,22 +246,18 @@ def archive_directory_contents(dir: Path):
         shutil.move(str(item), archive_dir / item.name)
 
 
-def create_mask_from_shapefile(
-    da_to_mask, shapefile_path=None, series_single_row_of_gdf=None
-):  # , COORD_EPSG):
+def create_mask_from_shapefile(da_to_mask, shapefile_path=None, series_single_row_of_gdf=None):  # , COORD_EPSG):
     # da_to_mask, shapefile_path = da_sim_wlevel, f_mitigation_aois
     og_shape = da_to_mask.shape
-    xs = da_to_mask.x.to_series()
-    ys = da_to_mask.y.to_series()
-    from shapely.geometry import mapping
+    _xs = da_to_mask.x.to_series()
+    _ys = da_to_mask.y.to_series()
     import geopandas as gpd
     import rasterio.features
+    from shapely.geometry import mapping
 
     if shapefile_path is not None:
         gdf = gpd.read_file(shapefile_path)
-        shapes = [
-            mapping(geom) for geom in gdf.geometry
-        ]  # Convert geometries to GeoJSON-like format
+        shapes = [mapping(geom) for geom in gdf.geometry]  # Convert geometries to GeoJSON-like format
     if series_single_row_of_gdf is not None:
         shapes = [mapping(series_single_row_of_gdf.geometry)]
     mask = rasterio.features.geometry_mask(
@@ -297,7 +291,7 @@ def get_package_data_root(package_name) -> Path:
 
 
 def fill_template(f_template: Path, mapping: dict):
-    with open(f_template, "r") as T:
+    with open(f_template) as T:
         template = Template(T.read())
         filled = template.safe_substitute(mapping)
     return filled
@@ -312,7 +306,7 @@ def create_from_template(f_template: Path, mapping: dict, f_out: Path):
 
 
 def find_all_keys_in_template(f_template):
-    with open(f_template, "r") as f:
+    with open(f_template) as f:
         text = f.read()
     keys = re.findall(r"\{([^}]+)\}", text)
     unique_keys = list(dict.fromkeys(keys))
@@ -365,7 +359,7 @@ def replace_substring_in_file(file_path, old_substring, new_substring, verbose=F
         new_substring (str): The substring to replace with.
     """
     # Read the file
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     # Replace substring
@@ -400,7 +394,8 @@ def current_datetime_string(filepath_friendly: bool = False):
 
     Generates a datetime string following following  ISO 8601 format conventions.
 
-    :param filepath_friendly: If True, colons are replaced with nothing, e.g., 2026-01-07T10:03:37-05:00 becomes 2026-01-07T100337-0500
+    :param filepath_friendly: If True, colons are replaced with nothing, e.g.,
+        2026-01-07T10:03:37-05:00 becomes 2026-01-07T100337-0500
     :type filepath_friendly: bool
     """
     dts = current_datetime()
@@ -416,8 +411,8 @@ def string_to_datetime(dt: str):
 
 def read_header(file, nlines):
     lst_lines = []
-    with open(file, "r") as f:
-        for i in range(nlines):
+    with open(file) as f:
+        for _i in range(nlines):
             line = f.readline()
             if not line:
                 break  # Stop if file has fewer than 6 lines
@@ -547,6 +542,7 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
         warnings.warn(
             f"Failed to parse TRITON log file {log_file_path}: {str(e)}",
             UserWarning,
+            stacklevel=2,
         )
         return dict(_EMPTY_TRITON_LOG_FIELDS)
 
@@ -578,7 +574,9 @@ def return_dic_zarr_encodings(
     import zarr
 
     compressor = zarr.codecs.BloscCodec(  # type: ignore
-        cname="zstd", clevel=clevel, shuffle=zarr.codecs.BloscShuffle.shuffle  # type: ignore
+        cname="zstd",
+        clevel=clevel,
+        shuffle=zarr.codecs.BloscShuffle.shuffle,  # type: ignore
     )
 
     # Handle data variables
@@ -788,7 +786,6 @@ def compute_optimal_chunks(
     For determining how many timesteps to load during processing, use
     estimate_timesteps_per_chunk() instead.
     """
-    from typing import List
 
     # Handle non-spatial data (e.g., performance summaries)
     if spatial_coords is None:
@@ -858,14 +855,10 @@ def compute_optimal_chunks(
     # Each nonspatial point contributes:
     # - spatial_chunk_points elements for each spatial variable
     # - 1 element for each non-spatial variable
-    elements_per_nonspatial_point = len(spatial_vars) * spatial_chunk_points + len(
-        nonspatial_vars
-    )
+    elements_per_nonspatial_point = len(spatial_vars) * spatial_chunk_points + len(nonspatial_vars)
 
     if elements_per_nonspatial_point > 0:
-        target_nonspatial_points = bytes_available / (
-            bytes_per_element * elements_per_nonspatial_point
-        )
+        target_nonspatial_points = bytes_available / (bytes_per_element * elements_per_nonspatial_point)
         target_nonspatial_points = max(1, int(target_nonspatial_points))
     else:
         # Edge case: no variables (shouldn't happen in practice)
@@ -988,9 +981,7 @@ def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
         ds.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
 
 
-def write_zarr_then_netcdf(
-    ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"
-):
+def write_zarr_then_netcdf(ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"):
     # encoding = return_dic_zarr_encodings(ds, compression_level)
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
@@ -1024,9 +1015,7 @@ def return_dic_netcdf_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
     return encoding
 
 
-def write_netcdf(
-    ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"
-):
+def write_netcdf(ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"):
     encoding = return_dic_netcdf_encodings(ds, compression_level)
     if chunks == "auto":
         chunk_dict = return_dic_autochunk(ds)
@@ -1074,7 +1063,7 @@ def convert_datetime_to_str(obj: Any) -> Any:
     import pandas as pd
 
     # Handle datetime objects
-    if isinstance(obj, (datetime.datetime, pd.Timestamp)):
+    if isinstance(obj, datetime.datetime | pd.Timestamp):
         return obj.isoformat()
 
     elif isinstance(obj, dict):
