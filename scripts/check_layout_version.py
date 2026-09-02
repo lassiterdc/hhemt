@@ -9,6 +9,7 @@ Usage:
 Exit 0 = pass; exit 1 = enforcement failure with structured message.
 Check C is warning-only and always exits 0.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -46,7 +47,13 @@ _OLD_SCENARIO_RELPATH = "src/TRITON_SWMM_toolkit/scenario.py"
 
 LAYOUT_VERSION_RE = re.compile(r"^LAYOUT_VERSION:\s*int\s*=\s*(\d+)\s*$", re.MULTILINE)
 LAYOUT_SUSPICIOUS_SUBSTRINGS = (
-    "scenario", "log", "config", "consolidation", "paths", "schema", "conventions",
+    "scenario",
+    "log",
+    "config",
+    "consolidation",
+    "paths",
+    "schema",
+    "conventions",
 )
 
 
@@ -56,6 +63,111 @@ def _git(*args: str, suppress_stderr: bool = False) -> str:
         cwd=str(REPO_ROOT),
         stderr=subprocess.DEVNULL if suppress_stderr else None,
     ).decode()
+
+
+class _NonCommitBaseRef(ValueError):
+    """`base_ref` names an object that EXISTS but does not peel to a commit."""
+
+
+def _resolve_base_ref(base_ref: str) -> str | None:
+    """Classify `base_ref` into three categories and return the ref to use.
+
+        NONEXISTENT        `--verify` fails              -> "HEAD" (absence of history)
+        EXISTS-NOT-COMMIT  `--verify` ok, `^{commit}` no -> raise _NonCommitBaseRef
+        OK                 both succeed                  -> `base_ref` unchanged
+
+    Returns None when even HEAD is unborn. TWO probes, not one: a single
+    `--verify {ref}^{commit}` collapses the first two categories, and they are
+    different KINDS of thing. A base that does not exist is an ABSENCE OF HISTORY --
+    a state, not a defect -- and falling back to HEAD is right there. A base that
+    exists but is not a commit is a MISCONFIGURED INVOCATION: someone wired a hook or
+    a CI argument with a tree-ish or a blob, and falling back would run the check
+    against a base nobody chose, silently, forever, behind a notice that scrolls past
+    once and is never seen again.
+
+    Measured discriminator, and the last two rows are what make the refusal safe:
+
+        OBJECT           --verify  ^{commit}   category
+        nosuchref        1         1           NONEXISTENT
+        empty tree       0         1           EXISTS-NOT-COMMIT
+        blob             0         1           EXISTS-NOT-COMMIT
+        annotated tag    0         0           OK
+        lightweight tag  0         0           OK
+        HEAD             0         0           OK
+
+    Both tag forms peel cleanly, so the refusal provably cannot fire on a legitimate
+    tag base. This is NOT a loud refusal on shallow clones: a shallow clone's HEAD~1
+    does not EXIST, so it lands in the first category and falls back.
+
+    WHY A GUARD IS NEEDED AT ALL. `_layout_version_at` swallows an unresolvable ref and
+    returns 0; `_changed_files` swallows nothing, so `git diff {unresolvable}` raises an
+    uncaught CalledProcessError. Before the check-b disarm became a pending-change
+    predicate, an unresolvable base made `head_v != base_v` true and the disarm returned 0
+    BEFORE `_changed_files` ever ran -- the disarm was ACCIDENTALLY SHIELDING the diff.
+    The repaired disarm no longer fires there, so the shield is gone and the crash is
+    reachable: measured on a repo's SECOND commit and on a `git clone --depth 1`.
+    """
+    try:
+        _git("rev-parse", "--verify", "--quiet", base_ref, suppress_stderr=True)
+    except subprocess.CalledProcessError:
+        pass  # NONEXISTENT -- absence of history, fall through to the HEAD probe
+    else:
+        try:
+            _git("rev-parse", "--verify", "--quiet", f"{base_ref}^{{commit}}", suppress_stderr=True)
+        except subprocess.CalledProcessError:
+            raise _NonCommitBaseRef(
+                f"base ref {base_ref!r} exists but does not name a commit (it is a tree or a blob); "
+                f"this is a misconfigured invocation, not an absence of history"
+            ) from None
+        return base_ref
+    try:
+        _git("rev-parse", "--verify", "--quiet", "HEAD^{commit}", suppress_stderr=True)
+    except subprocess.CalledProcessError:
+        return None
+    return "HEAD"
+
+
+def _base_ref_or_verdict(base_ref: str, check_name: str) -> tuple[str | None, int | None]:
+    """Shared preamble for check-a and check-b: `(ref, None)` to proceed, `(None, code)` to return.
+
+    Both entry points need it because both are `always_run: true` in
+    `.pre-commit-config.yaml`: a root-commit skip in one is defeated by a hard failure in
+    the other, and the developer is blocked either way. Measured at a root commit before
+    this guard, under EVERY base including the empty tree -- check-a
+    `FAIL - LAYOUT_VERSION jumped from 0 to 19` while check-b printed
+    `bumped (0->19); check-a covers this; pass`, which is false: check-a did not cover it,
+    it failed with a nonsense expectation derived from a `base_v` that swallowed to 0.
+    """
+    try:
+        resolved = _resolve_base_ref(base_ref)
+    except _NonCommitBaseRef as exc:
+        print(f"{check_name}: FAIL - {exc}", file=sys.stderr)
+        return None, 1
+    if resolved is None:
+        # NOT a conceded fail-open, and the licensing reason is ACTIONABILITY rather than
+        # the absence of a referent. At a root commit LAYOUT_VERSION is being ESTABLISHED,
+        # so the remedy these checks exist to demand -- "bump the version and ship a
+        # migration for it" -- names a bump that does not exist. Every layout-relevant file
+        # in an initial import would be flagged with an instruction nobody can follow, and a
+        # finding that cannot be acted on is worse than a skip. (Contrast pre-push, where the
+        # predicate is inert but the remedy is still well defined; "no referent" alone would
+        # argue for a different predicate there, not for a skip, so it is the wrong ground.)
+        #
+        # Do NOT "close" this by supplying a base that makes the diff non-empty. The only
+        # such base is the empty tree, and it was measured wrong at every state: fail-OPEN
+        # under the pre-repair disarm (EXIT=0 on a commit that genuinely modified a
+        # layout-relevant file), and flagging files the commit never touched under the
+        # repaired one. The one case this genuinely cannot see is a repo re-inited from an
+        # existing tree, where on-disk analyses DO exist in the wild; no base closes that,
+        # and the remedy is a one-time operator baseline, not a base choice.
+        print(f"{check_name}: no in-repo predecessor (unborn HEAD / root commit); skipped")
+        return None, 0
+    if resolved != base_ref:
+        print(
+            f"{check_name}: base ref {base_ref!r} does not exist (shallow clone or early history); "
+            f"falling back to {resolved!r}"
+        )
+    return resolved, None
 
 
 def _git_show_with_rename_fallback(ref: str, new_relpath: str, old_relpath: str) -> str | None:
@@ -75,9 +187,7 @@ def _git_show_with_rename_fallback(ref: str, new_relpath: str, old_relpath: str)
 
 
 def _layout_version_at(ref: str) -> int:
-    text = _git_show_with_rename_fallback(
-        ref, _NEW_CONSTANTS_RELPATH, _OLD_CONSTANTS_RELPATH
-    )
+    text = _git_show_with_rename_fallback(ref, _NEW_CONSTANTS_RELPATH, _OLD_CONSTANTS_RELPATH)
     if text is None:
         return 0
     m = LAYOUT_VERSION_RE.search(text)
@@ -113,7 +223,17 @@ def _changed_files(base_ref: str) -> list[Path]:
     still catches the highest-risk such case (compute_event_id_slug), and the
     skip is one-commit-scoped (the next non-rename edit re-enters enforcement).
     """
-    out = _git("diff", "--name-status", "-M", f"{base_ref}..HEAD").strip()
+    # {base}..HEAD is a COMMIT RANGE and stops at HEAD. At pre-commit the commit object
+    # does not exist, so this range is the PREVIOUS, already-committed commit -- which
+    # already passed this hook when it was made. Measured on a real merge: the range
+    # returned 1 unrelated file while 8 layout-relevant paths sat in the pending working
+    # tree, invisible. Diff against the WORKING TREE so the pending change is in scope,
+    # matching _layout_version_at_head(), which already reads the working tree -- the two
+    # previously described different commits inside one predicate. Pre-commit is the ONLY
+    # venue this script runs in (branching-and-release-model.md records that it is wired
+    # into no GitHub Actions workflow), so the range being wrong made the file-scan arm
+    # inert everywhere rather than only at commit time.
+    out = _git("diff", "--name-status", "-M", base_ref).strip()
     changed: list[Path] = []
     for line in out.splitlines():
         if not line.strip():
@@ -127,7 +247,13 @@ def _changed_files(base_ref: str) -> list[Path]:
 
 
 def _added_files(base_ref: str) -> list[Path]:
-    out = _git("diff", "--name-only", "--diff-filter=A", f"{base_ref}..HEAD").strip()
+    # Same {base}..HEAD vacuity as _changed_files above, and the same fix. The STAKES
+    # differ and the difference is worth stating: check-c is invoked from nowhere (no
+    # pre-commit hook id, no CI workflow -- only check-a and check-b are wired) and
+    # returns 0 unconditionally, so its arm was inert for two independent reasons rather
+    # than one. Repairing the range here is pre-emptive: it makes the function correct
+    # for whenever check-c is wired, and changes nothing observable until then.
+    out = _git("diff", "--name-only", "--diff-filter=A", base_ref).strip()
     return [REPO_ROOT / line for line in out.splitlines() if line.strip()]
 
 
@@ -197,9 +323,7 @@ def _load_allowlist(sentinel: dict) -> dict[str, AllowlistEntry]:
             raise SystemExit(f"check_layout_version: malformed allowlist entry: {raw!r}")
         unknown = set(raw) - {"path", "justification", "layout_signature"}
         if unknown:
-            raise SystemExit(
-                f"check_layout_version: unknown allowlist keys {sorted(unknown)} in {raw['path']!r}"
-            )
+            raise SystemExit(f"check_layout_version: unknown allowlist keys {sorted(unknown)} in {raw['path']!r}")
         just = raw.get("justification")
         if not isinstance(just, str) or not just.strip():
             raise SystemExit(
@@ -207,9 +331,7 @@ def _load_allowlist(sentinel: dict) -> dict[str, AllowlistEntry]:
             )
         sig = raw.get("layout_signature")
         if sig is not None and not isinstance(sig, str):
-            raise SystemExit(
-                f"check_layout_version: layout_signature for {raw['path']!r} must be a string"
-            )
+            raise SystemExit(f"check_layout_version: layout_signature for {raw['path']!r} must be a string")
         out[raw["path"]] = AllowlistEntry(justification=just, layout_signature=sig)
     return out
 
@@ -246,9 +368,7 @@ def _slug_function_hash(source: str) -> str | None:
 
 
 def _slug_hash_at(ref: str) -> str | None:
-    text = _git_show_with_rename_fallback(
-        ref, SCENARIO_RELPATH, _OLD_SCENARIO_RELPATH
-    )
+    text = _git_show_with_rename_fallback(ref, SCENARIO_RELPATH, _OLD_SCENARIO_RELPATH)
     if text is None:
         return None
     return _slug_function_hash(text)
@@ -261,7 +381,10 @@ def _slug_hash_at_head() -> str | None:
 
 
 def check_a(base_ref: str) -> int:
-    base_v = _layout_version_at(base_ref)
+    resolved_base, verdict = _base_ref_or_verdict(base_ref, "check-a")
+    if verdict is not None:
+        return verdict
+    base_v = _layout_version_at(resolved_base)
     head_v = _layout_version_at_head()
     if head_v == base_v:
         print(f"check-a: LAYOUT_VERSION unchanged ({head_v}); pass")
@@ -299,16 +422,51 @@ def check_a(base_ref: str) -> int:
 
 def check_b(base_ref: str) -> int:
     sentinel = _load_sentinel()
+    resolved_base, verdict = _base_ref_or_verdict(base_ref, "check-b")
+    if verdict is not None:
+        return verdict
     head_v = _layout_version_at_head()
-    base_v = _layout_version_at(base_ref)
-    if head_v != base_v:
-        print(f"check-b: LAYOUT_VERSION bumped ({base_v}->{head_v}); check-a covers this; pass")
+    base_v = _layout_version_at(resolved_base)
+    pending_base_v = _layout_version_at("HEAD")
+    # DISARM ON AGREEMENT, and both halves of this condition are load-bearing.
+    #
+    # The literal "HEAD" is NOT a stale `base_ref` waiting to be tidied up. The disarm asks
+    # "does THIS commit carry the bump", which is a property of the pending change and is
+    # therefore base-INDEPENDENT; the base ref governs the FILE SET and nothing else.
+    # Replacing "HEAD" with the base ref for consistency reinstates the fail-open this repair
+    # removed: a bump that landed one commit ago makes `head_v != base_v` true, the disarm
+    # fires, and check-b's file scan does not run at all for the whole next commit. Measured
+    # on this repo at 48d4efd3, which modified src/hhemt/log.py, a layout_relevant.paths member.
+    #
+    # The `and head_v != base_v` conjunct is what stops the disarm handing off to a check-a
+    # that cannot see what it is being handed. The two checks read DIFFERENT COMMITS -- check-b
+    # here reads HEAD, check-a reads the base it resolved -- and when those disagree the handoff
+    # is to a blind target. Measured: with HEAD~1=18, HEAD=19 and a worktree that backs the bump
+    # out to 18, a HEAD-only disarm reports `bumped (19->18)` and returns 0 while check-a reports
+    # `unchanged (18); pass`, so a pending layout-relevant change is neither scanned nor
+    # validated. Requiring BOTH comparisons to see a pending bump makes the disarm fire only
+    # when check-a will actually evaluate one.
+    #
+    # The false handoff is now unreachable from BOTH sides rather than suppressed on one. This
+    # conjunct closes the version-churn instance; the shared `_base_ref_or_verdict` sentinel
+    # closes the root-commit instance, where check-b used to print "check-a covers this" while
+    # check-a failed with `jumped from 0 to N` off a `base_v` that had swallowed to 0.
+    #
+    # SCOPE, so nobody wires this into a venue where it is dead. This is now a PENDING-CHANGE
+    # predicate: `_layout_version_at("HEAD")` reads the COMMIT and `_layout_version_at_head()`
+    # reads the WORKTREE FILE, so on a clean tree they are equal by construction and the disarm
+    # is structurally unreachable. Pre-commit, where the tree is dirty by definition, is the only
+    # venue in which it can fire. A range-based venue -- pre-push, CI, or the documented
+    # `check-b [base_ref=main]` default against a clean checkout -- gets a permanently-inert
+    # disarm and must supply its own bump predicate rather than assuming this one works there.
+    if head_v != pending_base_v and head_v != base_v:
+        print(f"check-b: LAYOUT_VERSION bumped ({pending_base_v}->{head_v}); check-a covers this; pass")
         return 0
     paths = set(sentinel["layout_relevant"]["paths"])
     globs = sentinel["layout_relevant"]["globs"]
     allow = _load_allowlist(sentinel)
     layout_relevant_changed: list[Path] = []
-    for p in _changed_files(base_ref):
+    for p in _changed_files(resolved_base):
         rel = str(p.relative_to(REPO_ROOT))
         if rel in allow:
             expected_sig = allow[rel].layout_signature
@@ -340,7 +498,7 @@ def check_b(base_ref: str) -> int:
         failed = True
 
     if SLUG_FUNC_SENTINEL not in allow:
-        base_hash = _slug_hash_at(base_ref)
+        base_hash = _slug_hash_at(resolved_base)
         head_hash = _slug_hash_at_head()
         if base_hash is not None and head_hash is not None and base_hash != head_hash:
             print(
