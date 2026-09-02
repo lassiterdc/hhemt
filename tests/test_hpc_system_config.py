@@ -214,3 +214,70 @@ def test_analysis_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, re
     # The two partition SELECTORS are KEPT (D-A).
     assert "hpc_ensemble_partition" in analysis_config.model_fields
     assert "hpc_setup_and_analysis_processing_partition" in analysis_config.model_fields
+
+
+# ---------------------------------------------------------------------------
+# Preflight: the output-processing runtime row must mirror the EMITTER, not a
+# hardcoded literal. Regression test for the 120-vs-240 mirror defect.
+# ---------------------------------------------------------------------------
+# validation.py's per-rule table carried a hardcoded 120 for output processing
+# while workflow.py:2903 emits cfg.hpc_runtime_min_for_sim_output_processing
+# (default 240) -- half the emitted value, in the PERMISSIVE direction. A
+# partition whose max_runtime fell in [120, 240) therefore PASSED preflight and
+# had its process jobs rejected or walltime-killed at submit. These two tests
+# pin both directions: the check must fire inside that window and must NOT fire
+# above it. Deliberately standalone -- it builds its own configs rather than
+# sharing a helper, so it cannot be broken by unrelated fixture churn.
+
+
+def _preflight_result_for_processing_cap(max_runtime: int):
+    """Run the real HPC preflight with one partition capped at ``max_runtime``.
+
+    ``batch_job`` is required because the per-rule runtime check is gated on it
+    (validation.py:957), and batch_job carries a conditional requirement on
+    ``hpc_total_job_duration_min`` (analysis.py required_when). Both partition
+    selectors name the same declared partition so the ONLY variable is the cap.
+    """
+    from pathlib import Path
+
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.loaders import load_analysis_config
+    from hhemt.validation import ValidationResult, _validate_hpc_configuration
+
+    template = (
+        Path(__file__).resolve().parents[1] / "test_data" / "norfolk_coastal_flooding" / "template_analysis_config.yaml"
+    )
+    d = load_analysis_config(template).model_dump(mode="json")
+    d["multi_sim_run_method"] = "batch_job"
+    d["hpc_total_job_duration_min"] = 4320
+    d["hpc_ensemble_partition"] = "standard"
+    d["hpc_setup_and_analysis_processing_partition"] = "standard"
+    cfg = analysis_config.model_validate(d)
+
+    cfg_hpc = hpc_system_config.model_validate(
+        {
+            "system_name": "probe",
+            "default_account": "acct",
+            "login_node": "login",
+            "partitions": {"standard": {"max_runtime": max_runtime}},
+        }
+    )
+    result = ValidationResult()
+    _validate_hpc_configuration(cfg, result, cfg_hpc_system=cfg_hpc)
+    return cfg, [i for i in result.errors if "output processing" in str(i.message)]
+
+
+def test_output_processing_runtime_row_fires_inside_the_permissive_window():
+    """FAILS PRE-FIX: the row compared a hardcoded 120 against the cap, so a
+    partition capped at 180 passed while the emitter requested 240."""
+    cfg, hits = _preflight_result_for_processing_cap(180)
+    assert cfg.hpc_runtime_min_for_sim_output_processing == 240
+    assert len(hits) == 1, "a 240-min request must be rejected by a 180-min cap"
+    assert "240" in str(hits[0].message)
+
+
+def test_output_processing_runtime_row_does_not_over_fire_above_the_request():
+    """Passes in BOTH states by design -- the no-false-positive arm. Pinned so a
+    future tightening of the row cannot start rejecting satisfiable configs."""
+    _cfg, hits = _preflight_result_for_processing_cap(300)
+    assert hits == []
