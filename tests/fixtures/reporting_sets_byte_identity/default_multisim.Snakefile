@@ -216,6 +216,23 @@ rule process_triton:
     output: "_status/d_process_triton_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_triton_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
+    # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
+    # `return max(job.restart_times for job in self.jobs)`; jobs.py:1763-1769's
+    # attempt setter propagates the incremented attempt to EVERY member; and
+    # jobs.py:1518-1520's remove_existing_output iterates every member and deletes
+    # its outputs at group start. So one member's failure re-runs the WHOLE group
+    # from scratch, at the highest retry count any member declares, with no
+    # skip-what-succeeded path.
+    #
+    # Inert today: the three process_* rules in this group all take the global
+    # restart-times baseline, so the max() is that baseline. It stops being inert the
+    # moment a rule carrying its own high `retries:` joins -- the sim rules emit
+    # _resolved_simulate_retries(), deliberately raised for hotstart-resume sweeps.
+    # Grouping a sim with its own process job was evaluated 2026-09-02 and REJECTED
+    # for exactly this: a deterministic process failure would re-run a ~100-minute
+    # simulation up to the SIM's retry count, across a 3,798-event ensemble.
+    # DO NOT add a rule with its own `retries:` directive to this group.
     priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
@@ -248,6 +265,23 @@ rule process_tritonswmm:
     output: "_status/d_process_tritonswmm_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
+    # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
+    # `return max(job.restart_times for job in self.jobs)`; jobs.py:1763-1769's
+    # attempt setter propagates the incremented attempt to EVERY member; and
+    # jobs.py:1518-1520's remove_existing_output iterates every member and deletes
+    # its outputs at group start. So one member's failure re-runs the WHOLE group
+    # from scratch, at the highest retry count any member declares, with no
+    # skip-what-succeeded path.
+    #
+    # Inert today: the three process_* rules in this group all take the global
+    # restart-times baseline, so the max() is that baseline. It stops being inert the
+    # moment a rule carrying its own high `retries:` joins -- the sim rules emit
+    # _resolved_simulate_retries(), deliberately raised for hotstart-resume sweeps.
+    # Grouping a sim with its own process job was evaluated 2026-09-02 and REJECTED
+    # for exactly this: a deterministic process failure would re-run a ~100-minute
+    # simulation up to the SIM's retry count, across a 3,798-event ensemble.
+    # DO NOT add a rule with its own `retries:` directive to this group.
     priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
@@ -280,6 +314,23 @@ rule process_swmm:
     output: "_status/d_process_swmm_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
+    # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
+    # `return max(job.restart_times for job in self.jobs)`; jobs.py:1763-1769's
+    # attempt setter propagates the incremented attempt to EVERY member; and
+    # jobs.py:1518-1520's remove_existing_output iterates every member and deletes
+    # its outputs at group start. So one member's failure re-runs the WHOLE group
+    # from scratch, at the highest retry count any member declares, with no
+    # skip-what-succeeded path.
+    #
+    # Inert today: the three process_* rules in this group all take the global
+    # restart-times baseline, so the max() is that baseline. It stops being inert the
+    # moment a rule carrying its own high `retries:` joins -- the sim rules emit
+    # _resolved_simulate_retries(), deliberately raised for hotstart-resume sweeps.
+    # Grouping a sim with its own process job was evaluated 2026-09-02 and REJECTED
+    # for exactly this: a deterministic process failure would re-run a ~100-minute
+    # simulation up to the SIM's retry count, across a 3,798-event ensemble.
+    # DO NOT add a rule with its own `retries:` directive to this group.
     priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
