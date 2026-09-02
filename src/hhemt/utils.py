@@ -1,18 +1,19 @@
+import datetime
+import importlib.util
 import json
 import os
-import warnings
-from pathlib import Path
-import importlib.util
-from platformdirs import user_data_dir
-from string import Template
 import re
-import datetime
-import yaml
-import xarray as xr
 import shutil
-from typing import Any
 import subprocess
-from typing import Optional, Literal, Callable
+import warnings
+from collections.abc import Callable
+from pathlib import Path
+from string import Template
+from typing import Any, Literal
+
+import xarray as xr
+import yaml
+from platformdirs import user_data_dir
 
 
 class BatchJobSubmissionError(Exception):
@@ -29,7 +30,7 @@ class BatchJobSubmissionError(Exception):
         command: list,
         return_code: int,
         stderr: str,
-        dependent_job_id: Optional[int | str | list] = None,
+        dependent_job_id: int | str | list | None = None,
         dependency_type: str = "afterok",
     ):
         self.script_path = script_path
@@ -71,10 +72,10 @@ def fast_rmtree(
     path: str | Path,
     *,
     missing_ok: bool = True,
-    onerror: Optional[Callable] = None,
-    analysis_dir: Optional[str | Path] = None,
-) -> None:
-    """Fast, cross-platform directory delete.
+    onerror: Callable | None = None,
+    analysis_dir: str | Path | None = None,
+) -> int:
+    """Fast, cross-platform directory delete. Returns bytes reclaimed.
 
     Uses OS-native delete commands for speed; falls back to shutil.rmtree.
 
@@ -103,13 +104,30 @@ def fast_rmtree(
 
     if not path.exists():
         if missing_ok:
-            return
+            return 0
         raise FileNotFoundError(path)
+
+    # Measured BEFORE the delete -- afterwards there is nothing to measure. This is
+    # the pre-delete walk the docstring prices, over a tree about to be walked for
+    # deletion anyway.
+    freed = 0
+    if path.is_symlink() or path.is_file():
+        try:
+            freed = path.stat().st_size
+        except OSError:
+            pass
+    else:
+        for _f in path.rglob("*"):
+            try:
+                if _f.is_file():
+                    freed += _f.stat().st_size
+            except OSError:
+                pass
 
     if path.is_symlink() or path.is_file():
         path.unlink()
         _restamp_after_mutation(path, analysis_dir)
-        return
+        return freed
 
     try:
         if os.name == "nt":
@@ -130,11 +148,10 @@ def fast_rmtree(
         shutil.rmtree(path, onerror=onerror)
 
     _restamp_after_mutation(path, analysis_dir)
+    return freed
 
 
-def _restamp_after_mutation(
-    path: Path, analysis_dir: Optional[str | Path]
-) -> None:
+def _restamp_after_mutation(path: Path, analysis_dir: str | Path | None) -> None:
     """Re-stamp parent DU sentinels for `path` under `analysis_dir`.
 
     No-op when `analysis_dir` is None, when `path == analysis_dir` (root-wipe
@@ -154,7 +171,316 @@ def _restamp_after_mutation(
     if not analysis_resolved.exists():
         return
     from hhemt.du_sentinels import restamp_parent_sentinels
+
     restamp_parent_sentinels(Path(path), analysis_dir=analysis_resolved)
+
+
+def _recover_and_clear_publish_temps(final, aside, tmp, *, analysis_dir=None) -> None:
+    """Steps 0 and 1 of the crash-safe publish. Shared by the callable-wrapping
+    form below and by the inline form in process_simulation, so the .aside/.tmp
+    preference has exactly ONE implementation -- two copies is how it gets undone.
+
+    THE PREFERENCE IS ORDER-DERIVED, NOT PROVENANCE-DERIVED. Read this before
+    changing either branch.
+
+    An earlier draft preferred .aside on the ground that it is "trustworthy by
+    construction -- only ever a renamed complete `final`". That rests on the
+    ABSENT-or-COMPLETE invariant, WHICH THIS MODULE ESTABLISHES, so it does not
+    hold over the stores this change INHERITS: on the first run after it ships,
+    every `final` on disk was written by the unprotected path and may be a
+    silent-fill partial. Measured: with an inherited partial at .aside and a
+    complete store at .tmp, that draft restored the partial and deleted the
+    complete one, announcing that it was restoring the last known-good copy.
+    That is a regression against doing nothing -- clearing both would have left
+    `final` absent and let the rule re-run.
+
+    What holds instead is an ORDERING fact about this process: .aside is created
+    ONLY at step 3, which runs only after write_fn(tmp) RETURNED (and, in the
+    inline form, only after the streaming loop completed). So
+
+        aside.exists() and not final.exists()   ==>   .tmp is COMPLETE
+
+    and in that state .tmp is the newer complete store and .aside is whatever
+    `final` happened to be. Prefer .tmp.
+
+    RECOVERY PUBLISHES, and that is a deliberate widening of what this function
+    does. The os.rename(tmp, final) below promotes a PREVIOUS invocation's store
+    to `final`. After a force-rerun that store may reflect a superseded input
+    set, so a reader between the recovery and the current write's own publish can
+    see stale-but-complete data. It is transient unless the current write also
+    fails with retries exhausted; the alternative -- discarding a complete store
+    to leave `final` absent -- loses data the system still has.
+
+    The asymmetry stays real everywhere else. On the step-2 crash path .aside
+    does NOT exist, a mid-write .tmp is incomplete, and nothing can tell it from
+    a complete one -- so it is cleared, unconditionally, in every branch.
+    """
+    if aside.exists():
+        if not final.exists():
+            if tmp.exists():
+                # Died in the step3->step4 gap: .tmp is the complete new store.
+                os.rename(tmp, final)
+                fast_rmtree(aside, analysis_dir=analysis_dir)
+            else:
+                warnings.warn(
+                    f"Recovering {aside}: a previous publish died mid-swap with no "
+                    f"replacement store present, so it is being restored to "
+                    f"{final.name}.",
+                    stacklevel=2,
+                )
+                os.rename(aside, final)
+        else:
+            # Died in the step4->step5 gap: the aside is superseded.
+            fast_rmtree(aside, analysis_dir=analysis_dir)
+    if tmp.exists():
+        warnings.warn(f"Discarding un-publishable partial store {tmp}.", stacklevel=2)
+        fast_rmtree(tmp, analysis_dir=analysis_dir)
+
+
+def _publish_store_crash_safe(write_fn, fname_out, *, analysis_dir=None) -> None:
+    """Build a zarr store under a temp name and publish it by rename.
+
+    GUARANTEE, and it is exactly this one: `fname_out` is either ABSENT or a
+    COMPLETE store, never an INCOMPLETE one. It is NOT guaranteed that a complete
+    store survives somewhere after any crash -- on the FRESH path (no prior store)
+    a crash before the rename leaves nothing, and that is the relaunch's own path.
+
+    WHY THIS EXISTS: no sound completeness detector is possible. zarr omits an
+    all-fill chunk by default (write_empty_chunks unset anywhere in this tree), so
+    a legitimately dry corner of a flood-depth field is byte-identical to a killed
+    write, and a missing chunk READS as the fill value rather than raising.
+    Measured under a real SIGKILL: the store is present-but-incomplete for ~28% of
+    a direct mode="w" write, opens without error, reports the full expected length,
+    and returns NaN for the rows whose chunks never landed.
+
+    THE GUARANTEE IS SINGLE-WRITER. Two processes publishing the same `final` can
+    interleave steps 3 and 4 and defeat it. Do not read that as "the toolkit
+    prevents this": the arbitration is partial and checkable. Snakemake's
+    output-vs-output lock covers concurrent rules in ONE workflow, and
+    SnakemakeWorkflowBuilder._orchestrator_liveness_gate covers a second driver --
+    but reprocess runs with --nolock and that gate refuses on a live DRIVER, not
+    on live WORKERS, so two publishers can still reach one store. The failure it
+    degrades to is a loud rename/replace error, which is strictly better than
+    today's silent interleave, and that is the whole claim.
+
+    STEPS 0/3/4 ARE ONE INTERLOCK, NOT THREE PIECES OF HYGIENE. Step 0 guarantees
+    no `.aside` survives into step 3; step 3's rename is what frees `final` so
+    step 4's os.replace is legal (both raise "Directory not empty" onto a
+    non-empty target). "Optimising away" step 0 breaks step 3 on the SECOND
+    recovery run, not the first -- which is why it would survive testing.
+
+    COST: 1.00x peak on the fresh path (the temp occupies bytes the store would
+    have taken anyway) and 2.00x on the rewrite path, where old and new coexist
+    until step 5.
+    """
+    final = Path(fname_out)
+    aside = final.with_name(final.name + ".aside")
+    tmp = final.with_name(final.name + ".tmp")
+
+    _recover_and_clear_publish_temps(final, aside, tmp, analysis_dir=analysis_dir)
+    write_fn(tmp)  # step 2
+    if final.exists():
+        os.rename(final, aside)  # step 3
+    os.replace(tmp, final)  # step 4
+    if aside.exists():
+        fast_rmtree(aside, analysis_dir=analysis_dir)  # step 5
+
+
+def chapters_dir_for(fname_out) -> Path:
+    """Sibling directory holding this store's per-chapter parts."""
+    root = Path(fname_out)
+    return root.with_name(root.name + ".chapters")
+
+
+def unified_flag_for(fname_out) -> Path:
+    root = Path(fname_out)
+    return root.with_name(root.name + ".done")
+
+
+def chapter_store_for(chapters: Path, k: int) -> Path:
+    return chapters / f"chapter_{k:05d}.zarr"
+
+
+def chapter_flag_for(chapters: Path, k: int) -> Path:
+    return chapters / f"chapter_{k:05d}.done"
+
+
+def verify_and_flag_chapter(store: Path, flag: Path, n_expected: int) -> None:
+    """Open the chapter store, confirm it is readable, THEN write the flag.
+
+    THE ORDER IS THE CONTRACT: write -> verify -> flag -> clear raw. The flag is a
+    positive completion marker in the Gotcha-40 sense, and the clear that follows
+    it destroys the raw inputs, so the flag must not be written on an unchecked
+    store.
+
+    WHAT THE FLAG ATTESTS, stated exactly, because an earlier docstring overclaimed
+    it. It attests that `to_zarr` RETURNED and that the resulting store OPENS. It
+    does NOT attest that the store's data is complete, and the size check below is
+    near-tautological on the success path: zarr writes the declared shape before the
+    chunk bytes, so if `to_zarr` returned the size is right by construction, and if
+    it did not return the flag is never written and `reap_unflagged_chapters`
+    removes the store. With `write_empty_chunks=False` an absent chunk is
+    byte-indistinguishable from a dry corner of a flood field, so no cheap check can
+    do better. The open() is retained because it is not vacuous -- it catches a
+    store that returned but cannot be read back -- and the size check is retained
+    because it costs one metadata read and catches a stale store at the same index.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    ds = xr.open_zarr(store, consolidated=False)
+    try:
+        n = ds.sizes.get("timestep_min", 0)
+        if n != n_expected:
+            raise ProcessingError(
+                operation="verify_and_flag_chapter",
+                filepath=str(store),
+                reason=f"chapter covers {n} timesteps, expected {n_expected}",
+            )
+    finally:
+        ds.close()
+    tmp = flag.with_suffix(flag.suffix + ".tmp")
+    tmp.write_text("ok", encoding="utf-8")
+    os.replace(tmp, flag)
+
+
+def completed_chapters(chapters: Path) -> dict:
+    """Chapter index -> store path, for FLAGGED chapters whose store still exists."""
+    if not chapters.exists():
+        return {}
+    out = {}
+    for f in sorted(chapters.glob("chapter_*.done")):
+        k = int(f.stem.split("_")[1])
+        store = chapter_store_for(chapters, k)
+        if store.exists():
+            out[k] = store
+    return out
+
+
+def covered_timesteps(chapters: Path) -> set:
+    """The set of timestep_min VALUES already published by flagged chapters.
+
+    A SET OF COORDINATE VALUES, never a COUNT. The loop that consumes this skips
+    timesteps on three paths (a missing raw file, a variable that loaded nothing, a
+    chunk that loaded nothing), so the number of published timesteps and their
+    POSITION in `timestep_list` diverge whenever any timestep is skipped -- which on
+    a partially-written raw directory is the expected shape, not a corner case. A
+    count used as a slice index is silently wrong there; a value set is correct
+    under skipped timesteps, a non-contiguous chapter set, and chapters written out
+    of order.
+
+    DEPENDENCY THIS RESTS ON, named because nothing protects it: exact set membership
+    requires that `timestep_min` round-trips through zarr UNENCODED. return_dic_zarr_encodings
+    does not encode it today -- its float32 branch iterates ds.data_vars and its coordinate
+    loop handles only Unicode -- but NO spec in this set touches that module and NO test pins
+    the property, so a one-line edit there would silently break resume by making
+    `t not in _covered_ts` true for timesteps that ARE covered.
+    """
+    out = set()
+    for store in completed_chapters(chapters).values():
+        ds = xr.open_zarr(store, consolidated=False)
+        try:
+            out.update(ds["timestep_min"].values.tolist())
+        finally:
+            ds.close()
+    return out
+
+
+def reap_unflagged_chapters(chapters: Path, *, analysis_dir=None) -> None:
+    """STATE 3: a chapter store with no flag was interrupted mid-write. Delete it.
+
+    Never deletes a FLAGGED chapter -- after a raw clear a flagged chapter is the
+    SOLE copy of its timesteps, and deleting one is unrecoverable without re-running
+    the simulation.
+    """
+    if not chapters.exists():
+        return
+    for store in sorted(chapters.glob("chapter_*.zarr")):
+        k = int(store.stem.split("_")[1])
+        if not chapter_flag_for(chapters, k).exists():
+            warnings.warn(f"Discarding unflagged (interrupted) chapter store {store}.", stacklevel=2)
+            fast_rmtree(store, analysis_dir=analysis_dir)
+
+
+def clear_raw_for_timesteps(df_outputs, timesteps, *, analysis_dir=None) -> int:
+    """Delete ONLY the raw per-timestep files this chapter consumed. Returns bytes.
+
+    DELIBERATELY NOT `process_simulation._clear_raw_outputs`, and it MUST NOT be
+    refactored to share that helper's allowlist. `_CLEAR_RAW_DELETE_SUBDIRS`
+    contains `cfg/` (the config_NNNN.cfg HOTSTART CHECKPOINTS a walltime-killed sim
+    resumes from) and `performance/` (the per-checkpoint files V0008's
+    _aggregate_perf_tseries merges for wallclock). Calling it per chapter would
+    RAISE RuntimeError on a resumable multi-allocation run and SILENTLY destroy both
+    on a single-allocation one.
+
+    This helper preserves them BY CONSTRUCTION rather than by omission from a delete
+    list: it deletes only paths named in `df_outputs`, which contains the
+    per-variable per-timestep data files and nothing else.
+    """
+    freed = 0
+    for path in df_outputs.loc[list(timesteps)].to_numpy().ravel():
+        p = Path(path)
+        if not p.exists():
+            continue
+        # Routed through fast_rmtree rather than a bare unlink + wrapper call. Three
+        # reasons, and the first is a correctness one: restamp_parent_sentinels has NO
+        # None guard (`if not analysis_dir.exists()`), and analysis_dir defaults to None
+        # here, so calling it directly -- the change that would satisfy the DU checker's
+        # _is_restamp_call most obviously -- raises AttributeError on every caller that
+        # omits analysis_dir. fast_rmtree handles a FILE, guards None via
+        # _restamp_after_mutation, and RETURNS the bytes it freed ([Q232]), which
+        # replaces the manual stat.
+        freed += fast_rmtree(p, analysis_dir=analysis_dir)
+    return freed
+
+
+def merge_chapters_to_unified(chapters: Path, fname_out, *, analysis_dir=None) -> None:
+    """STATES 4/5/6: concatenate flagged chapters into the unified store.
+
+    A flagless unified store is a merge that was interrupted; it is deleted and
+    re-merged rather than trusted, because nothing distinguishes it from a complete
+    one. The chapters are still present -- the interlock holds them until the
+    unified flag lands, which is what makes re-merge possible at all.
+
+    CONTIGUITY IS ASSERTED, not assumed. `completed_chapters` admits an interior
+    hole: a flag whose store was later removed leaves a gap, and concatenating
+    sorted(parts) over a gapped set yields a unified store missing an interior
+    timestep range and then FLAGS IT COMPLETE. The index set must be exactly
+    range(len(parts)).
+    """
+    from hhemt.exceptions import ProcessingError
+
+    final = Path(fname_out)
+    flag = unified_flag_for(final)
+    if final.exists() and not flag.exists():
+        warnings.warn(f"Discarding un-flagged (interrupted) unified store {final}; re-merging.", stacklevel=2)
+        fast_rmtree(final, analysis_dir=analysis_dir)
+    parts = completed_chapters(chapters)
+    if not parts:
+        raise ProcessingError(
+            operation="merge_chapters_to_unified",
+            filepath=str(chapters),
+            reason="no flagged chapter stores to merge",
+        )
+    if sorted(parts) != list(range(len(parts))):
+        raise ProcessingError(
+            operation="merge_chapters_to_unified",
+            filepath=str(chapters),
+            reason=(
+                f"chapter index set {sorted(parts)} is not contiguous from 0; a flagged "
+                "chapter's store is missing and merging would publish a store with an "
+                "interior gap and flag it complete"
+            ),
+        )
+    ds = xr.concat(
+        [xr.open_zarr(parts[k], consolidated=False) for k in sorted(parts)],
+        dim="timestep_min",
+    )
+    ds.to_zarr(final, mode="w", consolidated=False)
+    tmp = flag.with_suffix(flag.suffix + ".tmp")
+    tmp.write_text("ok", encoding="utf-8")
+    os.replace(tmp, flag)
+    # STATE 6: chapters die ONLY now, after the unified flag.
+    fast_rmtree(chapters, analysis_dir=analysis_dir)
 
 
 def fix_line_endings(file_path, target_ending="\n"):
@@ -199,7 +525,7 @@ def fix_line_endings(file_path, target_ending="\n"):
 
 def run_bash_script(
     bash_script: Path,
-    dependent_job_id: Optional[int | str | list] = None,
+    dependent_job_id: int | str | list | None = None,
     dependency_type: Literal["afterok", "afterany"] = "afterok",
     verbose: bool = True,
 ):
@@ -211,9 +537,7 @@ def run_bash_script(
         cmd.append(
             f"--dependency={dependency_type}:{dependent_job_id}",
         )
-        dpdndncy = (
-            f"\n dependent on job {dependent_job_id} using dependency={dependency_type}"
-        )
+        dpdndncy = f"\n dependent on job {dependent_job_id} using dependency={dependency_type}"
     cmd.append(str(bash_script))
 
     try:
@@ -248,22 +572,16 @@ def archive_directory_contents(dir: Path):
         shutil.move(str(item), archive_dir / item.name)
 
 
-def create_mask_from_shapefile(
-    da_to_mask, shapefile_path=None, series_single_row_of_gdf=None
-):  # , COORD_EPSG):
+def create_mask_from_shapefile(da_to_mask, shapefile_path=None, series_single_row_of_gdf=None):  # , COORD_EPSG):
     # da_to_mask, shapefile_path = da_sim_wlevel, f_mitigation_aois
     og_shape = da_to_mask.shape
-    xs = da_to_mask.x.to_series()
-    ys = da_to_mask.y.to_series()
-    from shapely.geometry import mapping
     import geopandas as gpd
     import rasterio.features
+    from shapely.geometry import mapping
 
     if shapefile_path is not None:
         gdf = gpd.read_file(shapefile_path)
-        shapes = [
-            mapping(geom) for geom in gdf.geometry
-        ]  # Convert geometries to GeoJSON-like format
+        shapes = [mapping(geom) for geom in gdf.geometry]  # Convert geometries to GeoJSON-like format
     if series_single_row_of_gdf is not None:
         shapes = [mapping(series_single_row_of_gdf.geometry)]
     mask = rasterio.features.geometry_mask(
@@ -297,7 +615,7 @@ def get_package_data_root(package_name) -> Path:
 
 
 def fill_template(f_template: Path, mapping: dict):
-    with open(f_template, "r") as T:
+    with open(f_template) as T:
         template = Template(T.read())
         filled = template.safe_substitute(mapping)
     return filled
@@ -312,7 +630,7 @@ def create_from_template(f_template: Path, mapping: dict, f_out: Path):
 
 
 def find_all_keys_in_template(f_template):
-    with open(f_template, "r") as f:
+    with open(f_template) as f:
         text = f.read()
     keys = re.findall(r"\{([^}]+)\}", text)
     unique_keys = list(dict.fromkeys(keys))
@@ -365,7 +683,7 @@ def replace_substring_in_file(file_path, old_substring, new_substring, verbose=F
         new_substring (str): The substring to replace with.
     """
     # Read the file
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     # Replace substring
@@ -400,7 +718,8 @@ def current_datetime_string(filepath_friendly: bool = False):
 
     Generates a datetime string following following  ISO 8601 format conventions.
 
-    :param filepath_friendly: If True, colons are replaced with nothing, e.g., 2026-01-07T10:03:37-05:00 becomes 2026-01-07T100337-0500
+    :param filepath_friendly: If True, colons are replaced with nothing, e.g.,
+        2026-01-07T10:03:37-05:00 becomes 2026-01-07T100337-0500
     :type filepath_friendly: bool
     """
     dts = current_datetime()
@@ -416,8 +735,8 @@ def string_to_datetime(dt: str):
 
 def read_header(file, nlines):
     lst_lines = []
-    with open(file, "r") as f:
-        for i in range(nlines):
+    with open(file) as f:
+        for _i in range(nlines):
             line = f.readline()
             if not line:
                 break  # Stop if file has fewer than 6 lines
@@ -547,6 +866,7 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
         warnings.warn(
             f"Failed to parse TRITON log file {log_file_path}: {str(e)}",
             UserWarning,
+            stacklevel=2,
         )
         return dict(_EMPTY_TRITON_LOG_FIELDS)
 
@@ -578,7 +898,9 @@ def return_dic_zarr_encodings(
     import zarr
 
     compressor = zarr.codecs.BloscCodec(  # type: ignore
-        cname="zstd", clevel=clevel, shuffle=zarr.codecs.BloscShuffle.shuffle  # type: ignore
+        cname="zstd",
+        clevel=clevel,
+        shuffle=zarr.codecs.BloscShuffle.shuffle,  # type: ignore
     )
 
     # Handle data variables
@@ -788,7 +1110,6 @@ def compute_optimal_chunks(
     For determining how many timesteps to load during processing, use
     estimate_timesteps_per_chunk() instead.
     """
-    from typing import List
 
     # Handle non-spatial data (e.g., performance summaries)
     if spatial_coords is None:
@@ -858,14 +1179,10 @@ def compute_optimal_chunks(
     # Each nonspatial point contributes:
     # - spatial_chunk_points elements for each spatial variable
     # - 1 element for each non-spatial variable
-    elements_per_nonspatial_point = len(spatial_vars) * spatial_chunk_points + len(
-        nonspatial_vars
-    )
+    elements_per_nonspatial_point = len(spatial_vars) * spatial_chunk_points + len(nonspatial_vars)
 
     if elements_per_nonspatial_point > 0:
-        target_nonspatial_points = bytes_available / (
-            bytes_per_element * elements_per_nonspatial_point
-        )
+        target_nonspatial_points = bytes_available / (bytes_per_element * elements_per_nonspatial_point)
         target_nonspatial_points = max(1, int(target_nonspatial_points))
     else:
         # Edge case: no variables (shouldn't happen in practice)
@@ -954,6 +1271,7 @@ def write_datatree_zarr(
     tree: "xr.DataTree",
     fname_out: Path,
     compression_level: int = 5,
+    analysis_dir=None,
 ) -> None:
     """Write a DataTree to a hierarchical zarr store.
 
@@ -971,10 +1289,14 @@ def write_datatree_zarr(
             message=".*does not have a Zarr V3 specification.*",
             category=Warning,
         )
-        tree.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+        _publish_store_crash_safe(
+            lambda _dest: tree.to_zarr(_dest, mode="w", encoding=encoding, consolidated=False),
+            fname_out,
+            analysis_dir=analysis_dir,
+        )
 
 
-def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
+def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto", analysis_dir=None):
     encoding = return_dic_zarr_encodings(ds, compression_level)
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
@@ -985,12 +1307,14 @@ def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
             message=".*does not have a Zarr V3 specification.*",
             category=Warning,
         )
-        ds.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+        _publish_store_crash_safe(
+            lambda _dest: ds.to_zarr(_dest, mode="w", encoding=encoding, consolidated=False),
+            fname_out,
+            analysis_dir=analysis_dir,
+        )
 
 
-def write_zarr_then_netcdf(
-    ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"
-):
+def write_zarr_then_netcdf(ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"):
     # encoding = return_dic_zarr_encodings(ds, compression_level)
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
@@ -1024,9 +1348,7 @@ def return_dic_netcdf_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
     return encoding
 
 
-def write_netcdf(
-    ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"
-):
+def write_netcdf(ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"):
     encoding = return_dic_netcdf_encodings(ds, compression_level)
     if chunks == "auto":
         chunk_dict = return_dic_autochunk(ds)
@@ -1074,7 +1396,7 @@ def convert_datetime_to_str(obj: Any) -> Any:
     import pandas as pd
 
     # Handle datetime objects
-    if isinstance(obj, (datetime.datetime, pd.Timestamp)):
+    if isinstance(obj, datetime.datetime | pd.Timestamp):
         return obj.isoformat()
 
     elif isinstance(obj, dict):

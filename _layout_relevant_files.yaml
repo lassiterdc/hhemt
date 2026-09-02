@@ -29,7 +29,27 @@ non_breaking_allowlist:
       file passed Check B silently, including numeric-correctness edits to the
       per-scenario perf zarrs. Re-stamp layout_signature whenever a genuinely
       non-breaking change lands; a breaking one must bump LAYOUT_VERSION instead.
-    layout_signature: "8b1695b1bfa3bf1081ddb6a9705eb10354bb87a5abc6b4c4db26e17da163eac5"
+
+      RE-STAMPED for the per-chapter timeseries write path (chapter stores +
+      per-chapter success flags + unified merge). JUDGED NON-BREAKING, and the
+      counter-argument is recorded rather than omitted so the judgement is auditable.
+      FOR: the PUBLISHED artifact is unchanged -- same path, same name, same shape;
+      the chapter stores and .done flags live under processed/ only between the first
+      batch write and the unified merge WITHIN ONE processing-rule invocation, and the
+      clause-3 interlock deletes them once the unified flag lands. An existing on-disk
+      analysis needs no migration: it carries no chapters, so completed_chapters()
+      returns {} and the write proceeds fresh. AGAINST: a run KILLED mid-write leaves
+      .chapters/ and .done artifacts that no prior layout version knows about, so a
+      reader of an INTERRUPTED tree can encounter them; an older toolkit meeting that
+      tree would also find the final store absent and rewrite, leaving the chapters as
+      orphaned garbage -- disk waste, not corruption. The judgement turns on LAYOUT_VERSION
+      describing the state a COMPLETED analysis carries, which is the state every
+      migration in versions/ transforms.
+      IF THE USER PREFERS [Q184]'s bump-by-default: the alternative is cheap and
+      precedented -- LAYOUT_VERSION 19 -> 20, a NO-OP V0020 stamp migration in the
+      shape of V0011 and V0016, and v20/ fixtures as a cp -r of v19/. Nothing on disk
+      needs transforming, which is why a migration body would be empty.
+    layout_signature: "adba89089d3b17ed5186cc1ccc65ee56f526c6e1d7effe674dbecf685e0e4396"
   - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
     justification: >-
       DU-sentinel gate closure — a one-character correction inside an existing

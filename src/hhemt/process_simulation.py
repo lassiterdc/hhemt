@@ -19,12 +19,21 @@ from hhemt.run_simulation import TRITONSWMM_run
 from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
 from hhemt.utils import (
+    chapter_flag_for,
+    chapter_store_for,
+    chapters_dir_for,
+    clear_raw_for_timesteps,
+    completed_chapters,
     convert_datetime_to_str,
+    covered_timesteps,
     current_datetime_string,
     fast_rmtree,
     get_file_size_MiB,
+    merge_chapters_to_unified,
     paths_to_strings,
+    reap_unflagged_chapters,
     return_dic_zarr_encodings,
+    verify_and_flag_chapter,
     write_zarr,
     write_zarr_then_netcdf,
 )
@@ -222,6 +231,7 @@ class TRITONSWMM_sim_post_processing:
         comp_level: int,
         *,
         verbose: bool = False,
+        override_clear_raw: "ClearRawValue | None" = None,
     ) -> None:
         """Stream TRITON binary outputs into a chunked zarr store via batched
         appends. Single-sites the load-chunk + flush-byte-cap logic shared by the
@@ -255,7 +265,36 @@ class TRITONSWMM_sim_post_processing:
                 flush=True,
             )
 
+        # Per-chapter publish (see utils.verify_and_flag_chapter). Each batch is its
+        # OWN store plus a success flag; the unified store is merged at the end and
+        # the chapters die only after ITS flag lands.
+        #
+        # THE RESUME PREDICATE IS A COORDINATE SET, NEVER A COUNT. The loop below
+        # skips timesteps on three paths, so a count of published timesteps and its
+        # POSITION in timestep_list diverge whenever any timestep is skipped.
+        _chapters = chapters_dir_for(fname_out)
+        _ad = self._analysis.analysis_paths.analysis_dir
+        _chapters.mkdir(parents=True, exist_ok=True)
+        reap_unflagged_chapters(_chapters, analysis_dir=_ad)
+        _done = completed_chapters(_chapters)
+        _covered_ts = covered_timesteps(_chapters)
+        _next_chapter = (max(_done) + 1) if _done else 0
+        _freed_bytes = 0
+        # THE PER-CHAPTER RAW CLEAR IS GATED ON analysis_config.clear_raw, exactly like
+        # every other raw clear in this module. Resolved ONCE here and tested at both
+        # flush sites, mirroring the callers at :797 and :870 which resolve once and then
+        # test per model. Without this the clause-4 clear would bypass the config and the
+        # override_clear_raw escape hatch entirely -- see the Round-15 finding.
+        _clear_raw_ok = self._should_clear_raw_for_model(self._resolve_clear_raw(override_clear_raw), model_type)
+
         timestep_list = sorted(df_outputs.index.tolist())
+        if _covered_ts:
+            timestep_list = [t for t in timestep_list if t not in _covered_ts]
+            print(
+                f"[Chunked Processing] Resuming: {len(_done)} flagged chapter(s) cover "
+                f"{len(_covered_ts)} timestep(s); {len(timestep_list)} remain.",
+                flush=True,
+            )
         total_timesteps = len(timestep_list)
         n_chunks = (total_timesteps + chunk_size - 1) // chunk_size
 
@@ -351,30 +390,28 @@ class TRITONSWMM_sim_post_processing:
                 ds_batch = (
                     xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
                 )
-                if first_chunk:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] Creating new zarr store: {fname_out.name}",
-                            flush=True,
-                        )
-                    encoding = return_dic_zarr_encodings(
-                        ds_batch,
-                        comp_level,
-                        store_float32=self._analysis.cfg_analysis.process_store_float32,
-                        time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
-                    )
-                    ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
-                    ds_batch.attrs["output_creation_date"] = current_datetime_string()
-                    ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
-                    ds_batch.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
-                    first_chunk = False
-                else:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] Appending batch of {pending_timesteps} timesteps to zarr store",
-                            flush=True,
-                        )
-                    ds_batch.to_zarr(fname_out, mode="a", append_dim="timestep_min")
+                _n = ds_batch.sizes["timestep_min"]
+                _ts = list(ds_batch["timestep_min"].values)
+                _store = chapter_store_for(_chapters, _next_chapter)
+                _flag = chapter_flag_for(_chapters, _next_chapter)
+                encoding = return_dic_zarr_encodings(
+                    ds_batch,
+                    comp_level,
+                    store_float32=self._analysis.cfg_analysis.process_store_float32,
+                    time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
+                )
+                ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
+                ds_batch.attrs["output_creation_date"] = current_datetime_string()
+                ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
+                ds_batch.to_zarr(_store, mode="w", encoding=encoding, consolidated=False)
+                verify_and_flag_chapter(_store, _flag, _n)
+                if _clear_raw_ok:
+                    _freed_bytes += clear_raw_for_timesteps(df_outputs, _ts, analysis_dir=_ad)
+                _next_chapter += 1
+                first_chunk = False
+                del ds_batch
+                pending_chunks = []
+                pending_timesteps = 0
                 del ds_batch
                 pending_chunks = []
                 pending_timesteps = 0
@@ -386,20 +423,25 @@ class TRITONSWMM_sim_post_processing:
         # Flush any remaining pending timesteps (final partial batch)
         if pending_chunks:
             ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
-            if first_chunk:
-                encoding = return_dic_zarr_encodings(
-                    ds_batch,
-                    comp_level,
-                    store_float32=self._analysis.cfg_analysis.process_store_float32,
-                    time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
-                )
-                ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
-                ds_batch.attrs["output_creation_date"] = current_datetime_string()
-                ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
-                ds_batch.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
-                first_chunk = False
-            else:
-                ds_batch.to_zarr(fname_out, mode="a", append_dim="timestep_min")
+            _n = ds_batch.sizes["timestep_min"]
+            _ts = list(ds_batch["timestep_min"].values)
+            _store = chapter_store_for(_chapters, _next_chapter)
+            _flag = chapter_flag_for(_chapters, _next_chapter)
+            encoding = return_dic_zarr_encodings(
+                ds_batch,
+                comp_level,
+                store_float32=self._analysis.cfg_analysis.process_store_float32,
+                time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
+            )
+            ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
+            ds_batch.attrs["output_creation_date"] = current_datetime_string()
+            ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
+            ds_batch.to_zarr(_store, mode="w", encoding=encoding, consolidated=False)
+            verify_and_flag_chapter(_store, _flag, _n)
+            if _clear_raw_ok:
+                _freed_bytes += clear_raw_for_timesteps(df_outputs, _ts, analysis_dir=_ad)
+            _next_chapter += 1
+            first_chunk = False
             del ds_batch
             pending_chunks = []
 
@@ -414,6 +456,10 @@ class TRITONSWMM_sim_post_processing:
                 f"{fname_out.name} — every chunk was skipped (all source output "
                 f"files missing?). Zarr store not created; nothing to consolidate."
             )
+
+        merge_chapters_to_unified(_chapters, fname_out, analysis_dir=_ad)
+        if _freed_bytes:
+            print(f"[Chunked Processing] Reclaimed {_freed_bytes} raw byte(s) across chapters.", flush=True)
 
     def write_timeseries_outputs(
         self,
@@ -836,6 +882,7 @@ class TRITONSWMM_sim_post_processing:
             raw_out_type=raw_out_type,
             comp_level=comp_level,
             verbose=verbose,
+            override_clear_raw=override_clear_raw,
         )
 
         # Consolidate metadata
@@ -923,6 +970,7 @@ class TRITONSWMM_sim_post_processing:
             raw_out_type=raw_out_type,
             comp_level=comp_level,
             verbose=verbose,
+            override_clear_raw=override_clear_raw,
         )
 
         # Consolidate metadata
