@@ -341,7 +341,19 @@ def _iter_run_units(analysis):
 
     Regular analysis: member_id is "" ; one unit per (event_iloc, enabled model_type).
     """
-    member_id = str(getattr(analysis, "sa_id", "") or "")
+    # A member analysis is identified by its OWN config, never by an `sa_id` attribute:
+    # `grep -rnE "\.(sa_id|member_id)\s*=\s*[^=]"` over src/ returns nothing, so the prior
+    # `getattr(analysis, "sa_id", "")` ALWAYS took its "" default. That is correct for a regular
+    # analysis (documented above) but silently collapsed every member to the same empty segment,
+    # so `#run-{member_id}-{event}-{model}` collided across members inside one crate.
+    # `analysis_id` is used WHOLE rather than stripped of `member_prefix`: that prefix is an
+    # instance attribute on the sensitivity object (`sensitivity_analysis.py:280`), not a module
+    # constant, and duplicating the literal here would be a second copy that can drift. Nothing
+    # parses these ids -- the only other `#run-` occurrence in the tree is a hand-built test
+    # fixture -- so uniqueness is the whole requirement.
+    member_id = (
+        str(analysis.cfg_analysis.analysis_id) if getattr(analysis.cfg_analysis, "is_experiment_member", False) else ""
+    )
     enabled = analysis._get_enabled_model_types()  # encapsulates self._system.cfg_system.toggle_* (analysis.py:1431)
     for event_iloc in analysis.df_sims.index:
         for model_type in enabled:
