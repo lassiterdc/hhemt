@@ -77,7 +77,7 @@ rule setup_target_0:
             --flag-output {output} \
             --rule-name setup_target_0 \
             --target-id 0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_member_0_evt_event_id_0:
@@ -108,7 +108,7 @@ rule prepare_member_0_evt_event_id_0:
             --rule-name prepare_member_0_evt_event_id_0 \
             --member-id 0 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule simulation_member_0_evt_event_id_0:
@@ -142,7 +142,7 @@ rule simulation_member_0_evt_event_id_0:
             --flag-output {output} \
             --rule-name simulation_member_0_evt_event_id_0 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_member_0_evt_event_id_0:
@@ -175,7 +175,7 @@ rule process_member_0_evt_event_id_0:
             --rule-name process_member_0_evt_event_id_0 \
             --member-id 0 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_member_0:
@@ -202,7 +202,7 @@ rule consolidate_member_0:
             --flag-output {output} \
             --rule-name consolidate_member_0 \
             --member-id 0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_member_1_evt_event_id_0:
@@ -233,7 +233,7 @@ rule prepare_member_1_evt_event_id_0:
             --rule-name prepare_member_1_evt_event_id_0 \
             --member-id 1 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule simulation_member_1_evt_event_id_0:
@@ -266,7 +266,7 @@ rule simulation_member_1_evt_event_id_0:
             --flag-output {output} \
             --rule-name simulation_member_1_evt_event_id_0 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_member_1_evt_event_id_0:
@@ -299,7 +299,7 @@ rule process_member_1_evt_event_id_0:
             --rule-name process_member_1_evt_event_id_0 \
             --member-id 1 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_member_1:
@@ -326,7 +326,7 @@ rule consolidate_member_1:
             --flag-output {output} \
             --rule-name consolidate_member_1 \
             --member-id 1 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_member_2_evt_event_id_0:
@@ -357,7 +357,7 @@ rule prepare_member_2_evt_event_id_0:
             --rule-name prepare_member_2_evt_event_id_0 \
             --member-id 2 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule simulation_member_2_evt_event_id_0:
@@ -391,7 +391,7 @@ rule simulation_member_2_evt_event_id_0:
             --flag-output {output} \
             --rule-name simulation_member_2_evt_event_id_0 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_member_2_evt_event_id_0:
@@ -424,7 +424,7 @@ rule process_member_2_evt_event_id_0:
             --rule-name process_member_2_evt_event_id_0 \
             --member-id 2 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_member_2:
@@ -451,7 +451,7 @@ rule consolidate_member_2:
             --flag-output {output} \
             --rule-name consolidate_member_2 \
             --member-id 2 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_member_3_evt_event_id_0:
@@ -482,7 +482,7 @@ rule prepare_member_3_evt_event_id_0:
             --rule-name prepare_member_3_evt_event_id_0 \
             --member-id 3 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule simulation_member_3_evt_event_id_0:
@@ -515,7 +515,7 @@ rule simulation_member_3_evt_event_id_0:
             --flag-output {output} \
             --rule-name simulation_member_3_evt_event_id_0 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_member_3_evt_event_id_0:
@@ -548,7 +548,7 @@ rule process_member_3_evt_event_id_0:
             --rule-name process_member_3_evt_event_id_0 \
             --member-id 3 \
             --event-id event_id.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_member_3:
@@ -575,7 +575,7 @@ rule consolidate_member_3:
             --flag-output {output} \
             --rule-name consolidate_member_3 \
             --member-id 3 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule master_consolidation:
@@ -602,7 +602,7 @@ rule master_consolidation:
             --compression-level 5 \
             --flag-output {output} \
             --rule-name master_consolidation \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_system_overview:
@@ -628,7 +628,7 @@ rule plot_system_overview:
             --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_per_analysis_summary_table:
@@ -656,7 +656,7 @@ rule plot_per_analysis_summary_table:
             --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_scenario_status_appendix:
@@ -684,7 +684,7 @@ rule plot_scenario_status_appendix:
             --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_errors_and_warnings:
@@ -713,7 +713,7 @@ rule plot_errors_and_warnings:
             --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_disk_utilization:
@@ -739,7 +739,7 @@ rule plot_disk_utilization:
             --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_metadata:
@@ -765,7 +765,7 @@ rule plot_metadata:
             --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_workflow_performance:
@@ -791,7 +791,7 @@ rule plot_workflow_performance:
             --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 localrules: export_scenario_status
@@ -835,7 +835,7 @@ rule export_scenario_status:
             --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 ILOC_BY_EVENT_ID_BY_MEMBER = {'0': {'event_id.0': 0}, '1': {'event_id.0': 0}, '2': {'event_id.0': 0}, '3': {'event_id.0': 0}}
@@ -903,7 +903,7 @@ rule plot_per_sim_per_member_peak_flood_depth:
             --member-id {wildcards.member_id} \
             --event-iloc {params.event_iloc} \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_per_sim_per_member_conduit_flow:
@@ -935,7 +935,7 @@ rule plot_per_sim_per_member_conduit_flow:
             --member-id {wildcards.member_id} \
             --event-iloc {params.event_iloc} \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 INDEPENDENT_VARS = ['n_devices']
@@ -977,7 +977,7 @@ rule plot_sensitivity_benchmarking:
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --independent-var {wildcards.independent_var} \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule render_report:
@@ -1013,5 +1013,5 @@ rule render_report:
             --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --format {wildcards.format} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """

@@ -453,7 +453,7 @@ rule {spec.rule_name}:
         {ctx.python_executable} -m hhemt.report_renderers._cli {spec.renderer_module} \\
             {ctx.config_args_str} \\
 {extra_flags_block}            --output {{output}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -488,7 +488,7 @@ rule render_report:
         {ctx.python_executable} -m hhemt.render_report_runner \\
             {ctx.config_args_str} \\
             --format {{wildcards.format}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -2578,7 +2578,7 @@ rule process_{model_type}:
             --flag-output {{output}} \\
             --rule-name process_{model_type} \\
             --event-id {{wildcards.event_id}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -2631,7 +2631,7 @@ rule consolidate:
             --which {which} \\
             --flag-output {{output}} \\
             --rule-name consolidate \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -2720,7 +2720,7 @@ rule consolidate_scenario:
             --flag-output {{output.flag}} \\
             --rule-name consolidate_scenario \\
             --event-id {{wildcards.event_id}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -2859,7 +2859,7 @@ rule consolidate_scenario:
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
             --flag-output {{output}} \\
             --rule-name setup \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """'''
 
         # Build resource blocks using helper
@@ -3064,7 +3064,7 @@ rule prepare_scenario:
             --flag-output {{output}} \\
             --rule-name prepare_scenario \\
             --event-id {{wildcards.event_id}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -3137,7 +3137,7 @@ rule run_{model_type}:
             --flag-output {{output}} \\
             --rule-name run_{model_type} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {{wildcards.event_id}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -3298,7 +3298,7 @@ rule render_report:
         {self.python_executable} -m hhemt.render_report_runner \\
             {config_args} \\
             --format {{wildcards.format}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
         return snakefile_content
@@ -3647,7 +3647,7 @@ rule export_scenario_status:
         """
         {self.python_executable} -m hhemt.export_scenario_status \\
             {config_args} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -7984,7 +7984,7 @@ exit $snakemake_status
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_processed_runner "\n'
                 f'        "--event-id {event_id} --analysis-dir {target_analysis_dir} "\n'
-                f'        "> {{log}} 2>&1"\n\n'
+                f'        "2>&1 | tee {{log}}"\n\n'
             )
 
         def _zarr_rule(rule_suffix: str, target_analysis_dir: str, flag: str, inputs: list[str]) -> str:
@@ -7999,7 +7999,7 @@ exit $snakemake_status
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_reprocess_zarr_runner "\n'
                 f'        "--analysis-dir {target_analysis_dir} "\n'
-                f'        "> {{log}} 2>&1"\n\n'
+                f'        "2>&1 | tee {{log}}"\n\n'
             )
 
         def _analysis_rule(rule_suffix: str, member_id: str, sub_dir: str, flag: str, start_with: str) -> str:
@@ -8017,7 +8017,7 @@ exit $snakemake_status
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_member_reprocess_runner "\n'
                 f'        "--member-id {member_id} --analysis-dir {sub_dir}{proc_arg} "\n'
-                f'        "> {{log}} 2>&1"\n\n'
+                f'        "2>&1 | tee {{log}}"\n\n'
             )
 
         is_sensitivity = getattr(self.analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
@@ -8614,7 +8614,7 @@ onerror:
             --flag-output {{output}} \\
             --rule-name setup_target_{target.target_id} \\
             --target-id {target.target_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -8752,7 +8752,7 @@ onerror:
             --rule-name {prep_rule_name} \\
             --member-id {member_id} \\
             --event-id {event_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -8806,7 +8806,7 @@ onerror:
             --flag-output {{output}} \\
             --rule-name {sim_rule_name} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {event_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -8839,7 +8839,7 @@ onerror:
             --rule-name {process_rule_name} \\
             --member-id {member_id} \\
             --event-id {event_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -8883,7 +8883,7 @@ onerror:
             --flag-output {{output}} \\
             --rule-name consolidate_{prefix}{member_id_rule} \\
             --member-id {member_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -8915,7 +8915,7 @@ onerror:
             --compression-level {compression_level} \\
             --flag-output {{output}} \\
             --rule-name master_consolidation \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -8974,7 +8974,7 @@ rule render_report:
         {self.python_executable} -m hhemt.render_report_runner \\
             {master_config_args} \\
             --format {{wildcards.format}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -9419,7 +9419,7 @@ onerror:
             --rule-name {process_rule_name} \\
             --member-id {member_id} \\
             --event-id {event_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 ''')
@@ -9477,7 +9477,7 @@ onerror:
             --flag-output {{output}} \\
             --rule-name consolidate_{prefix}{member_id_rule} \\
             --member-id {member_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -9538,7 +9538,7 @@ onerror:
             --compression-level {compression_level} \\
             --flag-output {{output}} \\
             --rule-name master_consolidation \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -9592,7 +9592,7 @@ rule render_report:
             {master_config_args} \\
             --format {{wildcards.format}} \\
             --reprocess \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 

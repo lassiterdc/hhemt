@@ -416,7 +416,7 @@ rule render_report:
             {config_args} \\
             --format {{wildcards.format}} \\
             --reprocess \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 

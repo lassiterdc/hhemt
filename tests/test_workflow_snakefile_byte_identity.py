@@ -58,6 +58,7 @@ GOLDENS_DIR = Path(__file__).parent / "fixtures" / "golden_snakefiles"
 # config.yaml, not the Snakefile). See the example config's header for the rationale.
 EXAMPLE_HPC_CONFIG = Path(__file__).parent / "fixtures" / "hpc_system_config_test.yaml"
 
+
 # Pin sys.executable for byte-identity comparison: pytest's shebang resolves
 # to `python3.11` whereas direct invocation resolves to `python`. The
 # captured goldens use `python` (symlink-preserved); pin to match.
@@ -161,9 +162,7 @@ def test_master_snakefile_byte_identity() -> None:
 # the per-event group's aggregate `cpus_per_task` equals the sum.
 _EXPECTED_CPUS_PER_TASK_PER_PROCESS_RULE = 2
 _EXPECTED_PROCESS_RULES_PER_EVENT = 3  # triton, tritonswmm, swmm
-_EXPECTED_GROUP_CPUS_PER_TASK = (
-    _EXPECTED_CPUS_PER_TASK_PER_PROCESS_RULE * _EXPECTED_PROCESS_RULES_PER_EVENT
-)
+_EXPECTED_GROUP_CPUS_PER_TASK = _EXPECTED_CPUS_PER_TASK_PER_PROCESS_RULE * _EXPECTED_PROCESS_RULES_PER_EVENT
 # Conservative ceiling guarding against accidental cpus_per_task inflation
 # (Snakemake architecture Gotcha 9): if a future edit bumps the per-rule
 # value, the aggregate could over-subscribe a CI runner. 16 leaves
@@ -183,11 +182,9 @@ def test_process_rules_emit_group_directive() -> None:
     builder = SnakemakeWorkflowBuilder(tc.analysis)
     got = builder.generate_snakefile_content()
     for rule_name in ("process_triton", "process_tritonswmm", "process_swmm"):
-        pattern = (
-            rf"rule {rule_name}:[\s\S]*?^\s*group:\s*\"process_evt_\{{event_id\}}\""
-        )
+        pattern = rf"rule {rule_name}:[\s\S]*?^\s*group:\s*\"process_evt_\{{event_id\}}\""
         assert re.search(pattern, got, re.MULTILINE), (
-            f"rule {rule_name} missing `group: \"process_evt_{{event_id}}\"` "
+            f'rule {rule_name} missing `group: "process_evt_{{event_id}}"` '
             f"directive; Snakemake will not collapse the three process rules "
             f"into a per-event job-group."
         )
@@ -212,8 +209,7 @@ def test_process_rule_group_resources_do_not_overallocate() -> None:
         assert block is not None, f"rule {rule_name} not found in Snakefile"
         m = re.search(r"cpus_per_task=(\d+)", block.group(0))
         assert m is not None, (
-            f"rule {rule_name} does not declare `cpus_per_task=`; cannot "
-            f"verify group-resource sum."
+            f"rule {rule_name} does not declare `cpus_per_task=`; cannot " f"verify group-resource sum."
         )
         per_rule_cpus.append(int(m.group(1)))
 
@@ -252,9 +248,7 @@ _Q8_CPU_PARTITION = "cpu-parallel-q8"
 def _report_tail_partition(builder: SnakemakeWorkflowBuilder) -> str:
     """The CPU partition the report-tail plot rules would emit, read straight off
     the RuleEmissionContext (no full Snakefile generation needed)."""
-    return builder._make_rule_emission_context(
-        static_backend="plotly"
-    ).report_tail_slurm_partition
+    return builder._make_rule_emission_context(static_backend="plotly").report_tail_slurm_partition
 
 
 def test_report_tail_partition_local_dispatch_slurm_locus_emits_cpu_partition(
@@ -321,9 +315,7 @@ def test_report_tail_partition_native_dispatch_invariant_to_locus(
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
-    monkeypatch.setattr(
-        builder.cfg_analysis, "multi_sim_run_method", "1_job_many_srun_tasks"
-    )
+    monkeypatch.setattr(builder.cfg_analysis, "multi_sim_run_method", "1_job_many_srun_tasks")
     monkeypatch.setattr(
         builder.cfg_analysis,
         "hpc_setup_and_analysis_processing_partition",
@@ -361,6 +353,75 @@ def test_home_data_dir_mask_survives_a_symlinked_home() -> None:
             f"{arm} arm: the home-data-dir mask did not fire, so a machine-specific path "
             f"survives into the byte-identity comparison. got={got!r}"
         )
-        assert "gpfs" not in got and "/home/u/" not in got, (
-            f"{arm} arm: a machine-specific segment leaked past the mask. got={got!r}"
-        )
+        assert (
+            "gpfs" not in got and "/home/u/" not in got
+        ), f"{arm} arm: a machine-specific segment leaked past the mask. got={got!r}"
+
+
+def test_no_shell_prefix_or_executable_disables_pipefail() -> None:
+    """`| tee {log}` relies on Snakemake's default `set -euo pipefail` prefix.
+
+    snakemake/shell.py::_get_process_prefix emits it under a CONJUNCTION:
+    `shell_exec == "bash"` AND `cls._process_prefix is None`. Either half can be
+    removed independently -- `shell.prefix(...)` defeats the second,
+    `shell.executable("/bin/sh")` defeats the first -- and losing pipefail makes
+    every teed rule report tee's exit status instead of its payload's, turning a
+    truncated log into an INVISIBLE failure, which is strictly worse than the
+    truncation this redirect form removes.
+
+    Two assertions, because the toolkit is a Snakefile GENERATOR: a call in our
+    own source and a call EMITTED INTO generated Snakefile text are different
+    populations, and a guard that reads only the first is blind to the shape
+    upstream's own documentation recommends.
+
+    RESIDUAL, stated rather than implied away: an aliased import
+    (`from snakemake.shell import shell as sh; sh.prefix(...)`) defeats both
+    assertions. Closing it needs import resolution rather than a regex, which is
+    a worse trade than the residual. This guard closes the direct-call and
+    emitted-text routes for the two conjuncts NAMED ABOVE; it does not close
+    aliasing.
+
+    AND IT CANNOT CLOSE A THIRD CONJUNCT, which is environmental rather than
+    lexical and is therefore outside any static check. snakemake/shell.py runs
+    `if not shutil.which("bash"): ... shell.executable("sh")` AT IMPORT TIME
+    (module scope, posix branch). So the precondition really reads: bash must be
+    ON PATH in the process that RUNS THE RULE. Under `--executor slurm` that is
+    not this machine and not the driver -- it is the innermost snakemake on the
+    compute node, and for a containerized rule it is the interpreter inside the
+    image. A minimal image without bash silently drops pipefail there. Snakemake
+    does emit `Cannot set bash as default shell ... Falling back to sh.`, but it
+    lands in the per-job SLURM log, which nothing routinely reads.
+
+    A test running on a dev machine structurally cannot verify a property of a
+    remote execution environment, so this is stated rather than guarded. If the
+    toolkit ever adopts snakemake's native `container:` directive, note that
+    deployment/singularity.py defaults `shell_executable` to "sh" -- which would
+    defeat the first conjunct for every containerized rule by construction.
+    """
+    pat = re.compile(r"^\s*shell\.(prefix|executable)\s*\(")
+    src = Path(__file__).resolve().parents[1] / "src" / "hhemt"
+    offenders = [
+        f"{p.relative_to(src)}:{i}"
+        for p in src.rglob("*.py")
+        for i, line in enumerate(p.read_text().splitlines(), 1)
+        if pat.match(line)
+    ]
+    assert not offenders, (
+        "shell.prefix()/shell.executable() disable Snakemake's default "
+        f"`set -euo pipefail`, which `| tee {{log}}` depends on: {offenders}"
+    )
+
+    # Second population: the GENERATED Snakefile text. The byte-identity suite
+    # already holds this string in hand, so this costs one generation and no fixture.
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    generated = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
+    emitted = [tok for tok in ("shell.prefix", "shell.executable") if tok in generated]
+    assert not emitted, (
+        "generated Snakefile emits "
+        f"{emitted}, which replaces Snakemake's default `set -euo pipefail` and "
+        "silently breaks exit-status propagation through `| tee {log}`"
+    )

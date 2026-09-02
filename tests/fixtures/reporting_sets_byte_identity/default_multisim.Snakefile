@@ -90,7 +90,7 @@ rule setup:
             \
             --flag-output {output} \
             --rule-name setup \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_scenario:
@@ -118,7 +118,7 @@ rule prepare_scenario:
             --flag-output {output} \
             --rule-name prepare_scenario \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule run_triton:
@@ -148,7 +148,7 @@ rule run_triton:
             --flag-output {output} \
             --rule-name run_triton \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule run_tritonswmm:
@@ -178,7 +178,7 @@ rule run_tritonswmm:
             --flag-output {output} \
             --rule-name run_tritonswmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule run_swmm:
@@ -208,7 +208,7 @@ rule run_swmm:
             --flag-output {output} \
             --rule-name run_swmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_triton:
@@ -222,7 +222,7 @@ rule process_triton:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
-        runtime=120,
+        runtime=240,
         tasks=1,
         cpus_per_task=2,
         mem_mb=12000,
@@ -240,7 +240,7 @@ rule process_triton:
             --flag-output {output} \
             --rule-name process_triton \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_tritonswmm:
@@ -254,7 +254,7 @@ rule process_tritonswmm:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
-        runtime=120,
+        runtime=240,
         tasks=1,
         cpus_per_task=2,
         mem_mb=12000,
@@ -272,7 +272,7 @@ rule process_tritonswmm:
             --flag-output {output} \
             --rule-name process_tritonswmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_swmm:
@@ -286,7 +286,7 @@ rule process_swmm:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
-        runtime=120,
+        runtime=240,
         tasks=1,
         cpus_per_task=2,
         mem_mb=12000,
@@ -304,7 +304,7 @@ rule process_swmm:
             --flag-output {output} \
             --rule-name process_swmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_scenario:
@@ -331,7 +331,7 @@ rule consolidate_scenario:
             --flag-output {output.flag} \
             --rule-name consolidate_scenario \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate:
@@ -356,7 +356,7 @@ rule consolidate:
             --which TRITON \
             --flag-output {output} \
             --rule-name consolidate \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_system_overview:
@@ -381,7 +381,7 @@ rule plot_system_overview:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 def _per_sim_event_page_sources(wildcards):
@@ -428,7 +428,7 @@ rule plot_per_sim_event_page:
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --event-iloc {params.event_iloc} \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_per_analysis_summary_table:
@@ -455,7 +455,7 @@ rule plot_per_analysis_summary_table:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_scenario_status_appendix:
@@ -482,7 +482,7 @@ rule plot_scenario_status_appendix:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_errors_and_warnings:
@@ -510,7 +510,7 @@ rule plot_errors_and_warnings:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_disk_utilization:
@@ -535,7 +535,7 @@ rule plot_disk_utilization:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_metadata:
@@ -560,7 +560,7 @@ rule plot_metadata:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_workflow_performance:
@@ -585,7 +585,7 @@ rule plot_workflow_performance:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 localrules: export_scenario_status
@@ -628,7 +628,7 @@ rule export_scenario_status:
         {PYTHON} -m hhemt.export_scenario_status \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule render_report:
@@ -660,5 +660,5 @@ rule render_report:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --format {wildcards.format} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """

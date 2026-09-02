@@ -75,7 +75,7 @@ rule setup_target_0:
             --flag-output {output} \
             --rule-name setup_target_0 \
             --target-id 0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_member_0_evt_event_index_0:
@@ -105,7 +105,7 @@ rule prepare_member_0_evt_event_index_0:
             --rule-name prepare_member_0_evt_event_index_0 \
             --member-id 0 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule simulation_member_0_evt_event_index_0:
@@ -138,7 +138,7 @@ rule simulation_member_0_evt_event_index_0:
             --flag-output {output} \
             --rule-name simulation_member_0_evt_event_index_0 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_member_0_evt_event_index_0:
@@ -170,7 +170,7 @@ rule process_member_0_evt_event_index_0:
             --rule-name process_member_0_evt_event_index_0 \
             --member-id 0 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_member_0:
@@ -196,7 +196,7 @@ rule consolidate_member_0:
             --flag-output {output} \
             --rule-name consolidate_member_0 \
             --member-id 0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_member_1_evt_event_index_0:
@@ -226,7 +226,7 @@ rule prepare_member_1_evt_event_index_0:
             --rule-name prepare_member_1_evt_event_index_0 \
             --member-id 1 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule simulation_member_1_evt_event_index_0:
@@ -258,7 +258,7 @@ rule simulation_member_1_evt_event_index_0:
             --flag-output {output} \
             --rule-name simulation_member_1_evt_event_index_0 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_member_1_evt_event_index_0:
@@ -290,7 +290,7 @@ rule process_member_1_evt_event_index_0:
             --rule-name process_member_1_evt_event_index_0 \
             --member-id 1 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_member_1:
@@ -316,7 +316,7 @@ rule consolidate_member_1:
             --flag-output {output} \
             --rule-name consolidate_member_1 \
             --member-id 1 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_member_2_evt_event_index_0:
@@ -346,7 +346,7 @@ rule prepare_member_2_evt_event_index_0:
             --rule-name prepare_member_2_evt_event_index_0 \
             --member-id 2 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule simulation_member_2_evt_event_index_0:
@@ -379,7 +379,7 @@ rule simulation_member_2_evt_event_index_0:
             --flag-output {output} \
             --rule-name simulation_member_2_evt_event_index_0 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_member_2_evt_event_index_0:
@@ -411,7 +411,7 @@ rule process_member_2_evt_event_index_0:
             --rule-name process_member_2_evt_event_index_0 \
             --member-id 2 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_member_2:
@@ -437,7 +437,7 @@ rule consolidate_member_2:
             --flag-output {output} \
             --rule-name consolidate_member_2 \
             --member-id 2 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_member_3_evt_event_index_0:
@@ -467,7 +467,7 @@ rule prepare_member_3_evt_event_index_0:
             --rule-name prepare_member_3_evt_event_index_0 \
             --member-id 3 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule simulation_member_3_evt_event_index_0:
@@ -499,7 +499,7 @@ rule simulation_member_3_evt_event_index_0:
             --flag-output {output} \
             --rule-name simulation_member_3_evt_event_index_0 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_member_3_evt_event_index_0:
@@ -531,7 +531,7 @@ rule process_member_3_evt_event_index_0:
             --rule-name process_member_3_evt_event_index_0 \
             --member-id 3 \
             --event-id event_index.0 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_member_3:
@@ -557,7 +557,7 @@ rule consolidate_member_3:
             --flag-output {output} \
             --rule-name consolidate_member_3 \
             --member-id 3 \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule master_consolidation:
@@ -583,7 +583,7 @@ rule master_consolidation:
             --compression-level 5 \
             --flag-output {output} \
             --rule-name master_consolidation \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_system_overview:
@@ -608,7 +608,7 @@ rule plot_system_overview:
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_per_analysis_summary_table:
@@ -635,7 +635,7 @@ rule plot_per_analysis_summary_table:
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_scenario_status_appendix:
@@ -662,7 +662,7 @@ rule plot_scenario_status_appendix:
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_errors_and_warnings:
@@ -690,7 +690,7 @@ rule plot_errors_and_warnings:
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_disk_utilization:
@@ -715,7 +715,7 @@ rule plot_disk_utilization:
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_metadata:
@@ -740,7 +740,7 @@ rule plot_metadata:
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_workflow_performance:
@@ -765,7 +765,7 @@ rule plot_workflow_performance:
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 localrules: export_scenario_status
@@ -808,7 +808,7 @@ rule export_scenario_status:
         {PYTHON} -m hhemt.export_scenario_status \
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 ILOC_BY_EVENT_ID_BY_MEMBER = {'0': {'event_index.0': 0}, '1': {'event_index.0': 0}, '2': {'event_index.0': 0}, '3': {'event_index.0': 0}}
@@ -875,7 +875,7 @@ rule plot_per_sim_per_member_peak_flood_depth:
             --member-id {wildcards.member_id} \
             --event-iloc {params.event_iloc} \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_per_sim_per_member_conduit_flow:
@@ -906,7 +906,7 @@ rule plot_per_sim_per_member_conduit_flow:
             --member-id {wildcards.member_id} \
             --event-iloc {params.event_iloc} \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 INDEPENDENT_VARS = ['n_devices']
@@ -947,7 +947,7 @@ rule plot_sensitivity_benchmarking:
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --independent-var {wildcards.independent_var} \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule render_report:
@@ -982,5 +982,5 @@ rule render_report:
             --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --format {wildcards.format} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
