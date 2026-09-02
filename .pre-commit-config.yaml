@@ -113,7 +113,17 @@ repos:
     hooks:
       - id: check-retired-field-overlay-columns
         name: check retired-field overlay columns
-        entry: python scripts/check_retired_field_overlay_columns.py
+        # This is the ONLY hook in this file that imports `hhemt`, and `language: system`
+        # resolves `python` from the ambient PATH. The sanctioned staging actuator runs as
+        # `conda run -n agentic ... python -m scripts.utils.git_stage --commit`, whose
+        # `git commit` subprocess inherits the agentic PATH -- an interpreter that cannot
+        # import hhemt. Measured 2026-09-01: identical tree, `Passed` under `-n hhemt`,
+        # `ModuleNotFoundError: No module named 'hhemt'` under `-n agentic`. PYTHONPATH=src
+        # does NOT repair it: agentic also lacks pandas and openpyxl, and
+        # hhemt/__init__ eagerly imports Toolkit -> system -> pandas. The durable fix is to
+        # drop the hhemt import (AST-parse model_fields) and move to `language: python`
+        # with additional_dependencies: [openpyxl]; this pin is the interim.
+        entry: conda run --no-capture-output -n hhemt python scripts/check_retired_field_overlay_columns.py
         language: system
         pass_filenames: false
         always_run: true
