@@ -110,13 +110,13 @@ def test_process_rule_walltime_is_config_sourced(site, norfolk_multi_sim_analysi
             _flag.touch()
 
             sf = builder.generate_reprocess_master_snakefile_content(start_with="process")
-        # BOTH sensitivity generators emit `process_sa_{sa_id}_evt_{event_id}` --
-        # NO model_type segment. workflow.py:8731's docstring says
-        # `process_{model_type}_sa_{sa_id}_evt_{event_id}`, which is STALE and is what
-        # an inferred pattern gets wrong; the emitting code at :8479 and :9098 is
-        # authoritative. Verified by running this test, which failed on an empty
-        # match set rather than on the value.
-        pattern = r"rule process_sa_\w+_evt_\w+:"
+        # Locator only -- the assertion below is `runtime={sentinel}`. BOTH sensitivity
+        # generators emit a per-(member, event) process rule with NO model_type segment.
+        # Deliberately does NOT pin the member-id segment: this literal was pinned to the
+        # retired `sa` dialect and broke on an empty match set at the member-vocabulary
+        # rename. `_evt_` is the discriminating anchor; the sibling per-event rules are
+        # `prepare_member_*` and `simulation_member_*`, neither of which begins `process_`.
+        pattern = r"rule process_\w+_evt_\w+:"
 
     matches = re.findall(pattern, sf)
     assert matches, f"{site}: no process rule emitted; pattern={pattern}"
