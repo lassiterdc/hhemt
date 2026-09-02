@@ -117,7 +117,42 @@ non_breaking_allowlist:
       path-keyed with no layout_signature, which made the exemption PERMANENT — every
       later edit to this file passed Check B silently. Re-stamp layout_signature whenever
       a genuinely non-breaking change lands; a breaking one must bump LAYOUT_VERSION. AND synthetic-event-window-padding [Q85] scrub — the union-of-finite trim and its n_finite==0 raise are REMOVED; the event window is now read from a user-declared CSV (or, absent one, the full time-coordinate extent) and the selection is clipped to it, with a zero-length guard, a CSV-gated endpoint-equality assertion, a property-side zero-length guard, and a rule-(1) forcing-completeness check. _assert_scenario_forcing_window_agreement moves from divisibility to equality over three independent sources. Provably non-breaking: only the LENGTH of the per-scenario sim_weather.nc changes. No path, filename, zarr group, log field, Snakemake rule, fingerprint payload, or _version.json value is added, removed, or renamed, and the clip is the identity on an unpadded no-CSV input. Re-stamped again after a COMMENT-ONLY correction to resolve_event_window's docstring, which claimed the function reads nothing but the window CSV; its no-CSV branch also opens cfg_analysis.weather_timeseries for the axis endpoints. No executable line changed.
-    layout_signature: "0dd035df7f7d0892262354864f6eafc85a44cb17f55e55d7914f9bd2e212a53d"
+      RE-STAMPED for the tree-wide ruff pass. FORMATTING-AND-EQUIVALENT-REWRITE ONLY,
+      discharged by measurement. Whole-AST equality is the WRONG instrument here and
+      reports a false difference: ruff applied F541 (dropping the f prefix from
+      placeholder-free f-strings, JoinedStr -> Constant) and UP032 (.format() -> f-string,
+      Call -> JoinedStr), both of which change NODE TYPE while preserving VALUE. After
+      normalising placeholder-free JoinedStr nodes to Constant and stripping imports,
+      the canonical unparse of this file differs from HEAD~1 in exactly THREE lines --
+      three UP032 rewrites of print() calls inside a single `if verbose:` diagnostic
+      block. '{}'.format(x) and f'{x}' both dispatch to format(x, ''), so output and
+      evaluation order are identical. The remaining delta is the F401 removal of an
+      unused `typing.Optional` import, plus whitespace. No path, filename, zarr group,
+      log field, Snakemake rule, fingerprint payload or _version.json value moves.
+    layout_signature: "0c97db8d1dea13c2ee7f4c30956490d3441f7a5dc98938d7d0383c45b2b53837"
+  - path: src/hhemt/version_migration/versions/V0005__inline_report_config.py
+    justification: >-
+      Tree-wide ruff pass. IMPORT-SORT AND FORMATTING ONLY, discharged by measurement
+      rather than by inspection: with imports stripped, this module's AST is IDENTICAL
+      to its AST at HEAD~1, and the imported-name SET is unchanged (zero added, zero
+      removed) -- so the change is a reordering plus whitespace. A migration module is
+      layout-relevant because its APPLIED OPERATIONS decide on-disk state; none of
+      version_from, version_to, or the upgrade() body is touched, so the on-disk result
+      of applying this migration is byte-unchanged. Re-stamp layout_signature on any
+      further non-breaking edit; a change to the applied operations must bump
+      LAYOUT_VERSION instead.
+    layout_signature: "b6ba6fbec714fecfad4b35860593649fbc50bfcffaa57600adf01716b419cf9c"
+  - path: src/hhemt/version_migration/versions/V0009__crs_config_composite_submodel.py
+    justification: >-
+      Tree-wide ruff pass. IMPORT-ONLY, discharged by measurement. With imports stripped
+      this module's AST is IDENTICAL to its AST at HEAD~1; the single imported-name
+      delta is the F401 removal of an unused `pathlib.Path`, which has zero references
+      in the module. As above, a migration module is layout-relevant because its APPLIED
+      OPERATIONS decide on-disk state, and version_from, version_to and the upgrade()
+      body are all byte-unchanged, so the on-disk result of applying this migration is
+      identical. Re-stamp layout_signature on any further non-breaking edit; a change to
+      the applied operations must bump LAYOUT_VERSION instead.
+    layout_signature: "e92636738d721ce5402312af1390a475cf815ee2b5e6e64be3cb1b82d42a87aa"
   - path: src/hhemt/config/analysis.py
     justification: >-
       synthetic-event-window-padding [Q85] scrub — ADDITIVE optional fields
