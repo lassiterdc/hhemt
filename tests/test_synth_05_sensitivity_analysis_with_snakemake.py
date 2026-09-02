@@ -271,9 +271,13 @@ def test_snakemake_sensitivity_workflow_dry_run(
     assert "snakemake_allocated_nTasks" in df_status.columns
     assert "snakemake_allocated_omp_threads" in df_status.columns
     assert "snakemake_allocated_total_cpus" in df_status.columns
-    assert "sa_id" in df_status.columns
+    # `sa_id` is a member of sensitivity_analysis._RETIRED_ID_COLUMNS; the master
+    # emits `member_id`. Asserting POSITION as well as presence, because the defect
+    # this caught was the column surviving but being demoted out of the identity block.
+    assert "member_id" in df_status.columns
+    assert df_status.columns[0] == "member_id"
     expected_ids = [str(i) for i in range(len(df_status))]
-    assert df_status["sa_id"].tolist() == expected_ids
+    assert df_status["member_id"].tolist() == expected_ids
 
 
 @pytest.mark.slow

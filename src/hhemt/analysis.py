@@ -5409,8 +5409,13 @@ class TRITONSWMM_analysis:
         pd.DataFrame
             DataFrame with columns in canonical order.
         """
+        # `member_id` is the post-rename identity column the sensitivity master emits
+        # (sensitivity_analysis.py sets it FIRST). Naming the retired "sa_id" here did
+        # not DROP it -- non-canonical columns are appended -- but it demoted the most
+        # important identity column on a sensitivity run into the dynamic block, so
+        # scenario_status.csv stopped leading with it.
         fixed_identity = [
-            "sa_id",
+            "member_id",
             "sub_analysis_iloc",
             "event_iloc",
             "model_type",
