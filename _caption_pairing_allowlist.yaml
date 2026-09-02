@@ -16,30 +16,24 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: 5e58a7d124e0907803e36994e67a823608a5974e04494f2dd6029a58f56db71a
+    renderer_sha256: f0a3493fe4a55074b6a543b302d055aff4fef7f612976900fcee3f41b48a37c5
     justification: >-
-      Iteration-8 caption-geometry group (D1.2 width declaration, D1.3
-      content_width_px adoption, R5.6 literal-subtraction retirement), plus a
-      whole-file ruff-format pass. Caption re-read: it describes the dependent
-      variable, aggregation mode, SWMM-only routing and the wallclock-reduction
-      stipulation, and makes no structural claim about panels, columns or
-      caption geometry, so none of those changes falsifies it. Looked; no
-      change needed.
-      RE-RECORDED for the sa_id identity-column repair: the renderer changes are
-      the .agg revert to _MEMBER_KEY, a _require_member_key boundary guard and
-      its three call sites, the first-party import block moved to the canonical
-      top position (four E402), four B007 loop-variable renames, and an
-      in-figure annotation repair. Caption RE-READ in full: it describes the
-      dependent variable, aggregation mode, SWMM-only routing, the
-      wallclock-reduction stipulation and the per-report axis auto-scaling. None
-      of those is touched -- the identity column carries member provenance for
-      hover and per-point recovery, not the plotted quantity, and no panel,
-      column or axis semantics moved. The one caption-shaped defect found while
-      re-reading was NOT in this .rst but in the renderer's own in-figure
-      _bench_caption, which told the reader the hybrid digit was the MPI rank
-      count while both builders emit n_omp_threads; that string is FIXED in this
-      same change rather than allowlisted. Looked; no change needed to this
-      file.
+      Item (A) extraction (ruling ## 18, option 2). Caption RE-READ in full; the finding is
+      that this change is a PURE MOVE and the caption makes no claim a pure move can touch.
+      `_compute_scaling_series` was lifted out of `render()` verbatim -- the four returned
+      objects are the same objects built by the same calls, established by a refute round
+      that rebuilt ten mutants and ran seventy test-mutant pairs, plus seven further mutants
+      including both 4-tuple return-order swaps.
+      The caption describes the DEPENDENT VARIABLE and its aggregation mode, and warns that
+      axis ranges are auto-scaled per report so equal bar heights across reports do not
+      denote equal values. Both are SEMANTIC claims about what the figure means. The
+      extraction changes no value, no axis, no aggregation and no rendering path -- it moves
+      where a computation is defined, not what it computes. Verify by reading the caption
+      against the diff: git diff -- src/hhemt/report_renderers/sensitivity_benchmarking.py
+      This is a PAIRING discharge on a re-read, not a formatting exemption: the change is
+      structural, and the re-read found the caption's claims invariant under it. Digest
+      recorded after the extraction, so the exemption expires on the next change to this
+      renderer.
   - renderer: cross_experiment_intercomparison_maps
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
     renderer_sha256: 882640f7f4e440bddad564484d61b4dbe149cd60e25a83e564105459fddb2fc1

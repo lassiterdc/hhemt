@@ -31,9 +31,11 @@ import pandas as pd
 import pytest
 import xarray as xr
 
+from hhemt.report_renderers import sensitivity_benchmarking as sb
 from hhemt.report_renderers.sensitivity_benchmarking import (
     _collect_rows,
     _compute_efficiency_per_group,
+    _compute_scaling_series,
     _compute_speedup_per_group,
     _find_perf_node,
     resolve_axis_groups,
@@ -1191,3 +1193,182 @@ def test_colour_axis_and_column_axis_are_deliberately_different_axes():
         4,
         3,
     ), f"expected 4 decomposition colours over 3 hardware families; got {n_colours} and {n_hw}"
+
+
+def _scaling_frame(*, include_serial: bool = True) -> pd.DataFrame:
+    """Two hardware families, replicates at min-N, and two configs at one N.
+
+    Fixture for the `_compute_scaling_series` group below -- the four panel-3/4
+    series extracted from `render()`. Every member of that group names the ONE
+    mutant it uniquely kills; a member that kills no mutant another member does
+    not already kill is padding and does not belong there.
+
+    Shaped so the three anchor/averaging decisions in `_compute_scaling_series`
+    each produce a DIFFERENT number, which is what makes the assertions below
+    discriminating rather than merely true:
+
+    * cpu family min-N (`serial`, n=1) carries replicates 100.0 / 110.0, so the
+      RAW anchor (100.0) and an AVERAGED anchor (105.0) differ.
+    * `hybrid` at n=4 carries two configs -- cfgA averaging to 50.0 and cfgB at
+      45.0 -- so the per-N minimum over AVERAGED configs (45.0) differs from the
+      per-N minimum over RAW rows (40.0).
+    * the gpu family anchors at 20.0 while the cpu family anchors at 100.0, so a
+      per-family anchor and a global-serial anchor differ by 5x.
+    """
+    rows = []
+    if include_serial:
+        rows += [
+            dict(sa_id="s0", group_value="serial", n_devices=1, config_id="serial-1", wallclock_s=100.0),
+            dict(sa_id="s1", group_value="serial", n_devices=1, config_id="serial-1", wallclock_s=110.0),
+        ]
+    rows += [
+        dict(sa_id="h0", group_value="hybrid", n_devices=4, config_id="hyb-A", wallclock_s=40.0),
+        dict(sa_id="h1", group_value="hybrid", n_devices=4, config_id="hyb-A", wallclock_s=60.0),
+        dict(sa_id="h2", group_value="hybrid", n_devices=4, config_id="hyb-B", wallclock_s=45.0),
+        dict(sa_id="g0", group_value="gpu (a100-80)", n_devices=1, config_id="gpu-1", wallclock_s=20.0),
+        dict(sa_id="g1", group_value="gpu (a100-80)", n_devices=1, config_id="gpu-1", wallclock_s=24.0),
+        dict(sa_id="g2", group_value="gpu (a100-80)", n_devices=2, config_id="gpu-2", wallclock_s=15.0),
+    ]
+    return pd.DataFrame(rows)
+
+
+def test_scaling_line_anchor_is_the_raw_minimum_not_the_replicate_average():
+    """The line and the markers divide ONE anchor, and it is the RAW minimum.
+
+    Uniquely kills the mutant that gives the two series DIFFERENT anchors -- the
+    defect the block comment warns about, where a shared colour and legendgroup
+    assert to the reader that two differently-normalised series are one thing.
+    Also kills the mutant that resolves the single anchor from `_df_avg`.
+
+    Under a RAW anchor the reference group's own line begins marginally BELOW
+    1.0 (100/105) while its fastest raw MARKER sits exactly at 1.0. Under an
+    AVERAGED anchor those two numbers swap: the line lands at 1.0 and the marker
+    at 1.05, i.e. a point floating above its own reference. Asserting `== 1.0`
+    for the line is therefore an assertion against the CORRECT behaviour.
+    """
+    speedup_pg, _eff_pg, speedup_all, _eff_all = _compute_scaling_series(_scaling_frame())
+
+    line_serial = _xy(speedup_pg["serial"])
+    assert line_serial == [
+        (1, pytest.approx(100.0 / 105.0))
+    ], f"serial line must divide the RAW anchor (100.0) by the REPLICATE MEAN (105.0); got {line_serial}"
+    marker_ys = [y for _n, y, _m in speedup_all["serial"]]
+    assert max(marker_ys) == pytest.approx(
+        1.0
+    ), f"the fastest raw run at min-N must be exactly self-anchored; got {marker_ys}"
+    assert max(marker_ys) <= 1.0 + 1e-12, "no marker may float above its own family reference"
+
+
+def test_scaling_line_takes_the_per_n_minimum_over_replicate_averaged_configs():
+    """Kills the mutant that builds the line from raw rows instead of `_df_avg`.
+
+    At n=4 the averaged winner is cfgB (45.0) but the raw winner is one cfgA
+    replicate (40.0). The line must report the averaged winner, and it must
+    carry exactly one vertex per device count -- the all-rows line this replaced
+    plotted x = [1,1,2,2,3,3] rather than [1,2,3].
+    """
+    speedup_pg, _eff_pg, _speedup_all, _eff_all = _compute_scaling_series(_scaling_frame())
+
+    assert _xy(speedup_pg["hybrid"]) == [
+        (4, pytest.approx(100.0 / 45.0))
+    ], "the line vertex must be the best AVERAGED config (45.0), not the luckiest raw run (40.0)"
+    gpu_ns = [n for n, _y in _xy(speedup_pg["gpu (a100-80)"])]
+    assert gpu_ns == [1, 2], f"the line carries one vertex per device count; got x = {gpu_ns}"
+
+
+def test_scaling_anchor_is_per_hardware_family_not_a_global_serial_anchor():
+    """Kills the mutant that anchors every group on the serial baseline.
+
+    The gpu family anchors on its OWN min-N raw minimum (20.0), so gpu at n=2
+    reads 20/15 = 1.33. A global-serial anchor reads 100/15 = 6.67 -- a
+    cross-hardware performance ratio dressed as a scaling speedup.
+    """
+    speedup_pg, _eff_pg, _speedup_all, _eff_all = _compute_scaling_series(_scaling_frame())
+
+    gpu_at_2 = dict(_xy(speedup_pg["gpu (a100-80)"]))[2]
+    assert gpu_at_2 == pytest.approx(
+        20.0 / 15.0
+    ), f"gpu must anchor on the gpu family's own 20.0, not the serial 100.0; got {gpu_at_2}"
+    assert gpu_at_2 != pytest.approx(100.0 / 15.0)
+
+
+def test_scaling_markers_keep_every_raw_row_and_share_the_line_anchor():
+    """EVERY raw row reaches the marker series, and they share one anchor.
+
+    Uniquely kills the mutant that de-duplicates the raw rows per device count;
+    also kills the mutant that feeds the averaged frame to the marker calls. The
+    markers exist to keep the replicate spread visible, so their count is the RAW
+    row count per group -- a de-duplicated marker series still plots plausible
+    points and hides exactly the spread the series was added to show.
+    """
+    _speedup_pg, _eff_pg, speedup_all, _eff_all = _compute_scaling_series(_scaling_frame())
+
+    assert [len(speedup_all[g]) for g in ("serial", "hybrid", "gpu (a100-80)")] == [
+        2,
+        3,
+        3,
+    ], "markers must carry every raw row, not one point per averaged config"
+    # Anchor-FREE by construction: y is proportional to 1/wallclock, so y*t recovers
+    # the shared anchor whatever its value. Stated this way the assertion is about
+    # WHICH ROWS reach the marker series, and the anchor's identity stays the
+    # exclusive subject of the raw-minimum test above -- one property per member.
+    _t = {"h0": 40.0, "h1": 60.0, "h2": 45.0}
+    products = {round(y * _t[m], 9) for _n, y, m in speedup_all["hybrid"]}
+    assert len(products) == 1, f"every hybrid marker must divide ONE shared anchor; got y*t = {products}"
+
+
+def test_scaling_efficiency_divides_the_speedup_by_the_device_count():
+    """Kills the mutant that passes kind='speedup' to both metric calls.
+
+    E(N) = anchor / (N * t(N)) = S(N) / N, so the two series coincide only at
+    N=1 -- which is why the assertion is made at N=2 and N=4.
+    """
+    speedup_pg, strong_eff_pg, _speedup_all, _eff_all = _compute_scaling_series(_scaling_frame())
+
+    eff_gpu = dict(_xy(strong_eff_pg["gpu (a100-80)"]))
+    spd_gpu = dict(_xy(speedup_pg["gpu (a100-80)"]))
+    assert eff_gpu[2] == pytest.approx(spd_gpu[2] / 2), f"E(2) must be S(2)/2; got {eff_gpu[2]} vs {spd_gpu[2]}"
+    assert eff_gpu[1] == pytest.approx(spd_gpu[1]), "E(1) and S(1) coincide by construction"
+    eff_hyb = dict(_xy(strong_eff_pg["hybrid"]))
+    assert eff_hyb[4] == pytest.approx(dict(_xy(speedup_pg["hybrid"]))[4] / 4)
+
+
+def test_scaling_falls_back_to_the_serial_anchor_when_no_family_resolves(monkeypatch):
+    """Kills the mutant that drops the else arm (or re-uses the family anchor there).
+
+    The arm is selected by monkeypatching `_resolve_family_baselines` to {} rather
+    than by hoping a contrived frame reaches it -- an emptied-family frame that
+    still resolves ONE family silently takes the if arm and the test then asserts
+    nothing about the code it names. The two arms are told apart BY VALUE: gpu at
+    n=2 reads 1.33 under the per-family anchor and 6.67 under the serial anchor.
+    """
+    monkeypatch.setattr(sb, "_resolve_family_baselines", lambda *a, **k: {})
+    speedup_pg, strong_eff_pg, speedup_all, efficiency_all = _compute_scaling_series(_scaling_frame())
+
+    gpu_marker_at_2 = [y for n, y, _m in speedup_all["gpu (a100-80)"] if n == 2]
+    assert gpu_marker_at_2 == [
+        pytest.approx(100.0 / 15.0)
+    ], f"the else arm anchors on the serial baseline (100.0); got {gpu_marker_at_2}"
+    assert dict(_xy(speedup_pg["gpu (a100-80)"]))[2] == pytest.approx(100.0 / 15.0)
+    assert dict(_xy(strong_eff_pg["gpu (a100-80)"]))[2] == pytest.approx(100.0 / (2 * 15.0))
+    assert isinstance(efficiency_all, dict)
+
+
+def test_scaling_marker_series_are_none_when_neither_a_family_nor_a_serial_anchor_resolves(monkeypatch):
+    """Kills the mutant that returns {} instead of None for the marker series.
+
+    `_render_plotly_branch` treats None as "draw no marker trace" and a dict as
+    "draw these points", so the two are not interchangeable. Each of the four
+    returns is asserted SEPARATELY -- a single `not speedup_all` collapses {} and
+    None onto one boolean and cannot see the difference it exists to test.
+    """
+    monkeypatch.setattr(sb, "_resolve_family_baselines", lambda *a, **k: {})
+    speedup_pg, strong_eff_pg, speedup_all, efficiency_all = _compute_scaling_series(
+        _scaling_frame(include_serial=False)
+    )
+
+    assert speedup_all is None
+    assert efficiency_all is None
+    assert isinstance(speedup_pg, dict)
+    assert isinstance(strong_eff_pg, dict)
+    assert speedup_pg == {}, "with no serial group the else arm's line series is empty, not absent"

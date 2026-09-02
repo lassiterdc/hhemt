@@ -18,6 +18,25 @@ layout_relevant:
     - "src/hhemt/config/**/*.py"
     - "src/hhemt/version_migration/versions/*.py"
 non_breaking_allowlist:
+  - path: src/hhemt/constants.py
+    layout_signature: 78b5736a26c281bba52c5d8de684b7f4d527dd26def6d95cbbb8e63ffbdaa89a
+    justification: >-
+      COVERED BY V0020 (22fa8162), not non-breaking — this field's name does not fit
+      this case; see the follow-up to add a migration-coverage list. The change IS
+      breaking: S3 renamed consolidate_master_flag -> consolidate_experiment_flag,
+      which renames the on-disk _status flag this module mints. V0020 performs exactly
+      that rename and shipped in 22fa8162, one commit BEFORE the builder edit landed in
+      e8108a96.
+      Check-B cannot see that coverage: it passes when head_v != base_v, and at
+      HEAD~1=22fa8162 both endpoints read LAYOUT_VERSION 20, so the window slid past
+      its own bump. check_a's three-artifact requirement (module + v{base} + v{head})
+      is what forced the bump into a separate commit from the builder rename, so the
+      two gates are jointly unsatisfiable for a change of this shape.
+      A migration_covered_allowlist was designed and REFUTED by execution: its
+      nonexistent-migration arm printed FAIL and exited 0, because check_b assigns
+      failed = False after the loop the new arm sets it in. Recorded so the follow-up
+      starts from a spec that has been run rather than one that reads correctly.
+      layout_signature expires this entry on the next change to constants.py.
   - path: src/hhemt/process_simulation.py
     justification: >-
       cleanup-rerun-delete-redesign Phase 3 — replaces structurally broken
