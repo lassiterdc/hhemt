@@ -19,6 +19,7 @@ from pathlib import Path
 
 from hhemt._filelock_compat import resolve_filelock
 from hhemt.version_migration.constants import (
+    LAYOUT_VERSION,
     LOCK_TIMEOUT_SECONDS,
     VERSION_FILE_NAME,
 )
@@ -177,6 +178,13 @@ def infer_layout_version(target_dir: Path) -> int | None:
         return st.layout_version if st else None
     if _has_legacy_iloc_prefix(target_dir):
         return 0
+    if (target_dir / "experiment_datatree.zarr").exists():
+        # A store under the unified name is post-V0021 by construction, so the
+        # flat-summary branch below must NOT claim it as layout 1. Measured: without
+        # this guard a renamed, _version.json-less tree infers 1 and replays V0003,
+        # which rebuilds analysis_datatree.zarr from the flat summaries and resurrects
+        # the retired store beside the new one.
+        return LAYOUT_VERSION
     if not (target_dir / "analysis_datatree.zarr").exists() and _has_flat_mode_zarrs(target_dir):
         return 1
     if (target_dir / "analysis_datatree.zarr").exists():
