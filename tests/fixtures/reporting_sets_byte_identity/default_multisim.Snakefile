@@ -222,7 +222,7 @@ rule process_triton:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
-        runtime=120,
+        runtime=240,
         tasks=1,
         cpus_per_task=2,
         mem_mb=12000,
@@ -254,7 +254,7 @@ rule process_tritonswmm:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
-        runtime=120,
+        runtime=240,
         tasks=1,
         cpus_per_task=2,
         mem_mb=12000,
@@ -286,7 +286,7 @@ rule process_swmm:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
-        runtime=120,
+        runtime=240,
         tasks=1,
         cpus_per_task=2,
         mem_mb=12000,
