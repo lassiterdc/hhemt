@@ -40,6 +40,7 @@ The renderer <-> caption pairing is read from the EXISTING registry: every
 No second registry is introduced. The registry is parsed with `ast` rather than
 imported so the check has no runtime dependency on the hhemt package.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -58,12 +59,78 @@ CAPTION_DIR = Path("src/hhemt/report_templates/captions")
 ALLOWLIST_PATH = REPO_ROOT / "_caption_pairing_allowlist.yaml"
 
 
-def _changed_files(base_ref: str) -> set[str]:
+def _diff_names(ref: str) -> set[str]:
     out = subprocess.run(
-        ["git", "diff", "--name-only", base_ref],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+        ["git", "diff", "--name-only", ref],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def _changed_files(base_ref: str) -> set[str]:
+    """Paths this change authored.
+
+    ORDINARY COMMIT: base_ref vs the working tree, unchanged.
+
+    MID-MERGE: the SEMANTIC intersection of the diffs against BOTH parents. Two
+    corrections stack here and the second only became visible once the first shipped.
+
+    (1) A merge's working tree carries the other branch's entire accumulated delta,
+    whose pairing was satisfied commit-by-commit over there; any SINGLE-parent basis
+    re-asks for all of it at once. Measured on a real 382-file merge: HEAD~1 and HEAD
+    score identically (15 renderers, 5 captions, 10 flagged), because the basis was
+    never the problem -- the parent COUNT was.
+
+    (2) A textual intersection is then defeated by a whole-tree `ruff format` riding
+    the same commit: reformatting makes a file differ from BOTH parents, so it lands
+    in the intersection by construction. Measured on that same merge once a 110-file
+    reformat rode along, the textual intersection flagged 4 renderers and ALL FOUR
+    were ast-identical to MERGE_HEAD -- formatting only, semantically unchanged from a
+    parent already reviewed on its own branch. So compare ASTs, not text: a caption is
+    owed a re-read when the renderer's CODE moved, never when its formatting did.
+
+    Skipping on merge is NOT the alternative: that same merge carried a genuine
+    evil-merge renderer change, and a skip would have passed it unexamined -- trading
+    a false positive for a false negative on the one file that needed a human.
+    """
+    merge_head = subprocess.run(
+        ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merge_head.returncode != 0:
+        return _diff_names(base_ref)
+    textual = _diff_names("HEAD") & _diff_names(merge_head.stdout.strip())
+    parents = ("HEAD", merge_head.stdout.strip())
+    changed: set[str] = set()
+    for rel in textual:
+        p = REPO_ROOT / rel
+        if p.suffix != ".py" or not p.is_file():
+            changed.add(rel)  # non-Python: no AST to compare, keep the textual verdict
+            continue
+        try:
+            now = ast.dump(ast.parse(p.read_text()))
+        except SyntaxError:
+            changed.add(rel)  # unparseable: fail loud, never silently exempt
+            continue
+        for ref in parents:
+            r = subprocess.run(
+                ["git", "show", f"{ref}:{rel}"], cwd=REPO_ROOT, capture_output=True, text=True, check=False
+            )
+            if r.returncode == 0:
+                try:
+                    if ast.dump(ast.parse(r.stdout)) == now:
+                        break  # semantically identical to a parent -> not authored here
+                except SyntaxError:
+                    pass
+        else:
+            changed.add(rel)
+    return changed
 
 
 def _pairs_from_registry() -> list[tuple[str, str]]:
@@ -87,14 +154,11 @@ def _pairs_from_registry() -> list[tuple[str, str]]:
             if kw.arg == "renderer_module" and isinstance(kw.value, ast.Constant):
                 module = kw.value.value
             elif kw.arg == "report_kwargs" and isinstance(kw.value, ast.Dict):
-                for k, v in zip(kw.value.keys, kw.value.values):
-                    if (
-                        isinstance(k, ast.Constant) and k.value == "caption"
-                        and isinstance(v, ast.Constant)
-                    ):
+                for k, v in zip(kw.value.keys, kw.value.values, strict=False):
+                    if isinstance(k, ast.Constant) and k.value == "caption" and isinstance(v, ast.Constant):
                         caption = v.value
         if module and caption and caption.startswith("report/captions/"):
-            stem = caption[len("report/captions/"):]
+            stem = caption[len("report/captions/") :]
             pairs.add((module, (CAPTION_DIR / stem).as_posix()))
     return sorted(pairs)
 
@@ -117,10 +181,7 @@ def _allowlist() -> dict[tuple[str, str], dict]:
     if not ALLOWLIST_PATH.exists():
         return {}
     raw = yaml.safe_load(ALLOWLIST_PATH.read_text()) or {}
-    return {
-        (e["renderer"], e["caption"]): e
-        for e in (raw.get("unpaired_allowlist") or [])
-    }
+    return {(e["renderer"], e["caption"]): e for e in (raw.get("unpaired_allowlist") or [])}
 
 
 def main() -> int:

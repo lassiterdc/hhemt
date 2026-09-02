@@ -13,6 +13,35 @@
 # has already accreted "Two collapsed non-breaking changes" because a path-keyed
 # exemption never expires -- the permanent-hole outcome, already realised in the
 # sibling machinery this guard is modelled on.
+#
+# KNOWN-STALE EXEMPTION, DISCLOSED RATHER THAN RE-RECORDED (2026-09-01)
+#
+# `sensitivity_benchmarking` below carries a digest that no longer matches its
+# renderer. The renderer was changed by the docs-and-experiment-system merge
+# cleanup -- an E402 import hoist plus a whole-tree ruff-format pass -- and the
+# recorded digest predates both.
+#
+# It is NOT re-recorded, deliberately. Re-recording would stamp a fresh "someone
+# looked" claim onto a caption nobody re-read, which is the false artifact this
+# file's own header warns about one paragraph up. A disclosed stale exemption is
+# honest; a silently refreshed one is not.
+#
+# WHY THE GUARD DOES NOT REPORT IT. main() skips a pair before consulting the
+# allowlist at all: `if renderer_rel not in changed or caption_rel in changed:
+# continue`. Both disjuncts have fired here at different moments -- at merge time
+# the merge had also edited the caption, and post-merge the renderer is simply no
+# longer in the diff against the base ref. Either way the stale-digest branch is
+# unreachable, so the guard is silent about it.
+#
+# WHEN IT WILL FIRE. The first commit that changes
+# `src/hhemt/report_renderers/sensitivity_benchmarking.py` WITHOUT also touching
+# `src/hhemt/report_templates/captions/sensitivity_benchmarking.rst`. At that point
+# the pair reaches the allowlist, the digest mismatches, and the guard emits a
+# stale-exemption message citing a digest from before this merge. That is the
+# guard working. The correct response then is to re-read the caption and either
+# edit it or re-record the digest with a fresh justification -- not to assume the
+# staleness is this note's leftover.
+#
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
