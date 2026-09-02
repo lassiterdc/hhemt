@@ -19,27 +19,31 @@ repos:
       - id: check-layout-version-a
         name: check LAYOUT_VERSION bump implies migration + fixtures
         entry: python scripts/check_layout_version.py check-a HEAD~1
-        language: system
+        language: python
+        additional_dependencies: [pyyaml]
         pass_filenames: false
         always_run: true
       - id: check-layout-version-b
         name: check layout-relevant files trigger LAYOUT_VERSION bump
         entry: python scripts/check_layout_version.py check-b HEAD~1
-        language: system
+        language: python
+        additional_dependencies: [pyyaml]
         pass_filenames: false
         always_run: true
 
       - id: check-caption-pairing
         name: check captioned renderer changes are paired with caption edits
         entry: python scripts/check_caption_pairing.py HEAD~1
-        language: system
+        language: python
+        additional_dependencies: [pyyaml]
         pass_filenames: false
         always_run: true
 
       - id: check-caption-vocabulary
         name: retired-vocabulary guard over the report template tree
         entry: python scripts/check_caption_vocabulary.py
-        language: system
+        language: python
+        additional_dependencies: [pyyaml]
         pass_filenames: false
         always_run: true
 
@@ -51,7 +55,7 @@ repos:
       - id: check-du-sentinel-sites
         name: DU-sentinel mutation-site restamp check
         entry: python scripts/check_du_sentinel_sites.py
-        language: system
+        language: python
         pass_filenames: false
         always_run: true
 
@@ -73,7 +77,7 @@ repos:
       - id: anonymization-guard
         name: anonymization blocklist guard
         entry: python scripts/check_anonymization.py
-        language: system
+        language: python
         pass_filenames: false
         always_run: true
         stages: [pre-commit, pre-push]
@@ -88,7 +92,7 @@ repos:
       - id: anonymization-guard-commit-msg
         name: anonymization blocklist guard (commit message)
         entry: python scripts/check_commit_message_anonymization.py
-        language: system
+        language: python
         stages: [commit-msg]
 
   # Vocabulary freeze (scripts/check_vocabulary_freeze.py)
@@ -102,7 +106,8 @@ repos:
       - id: vocabulary-freeze
         name: migration vocabulary freeze
         entry: python scripts/check_vocabulary_freeze.py
-        language: system
+        language: python
+        additional_dependencies: [pyyaml]
         pass_filenames: false
         always_run: true
 
@@ -138,6 +143,7 @@ repos:
       - id: check-env-lock-consistency
         name: environment-lock.yaml swmm-provenance consistency
         entry: python scripts/check_env_lock_consistency.py
-        language: system
+        language: python
+        additional_dependencies: [pyyaml, packaging]
         pass_filenames: false
         files: ^environment(-lock)?\.yaml$
