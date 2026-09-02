@@ -14,6 +14,10 @@ Rules:
   EXEMPT_MISSING_CATEGORY           bare `# EXEMPT-DU:` with no category
   EXEMPT_UNKNOWN_CATEGORY           category not in EXEMPT_CATEGORIES
   EXEMPT_ORPHAN                     exempt comment with no associated mutation (warn-only)
+  RAW_RMTREE_UNMAINTAINED           raw shutil.rmtree(...) not adjacent-followed by
+                                    restamp_parent_sentinels(...) (warn-only; prefer
+                                    fast_rmtree(path, analysis_dir=...))
+  UNCLASSIFIED_MUTATION             a declared FS_MUTATORS name with no rule (warn-only)
 """
 
 from __future__ import annotations
@@ -55,6 +59,47 @@ EXEMPT_CATEGORIES = frozenset(
 )
 EXEMPT_TOKEN = "# EXEMPT-DU:"
 
+#: Declared filesystem-mutating vocabulary. A resolved name in this set with no
+#: branch in _check_stmt is reported UNCLASSIFIED_MUTATION rather than ignored --
+#: the inversion that makes the NEXT blind spot loud instead of silent.
+FS_MUTATORS: frozenset[str] = frozenset(
+    {
+        "fast_rmtree",
+        "unlink",
+        "shutil.rmtree",
+        "shutil.copytree",
+        "shutil.move",
+        "os.remove",
+        "os.unlink",
+        "os.rmdir",
+        "os.removedirs",
+        "os.replace",
+        "os.rename",
+        "os.truncate",
+        "shutil.copy",
+        "shutil.copy2",
+        "shutil.copyfile",
+    }
+)
+#: The names _check_stmt branches on. Paired with DELIBERATELY_UNHANDLED by the
+#: vocabulary self-test in tests/test_check_du_sentinel_sites_vocabulary.py.
+_BRANCHED_NAMES: frozenset[str] = frozenset({"fast_rmtree", "unlink", "shutil.rmtree"})
+#: Vocabulary members with no enforcing branch, each with the reason.
+DELIBERATELY_UNHANDLED: dict[str, str] = {
+    "os.replace": "atomic swap; net delta needs a post-replace restamp, not an adjacent one",
+    "os.rename": "same as os.replace",
+    "shutil.move": "relocation; one restamp is correct at one endpoint and wrong at the other",
+    "shutil.copy": "growth; self-corrects at the next rollup",
+    "shutil.copy2": "growth; self-corrects at the next rollup",
+    "shutil.copyfile": "growth; self-corrects at the next rollup",
+    "shutil.copytree": "growth; self-corrects at the next rollup",
+    "os.truncate": "no occurrence in src/hhemt; vocabulary member for forward coverage",
+    "os.removedirs": "no occurrence in src/hhemt; vocabulary member for forward coverage",
+    "os.rmdir": "no occurrence in src/hhemt; vocabulary member for forward coverage",
+    "os.remove": "no occurrence in src/hhemt; vocabulary member for forward coverage",
+    "os.unlink": "no occurrence in src/hhemt; vocabulary member for forward coverage",
+}
+
 # (file-relpath basename, funcname) bodies that ARE the sanctioned implementation — never scanned.
 _CANONICAL_HELPER_FUNCS = frozenset(
     {
@@ -63,7 +108,7 @@ _CANONICAL_HELPER_FUNCS = frozenset(
     }
 )
 
-WARN_ONLY_RULES = frozenset({"EXEMPT_ORPHAN"})
+WARN_ONLY_RULES = frozenset({"EXEMPT_ORPHAN", "UNCLASSIFIED_MUTATION", "RAW_RMTREE_UNMAINTAINED"})
 
 
 @dataclass(frozen=True)
@@ -100,15 +145,22 @@ def _import_alias_map(tree: ast.AST) -> dict[str, str]:
     plus module aliases (e.g. `import ...utils as u` -> 'u' -> '<module:utils>')."""
     aliases: dict[str, str] = {}
     canonical = {"fast_rmtree", "restamp_parent_sentinels"}
+    _FS_MODULES = {"os", "shutil", "subprocess", "pathlib"}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             for a in node.names:
                 if a.name in canonical:
                     aliases[a.asname or a.name] = a.name
+            if node.module in _FS_MODULES:
+                for a in node.names:
+                    aliases[a.asname or a.name] = f"{node.module}.{a.name}"
         elif isinstance(node, ast.Import):
             for a in node.names:
                 if a.name.endswith(".utils") or a.name.endswith("du_sentinels"):
                     aliases[a.asname or a.name.split(".")[-1]] = f"<module:{a.name.split('.')[-1]}>"
+            for a in node.names:
+                if a.name in _FS_MODULES:
+                    aliases[a.asname or a.name] = f"<fsmod:{a.name}>"
     return aliases
 
 
@@ -119,6 +171,11 @@ def _resolve_call_name(call: ast.Call, aliases: dict[str, str]) -> str | None:
     if isinstance(func, ast.Name):
         return aliases.get(func.id, func.id)
     if isinstance(func, ast.Attribute):
+        recv = func.value
+        if isinstance(recv, ast.Name):
+            bound = aliases.get(recv.id)
+            if bound is not None and bound.startswith("<fsmod:"):
+                return f"{bound[len('<fsmod:') : -1]}.{func.attr}"
         # p.unlink()  OR  module.fast_rmtree()  OR subprocess.run(["rm", ...])
         return func.attr
     return None
@@ -210,6 +267,40 @@ class _MutationSiteVisitor(ast.NodeVisitor):
                     "re-stamped, or annotate the site with `# EXEMPT-DU: {category}`",
                 )
             )
+            return
+
+        if name == "shutil.rmtree":
+            if self._next_is_restamp(nxt):
+                return
+            if self._is_exempt(stmt):
+                self._mark_exempt_used(stmt)
+                return
+            self.violations.append(
+                Violation(
+                    self.relpath,
+                    stmt.lineno,
+                    "RAW_RMTREE_UNMAINTAINED",
+                    f"raw {name}(...) is not maintained; prefer "
+                    "fast_rmtree(path, analysis_dir=...) which re-stamps internally, or "
+                    "add restamp_parent_sentinels(...) as the next sibling, or annotate "
+                    "with `# EXEMPT-DU: {category}`",
+                )
+            )
+            return
+
+        if name in DELIBERATELY_UNHANDLED:
+            if self._is_exempt(stmt):
+                self._mark_exempt_used(stmt)
+            else:
+                self.violations.append(
+                    Violation(
+                        self.relpath,
+                        stmt.lineno,
+                        "UNCLASSIFIED_MUTATION",
+                        f"`{name}` is a declared filesystem mutator with no DU rule "
+                        f"({DELIBERATELY_UNHANDLED[name]}); classify it or annotate it",
+                    )
+                )
             return
 
         if name == "unlink":
