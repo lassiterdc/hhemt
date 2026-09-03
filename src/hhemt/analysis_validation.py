@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from hhemt.member_identity import resolve_member_id_column
+
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
 
@@ -222,6 +224,12 @@ def check_scenarios_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
             failed = list(sub._scenarios_not_created)
             failed_count += len(failed)
             for p in failed:
+                # DO NOT RENAME the "sa_id" key written below, here or at :253 :310
+                # :1863 :1954. These are CheckResult.details rows, not df_status: the
+                # consumer is report_renderers/errors_and_warnings.py:405
+                # `d.get("sa_id", "")`, and producer and consumer AGREE. This is a
+                # different artifact from the df_status reads this file's other
+                # repairs touch, and renaming it breaks a working path.
                 row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": "scenario not created"}
                 if member_id is not None:
                     row["sa_id"] = f"member_{member_id}"
@@ -1200,9 +1208,10 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
                 )
         except Exception:  # noqa: BLE001 — durable-evidence fallback is best-effort; absence -> log-only Arm B
             _tree_ev = {}
+        _id_col = resolve_member_id_column(getattr(resume_candidates, "columns", []))
         for _, row in resume_candidates.iterrows():
             scen_dir = str(row.get("scenario_directory", ""))
-            _sa = row.get("sa_id")
+            _sa = row.get(_id_col) if _id_col else None
             sub = subs.get(str(_sa) if _sa is not None else None)
             if sub is None:
                 indeterminate += 1
@@ -1494,8 +1503,9 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis) -> CheckResult:
             n_res = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
             triton_resumed = df[(df["model_type"] == "triton") & (n_res >= 1)]
             subs = {(str(k) if k is not None else None): v for k, v in _iter_members_or_self(analysis)}
+            _id_col = resolve_member_id_column(getattr(triton_resumed, "columns", []))
             for _, row in triton_resumed.iterrows():
-                _sa = row.get("sa_id")
+                _sa = row.get(_id_col) if _id_col else None
                 sub = subs.get(str(_sa) if _sa is not None else None)
                 sched = getattr(getattr(sub, "cfg_analysis", None), "resume_interruption_schedule", None)
                 if not sched:

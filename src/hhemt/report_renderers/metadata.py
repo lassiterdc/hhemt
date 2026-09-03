@@ -71,6 +71,7 @@ if TYPE_CHECKING:
 # leak into the bundle-shippable render. `metadata._VOLATILE_GRAPH_KEYS` is
 # empty, so the sidecar DOES carry these volatile keys; the projection simply
 # never reaches for them, and `_prop` raises if a maintainer tries.
+from hhemt.member_identity import member_id_from, resolve_member_id_column
 from hhemt.report_renderers._tabulator_defaults import (
     TableFragment,
     build_columns_spec,
@@ -3218,8 +3219,9 @@ def _read_scenario_status(analysis_dir: Path) -> tuple[dict[tuple[str, str, str]
     except OSError:
         return ({}, None)
     out: dict[tuple[str, str, str], dict[str, str]] = {}
+    identity_column = resolve_member_id_column(csv.DictReader(io.StringIO(text)).fieldnames or [])
     for record in csv.DictReader(io.StringIO(text)):
-        member_id = (record.get("sa_id") or "").strip()
+        member_id = member_id_from(record, identity_column)
         model_type = (record.get("model_type") or "").strip()
         iloc = (record.get("event_iloc") or "").strip()
         slug = os.path.basename((record.get("scenario_directory") or "").rstrip("/\\"))

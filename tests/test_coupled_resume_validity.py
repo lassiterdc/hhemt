@@ -151,7 +151,7 @@ def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None)
     )
 
 
-def _resumed_df(scenario_directory="", event_iloc=0, member_id=None, model_type="tritonswmm"):
+def _resumed_df(scenario_directory="", event_iloc=0, member_id=None, model_type="tritonswmm", column="member_id"):
     row = {
         "model_type": model_type,
         "n_resumes": 2,
@@ -159,7 +159,7 @@ def _resumed_df(scenario_directory="", event_iloc=0, member_id=None, model_type=
         "event_iloc": event_iloc,
     }
     if member_id is not None:
-        row["sa_id"] = member_id
+        row[column] = member_id
     return pd.DataFrame([row])
 
 
@@ -421,7 +421,7 @@ def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
         df=_resumed_df(str(scen), member_id="member_0"),
         simlog_dir=tmp_path / "unused",
     )
-    master.sensitivity = SimpleNamespace(analyses={"member_0": sub})
+    master.sensitivity = SimpleNamespace(members={"member_0": sub})
     master.cfg_analysis.toggle_sensitivity_analysis = True
     _write_real_log(sub, 0, _CKPT + _ENDS)  # resumed, complete, no replay marker -> WARN
     assert (master_dir / "logs" / "sims" / "model_tritonswmm_member_0_evt0.log").exists()

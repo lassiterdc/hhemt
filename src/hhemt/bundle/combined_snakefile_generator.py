@@ -640,7 +640,7 @@ def _plot_id_facets(plot_id: str, *, models: str = "") -> dict[str, str]:
     facets: dict[str, str] = {}
     for seg in segments:
         if seg.startswith("member."):
-            facets["member"] = seg[3:]
+            facets["member"] = seg[len("member.") :]
         elif seg.startswith("evt."):
             facets["event"] = seg[4:]
         else:

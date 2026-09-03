@@ -37,6 +37,7 @@ from hhemt.config_labels import _derive_config_label, _to_int
 from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption
 from hhemt.figure_panels import AXIS_BAND_PX, panel_geometry, side_table_columns, watershed_swatch
+from hhemt.member_identity import member_id_from, member_id_from_mapping, resolve_member_id_column
 from hhemt.report_renderers._table_presentation import (
     plotly_columnwidth,
     plotly_table_header,
@@ -336,8 +337,28 @@ def partition_groups_by_family(groups: list[dict]) -> dict[str, list[dict]]:
 
 def _n_resumes_by_member_id(root: Path) -> dict[str, int]:
     """member_id -> max n_resumes from the bundled scenario_status.csv (Q11: shipped data,
-    no re-run). Mirrors _combine._bundle_role_from_status's CSV read; keys normalized to
-    the bare member_id (strips a leading 'member_') to match _load_subs' member_id convention."""
+    no re-run). Mirrors _combine._bundle_role_from_status's CSV read.
+
+    WHY NO PREFIX IS HANDLED HERE. This is the question a reader arriving from the
+    `_load_subs` join comes with, so it is answered first. Keys are the member_id VERBATIM,
+    with NO normalization, because the CSV value IS the consumer's lookup key -- there is no
+    "bare form" distinct from the member_id for this function to produce.
+    `_load_subs` derives that key as
+    `member_id_from_mapping(node.attrs, g[len("/member_"):])`: the attrs branch reads the
+    value verbatim (sensitivity_analysis.py:1591 writes `attrs["member_id"] = str(member_id)`),
+    and the path branch is an EXACT inverse of the node-name writer at
+    sensitivity_analysis.py:1566 (`f"{member_prefix}{member_id}"`). Both branches therefore
+    yield the member_id unchanged, and this side must too.
+
+    This function previously stripped a leading 'member_' here. That was wrong, and it is
+    worth naming so it is not re-added: the member_id charset is ^[A-Za-z0-9_.]+$
+    (sensitivity_analysis.py:2013), which PERMITS a leading 'member_', so the strip silently
+    truncated a legal id -- measured, a member named 'member_2' joined as '2' and picked up
+    n_resumes=0 instead of its recorded value, on BOTH attrs branches.
+
+    The general rule: strip a prefix only where the prefix is structurally guaranteed, never
+    where it is merely likely. `_load_subs`'s own g[len("/member_"):] is guaranteed -- it
+    inverts a name this codebase wrote. A user-authored identifier is not."""
     import csv
 
     out: dict[str, int] = {}
@@ -346,9 +367,10 @@ def _n_resumes_by_member_id(root: Path) -> dict[str, int]:
         return out
     try:
         with p.open() as fh:
-            for row in csv.DictReader(fh):
-                member = str(row.get("sa_id") or "")
-                member = member[3:] if member.startswith("member_") else member
+            _reader = csv.DictReader(fh)
+            _id_col = resolve_member_id_column(_reader.fieldnames or [])
+            for row in _reader:
+                member = member_id_from(row, _id_col)
                 if not member:
                     continue
                 try:
@@ -396,7 +418,7 @@ def _load_subs(root: Path, *, event_iloc: int = 0) -> dict[str, dict]:
             lnk = dt[g + "/tritonswmm/swmm_link"]
         except KeyError:
             lnk = None  # pure-TRITON: no coupled SWMM link tier
-        member_id = str(node.attrs.get("sa_id", g[len("/member_") :]))
+        member_id = member_id_from_mapping(node.attrs, g[len("/member_") :])
         subs[member_id] = {
             "attrs": dict(node.attrs),
             "label": _derive_config_label(node.attrs),

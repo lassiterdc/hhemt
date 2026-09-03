@@ -94,7 +94,20 @@ unpaired_allowlist:
       change to this file rather than on arrival.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 5be0ac5dac378685c7b89cb2cc1c9b16dee6f151f71b9f0f46e83ce0c5b4aee3
+    renderer_sha256: da23d989c004c62de6d06efcdaea552e27cb1e7088f48c93ee6035aae150e84b
+    justification_2026_09_03: >-
+      member-identity repair (case-8 Spec 2). Caption RE-READ IN FULL, and it makes no
+      claim this change can touch. The caption describes exactly three sections --
+      Provenance summary, Data availability, Reproduction guide. Spec 2 edits
+      _read_scenario_status, which feeds the scenario/efficiency JOIN consumed by
+      _enrich_efficiency_rows -- a section the caption does not describe at all. The
+      repair also changes no rendered VALUE the caption characterises: it restores the
+      member slot in a join key that was silently collapsing to "" on every row.
+      A FINDING the re-read produced, recorded because this guard cannot see it: the
+      caption enumerates three sections while the page carries at least a fourth (the
+      efficiency table). That is a caption COMPLETENESS gap, it predates this change,
+      and it is NOT discharged by this entry -- routed to the doc feedback tracker
+      rather than fixed here, because a caption rewrite is not part of a column repair.
     justification: >-
       V0020 vocabulary rename (spec S7). Caption RE-READ in full, and the finding is
       that it makes no claim this change can touch. S7 edits ONE object:
@@ -113,7 +126,17 @@ unpaired_allowlist:
       recorded after S7, so the exemption expires on the next change to this renderer.
   - renderer: per_analysis_summary
     caption: src/hhemt/report_templates/captions/per_analysis_summary_table.rst
-    renderer_sha256: 5101456a3a8a06645385ef08bb0756c2f25677e5f275173b0862d9ed3dd505d8
+    renderer_sha256: 23eab4d358490fa4c6c7fdaddd3e034f241dd8203e9c36c5dac514d1a4a8d1ce
+    justification_2026_09_03: >-
+      member-identity repair (case-8 Spec 9). Caption RE-READ IN FULL, and it makes no
+      claim this change can touch. The caption describes aggregate scenario status and
+      SWMM flow-routing continuity error parsed from each scenario's .rpt. Spec 9 edits
+      how MEMBER ROWS ARE SELECTED from status_df -- resolving the identity column
+      instead of subscripting a retired literal that raised KeyError on a post-rename
+      CSV. Selection is not a property the caption states, and the metrics it does
+      state (continuity error, their source and their threshold) are untouched. The
+      None-branch now yields an empty frame rather than raising, which changes a crash
+      into an empty section; the caption characterises neither.
     justification: >-
       docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
       not by judgement. This renderer's abstract syntax tree, parsed from the working

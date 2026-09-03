@@ -43,6 +43,7 @@ import plotly.io as pio
 
 from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.figure_panels import PanelBudget, panel_geometry
+from hhemt.member_identity import member_id_from_mapping
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import (
     emit_plot_with_sources,  # noqa: F401  # reserved for the /design-figure-authored bodies
@@ -1404,7 +1405,7 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
         point). Data-derived; imports no generator rank-cap/deadlock constant.
         """
         node_name = node_by_res[res]
-        member_id = str(dt[f"/{node_name}"].attrs.get("sa_id", node_name))
+        member_id = member_id_from_mapping(dt[f"/{node_name}"].attrs, node_name)
         inps = sorted(root.glob(f"members/*{member_id}*/sims/*/swmm/hydraulics.inp"))
         if not inps:
             inps = sorted(root.glob(f"members/*{node_name}*/sims/*/swmm/hydraulics.inp"))
