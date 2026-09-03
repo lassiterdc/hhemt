@@ -1,8 +1,7 @@
-
-import hhemt.utils as utils
-import hhemt.plot_utils as plt_utils
-
 from typing import TYPE_CHECKING
+
+import hhemt.plot_utils as plt_utils
+import hhemt.utils as utils
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis

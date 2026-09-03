@@ -1,9 +1,9 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
+
 from tkinterdnd2 import DND_FILES, TkinterDnD
+
 from hhemt import run_model
-from pathlib import Path
-import yaml
 
 
 def launch_gui():
@@ -20,9 +20,7 @@ def launch_gui():
     entry_path.pack(padx=10, pady=5)
 
     def browse_file():
-        path = filedialog.askopenfilename(
-            filetypes=[("YAML files", "*.yaml"), ("All files", "*.*")]
-        )
+        path = filedialog.askopenfilename(filetypes=[("YAML files", "*.yaml"), ("All files", "*.*")])
         if path:
             entry_path.delete(0, tk.END)
             entry_path.insert(0, path)
@@ -71,8 +69,6 @@ def launch_gui():
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
-    tk.Button(root, text="Run Simulation", command=run, bg="green", fg="white").pack(
-        pady=15
-    )
+    tk.Button(root, text="Run Simulation", command=run, bg="green", fg="white").pack(pady=15)
 
     root.mainloop()

@@ -5,8 +5,10 @@ Validates Phase 1 and Phase 2 of enable_swmm_threading_control implementation.
 """
 
 import pytest
+
 import tests.fixtures.test_case_catalog as cases
 import tests.utils_for_testing as tst_ut
+
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_swmm_threads_updated_in_inp_files():
@@ -20,9 +22,7 @@ def test_swmm_threads_updated_in_inp_files():
     4. Configuration value propagates correctly from analysis config
     """
     # Get test case with cached system inputs (faster)
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False
-    )
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Verify configuration
@@ -47,7 +47,7 @@ def test_swmm_threads_updated_in_inp_files():
         # Check hydrology.inp (if hydrology enabled)
         if analysis._system.cfg_system.toggle_use_swmm_for_hydrology:
             tst_ut.assert_file_exists(paths.swmm_hydro_inp, "SWMM hydrology .inp")
-            with open(paths.swmm_hydro_inp, "r") as fp:
+            with open(paths.swmm_hydro_inp) as fp:
                 content = fp.read()
                 expected_line = f"THREADS              {expected_threads}"
                 assert expected_line in content, (
@@ -58,7 +58,7 @@ def test_swmm_threads_updated_in_inp_files():
         # Check full.inp (if full model enabled)
         if analysis._system.cfg_system.toggle_swmm_model:
             tst_ut.assert_file_exists(paths.swmm_full_inp, "SWMM full .inp")
-            with open(paths.swmm_full_inp, "r") as fp:
+            with open(paths.swmm_full_inp) as fp:
                 content = fp.read()
                 expected_line = f"THREADS              {expected_threads}"
                 assert expected_line in content, (
@@ -77,9 +77,7 @@ def test_swmm_threads_different_values():
     2. Different thread counts are written correctly
     3. Method works for various thread values (1, 4, 8)
     """
-    case = cases.Local_TestCases.retrieve_norfolk_single_sim_test_case(
-        start_from_scratch=False
-    )
+    case = cases.Local_TestCases.retrieve_norfolk_single_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Test with different thread counts
@@ -98,12 +96,11 @@ def test_swmm_threads_different_values():
         paths = proc.scen_paths
 
         if analysis._system.cfg_system.toggle_swmm_model:
-            with open(paths.swmm_full_inp, "r") as fp:
+            with open(paths.swmm_full_inp) as fp:
                 content = fp.read()
                 expected_line = f"THREADS              {n_threads}"
                 assert expected_line in content, (
-                    f"full.inp should have THREADS={n_threads} but got: "
-                    f"{_extract_options_section(content)}"
+                    f"full.inp should have THREADS={n_threads} but got: {_extract_options_section(content)}"
                 )
 
 

@@ -8,7 +8,6 @@ runner script logs during debugging.
 
 import logging
 import os
-from pathlib import Path
 
 
 def log_workflow_context(logger: logging.Logger):
@@ -78,9 +77,7 @@ def log_workflow_context(logger: logging.Logger):
     cpus_on_node = os.environ.get("SLURM_CPUS_ON_NODE", "N/A")
     cpus_per_task = os.environ.get("SLURM_CPUS_PER_TASK", "N/A")
     ntasks = os.environ.get("SLURM_NTASKS", "N/A")
-    logger.info(
-        f"CPUs: {cpus_on_node} total ({ntasks} tasks × {cpus_per_task} CPUs/task)"
-    )
+    logger.info(f"CPUs: {cpus_on_node} total ({ntasks} tasks × {cpus_per_task} CPUs/task)")
 
     # GPU allocation (if applicable)
     gpus = os.environ.get("SLURM_JOB_GPUS", "N/A")

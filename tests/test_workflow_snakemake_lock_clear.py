@@ -9,7 +9,6 @@ DoD.
 
 from __future__ import annotations
 
-import os
 import sys
 from types import SimpleNamespace
 from unittest import mock
@@ -50,9 +49,7 @@ def test_non_interactive_branch_clears_locks_and_incomplete(tmp_path, monkeypatc
 
     builder = _make_builder(analysis_dir)
     # Pass a dummy snakefile_path — branch does not touch it.
-    builder._check_and_clear_snakemake_lock(
-        analysis_dir / "Snakefile", dry_run=False, verbose=False
-    )
+    builder._check_and_clear_snakemake_lock(analysis_dir / "Snakefile", dry_run=False, verbose=False)
 
     assert not (snakemake_state / "locks").exists(), "locks/ should be removed"
     assert not (snakemake_state / "incomplete").exists(), "incomplete/ should be removed"
@@ -84,9 +81,7 @@ def test_interactive_branch_when_env_unset(tmp_path, monkeypatch):
 
     with mock.patch("builtins.input", return_value="n") as mock_input:
         with pytest.raises(WorkflowError):
-            builder._check_and_clear_snakemake_lock(
-                analysis_dir / "Snakefile", dry_run=False, verbose=False
-            )
+            builder._check_and_clear_snakemake_lock(analysis_dir / "Snakefile", dry_run=False, verbose=False)
 
     assert mock_input.called, "interactive branch must call input() when env unset"
 
@@ -112,9 +107,7 @@ def test_non_tty_with_locks_refuses_with_actionable_error(tmp_path, monkeypatch)
 
     with mock.patch("builtins.input", side_effect=EOFError) as mock_input:
         with pytest.raises(WorkflowError) as excinfo:
-            builder._check_and_clear_snakemake_lock(
-                analysis_dir / "Snakefile", dry_run=False, verbose=False
-            )
+            builder._check_and_clear_snakemake_lock(analysis_dir / "Snakefile", dry_run=False, verbose=False)
 
     assert not mock_input.called, "non-TTY must not reach input()"
     assert "--unlock" in str(excinfo.value), "error must carry the manual unlock command"
@@ -173,6 +166,4 @@ def test_non_tty_without_locks_returns_cleanly(tmp_path, monkeypatch):
     builder = _make_builder(analysis_dir)
 
     with mock.patch("builtins.input", side_effect=EOFError):
-        builder._check_and_clear_snakemake_lock(
-            analysis_dir / "Snakefile", dry_run=False, verbose=False
-        )
+        builder._check_and_clear_snakemake_lock(analysis_dir / "Snakefile", dry_run=False, verbose=False)

@@ -5,18 +5,17 @@ Provides utilities for running subprocesses with "tee" logging -
 writing to both a local log file AND stdout so Snakemake can capture.
 """
 
+import os
 import subprocess
 import sys
-import os
 from pathlib import Path
-from typing import List, Dict, Optional
 
 
 def run_subprocess_with_tee(
-    cmd: List[str],
+    cmd: list[str],
     logfile: Path,
-    env: Optional[Dict] = None,
-    cwd: Optional[Path] = None,
+    env: dict | None = None,
+    cwd: Path | None = None,
     echo_to_stdout: bool = True,
 ) -> subprocess.Popen:
     """

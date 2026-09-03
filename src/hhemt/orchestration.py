@@ -14,7 +14,7 @@ Key components:
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Literal
 
 from hhemt.exceptions import ConfigurationError
 
@@ -70,6 +70,7 @@ def resolve_execution_locus(
         message=f"Unrecognized multi_sim_run_method={multi_sim_run_method!r} for execution-locus resolution",
     )
 
+
 if TYPE_CHECKING:
     from hhemt.config.analysis import ClearRawValue, ForceRerunValue
 
@@ -101,8 +102,8 @@ class PhaseStatus:
     name: str
     complete: bool
     progress: float = 0.0
-    details: Dict[str, str] = field(default_factory=dict)
-    failed_items: List[str] = field(default_factory=list)
+    details: dict[str, str] = field(default_factory=dict)
+    failed_items: list[str] = field(default_factory=list)
 
     def symbol(self) -> str:
         """Return status symbol for display.
@@ -211,11 +212,7 @@ class WorkflowStatus:
             self.consolidation,
         ]:
             symbol = phase.symbol()
-            progress = (
-                f" ({phase.progress*100:.0f}% complete)"
-                if 0 < phase.progress < 1
-                else ""
-            )
+            progress = f" ({phase.progress * 100:.0f}% complete)" if 0 < phase.progress < 1 else ""
             lines.append(f"  {symbol} {phase.name.title()}{progress}")
 
             for value in phase.details.values():
@@ -227,9 +224,7 @@ class WorkflowStatus:
                 for item in phase.failed_items[:n_show]:
                     lines.append(f"      - {item}")
                 if len(phase.failed_items) > n_show:
-                    lines.append(
-                        f"      ... and {len(phase.failed_items) - n_show} more"
-                    )
+                    lines.append(f"      ... and {len(phase.failed_items) - n_show} more")
 
         lines.extend(
             [
@@ -290,13 +285,13 @@ class WorkflowResult:
 
     success: bool
     mode: str
-    execution_time: Optional[float] = None
-    phases_completed: List[str] = field(default_factory=list)
-    events_processed: List[int] = field(default_factory=list)
-    snakefile_path: Optional[Path] = None
-    job_id: Optional[str] = None
+    execution_time: float | None = None
+    phases_completed: list[str] = field(default_factory=list)
+    events_processed: list[int] = field(default_factory=list)
+    snakefile_path: Path | None = None
+    job_id: str | None = None
     message: str = ""
-    partial_failures: List[dict] = field(default_factory=list)
+    partial_failures: list[dict] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         """Allow truthiness check: if result: ..."""
@@ -403,7 +398,7 @@ def translate_mode(mode: Literal["fresh", "resume"]) -> dict:
 
 
 def translate_phases(
-    phases: Optional[List[str]] = None,
+    phases: list[str] | None = None,
 ) -> dict:
     """Translate phase list to workflow boolean flags.
 

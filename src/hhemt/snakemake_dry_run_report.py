@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
-import re
 
 from hhemt.utils import current_datetime_string
 
@@ -147,9 +147,7 @@ def _extract_metadata(lines: list[str]) -> dict[str, str]:
             metadata["profile"] = stripped
         elif stripped.startswith("host:"):
             metadata["host"] = stripped.split(":", 1)[1].strip()
-    metadata["dry_run_marker_found"] = str(
-        any("This was a dry-run" in line for line in lines)
-    )
+    metadata["dry_run_marker_found"] = str(any("This was a dry-run" in line for line in lines))
     return metadata
 
 

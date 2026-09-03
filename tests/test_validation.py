@@ -1,18 +1,16 @@
 """Tests for preflight validation infrastructure."""
 
 import pytest
-from pathlib import Path
 
-from hhemt.validation import (
-    ValidationResult,
-    ValidationIssue,
-    IssueLevel,
-    preflight_validate,
-    validate_system_config,
-    validate_analysis_config,
-)
-from hhemt.config.loaders import load_system_config, load_analysis_config
 from hhemt.exceptions import ConfigurationError
+from hhemt.validation import (
+    IssueLevel,
+    ValidationIssue,
+    ValidationResult,
+    preflight_validate,
+    validate_analysis_config,
+    validate_system_config,
+)
 
 
 def test_validation_result_basic():
@@ -143,8 +141,7 @@ def test_validate_data_consistency(norfolk_multi_sim_analysis):
 
 def test_validate_storm_tide_when_disabled(norfolk_multi_sim_analysis):
     """Test storm tide validation when toggle disabled."""
-    from hhemt.validation import _validate_storm_tide_data
-    from hhemt.validation import ValidationResult
+    from hhemt.validation import ValidationResult, _validate_storm_tide_data
 
     cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
     result = ValidationResult()
@@ -158,8 +155,7 @@ def test_validate_storm_tide_when_disabled(norfolk_multi_sim_analysis):
 
 def test_validate_units_requires_rainfall_units(norfolk_multi_sim_analysis):
     """Test units validation requires explicit rainfall_units."""
-    from hhemt.validation import _validate_units
-    from hhemt.validation import ValidationResult
+    from hhemt.validation import ValidationResult, _validate_units
 
     cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
     result = ValidationResult()
@@ -176,9 +172,9 @@ def test_analysis_validate_method(norfolk_multi_sim_analysis):
     result = norfolk_multi_sim_analysis.validate()
 
     # Verify we get a ValidationResult
-    assert hasattr(result, 'is_valid')
-    assert hasattr(result, 'errors')
-    assert hasattr(result, 'warnings')
+    assert hasattr(result, "is_valid")
+    assert hasattr(result, "errors")
+    assert hasattr(result, "warnings")
 
     # Real Norfolk config should be valid
     if not result.is_valid:
@@ -297,9 +293,7 @@ def test_dq6_per_row_partition_requires_batch_job(tmp_path):
     )
 
     csv = tmp_path / "sens.csv"
-    pd.DataFrame(
-        {"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a100"]}
-    ).to_csv(csv, index=False)
+    pd.DataFrame({"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a100"]}).to_csv(csv, index=False)
 
     # 1_job_many_srun_tasks + >1 distinct partition -> invalid, with batch_job hint.
     cfg_bad = SimpleNamespace(
@@ -337,9 +331,7 @@ def test_dq6_single_partition_allowed_under_1job(tmp_path):
     )
 
     csv = tmp_path / "sens.csv"
-    pd.DataFrame(
-        {"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a6000"]}
-    ).to_csv(csv, index=False)
+    pd.DataFrame({"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a6000"]}).to_csv(csv, index=False)
     cfg = SimpleNamespace(
         toggle_sensitivity_analysis=True,
         multi_sim_run_method="1_job_many_srun_tasks",
@@ -363,9 +355,5 @@ def test_null_software_dir_no_required_path_error(synth_multi_sim_analysis):
     null_cfg = cfg_sys.model_copy(update={"TRITONSWMM_software_directory": None})
 
     result = validate_system_config(null_cfg)
-    offending = [
-        e for e in result.errors if e.field == "system.TRITONSWMM_software_directory"
-    ]
-    assert not offending, (
-        f"null TRITONSWMM_software_directory wrongly flagged: {offending}"
-    )
+    offending = [e for e in result.errors if e.field == "system.TRITONSWMM_software_directory"]
+    assert not offending, f"null TRITONSWMM_software_directory wrongly flagged: {offending}"

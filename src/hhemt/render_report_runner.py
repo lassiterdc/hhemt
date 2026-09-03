@@ -56,8 +56,8 @@ def main():
     args = parser.parse_args()
 
     try:
-        from hhemt.system import TRITONSWMM_system
         from hhemt.analysis import TRITONSWMM_analysis
+        from hhemt.system import TRITONSWMM_system
 
         system = TRITONSWMM_system(args.system_config)
         analysis = TRITONSWMM_analysis(

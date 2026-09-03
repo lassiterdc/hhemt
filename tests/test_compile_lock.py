@@ -7,10 +7,10 @@ regression guard uses, which never runs the expensive
 `process_system_level_inputs`.
 """
 
-import hhemt.system
 import pytest
 from filelock import Timeout
 
+import hhemt.system
 from hhemt._filelock_compat import resolve_filelock
 from hhemt.exceptions import CompilationError
 from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
@@ -18,9 +18,7 @@ from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_cas
 
 @pytest.fixture(scope="module")
 def synth_builder():
-    return retrieve_synth_TRITON_SWMM_test_case(
-        analysis_name="single_sim", start_from_scratch=False, skip_run=True
-    )
+    return retrieve_synth_TRITON_SWMM_test_case(analysis_name="single_sim", start_from_scratch=False, skip_run=True)
 
 
 def _can_acquire(lock) -> bool:
@@ -43,9 +41,7 @@ def test_gate_runs_inside_the_lock(monkeypatch, synth_builder):
     observed = {}
 
     def _fake_locked(**kwargs):
-        probe = resolve_filelock(
-            str(build_dir.parent / f".{build_dir.name}.compile.lock"), timeout=0
-        )
+        probe = resolve_filelock(str(build_dir.parent / f".{build_dir.name}.compile.lock"), timeout=0)
         observed["held"] = not _can_acquire(probe)
 
     monkeypatch.setattr(type(system), "_compile_backend_locked", staticmethod(_fake_locked))
@@ -69,9 +65,7 @@ def test_lock_timeout_names_the_lock_path(monkeypatch, capsys, synth_builder):
     system = synth_builder.system
     build_dir = system.sys_paths.TRITONSWMM_build_dir_cpu
     monkeypatch.setattr(hhemt.system, "_COMPILE_LOCK_TIMEOUT_SECONDS", 1)
-    holder = resolve_filelock(
-        str(build_dir.parent / f".{build_dir.name}.compile.lock"), timeout=10
-    )
+    holder = resolve_filelock(str(build_dir.parent / f".{build_dir.name}.compile.lock"), timeout=10)
     with holder:
         with pytest.raises(CompilationError):
             system._compile_backend(

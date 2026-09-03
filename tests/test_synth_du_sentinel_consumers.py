@@ -16,11 +16,8 @@ written `_status/_du.json`) — no full TRITON/SWMM compile is required.
 
 from __future__ import annotations
 
-import json
 import types
 from pathlib import Path
-
-import pytest
 
 from hhemt.du_sentinels import write_du_sentinel
 
@@ -50,6 +47,7 @@ def _import_du_via_sentinel(tmp_path: Path):
     way to exercise it is to call that function and inspect stderr.
     """
     from hhemt.cli import _print_delete_dry_run_summary
+
     return _print_delete_dry_run_summary
 
 

@@ -4,9 +4,9 @@ import numpy as np
 import xarray as xr
 
 from hhemt.cf_conventions import (
+    _CF_VARIABLE_MAP,
     apply_cf_attributes,
     apply_global_attributes,
-    _CF_VARIABLE_MAP,
 )
 
 

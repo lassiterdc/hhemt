@@ -6,6 +6,7 @@ the 1_job_many_srun_tasks execution mode.
 """
 
 import pytest
+
 import tests.fixtures.test_case_catalog as cases
 
 pytestmark = pytest.mark.requires_snakemake_subprocess
@@ -14,9 +15,7 @@ pytestmark = pytest.mark.requires_snakemake_subprocess
 @pytest.fixture
 def norfolk_1job_analysis():
     """Norfolk test case configured for 1-job mode."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False
-    )
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode
@@ -81,14 +80,10 @@ def test_1job_dry_run_does_not_submit(norfolk_1job_analysis):
     assert result.get("success"), f"Dry-run failed: {result.get('message', '')}"
 
     # Verify mode is set correctly (should be 'single_job' indicating 1-job mode)
-    assert (
-        result.get("mode") == "single_job"
-    ), f"Expected mode='single_job' for dry-run, got {result.get('mode')}"
+    assert result.get("mode") == "single_job", f"Expected mode='single_job' for dry-run, got {result.get('mode')}"
 
     # Verify Snakefile was generated
-    snakefile_path = (
-        analysis._workflow_builder.analysis_paths.analysis_dir / "Snakefile"
-    )
+    snakefile_path = analysis._workflow_builder.analysis_paths.analysis_dir / "Snakefile"
     assert snakefile_path.exists(), "Snakefile should be generated even in dry-run"
 
 

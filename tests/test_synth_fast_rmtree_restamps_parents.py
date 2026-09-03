@@ -11,17 +11,14 @@ Run:
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 
-import pytest
-
-from hhemt.utils import fast_rmtree
 from hhemt.du_sentinels import (
     compute_and_write_scope_sentinel,
     read_du_sentinel,
 )
+from hhemt.utils import fast_rmtree
 
 
 def _seed_scope(scope_dir: Path, child_bytes: dict[str, int]) -> None:

@@ -1,10 +1,11 @@
-import pandas as pd
 from typing import TYPE_CHECKING
-from hhemt.plot_utils import plot_discrete_raster, plot_continuous_raster
-from matplotlib.axes import Axes
-from typing import Optional
-import rioxarray as rxr
+
 import matplotlib.pyplot as plt
+import pandas as pd
+import rioxarray as rxr
+from matplotlib.axes import Axes
+
+from hhemt.plot_utils import plot_continuous_raster, plot_discrete_raster
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
@@ -80,9 +81,7 @@ class TRITONSWMM_system_plotting:
         self.processed_dem(ax=axes[0])
         self.processed_mannings(ax=axes[1])
 
-    def _process_dem_for_plotting(
-        self, rds_dem, dem_out_of_watershed=None, dem_building_height=None
-    ):
+    def _process_dem_for_plotting(self, rds_dem, dem_out_of_watershed=None, dem_building_height=None):
         """
         Docstring for _process_dem_for_plotting
 
@@ -110,7 +109,7 @@ class TRITONSWMM_system_plotting:
         landuse_plot_color_colname,
         watershed_shapefile,
         watershed_shapefile_color="black",
-        ax: Optional[Axes] = None,
+        ax: Axes | None = None,
     ):
         rds = rxr.open_rasterio(landuse_raster)
         df_lu_lookup = pd.read_csv(landuse_lookup).set_index(landuse_colname)

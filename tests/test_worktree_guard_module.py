@@ -13,7 +13,6 @@ which is the duplication F2c exists to remove.
 from __future__ import annotations
 
 import subprocess
-import sys
 
 import pytest
 
@@ -41,9 +40,7 @@ def test_message_is_none_when_the_import_resolves_under_expected_src(tmp_path):
 
 def test_message_names_the_resolved_path_when_it_lies_outside(tmp_path):
     """VIOLATING input: resolved path outside expected_src -> the message."""
-    msg = worktree_mismatch_message(
-        expected_src=tmp_path / "src", force_wrong_src="/tmp/not-the-worktree/src"
-    )
+    msg = worktree_mismatch_message(expected_src=tmp_path / "src", force_wrong_src="/tmp/not-the-worktree/src")
     assert msg is not None
     assert "hhemt.__file__ = /tmp/not-the-worktree/src" in msg
     assert str(tmp_path / "src") in msg
@@ -58,9 +55,7 @@ def test_label_parameterizes_the_prefix_but_not_the_body(tmp_path, label):
     `tests/test_worktree_guard.py` asserts the `worktree-test-guard:` spelling verbatim, so
     this pins that the parameter actually reaches the emitted text.
     """
-    msg = worktree_mismatch_message(
-        expected_src=tmp_path / "src", force_wrong_src="/elsewhere/src", label=label
-    )
+    msg = worktree_mismatch_message(expected_src=tmp_path / "src", force_wrong_src="/elsewhere/src", label=label)
     assert msg is not None
     assert msg.startswith(f"{label}: hhemt.__file__ = ")
     assert "shared conda env's editable install points elsewhere." in msg
