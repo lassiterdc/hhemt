@@ -49,7 +49,18 @@ non_breaking_allowlist:
       precedented -- LAYOUT_VERSION 19 -> 20, a NO-OP V0020 stamp migration in the
       shape of V0011 and V0016, and v20/ fixtures as a cp -r of v19/. Nothing on disk
       needs transforming, which is why a migration body would be empty.
-    layout_signature: "adba89089d3b17ed5186cc1ccc65ee56f526c6e1d7effe674dbecf685e0e4396"
+
+      RE-STAMPED AGAIN for the chapter-set build guard (Files 2 and 5 of the
+      chapter-staleness set). JUDGED NON-BREAKING on this row's own test: File 2 adds a
+      read-only provenance comparison at the chapter-loop entry and File 5 removes a
+      duplicated `del ds_batch` that raised UnboundLocalError on the first mid-loop
+      flush. Neither changes any artifact a COMPLETED analysis carries -- the chapter
+      stores, their flags and the unified store are byte-identical in name, shape and
+      content. The guard writes one new file, `provenance_history.json`, INSIDE the
+      per-store `.chapters/` directory, which `merge_chapters_to_unified` already
+      removes wholesale at merge, so it exists only while an interrupted chapter set
+      exists and never survives into a completed tree.
+    layout_signature: "a89d493389ae5a5e6fd4dc6045d9cae7ffb7b4222a4ff2e061a70a1dd4a68d38"
   - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
     justification: >-
       DU-sentinel gate closure — a one-character correction inside an existing

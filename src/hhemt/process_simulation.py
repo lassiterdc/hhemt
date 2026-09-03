@@ -276,6 +276,25 @@ class TRITONSWMM_sim_post_processing:
         _ad = self._analysis.analysis_paths.analysis_dir
         _chapters.mkdir(parents=True, exist_ok=True)
         reap_unflagged_chapters(_chapters, analysis_dir=_ad)
+        # Chapter-set build guard ([Q235] / [Q238]). Reuses provenance.py's
+        # producing-stamp family: the same (sha, dirty) key append_stage_provenance
+        # already writes, and the same refuse-with-declared-bypass shape
+        # assert_plots_match_running_build already uses. Placed after the reap and
+        # before the resume decision, which is the only point at which a mixed-build
+        # merge is still preventable.
+        #
+        # THE BUILD IS RECORDED IN verify_and_flag_chapter, NOT HERE. An entry-site
+        # record fires on every invocation that ENTERS this writer, including one that
+        # writes ZERO chapters and raises below -- so the history would name a build
+        # that contributed nothing, and the guard would then refuse a set every chapter
+        # of which the running build wrote. Recording beside the flag write makes the
+        # history the PROVENANCE of the chapters rather than a log of arrivals.
+        from hhemt.provenance import assert_chapters_match_running_build
+
+        assert_chapters_match_running_build(
+            _chapters,
+            declare_mixed_version_chapters=self._analysis.cfg_analysis.allow_mixed_version_chapters,
+        )
         _done = completed_chapters(_chapters)
         _covered_ts = covered_timesteps(_chapters)
         _next_chapter = (max(_done) + 1) if _done else 0
@@ -409,9 +428,6 @@ class TRITONSWMM_sim_post_processing:
                     _freed_bytes += clear_raw_for_timesteps(df_outputs, _ts, analysis_dir=_ad)
                 _next_chapter += 1
                 first_chunk = False
-                del ds_batch
-                pending_chunks = []
-                pending_timesteps = 0
                 del ds_batch
                 pending_chunks = []
                 pending_timesteps = 0

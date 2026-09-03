@@ -299,7 +299,7 @@ def assert_plots_match_running_build(analysis_dir: Path, *, declare_stale_plots:
         return None
     else:
         (psha, pdirty) = next(iter(keys))
-        why = f"figures built at {psha[:12]} (dirty={pdirty}), report rendering at " f"{mine[0][:12]} (dirty={mine[1]})"
+        why = f"figures built at {psha[:12]} (dirty={pdirty}), report rendering at {mine[0][:12]} (dirty={mine[1]})"
     msg = (
         f"Report/figure build mismatch: {why}. The figures may not reflect the renderer "
         "code now producing this report. Re-render with force_rerun "
@@ -310,6 +310,121 @@ def assert_plots_match_running_build(analysis_dir: Path, *, declare_stale_plots:
         print(f"[render_report] DECLARED STALE PLOTS: {msg}", flush=True)
         return msg
     raise StalePlotsError(msg)
+
+
+#: Stage key for the per-chapter-set producing-build history. Declared ONCE here and
+#: referenced by no other literal, exactly as _HISTORY_FILENAME above is.
+_CHAPTER_STAGE = "chapters"
+
+
+def processing_build_key() -> tuple[str, str]:
+    """The (sha, dirty) identity of the build running the PROCESSING stage.
+
+    `producing_stamp()` alone is not sufficient in container mode: the SIF build
+    deletes the toolkit's `.git` (containers/uva-cpu.def), so an in-image
+    `_toolkit_git_sha()` returns "unknown" for every SIF and two different images
+    stamp identically. When the git sha is unresolvable this falls back to the
+    image's own `org.hhemt.hhemt_sha` label, which build_sifs_uva.sh stamps
+    host-side. Graceful-absent on BOTH paths: an unresolvable identity returns
+    "unknown", which every caller treats as NOT-COMPARED rather than as unequal.
+    """
+    stamp = producing_stamp()
+    sha = str(stamp.get("hhemt_sha") or "").strip()
+    dirty = str(stamp.get("hhemt_dirty") or "unknown")
+    if sha and sha != "unknown":
+        return sha, dirty
+    try:
+        from hhemt.container_labels import looks_like_sha, read_container_labels
+
+        label = read_container_labels("/").hhemt_sha
+    except Exception:
+        label = None
+    if looks_like_sha(label):
+        # An image label identifies a BUILT artifact, which has no working tree, so
+        # "false" is the honest dirty value rather than a carried-over one.
+        return str(label).strip(), "false"
+    return "unknown", dirty
+
+
+def record_chapter_build(chapters_dir) -> bool:
+    """Record this process's build in the chapter set's own provenance history.
+
+    Delegates to `append_stage_provenance`, which already accepts an arbitrary
+    directory, de-duplicates on (sha, dirty), preserves mtime on an unchanged
+    build, and never raises.
+    """
+    return append_stage_provenance(Path(chapters_dir), _CHAPTER_STAGE)
+
+
+def collect_chapter_build_keys(chapters_dir) -> list[tuple[str, str]]:
+    """The (sha, dirty) keys recorded against this chapter set, oldest first."""
+    entries = read_stage_provenance_history(Path(chapters_dir)).get(_CHAPTER_STAGE, [])
+    return [
+        (str(e.get("hhemt_sha") or "").strip(), str(e.get("hhemt_dirty") or "unknown"))
+        for e in entries
+        if str(e.get("hhemt_sha") or "").strip()
+    ]
+
+
+def assert_chapters_match_running_build(chapters_dir, *, declare_mixed_version_chapters: bool = False):
+    """Refuse to extend a chapter set that a DIFFERENT processing build wrote.
+
+    The invariant: every flagged chapter merged into one unified store was written
+    by one build. Enforced at loop ENTRY, which is the only point at which a mixed
+    merge is still preventable. By induction over invocations this holds for every
+    chapter whose producing build was RECORDED -- it does NOT extend to a legacy set
+    that predates the capture site, which is NOT-COMPARED by design (below). No
+    second gate at merge time is needed for the recorded population.
+
+    ABSENCE IS NOT-COMPARED, which INVERTS `StalePlotsError`'s absent-is-never-equal
+    rule and does so deliberately. Figures are cheap to re-render, so failing loud on
+    a missing stamp is right there. A chapter set is a partially-completed run whose
+    loss is the failure this whole mechanism exists to prevent, and every set already
+    on disk predates this capture site — so an absent-is-unequal reader would refuse
+    every resume of every existing analysis on the day it lands.
+
+    Comparison is by `shas_match` prefix in both directions, so an abbreviated sha
+    validates against a full one rather than reading as a different commit.
+
+    `prior` is the PROVENANCE of the flagged chapters, not a log of arrivals, because
+    the build is recorded in `utils.verify_and_flag_chapter` -- immediately after the
+    flag write and only when a chapter was actually flagged. Recording at this
+    function's call site instead would enter builds that wrote zero chapters, and the
+    `all(...)` below would then range over builds that contributed nothing.
+    """
+    from hhemt.container_labels import shas_match
+    from hhemt.exceptions import ProcessingError
+    from hhemt.utils import completed_chapters
+
+    chapters_dir = Path(chapters_dir)
+    n_flagged = len(completed_chapters(chapters_dir))
+    if not n_flagged:
+        return None
+    prior = [k for k in collect_chapter_build_keys(chapters_dir) if k[0] != "unknown"]
+    if not prior:
+        return None
+    mine = processing_build_key()
+    if mine[0] == "unknown":
+        return None
+    if all(shas_match(k[0], mine[0]) and k[1] == mine[1] for k in prior):
+        return None
+    msg = (
+        f"Chapter-set build mismatch under {chapters_dir}: {n_flagged} flagged chapter(s) "
+        f"were written by {sorted({f'{s[:12]}(dirty={d})' for s, d in prior})} but this "
+        f"process is {mine[0][:12]}(dirty={mine[1]}). Merging them would publish one store "
+        "built by two processing builds. Either discard the partial chapter set with "
+        'force_rerun {"subject": "all", "stage": "process"}, or -- if nothing material '
+        "changed -- set allow_mixed_version_chapters: true in the analysis config to "
+        "proceed and record the mixed provenance."
+    )
+    if declare_mixed_version_chapters:
+        print(f"[Chunked Processing] DECLARED MIXED-VERSION CHAPTERS: {msg}", flush=True)
+        return msg
+    raise ProcessingError(
+        operation="assert_chapters_match_running_build",
+        filepath=str(chapters_dir),
+        reason=msg,
+    )
 
 
 def _resolve_case_manifest(analysis):

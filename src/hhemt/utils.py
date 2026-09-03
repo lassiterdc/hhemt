@@ -308,7 +308,11 @@ def chapter_flag_for(chapters: Path, k: int) -> Path:
 def verify_and_flag_chapter(store: Path, flag: Path, n_expected: int) -> None:
     """Open the chapter store, confirm it is readable, THEN write the flag.
 
-    THE ORDER IS THE CONTRACT: write -> verify -> flag -> clear raw. The flag is a
+    THE ORDER IS THE CONTRACT: write -> verify -> flag -> record -> clear raw. The
+    RECORD step appends the producing build to the chapter set's provenance history
+    and is what lets the chapter-set guard compare a resume against the builds that
+    actually flagged chapters. It follows the flag deliberately: recording before the
+    flag lands would name a build for a chapter a failed verify never flagged. The flag is a
     positive completion marker in the Gotcha-40 sense, and the clear that follows
     it destroys the raw inputs, so the flag must not be written on an unchecked
     store.
@@ -341,6 +345,16 @@ def verify_and_flag_chapter(store: Path, flag: Path, n_expected: int) -> None:
     tmp = flag.with_suffix(flag.suffix + ".tmp")
     tmp.write_text("ok", encoding="utf-8")
     os.replace(tmp, flag)
+    # RECORD THE PRODUCING BUILD, and only now. The chapter-set guard compares the
+    # running build against this history, so the history must be the provenance of
+    # the FLAGGED chapters -- not a log of every invocation that entered the writer.
+    # Recorded here rather than at the two call sites because those two blocks are a
+    # measured drift surface (they have already diverged once) and a third flush site
+    # would silently miss it. Function-local import, matching ProcessingError above;
+    # provenance imports utils function-locally too, so no module-load edge is added.
+    from hhemt.provenance import record_chapter_build
+
+    record_chapter_build(flag.parent)
 
 
 def completed_chapters(chapters: Path) -> dict:
