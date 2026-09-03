@@ -18,27 +18,27 @@ repos:
     hooks:
       - id: check-layout-version-a
         name: check LAYOUT_VERSION bump implies migration + fixtures
-        entry: python scripts/check_layout_version.py check-a HEAD~1
+        entry: uv run --locked python scripts/check_layout_version.py check-a HEAD~1
         language: system
         pass_filenames: false
         always_run: true
       - id: check-layout-version-b
         name: check layout-relevant files trigger LAYOUT_VERSION bump
-        entry: python scripts/check_layout_version.py check-b HEAD~1
+        entry: uv run --locked python scripts/check_layout_version.py check-b HEAD~1
         language: system
         pass_filenames: false
         always_run: true
 
       - id: check-caption-pairing
         name: check captioned renderer changes are paired with caption edits
-        entry: python scripts/check_caption_pairing.py HEAD~1
+        entry: uv run --locked python scripts/check_caption_pairing.py HEAD~1
         language: system
         pass_filenames: false
         always_run: true
 
       - id: check-caption-vocabulary
         name: retired-vocabulary guard over the report template tree
-        entry: python scripts/check_caption_vocabulary.py
+        entry: uv run --locked python scripts/check_caption_vocabulary.py
         language: system
         pass_filenames: false
         always_run: true
@@ -50,7 +50,7 @@ repos:
     hooks:
       - id: check-du-sentinel-sites
         name: DU-sentinel mutation-site restamp check
-        entry: python scripts/check_du_sentinel_sites.py
+        entry: uv run --locked python scripts/check_du_sentinel_sites.py
         language: system
         pass_filenames: false
         always_run: true
@@ -72,7 +72,7 @@ repos:
     hooks:
       - id: anonymization-guard
         name: anonymization blocklist guard
-        entry: python scripts/check_anonymization.py
+        entry: uv run --locked python scripts/check_anonymization.py
         language: system
         pass_filenames: false
         always_run: true
@@ -87,7 +87,7 @@ repos:
     hooks:
       - id: anonymization-guard-commit-msg
         name: anonymization blocklist guard (commit message)
-        entry: python scripts/check_commit_message_anonymization.py
+        entry: uv run --locked python scripts/check_commit_message_anonymization.py
         language: system
         stages: [commit-msg]
 
@@ -101,7 +101,7 @@ repos:
     hooks:
       - id: vocabulary-freeze
         name: migration vocabulary freeze
-        entry: python scripts/check_vocabulary_freeze.py
+        entry: uv run --locked python scripts/check_vocabulary_freeze.py
         language: system
         pass_filenames: false
         always_run: true
@@ -113,7 +113,7 @@ repos:
     hooks:
       - id: check-retired-field-overlay-columns
         name: check retired-field overlay columns
-        entry: python scripts/check_retired_field_overlay_columns.py
+        entry: uv run --locked python scripts/check_retired_field_overlay_columns.py
         language: system
         pass_filenames: false
         always_run: true
@@ -127,7 +127,7 @@ repos:
     hooks:
       - id: check-env-lock-consistency
         name: environment-lock.yaml swmm-provenance consistency
-        entry: python scripts/check_env_lock_consistency.py
+        entry: uv run --locked python scripts/check_env_lock_consistency.py
         language: system
         pass_filenames: false
         files: ^environment(-lock)?\.yaml$

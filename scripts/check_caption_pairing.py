@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """CI check enforcing the caption/renderer paired-edit discipline.
 
 Usage:

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Retired-vocabulary guard over the report template tree.
 
 Usage:

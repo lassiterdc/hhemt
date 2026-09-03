@@ -33,14 +33,27 @@ open an issue to discuss before submitting.
    does not ship it, and adding `--no-deps` to the `[docs]` extra would install
    none of it:
    `pip install mkdocs mkdocs-material "mkdocstrings[python]" mkdocs-htmlproofer-plugin`
-4. Install pre-commit hooks: `pre-commit install`
+4. Install `uv` (https://docs.astral.sh/uv/). It is a hard prerequisite, not a
+   convenience: every pre-commit hook in this repo runs through `uv run --locked`,
+   so `git commit` fails without it. `uv` builds and manages its own project
+   environment in `.venv/`, separate from the conda environment step 2 creates —
+   both will exist on your machine, and the hooks always use `.venv/`. If you work
+   inside an activated virtualenv (this does not apply to conda), `uv` prints a
+   `VIRTUAL_ENV ... will be ignored` warning on each hook run; that is expected.
+5. Install pre-commit hooks: `pre-commit install`. The `pre-commit` package ships
+   only with the conda environment (`environment.yaml`); it is declared in no
+   `pyproject.toml` extra, so if you installed via Option B of
+   `docs/how-to/installation.md` you must `pip install pre-commit` first.
 
 ## Workflow
 
 - Create a feature branch from `develop`
 - Make changes with tests
-- Run `ruff check .` and `ruff format .`
-- Run `pytest`
+- Run `just qa` before opening a pull request. It formats, lints, type-checks, runs
+  the two guard scripts listed in that recipe, and runs the test suite. `just` is
+  installed by neither `environment.yaml` nor any `pyproject.toml` extra — install it
+  separately (https://github.com/casey/just), or run the commands under the `qa:`
+  recipe in `justfile` yourself, in the order they appear there.
 - Submit a pull request
 
 ## Documentation

@@ -99,10 +99,13 @@ already say, no confirmation is needed: that is the common one-config path.
 
 ## Verifying a bundle conforms
 
-The descriptor model ships in the wheel, so an installed copy can validate a bundle directly:
+The descriptor model ships in the wheel, so an installed copy can validate a bundle
+directly. Run this with the interpreter you installed `hhemt` into: inside that
+environment, `python3` resolves to it; from outside one, no interpreter on `PATH` will
+import `hhemt` and the snippet cannot work.
 
 ```bash
-python -c "
+python3 -c "
 import sys, yaml
 from hhemt.config.experiment_bundle import ExperimentConfig
 ExperimentConfig.model_validate(yaml.safe_load(open(sys.argv[1] + '/experiment.yaml')))
@@ -114,7 +117,7 @@ matches the directory name, that the declared `system_config`/`analysis_config` 
 and that `README.md` + `rerun.sh` are present:
 
 ```bash
-python scripts/check_experiment_structure.py experiments/my_experiment
+uv run --locked python scripts/check_experiment_structure.py experiments/my_experiment
 ```
 
 Exit 0 = conformant. Note that `scripts/` is not distributed in the wheel, so this second form

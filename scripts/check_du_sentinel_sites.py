@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """CI check enforcing the DU-sentinel mutation-site restamp contract.
 
 Implements the MUTATION_SITE_MISSING_RESTAMP audit rule deferred by the

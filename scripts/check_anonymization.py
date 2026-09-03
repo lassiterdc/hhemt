@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """CI check enforcing the ADR-14 anonymization blocklist.
 
 Enumerates the git-tracked set (`git ls-files`) and fails if any tracked text

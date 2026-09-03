@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """CI check: every public class/function in a public module's __all__ renders as a
 mkdocstrings doc-object anchor in the built site (ADR-7 docs-accuracy proxy).
 

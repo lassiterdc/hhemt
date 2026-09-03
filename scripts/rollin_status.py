@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Re-derive the hhemt-specialist VMS roll-in status from DISK.
 
 One marker grep per spec, one test-symbol grep per cluster. Run from the hhemt

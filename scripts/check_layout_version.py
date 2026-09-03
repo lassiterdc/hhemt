@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """CI check enforcing the version-migration discipline.
 
 Usage:
@@ -9,6 +9,7 @@ Usage:
 Exit 0 = pass; exit 1 = enforcement failure with structured message.
 Check C is warning-only and always exits 0.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -46,7 +47,13 @@ _OLD_SCENARIO_RELPATH = "src/TRITON_SWMM_toolkit/scenario.py"
 
 LAYOUT_VERSION_RE = re.compile(r"^LAYOUT_VERSION:\s*int\s*=\s*(\d+)\s*$", re.MULTILINE)
 LAYOUT_SUSPICIOUS_SUBSTRINGS = (
-    "scenario", "log", "config", "consolidation", "paths", "schema", "conventions",
+    "scenario",
+    "log",
+    "config",
+    "consolidation",
+    "paths",
+    "schema",
+    "conventions",
 )
 
 
@@ -75,9 +82,7 @@ def _git_show_with_rename_fallback(ref: str, new_relpath: str, old_relpath: str)
 
 
 def _layout_version_at(ref: str) -> int:
-    text = _git_show_with_rename_fallback(
-        ref, _NEW_CONSTANTS_RELPATH, _OLD_CONSTANTS_RELPATH
-    )
+    text = _git_show_with_rename_fallback(ref, _NEW_CONSTANTS_RELPATH, _OLD_CONSTANTS_RELPATH)
     if text is None:
         return 0
     m = LAYOUT_VERSION_RE.search(text)
@@ -197,9 +202,7 @@ def _load_allowlist(sentinel: dict) -> dict[str, AllowlistEntry]:
             raise SystemExit(f"check_layout_version: malformed allowlist entry: {raw!r}")
         unknown = set(raw) - {"path", "justification", "layout_signature"}
         if unknown:
-            raise SystemExit(
-                f"check_layout_version: unknown allowlist keys {sorted(unknown)} in {raw['path']!r}"
-            )
+            raise SystemExit(f"check_layout_version: unknown allowlist keys {sorted(unknown)} in {raw['path']!r}")
         just = raw.get("justification")
         if not isinstance(just, str) or not just.strip():
             raise SystemExit(
@@ -207,9 +210,7 @@ def _load_allowlist(sentinel: dict) -> dict[str, AllowlistEntry]:
             )
         sig = raw.get("layout_signature")
         if sig is not None and not isinstance(sig, str):
-            raise SystemExit(
-                f"check_layout_version: layout_signature for {raw['path']!r} must be a string"
-            )
+            raise SystemExit(f"check_layout_version: layout_signature for {raw['path']!r} must be a string")
         out[raw["path"]] = AllowlistEntry(justification=just, layout_signature=sig)
     return out
 
@@ -246,9 +247,7 @@ def _slug_function_hash(source: str) -> str | None:
 
 
 def _slug_hash_at(ref: str) -> str | None:
-    text = _git_show_with_rename_fallback(
-        ref, SCENARIO_RELPATH, _OLD_SCENARIO_RELPATH
-    )
+    text = _git_show_with_rename_fallback(ref, SCENARIO_RELPATH, _OLD_SCENARIO_RELPATH)
     if text is None:
         return None
     return _slug_function_hash(text)
