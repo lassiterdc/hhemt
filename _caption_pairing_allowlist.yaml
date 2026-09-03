@@ -94,7 +94,26 @@ unpaired_allowlist:
       change to this file rather than on arrival.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: da23d989c004c62de6d06efcdaea552e27cb1e7088f48c93ee6035aae150e84b
+    renderer_sha256: d4d4b255d7a54248106457f71b81e811de0d3bdefbc99e489454ae9f8221aa2c
+    justification_2026_09_03b: >-
+      path-tree leaf-run collapse (four-spec set). Caption RE-READ IN FULL, and it makes
+      no claim this change can touch. The caption describes WHAT the Provenance summary
+      contains -- sidecar identity and license, toolkit git-SHA, container and SIF digest,
+      input digests, the per-run process graph, and the consolidated outputs with their CF
+      variable dictionary. This change alters only HOW the path tree DISPLAYS those
+      outputs: whether a run of sibling leaves collapses, what the sentinel label reads,
+      and the roster's own sentence about how membership is decided. The caption states
+      nothing about collapsing, sentinels, labels, or membership, and no value it
+      characterises changes.
+      SCOPE, recorded so a later reader need not re-derive it: the change is LEAVES ONLY.
+      Directory runs keep the subtree-only grouping, so the delivered crate -- whose
+      members are directories -- renders byte-identically today. The repair targets the
+      row explosion the RO-Crate member-reference repair will introduce by turning member
+      references into bare directories.
+      The caption COMPLETENESS gap recorded in the 2026-09-03 entry above is UNCHANGED and
+      NOT discharged here: the caption enumerates three sections while the page carries at
+      least a fourth. A caption rewrite is not part of a rendering change; it stays on the
+      work stack as its own item.
     justification_2026_09_03: >-
       member-identity repair (case-8 Spec 2). Caption RE-READ IN FULL, and it makes no
       claim this change can touch. The caption describes exactly three sections --

@@ -56,12 +56,36 @@ def test_a_divergent_sibling_breaks_the_run_and_renders_under_its_own_name():
     assert "× 27" in _tree(html)
 
 
-def test_a_run_of_leaves_is_never_collapsed():
-    """No shared structure to show once, so a sentinel would be pure information loss."""
+def test_a_leaf_run_collapses_when_it_is_an_index_family():
+    """Reverses `test_a_run_of_leaves_is_never_collapsed`.
+
+    That test's rationale was true of the code it guarded: no roster was reachable for a
+    leaf run, because `collapsed.append` sat inside the branch the `child` conjunct gated.
+    Lifting the conjunct supplies the roster in the same edit, so the names survive the
+    collapse -- which is asserted here rather than assumed.
+    """
     html = metadata._path_tree_html([f"flat_{n}.json" for n in range(5)])
-    assert _SENTINEL_MARK not in html
+    assert _SENTINEL_MARK in _tree(html), "an index family of leaves must collapse to one sentinel"
+    assert "{flat_{i}.json}" in _tree(html), "the label must name the varying index, not a bare prefix"
+    assert "<details>" in html, "a collapsed leaf run must still disclose every name"
     for n in range(5):
-        assert f"flat_{n}.json" in html
+        assert f"flat_{n}.json" in html, "no name may be lost by the collapse"
+
+
+def test_a_heterogeneous_leaf_run_stays_expanded():
+    """The differently-positioned satisfying arm: NOT an index family, so no collapse.
+
+    These names share no skeleton -- the varying token is not a digit run -- so the
+    predicate must refuse them. This is the arm that catches an over-collapse, which is
+    the failure the old `child` conjunct used to prevent for free: under the pre-change
+    signature every leaf compared equal to every other, so five unrelated files formed
+    one run of five and would collapse behind an empty-stemmed sentinel.
+    """
+    names = ["alpha.json", "bravo.json", "charlie.json", "delta.json", "echo.json"]
+    html = metadata._path_tree_html(names)
+    assert _SENTINEL_MARK not in _tree(html), "unrelated leaves must not collapse"
+    for n in names:
+        assert n in html
 
 
 def test_two_identical_siblings_stay_expanded():
