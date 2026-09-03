@@ -10,35 +10,28 @@ The tests ensure:
 3. Performance - no significant regression in execution time
 """
 
-import pytest
-import warnings
-import time
-from pathlib import Path
-import numpy as np
-import xarray as xr
-import pandas as pd
-from importlib.resources import files
-import tests.fixtures.test_case_catalog as cases
-
 import tempfile
-from hhemt.utils import write_zarr
+import time
+import warnings
+from importlib.resources import files
+from pathlib import Path
 
-from hhemt.swmm_output_parser import (
-    retrieve_SWMM_outputs_as_datasets,
-    convert_swmm_tdeltas_to_minutes,
-    return_swmm_outputs,
-    return_node_time_series_results_from_rpt,
-    format_rpt_section_into_dataframe,
-    return_data_from_rpt,
-    parse_total_elapsed,
-)
+import numpy as np
+import pandas as pd
+import pytest
+import xarray as xr
+
+import tests.fixtures.test_case_catalog as cases
 from hhemt.constants import (
-    LST_COL_HEADERS_NODE_FLOOD_SUMMARY,
-    LST_COL_HEADERS_NODE_FLOW_SUMMARY,
-    LST_COL_HEADERS_LINK_FLOW_SUMMARY,
     APP_NAME,
 )
-
+from hhemt.swmm_output_parser import (
+    convert_swmm_tdeltas_to_minutes,
+    parse_total_elapsed,
+    retrieve_SWMM_outputs_as_datasets,
+    return_data_from_rpt,
+)
+from hhemt.utils import write_zarr
 
 # =============================================================================
 # Test Configuration
@@ -74,11 +67,7 @@ BASELINE_RETRIEVE_SECONDS = 20.295690
 
 @pytest.fixture(scope="module")
 def test_case_analysis():
-    nrflk_multisim_ensemble = (
-        cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-            start_from_scratch=False
-        )
-    )
+    nrflk_multisim_ensemble = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
     analysis = nrflk_multisim_ensemble.analysis
     return analysis
 
@@ -258,13 +247,9 @@ def compare_zarr_datasets(
             # Compare non-NaN values
             mask = ~ref_nan
             if mask.any():
-                if not np.allclose(
-                    new_vals[mask], ref_vals[mask], rtol=rtol, atol=atol
-                ):
+                if not np.allclose(new_vals[mask], ref_vals[mask], rtol=rtol, atol=atol):
                     max_diff = np.max(np.abs(new_vals[mask] - ref_vals[mask]))
-                    differences[f"var_{var}"] = (
-                        f"numeric values differ (max diff: {max_diff})"
-                    )
+                    differences[f"var_{var}"] = f"numeric values differ (max diff: {max_diff})"
         else:
             # String/object comparison
             try:
@@ -292,9 +277,7 @@ def compare_zarr_datasets(
     return len(differences) == 0, differences
 
 
-def assert_datasets_equivalent(
-    ds_new: xr.Dataset, ds_ref: xr.Dataset, name: str = "dataset"
-):
+def assert_datasets_equivalent(ds_new: xr.Dataset, ds_ref: xr.Dataset, name: str = "dataset"):
     """
     Assert that two datasets are equivalent, with detailed error messages.
 
@@ -354,10 +337,7 @@ class TestOutputEquivalence:
                     invalid_nans = ref_valid & new_nan
                     if invalid_nans.any():
                         count = invalid_nans.sum()
-                        pytest.fail(
-                            f"Node variable '{var}': {count} values became NaN "
-                            f"that were valid in reference"
-                        )
+                        pytest.fail(f"Node variable '{var}': {count} values became NaN that were valid in reference")
 
         # Check link data
         for var in reference_link_tseries.data_vars:
@@ -372,10 +352,7 @@ class TestOutputEquivalence:
                     invalid_nans = ref_valid & new_nan
                     if invalid_nans.any():
                         count = invalid_nans.sum()
-                        pytest.fail(
-                            f"Link variable '{var}': {count} values became NaN "
-                            f"that were valid in reference"
-                        )
+                        pytest.fail(f"Link variable '{var}': {count} values became NaN that were valid in reference")
 
 
 # =============================================================================
@@ -409,8 +386,7 @@ class TestWarningSuppression:
             write_zarr(ds, output_path, compression_level=5)
 
         assert len(caught_warnings) == 0, (
-            f"Found {len(caught_warnings)} warning(s): "
-            f"{[str(w.message) for w in caught_warnings]}"
+            f"Found {len(caught_warnings)} warning(s): {[str(w.message) for w in caught_warnings]}"
         )
 
     def test_full_pipeline_no_warnings(self, test_case_analysis):
@@ -424,8 +400,7 @@ class TestWarningSuppression:
             wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
 
         assert len(caught_warnings) == 0, (
-            f"Found {len(caught_warnings)} warning(s): "
-            f"{[str(w.message) for w in caught_warnings]}"
+            f"Found {len(caught_warnings)} warning(s): {[str(w.message) for w in caught_warnings]}"
         )
 
 
@@ -449,7 +424,7 @@ class TestConvertSwmmTdeltasToMinutes:
         result = convert_swmm_tdeltas_to_minutes(test_input)
 
         assert len(result) == len(expected)
-        for r, e in zip(result, expected):
+        for r, e in zip(result, expected, strict=True):
             assert abs(r - e) < 0.01, f"Expected {e}, got {r}"
 
     def test_handles_nan_values(self):
@@ -475,7 +450,7 @@ class TestConvertSwmmTdeltasToMinutes:
 
         result = convert_swmm_tdeltas_to_minutes(test_input)
 
-        for r, e in zip(result, expected):
+        for r, e in zip(result, expected, strict=True):
             assert abs(r - e) < 0.01
 
 
@@ -541,9 +516,7 @@ class TestPerformance:
         """Test that vectorized tdelta conversion is fast."""
         # Create large test input
         n = 10000
-        test_input = pd.Series(
-            [f"{i % 10}  {(i % 24):02d}:{(i % 60):02d}" for i in range(n)]
-        )
+        test_input = pd.Series([f"{i % 10}  {(i % 24):02d}:{(i % 60):02d}" for i in range(n)])
 
         start_time = time.time()
         result = convert_swmm_tdeltas_to_minutes(test_input)
@@ -552,9 +525,7 @@ class TestPerformance:
         assert len(result) == n
         # Relaxed timing constraint - current implementation is iterative
         # Will be improved in Phase 1 with vectorization
-        assert (
-            elapsed < 5.0
-        ), f"Conversion of {n} values took {elapsed:.2f}s (should be < 5s)"
+        assert elapsed < 5.0, f"Conversion of {n} values took {elapsed:.2f}s (should be < 5s)"
 
 
 # =============================================================================
@@ -564,9 +535,7 @@ class TestPerformance:
 
 def pytest_configure(config):
     """Configure custom pytest markers."""
-    config.addinivalue_line(
-        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
-    )
+    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
 
 
 # =============================================================================

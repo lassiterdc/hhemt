@@ -9,10 +9,10 @@ These tests verify that the toolkit can handle:
 """
 
 import pytest
-from pathlib import Path
-from tests.fixtures.test_case_catalog import Local_TestCases
+
 import tests.utils_for_testing as tut
 from hhemt.scenario import TRITONSWMM_scenario
+from tests.fixtures.test_case_catalog import Local_TestCases
 
 
 class TestTRITONOnlyIntegration:
@@ -21,9 +21,7 @@ class TestTRITONOnlyIntegration:
     @pytest.fixture
     def triton_only_case(self):
         """Retrieve TRITON-only test case."""
-        return Local_TestCases.retrieve_norfolk_triton_only_test_case(
-            start_from_scratch=True
-        )
+        return Local_TestCases.retrieve_norfolk_triton_only_test_case(start_from_scratch=True)
 
     def test_triton_only_compilation(self, triton_only_case):
         """Test that TRITON-only compiles with correct flags."""
@@ -86,14 +84,12 @@ class TestSWMMOnlyIntegration:
     @pytest.fixture
     def swmm_only_case(self):
         """Retrieve SWMM-only test case."""
-        return Local_TestCases.retrieve_norfolk_swmm_only_test_case(
-            start_from_scratch=True
-        )
+        return Local_TestCases.retrieve_norfolk_swmm_only_test_case(start_from_scratch=True)
 
     def test_swmm_only_compilation(self, swmm_only_case):
         """Test that SWMM compiles successfully."""
         system = swmm_only_case.system
-        analysis = system.analysis
+        analysis = system.analysis  # noqa: F841 - system.analysis is a property that RAISES when unset; the bind IS the check
 
         # Verify toggles are set correctly
         assert system.cfg_system.toggle_triton_model is False
@@ -131,9 +127,7 @@ class TestAllModelsIntegration:
     @pytest.fixture
     def all_models_case(self):
         """Retrieve test case with all models enabled."""
-        return Local_TestCases.retrieve_norfolk_all_models_test_case(
-            start_from_scratch=True
-        )
+        return Local_TestCases.retrieve_norfolk_all_models_test_case(start_from_scratch=True)
 
     def test_all_models_toggles(self, all_models_case):
         """Test that all model toggles are enabled."""
@@ -164,7 +158,10 @@ class TestAllModelsIntegration:
         if system.log.compilation_triton_cpu_successful.get() or system.log.compilation_triton_gpu_successful.get():
             assert scenario.scen_paths.sim_triton_executable is not None
 
-        if system.log.compilation_tritonswmm_cpu_successful.get() or system.log.compilation_tritonswmm_gpu_successful.get():
+        if (
+            system.log.compilation_tritonswmm_cpu_successful.get()
+            or system.log.compilation_tritonswmm_gpu_successful.get()
+        ):
             assert scenario.scen_paths.sim_tritonswmm_executable is not None
 
         if system.log.compilation_swmm_successful.get():

@@ -104,7 +104,8 @@ non_breaking_allowlist:
     layout_signature: "e27854c6749b72a3c78e6771bad21be061bfe9c2b3cb89510c333e6d1b940b22"
   - path: src/hhemt/scenario.py
     justification: >-
-      Two collapsed non-breaking changes. cleanup-rerun-delete-redesign Phase 3 —
+      Several collapsed non-breaking changes, appended in order below.
+      cleanup-rerun-delete-redesign Phase 3 —
       incidental method-signature touch to remove clear_raw_outputs references. AND
       resume-validity-and-cross-experiment-intercomparison Phase 3 — retire the
       vestigial log_run_triton / log_run_tritonswmm / log_run_swmm ScenarioPaths
@@ -126,8 +127,23 @@ non_breaking_allowlist:
       an unpadded input. SIGNATURE-SCOPED as of this change: this entry was previously
       path-keyed with no layout_signature, which made the exemption PERMANENT — every
       later edit to this file passed Check B silently. Re-stamp layout_signature whenever
-      a genuinely non-breaking change lands; a breaking one must bump LAYOUT_VERSION. AND synthetic-event-window-padding [Q85] scrub — the union-of-finite trim and its n_finite==0 raise are REMOVED; the event window is now read from a user-declared CSV (or, absent one, the full time-coordinate extent) and the selection is clipped to it, with a zero-length guard, a CSV-gated endpoint-equality assertion, a property-side zero-length guard, and a rule-(1) forcing-completeness check. _assert_scenario_forcing_window_agreement moves from divisibility to equality over three independent sources. Provably non-breaking: only the LENGTH of the per-scenario sim_weather.nc changes. No path, filename, zarr group, log field, Snakemake rule, fingerprint payload, or _version.json value is added, removed, or renamed, and the clip is the identity on an unpadded no-CSV input. Re-stamped again after a COMMENT-ONLY correction to resolve_event_window's docstring, which claimed the function reads nothing but the window CSV; its no-CSV branch also opens cfg_analysis.weather_timeseries for the axis endpoints. No executable line changed.
-    layout_signature: "47f6503ba38544fbdcefc1266687acad080eeafcb5e26b1c5badb594de550ec2"
+      a genuinely non-breaking change lands; a breaking one must bump LAYOUT_VERSION. AND synthetic-event-window-padding [Q85] scrub — the union-of-finite trim and its n_finite==0 raise are REMOVED; the event window is now read from a user-declared CSV (or, absent one, the full time-coordinate extent) and the selection is clipped to it, with a zero-length guard, a CSV-gated endpoint-equality assertion, a property-side zero-length guard, and a rule-(1) forcing-completeness check. _assert_scenario_forcing_window_agreement moves from divisibility to equality over three independent sources. Provably non-breaking: only the LENGTH of the per-scenario sim_weather.nc changes. No path, filename, zarr group, log field, Snakemake rule, fingerprint payload, or _version.json value is added, removed, or renamed, and the clip is the identity on an unpadded no-CSV input. Re-stamped again after a COMMENT-ONLY correction to resolve_event_window's docstring, which claimed the function reads nothing but the window CSV; its no-CSV branch also opens cfg_analysis.weather_timeseries for the axis endpoints. No executable line changed. AND [Q245] ruff-pin bump v0.6.0 -> v0.15.17 with `--fix` — the
+      autofix reflowed this file (import sort, F401 `typing.Optional`, string-continuation
+      reflow, comment rewraps, three UP032 `.format()` -> f-string conversions, four F541
+      placeholder-less f-string removals), plus three deliberate E501 wraps. Provably
+      non-breaking by AST-unparse diff of HEAD vs working (887 unparsed lines each; the whole
+      semantic delta is 48 diff lines in four classes): the F401 removal is one stdlib NAME
+      whose only surviving occurrences are a docstring and a comment; all four F541 sites are
+      placeholder-less and therefore value-identical, including the two `extbc/` path
+      components and the two `output_folder=` cfg fragments that DO reach disk; all three
+      UP032 conversions are diagnostic `print()`s in
+      return_df_of_nodes_grouped_by_DEM_gridcell with no parser consuming their output, and
+      `"{}".format(v)` and `f"{v}"` both dispatch to `format(v, "")` so they are identities on
+      every value type at those sites. `compute_event_id_slug`'s AST-normalized hash is
+      unchanged (41e679d6...), so V0001's slug-derivation invariant is intact. No path,
+      filename, zarr group, log field, Snakemake rule, fingerprint payload, or _version.json
+      value is added, removed, renamed, or altered in value.
+    layout_signature: "90dc1f68dfd2835cf851971624653437d9d7b1eb7e1aa16007dcbe326dadad1f"
   - path: src/hhemt/config/analysis.py
     justification: >-
       synthetic-event-window-padding [Q85] scrub — ADDITIVE optional fields

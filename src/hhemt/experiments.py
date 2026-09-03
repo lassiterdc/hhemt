@@ -44,28 +44,26 @@ For test infrastructure (synthetic weather, isolated test directories),
 see tests/fixtures/ instead.
 """
 
+import sys
+import warnings
+from importlib.resources import files
 from pathlib import Path
-from typing import Optional
+from zipfile import ZipFile
 
-from hhemt.system import TRITONSWMM_system
-from hhemt.analysis import TRITONSWMM_analysis
+import bagit
+import yaml
+
 import hhemt.constants as cnst
-
+from hhemt.analysis import TRITONSWMM_analysis
+from hhemt.system import TRITONSWMM_system
 from hhemt.utils import (
     fast_rmtree,
-    get_package_root,
-    get_package_data_root,
     fill_template,
+    get_package_data_root,
+    get_package_root,
     read_yaml,
     write_yaml,
 )
-import sys
-import yaml
-import bagit
-from zipfile import ZipFile
-
-import warnings
-from importlib.resources import files
 
 with warnings.catch_warnings():
     # Only ignore the pkg_resources deprecation warning
@@ -79,16 +77,15 @@ with warnings.catch_warnings():
     except ImportError:
         HydroShare = None
 
-from hhemt.config.loaders import (
-    load_system_config,
-    load_system_config_from_dict,
-)
-
 import hashlib
 import json
 import re
 
 from hhemt.config.case_manifest import CaseManifest
+from hhemt.config.loaders import (
+    load_system_config,
+    load_system_config_from_dict,
+)
 from hhemt.exceptions import ConfigurationError, ProcessingError
 
 
@@ -142,11 +139,7 @@ class TRITON_SWMM_experiment:
         # `Toolkit(exp.system)` is impossible (toolkit.py:96 reads system.analysis).
         # This constructor was the sole system+analysis pair-builder omitting it.
         self.system._analysis = self.analysis
-        self.test_case_directory = (
-            self.retrieve_test_data_directory(case_name)
-            if case_name is not None
-            else None
-        )
+        self.test_case_directory = self.retrieve_test_data_directory(case_name) if case_name is not None else None
         self.bundle_root: Path | None = None
 
     @classmethod
@@ -164,7 +157,7 @@ class TRITON_SWMM_experiment:
         weather_events_to_simulate: str,
         analysis_description: str,
         download_if_exists: bool = False,
-        example_data_dir: Optional[Path] = None,
+        example_data_dir: Path | None = None,
     ):
         """
         Load a case study example from configuration templates.
@@ -413,15 +406,9 @@ class TRITON_SWMM_experiment:
             from hhemt.config.loaders import yaml_to_model
 
             _mf = bundle_root / "bundle_manifest.json"
-            _cb_raw = (
-                (json.loads(_mf.read_text()) or {}).get("container_build")
-                if _mf.is_file()
-                else None
-            )
+            _cb_raw = (json.loads(_mf.read_text()) or {}).get("container_build") if _mf.is_file() else None
             # Back-compat: a pre-multi-SIF bundle carries a single dict; normalize to a list.
-            _blocks = (
-                _cb_raw if isinstance(_cb_raw, list) else ([_cb_raw] if _cb_raw else [])
-            )
+            _blocks = _cb_raw if isinstance(_cb_raw, list) else ([_cb_raw] if _cb_raw else [])
             _cfg_hpc_model = yaml_to_model(hpc_cfg_path, _hpc_model)
             # ADR-19(vii) D-E guard, generalized to SET-CONTAINMENT (multi-SIF, Option A):
             # every distinct GPU arch the matrix requires (gpu_hardware namespace) must be
@@ -505,9 +492,7 @@ class TRITON_SWMM_experiment:
         else:
             return None
         if not path.is_file():
-            raise FileNotFoundError(
-                f"hpc_system_config not found at {path} (from {source})."
-            )
+            raise FileNotFoundError(f"hpc_system_config not found at {path} (from {source}).")
         print(f"[Ingest] hpc_system_config: {path} (from {source})", flush=True)
         return path.resolve()
 
@@ -542,9 +527,7 @@ class TRITON_SWMM_experiment:
         cfg = read_yaml(hpc_cfg_path)
         container = dict(cfg.get("container") or {})
         container["sif_path"] = str(Path(sif_path).resolve())  # process/default (arch-agnostic)
-        container["sif_paths_by_arch"] = {
-            a: str(Path(p).resolve()) for a, p in sif_paths_by_arch.items()
-        }
+        container["sif_paths_by_arch"] = {a: str(Path(p).resolve()) for a, p in sif_paths_by_arch.items()}
         cfg["container"] = container
         target_path.parent.mkdir(parents=True, exist_ok=True)
         write_yaml(cfg, target_path)
@@ -586,11 +569,7 @@ class TRITON_SWMM_experiment:
             import json
 
             _cb = (json.loads(manifest_path.read_text()) or {}).get("container_build")
-            block = (
-                _cb
-                if isinstance(_cb, dict)
-                else (_cb[0] if isinstance(_cb, list) and _cb else {})
-            )
+            block = _cb if isinstance(_cb, dict) else (_cb[0] if isinstance(_cb, list) and _cb else {})
         def_relpath = block.get("def_relpath")
         if not def_relpath:
             raise ConfigurationError(
@@ -680,11 +659,7 @@ class TRITON_SWMM_experiment:
         """
         from hhemt.config.hpc_system import resolve_gpu_target
 
-        carried = {
-            b["target_arch"]
-            for b in carried_blocks
-            if b.get("target_arch") and b["target_arch"] != "unknown"
-        }
+        carried = {b["target_arch"] for b in carried_blocks if b.get("target_arch") and b["target_arch"] != "unknown"}
         # Enumerate the matrix's partitions (master + best-effort sensitivity sub-rows).
         cfg = read_yaml(analysis_config_path) or {}
         partitions: set[str] = set()
@@ -704,18 +679,10 @@ class TRITON_SWMM_experiment:
                         _df = pd.read_csv(_setup)
                         for _col in ("hpc.partition", "analysis.hpc_ensemble_partition"):
                             if _col in _df.columns:
-                                partitions |= {
-                                    str(v)
-                                    for v in _df[_col].dropna().tolist()
-                                    if str(v).strip()
-                                }
+                                partitions |= {str(v) for v in _df[_col].dropna().tolist() if str(v).strip()}
             except Exception:
                 pass  # degrade to master-only — never false-close on a setup-read failure
-        required = {
-            hw
-            for hw in (resolve_gpu_target(cfg_hpc_system, p)[0] for p in partitions)
-            if hw
-        }
+        required = {hw for hw in (resolve_gpu_target(cfg_hpc_system, p)[0] for p in partitions) if hw}
         missing = required - carried
         if not missing:
             return  # every required arch is covered (incl. the a100->a100 [Q8] chain)
@@ -737,8 +704,7 @@ class TRITON_SWMM_experiment:
         raise ConfigurationError(
             field="container_build.target_arch",
             message=(
-                detail
-                + "\n\nSupply one .def per required arch at emit time "
+                detail + "\n\nSupply one .def per required arch at emit time "
                 "(hhemt bundle ... --container-defs <a.def> --container-defs <b.def>), "
                 "point your partitions at hardware the carried .defs cover, or — if you "
                 "have confirmed run-compatibility — re-ingest with allow_cross_family_sif="
@@ -775,10 +741,7 @@ class TRITON_SWMM_experiment:
             raise ProcessingError(
                 operation="doi_ingest_bundle_zip",
                 filepath=str(payload_root),
-                reason=(
-                    f"expected exactly one bundle .zip in the fetched deposit, found "
-                    f"{len(candidates)}: {rel}"
-                ),
+                reason=(f"expected exactly one bundle .zip in the fetched deposit, found {len(candidates)}: {rel}"),
             )
         zip_path = candidates[0]
         if expected_sha256 is not None:
@@ -796,10 +759,7 @@ class TRITON_SWMM_experiment:
             raise ProcessingError(
                 operation="doi_ingest_sha256",
                 filepath=str(path),
-                reason=(
-                    f"sha256 mismatch on the fetched bundle: expected "
-                    f"{expected_sha256}, got {actual}"
-                ),
+                reason=(f"sha256 mismatch on the fetched bundle: expected {expected_sha256}, got {actual}"),
             )
 
     @staticmethod
@@ -850,9 +810,7 @@ class TRITON_SWMM_experiment:
             )
 
     @classmethod
-    def _materialize_input_deposits(
-        cls, bundle_root: Path, missing: list[tuple[str, str]]
-    ) -> list[tuple[str, str]]:
+    def _materialize_input_deposits(cls, bundle_root: Path, missing: list[tuple[str, str]]) -> list[tuple[str, str]]:
         """Fetch the excluded inputs a bundle carries BY REFERENCE (ADR-20, as amended).
 
         This is outcome 2 of the three-outcome materialize gate. For each declared-but-absent
@@ -918,9 +876,7 @@ class TRITON_SWMM_experiment:
         return still_missing
 
     @classmethod
-    def _assert_declared_inputs_exist(
-        cls, system_config_path: Path, analysis_config_path: Path
-    ) -> None:
+    def _assert_declared_inputs_exist(cls, system_config_path: Path, analysis_config_path: Path) -> None:
         """Fail-closed materialize gate: raise ``ProcessingError`` naming EVERY
         reconstituted input Path that does not exist on disk.
 
@@ -1022,7 +978,7 @@ class TRITON_SWMM_experiment:
         cfg_system_yaml: Path,
         weather_events_to_simulate: str,
         analysis_description: str,
-        example_data_dir: Optional[Path] = None,
+        example_data_dir: Path | None = None,
     ):
         """
         Load analysis config for any case study.
@@ -1047,9 +1003,7 @@ class TRITON_SWMM_experiment:
         filled_yaml_data["analysis_description"] = analysis_description
         cfg_system = load_system_config(cfg_system_yaml)
         analysis_id = filled_yaml_data["analysis_id"]
-        cfg_yaml = (
-            Path(cfg_system.system_directory) / f"config_analysis_{analysis_id}.yaml"
-        )
+        cfg_yaml = Path(cfg_system.system_directory) / f"config_analysis_{analysis_id}.yaml"
         cfg_yaml.parent.mkdir(parents=True, exist_ok=True)
         write_yaml(filled_yaml_data, cfg_yaml)
         return cfg_yaml
@@ -1060,7 +1014,7 @@ class TRITON_SWMM_experiment:
         app_name: str,
         case_name: str,
         analysis_config_template: str,
-        example_data_dir: Optional[Path] = None,
+        example_data_dir: Path | None = None,
     ):
         """
         Fill analysis YAML template for any case study.
@@ -1079,9 +1033,7 @@ class TRITON_SWMM_experiment:
             example_data_dir=example_data_dir,
         )
         cfg_template = cls._load_config_filepath(case_name, analysis_config_template)
-        filled_yaml_data = cls._return_filled_template_yaml_dictionary(
-            cfg_template, mapping
-        )
+        filled_yaml_data = cls._return_filled_template_yaml_dictionary(cfg_template, mapping)
         return filled_yaml_data
 
     @classmethod
@@ -1091,7 +1043,7 @@ class TRITON_SWMM_experiment:
         system_config_template: str,
         case_config_filename: str,
         download_if_exists: bool,
-        example_data_dir: Optional[Path] = None,
+        example_data_dir: Path | None = None,
         verbose: bool = True,
     ):
         """
@@ -1117,19 +1069,15 @@ class TRITON_SWMM_experiment:
             example_data_dir=example_data_dir,
         )
         cfg_template = cls._load_config_filepath(case_name, system_config_template)
-        filled_yaml_data = cls._return_filled_template_yaml_dictionary(
-            cfg_template, mapping
-        )
-        cfg_system = load_system_config_from_dict(filled_yaml_data)
+        filled_yaml_data = cls._return_filled_template_yaml_dictionary(cfg_template, mapping)
+        load_system_config_from_dict(filled_yaml_data)  # validation side effect; binding intentionally dropped
 
         # download data if it doesn't exist
         if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
             pass
         else:
             if verbose:
-                print(
-                    f"Download example data to {mapping['DATA_DIR']} using Hydroshare"
-                )
+                print(f"Download example data to {mapping['DATA_DIR']} using Hydroshare")
             if case_manifest.host == "zenodo":
                 cls._download_data_from_zenodo(
                     case_manifest,
@@ -1156,7 +1104,7 @@ class TRITON_SWMM_experiment:
     def _get_case_data_and_package_directory_mapping_dict(
         cls,
         case_name: str,
-        example_data_dir: Optional[Path] = None,
+        example_data_dir: Path | None = None,
     ):
         """
         Get directory mappings for any case study.
@@ -1174,9 +1122,7 @@ class TRITON_SWMM_experiment:
             root = get_package_data_root(cnst.APP_NAME)
         hydroshare_root_dir = root / "examples" / case_name
         data_dir = hydroshare_root_dir / "data" / "contents"
-        package_dir = (
-            get_package_root(cnst.APP_NAME).parents[1] / "test_data" / case_name
-        )
+        package_dir = get_package_root(cnst.APP_NAME).parents[1] / "test_data" / case_name
 
         mapping = dict(
             DATA_DIR=str(data_dir),
@@ -1233,9 +1179,7 @@ class TRITON_SWMM_experiment:
                 raise ProcessingError(
                     operation="zenodo_resolve",
                     filepath=None,
-                    reason=(
-                        f"cannot resolve a Zenodo record id from doi={doi!r} pid={pid!r}"
-                    ),
+                    reason=(f"cannot resolve a Zenodo record id from doi={doi!r} pid={pid!r}"),
                 )
             if not re.fullmatch(r"[0-9]+", recid):
                 raise ProcessingError(
@@ -1256,9 +1200,7 @@ class TRITON_SWMM_experiment:
             import requests  # explicit dep declared in pyproject
 
             base = os.environ.get("HHEMT_ZENODO_BASE_URL", "https://zenodo.org").rstrip("/")
-            resp = requests.get(
-                f"{base}/api/records/{recid}", timeout=60
-            )
+            resp = requests.get(f"{base}/api/records/{recid}", timeout=60)
             if resp.status_code != 200:
                 raise ProcessingError(
                     operation="zenodo_fetch",
@@ -1292,18 +1234,14 @@ class TRITON_SWMM_experiment:
             with ZipFile(zip_path, "r") as z:
                 z.extractall(dest.parent)
             with ZipFile(zip_path, "r") as z:
-                top_level_dirs = {
-                    Path(f).parts[0] for f in z.namelist() if Path(f).parts
-                }
+                top_level_dirs = {Path(f).parts[0] for f in z.namelist() if Path(f).parts}
             if len(top_level_dirs) == 1:
                 bag_root = dest.parent / next(iter(top_level_dirs))
             else:
                 raise ProcessingError(
                     operation="hydroshare_bag_extract",
                     filepath=str(zip_path),
-                    reason=(
-                        "ZIP has multiple top-level folders; cannot determine Bag root."
-                    ),
+                    reason=("ZIP has multiple top-level folders; cannot determine Bag root."),
                 )
             if validate:
                 bag = bagit.Bag(str(bag_root))
@@ -1313,10 +1251,7 @@ class TRITON_SWMM_experiment:
                     raise ProcessingError(
                         operation="hydroshare_bag_validation",
                         filepath=str(bag_root),
-                        reason=(
-                            "bagit manifest validation failed (bag is not "
-                            "self-consistent)."
-                        ),
+                        reason=("bagit manifest validation failed (bag is not self-consistent)."),
                     )
             cls._verify_manifest(bag_root, expected_manifest)
             bag_root.rename(dest)
@@ -1330,9 +1265,7 @@ class TRITON_SWMM_experiment:
         )
 
     @classmethod
-    def _fetch_file_by_url(
-        cls, url: str, dest: Path, *, expected_sha256: str | None = None
-    ) -> Path:
+    def _fetch_file_by_url(cls, url: str, dest: Path, *, expected_sha256: str | None = None) -> Path:
         """Streaming 1 MiB-chunk download of a single URL to ``dest`` (the digest core).
 
         Used by the Zenodo per-file branch of ``_fetch_deposit_files`` AND by the crate's
@@ -1546,7 +1479,7 @@ class NorfolkIreneExperiment:
     def load(
         cls,
         download_if_exists: bool = False,
-        example_data_dir: Optional[Path] = None,
+        example_data_dir: Path | None = None,
     ) -> TRITON_SWMM_experiment:
         """
         Load Norfolk coastal flooding example.
@@ -1596,7 +1529,7 @@ class NorfolkObservedExperiment:
     def load(
         cls,
         download_if_exists: bool = False,
-        example_data_dir: Optional[Path] = None,
+        example_data_dir: Path | None = None,
     ) -> TRITON_SWMM_experiment:
         """
         Load Norfolk coastal flooding example.
@@ -1612,9 +1545,7 @@ class NorfolkObservedExperiment:
         # this method just changes the weather_events_to_simulate
         # for analysis config
 
-        weather_events_to_simulate = (
-            "obs_event_summaries_from_yrs_with_complete_coverage.csv"
-        )
+        weather_events_to_simulate = "obs_event_summaries_from_yrs_with_complete_coverage.csv"
         analysis_description = "Observed event ensemble"
         return TRITON_SWMM_experiment.from_case_study(
             case_name=cnst.NORFOLK_EX,

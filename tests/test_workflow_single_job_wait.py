@@ -5,16 +5,18 @@ This test module verifies that the wait_for_completion parameter
 works correctly for 1_job_many_srun_tasks mode.
 """
 
-import pytest
-from unittest.mock import Mock, patch
 from pathlib import Path
+from unittest.mock import Mock, patch
+
+import pytest
+
 from hhemt.workflow import SnakemakeWorkflowBuilder
 
 pytestmark = pytest.mark.requires_snakemake_subprocess
 
 
 @pytest.fixture
-def mock_analysis():
+def mock_analysis(tmp_path):
     """Create a mock analysis object for testing."""
     analysis = Mock()
     analysis.cfg_analysis = Mock()
@@ -23,11 +25,9 @@ def mock_analysis():
     analysis.cfg_analysis.hpc_total_nodes = 1
     analysis.cfg_analysis.mem_gb_per_cpu = 2
     analysis.analysis_paths = Mock()
-    analysis.analysis_paths.analysis_dir = Path("/test/analysis")
+    analysis.analysis_paths.analysis_dir = tmp_path / "analysis"
     analysis._resource_manager = Mock()
-    analysis._resource_manager._get_simulation_resource_requirements.return_value = {
-        "n_gpus": 0
-    }
+    analysis._resource_manager._get_simulation_resource_requirements.return_value = {"n_gpus": 0}
     analysis._system = Mock()
     analysis._python_executable = "python"
     analysis._refresh_log = Mock()
@@ -189,9 +189,7 @@ class TestSubmitSingleJobWorkflow:
         )
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -220,9 +218,7 @@ class TestSubmitSingleJobWorkflow:
         ]
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -251,9 +247,7 @@ class TestSubmitSingleJobWorkflow:
         ]
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -280,9 +274,7 @@ class TestSubmitSingleJobWorkflow:
         )
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -308,9 +300,7 @@ class TestSubmitSingleJobWorkflow:
         )
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -336,9 +326,7 @@ class TestSubmitSingleJobWorkflow:
         )
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -377,9 +365,7 @@ class TestSubmitWorkflowIntegration:
             yield
 
     @patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow")
-    def test_submit_workflow_passes_wait_parameter(
-        self, mock_submit_single, mock_analysis
-    ):
+    def test_submit_workflow_passes_wait_parameter(self, mock_submit_single, mock_analysis):
         """Test that submit_workflow passes wait_for_completion to _submit_single_job_workflow."""
         mock_analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
         mock_submit_single.return_value = {
@@ -392,15 +378,13 @@ class TestSubmitWorkflowIntegration:
 
         with (
             patch.object(builder, "generate_snakefile_content") as mock_gen,
-            patch.object(
-                builder, "run_snakemake_local", return_value={"success": True}
-            ),
+            patch.object(builder, "run_snakemake_local", return_value={"success": True}),
             patch("pathlib.Path.write_text"),
         ):
             mock_gen.return_value = "# Snakefile"
 
             # Call with wait_for_completion=True
-            result = builder.submit_workflow(
+            builder.submit_workflow(
                 wait_for_completion=True,
                 verbose=False,
             )
@@ -424,15 +408,13 @@ class TestSubmitWorkflowIntegration:
 
         with (
             patch.object(builder, "generate_snakefile_content") as mock_gen,
-            patch.object(
-                builder, "run_snakemake_local", return_value={"success": True}
-            ),
+            patch.object(builder, "run_snakemake_local", return_value={"success": True}),
             patch("pathlib.Path.write_text"),
         ):
             mock_gen.return_value = "# Snakefile"
 
             # Call without wait_for_completion parameter
-            result = builder.submit_workflow(verbose=False)
+            builder.submit_workflow(verbose=False)
 
             # Verify default is False
             mock_submit_single.assert_called_once()
@@ -480,9 +462,7 @@ def test_wait_watchdog_fails_fast_on_stall(monkeypatch, _builder_with_status_dir
     # unreachable, so the test would hang rather than assert.
     monkeypatch.setattr(type(b), "_workflow_has_live_slurm_jobs", lambda self, **kw: set())
     # collapse the stall window + poll so the test is instant
-    res = b._wait_for_tmux_session_completion(
-        "sess", verbose=False, poll_interval_s=0, no_progress_timeout_min=1e-6
-    )
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0, no_progress_timeout_min=1e-6)
     assert res["completed"] is False
     assert "stall" in res["message"].lower()
 
@@ -531,16 +511,12 @@ def test_wait_watchdog_does_not_kill_while_slurm_jobs_are_live(monkeypatch, _bui
 
     monkeypatch.setattr("hhemt.workflow.subprocess.run", _fake_run)
     monkeypatch.setattr(type(b), "_tmux_snakemake_exit_status", lambda self, s: 0)
-    res = b._wait_for_tmux_session_completion(
-        "sess", verbose=False, poll_interval_s=0, no_progress_timeout_min=1e-6
-    )
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0, no_progress_timeout_min=1e-6)
     assert res["completed"] is True
     assert "stall" not in res["message"].lower()
 
 
-def test_wait_watchdog_uses_configured_backstop_over_walltime_derivation(
-    monkeypatch, _builder_with_status_dir
-):
+def test_wait_watchdog_uses_configured_backstop_over_walltime_derivation(monkeypatch, _builder_with_status_dir):
     """cfg.hpc_no_progress_timeout_min overrides max(30, 6*hpc_time_min_per_sim).
 
     The clock stub must ADVANCE: a constant monotonic makes now - last_progress_t
