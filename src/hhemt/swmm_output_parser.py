@@ -1,19 +1,18 @@
-import sys
-import re
 import io
+import re
 import warnings
 from collections import Counter
-from functools import lru_cache
-from typing import Any, NamedTuple, cast
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
+from typing import Any, NamedTuple, cast
+
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-
 try:  # pragma: no cover - used by line_profiler
-    profile  # type: ignore[name-defined]
+    profile  # type: ignore[name-defined]  # noqa: B018 - probing for line_profiler's injected global; the bare name IS the check
 except NameError:  # pragma: no cover
 
     def profile(func):  # type: ignore[no-redef]
@@ -21,11 +20,10 @@ except NameError:  # pragma: no cover
 
 
 from hhemt.constants import (
+    LST_COL_HEADERS_LINK_FLOW_SUMMARY,
     LST_COL_HEADERS_NODE_FLOOD_SUMMARY,
     LST_COL_HEADERS_NODE_FLOW_SUMMARY,
-    LST_COL_HEADERS_LINK_FLOW_SUMMARY,
 )
-
 
 TDELTA_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+):(\d+)")
 RPT_DATETIME_FORMAT = "%m/%d/%Y %H:%M:%S"
@@ -85,7 +83,7 @@ def retrieve_swmm_performance_stats_from_rpt(
 
     for encoding in attempted_encodings:
         try:
-            with open(report_file_path, "r", encoding=encoding) as f:
+            with open(report_file_path, encoding=encoding) as f:
                 content = f.read()
             break
         except UnicodeDecodeError as e:
@@ -95,8 +93,7 @@ def retrieve_swmm_performance_stats_from_rpt(
         attempted = ", ".join(attempted_encodings)
         details = " | ".join(decode_errors)
         raise UnicodeError(
-            f"Failed to decode SWMM report file {report_file_path} using encodings "
-            f"[{attempted}]. Errors: {details}"
+            f"Failed to decode SWMM report file {report_file_path} using encodings " f"[{attempted}]. Errors: {details}"
         )
 
     match_hms = re.search(r"Total elapsed time:\s*(\d{1,2}):(\d{2}):(\d{2})", content)
@@ -109,10 +106,7 @@ def retrieve_swmm_performance_stats_from_rpt(
     elif match_lt_1s is not None:
         result["wall_time_s"] = 1.0
     else:
-        raise ValueError(
-            f"Could not find supported elapsed-time format in SWMM report file "
-            f"{report_file_path}"
-        )
+        raise ValueError(f"Could not find supported elapsed-time format in SWMM report file " f"{report_file_path}")
 
     thread_match = re.search(
         r"Number of Threads\s*\.{2,}\s*(\d+)",
@@ -171,18 +165,10 @@ def return_swmm_outputs(
             valid,
         ) = parse_rpt_single_pass(swmm_timeseries_result_file)
         if valid is False:
-            print(
-                "The RPT file seems to not contain any information: {}".format(
-                    swmm_timeseries_result_file
-                )
-            )
+            print(f"The RPT file seems to not contain any information: {swmm_timeseries_result_file}")
         # make sure the data arrays are data type float
-        ds_node_tseries = convert_datavars_to_dtype(
-            ds_node_tseries, lst_dtypes_to_try=[float]
-        )
-        ds_link_tseries = convert_datavars_to_dtype(
-            ds_link_tseries, lst_dtypes_to_try=[float]
-        )
+        ds_node_tseries = convert_datavars_to_dtype(ds_node_tseries, lst_dtypes_to_try=[float])
+        ds_link_tseries = convert_datavars_to_dtype(ds_link_tseries, lst_dtypes_to_try=[float])
         # make sure the coordinates are the right data type
         ds_node_tseries = convert_coords_to_dtype(
             ds_node_tseries,
@@ -201,37 +187,26 @@ def return_swmm_outputs(
         rpt_file = swmm_timeseries_result_file.with_suffix(".rpt")
         if rpt_file.exists():
             try:
-                with open(rpt_file, "r", encoding="latin-1") as file:
+                with open(rpt_file, encoding="latin-1") as file:
                     rpt_lines = file.readlines()
-                lst_node_fld_summary = return_lines_for_section_of_rpt(
-                    "Node Flooding Summary", lines=rpt_lines
-                )
-                lst_node_flow_summary = return_lines_for_section_of_rpt(
-                    "Node Inflow Summary", lines=rpt_lines
-                )
-                lst_link_flow_summary = return_lines_for_section_of_rpt(
-                    "Link Flow Summary", lines=rpt_lines
-                )
+                lst_node_fld_summary = return_lines_for_section_of_rpt("Node Flooding Summary", lines=rpt_lines)
+                lst_node_flow_summary = return_lines_for_section_of_rpt("Node Inflow Summary", lines=rpt_lines)
+                lst_link_flow_summary = return_lines_for_section_of_rpt("Link Flow Summary", lines=rpt_lines)
                 dict_system_results = return_swmm_system_outputs(rpt_lines)
             except Exception as exc:
                 warnings.warn(
                     f"Failed to parse SWMM RPT summaries from {rpt_file}: {exc}",
                     UserWarning,
+                    stacklevel=2,
                 )
     #
     if use_rpt_for_tseries:
         lst_node_fld_summary = dict_section_lines.get("Node Flooding Summary", [])
         lst_node_flow_summary = dict_section_lines.get("Node Inflow Summary", [])
         lst_link_flow_summary = dict_section_lines.get("Link Flow Summary", [])
-    df_node_flood_summary = format_rpt_section_into_dataframe(
-        lst_node_fld_summary, lst_col_headers_node_flood_summary
-    )
-    df_node_flow_summary = format_rpt_section_into_dataframe(
-        lst_node_flow_summary, lst_col_headers_node_flow_summary
-    )
-    df_link_flow_summary = format_rpt_section_into_dataframe(
-        lst_link_flow_summary, lst_col_headers_link_flow_summary
-    )
+    df_node_flood_summary = format_rpt_section_into_dataframe(lst_node_fld_summary, lst_col_headers_node_flood_summary)
+    df_node_flow_summary = format_rpt_section_into_dataframe(lst_node_flow_summary, lst_col_headers_node_flow_summary)
+    df_link_flow_summary = format_rpt_section_into_dataframe(lst_link_flow_summary, lst_col_headers_link_flow_summary)
     # combine event summary dataframes into an xarray dataset
     df_node_flood_summary.set_index("node_id", inplace=True)
     df_node_flow_summary.set_index("node_id", inplace=True)
@@ -245,9 +220,7 @@ def return_swmm_outputs(
         df_node_summaries["time_of_max_flow_d_hr_mn"]
     )
     #
-    df_node_summaries = df_node_summaries.drop(
-        columns=["time_of_max_flood_d_hr_mn", "time_of_max_flow_d_hr_mn"]
-    )
+    df_node_summaries = df_node_summaries.drop(columns=["time_of_max_flood_d_hr_mn", "time_of_max_flow_d_hr_mn"])
     # remove spaces from node id column
     lst_node_ids = []
     for val in df_node_summaries.index.values:
@@ -262,9 +235,7 @@ def return_swmm_outputs(
     df_link_flow_summary["time_of_max_flow_min"] = convert_swmm_tdeltas_to_minutes(
         df_link_flow_summary["time_of_max_flow_d_hr_mn"]
     )
-    df_link_flow_summary = df_link_flow_summary.drop(
-        columns=["time_of_max_flow_d_hr_mn"]
-    )
+    df_link_flow_summary = df_link_flow_summary.drop(columns=["time_of_max_flow_d_hr_mn"])
 
     def _clean_link_id(link_id):
         """Clean a single link_id value."""
@@ -276,9 +247,7 @@ def return_swmm_outputs(
                 return parts[0] if parts else link_id
             return str(link_id)
 
-    df_link_flow_summary["link_id"] = df_link_flow_summary["link_id"].apply(
-        _clean_link_id
-    )
+    df_link_flow_summary["link_id"] = df_link_flow_summary["link_id"].apply(_clean_link_id)
     df_link_flow_summary.set_index("link_id", inplace=True)
 
     ds_node_summaries = df_node_summaries.to_xarray()
@@ -289,17 +258,13 @@ def return_swmm_outputs(
         lst_dtypes_to_try=[str],
         coords_to_coerce=["node_id", "link_id"],
     )
-    ds_node_summaries = convert_datavars_to_dtype(
-        ds_node_summaries, lst_dtypes_to_try=[float, str]
-    )
+    ds_node_summaries = convert_datavars_to_dtype(ds_node_summaries, lst_dtypes_to_try=[float, str])
     ds_link_flow_summary = convert_coords_to_dtype(
         ds_link_flow_summary,
         lst_dtypes_to_try=[str],
         coords_to_coerce=["node_id", "link_id"],
     )
-    ds_link_flow_summary = convert_datavars_to_dtype(
-        ds_link_flow_summary, lst_dtypes_to_try=[float, str]
-    )
+    ds_link_flow_summary = convert_datavars_to_dtype(ds_link_flow_summary, lst_dtypes_to_try=[float, str])
 
     ds_nodes = xr.merge([ds_node_summaries, ds_node_tseries], join="outer")
     ds_links = xr.merge([ds_link_flow_summary, ds_link_tseries], join="outer")
@@ -515,8 +480,8 @@ def _bulk_parse_tseries(content: str):
     m_link = _RE_LINK_TSERIES_SECTION.search(content)
 
     node_section_end = m_link.start() if m_link else len(content)
-    node_section = content[m_node.end():node_section_end] if m_node else ""
-    link_section = content[m_link.end():] if m_link else ""
+    node_section = content[m_node.end() : node_section_end] if m_node else ""
+    link_section = content[m_link.end() :] if m_link else ""
 
     ds_node_tseries = _bulk_parse_section(
         node_section,
@@ -571,9 +536,7 @@ def _bulk_parse_section(section_text, kind_filter, idx_colname, value_cols):
         engine="c",
         dtype={"date": str, "time": str},
     )
-    df["date_time"] = pd.to_datetime(
-        df["date"] + " " + df["time"], format=RPT_DATETIME_FORMAT, errors="coerce"
-    )
+    df["date_time"] = pd.to_datetime(df["date"] + " " + df["time"], format=RPT_DATETIME_FORMAT, errors="coerce")
     if df["date_time"].isna().any():
         raise ValueError(
             "Parsed RPT date_time values contained NaT. "
@@ -589,9 +552,8 @@ def _bulk_parse_section(section_text, kind_filter, idx_colname, value_cols):
 
 def _iter_rpt_lines(f_rpt: Path):
     """Yield lines from an RPT file."""
-    with open(f_rpt, "r", encoding="latin-1") as file:
-        for line in file:
-            yield line
+    with open(f_rpt, encoding="latin-1") as file:
+        yield from file
 
 
 def rpt_is_complete(f_rpt: Path) -> bool:
@@ -659,7 +621,7 @@ def rpt_status(f_rpt: Path) -> RptStatus:
         return RptStatus(False, False)
     finalized = False
     has_errors = False
-    with open(f_rpt, "r", encoding="latin-1") as fh:
+    with open(f_rpt, encoding="latin-1") as fh:
         for line in fh:
             if not finalized and "Analysis ended on" in line:
                 finalized = True
@@ -687,9 +649,7 @@ def _build_system_results(
     flow_units = line_flw_units.split(".")[-1].split("\n")[0].split(" ")[-1].lower()
 
     if runoff_continuity_error_line is not None:
-        runoff_continuity_error_perc = float(
-            runoff_continuity_error_line.split(" ")[-1].split("\n")[0]
-        )
+        runoff_continuity_error_perc = float(runoff_continuity_error_line.split(" ")[-1].split("\n")[0])
     else:
         runoff_continuity_error_perc = np.nan
     flow_continuity_error_perc = float(
@@ -749,15 +709,11 @@ def parse_hydrology_rpt_summary(f_rpt: Path):
     absent Subcatchment Runoff Summary yields an empty Dataset with the attrs
     still populated, because a hydrology model with zero subcatchments is legal.
     """
-    with open(f_rpt, "r", encoding="latin-1") as fh:
+    with open(f_rpt, encoding="latin-1") as fh:
         rpt_lines = fh.readlines()
     dict_system_results = return_swmm_system_outputs(rpt_lines)
-    lst_rows = return_lines_for_section_of_rpt(
-        "Subcatchment Runoff Summary", lines=rpt_lines
-    )
-    df = format_rpt_section_into_dataframe(
-        lst_rows, list(LST_COL_HEADERS_SUBCATCH_RUNOFF_SUMMARY)
-    )
+    lst_rows = return_lines_for_section_of_rpt("Subcatchment Runoff Summary", lines=rpt_lines)
+    df = format_rpt_section_into_dataframe(lst_rows, list(LST_COL_HEADERS_SUBCATCH_RUNOFF_SUMMARY))
     if not df.empty:
         df = df.set_index("subcatchment_id")
     ds = df.to_xarray()
@@ -778,7 +734,7 @@ def _parse_analysis_end_line(end_line: str):
     day = lst_info_in_line[2]
     assumed_year = datetime.today().year
     time = lst_info_in_line[3]
-    datetime_string = "{}-{}-{} {}".format(month, day, assumed_year, time)
+    datetime_string = f"{month}-{day}-{assumed_year} {time}"
     return pd.to_datetime(datetime_string, format="%b-%d-%Y %H:%M:%S")
 
 
@@ -812,7 +768,7 @@ def _build_tseries_datasets(dict_nodes, dict_links):
 def return_lines_for_section_of_rpt(section_header, f_rpt=None, lines=None):
     lst_section_lines = []
     if lines is None:
-        with open(f_rpt, "r", encoding="latin-1") as file:  # type: ignore
+        with open(f_rpt, encoding="latin-1") as file:  # type: ignore
             # Read all lines from the file
             lines = file.readlines()
     line_num = -1
@@ -882,7 +838,7 @@ def return_node_time_series_results_from_rpt(
     # section_header, lines = "Node Time Series Results", rpt_lines
     # lst_section_lines = []
     if lines is None:
-        with open(f_rpt, "r", encoding="latin-1") as file:  # type: ignore
+        with open(f_rpt, encoding="latin-1") as file:  # type: ignore
             # Read all lines from the file
             lines = file.readlines()
     encountered_header = False
@@ -943,14 +899,31 @@ def return_node_time_series_results_from_rpt(
 
 
 def return_node_time_series_results_from_outfile(f_outfile):
-    from pyswmm import Output, NodeSeries, LinkSeries
+    from pyswmm import LinkSeries, NodeSeries, Output
 
     with Output(str(f_outfile)) as out:
         d_links = out.links
         d_nodes = out.nodes
         units = out.units
         if units["system"] != "SI":  # type: ignore
-            sys.exit("SWMM outputs are not in SI units!")
+            # RAISE, never sys.exit. SystemExit derives from BaseException, so no
+            # `except Exception` in any caller catches it and the process dies with
+            # no traceback -- the un-diagnosable shape that made an unrelated
+            # 123-scenario failure take a full session to attribute. ProcessingError
+            # is this module's own family (CLI exit 5) and carries the file.
+            from hhemt.exceptions import ProcessingError
+
+            raise ProcessingError(
+                operation="return_node_time_series_results_from_outfile",
+                filepath=Path(f_outfile),
+                reason=(
+                    f"SWMM outputs are not in SI units (unit system reported: "
+                    f"{units['system']!r}). The model's [OPTIONS] FLOW_UNITS must be one of "
+                    "CMS, LPS or MLD; CFS, GPM and MGD are US units, and an ABSENT "
+                    "FLOW_UNITS line defaults to CFS. Fix it in the SWMM template named by "
+                    "system_config, not in the generated per-scenario .inp, which inherits it."
+                ),
+            )
         # PROCESSING NODES
         dic_dfs = dict(depth_m=[], head_m=[], inflow_flow_cms=[], flooding_cms=[])
         for node_id in d_nodes.keys():
@@ -995,11 +968,7 @@ def return_node_time_series_results_from_outfile(f_outfile):
         #
         lst_dfs = []
         for key in dic_dfs.keys():
-            df = (
-                pd.concat(dic_dfs[key])
-                .reset_index()
-                .set_index(["node_id", "date_time"])
-            )
+            df = pd.concat(dic_dfs[key]).reset_index().set_index(["node_id", "date_time"])
             lst_dfs.append(df)
         #
         ds_node_tseries = pd.concat(lst_dfs, axis=1).to_xarray()
@@ -1048,11 +1017,7 @@ def return_node_time_series_results_from_outfile(f_outfile):
         #
         lst_dfs = []
         for key in dic_dfs.keys():
-            df = (
-                pd.concat(dic_dfs[key])
-                .reset_index()
-                .set_index(["link_id", "date_time"])
-            )
+            df = pd.concat(dic_dfs[key]).reset_index().set_index(["link_id", "date_time"])
             lst_dfs.append(df)
         #
         ds_link_tseries = pd.concat(lst_dfs, axis=1).to_xarray()
@@ -1065,9 +1030,7 @@ def create_tseries_ds(dict_lst_time_series, lst_col_headers, idx_colname):
     # dict_lst_time_series, lst_col_headers, idx_colname = dict_lst_node_time_series, lst_col_headers, "node_id"
     lst_dfs = []
     for key, lst_section_lines in dict_lst_time_series.items():
-        df_tseries = format_rpt_section_into_dataframe(
-            lst_section_lines, lst_col_headers
-        )
+        df_tseries = format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers)
         if df_tseries.empty:
             continue
         df_tseries[idx_colname] = key
@@ -1079,9 +1042,7 @@ def create_tseries_ds(dict_lst_time_series, lst_col_headers, idx_colname):
         empty_df = empty_df.set_index([idx_colname, "date_time"])
         return empty_df.to_xarray()
     df_tseries = pd.concat(lst_dfs, ignore_index=True)
-    df_tseries["date_time"] = pd.to_datetime(
-        df_tseries["date_time"], format=RPT_DATETIME_FORMAT, errors="coerce"
-    )
+    df_tseries["date_time"] = pd.to_datetime(df_tseries["date_time"], format=RPT_DATETIME_FORMAT, errors="coerce")
     if df_tseries["date_time"].isna().any():
         raise ValueError(
             "Parsed RPT date_time values contained NaT. "
@@ -1092,9 +1053,7 @@ def create_tseries_ds(dict_lst_time_series, lst_col_headers, idx_colname):
     return df_tseries.to_xarray()
 
 
-def convert_pyswmm_output_to_df(
-    pyswmm_tseries, valname, item_idx_name, item_idx, idx_name="date_time"
-):
+def convert_pyswmm_output_to_df(pyswmm_tseries, valname, item_idx_name, item_idx, idx_name="date_time"):
     df = pd.DataFrame.from_dict(pyswmm_tseries, orient="index", columns=[valname])
     df.index.name = idx_name
     df[item_idx_name] = str(item_idx)
@@ -1147,26 +1106,20 @@ def return_data_from_rpt(lst_section_lines):
     line_lengths = []
     for line in lst_section_lines:
         lst_substrings_with_content = [
-            substring
-            for substring in line.split(" ")
-            if substring and substring not in lst_substrings_to_ignore
+            substring for substring in line.split(" ") if substring and substring not in lst_substrings_to_ignore
         ]
         if lst_substrings_with_content:
             line_contents.append(lst_substrings_with_content)
             line_strings.append(line)
             line_lengths.append(len(lst_substrings_with_content))
-    dict_line_contents_aslist = {
-        idx: contents for idx, contents in enumerate(line_contents)
-    }
+    dict_line_contents_aslist = {idx: contents for idx, contents in enumerate(line_contents)}
     dict_line_contents_asline = {idx: line for idx, line in enumerate(line_strings)}
     dict_content_lengths = {idx: length for idx, length in enumerate(line_lengths)}
     # make sure the lines all have the same lengths
     if not line_lengths:
         return dict_line_contents_aslist
     target_length = Counter(line_lengths).most_common(1)[0][0]
-    idx_problem_rows = [
-        idx for idx, length in dict_content_lengths.items() if length != target_length
-    ]
+    idx_problem_rows = [idx for idx, length in dict_content_lengths.items() if length != target_length]
     # if there is an issue
     if len(idx_problem_rows) > 0:
         normal_row, normal_row_list = _select_normal_row(
@@ -1189,7 +1142,9 @@ def return_data_from_rpt(lst_section_lines):
                     print(problem_row)
                     break
                 if "orifice" in problem_row_lower:  # type: ignore
-                    solution = "Orifice conduits do not return max velocity or max over full flow. Filling with empty string"
+                    solution = (
+                        "Orifice conduits do not return max velocity or max over full flow. Filling with empty string"
+                    )
                     print("##################################")
                     print(f"Found problem. {solution}")
                     print("Normal row vs. problem row:")
@@ -1208,12 +1163,8 @@ def return_data_from_rpt(lst_section_lines):
                 closest_end_loc_of_val_at_index = 9999
                 closest_begin_loc_of_next_val = -9999
                 dif_between_locs = 9999
-                for normal_val_at_index_string_ilocs in find_substring_indices(
-                    normal_row, normal_val_at_index
-                ):
-                    if normal_val_at_index != extract_substring(
-                        normal_row, normal_val_at_index_string_ilocs
-                    ):
+                for normal_val_at_index_string_ilocs in find_substring_indices(normal_row, normal_val_at_index):
+                    if normal_val_at_index != extract_substring(normal_row, normal_val_at_index_string_ilocs):
                         print("WARNING: There is a string indexing issue")
                     end_loc_prev = max(normal_val_at_index_string_ilocs)
                     for normal_val_at_next_index_string_ilocs in find_substring_indices(
@@ -1249,22 +1200,16 @@ def return_data_from_rpt(lst_section_lines):
                 dict_line_contents_aslist[idx_int] = problem_row_list
                 print(f"Properly parsed values:\n{dict_line_contents_aslist[idx_int]}")
             else:
-                print(
-                    "####################################################################"
-                )
+                print("####################################################################")
                 print(
                     "WARNING: There is an issue with swmm outputs read from an rpt file that I have not yet encountered"
                 )
                 print("Here is an example of a normal row:")
                 print(normal_row)
-                print(
-                    f"There are {len(idx_problem_rows)} problem rows. Here are examples:"
-                )
+                print(f"There are {len(idx_problem_rows)} problem rows. Here are examples:")
                 for idx in idx_problem_rows[:5]:
                     print(line_strings[idx])
-                print(
-                    "####################################################################"
-                )
+                print("####################################################################")
     return dict_line_contents_aslist
 
 
@@ -1283,13 +1228,11 @@ def extract_substring(main_string, indices):
     return main_string[start : end + 1]  # Use slicing to extract the substring
 
 
-def _select_normal_row(
-    line_strings, line_lengths, idx_problem_rows, dict_line_contents_aslist
-):
+def _select_normal_row(line_strings, line_lengths, idx_problem_rows, dict_line_contents_aslist):
     str_lengths = [len(line) for line in line_strings]
     str_length_mode = Counter(str_lengths).most_common(1)[0][0]
     normal_idx = None
-    for idx, (str_len, content_len) in enumerate(zip(str_lengths, line_lengths)):
+    for idx, (str_len, content_len) in enumerate(zip(str_lengths, line_lengths, strict=False)):
         if str_len == str_length_mode and idx not in idx_problem_rows:
             normal_idx = idx
             break
@@ -1312,10 +1255,7 @@ def find_substring_indices(main_string, substring):
     Returns:
     list of tuples: A list of (start, end) tuples representing the start and end index of each occurrence.
     """
-    return [
-        (m.start(), m.end() - 1)
-        for m in _substring_pattern(substring).finditer(main_string)
-    ]
+    return [(m.start(), m.end() - 1) for m in _substring_pattern(substring).finditer(main_string)]
 
 
 @lru_cache(maxsize=256)
@@ -1407,9 +1347,7 @@ def convert_datavars_to_dtype(ds, lst_dtypes_to_try=[str], lst_vars_to_convert=N
                 data_to_convert = ds[var]
                 if data_to_convert.dtype == object:
                     data_to_convert = data_to_convert.astype(str)
-                    data_to_convert = xr.where(
-                        data_to_convert == "", "0", data_to_convert
-                    )
+                    data_to_convert = xr.where(data_to_convert == "", "0", data_to_convert)
                 try:
                     ds[var] = data_to_convert.astype(dtype)
                     converted = True

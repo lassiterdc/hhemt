@@ -182,6 +182,17 @@ def generate_reprocess_snakefile(
         tasks=1,
         cpus_per_task=2,
     )
+    # Mirrors the production site's values (workflow.py:3224-3231) so the restored rule
+    # requests the same allocation it does there: the work is one DU walk over one
+    # scenario plus a handful of unlinks.
+    consolidate_scenario_resources = builder._build_resource_block(
+        partition=cfg_analysis.hpc_setup_and_analysis_processing_partition,
+        runtime_min=10,
+        mem_mb=2048,
+        nodes=1,
+        tasks=1,
+        cpus_per_task=1,
+    )
     consolidate_resources = builder._build_resource_block(
         partition=cfg_analysis.hpc_setup_and_analysis_processing_partition,
         runtime_min=30,
@@ -345,11 +356,46 @@ onerror:
             flag_prefix = "d_process"
         else:
             flag_prefix = "c_run"
-        consolidate_inputs = []
-        for model_type in enabled_models:
-            flag_pattern = f"{flag_prefix}_{model_type}_evt-{{event_id}}_complete.flag"
-            consolidate_inputs.append(f'expand("_status/{flag_pattern}", event_id=SIM_IDS)')
-        consolidate_input_str = " + ".join(consolidate_inputs)
+        # PER-SCENARIO CONSOLIDATE -- the ONLY post-simulation rule-block builder the
+        # production multisim generator calls that this one did not. The omission was not
+        # a scoping choice and it already cost something before the reclaim work found it:
+        # compute_and_write_scope_sentinel(..., scope="scenario") has exactly ONE call site
+        # in the tree (consolidate_workflow.py's --event-id arm), reachable only from this
+        # rule, so no reprocess has ever re-stamped a per-scenario DU sentinel -- including
+        # the regenerate_existing arm, which deletes and rewrites every per-scenario summary.
+        #
+        # INERT WHERE THE WORK IS DONE. _invalidate_downstream_flags never deletes
+        # f_consolidate_scenario_* on any arm, so a scenario a production run already
+        # consolidated is satisfied and skipped. The rule fires exactly on the scenarios
+        # where the work is genuinely outstanding.
+        #
+        # WHY flag_prefix IS THREADED. On the consolidate arm the process rules are not
+        # emitted, so demanding d_process here would re-open the MissingRuleException the
+        # comment above guards against; this rule takes the same prefix the consolidate
+        # rule takes. c_run is the weaker flag, but SIM_IDS is filtered by
+        # _available_event_ids to events whose per-enabled-model SUMMARIES all exist, and
+        # summary existence entails a completed process -- the enumeration supplies the
+        # certification the flag does not.
+        snakefile_content += builder._build_consolidate_scenario_rule_block(
+            enabled_models=enabled_models,
+            config_args=config_args,
+            log_dir_str=log_dir_str,
+            conda_env_path=conda_env_path,
+            consolidate_scenario_resources=consolidate_scenario_resources,
+            compression_level=compression_level,
+            flag_prefix=flag_prefix,
+        )
+        # Analysis-level consolidate now fans in on the per-scenario flags, matching the
+        # production generator (workflow.py:3250). This CONVERGES the two rather than
+        # diverging them: e_consolidate_complete.flag is ONE output whose metadata records
+        # whichever generator last produced it, so today an alternating production/reprocess
+        # sequence flips its declared input set on every run and fires the INPUT trigger
+        # each time. After this they agree and that churn source is gone.
+        # PLAIN string, not an f-string: {event_id} must reach the emitted Snakefile as a
+        # wildcard rather than being interpolated here.
+        consolidate_input_str = (
+            'expand("_status/f_consolidate_scenario_evt-{event_id}_complete.flag", ' "event_id=SIM_IDS)"
+        )
         snakefile_content += builder._build_consolidate_rule_block(
             consolidate_input_str=consolidate_input_str,
             which=which,

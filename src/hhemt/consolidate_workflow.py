@@ -229,6 +229,62 @@ def validate_resource_usage(analysis, logger=None):
         return True, []  # Validation passed
 
 
+def reclaim_unconsolidated_scenarios(analysis, enabled_models, scoped, analysis_dir) -> dict[str, dict[str, bool]]:
+    """Run the scenario-scoped reclaim for events the per-scenario barrier did not cover.
+
+    TWO SKIPS, AND THEY ARE ASYMMETRIC -- do not simplify one away.
+
+    SKIP 1 (the flag) is an INTERLOCK, not a convention: `rule consolidate_scenario`'s
+    shell runs the reclaim, then the DU sentinel, then writes
+    `f_consolidate_scenario_evt-{id}_complete.flag` LAST, so flag presence entails the
+    reclaim completed and a reclaim FAILURE leaves no flag to skip on.
+
+    SKIP 2 (the summaries) is the one whose absence made this loop unsafe. This walks
+    `df_sims` -- the FULL event set -- while `rule consolidate` fans in on SIM_IDS, which
+    on the reprocess path `_available_event_ids` has FILTERED to events whose
+    per-enabled-model summaries all exist. So an event this run deliberately EXCLUDED has
+    no flag, and SKIP 1 alone would let it fall through and reclaim -- for a scenario
+    whose summaries are absent, which is the Gotcha-34 c_run-present/summary-absent
+    divergence an operator is mid-recovery on. That inverts the mechanism's own
+    precondition: `remove_after_processing` fires "ONLY after the per-model summary
+    outputs are verified present AND openable on disk". `scenario_summaries_present` is
+    that precondition restated as a path-only probe -- the SAME function object
+    `_available_event_ids` filters SIM_IDS with, so the predicate cannot drift between
+    the two sites.
+
+    An interlock's coverage is the PRODUCING RULE'S INSTANTIATION SET, never the
+    consumer's iteration set. That is the general form of why SKIP 1 alone is not enough
+    here, and it is the sentence to keep if this docstring is ever compressed.
+
+    Returns a per-event outcome map so the caller can summarise and a test can assert on
+    which events were acted upon.
+    """
+    from hhemt.process_simulation import reclaim_scenario_scoped_classes
+    from hhemt.scenario import TRITONSWMM_scenario, compute_event_id_slug
+    from hhemt.summary_paths import scenario_summaries_present
+
+    outcomes: dict[str, dict[str, bool]] = {}
+    status_dir = Path(analysis_dir) / "_status"
+    for _iloc in analysis.df_sims.index:
+        _eid = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(_iloc))
+        if (status_dir / f"f_consolidate_scenario_evt-{_eid}_complete.flag").exists():
+            continue  # SKIP 1 -- the per-scenario barrier already reclaimed this event
+        if not scenario_summaries_present(analysis, _eid, enabled_models):
+            continue  # SKIP 2 -- precondition unmet; this event is mid-recovery
+        _scen = TRITONSWMM_scenario(_iloc, analysis)
+        _outcome = reclaim_scenario_scoped_classes(_scen, scoped, analysis_dir, verbose=True)
+        # Disclosure printed UNCONDITIONALLY; the log write is the seam to the deferred
+        # log-schema migration and skips while the fields are absent. Mirrors the
+        # --event-id arm's block so there is ONE disclosure shape.
+        logger.info(f"Scenario-scoped reclaim fallback for {_eid}: {_outcome}")
+        for _klass, _did in _outcome.items():
+            _field = getattr(_scen.log, f"{_klass}_reclaimed", None)
+            if _did and _field:
+                _field.set(True)
+        outcomes[_eid] = _outcome
+    return outcomes
+
+
 def main() -> int:
     """Main entry point for workflow consolidation."""
     parser = argparse.ArgumentParser(description="Consolidate TRITON-SWMM simulation outputs after ensemble run")
@@ -305,6 +361,18 @@ def main() -> int:
         default=None,
         help="Event id for the flag sidecar payload AND the per-scenario consolidate dispatch arm (multisim per-scenario consolidate; writes {scenario_dir}/_status/_du.json via du_sentinels.compute_and_write_scope_sentinel).",  # noqa: E501
     )
+    parser.add_argument(
+        "--event-iloc",
+        type=int,
+        default=None,
+        help=(
+            "Integer scenario index for the --event-id arm. PASSED rather than reverse-resolved: "
+            "no event_id -> event_iloc resolver exists (compute_event_id_slug runs iloc-to-id only), "
+            "and enumerating ilocs inside a rule that runs once per scenario is O(n_sims^2) across a "
+            "campaign. The emitter already holds ILOC_BY_EVENT_ID. Required for the scenario-scoped "
+            "reclaim; when absent the arm writes the DU sentinel and declines the reclaim loudly."
+        ),
+    )
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -352,6 +420,54 @@ def main() -> int:
             from hhemt.du_sentinels import compute_and_write_scope_sentinel
 
             scenario_dir = analysis.analysis_paths.analysis_dir / "sims" / args.event_id
+            if not scenario_dir.exists():
+                logger.error(f"Per-scenario consolidate target does not exist: {scenario_dir}")
+                return 1
+
+            # SCENARIO-SCOPED RECLAIM, and it MUST precede the DU sentinel write below:
+            # the sentinel records this scenario's on-disk total, so reclaiming after it
+            # publishes a total stale by exactly the reclaimed bytes. That ordering used to
+            # be an unstated cross-rule invariant (reclaim in process_tritonswmm, sentinel
+            # here) held only by the DAG; co-locating them makes it local and checkable.
+            #
+            # This rule fans in on d_process_{m} for EVERY enabled model, and both that flag
+            # and the c_run_{m} it depends on are SUCCESS markers -- each runner refuses to
+            # write its flag and returns 1 on failure -- so arrival here entails that every
+            # enabled model both RAN and PROCESSED. That is what retired the _unrun guard.
+            from hhemt.process_simulation import (
+                TRITONSWMM_sim_post_processing,
+                reclaim_scenario_scoped_classes,
+            )
+            from hhemt.scenario import TRITONSWMM_scenario
+
+            _classes = TRITONSWMM_sim_post_processing._reclaim_classes(
+                getattr(analysis.cfg_analysis, "remove_after_processing", "none")
+            )
+            _scoped = tuple(c for c in _classes if c in ("hydro_out", "prep_inputs", "hydrographs", "standalone_rpt"))
+            if _scoped and args.event_iloc is None:
+                logger.error(
+                    f"Scenario-scoped reclaim classes {list(_scoped)} are elected but --event-iloc was not "
+                    "passed; declining the reclaim rather than reverse-resolving the index. Re-emit the "
+                    "Snakefile so rule consolidate_scenario passes --event-iloc."
+                )
+                return 1
+            if _scoped:
+                _scen = TRITONSWMM_scenario(args.event_iloc, analysis)
+                _outcome = reclaim_scenario_scoped_classes(
+                    _scen,
+                    _scoped,
+                    analysis.analysis_paths.analysis_dir,
+                    verbose=True,
+                )
+                # Disclosure, printed UNCONDITIONALLY and written to the scenario log when the
+                # fields exist. The getattr guard is the seam to the log-schema migration: while
+                # the four LogFields are absent it skips, so this set is correct without that
+                # round; the print is what keeps the record honest in the interval.
+                logger.info(f"Scenario-scoped reclaim for {args.event_id}: {_outcome}")
+                for _klass, _did in _outcome.items():
+                    _field = getattr(_scen.log, f"{_klass}_reclaimed", None)
+                    if _did and _field:
+                        _field.set(True)
             if not scenario_dir.exists():
                 logger.error(f"Per-scenario consolidate target does not exist: {scenario_dir}")
                 return 1
@@ -436,6 +552,97 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         else:
+            # SCENARIO-SCOPED RECLAIM FALLBACK -- companion to the per-scenario call in
+            # the --event-id arm above. `rule consolidate_scenario` is emitted by exactly
+            # ONE generator (the multisim PRODUCTION path, workflow.py:3232). The multisim
+            # REPROCESS generator, the sensitivity PRODUCTION master and the sensitivity
+            # REPROCESS master emit no such rule, so without this block the four
+            # scenario-scoped classes reclaim on one path and silently stop reclaiming on
+            # three -- including the paths an operator reaches for when disk is short.
+            #
+            # WHY HERE AND NOT IN A NEW RULE. All three orphaned seams reach this branch:
+            # the multisim `rule consolidate` (no --event-id, no --member-id) and the
+            # sensitivity per-member `consolidate_member_*` (--member-id, no --event-id)
+            # both fall through to it. One call site covers all three, edits no Snakefile
+            # generator, and therefore cannot perturb the sensitivity generators'
+            # `subanalysis_flags == _expected_subanalysis_flags` equality assertion or
+            # change any existing rule's `input:` set.
+            #
+            # WHY THE BARRIER HOLDS ON EVERY ARM THAT REACHES HERE. start_with='process':
+            # this rule's input: is d_process_{m} for every enabled model over SIM_IDS, and
+            # both d_process and the c_run it depends on are SUCCESS markers, so arrival
+            # entails every model ran AND processed. start_with='consolidate': the input: is
+            # c_run_{m} (run-completion only), but SIM_IDS is itself filtered to events whose
+            # per-enabled-model SUMMARIES exist, and summary existence entails a completed
+            # process -- the enumeration supplies what the flag does not. start_with='render':
+            # no consolidate rule is emitted at all, so this block is unreachable, which is
+            # correct because nothing being reclaimed was regenerated. No start_with
+            # conditional is added here; the generators' rule-emission gate already is one.
+            #
+            # TWO SKIPS, AND BOTH ARE ON-DISK FACTS RATHER THAN MODE INFERENCES.
+            #
+            # SKIP 1 -- the flag. f_consolidate_scenario_evt-{id}_complete.flag is the record
+            # that the tighter per-scenario barrier already ran for that event, and it is an
+            # INTERLOCK rather than a convention: that rule's shell runs the reclaim, then the
+            # DU sentinel, then writes this flag LAST, so flag presence entails the reclaim
+            # completed and a reclaim FAILURE leaves no flag to skip on.
+            #
+            # SKIP 2 -- the summaries, and it is the one whose absence made this loop UNSAFE.
+            # This loop walks df_sims (the FULL event set) while `rule consolidate` fans in on
+            # SIM_IDS, which on the reprocess path _available_event_ids has FILTERED to events
+            # whose per-enabled-model summaries all exist. So an event this run deliberately
+            # EXCLUDED has no flag, and skip 1 alone would let it fall through and reclaim --
+            # for a scenario whose summaries are absent, which is precisely the Gotcha-34
+            # c_run-present/summary-absent divergence an operator is mid-recovery on. That
+            # inverts the mechanism's own precondition: remove_after_processing fires "ONLY
+            # after the per-model summary outputs are verified present AND openable on disk",
+            # and for these events they are verifiably absent. scenario_summaries_present is
+            # that precondition restated as a path-only probe, so this is the reclaim's
+            # existing contract enforced at a site that had lost it, not a new rule.
+            #
+            # TOGETHER they make this block a provable no-op on EVERY multisim path: in
+            # SIM_IDS -> flag present -> skip 1; not in SIM_IDS -> summaries absent -> skip 2.
+            # Neither skip subsumes the other and removing either re-opens a live case.
+            #
+            # The skips are load-bearing rather than tidy because of what construction costs:
+            # TRITONSWMM_scenario.__init__ runs _create_directories(), which re-creates the
+            # dats/ and extbc/ directories prep_inputs empties, so constructing one per event
+            # unconditionally would undo part of the reclaim it just performed.
+            # KNOWN GAP, with an existing remedy: a tree consolidated BEFORE the operator
+            # enabled a scenario-scoped class carries the flag and is skipped here. The
+            # remedy already exists -- a force-rerun at stage `consolidate` deletes those
+            # flags (analysis.py::_delete_flags_for_force_rerun), after which this fires.
+            from hhemt.process_simulation import TRITONSWMM_sim_post_processing as _P
+
+            _scoped = tuple(
+                c
+                for c in _P._reclaim_classes(getattr(analysis.cfg_analysis, "remove_after_processing", "none"))
+                if c in ("hydro_out", "prep_inputs", "hydrographs", "standalone_rpt")
+            )
+            if _scoped:
+                # ENABLED-MODEL DERIVATION, DUPLICATED ON PURPOSE AND NAMED SO IT IS NOT
+                # MISTAKEN FOR AN OVERSIGHT. reprocess_snakefile_generator._enabled_models
+                # runs this identical three-toggle sequence in this identical order, and it
+                # is module-private, so importing it here would widen that module's surface
+                # for one caller. THE TWO MUST AGREE: _enabled_models builds the list that
+                # filters SIM_IDS via scenario_summaries_present, and the list below is what
+                # SKIP 2 passes to that SAME function object (summary_paths:44, aliased into
+                # workflow.py:68 and re-imported at reprocess_snakefile_generator.py:58). The
+                # predicate is therefore shared by construction and cannot drift; THIS
+                # derivation is the only place the two populations still can. A third and
+                # fourth copy live on TRITONSWMM_run.model_types_enabled and
+                # TRITONSWMM_scenario.model_types_enabled; consolidating all four is a
+                # separate refactor and deliberately not this change.
+                _cfg_sys = system.cfg_system
+                _enabled = []
+                if _cfg_sys.toggle_triton_model:
+                    _enabled.append("triton")
+                if _cfg_sys.toggle_tritonswmm_model:
+                    _enabled.append("tritonswmm")
+                if _cfg_sys.toggle_swmm_model:
+                    _enabled.append("swmm")
+                reclaim_unconsolidated_scenarios(analysis, _enabled, _scoped, analysis.analysis_paths.analysis_dir)
+
             logger.info("Assembling per-scenario summaries into master DataTree...")
             try:
                 analysis.process.consolidate_to_datatree(

@@ -30,9 +30,9 @@ def _truncate(rpt_path):
     """
     from hhemt.process_simulation import TRITONSWMM_sim_post_processing as _P
 
-    return _P._truncate_coupled_rpt(
-        _P.__new__(_P), rpt_path, rpt_path.parent, False
-    )
+    # No shim: _truncate_coupled_rpt is a @staticmethod (it binds no instance state),
+    # so the unbound call takes the three real arguments and nothing else.
+    return _P._truncate_coupled_rpt(rpt_path, rpt_path.parent, False)
 
 
 def _write_fixture_rpt(tmp_path: Path, *, finalized: bool = True) -> Path:
@@ -68,9 +68,7 @@ def test_hydrology_rpt_summary_captures_runoff_volume_and_continuity():
     """S4: the capture must carry both the volume column and the continuity attrs."""
     from hhemt.swmm_output_parser import parse_hydrology_rpt_summary
 
-    src = Path(
-        "test_data/norfolk_coastal_flooding/tests/single_sim/sims/event_id.0/swmm/hydro.rpt"
-    )
+    src = Path("test_data/norfolk_coastal_flooding/tests/single_sim/sims/event_id.0/swmm/hydro.rpt")
     if not src.exists():
         pytest.skip("real-data hydro.rpt not present in this checkout")
     ds = parse_hydrology_rpt_summary(src)
@@ -118,13 +116,11 @@ def test_per_node_capture_is_bit_identical_to_the_written_hydrograph(synth_prepa
         }
     )
     inflow = cap["inflow_cms"].values.astype("float64")
-    rebuilt = np.column_stack(
-        [inflow[g["i"].to_numpy()].sum(axis=0) for _, g in df.groupby(["x", "y"], sort=True)]
-    )
+    rebuilt = np.column_stack([inflow[g["i"].to_numpy()].sum(axis=0) for _, g in df.groupby(["x", "y"], sort=True)])
 
-    assert rebuilt.shape == written_cells.shape, (
-        f"gridcell reconstruction shape {rebuilt.shape} != written {written_cells.shape}"
-    )
+    assert (
+        rebuilt.shape == written_cells.shape
+    ), f"gridcell reconstruction shape {rebuilt.shape} != written {written_cells.shape}"
     np.testing.assert_allclose(rebuilt, written_cells, rtol=0, atol=1e-6)
 
 

@@ -60,7 +60,29 @@ non_breaking_allowlist:
       per-store `.chapters/` directory, which `merge_chapters_to_unified` already
       removes wholesale at merge, so it exists only while an interrupted chapter set
       exists and never survives into a completed tree.
-    layout_signature: "a89d493389ae5a5e6fd4dc6045d9cae7ffb7b4222a4ff2e061a70a1dd4a68d38"
+      RE-STAMPED for the scenario-scoped reclaim relocation (the reclaim-ordering set).
+      JUDGED NON-BREAKING, and the judgement rests on a measurement rather than on the
+      diff reading as behavioural. The only candidate on-disk consequence is that four
+      `*_reclaimed` disclosure writes leave the per-model path. Three of the four --
+      prep_inputs_reclaimed, hydrographs_reclaimed, standalone_rpt_reclaimed -- are
+      never bound to a LogField on the model log (`grep -c "{field} = LogField()"`
+      returns 0 for each), so their `getattr(..., None)` guards were always falsy and
+      those writes were already dead. The fourth, hydro_out_reclaimed, IS bound
+      (scenario.py) and stops being set on this path. No JSON key is added or removed:
+      `TRITONSWMM_log.to_dict` is `model_dump(mode="json")` with no exclude_none or
+      exclude_unset, and the field DECLARATIONS are untouched, so every key still
+      serializes; only a value moves within its already-declared `bool | None` domain.
+      Both live readers tolerate that by construction -- analysis_validation tests
+      `payload.get(field) is True`, which treats absent, null and false alike, and
+      scenario.py's `is None` check is a lazy LogField initializer rather than a
+      semantic read. Nothing else in the diff touches a path, filename, flag name,
+      directory or zarr structure.
+      THE RESIDUAL, named rather than absorbed: on a post-change tree the reclaim
+      disclosure UNDER-REPORTS hydro_out, because the relocated writes target the
+      scenario log and are inert until the deferred log-schema round adds those fields
+      there. That is a disclosure regression, not a layout break -- there is no old
+      on-disk state for a migration to transform -- and the scheduled round closes it.
+    layout_signature: "44d3387eda21a3a016b8cde58b5eaf58d6905a65387f2918f49b0999f1e476c9"
   - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
     justification: >-
       DU-sentinel gate closure — a one-character correction inside an existing

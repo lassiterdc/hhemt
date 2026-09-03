@@ -2661,6 +2661,7 @@ rule consolidate:
         conda_env_path: str,
         consolidate_scenario_resources: str,
         compression_level: int,
+        flag_prefix: str = "d_process",
     ) -> str:
         """Emit a single ``rule consolidate_scenario`` block (wildcarded on event_id).
 
@@ -2716,7 +2717,7 @@ rule consolidate:
         rules that declare it as ``input:`` get Snakemake-tracked mtime semantics.
         """
         input_flags = ", ".join(
-            f'"_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"' for model_type in enabled_models
+            f'"_status/{flag_prefix}_{model_type}_evt-{{event_id}}_complete.flag"' for model_type in enabled_models
         )
         return f'''
 rule consolidate_scenario:
@@ -2727,6 +2728,8 @@ rule consolidate_scenario:
     priority: 100
     log: "{log_dir_str}/sims/consolidate_scenario_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
+    params:
+        event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
 {consolidate_scenario_resources}
     shell:
@@ -2737,6 +2740,7 @@ rule consolidate_scenario:
             --flag-output {{output.flag}} \\
             --rule-name consolidate_scenario \\
             --event-id {{wildcards.event_id}} \\
+            --event-iloc {{params.event_iloc}} \\
             2>&1 | tee {{log}}
         """
 '''

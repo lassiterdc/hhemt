@@ -1847,7 +1847,8 @@ class TRITONSWMM_sim_post_processing:
                         out.append(("raw_swmm_binaries", p))
         return out
 
-    def _remove_reclaimed(self, path: Path, analysis_dir, verbose: bool) -> None:
+    @staticmethod
+    def _remove_reclaimed(path: Path, analysis_dir, verbose: bool) -> None:
         """Delete one reclaimed artifact, re-stamping the DU sentinels either way.
 
         Both patterns are preserved verbatim from the function this one replaces, because
@@ -1890,7 +1891,8 @@ class TRITONSWMM_sim_post_processing:
             return False
         return True
 
-    def _truncate_coupled_rpt(self, rpt_path: Path, analysis_dir, verbose: bool) -> bool:
+    @staticmethod
+    def _truncate_coupled_rpt(rpt_path: Path, analysis_dir, verbose: bool) -> bool:
         """Truncate a finalized coupled rpt to header+summaries+trailer. Returns True iff written.
 
         STREAMING by construction: the Norfolk rpt is ~318 MB / ~5M lines, so this reads
@@ -2031,112 +2033,6 @@ class TRITONSWMM_sim_post_processing:
             if rpt is not None and rpt.exists():
                 truncated_rpt = self._truncate_coupled_rpt(rpt, analysis_dir, verbose)
 
-        # hydro.out is the SWMM hydrology output that write_hydrograph_files reads to build
-        # TRITON's inflow hydrographs. It is safe to reclaim ONLY because spec E gave that
-        # function an already-written gate: without the gate, every subsequent re-prep would
-        # re-open this file and fail. Do NOT enable this class in a tree whose
-        # swmm_runoff_modeling.py predates that gate.
-        #
-        # It is model-INDEPENDENT (a scenario-prep artifact, not a per-model output), so it
-        # is reclaimed on the tritonswmm pass only, to avoid three enabled models racing to
-        # unlink the same file.
-        reclaimed_hydro_out = False
-        if "hydro_out" in classes and model_type == "tritonswmm":
-            _hydro_out = Path(str(self.scen_paths.swmm_hydro_inp).replace(".inp", ".out"))
-            if _hydro_out.exists():
-                self._remove_reclaimed(_hydro_out, analysis_dir, verbose)
-                reclaimed_hydro_out = True
-
-        # ---- The three regeneration-cost classes (S1/S2 vocabulary) ----------------
-        # Each is model-INDEPENDENT (a scenario-prep or per-model-report artifact, not a
-        # per-model output), so each fires on the tritonswmm pass only -- the same
-        # racing-models guard the hydro_out branch above uses. On a triton-only or
-        # swmm-only analysis `model_type` is never "tritonswmm" and all three are inert.
-        removed_prep_inputs = False
-        removed_hydrographs = False
-        removed_standalone_rpt = False
-        if model_type == "tritonswmm":
-            # T0 -- regenerable by prepare_scenario template-fill, no solver. No capture
-            # gate: nothing is lost that a re-prep cannot rebuild from persistent inputs.
-            if "prep_inputs" in classes:
-                # PRECONDITION: every enabled model must have RUN. These three paths are
-                # scenario-scoped inputs consumed at RUN time (dats/ and extbc/ are read
-                # by the solver, not by prepare), but this branch is selected by which
-                # model is PROCESSING. The `model_type == "tritonswmm"` guard above stops
-                # three models racing to unlink the same file; it does NOT stop a model
-                # whose simulation has not started yet from losing its inputs. run_swmm
-                # and process_tritonswmm hang off prepare_scenario independently -- there
-                # is no DAG edge between them -- so "processed before the other model ran"
-                # is unconstrained, and it is what emptied dats/ for 123 scenarios whose
-                # standalone SWMM then aborted with seven ERROR 361s.
-                # This reads RUN completion rather than PROCESS completion because the
-                # consumer is the solver. It depends on model_run_completed being sound
-                # for SWMM, which is what Spec 12 repairs -- an ordering dependency, not
-                # a circular one: Spec 12 never reads this guard.
-                _unrun = [m for m in self._run.model_types_enabled if not self._scenario.model_run_completed(m)]
-                if _unrun:
-                    print(
-                        f"[reclaim] scenario {self._scenario.event_iloc}: 'prep_inputs' is "
-                        f"elected but {_unrun} have not completed their runs -- declining. "
-                        "These inputs are consumed at RUN time; removing them now would "
-                        "leave those models pointing at absent files.",
-                        flush=True,
-                    )
-                    classes = tuple(c for c in classes if c != "prep_inputs")
-            if "prep_inputs" in classes:
-                for _p in (
-                    self.scen_paths.dir_weather_datfiles,
-                    self.scen_paths.extbc_tseries.parent,
-                    self.scen_paths.weather_timeseries,
-                ):
-                    if _p is not None and Path(_p).exists():
-                        self._remove_reclaimed(Path(_p), analysis_dir, verbose)
-                        removed_prep_inputs = True
-
-            # T1 -- CAPTURE-GATED, and the gate is the whole safety property. On every
-            # pre-existing scenario tree the capture is absent (it is introduced by this
-            # commit), so this class is a disclosed NO-OP on the first post-apply run
-            # rather than a deletion of data nothing has yet preserved.
-            if "hydrographs" in classes:
-                _cap = Path(self.scen_paths.sim_folder) / "processed" / "hydrology_inflow_summary.zarr"
-                if self._capture_landed(_cap):
-                    for _p in (self.scen_paths.hyg_timeseries, self.scen_paths.hyg_locs):
-                        if _p is not None and Path(_p).exists():
-                            self._remove_reclaimed(Path(_p), analysis_dir, verbose)
-                            removed_hydrographs = True
-                elif verbose:
-                    print(
-                        f"[reclaim] scenario {self._scenario.event_iloc}: 'hydrographs' elected but "
-                        f"the capture at {_cap} is absent or unopenable -- declining. Re-run "
-                        "processing after the capture lands.",
-                        flush=True,
-                    )
-
-            # T2 -- full.rpt is TRUNCATED (five live consumers read its head or trailer,
-            # and one RAISES on a missing 'Total elapsed time', which is why S3's
-            # trailer-BLOCK fix is a precondition rather than a companion). hydro.rpt is
-            # capture-then-DELETE: the truncator is a provable no-op on it (no
-            # time-series body) and 39% of it is the Subcatchment Runoff Summary, the
-            # only per-subcatchment runoff-volume and hydrology-continuity record on disk.
-            if "standalone_rpt" in classes:
-                _full_rpt = self.scen_paths.swmm_full_rpt_file
-                if _full_rpt is not None and Path(_full_rpt).exists():
-                    if self._truncate_coupled_rpt(Path(_full_rpt), analysis_dir, verbose):
-                        removed_standalone_rpt = True
-                _hydro_rpt = Path(str(self.scen_paths.swmm_hydro_inp).replace(".inp", ".rpt"))
-                _hydro_cap = Path(self.scen_paths.sim_folder) / "processed" / "hydrology_rpt_summary.zarr"
-                if _hydro_rpt.exists() and not self._capture_landed(_hydro_cap):
-                    from hhemt.du_sentinels import restamp_parent_sentinels
-                    from hhemt.swmm_output_parser import parse_hydrology_rpt_summary
-
-                    _ds = parse_hydrology_rpt_summary(_hydro_rpt)
-                    _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
-                    _ds.to_zarr(_hydro_cap, mode="w")
-                    restamp_parent_sentinels(_hydro_cap, analysis_dir=analysis_dir)  # PATTERN B
-                if _hydro_rpt.exists() and self._capture_landed(_hydro_cap):
-                    self._remove_reclaimed(_hydro_rpt, analysis_dir, verbose)
-                    removed_standalone_rpt = True
-
         effective_policy = list(classes)
         removed: set[str] = set()
         for klass, path in self._reclaim_paths(model_type, policy=effective_policy, which=which):
@@ -2157,14 +2053,6 @@ class TRITONSWMM_sim_post_processing:
             self.log.raw_SWMM_binaries_reclaimed.set(True)
         if truncated_rpt and getattr(self.log, "coupled_rpt_truncated", None):
             self.log.coupled_rpt_truncated.set(True)
-        if reclaimed_hydro_out and getattr(self.log, "hydro_out_reclaimed", None):
-            self.log.hydro_out_reclaimed.set(True)
-        if removed_prep_inputs and getattr(self.log, "prep_inputs_reclaimed", None):
-            self.log.prep_inputs_reclaimed.set(True)
-        if removed_hydrographs and getattr(self.log, "hydrographs_reclaimed", None):
-            self.log.hydrographs_reclaimed.set(True)
-        if removed_standalone_rpt and getattr(self.log, "standalone_rpt_reclaimed", None):
-            self.log.standalone_rpt_reclaimed.set(True)
         return
 
     @property
@@ -2180,6 +2068,117 @@ class TRITONSWMM_sim_post_processing:
         node_ok = self.log.SWMM_node_summary_written and bool(self.log.SWMM_node_summary_written.get())
         link_ok = self.log.SWMM_link_summary_written and bool(self.log.SWMM_link_summary_written.get())
         return node_ok and link_ok
+
+
+def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: bool = False) -> dict[str, bool]:
+    """Reclaim the four SCENARIO-SCOPED artifact classes for one scenario.
+
+    WHY THESE FOUR AND NOT THE OTHER THREE. The selector is the per-class SCOPE
+    property the source documents, not the `model_type == "tritonswmm"` fence that
+    used to implement it. Five of the seven classes carried that fence and only four
+    are scenario-scoped, so the fence was never the property -- it was a guard against
+    three enabled models racing to unlink one file. `hydro_out`, `prep_inputs`,
+    `hydrographs` and `standalone_rpt` are each documented model-INDEPENDENT (a
+    scenario-prep or per-model-report artifact, not a per-model output) and move here.
+    `coupled_rpt` stays per-model because no model but tritonswmm writes
+    out_tritonswmm/swmm/hydraulics.rpt; `raw_swmm_binaries` stays because it reads
+    out_tritonswmm/ and is gated on the per-model `clear_raw` axis; `timeseries` is
+    per-model by construction.
+
+    WHY NO `_unrun` GUARD HERE. This runs from `rule consolidate_scenario`, which fans
+    in on `d_process_{m}` for every enabled model. Both that flag and the `c_run_{m}`
+    it depends on are SUCCESS markers -- each runner refuses to write its flag and
+    returns 1 on failure -- so arrival here entails that every enabled model both RAN
+    and PROCESSED. That is strictly stronger than the retired runtime guard, which
+    tested run-completion only and inherited its soundness from a predicate that was a
+    fixed point until 2026-08-31. A second, derivative gate behind a structural one is
+    a second thing to keep true, not defence in depth.
+
+    NOTE FOR THE NEXT READER, so it is not re-derived: constructing the
+    `TRITONSWMM_scenario` this takes runs `_create_directories()`, which mkdirs `dats/`
+    and `extbc/` -- two of the three paths `prep_inputs` removes. Nothing reads their
+    existence as an inputs-present predicate (checked), so the consequence is bounded
+    to empty directories reappearing after the reclaim empties them.
+
+    Returns a per-class outcome map so the CALLER records what was actually removed
+    rather than what the config elected -- the same actor-writes-the-record rule the
+    per-model disclosure block follows.
+    """
+    _P = TRITONSWMM_sim_post_processing
+    reclaimed_hydro_out = False
+    removed_prep_inputs = False
+    removed_hydrographs = False
+    removed_standalone_rpt = False
+
+    # hydro.out is the SWMM hydrology output that write_hydrograph_files reads to build
+    # TRITON's inflow hydrographs. It is safe to reclaim ONLY because spec E gave that
+    # function an already-written gate: without the gate, every subsequent re-prep would
+    # re-open this file and fail. Do NOT enable this class in a tree whose
+    # swmm_runoff_modeling.py predates that gate.
+    if "hydro_out" in classes:
+        _hydro_out = Path(str(scen.scen_paths.swmm_hydro_inp).replace(".inp", ".out"))
+        if _hydro_out.exists():
+            _P._remove_reclaimed(_hydro_out, analysis_dir, verbose)
+            reclaimed_hydro_out = True
+
+    # T0 -- regenerable by prepare_scenario template-fill, no solver. No capture gate:
+    # nothing is lost that a re-prep cannot rebuild from persistent inputs.
+    if "prep_inputs" in classes:
+        for _p in (
+            scen.scen_paths.dir_weather_datfiles,
+            scen.scen_paths.extbc_tseries.parent,
+            scen.scen_paths.weather_timeseries,
+        ):
+            if _p is not None and Path(_p).exists():
+                _P._remove_reclaimed(Path(_p), analysis_dir, verbose)
+                removed_prep_inputs = True
+
+    # T1 -- CAPTURE-GATED, and the gate is the whole safety property.
+    if "hydrographs" in classes:
+        _cap = Path(scen.scen_paths.sim_folder) / "processed" / "hydrology_inflow_summary.zarr"
+        if _P._capture_landed(_cap):
+            for _p in (scen.scen_paths.hyg_timeseries, scen.scen_paths.hyg_locs):
+                if _p is not None and Path(_p).exists():
+                    _P._remove_reclaimed(Path(_p), analysis_dir, verbose)
+                    removed_hydrographs = True
+        elif verbose:
+            print(
+                f"[reclaim] scenario {scen.event_iloc}: 'hydrographs' elected but "
+                f"the capture at {_cap} is absent or unopenable -- declining. Re-run "
+                "processing after the capture lands.",
+                flush=True,
+            )
+
+    # T2 -- full.rpt is TRUNCATED (five live consumers read its head or trailer, and one
+    # RAISES on a missing 'Total elapsed time'). hydro.rpt is capture-then-DELETE: the
+    # truncator is a provable no-op on it (no time-series body) and 39% of it is the
+    # Subcatchment Runoff Summary, the only per-subcatchment runoff-volume and
+    # hydrology-continuity record on disk.
+    if "standalone_rpt" in classes:
+        _full_rpt = scen.scen_paths.swmm_full_rpt_file
+        if _full_rpt is not None and Path(_full_rpt).exists():
+            if _P._truncate_coupled_rpt(Path(_full_rpt), analysis_dir, verbose):
+                removed_standalone_rpt = True
+        _hydro_rpt = Path(str(scen.scen_paths.swmm_hydro_inp).replace(".inp", ".rpt"))
+        _hydro_cap = Path(scen.scen_paths.sim_folder) / "processed" / "hydrology_rpt_summary.zarr"
+        if _hydro_rpt.exists() and not _P._capture_landed(_hydro_cap):
+            from hhemt.du_sentinels import restamp_parent_sentinels
+            from hhemt.swmm_output_parser import parse_hydrology_rpt_summary
+
+            _ds = parse_hydrology_rpt_summary(_hydro_rpt)
+            _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
+            _ds.to_zarr(_hydro_cap, mode="w")
+            restamp_parent_sentinels(_hydro_cap, analysis_dir=analysis_dir)  # PATTERN B
+        if _hydro_rpt.exists() and _P._capture_landed(_hydro_cap):
+            _P._remove_reclaimed(_hydro_rpt, analysis_dir, verbose)
+            removed_standalone_rpt = True
+
+    return {
+        "hydro_out": reclaimed_hydro_out,
+        "prep_inputs": removed_prep_inputs,
+        "hydrographs": removed_hydrographs,
+        "standalone_rpt": removed_standalone_rpt,
+    }
 
 
 def _aggregate_perf_tseries(
