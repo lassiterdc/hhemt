@@ -28,6 +28,11 @@ from hhemt.constants import (
 TDELTA_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+):(\d+)")
 RPT_DATETIME_FORMAT = "%m/%d/%Y %H:%M:%S"
 
+_ADJACENT_VALUE_SOLUTION = (
+    "Two values in the rpt were right next to each other and couldn't be parsed "
+    "using spacing. Parsing by referencing a normal line."
+)
+
 # Bulk-parse regex patterns for parse_rpt_single_pass.
 # Each <<< Node|Link {id} >>> block has the structure:
 #   <<< (Node|Link) {id} >>>
@@ -780,7 +785,6 @@ def return_lines_for_section_of_rpt(section_header, f_rpt=None, lines=None):
         line_num += 1
         # return node flooding summaries
         if section_header in line:
-            first_line = line_num
             # print("encountered header")
             encountered_header = True
         if encountered_header is False:
@@ -1098,7 +1102,6 @@ def return_data_from_rpt(lst_section_lines):
     lst_substrings_to_ignore = ["ltr\n"]
     # initialize vars
     dict_line_contents_aslist = {}
-    dict_line_contents_asline = {}
     dict_content_lengths = {}
     # extract and parse data in each line using spaces
     line_contents = []
@@ -1113,7 +1116,6 @@ def return_data_from_rpt(lst_section_lines):
             line_strings.append(line)
             line_lengths.append(len(lst_substrings_with_content))
     dict_line_contents_aslist = {idx: contents for idx, contents in enumerate(line_contents)}
-    dict_line_contents_asline = {idx: line for idx, line in enumerate(line_strings)}
     dict_content_lengths = {idx: length for idx, length in enumerate(line_lengths)}
     # make sure the lines all have the same lengths
     if not line_lengths:
@@ -1132,9 +1134,9 @@ def return_data_from_rpt(lst_section_lines):
             problem_row_list = dict_line_contents_aslist[idx_int]
             solution = None
             problem_row_lower = problem_row.lower()
-            for prob_index, val in enumerate(problem_row_list):
+            for prob_index, val in enumerate(problem_row_list):  # noqa: B007 - prob_index is read AFTER this loop at the normal_row_list lookups
                 if val.count(".") > 1:
-                    solution = "Two values in the rpt were right next to each other and couldn't be parsed using spacing. Parsing by referencing a normal line."
+                    solution = _ADJACENT_VALUE_SOLUTION
                     print("##################################")
                     print(f"Found problem. {solution}")
                     print("Normal row vs. problem row:")
@@ -1151,17 +1153,14 @@ def return_data_from_rpt(lst_section_lines):
                     print(normal_row)
                     print(problem_row)
                     break
-            if (
-                solution
-                == "Two values in the rpt were right next to each other and couldn't be parsed using spacing. Parsing by referencing a normal line."
-            ):
+            if solution == _ADJACENT_VALUE_SOLUTION:
                 # problem_val = problem_row_list[prob_index]
                 normal_val_at_index = normal_row_list[prob_index]
                 normal_next_val_at_index = normal_row_list[prob_index + 1]
                 # identify string parsing location
-                ## deal with the possibility that there are multiple substrings with the same value; find the pair with the smallest difference between the current val and next val
+                ## deal with the possibility that there are multiple substrings with the same value;
+                ## find the pair with the smallest difference between the current val and next
                 closest_end_loc_of_val_at_index = 9999
-                closest_begin_loc_of_next_val = -9999
                 dif_between_locs = 9999
                 for normal_val_at_index_string_ilocs in find_substring_indices(normal_row, normal_val_at_index):
                     if normal_val_at_index != extract_substring(normal_row, normal_val_at_index_string_ilocs):
@@ -1173,7 +1172,6 @@ def return_data_from_rpt(lst_section_lines):
                         begin_loc_next = min(normal_val_at_next_index_string_ilocs)
                         if (begin_loc_next - end_loc_prev) < dif_between_locs:
                             dif_between_locs = begin_loc_next - end_loc_prev
-                            closest_begin_loc_of_next_val = begin_loc_next
                             closest_end_loc_of_val_at_index = end_loc_prev
                 #
                 split_loc = closest_end_loc_of_val_at_index
@@ -1232,7 +1230,7 @@ def _select_normal_row(line_strings, line_lengths, idx_problem_rows, dict_line_c
     str_lengths = [len(line) for line in line_strings]
     str_length_mode = Counter(str_lengths).most_common(1)[0][0]
     normal_idx = None
-    for idx, (str_len, content_len) in enumerate(zip(str_lengths, line_lengths, strict=False)):
+    for idx, (str_len, _content_len) in enumerate(zip(str_lengths, line_lengths, strict=False)):
         if str_len == str_length_mode and idx not in idx_problem_rows:
             normal_idx = idx
             break
@@ -1281,8 +1279,8 @@ def split_at_index(main_string, index):
 
 def convert_coords_to_dtype(
     ds,
-    lst_dtypes_to_try=[int, str],
-    coords_to_coerce=["node_id", "link_id", "model", "simtype"],
+    lst_dtypes_to_try=(int, str),
+    coords_to_coerce=("node_id", "link_id", "model", "simtype"),
 ):
     for coord in ds.coords:
         if (ds[coord].dtype == object) or (coord in coords_to_coerce):
@@ -1292,7 +1290,7 @@ def convert_coords_to_dtype(
                 if ds[coord].dtype == dtype:
                     converted = True
                     break
-                if dtype == int:
+                if dtype is int:
                     numeric = pd.to_numeric(ds[coord].values, errors="coerce")
                     if np.isnan(numeric).any():
                         continue
@@ -1313,7 +1311,7 @@ def convert_coords_to_dtype(
     return ds
 
 
-def convert_datavars_to_dtype(ds, lst_dtypes_to_try=[str], lst_vars_to_convert=None):
+def convert_datavars_to_dtype(ds, lst_dtypes_to_try=(str,), lst_vars_to_convert=None):
     # ds, lst_dtypes_to_try=[float, str]
     if lst_vars_to_convert is None:  # convert all variables
         lst_vars_to_convert = ds.data_vars
@@ -1328,7 +1326,7 @@ def convert_datavars_to_dtype(ds, lst_dtypes_to_try=[str], lst_vars_to_convert=N
                 converted = True
                 break
             # deal with common problem in SWMM results
-            if (dtype == float) or (dtype == int):
+            if (dtype is float) or (dtype is int):
                 sample = isel_first_and_slice_longest(ds[var], n=10)
                 sample_values = sample.values
                 if sample.dtype == object:
@@ -1340,7 +1338,7 @@ def convert_datavars_to_dtype(ds, lst_dtypes_to_try=[str], lst_vars_to_convert=N
                     if invalid_mask.any():
                         first_attempt = False
                         continue
-                if dtype == int:
+                if dtype is int:
                     if np.any(sample_numeric % 1 != 0):
                         first_attempt = False
                         continue

@@ -33,7 +33,9 @@ from __future__ import annotations
 import pytest
 
 from hhemt.config.analysis import analysis_config
+from hhemt.exceptions import ProcessingError
 from hhemt.process_simulation import TRITONSWMM_sim_post_processing as _Proc
+from hhemt.swmm_runoff_modeling import hydrograph_outputs_gate as _run_gate
 
 # The ScenarioPaths attr names of the preserve set, keyed identically to
 # summary_paths._SUMMARY_STEMS_BY_MODEL. Kept here (not imported) deliberately: this is the
@@ -268,8 +270,6 @@ def test_summary_export_validates_timeseries_below_the_already_written_return():
 # --------------------------------------------------------------------------
 # Surface 2 — hydrograph already-written gate (Spec H).
 # --------------------------------------------------------------------------
-from hhemt.exceptions import ProcessingError
-from hhemt.swmm_runoff_modeling import hydrograph_outputs_gate as _run_gate
 
 
 class _FakeScenario:
