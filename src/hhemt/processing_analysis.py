@@ -443,6 +443,47 @@ class TRITONSWMM_analysis_post_processing:
                     f"Summary file not found: {summary_file}. "
                     f"Run timeseries processing with summary creation before consolidating."
                 )
+            # COMPLETENESS, not just existence. A kill inside write_zarr leaves a
+            # store that .exists() and OPENS and returns fill for the chunks that
+            # never landed -- measured; zarr writes the declared shape before the
+            # chunk bytes, and an absent chunk reads as fill_value rather than
+            # raising. The per-model processing-log record is the only signal in the
+            # tree that attests RETURN rather than PRESENCE: add_sim_processing_entry
+            # runs after write_zarr returns, so a killed write leaves no record. The
+            # upstream d_process flag does NOT close this -- it gates on the summary
+            # files EXISTING, which a fill-filled partial satisfies.
+            #
+            # THIS CLOSES AN ASYMMETRY RATHER THAN INVENTING A MECHANISM. The
+            # CONSOLIDATED tier already has the write-then-flag interlock: the gate at
+            # :218-219 is a CONJUNCTION of exists() and datatree_consolidation_complete,
+            # and the flag is set at :322-323 only after write_datatree_zarr returns at
+            # :315, so a kill between them re-consolidates. The per-scenario tier had
+            # the same signal available and was not consulting it.
+            #
+            # FileNotFoundError, NOT a distinct type, and the type is load-bearing.
+            # Six live call sites across three modules reach this method, and FOUR
+            # enclosing handlers catch exactly (FileNotFoundError, ValueError):
+            # eda/cross_sim_identity.py:93 and :392, eda/compute_sensitivity.py:321,
+            # and sensitivity_analysis.py:1736. A distinct type would turn Gotcha 36's
+            # deliberate skip-with-warning into a master abort AND strip both EDA calc
+            # members of the skip arms that let a family comparison proceed over the
+            # remaining subs. Making that abort deliberate is a FIVE-spec change --
+            # this one plus four handler widenings -- and the EDA skip semantics belong
+            # to their own authors.
+            if mode.startswith("tritonswmm"):
+                _model_type = "tritonswmm"
+            elif mode.startswith("triton"):
+                _model_type = "triton"
+            else:
+                _model_type = "swmm"
+            _entry = scen.get_log(_model_type).processing_log.outputs.get(summary_file.name)
+            if _entry is None or not _entry.success:
+                raise FileNotFoundError(
+                    f"Summary store present but incomplete: {summary_file}. "
+                    "It carries no successful processing-log record, so its write did "
+                    "not return and it may be a fill-filled partial. Re-run timeseries "
+                    "processing for this scenario."
+                )
             # (R8) Defense-in-depth backstop. With the Phase-2 positive completion
             # marker gating the upstream generator emit (the d_process flag is
             # written only after all enabled-model summaries land), this raise is

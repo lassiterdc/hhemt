@@ -465,3 +465,33 @@ non_breaking_allowlist:
       log key, a flag name or a directory name -- those WOULD owe a migration. The schema this
       DOES break is the render bundle, so BUNDLE_SCHEMA_VERSION is bumped 4 -> 5 and both
       checked-in fixture bundles are regenerated in the same commit.
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      T15(iv) Shape B -- _retrieve_combined_output gains a COMPLETENESS check before it opens
+      an existing per-scenario summary store: it consults the per-model processing-log record
+      and raises when that record is absent or unsuccessful. FOR (non-breaking): the change is
+      READ-SIDE ONLY. No path, filename, zarr group, dtype, attr, chunk, encoding or
+      _version.json value differs, no artifact is created, renamed or removed, and an existing
+      on-disk analysis opens and re-consolidates unchanged whenever its processing-log records
+      are intact -- which is every analysis whose processing completed normally, since
+      add_sim_processing_entry writes the record on the success path. AGAINST, stated rather
+      than elided because the entry is the audit record: an analysis whose
+      processing_log.outputs were CLEARED while its summary stores survived -- the deliberate
+      Gotcha-28 force-rerun state -- would now raise where it previously proceeded. The defence
+      is checkable and was checked at workflow.py:1907-1909 (_FLOOR_FLAG_PREFIXES): both stages
+      that reach _invalidate_processing_log_for_force_rerun ("simulate" and "process") also
+      clear the d_process_ flags, so consolidation is DAG-unreachable in that state until
+      processing re-runs and re-writes BOTH the store and the record. The raise is deliberately
+      FileNotFoundError and the type is load-bearing: six live call sites across three modules
+      reach this method and four enclosing handlers catch exactly (FileNotFoundError,
+      ValueError), so a distinct type would convert Gotcha 36's tolerated skip into a master
+      abort and strip both EDA calc members of their skip arms.
+      CHANGE-SCOPED via layout_signature -- and this is the FIRST signature this path has
+      carried. The three prior processing_analysis.py rows are path-keyed with no signature,
+      which under _load_allowlist's last-wins merge had made the exemption PERMANENT: every
+      later edit to this file passed Check B silently, which is the same fail-open this file
+      already records against report_plot_ids.py and which `## M-16` measured across four
+      entries on 2026-09-01. This row closes it for this path. Per that same merge rule a later
+      row omitting layout_signature INHERITS this one, so re-opening the permanent exemption
+      must be an EDIT that deletes this signature -- never an append that quietly outranks it.
+    layout_signature: "fa7d7758c1722ef38d3589aca3e7e55d0710df05b33bf58c792a02cfec93b529"
