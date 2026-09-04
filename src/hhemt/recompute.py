@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -34,14 +34,16 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------- #
 # Frozen action / scope enums (versioning-specialist Q2/Q3).
 #
-# Both are ``(str, Enum)`` NOT ``StrEnum``: StrEnum landed in Python 3.11, and the
-# ``(str, Enum)`` mix-in gives the same string-identity + clean YAML/JSON
-# serialization (the members are written into the ``hhemt recompute-plan`` output
-# and compared against the registry's fields) while staying import-safe on 3.10.
+# Both are ``StrEnum``. They were ``(str, Enum)`` while the project floor was 3.10;
+# the floor is now ``requires-python = ">= 3.11, < 3.13"`` and ``just testall``
+# collects on 3.11 and 3.12, so the constraint that forced the mix-in is gone.
+# ``StrEnum`` keeps the string-identity and JSON serialization the members need
+# (they are written into the ``hhemt recompute-plan`` output and compared against
+# the registry's fields).
 # ``analysis_validation.IssueLevel`` is a bare ``Enum`` because it is internal-only
 # and never serialized; ``RecomputeAction`` IS serialized, so it needs ``str``.
 # --------------------------------------------------------------------------- #
-class RecomputeAction(str, Enum):  # noqa: UP042 -- (str, Enum) is deliberate; see the comment block above (NOT StrEnum)
+class RecomputeAction(StrEnum):
     """The four recompute tiers, each a thin dispatch into existing machinery.
 
     * ``RE_RUN``              -> scoped ``run(override_force_rerun=...)`` per affected
@@ -58,7 +60,7 @@ class RecomputeAction(str, Enum):  # noqa: UP042 -- (str, Enum) is deliberate; s
     NONE_COSMETIC = "none-cosmetic"
 
 
-class RecomputeScope(str, Enum):  # noqa: UP042 -- (str, Enum) is deliberate; see the comment block above (NOT StrEnum)
+class RecomputeScope(StrEnum):
     """Which production tier a bug lives in — designated EXPLICITLY, never inferred
     from changed-file paths (the ADR-16 flip-condition: path->scope auto-derivation
     is fragile and mis-scopes a cosmetic edit as a scenario-processing NUMERICS bug)."""
@@ -405,8 +407,7 @@ def _action_call_descriptor(
             "call": "analysis.run",
             "kwargs": {"override_force_rerun": {"pre_fix_scopes": pre_fix_scopes}},
             "rationale": (
-                "scenario-scoped re-run; per-scenario force-rerun targets resolve "
-                "from the per-scenario ADR-15 stamps"
+                "scenario-scoped re-run; per-scenario force-rerun targets resolve from the per-scenario ADR-15 stamps"
             ),
         }
     if action is RecomputeAction.REPROCESS_SCENARIO:
@@ -525,9 +526,7 @@ def _resolve_registry_matches(
                         severity=entry.severity,
                         recommended_action=entry.recommended_action,
                         affected_scope=scope_id,
-                        summary=(
-                            f"Scope {scope_id!r} predates invalidating fix " f"{entry.commit_id} ({entry.severity})."
-                        ),
+                        summary=(f"Scope {scope_id!r} predates invalidating fix {entry.commit_id} ({entry.severity})."),
                     )
                 )
     return actionable, info

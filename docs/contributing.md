@@ -111,11 +111,58 @@ If you come across an unused variable, import, or function argument, investigate
 1. Check whether the surrounding implementation is incomplete
 2. Find planning documents that touched that function and determine whether implementation is planned
 3. If still uncertain, raise the concern with the developer with hypotheses about why it exists
-4. The only exception: elements included for a currently-planned implementation, marked with a comment referencing the planning document
+4. Exception A: elements included for a currently-planned implementation, marked with a comment referencing the planning document
+5. Exception B: an element whose *evaluation* is the point, where the name is unread but the statement is load-bearing — an import whose side effect is registration (`import rioxarray` registers the `.rio` accessor), or a bind whose only job is to trigger a property that raises. Prefer the compliant form when one exists and is a no-op: `_ = system.analysis` does not trip F841, so use it and keep the explanation as a plain comment. When no compliant form exists — `import x as _` still trips F401 — suppress with `# noqa` and say what the side effect is. "Unused" here is the linter's name-liveness verdict, not a claim that the statement does nothing, and the two come apart exactly here.
 
 Report your observations, hypotheses, and recommendations to the developer.
 
 After investigation and with approval from the developer, remove unused code, dead branches, commented-out blocks, and stale imports.
+
+### Suppressing a lint finding: comply, or annotate with a checkable reason
+
+Comply by default. Reach for `# noqa` when — and only when — complying would change
+behaviour or delete information.
+
+| The finding is… | Do this | Because |
+|---|---|---|
+| Wrong about this code (a genuine false positive) | `# noqa: XXX` + reason | Complying would encode a falsehood. |
+| Right, and the compliant form is behaviour-identical | Comply | A suppression here is debt against no offsetting truth. |
+| Right, but compliance is genuinely unavailable | `# noqa` or `per-file-ignores` + a reason naming the blocker | The blocker is the reason — and blockers expire, so it must be checkable. |
+| Right, and complying would delete information | `# noqa: XXX` + reason | Column alignment, an assertion, and a deliberate shape are all information. |
+| A real defect nobody is fixing today | Fix it, or ignore it with an explicit tracked note | See the `docs/*.ipynb` F403 block in `pyproject.toml`. |
+
+**Unused variables, imports and function arguments are governed by "No cruft" above,
+which is narrower than this table.** Investigate first; do not suppress an F401, F841
+or ARG finding on the strength of this section alone. Exceptions A and B there are the
+whole of the license.
+
+**Two rules about the reason itself.**
+
+1. *State a fact, not a preference.* "deliberate" and "intentional" assert only that
+   someone chose it; a reader cannot check them. `# noqa: B905 - the two lists are
+   appended in separate statements in a background thread` is a reason, because a
+   reader can go and look.
+2. *Single-source a reason that names a repo-wide fact.* If three sites are suppressed
+   for one ground — a Python floor, a dependency version, a downstream consumer — write
+   the ground once and point the other sites at it. When the ground changes, that is one
+   edit rather than three, and the two that were missed cannot become quietly wrong.
+   Nothing detects a suppression whose reason has gone stale: the rule still fires, so
+   the directive is still consumed, so even `RUF100` stays silent.
+
+**What never counts as complying.** Making the finding go away by weakening what the
+code asserts is not compliance, it is a behaviour change with a lint fix's paperwork.
+`zip(a, b, strict=False)` silently truncates where `strict=True` would raise. If the
+compliant form is not a no-op, suppress and say why.
+
+**Where the suppression lives** — put it at the smallest scope at which the reason is
+true:
+
+- the reason is about *this line* -> per-site `# noqa: XXX -- reason`;
+- the reason is about *this file* -> `per-file-ignores` in `pyproject.toml`, with the
+  reason as a comment above the entry (the existing Typer/`B008` and
+  `rollin_status.py`/`E501` entries are the model);
+- the reason is about *the whole project* -> a global `ignore`. Nothing currently
+  qualifies, and the bar should stay high.
 
 ### Functions have docstrings, type hints, and type checking
 

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from hhemt.version_migration.constants import BUNDLE_MANIFEST_FILENAME
@@ -79,7 +79,7 @@ _CFG_ANALYSIS_COMPARISON_FIELDS: tuple[str, ...] = (
 _RESERVED_LABEL_FIELDS: frozenset[str] = frozenset({"analysis_id"})
 
 
-class CompatibilitySeverity(str, Enum):  # noqa: UP042 -- (str, Enum) is deliberate (NOT StrEnum); see recompute.py
+class CompatibilitySeverity(StrEnum):
     """Combine-admissibility severity (NOT ADR-17 output-invalidation severity)."""
 
     INFORMATIONAL = "informational"  # expected divergence (HPC bucket): UVA vs Frontier
