@@ -42,10 +42,79 @@
 # edit it or re-record the digest with a fresh justification -- not to assume the
 # staleness is this note's leftover.
 #
+# DISCHARGED 2026-09-04. It fired exactly as predicted -- on a commit that changes the
+# renderer (FR-7, an error-path-only diagnostic) and not the caption. The caption was
+# re-read in full, the digest re-recorded, and the intervening merge-cleanup layer shown
+# import/format-only by AST measurement. The paragraphs above are RETAINED rather than
+# deleted: the prediction and its discharge are the evidence that this guard's expiry
+# mechanism works, and that is worth more than a tidy file. Only the sentence "It is NOT
+# re-recorded, deliberately" is now historical -- it describes the state until 2026-09-04.
+#
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: f0a3493fe4a55074b6a543b302d055aff4fef7f612976900fcee3f41b48a37c5
+    renderer_sha256: 93cdbbe783a59cf0afeff16eafb8b8d0fd7d1e2b1c19b07dd317436e80bf1024
+    justification_2026_09_04: >-
+      FR-7 of the post-merge-suite-reds friction set. THIS IS THE FIRING THE 2026-09-01
+      HEADER NOTE PREDICTED, discharged the way that note prescribed: the caption was
+      re-read in full and the digest re-recorded, rather than the staleness being written
+      off as the note's own leftover.
+      THE CHANGE IS ERROR-PATH ONLY. FR-7 edits exactly one statement -- the RuntimeError
+      raised at `if not rows:` when `_collect_rows` returns empty -- replacing a message
+      that named none of the ways the collection can come back empty with one that prints
+      the member list, the swmm-only member list, the consolidated-tree path and its
+      existence, the tree node paths, and a per-member performance `data_vars` map. It
+      adds no branch: the `if not rows:` arm already existed and is the arm being taken
+      today. Nothing on the SUCCESS path moved.
+      THE RE-READ WAS PERFORMED AND IS THE POINT OF THIS ENTRY. The caption makes six
+      claims: the independent variable it is keyed on; the dependent variable's default
+      and its slowest-rank wallclock semantics with the `wallclock reduction uses max over
+      rank` stipulation; restart-safety; the per-member `aggregation` mode from
+      report_config.yaml; the SWMM-only routing to `swmm_full_rpt_file` Total elapsed via
+      `swmm_output_parser.parse_total_elapsed`; and the per-report axis auto-scaling
+      caveat with its cross-arm comparison warning. Every one of them describes the figure
+      that RENDERS. FR-7 governs only the case where no figure is produced, so no claim
+      the caption makes can have gone stale under it.
+      ACTIVELY CONSISTENT, not merely non-contradictory: the caption already names
+      `swmm_full_rpt_file` and `parse_total_elapsed`, and those are exactly the two symbols
+      FR-7's new "FIFTH path" sentence is about -- the swmm-only branch's two silent
+      `continue`s when that .rpt is absent or unparseable. The figure's documentation and
+      its failure message now use one vocabulary.
+      WHY THE CAPTION IS NOT EDITED TO DESCRIBE THE ABSENCE. A caption is Jinja-rendered
+      INTO the report beside its figure. When this RuntimeError fires the plot rule fails,
+      the workflow fails, and no report exists to carry the caption -- so a sentence about
+      what the figure's absence means could never reach a reader. The diagnostic belongs in
+      the exception, which is where FR-7 put it.
+      THIS ENTRY DISCHARGES TWO LAYERS, AND BOTH WERE MEASURED. The recorded digest
+      f0a3493f belongs to commit 75ca35de (the _compute_scaling_series extraction); between
+      it and HEAD sits the merge cleanup the header note describes, never re-recorded. That
+      middle layer is import/format-only BY MEASUREMENT, on the instrument the sibling
+      entries in this file established: with imports stripped from every body list the
+      module's AST at 75ca35de is IDENTICAL to its AST at HEAD, and the imported-name set
+      is identical with zero names added and zero removed. So re-recording here does not
+      silently absorb an un-re-read semantic change. Reproduce by running this script,
+      which prints True (verified before this entry was written):
+      import ast, subprocess
+      f = "src/hhemt/report_renderers/sensitivity_benchmarking.py"
+      def strip(src):
+      ....t = ast.parse(src)
+      ....for n in ast.walk(t):
+      ........for fld in ("body", "orelse", "finalbody"):
+      ............v = getattr(n, fld, None)
+      ............if isinstance(v, list):
+      ................setattr(n, fld, [x for x in v if not isinstance(x, (ast.Import, ast.ImportFrom))])
+      ....return ast.dump(t)
+      show = lambda r: subprocess.run(["git", "show", f"{r}:{f}"], capture_output=True, text=True).stdout
+      print(strip(show("75ca35de")) == strip(show("HEAD")))
+      (Leading dots stand for four spaces each; YAML folded scalars collapse real
+      indentation, so the script is written with dot-padding and must be de-dotted before
+      running. NOTE the list guard `isinstance(v, list)` -- without it ast.walk reaches a
+      Lambda or IfExp whose `body` is a single node, and the script dies with
+      "TypeError: 'Constant' object is not iterable". That is measured, not anticipated:
+      the first form written for this entry had no guard and failed exactly that way.)
+      Digest re-derived independently with sha256sum against the working tree after the
+      ruff-format pass that rides this change, so the exemption expires on the next change
+      to this renderer rather than on arrival.
     justification: >-
       Item (A) extraction (ruling ## 18, option 2). Caption RE-READ in full; the finding is
       that this change is a PURE MOVE and the caption makes no claim a pure move can touch.

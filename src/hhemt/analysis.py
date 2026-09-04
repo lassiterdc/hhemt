@@ -160,7 +160,7 @@ class TestResult:
     ``{analysis_dir}/_test`` root directory."""
 
     representatives: list
-    analyses: list
+    members: list
     root: Path
 
 
@@ -2925,7 +2925,7 @@ class TRITONSWMM_analysis:
             )
         return TestResult(
             representatives=reps,
-            analyses=results,
+            members=results,
             root=self.analysis_paths.analysis_dir / "_test",
         )
 

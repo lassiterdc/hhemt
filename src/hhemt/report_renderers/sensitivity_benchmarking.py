@@ -647,7 +647,31 @@ def render(
 
     rows, source_paths = _collect_rows(analysis, dependent_var)
     if not rows:
-        raise RuntimeError(f"No data for benchmarking {independent_var} vs {dependent_var}")
+        _dt_path = analysis.analysis_paths.sensitivity_datatree_zarr
+        _members = list(sensitivity.members.keys())
+        _swmm_only = [_m for _m, _a in sensitivity.members.items() if _a._get_enabled_model_types() == ["swmm"]]
+        _nodes: list[str] = []
+        _perf_vars: dict[str, list[str]] = {}
+        if _dt_path is not None and _dt_path.exists():
+            _tree = xr.open_datatree(str(_dt_path), engine="zarr", consolidated=False)
+            _nodes = [p for p, _n in _tree.subtree_with_keys]
+            for _m in _members:
+                _nd = _find_perf_node(_tree, _m)
+                _perf_vars[str(_m)] = sorted(_nd.data_vars) if _nd is not None else []
+        raise RuntimeError(
+            f"No data for benchmarking {independent_var} vs {dependent_var}. "
+            f"members={_members}; swmm_only_members={_swmm_only}; "
+            f"consolidated tree={_dt_path} "
+            f"exists={_dt_path is not None and _dt_path.exists()}; "
+            f"tree node paths={_nodes}; per-member performance data_vars={_perf_vars}. "
+            "For a member carrying a TRITON arm, exactly one of these is true: the "
+            "member set is empty, the consolidated tree is absent, no member resolves "
+            "a tritonswmm/performance or triton_only/performance node (its entry above "
+            "is an empty list), or that node carries no such column (its entry is "
+            f"non-empty and lacks {dependent_var.split('.', 1)[1]!r}). A swmm-only "
+            "member has a FIFTH path this enumeration does not cover: its .rpt file is "
+            "absent or unparseable, which _collect_rows skips without raising."
+        )
 
     df = pd.DataFrame(rows)
     # Wallclock-safe column allowlist (V0008+): only barrier-synchronized
