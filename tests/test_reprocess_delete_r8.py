@@ -294,9 +294,9 @@ def test_delete_rules_declare_a_log_and_redirect_into_it(norfolk_multi_sim_analy
     # the SLURM executor captures per-jobid and never deletes. Exit status is preserved
     # because Snakemake prefixes shell commands with `set -euo pipefail`.
     assert "2>&1 | tee {log}" in content, "shell must redirect into {log}; a `log:` directive alone captures nothing"
-    assert content.count("2>&1 | tee {log}") == content.count(
-        "    log:\n"
-    ), "every rule declaring a log must also redirect into it"
+    assert content.count("2>&1 | tee {log}") == content.count("    log:\n"), (
+        "every rule declaring a log must also redirect into it"
+    )
 
 
 def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivity_analysis):

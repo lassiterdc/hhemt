@@ -1250,7 +1250,7 @@ def _render_plotly_branch(
     )
     html_text = html_text.replace(
         '<head><meta charset="utf-8" /></head>',
-        '<head><meta charset="utf-8" />' f"<title>System overview — {_title_panels}</title>" "</head>",
+        f'<head><meta charset="utf-8" /><title>System overview — {_title_panels}</title></head>',
         1,
     )
 
@@ -1448,9 +1448,7 @@ def _draw_hydrology_panel_plotly(
                     legendgroup="hydrology",
                     customdata=outlet_names,
                     hovertemplate=(
-                        "<b>%{customdata}</b> (outlet)<br>"
-                        "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m"
-                        "<extra></extra>"
+                        "<b>%{customdata}</b> (outlet)<br>Easting: %{x:.1f} m<br>Northing: %{y:.1f} m<extra></extra>"
                     ),
                     showlegend=False,
                 ),
@@ -1724,9 +1722,7 @@ def _draw_hydraulics_panel_plotly(
                     name="Outfalls",
                     legendgroup="hydraulics_outfalls",
                     customdata=o_customdata,
-                    hovertemplate=(
-                        "<b>Outfall %{customdata[0]}</b><br>" "Invert: %{customdata[1]:.2f} m" "<extra></extra>"
-                    ),
+                    hovertemplate=("<b>Outfall %{customdata[0]}</b><br>Invert: %{customdata[1]:.2f} m<extra></extra>"),
                 ),
                 row=_prow,
                 col=col,
@@ -1841,9 +1837,7 @@ def _draw_mannings_panel_plotly(
                 showscale=True,
                 colorbar=_cbar,
                 name="Manning's n",
-                hovertemplate=(
-                    "Manning's n: %{z:.3f}<br>" "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m" "<extra></extra>"
-                ),
+                hovertemplate=("Manning's n: %{z:.3f}<br>Easting: %{x:.1f} m<br>Northing: %{y:.1f} m<extra></extra>"),
             ),
             row=_prow,
             col=col,
@@ -1968,9 +1962,7 @@ def _draw_elevation_panel_plotly(
                     **({"y": cbar_y, "yanchor": "middle"} if cbar_y is not None else {}),
                 ),
                 name="DEM elevation (modeled area)",
-                hovertemplate=(
-                    "Elevation: %{z:.2f} m<br>" "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m" "<extra></extra>"
-                ),
+                hovertemplate=("Elevation: %{z:.2f} m<br>Easting: %{x:.1f} m<br>Northing: %{y:.1f} m<extra></extra>"),
             ),
             row=_prow,
             col=col,
@@ -1990,7 +1982,7 @@ def _draw_elevation_panel_plotly(
                 showlegend=False,
                 name="DEM walls",
                 hovertemplate=(
-                    "Wall / out-of-range cell<br>" "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m" "<extra></extra>"
+                    "Wall / out-of-range cell<br>Easting: %{x:.1f} m<br>Northing: %{y:.1f} m<extra></extra>"
                 ),
             ),
             row=_prow,
@@ -2086,7 +2078,7 @@ def _draw_elevation_panel_plotly(
                         name="Storm tide BC",
                         legendgroup="dem",
                         hovertemplate=(
-                            "Storm tide boundary<br>" "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m" "<extra></extra>"
+                            "Storm tide boundary<br>Easting: %{x:.1f} m<br>Northing: %{y:.1f} m<extra></extra>"
                         ),
                     ),
                     row=_prow,

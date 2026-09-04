@@ -72,9 +72,9 @@ def test_reclaim_drop_set_is_disjoint_from_preserve_set(model_type):
     """
     preserve = set(_SUMMARY_ATTRS_BY_MODEL[model_type])
     drop = set(_Proc._reclaim_attrs(model_type, policy="all"))
-    assert (
-        preserve & drop == set()
-    ), f"reclaim would remove preserved artifact(s) for {model_type}: {sorted(preserve & drop)}"
+    assert preserve & drop == set(), (
+        f"reclaim would remove preserved artifact(s) for {model_type}: {sorted(preserve & drop)}"
+    )
 
 
 @pytest.mark.parametrize("model_type", _MODEL_TYPES)
@@ -86,9 +86,9 @@ def test_preserve_and_drop_sets_are_one_to_one_paired(model_type):
     """
     preserve = _SUMMARY_ATTRS_BY_MODEL[model_type]
     drop = _Proc._reclaim_attrs(model_type, policy="all")
-    assert len(drop) == len(
-        preserve
-    ), f"{model_type}: {len(drop)} timeseries attr(s) paired against {len(preserve)} summary attr(s)"
+    assert len(drop) == len(preserve), (
+        f"{model_type}: {len(drop)} timeseries attr(s) paired against {len(preserve)} summary attr(s)"
+    )
 
 
 @pytest.mark.parametrize("model_type", _MODEL_TYPES)
@@ -467,9 +467,9 @@ def test_truncation_preserves_every_parser_needed_marker(tmp_path):
     _truncate(p)
     truncated = p.read_text()
     survivors = _markers_that_must_survive()
-    assert (
-        len(survivors) == len(_parser_markers()) - 1
-    ), "exactly one marker (the body-start sentinel) may be consumed by truncation"
+    assert len(survivors) == len(_parser_markers()) - 1, (
+        "exactly one marker (the body-start sentinel) may be consumed by truncation"
+    )
     for marker in survivors:
         assert marker in truncated, f"truncation dropped a parser-needed marker: {marker}"
 

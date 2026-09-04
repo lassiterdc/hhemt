@@ -945,7 +945,7 @@ def _validate_hpc_configuration(
                 ),
                 current_value=None,
                 fix_hint=(
-                    "Set hpc_system_config.login_node to your specific login node " "(e.g., 'login1.hpc.virginia.edu')"
+                    "Set hpc_system_config.login_node to your specific login node (e.g., 'login1.hpc.virginia.edu')"
                 ),
             )
 
@@ -1366,7 +1366,7 @@ def _validate_storm_tide_data(cfg: analysis_config, result: ValidationResult):
                             f"weather_timeseries NetCDF. Available: {avail}"
                         ),
                         current_value=rain_name,
-                        fix_hint=(f"Set weather_time_series_spatial_mean_rainfall_datavar to " f"one of: {avail}"),
+                        fix_hint=(f"Set weather_time_series_spatial_mean_rainfall_datavar to one of: {avail}"),
                     )
                 if (
                     cfg.toggle_storm_tide_boundary
@@ -1516,7 +1516,7 @@ def _check_static_backend_kaleido_available(report_cfg, result: ValidationResult
         result.add_error(
             field="report_config.interactive.static_backend",
             message=(
-                "static_backend='plotly' requires kaleido, but kaleido " "is not importable in the current environment."
+                "static_backend='plotly' requires kaleido, but kaleido is not importable in the current environment."
             ),
             current_value="plotly",
             fix_hint=(
@@ -1734,7 +1734,7 @@ def _validate_per_member_row_caps(
                         f"'{partition_name}', exceeding its cap of {cap}."
                     ),
                     current_value=requested,
-                    fix_hint=(f"Reduce {col} to <= {cap} or choose a partition with a higher " f"{cap_attr} cap."),
+                    fix_hint=(f"Reduce {col} to <= {cap} or choose a partition with a higher {cap_attr} cap."),
                 )
 
 
@@ -1829,7 +1829,7 @@ def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "Validation
         if _pp.is_dir() and (_pp / ".singularity.d").is_dir():
             continue
         _kind = (
-            "a directory exists there but carries no .singularity.d/ marker, so it is not an " "apptainer sandbox"
+            "a directory exists there but carries no .singularity.d/ marker, so it is not an apptainer sandbox"
             if _pp.is_dir()
             else "no SIF file or sandbox directory exists there"
         )

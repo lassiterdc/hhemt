@@ -125,7 +125,7 @@ class PerSimMapConfig(cfgBaseModel):
     )
     wse_clip_quantile_lower: float = Field(
         0.01,
-        description=("Lower-quantile clip on WSE colorbar (computed across wetted " "cells)."),
+        description=("Lower-quantile clip on WSE colorbar (computed across wetted cells)."),
     )
     depth_clip_quantile_upper: float | None = Field(
         0.98,
@@ -176,8 +176,7 @@ class PerSimMapConfig(cfgBaseModel):
     fallback_h_inches: float = Field(
         6.0,
         description=(
-            "Fallback figure height when `cfg.figsize_inches` is absent. "
-            "Verbatim per_sim_peak_flood_depth.py line 279."
+            "Fallback figure height when `cfg.figsize_inches` is absent. Verbatim per_sim_peak_flood_depth.py line 279."
         ),
     )
 
@@ -279,7 +278,7 @@ class SystemMapConfig(cfgBaseModel):
     )
     fig_width_min_factor: float = Field(
         1.6,
-        description=("Minimum figure-width multiplier on `h`. Verbatim `1.6` " "system_overview.py line 73."),
+        description=("Minimum figure-width multiplier on `h`. Verbatim `1.6` system_overview.py line 73."),
     )
     subplots_adjust: dict = Field(
         default_factory=lambda: {"left": 0.04, "right": 0.97, "top": 0.92, "bottom": 0.20, "wspace": 0.04},
@@ -524,7 +523,7 @@ class TableInteractiveConfig(cfgBaseModel):
     visible_columns_default: list[str] | None = Field(
         None,
         description=(
-            "Column slugs to mark visible:true initially. None means all " "visible. User toggles via headerMenu."
+            "Column slugs to mark visible:true initially. None means all visible. User toggles via headerMenu."
         ),
     )
     header_filter: bool = Field(
@@ -560,9 +559,7 @@ class TableInteractiveConfig(cfgBaseModel):
         if v is None:
             return v
         if not re.fullmatch(r"[A-Za-z0-9_.\-]+", v):
-            raise ValueError(
-                f"persistence_id={v!r} must match ^[A-Za-z0-9_.\\-]+$ " f"(Tabulator localStorage-key safe)."
-            )
+            raise ValueError(f"persistence_id={v!r} must match ^[A-Za-z0-9_.\\-]+$ (Tabulator localStorage-key safe).")
         return v
 
     @field_validator("visible_columns_default")
@@ -1170,8 +1167,7 @@ def resolve_reporting_set_names(
         raise ConfigurationError(
             field="reporting_set",
             message=(
-                f"report.reporting_set names the same set more than once: {repeated}. "
-                "Each set may appear at most once."
+                f"report.reporting_set names the same set more than once: {repeated}. Each set may appear at most once."
             ),
             config_path=None,
         )

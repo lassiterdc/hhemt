@@ -345,18 +345,18 @@ def test_synth_models_mask_converges_across_a_symlinked_home() -> None:
         "the normalizer did not converge across homes, so the byte-identity comparison "
         f"is machine-bound. laptop={got_laptop!r} cluster={got_cluster!r}"
     )
-    assert (
-        "{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson" in got_laptop
-    ), f"the synth-models mask did not fire. got={got_laptop!r}"
+    assert "{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson" in got_laptop, (
+        f"the synth-models mask did not fire. got={got_laptop!r}"
+    )
     assert "gpfs" not in got_cluster, f"a machine-specific segment leaked. got={got_cluster!r}"
     assert "../" not in got_cluster, f"a relative-climb residual survived. got={got_cluster!r}"
 
     # differently-positioned satisfying input: a ../-relative path carrying no
     # model-cache token is real signal and must be returned byte-unchanged.
     unrelated = "source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}]"
-    assert (
-        _normalize_volatile(unrelated) == unrelated
-    ), f"an unrelated ../-relative path was mangled. got={_normalize_volatile(unrelated)!r}"
+    assert _normalize_volatile(unrelated) == unrelated, (
+        f"an unrelated ../-relative path was mangled. got={_normalize_volatile(unrelated)!r}"
+    )
 
 
 def test_pytest_tmp_mask_survives_an_explicitly_chosen_basetemp(
@@ -397,6 +397,6 @@ def test_pytest_tmp_mask_survives_an_explicitly_chosen_basetemp(
     # differently-positioned satisfying input: a line carrying no basetemp is real
     # signal and must be returned byte-unchanged.
     unrelated = "shell: 'python -m hhemt.setup_workflow --analysis-config cfg.yaml'"
-    assert (
-        _normalize_volatile(unrelated) == unrelated
-    ), f"an unrelated line was mangled. got={_normalize_volatile(unrelated)!r}"
+    assert _normalize_volatile(unrelated) == unrelated, (
+        f"an unrelated line was mangled. got={_normalize_volatile(unrelated)!r}"
+    )

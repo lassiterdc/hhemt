@@ -129,7 +129,7 @@ def test_check_b_passes_when_path_in_non_breaking_allowlist(tmp_path: Path) -> N
         extra_files_at_main={"src/foo.py": "# initial\n"},
         extra_files_at_head={"src/foo.py": "# changed\n"},
         sentinel_yaml=(
-            "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\n" "non_breaking_allowlist:\n  - src/foo.py\n"
+            "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n  - src/foo.py\n"
         ),
     )
     out = _run(repo, "check-b", "main")
@@ -142,7 +142,7 @@ def test_check_b_fails_when_compute_event_id_slug_ast_drifts(tmp_path: Path) -> 
         "    return f'year.{year}_event_type.{event_type}_event_id.{event_id}'\n"
     )
     head_scenario = (
-        "def compute_event_id_slug(year, event_type, event_id):\n" "    return f'y{year}_t{event_type}_e{event_id}'\n"
+        "def compute_event_id_slug(year, event_type, event_id):\n    return f'y{year}_t{event_type}_e{event_id}'\n"
     )
     repo = _make_repo(
         tmp_path,
@@ -151,7 +151,7 @@ def test_check_b_fails_when_compute_event_id_slug_ast_drifts(tmp_path: Path) -> 
         extra_files_at_main={"src/hhemt/scenario.py": main_scenario},
         extra_files_at_head={"src/hhemt/scenario.py": head_scenario},
         sentinel_yaml=(
-            "layout_relevant:\n  paths:\n    - src/hhemt/scenario.py\n" "  globs: []\nnon_breaking_allowlist: []\n"
+            "layout_relevant:\n  paths:\n    - src/hhemt/scenario.py\n  globs: []\nnon_breaking_allowlist: []\n"
         ),
     )
     out = _run(repo, "check-b", "main")
@@ -233,7 +233,7 @@ def test_check_a_passes_across_package_rename(tmp_path: Path) -> None:
         tmp_path,
         layout_version=12,
         sentinel_yaml=(
-            "layout_relevant:\n  paths:\n    - src/hhemt/paths.py\n" "  globs: []\nnon_breaking_allowlist: []\n"
+            "layout_relevant:\n  paths:\n    - src/hhemt/paths.py\n  globs: []\nnon_breaking_allowlist: []\n"
         ),
     )
     out = _run(repo, "check-a", "main")
@@ -268,7 +268,7 @@ def test_check_b_passes_when_only_renames(tmp_path: Path) -> None:
         tmp_path,
         layout_version=4,
         sentinel_yaml=(
-            "layout_relevant:\n  paths:\n    - src/hhemt/paths.py\n" "  globs: []\nnon_breaking_allowlist: []\n"
+            "layout_relevant:\n  paths:\n    - src/hhemt/paths.py\n  globs: []\nnon_breaking_allowlist: []\n"
         ),
     )
     out = _run(repo, "check-b", "main")
@@ -301,9 +301,9 @@ def test_every_sentinel_entry_resolves_on_disk() -> None:
     for rel in sentinel["layout_relevant"]["paths"]:
         assert (repo_root / rel).exists(), f"sentinel path {rel} does not exist on disk"
     for g in sentinel["layout_relevant"]["globs"]:
-        assert any(
-            mod._layout_glob_match(rel, g) for rel in tracked
-        ), f"sentinel glob {g!r} matches no tracked file (stale glob or matcher regression)"
+        assert any(mod._layout_glob_match(rel, g) for rel in tracked), (
+            f"sentinel glob {g!r} matches no tracked file (stale glob or matcher regression)"
+        )
     # allowlist parses without SystemExit (non-empty justification enforced) and every path exists
     allow = mod._load_allowlist(sentinel)
     for rel in allow:
@@ -330,7 +330,7 @@ def test_check_c_does_not_warn_on_new_direct_child_config_file(tmp_path: Path) -
         layout_version_at_main=4,
         extra_files_at_head={"src/hhemt/config/new_thing_config.py": "x = 1\n"},
         sentinel_yaml=(
-            'layout_relevant:\n  paths: []\n  globs:\n    - "src/hhemt/config/**/*.py"\n' "non_breaking_allowlist: []\n"
+            'layout_relevant:\n  paths: []\n  globs:\n    - "src/hhemt/config/**/*.py"\nnon_breaking_allowlist: []\n'
         ),
     )
     out = _run(repo, "check-c", "main")

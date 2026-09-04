@@ -2943,9 +2943,9 @@ class TRITONSWMM_sensitivity_analysis:
         status_frames = []
 
         for member_id, analysis in self.members.items():
-            assert (
-                analysis.cfg_analysis.is_experiment_member
-            ), "is_experiment_member attribute not true in member.cfg_analysis.is_experiment_member"
+            assert analysis.cfg_analysis.is_experiment_member, (
+                "is_experiment_member attribute not true in member.cfg_analysis.is_experiment_member"
+            )
             sub_df_status = analysis.df_status.copy()
 
             setup_row = self.df_setup.loc[member_id, :]

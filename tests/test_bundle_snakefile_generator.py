@@ -103,9 +103,9 @@ def test_regeneration_scoped_rule_set(bundle_fixture: str, request: pytest.Fixtu
     text = generate_regeneration_snakefile(bundle, static_backend="matplotlib")
     rule_names = _extract_rule_names(text)
     assert rule_names.issubset(REGEN_RULE_SET), f"Unexpected rules emitted: {rule_names - REGEN_RULE_SET}"
-    assert not (
-        rule_names & NON_REGEN_RULES
-    ), f"Forbidden simulation/processing rules emitted: {rule_names & NON_REGEN_RULES}"
+    assert not (rule_names & NON_REGEN_RULES), (
+        f"Forbidden simulation/processing rules emitted: {rule_names & NON_REGEN_RULES}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -154,9 +154,9 @@ def test_static_backend_controls_output_ext(
     pattern = (
         r"rule\s+plot_system_overview:.*?output:.*?" rf"\"plots/system_overview\{expected_ext_for_system_overview}\""
     )
-    assert re.search(
-        pattern, text, re.DOTALL
-    ), f"Expected system_overview output {expected_ext_for_system_overview!r} for static_backend={static_backend!r}"
+    assert re.search(pattern, text, re.DOTALL), (
+        f"Expected system_overview output {expected_ext_for_system_overview!r} for static_backend={static_backend!r}"
+    )
 
 
 def test_writes_to_bundle_root_snakefile(multi_sim_bundle: Path) -> None:
@@ -198,18 +198,18 @@ def test_output_ext_propagates_to_all_three_sites(
         text,
         re.DOTALL,
     )
-    assert rule_all_match and (
-        f"plots/system_overview{ext}" in rule_all_match.group(1)
-    ), f"rule all does not reference {ext} system_overview"
+    assert rule_all_match and (f"plots/system_overview{ext}" in rule_all_match.group(1)), (
+        f"rule all does not reference {ext} system_overview"
+    )
     # Site 3b: render_report input list
     render_match = re.search(
         r"rule\s+render_report:\s*\n\s*input:(.*?)(?=\n\s*output:)",
         text,
         re.DOTALL,
     )
-    assert render_match and (
-        f"plots/system_overview{ext}" in render_match.group(1)
-    ), f"render_report does not reference {ext} system_overview"
+    assert render_match and (f"plots/system_overview{ext}" in render_match.group(1)), (
+        f"render_report does not reference {ext} system_overview"
+    )
 
 
 def test_preamble_preserved_for_jinja2_conditionals(multi_sim_bundle: Path) -> None:
@@ -346,9 +346,9 @@ def test_dem_resolution_bundle_emits_all_four_eda_rules(sensitivity_bundle: Path
         if sel.builder_key == "eda_compute_sensitivity"
         for tmpl in sel.rule_spec_template
     }
-    assert (
-        _eda_rule_names(text) == expected
-    ), f"Emitted EDA rules {_eda_rule_names(text)} != registry templates {expected}"
+    assert _eda_rule_names(text) == expected, (
+        f"Emitted EDA rules {_eda_rule_names(text)} != registry templates {expected}"
+    )
     assert len(expected) == 4, f"dem-resolution should carry four EDA templates, got {len(expected)}"
 
 
@@ -375,7 +375,7 @@ def test_b4b_bundle_emits_config_diff_maps_eda_rule(sensitivity_bundle: Path) ->
     _set_reporting_set(sensitivity_bundle, "b4b")
     text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="matplotlib")
     assert "plot_eda_compute_sensitivity" in _eda_rule_names(text), (
-        f"b4b bundle did not emit the config_diff_maps EDA rule; emitted: " f"{_eda_rule_names(text)}"
+        f"b4b bundle did not emit the config_diff_maps EDA rule; emitted: {_eda_rule_names(text)}"
     )
 
 

@@ -140,9 +140,9 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitiv
 
     # Precondition sanity: flags + log entries exist before reprocess.
     for member_str, _per_sub in seeded.items():
-        assert list(
-            status_dir.glob(f"d_process_*_member-{member_str}_*")
-        ), f"precondition: d_process flags must exist for member {member_str}"
+        assert list(status_dir.glob(f"d_process_*_member-{member_str}_*")), (
+            f"precondition: d_process flags must exist for member {member_str}"
+        )
 
     sensitivity.reprocess(
         start_with="process",
@@ -240,9 +240,9 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivit
         for event_iloc in analysis.df_sims.index:
             event_id = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
             d_process_rel = process_timeseries_flag_per_member(model_type, member_str, event_id)
-            assert (
-                f'"{d_process_rel}"' in content
-            ), f"per-member consolidate input must include d_process flag {d_process_rel!r}"
+            assert f'"{d_process_rel}"' in content, (
+                f"per-member consolidate input must include d_process flag {d_process_rel!r}"
+            )
 
     # The generated Snakefile must PARSE — write it and run a Snakemake dry-run.
     snakefile = analysis_dir / "Snakefile.reprocess"
@@ -524,9 +524,9 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     # and nowhere else. Closes the one gap the distinct-target property leaves open --
     # a spurious write to a NEW target -- without constraining how many merge writes
     # there are, which is what re-coupled the merge tier in the rejected +1 form.
-    assert all(
-        p.startswith(chapters_root) or p == str(fname_out) for p in targets
-    ), f"a write targeted neither a chapter nor the unified store: {targets}"
+    assert all(p.startswith(chapters_root) or p == str(fname_out) for p in targets), (
+        f"a write targeted neither a chapter nor the unified store: {targets}"
+    )
 
     # No data loss: every timestep present in the store.
     ds = xr.open_zarr(fname_out)

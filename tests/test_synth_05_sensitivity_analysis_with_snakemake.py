@@ -143,8 +143,7 @@ def test_reprocess_render_report_rule_carries_reprocess_flag(synth_sensitivity_a
     )
     assert "render_report_runner" in production_block, "production render_report rule must invoke the runner"
     assert "--reprocess" not in production_block, (
-        "production master render_report shell MUST NOT pass --reprocess "
-        "(byte-identical production render path; R3/R5)"
+        "production master render_report shell MUST NOT pass --reprocess (byte-identical production render path; R3/R5)"
     )
 
 
@@ -485,7 +484,7 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
     assert snakefile.exists(), f"reprocess Snakefile not generated: {snakefile}"
     snakefile_text = snakefile.read_text()
     assert "rule process_member_" not in snakefile_text, (
-        "steady-state second reprocess must emit zero process_member_ rules " "(all d_process flags now present)"
+        "steady-state second reprocess must emit zero process_member_ rules (all d_process flags now present)"
     )
 
 
@@ -602,20 +601,20 @@ def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivit
     assert out.exists(), "master tree must regenerate over the completed subset"
     tree = xr.open_datatree(out, engine="zarr", consolidated=False)
     member_nodes = {c for c in tree.children if c.startswith(prefix)}
-    assert (
-        f"{prefix}{incomplete_id}" not in member_nodes
-    ), f"incomplete sub {prefix}{incomplete_id} must be absent from the master tree nodes"
-    assert (
-        f"{prefix}{complete_id}" in member_nodes
-    ), f"complete sub {prefix}{complete_id} must be present in the master tree nodes"
-    assert (
-        len(member_nodes) == len(member_items) - 1
-    ), "exactly one member (the incomplete one) must be absent from the tree nodes"
+    assert f"{prefix}{incomplete_id}" not in member_nodes, (
+        f"incomplete sub {prefix}{incomplete_id} must be absent from the master tree nodes"
+    )
+    assert f"{prefix}{complete_id}" in member_nodes, (
+        f"complete sub {prefix}{complete_id} must be present in the master tree nodes"
+    )
+    assert len(member_nodes) == len(member_items) - 1, (
+        "exactly one member (the incomplete one) must be absent from the tree nodes"
+    )
     # The root `parameters` node (experiment definition) still lists every member.
     assert "parameters" in tree.children, "root `parameters` node must be present"
-    assert len(tree["parameters"].to_dataset().to_dataframe()) == len(
-        sensitivity.df_setup
-    ), "root `parameters` Dataset must list every defined member"
+    assert len(tree["parameters"].to_dataset().to_dataframe()) == len(sensitivity.df_setup), (
+        "root `parameters` Dataset must list every defined member"
+    )
 
     # Assert R3: fail-fast preserved when allow_incomplete=False.
     shutil.rmtree(out)
@@ -705,9 +704,9 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
     sensitivity = analysis.sensitivity
     prefix = sensitivity.member_prefix
     master_zarr = sensitivity.analysis_paths.sensitivity_datatree_zarr
-    assert (
-        master_zarr is not None and master_zarr.exists()
-    ), "master sensitivity_datatree.zarr must exist after a full clean run"
+    assert master_zarr is not None and master_zarr.exists(), (
+        "master sensitivity_datatree.zarr must exist after a full clean run"
+    )
     master_tree = xr.open_datatree(master_zarr, engine="zarr", consolidated=False)
     tree_member_ids = {c.removeprefix(prefix) for c in master_tree.children if c.startswith(prefix)}
     on_disk_member_ids = {
@@ -715,9 +714,9 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
         for member_id, sub in sensitivity.members.items()
         if sub.analysis_paths.analysis_datatree_zarr is not None and sub.analysis_paths.analysis_datatree_zarr.exists()
     }
-    assert (
-        on_disk_member_ids <= tree_member_ids
-    ), f"silent-drop: subs on disk but missing from master tree: {on_disk_member_ids - tree_member_ids}"
+    assert on_disk_member_ids <= tree_member_ids, (
+        f"silent-drop: subs on disk but missing from master tree: {on_disk_member_ids - tree_member_ids}"
+    )
 
 
 @pytest.mark.slow
@@ -1061,9 +1060,9 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     #     missing report()-flagged figure. Figures live at
     #     plots/sensitivity/per_sim/member-{id}/{event_id}/*.{html,png}.
     incomplete_fig_dir = master_dir / "plots" / "sensitivity" / "per_sim" / f"member-{incomplete_id}"
-    assert (
-        incomplete_fig_dir.exists()
-    ), f"precondition: incomplete sub per-sim figures must exist after the full run: {incomplete_fig_dir}"
+    assert incomplete_fig_dir.exists(), (
+        f"precondition: incomplete sub per-sim figures must exist after the full run: {incomplete_fig_dir}"
+    )
     shutil.rmtree(incomplete_fig_dir)
 
     # Act: reprocess the RENDER stage. With the fix this reads
@@ -1082,9 +1081,9 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
         f"report over the completed subset with no WorkflowError; got "
         f"{reprocess_result.get('message')!r}. Snakemake log: {reprocess_result.get('snakemake_logfile')}"
     )
-    assert (
-        report_zip.exists() and report_zip.stat().st_size > 0
-    ), "master analysis_report.zip must exist after the reprocess render"
+    assert report_zip.exists() and report_zip.stat().st_size > 0, (
+        "master analysis_report.zip must exist after the reprocess render"
+    )
 
 
 @pytest.mark.skipif(

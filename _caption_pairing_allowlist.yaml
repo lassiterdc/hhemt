@@ -222,7 +222,7 @@ unpaired_allowlist:
       change to this file rather than on arrival.
   - renderer: system_overview
     caption: src/hhemt/report_templates/captions/system_map.rst
-    renderer_sha256: 38cd0ab96dc315afe7f1a96943cafad37140d09e9ded15754860b7f5eebbc7b3
+    renderer_sha256: 0980dcf7fe1f68587343ba9cddc0e964189acf1080ba9e216bf6dd9235f26617
     justification: >-
       Vocabulary-rename fallout repair. THIS SUPERSEDES A FORMATTING-ONLY ENTRY AND ITS
       DISCHARGE DOES NOT CARRY OVER. The prior entry recorded digest 43e350a7 and
@@ -257,6 +257,29 @@ unpaired_allowlist:
       software-engineering-specialist over a per-spec ledger; the paired stub at
       tests/test_system_overview_model_gate.py:19 lands in the same commit, verified by a
       four-arm probe in which either half alone fails.
+      RE-RECORDED 2026-09-04 for a FORMATTING-ONLY ruff-format pass, and the entry above
+      PREDICTED this: it said its own exemption "expires on the next real change to this
+      file". This is NOT that next real change -- it is a reflow, so the discharge returns
+      to the AST-identity pattern the sibling entries in this file established, and the
+      behavioural argument recorded above still describes the last SEMANTIC change and is
+      retained rather than overwritten.
+      DISCHARGED BY MEASUREMENT, not judgement: ast.dump of the working-tree file is
+      IDENTICAL to ast.dump of the same path at HEAD. Measured across the whole reformat
+      batch -- 20 files whose BYTES all changed, 20 of 20 AST-identical to HEAD, 0
+      differing -- so no behaviour changed anywhere in the pass, this file included.
+      THE RE-READ WAS STILL PERFORMED, because this guard checks PAIRING and an
+      AST argument is a claim about the RENDERER rather than about the caption. The
+      caption names what the map OVERLAYS -- watershed polygon, TRITON DEM extent,
+      boundary-condition shapefile location, SWMM nodes and links via swmmio -- and the
+      CRS from system_config.crs.horizontal_epsg. A reflow cannot alter a column, a unit,
+      an overlay, or a CRS, so every claim it makes is unaffected and it is accurate as
+      written.
+      WHY THE REFORMAT HAPPENED AT ALL, since it is not this renderer's own work: the
+      pre-push ruff-format hook runs over the PUSH RANGE and failed on 20 files of
+      INHERITED debt (both files this branch touched were already format-dirty at
+      68ff2a85; repo-wide baseline 168). The developer chose to clear the 20 rather than
+      SKIP the hook. Digest recorded AFTER the reformat, so this exemption again expires
+      on the next real change to this file rather than on arrival.
   - renderer: cross_experiment_compatibility
     caption: src/hhemt/report_templates/captions/cross_experiment_compatibility.rst
     renderer_sha256: d8ca3825cbd41486d54601632bdcd6315319c86c7a84467cafeed804ce06ba5b

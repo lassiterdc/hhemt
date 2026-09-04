@@ -907,7 +907,7 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis) -> CheckResult:
         name=_name,
         level="aggregate",
         passed=True,
-        summary=(f"{n_resumed} resumed sim(s) at a build carrying no known resume defect " f"(pin {sha[:12]})."),
+        summary=(f"{n_resumed} resumed sim(s) at a build carrying no known resume defect (pin {sha[:12]})."),
         details=[],
     )
 
@@ -1058,7 +1058,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             level="aggregate",
             passed=True,
             applicable=False,
-            summary=(f"Producing-TRITON resume status unknown ({replay.detail}); " "resume validity NOT verified."),
+            summary=(f"Producing-TRITON resume status unknown ({replay.detail}); resume validity NOT verified."),
             details=[],
         )
 
