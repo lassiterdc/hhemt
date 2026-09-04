@@ -82,7 +82,23 @@ non_breaking_allowlist:
       scenario log and are inert until the deferred log-schema round adds those fields
       there. That is a disclosure regression, not a layout break -- there is no old
       on-disk state for a migration to transform -- and the scheduled round closes it.
-    layout_signature: "44d3387eda21a3a016b8cde58b5eaf58d6905a65387f2918f49b0999f1e476c9"
+
+      RE-STAMPED for the roadmap-3f re-entry guard (an import plus an early return in
+      _streaming_chunked_zarr_write). JUDGED NON-BREAKING, and the counter-argument is
+      recorded rather than omitted so the judgement is auditable. FOR: the change
+      creates, renames and removes NO on-disk artifact -- no path, no filename, no
+      schema, no log field. It adds a single .exists() read of an artifact that ALREADY
+      EXISTS (the unified .done flag that merge_chapters_to_unified has written since the
+      per-chapter round above) and, on a hit, DECLINES to rewrite a store that is already
+      complete and flagged. A tree carrying no .done takes the pre-change path
+      byte-identically, so no existing on-disk analysis needs a migration. AGAINST: the
+      on-disk OUTCOME of a re-entry does change -- an older toolkit meeting the same tree
+      would rebuild the chapter set from whatever raw survived and could republish a
+      TRUNCATED store under the surviving flag (measured 30 -> 10 timesteps against the
+      real merge). That is the DEFECT BEING FIXED rather than a layout break: the artifact
+      class is unchanged, and the divergence is that the older toolkit destroys data the
+      newer one preserves -- not a state a migration could or should transform.
+    layout_signature: "4b3d1469f53d08d1aacfc2a367d21d88aa6d56ad99dc79d06d48b7b06007acb0"
   - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
     justification: >-
       DU-sentinel gate closure — a one-character correction inside an existing
