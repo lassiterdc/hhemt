@@ -212,7 +212,7 @@ class WorkflowStatus:
             self.consolidation,
         ]:
             symbol = phase.symbol()
-            progress = f" ({phase.progress*100:.0f}% complete)" if 0 < phase.progress < 1 else ""
+            progress = f" ({phase.progress * 100:.0f}% complete)" if 0 < phase.progress < 1 else ""
             lines.append(f"  {symbol} {phase.name.title()}{progress}")
 
             for value in phase.details.values():

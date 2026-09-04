@@ -416,7 +416,15 @@ def _build_synthetic_post_processing(*, fname_out, raw_dir, batch_timesteps, ny,
             process_append_batch_memory_budget_mb=100_000,
             process_store_float32=True,
             process_timestep_chunk=None,
-        )
+            # Chapter-set build guard: the writer reads this on the resume path, so
+            # the synthetic cfg must carry it or the flush raises AttributeError
+            # before this module's batching assertion ever runs.
+            allow_mixed_version_chapters=False,
+        ),
+        # c34dd6e1 added `_ad = self._analysis.analysis_paths.analysis_dir` to the
+        # chapter-publish entry and did not extend this stand-in, leaving this test
+        # RED at that commit. fname_out's parent IS the test's tmp_path.
+        analysis_paths=SimpleNamespace(analysis_dir=fname_out.parent),
     )
     inst._run = SimpleNamespace(raw_triton_output_dir=lambda model_type: raw_dir)
     inst._system = SimpleNamespace(processed_dem_rds=rds_dem)
@@ -455,9 +463,16 @@ def _patch_loaders(monkeypatch, *, df_outputs, ny, nx):
 
 def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     """With the load chunk floored to 1 timestep (the fine-grid degeneration this
-    fix targets), the batched-append path must emit ceil(N / append_batch_timesteps)
-    zarr writes — NOT one append per timestep — and the resulting store must hold
-    every timestep (no loss across batched appends). R4 + R5 (separate knob)."""
+    fix targets), the batching path must emit ceil(N / append_batch_timesteps)
+    CHAPTER stores — NOT one store per timestep — and the merged store must hold
+    every timestep (no loss across the merge). R4 + R5 (separate knob).
+
+    Counts CHAPTER writes only, classified via utils.chapters_dir_for, because the
+    unified merge is a fourth to_zarr call that is not a batch write; a total over
+    both populations would constrain the merge tier as a side effect of measuring
+    batching. The mode assertions this replaced encoded the retired append-into-one-
+    store design (w, a, a); what the chapter design actually guarantees is that no
+    write targets a store a previous write created, which is asserted directly."""
     n_timesteps = 10
     batch = 4
     ny = nx = 4
@@ -477,26 +492,41 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     inst = _build_synthetic_post_processing(fname_out=fname_out, raw_dir=raw_dir, batch_timesteps=batch, ny=ny, nx=nx)
     _patch_loaders(monkeypatch, df_outputs=df_outputs, ny=ny, nx=nx)
 
-    # Count actual zarr write/append operations (one per flushed batch).
-    to_zarr_modes = []
+    # Count actual zarr writes, recording the TARGET so chapter writes can be told
+    # apart from the unified merge (c34dd6e1: N chapter stores + 1 merge).
+    to_zarr_calls = []
     orig_to_zarr = xr.Dataset.to_zarr
 
     def _counting_to_zarr(self, *args, **kwargs):
-        to_zarr_modes.append(kwargs.get("mode"))
+        to_zarr_calls.append((kwargs.get("mode"), str(args[0] if args else kwargs.get("store"))))
         return orig_to_zarr(self, *args, **kwargs)
 
     monkeypatch.setattr(xr.Dataset, "to_zarr", _counting_to_zarr)
 
     inst._export_TRITONSWMM_TRITON_outputs(verbose=False)
 
-    expected_appends = math.ceil(n_timesteps / batch)
-    assert len(to_zarr_modes) == expected_appends, (
-        f"expected {expected_appends} batched zarr writes (ceil({n_timesteps}/{batch})), "
-        f"got {len(to_zarr_modes)}: {to_zarr_modes}"
+    from hhemt.utils import chapters_dir_for
+
+    chapters_root = str(chapters_dir_for(fname_out))
+    chapter_writes = [c for c in to_zarr_calls if c[1].startswith(chapters_root)]
+    expected_batches = math.ceil(n_timesteps / batch)
+    assert len(chapter_writes) == expected_batches, (
+        f"expected {expected_batches} chapter writes (ceil({n_timesteps}/{batch})), "
+        f"got {len(chapter_writes)}: {chapter_writes}"
     )
-    # First write creates the store, the rest append.
-    assert to_zarr_modes[0] == "w"
-    assert all(m == "a" for m in to_zarr_modes[1:])
+    # The chapter design's safety premise: no write targets a store a previous
+    # write already created. Asserted on the PROPERTY, not on the mode letters --
+    # the retired (w, a, a) assertion encoded an implementation that no longer
+    # exists, and an all-"w" assertion would repeat that mistake one design later.
+    targets = [c[1] for c in to_zarr_calls]
+    assert len(set(targets)) == len(targets), f"a store was written twice: {targets}"
+    # Membership, not a count: every write goes to a chapter or to the unified store
+    # and nowhere else. Closes the one gap the distinct-target property leaves open --
+    # a spurious write to a NEW target -- without constraining how many merge writes
+    # there are, which is what re-coupled the merge tier in the rejected +1 form.
+    assert all(
+        p.startswith(chapters_root) or p == str(fname_out) for p in targets
+    ), f"a write targeted neither a chapter nor the unified store: {targets}"
 
     # No data loss: every timestep present in the store.
     ds = xr.open_zarr(fname_out)

@@ -282,8 +282,7 @@ class analysis_config(cfgBaseModel):
         json_schema_extra=field_meta(
             options={
                 "CC0-1.0": (
-                    "Public-domain dedication. No attribution required; the "
-                    "regret-safe choice across immutable DOIs."
+                    "Public-domain dedication. No attribution required; the regret-safe choice across immutable DOIs."
                 ),
                 "CC-BY-NC-4.0": (
                     "Attribution required, commercial use prohibited. "
@@ -781,6 +780,21 @@ class analysis_config(cfgBaseModel):
             "spatial timeseries. When None (default), preserves the current "
             "first-write-extent chunking behavior. Decouples read-locality from the "
             "write append-batch size. Consumed by utils.return_dic_zarr_encodings."
+        ),
+    )
+    allow_mixed_version_chapters: bool = Field(
+        False,
+        description=(
+            "Bypass the chapter-set build guard. Default False: when a resume would extend "
+            "a per-scenario chapter set that a DIFFERENT hhemt build wrote, processing "
+            "refuses loudly rather than publishing one unified store built by two "
+            "processing builds. Set True only when you know nothing material changed "
+            "between the builds; the run then proceeds and records BOTH builds in the "
+            "chapter set's provenance history. NOTE: under execution_environment='container' "
+            "the detector is INERT and nothing is refused -- the SIF build strips the "
+            "toolkit's .git, so every in-image build stamps the same 'unknown' sha and no "
+            "mismatch is observable. Consumed by "
+            "provenance.assert_chapters_match_running_build."
         ),
     )
     TRITON_raw_output_type: Literal["bin", "asc"] = Field(

@@ -454,7 +454,7 @@ rule {spec.rule_name}:
         {ctx.python_executable} -m hhemt.report_renderers._cli {spec.renderer_module} \\
             {ctx.config_args_str} \\
 {extra_flags_block}            --output {{output}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -489,7 +489,7 @@ rule render_report:
         {ctx.python_executable} -m hhemt.render_report_runner \\
             {ctx.config_args_str} \\
             --format {{wildcards.format}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -2559,6 +2559,23 @@ rule process_{model_type}:
     output: "_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"
     log: "{log_dir_str}/sims/process_{model_type}_evt-{{event_id}}.log"
     group: "process_evt_{{event_id}}"
+    # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
+    # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
+    # `return max(job.restart_times for job in self.jobs)`; jobs.py:1763-1769's
+    # attempt setter propagates the incremented attempt to EVERY member; and
+    # jobs.py:1518-1520's remove_existing_output iterates every member and deletes
+    # its outputs at group start. So one member's failure re-runs the WHOLE group
+    # from scratch, at the highest retry count any member declares, with no
+    # skip-what-succeeded path.
+    #
+    # Inert today: the three process_* rules in this group all take the global
+    # restart-times baseline, so the max() is that baseline. It stops being inert the
+    # moment a rule carrying its own high `retries:` joins -- the sim rules emit
+    # _resolved_simulate_retries(), deliberately raised for hotstart-resume sweeps.
+    # Grouping a sim with its own process job was evaluated 2026-09-02 and REJECTED
+    # for exactly this: a deterministic process failure would re-run a ~100-minute
+    # simulation up to the SIM's retry count, across a 3,798-event ensemble.
+    # DO NOT add a rule with its own `retries:` directive to this group.
     priority: 100
     conda: "{conda_env_path}"
     params:
@@ -2577,7 +2594,7 @@ rule process_{model_type}:
             --flag-output {{output}} \\
             --rule-name process_{model_type} \\
             --event-id {{wildcards.event_id}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -2630,7 +2647,7 @@ rule consolidate:
             --which {which} \\
             --flag-output {{output}} \\
             --rule-name consolidate \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -2643,6 +2660,7 @@ rule consolidate:
         conda_env_path: str,
         consolidate_scenario_resources: str,
         compression_level: int,
+        flag_prefix: str = "d_process",
     ) -> str:
         """Emit a single ``rule consolidate_scenario`` block (wildcarded on event_id).
 
@@ -2698,7 +2716,7 @@ rule consolidate:
         rules that declare it as ``input:`` get Snakemake-tracked mtime semantics.
         """
         input_flags = ", ".join(
-            f'"_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"' for model_type in enabled_models
+            f'"_status/{flag_prefix}_{model_type}_evt-{{event_id}}_complete.flag"' for model_type in enabled_models
         )
         return f'''
 rule consolidate_scenario:
@@ -2709,6 +2727,8 @@ rule consolidate_scenario:
     priority: 100
     log: "{log_dir_str}/sims/consolidate_scenario_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
+    params:
+        event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
 {consolidate_scenario_resources}
     shell:
@@ -2719,7 +2739,8 @@ rule consolidate_scenario:
             --flag-output {{output.flag}} \\
             --rule-name consolidate_scenario \\
             --event-id {{wildcards.event_id}} \\
-            > {{log}} 2>&1
+            --event-iloc {{params.event_iloc}} \\
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -2858,7 +2879,7 @@ rule consolidate_scenario:
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
             --flag-output {{output}} \\
             --rule-name setup \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """'''
 
         # Build resource blocks using helper
@@ -3063,7 +3084,7 @@ rule prepare_scenario:
             --flag-output {{output}} \\
             --rule-name prepare_scenario \\
             --event-id {{wildcards.event_id}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -3136,7 +3157,7 @@ rule run_{model_type}:
             --flag-output {{output}} \\
             --rule-name run_{model_type} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {{wildcards.event_id}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -3297,7 +3318,7 @@ rule render_report:
         {self.python_executable} -m hhemt.render_report_runner \\
             {config_args} \\
             --format {{wildcards.format}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
         return snakefile_content
@@ -3646,7 +3667,7 @@ rule export_scenario_status:
         """
         {self.python_executable} -m hhemt.export_scenario_status \\
             {config_args} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -3760,9 +3781,9 @@ def _per_sim_event_page_sources(wildcards):
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
         }
-        assert isinstance(
-            self.cfg_analysis.local_cpu_cores_for_workflow, int
-        ), "local_cpu_cores_for_workflow must be specified for local runs"
+        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
+            "local_cpu_cores_for_workflow must be specified for local runs"
+        )
         if mode == "local":
             config.update(
                 {
@@ -3784,9 +3805,9 @@ def _per_sim_event_page_sources(wildcards):
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
             max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
-            assert isinstance(
-                max_concurrent, int
-            ), "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
+            assert isinstance(max_concurrent, int), (
+                "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
+            )
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -4023,9 +4044,9 @@ echo ""
             # per-node count is required) — _resolve_gpus_per_node resolves an
             # absent value to 0, which is a misconfiguration in the GPU branch.
             gpus_per_node = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
-            assert (
-                isinstance(gpus_per_node, int) and gpus_per_node > 0
-            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            assert isinstance(gpus_per_node, int) and gpus_per_node > 0, (
+                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            )
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self._resolve_gpu_hardware(self.cfg_analysis.hpc_ensemble_partition)
             if gpu_hardware:
@@ -7983,7 +8004,7 @@ exit $snakemake_status
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_processed_runner "\n'
                 f'        "--event-id {event_id} --analysis-dir {target_analysis_dir} "\n'
-                f'        "> {{log}} 2>&1"\n\n'
+                f'        "2>&1 | tee {{log}}"\n\n'
             )
 
         def _zarr_rule(rule_suffix: str, target_analysis_dir: str, flag: str, inputs: list[str]) -> str:
@@ -7998,7 +8019,7 @@ exit $snakemake_status
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_reprocess_zarr_runner "\n'
                 f'        "--analysis-dir {target_analysis_dir} "\n'
-                f'        "> {{log}} 2>&1"\n\n'
+                f'        "2>&1 | tee {{log}}"\n\n'
             )
 
         def _analysis_rule(rule_suffix: str, member_id: str, sub_dir: str, flag: str, start_with: str) -> str:
@@ -8016,7 +8037,7 @@ exit $snakemake_status
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_member_reprocess_runner "\n'
                 f'        "--member-id {member_id} --analysis-dir {sub_dir}{proc_arg} "\n'
-                f'        "> {{log}} 2>&1"\n\n'
+                f'        "2>&1 | tee {{log}}"\n\n'
             )
 
         is_sensitivity = getattr(self.analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
@@ -8613,7 +8634,7 @@ onerror:
             --flag-output {{output}} \\
             --rule-name setup_target_{target.target_id} \\
             --target-id {target.target_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -8751,7 +8772,7 @@ onerror:
             --rule-name {prep_rule_name} \\
             --member-id {member_id} \\
             --event-id {event_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -8805,7 +8826,7 @@ onerror:
             --flag-output {{output}} \\
             --rule-name {sim_rule_name} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {event_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -8838,7 +8859,7 @@ onerror:
             --rule-name {process_rule_name} \\
             --member-id {member_id} \\
             --event-id {event_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -8882,7 +8903,7 @@ onerror:
             --flag-output {{output}} \\
             --rule-name consolidate_{prefix}{member_id_rule} \\
             --member-id {member_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -8918,7 +8939,7 @@ onerror:
             --compression-level {compression_level} \\
             --flag-output {{output}} \\
             --rule-name experiment_consolidation \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -8977,7 +8998,7 @@ rule render_report:
         {self.python_executable} -m hhemt.render_report_runner \\
             {master_config_args} \\
             --format {{wildcards.format}} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -9422,7 +9443,7 @@ onerror:
             --rule-name {process_rule_name} \\
             --member-id {member_id} \\
             --event-id {event_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 ''')
@@ -9480,7 +9501,7 @@ onerror:
             --flag-output {{output}} \\
             --rule-name consolidate_{prefix}{member_id_rule} \\
             --member-id {member_id} \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 
 '''
@@ -9540,7 +9561,7 @@ onerror:
             --compression-level {compression_level} \\
             --flag-output {{output}} \\
             --rule-name experiment_consolidation \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -9594,7 +9615,7 @@ rule render_report:
             {master_config_args} \\
             --format {{wildcards.format}} \\
             --reprocess \\
-            > {{log}} 2>&1
+            2>&1 | tee {{log}}
         """
 '''
 

@@ -42,15 +42,15 @@ def test_reprocess_runs_migration_when_layout_outdated(synthetic_multisim_comple
 
     pre = read_version_file(analysis_dir)
     assert pre is not None and pre.layout_version == older, (
-        f"Failed to set up: expected _version.json at v{older}, got " f"{pre.layout_version if pre else None!r}"
+        f"Failed to set up: expected _version.json at v{older}, got {pre.layout_version if pre else None!r}"
     )
 
     result = a.reprocess(start_with="render", execution_mode="local", verbose=False)
-    assert result.get("success"), f"reprocess(render) failed: {result.get('message','(no message)')}"
+    assert result.get("success"), f"reprocess(render) failed: {result.get('message', '(no message)')}"
 
     post = read_version_file(analysis_dir)
     assert post is not None and post.layout_version == LAYOUT_VERSION, (
-        f"Expected post-reprocess _version.json at v{LAYOUT_VERSION}, got " f"{post.layout_version if post else None!r}"
+        f"Expected post-reprocess _version.json at v{LAYOUT_VERSION}, got {post.layout_version if post else None!r}"
     )
 
 
@@ -77,14 +77,14 @@ def test_reprocess_idempotent_when_current(synthetic_multisim_completed_isolated
     pre_mtime = vf.stat().st_mtime
 
     result = a.reprocess(start_with="render", execution_mode="local", verbose=False)
-    assert result.get("success"), f"reprocess(render) failed: {result.get('message','(no message)')}"
+    assert result.get("success"), f"reprocess(render) failed: {result.get('message', '(no message)')}"
 
     # Idempotent: stamp_new_target returns early when version matches, so
     # _version.json should be untouched (same bytes, same mtime).
     post_bytes = vf.read_bytes()
     post_mtime = vf.stat().st_mtime
     assert post_bytes == pre_bytes, (
-        "Expected _version.json to be byte-identical when already at " "LAYOUT_VERSION; diff detected."
+        "Expected _version.json to be byte-identical when already at LAYOUT_VERSION; diff detected."
     )
     assert post_mtime == pre_mtime, (
         "Expected _version.json mtime to be unchanged when already at "

@@ -325,3 +325,73 @@ class system_config(cfgBaseModel):
         if errors:
             raise ValueError("; ".join(errors))
         return values
+
+    @model_validator(mode="after")
+    def validate_swmm_templates_are_si(self):
+        """Refuse a SWMM template whose FLOW_UNITS are not SI, at config load.
+
+        WHY THIS IS REACHABLE AT LOAD, stated because the .inp looks like a runtime
+        artifact. The three fields below are Path fields that `_check_paths_exist`
+        already validated, so the TEMPLATES are on disk here; the per-scenario .inp
+        inherits FLOW_UNITS from its template because `utils.fill_template` is a
+        `string.Template.safe_substitute` placeholder pass that cannot alter a
+        literal line. So the template's value predicts the runtime unit system.
+
+        ABSENT IS A FAILURE *within a real model*, not a neutral state: SWMM defaults
+        FLOW_UNITS to CFS, which is US, so an omitted line produces exactly the run
+        this refuses. But absence is only EVIDENCE of that in a file that is a SWMM
+        model at all, so a file carrying no [OPTIONS] SECTION is skipped rather than
+        judged -- the check's premise is "this .inp's OPTIONS declare its units", and
+        a file with no OPTIONS section does not meet the premise. That is what keeps
+        placeholder templates (an empty `_touch`ed stub, a partial fragment) out of
+        the finding set without weakening the rule for a real model, which always
+        carries [OPTIONS]. Measured: without this gate, two existing tests in
+        tests/test_config_validation.py go red on empty stub .inp files.
+
+        UNREADABLE IS NOT A FAILURE. A template this cannot decode is SKIPPED rather
+        than rejected -- manufacturing a config-load refusal out of an encoding quirk
+        would block routine work to catch a case the runtime guard still backstops.
+        Both encodings are tried for the reason the .rpt reader tries both.
+        """
+        import re as _re
+
+        # LOCAL, not a class attribute. A bare underscore-prefixed class attribute on a
+        # pydantic v2 model is private-attribute territory and its instance-time
+        # readability is a question this check does not need to answer.
+        _SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
+        _bad = []
+        for _field in ("SWMM_hydraulics", "SWMM_hydrology", "SWMM_full"):
+            _p = getattr(self, _field, None)
+            if _p is None:
+                continue
+            _text = None
+            for _enc in ("utf-8", "latin-1"):
+                try:
+                    _text = Path(_p).read_text(encoding=_enc)
+                    break
+                except (OSError, UnicodeDecodeError):
+                    continue
+            if _text is None:
+                continue
+            if not _re.search(r"^\s*\[OPTIONS\]", _text, _re.IGNORECASE | _re.MULTILINE):
+                continue  # not a SWMM model file -- premise unmet, see docstring
+            _found = None
+            for _line in _text.splitlines():
+                _s = _line.strip()
+                if not _s or _s.startswith(";"):
+                    continue
+                _m = _re.match(r"^FLOW_UNITS\s+(\S+)", _s, _re.IGNORECASE)
+                if _m:
+                    _found = _m.group(1).upper()
+                    break
+            if _found is None:
+                _bad.append(f"{_field} ({_p}) declares no FLOW_UNITS; SWMM defaults to CFS (US)")
+            elif _found not in _SI_FLOW_UNITS:
+                _bad.append(f"{_field} ({_p}) declares FLOW_UNITS {_found} (US)")
+        if _bad:
+            raise ValueError(
+                "SWMM templates must use SI flow units (CMS, LPS or MLD) -- the toolkit's "
+                "output parser reads SI only and refuses a US-unit run after the simulation "
+                "has already been spent. Offending: " + "; ".join(_bad)
+            )
+        return self

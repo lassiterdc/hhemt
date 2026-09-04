@@ -90,7 +90,7 @@ rule setup:
             \
             --flag-output {output} \
             --rule-name setup \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_scenario:
@@ -118,7 +118,7 @@ rule prepare_scenario:
             --flag-output {output} \
             --rule-name prepare_scenario \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule run_triton:
@@ -148,7 +148,7 @@ rule run_triton:
             --flag-output {output} \
             --rule-name run_triton \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule run_tritonswmm:
@@ -178,7 +178,7 @@ rule run_tritonswmm:
             --flag-output {output} \
             --rule-name run_tritonswmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule run_swmm:
@@ -208,7 +208,7 @@ rule run_swmm:
             --flag-output {output} \
             --rule-name run_swmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_triton:
@@ -216,6 +216,23 @@ rule process_triton:
     output: "_status/d_process_triton_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_triton_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
+    # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
+    # `return max(job.restart_times for job in self.jobs)`; jobs.py:1763-1769's
+    # attempt setter propagates the incremented attempt to EVERY member; and
+    # jobs.py:1518-1520's remove_existing_output iterates every member and deletes
+    # its outputs at group start. So one member's failure re-runs the WHOLE group
+    # from scratch, at the highest retry count any member declares, with no
+    # skip-what-succeeded path.
+    #
+    # Inert today: the three process_* rules in this group all take the global
+    # restart-times baseline, so the max() is that baseline. It stops being inert the
+    # moment a rule carrying its own high `retries:` joins -- the sim rules emit
+    # _resolved_simulate_retries(), deliberately raised for hotstart-resume sweeps.
+    # Grouping a sim with its own process job was evaluated 2026-09-02 and REJECTED
+    # for exactly this: a deterministic process failure would re-run a ~100-minute
+    # simulation up to the SIM's retry count, across a 3,798-event ensemble.
+    # DO NOT add a rule with its own `retries:` directive to this group.
     priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
@@ -240,7 +257,7 @@ rule process_triton:
             --flag-output {output} \
             --rule-name process_triton \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_tritonswmm:
@@ -248,6 +265,23 @@ rule process_tritonswmm:
     output: "_status/d_process_tritonswmm_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
+    # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
+    # `return max(job.restart_times for job in self.jobs)`; jobs.py:1763-1769's
+    # attempt setter propagates the incremented attempt to EVERY member; and
+    # jobs.py:1518-1520's remove_existing_output iterates every member and deletes
+    # its outputs at group start. So one member's failure re-runs the WHOLE group
+    # from scratch, at the highest retry count any member declares, with no
+    # skip-what-succeeded path.
+    #
+    # Inert today: the three process_* rules in this group all take the global
+    # restart-times baseline, so the max() is that baseline. It stops being inert the
+    # moment a rule carrying its own high `retries:` joins -- the sim rules emit
+    # _resolved_simulate_retries(), deliberately raised for hotstart-resume sweeps.
+    # Grouping a sim with its own process job was evaluated 2026-09-02 and REJECTED
+    # for exactly this: a deterministic process failure would re-run a ~100-minute
+    # simulation up to the SIM's retry count, across a 3,798-event ensemble.
+    # DO NOT add a rule with its own `retries:` directive to this group.
     priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
@@ -272,7 +306,7 @@ rule process_tritonswmm:
             --flag-output {output} \
             --rule-name process_tritonswmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_swmm:
@@ -280,6 +314,23 @@ rule process_swmm:
     output: "_status/d_process_swmm_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
+    # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
+    # `return max(job.restart_times for job in self.jobs)`; jobs.py:1763-1769's
+    # attempt setter propagates the incremented attempt to EVERY member; and
+    # jobs.py:1518-1520's remove_existing_output iterates every member and deletes
+    # its outputs at group start. So one member's failure re-runs the WHOLE group
+    # from scratch, at the highest retry count any member declares, with no
+    # skip-what-succeeded path.
+    #
+    # Inert today: the three process_* rules in this group all take the global
+    # restart-times baseline, so the max() is that baseline. It stops being inert the
+    # moment a rule carrying its own high `retries:` joins -- the sim rules emit
+    # _resolved_simulate_retries(), deliberately raised for hotstart-resume sweeps.
+    # Grouping a sim with its own process job was evaluated 2026-09-02 and REJECTED
+    # for exactly this: a deterministic process failure would re-run a ~100-minute
+    # simulation up to the SIM's retry count, across a 3,798-event ensemble.
+    # DO NOT add a rule with its own `retries:` directive to this group.
     priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
@@ -304,7 +355,7 @@ rule process_swmm:
             --flag-output {output} \
             --rule-name process_swmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_scenario:
@@ -315,6 +366,8 @@ rule consolidate_scenario:
     priority: 100
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    params:
+        event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
         runtime=10,
@@ -331,7 +384,8 @@ rule consolidate_scenario:
             --flag-output {output.flag} \
             --rule-name consolidate_scenario \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            --event-iloc {params.event_iloc} \
+            2>&1 | tee {log}
         """
 
 rule consolidate:
@@ -356,7 +410,7 @@ rule consolidate:
             --which TRITON \
             --flag-output {output} \
             --rule-name consolidate \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_system_overview:
@@ -381,7 +435,7 @@ rule plot_system_overview:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 def _per_sim_event_page_sources(wildcards):
@@ -428,7 +482,7 @@ rule plot_per_sim_event_page:
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --event-iloc {params.event_iloc} \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_per_analysis_summary_table:
@@ -455,7 +509,7 @@ rule plot_per_analysis_summary_table:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_scenario_status_appendix:
@@ -482,7 +536,7 @@ rule plot_scenario_status_appendix:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_errors_and_warnings:
@@ -510,7 +564,7 @@ rule plot_errors_and_warnings:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_disk_utilization:
@@ -535,7 +589,7 @@ rule plot_disk_utilization:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_metadata:
@@ -560,7 +614,7 @@ rule plot_metadata:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_workflow_performance:
@@ -585,7 +639,7 @@ rule plot_workflow_performance:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 localrules: export_scenario_status
@@ -628,7 +682,7 @@ rule export_scenario_status:
         {PYTHON} -m hhemt.export_scenario_status \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule render_report:
@@ -660,5 +714,5 @@ rule render_report:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --format {wildcards.format} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """

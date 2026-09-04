@@ -111,7 +111,7 @@ def main():
     print("\n6. Duration and sample count:")
     print(f"   Duration: {report['duration_seconds']:.1f}s")
     print(f"   Samples: {report['samples']}")
-    print(f"   Sample rate: {report['samples']/report['duration_seconds']:.1f} Hz")
+    print(f"   Sample rate: {report['samples'] / report['duration_seconds']:.1f} Hz")
 
     print("\n" + "=" * 70)
     print("INTERPRETATION")

@@ -329,9 +329,7 @@ def resolve_event_window(cfg_analysis, weather_event_indexers, cache=None):
     if len(rows) != 1:
         raise ConfigurationError(
             field="analysis.weather_event_windows_csv",
-            message=(
-                f"{csv} matched {len(rows)} rows for event " f"{weather_event_indexers}; exactly one is required."
-            ),
+            message=(f"{csv} matched {len(rows)} rows for event {weather_event_indexers}; exactly one is required."),
             fix_hint="One row per simulated event, keyed on weather_event_indices.",
         )
     row = rows.iloc[0]
@@ -662,7 +660,7 @@ class TRITONSWMM_scenario:
     def seconds_to_hhmm(self, seconds):
         seconds = int(seconds)
         h, rem = divmod(int(seconds), 3600)
-        return f"{h}:{rem//60:02d}"
+        return f"{h}:{rem // 60:02d}"
 
     def seconds_to_hhmmss(self, seconds: int | float) -> str:
         seconds = int(seconds)

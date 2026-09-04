@@ -16,7 +16,7 @@ pytestmark = pytest.mark.requires_snakemake_subprocess
 
 
 @pytest.fixture
-def mock_analysis():
+def mock_analysis(tmp_path):
     """Create a mock analysis object for testing."""
     analysis = Mock()
     analysis.cfg_analysis = Mock()
@@ -25,7 +25,7 @@ def mock_analysis():
     analysis.cfg_analysis.hpc_total_nodes = 1
     analysis.cfg_analysis.mem_gb_per_cpu = 2
     analysis.analysis_paths = Mock()
-    analysis.analysis_paths.analysis_dir = Path("/test/analysis")
+    analysis.analysis_paths.analysis_dir = tmp_path / "analysis"
     analysis._resource_manager = Mock()
     analysis._resource_manager._get_simulation_resource_requirements.return_value = {"n_gpus": 0}
     analysis._system = Mock()
@@ -384,7 +384,7 @@ class TestSubmitWorkflowIntegration:
             mock_gen.return_value = "# Snakefile"
 
             # Call with wait_for_completion=True
-            _result = builder.submit_workflow(
+            builder.submit_workflow(
                 wait_for_completion=True,
                 verbose=False,
             )
@@ -414,7 +414,7 @@ class TestSubmitWorkflowIntegration:
             mock_gen.return_value = "# Snakefile"
 
             # Call without wait_for_completion parameter
-            _result = builder.submit_workflow(verbose=False)
+            builder.submit_workflow(verbose=False)
 
             # Verify default is False
             mock_submit_single.assert_called_once()

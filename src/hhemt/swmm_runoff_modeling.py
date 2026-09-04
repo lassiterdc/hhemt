@@ -109,7 +109,6 @@ class SWMMRunoffModeler:
         for SWMM input. Files are written to the scenario's weather data directory.
         Updates the scenario log with paths to created files.
         """
-        _weather_event_indexers = self.scenario.weather_event_indexers
         subcatchment_raingage_mapping = self.system.cfg_system.subcatchment_raingage_mapping
         subcatchment_raingage_mapping_gage_id_colname = (
             self.system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
@@ -159,7 +158,6 @@ class SWMMRunoffModeler:
         """
         storm_tide_units = self.cfg_analysis.storm_tide_units
         weather_time_series_storm_tide_datavar = self.cfg_analysis.weather_time_series_storm_tide_datavar
-        _weather_event_indexers = self.scenario.weather_event_indexers
 
         sim_id_str = self.scenario.sim_id_str
 
@@ -302,8 +300,9 @@ class SWMMRunoffModeler:
         ds = ds.assign_coords(event_iloc=self.scenario.event_iloc).expand_dims("event_iloc")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         ds.to_zarr(out_path, mode="w")
-        # PATTERN B
-        restamp_parent_sentinels(out_path, analysis_dir=self.scenario._analysis.analysis_paths.analysis_dir)
+        restamp_parent_sentinels(  # PATTERN B
+            out_path, analysis_dir=self.scenario._analysis.analysis_paths.analysis_dir
+        )
 
     def write_hydrograph_files(self) -> None:
         """

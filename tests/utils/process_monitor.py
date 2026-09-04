@@ -299,7 +299,7 @@ class RunnerConcurrencyMonitor:
             writer.writerow(["timestamp_s"] + all_runner_types + ["total"])
 
             # Data rows
-            for timestamp, counts in zip(self.timestamps, self.runner_counts_timeline, strict=False):
+            for timestamp, counts in zip(self.timestamps, self.runner_counts_timeline):  # noqa: B905 - the two lists are appended in SEPARATE statements in a background thread
                 row: list[str | int] = [f"{timestamp:.2f}"]
                 for rt in all_runner_types:
                     row.append(counts.get(rt, 0))

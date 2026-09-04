@@ -5,7 +5,6 @@ This module contains shared utility functions for creating SWMM .inp files from 
 These functions are used across multiple SWMM model creation modules to avoid code duplication.
 """
 
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -110,7 +109,19 @@ def create_swmm_inp_from_template(
         print(f"Missing keys: {missing_keys}")
         print(f"All expected keys: {template_keys}")
         print(f"All keys accounted for: {mapping.keys()}")
-        sys.exit()
+        # RAISE, never sys.exit() -- and the bare form is the sharp edge: with no
+        # argument it exits 0, so a scenario whose SWMM template could not be filled
+        # reported SUCCESS to Snakemake and to every completion predicate downstream.
+        from hhemt.exceptions import ProcessingError
+
+        raise ProcessingError(
+            operation="create_swmm_inp_from_template",
+            filepath=Path(swmm_model_template),
+            reason=(
+                f"template keys missing from the fill mapping: {sorted(missing_keys)}. "
+                f"Expected: {sorted(template_keys)}."
+            ),
+        )
 
     # Create the .inp file from template
     utils.create_from_template(swmm_model_template, mapping, destination)

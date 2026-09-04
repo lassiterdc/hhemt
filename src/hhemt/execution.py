@@ -172,7 +172,7 @@ class LocalConcurrentExecutor:
             # ----------------------------
             if use_gpu:
                 raise ValueError(
-                    "Currently desktop-based simulations are not designed to use GPUs. " "Feature must be built out."
+                    "Currently desktop-based simulations are not designed to use GPUs. Feature must be built out."
                 )
 
             # ----------------------------
@@ -315,11 +315,11 @@ class SlurmExecutor:
 
         if n_nodes_per_sim > num_nodes:  # type: ignore
             raise RuntimeError(
-                f"Each simulation requires {n_nodes_per_sim} node(s), " f"but job only has {num_nodes}."  # type: ignore
+                f"Each simulation requires {n_nodes_per_sim} node(s), but job only has {num_nodes}."  # type: ignore
             )
 
         if cpus_per_sim > total_cpus:
-            raise RuntimeError(f"Each simulation requires {cpus_per_sim} CPUs, " f"but job only has {total_cpus}.")
+            raise RuntimeError(f"Each simulation requires {cpus_per_sim} CPUs, but job only has {total_cpus}.")
 
         if self.analysis.cfg_analysis.run_mode == "gpu":
             if total_gpus == 0:
@@ -335,7 +335,7 @@ class SlurmExecutor:
 
         if verbose:
             print(
-                f"[SLURM] Running {len(launch_functions)} simulations " f"(max {max_concurrent} concurrent tasks)",
+                f"[SLURM] Running {len(launch_functions)} simulations (max {max_concurrent} concurrent tasks)",
                 flush=True,
             )
 
@@ -353,8 +353,7 @@ class SlurmExecutor:
             running_processes[proc] = (finalize_sim, start_time, sim_logfile, lf)
             if verbose:
                 print(
-                    f"[SLURM] Launched simulation ({len(running_processes)} running, "
-                    f"{len(pending_launchers)} pending)",
+                    f"[SLURM] Launched simulation ({len(running_processes)} running, {len(pending_launchers)} pending)",
                     flush=True,
                 )
 

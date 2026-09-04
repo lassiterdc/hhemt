@@ -67,7 +67,7 @@ rule experiment_consolidation:
             --compression-level 5 \
             --flag-output {output} \
             --rule-name experiment_consolidation \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_system_overview:
@@ -92,7 +92,7 @@ rule plot_system_overview:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_per_analysis_summary_table:
@@ -119,7 +119,7 @@ rule plot_per_analysis_summary_table:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_scenario_status_appendix:
@@ -146,7 +146,7 @@ rule plot_scenario_status_appendix:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_errors_and_warnings:
@@ -174,7 +174,7 @@ rule plot_errors_and_warnings:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_disk_utilization:
@@ -199,7 +199,7 @@ rule plot_disk_utilization:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_metadata:
@@ -224,7 +224,7 @@ rule plot_metadata:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_workflow_performance:
@@ -249,7 +249,7 @@ rule plot_workflow_performance:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 localrules: export_scenario_status
@@ -292,7 +292,7 @@ rule export_scenario_status:
         {PYTHON} -m hhemt.export_scenario_status \
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 INDEPENDENT_VARS = ['n_devices']
@@ -333,7 +333,7 @@ rule plot_sensitivity_benchmarking:
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --independent-var {wildcards.independent_var} \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule render_report:
@@ -367,5 +367,5 @@ rule render_report:
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --format {wildcards.format} \
             --reprocess \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """

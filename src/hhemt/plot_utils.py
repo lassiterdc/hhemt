@@ -28,11 +28,10 @@ def plot_discrete_raster(
     watershed_shapefile: Path = Path(""),
     watershed_shapefile_color="black",
 ):
-    if colors is None:
-        colors = pd.Series()
-    if labs is None:
-        labs = pd.Series()
     # filter out no data values
+    # B008: mutable/call defaults materialised here rather than at def time.
+    colors = pd.Series() if colors is None else colors
+    labs = pd.Series() if labs is None else labs
     nodata = rds.rio.nodata
     if nodata is not None:
         mask = rds.values != nodata
@@ -141,10 +140,11 @@ def plot_continuous_raster(
 
 
 def print_json_file_tree(source: str | Path | dict, base_dir: str | Path | None = None) -> None:
+
     # -------------------------
     # Load JSON or dict
     # -------------------------
-    if isinstance(source, str | Path):
+    if isinstance(source, (str, Path)):
         with Path(source).open("r") as f:
             data = json.load(f)
     elif isinstance(source, dict):
@@ -186,7 +186,7 @@ def print_json_file_tree(source: str | Path | dict, base_dir: str | Path | None 
     # Auto-detect base directory
     # -------------------------
     if base_dir is None:
-        common_parts = list(zip(*(p.parts for p in all_paths if p.parts), strict=False))
+        common_parts = list(zip(*(p.parts for p in all_paths if p.parts)))  # noqa: B905 - common-prefix over DIFFERENT-depth paths; truncation IS the algorithm
         root_parts = []
         for parts in common_parts:
             if len(set(parts)) == 1:

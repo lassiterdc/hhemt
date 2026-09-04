@@ -958,8 +958,15 @@ def _validate_hpc_configuration(
         # Per-rule (runtime_min, partition) pairs mirror the batch_job emitter
         # in workflow.py: sim rules target hpc_ensemble_partition; setup/prep/
         # process/consolidate target hpc_setup_and_analysis_processing_partition.
-        # The literal runtimes (30/120/30) mirror the workflow.py emitter
-        # constants verbatim; an emitter runtime edit must update both.
+        # The literal runtimes (30/30) mirror the workflow.py emitter constants
+        # verbatim; an emitter runtime edit must update both. Output processing is
+        # NOT a literal and has not been one since acbb8a48: workflow.py:2903 emits
+        # cfg.hpc_runtime_min_for_sim_output_processing (default 240), so this row
+        # reads the same field. It carried a hardcoded 120 until this change --
+        # half the emitted value, in the PERMISSIVE direction: a partition whose
+        # max_runtime fell in [120, 240) passed preflight and had its process jobs
+        # rejected or walltime-killed at submit. The emitter was fixed and its
+        # mirror was not.
         sim_partition = cfg.hpc_ensemble_partition
         proc_partition = cfg.hpc_setup_and_analysis_processing_partition
         # (rule_label, partition_name, requested_runtime_min, is_hardcoded_literal)
@@ -972,7 +979,12 @@ def _validate_hpc_configuration(
             ),
             ("setup", proc_partition, cfg.hpc_runtime_min_for_setup, False),
             ("scenario preparation", proc_partition, 30, True),
-            ("output processing", proc_partition, 120, True),
+            (
+                "output processing",
+                proc_partition,
+                cfg.hpc_runtime_min_for_sim_output_processing,
+                False,
+            ),
             ("consolidation", proc_partition, 30, True),
         ]
         for rule_label, partition_name, requested, is_literal in per_rule_runtimes:

@@ -139,9 +139,9 @@ class ScenarioInputGenerator:
                         if verbose:
                             print("###########################################")
                             print(
-                                f"Warning: node selection ambiguous for nodes {list(node_to_keep)} even after"
-                                " trying to select based on the lowest invert elevation."
-                                " Choose the first node in the list..."
+                                f"Warning: node selection ambiguous for nodes {list(node_to_keep)} even after "
+                                "trying to select based on the lowest invert elevation. "
+                                "Choose the first node in the list..."
                             )
                             print("###########################################")
                         if node_to_keep not in lst_ambiguous_nodes:
@@ -177,9 +177,9 @@ class ScenarioInputGenerator:
                             if verbose:
                                 print("###########################################")
                                 print(
-                                    f"Warning: node selection ambiguous for nodes {list(node_to_keep)} even after"
-                                    " trying to select based on the lowest invert elevation."
-                                    " Choose the first node in the list..."
+                                    f"Warning: node selection ambiguous for nodes {list(node_to_keep)} even after "
+                                    "trying to select based on the lowest invert elevation. "
+                                    "Choose the first node in the list..."
                                 )
                                 print("###########################################")
                         node_to_keep = node_to_keep[0]
@@ -245,7 +245,6 @@ class ScenarioInputGenerator:
 
         # Find and replace THREADS line in [OPTIONS] section
         in_options_section = False
-        _threads_found = False
 
         for idx, line in enumerate(lines):
             # Track when we enter/exit OPTIONS section
@@ -260,7 +259,6 @@ class ScenarioInputGenerator:
             if in_options_section and line.strip().startswith("THREADS"):
                 # Preserve spacing format: "THREADS              {value}"
                 lines[idx] = f"THREADS              {n_threads}\n"
-                _threads_found = True
                 break
 
         # Write back modified file
@@ -289,9 +287,7 @@ class ScenarioInputGenerator:
             infer_side,
         )
 
-        _weather_event_indexers = self.scenario.weather_event_indexers
         weather_time_series_storm_tide_datavar = self.cfg_analysis.weather_time_series_storm_tide_datavar
-        _simulation_folders = self.scenario._analysis.analysis_paths.simulation_directory
         storm_tide_units = self.cfg_analysis.storm_tide_units
 
         dem_processed = self.system.sys_paths.dem_processed

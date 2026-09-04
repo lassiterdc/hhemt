@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """CI check enforcing the caption/renderer paired-edit discipline.
 
 Usage:
@@ -59,15 +59,78 @@ CAPTION_DIR = Path("src/hhemt/report_templates/captions")
 ALLOWLIST_PATH = REPO_ROOT / "_caption_pairing_allowlist.yaml"
 
 
-def _changed_files(base_ref: str) -> set[str]:
+def _diff_names(ref: str) -> set[str]:
     out = subprocess.run(
-        ["git", "diff", "--name-only", base_ref],
+        ["git", "diff", "--name-only", ref],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=True,
     ).stdout
     return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def _changed_files(base_ref: str) -> set[str]:
+    """Paths this change authored.
+
+    ORDINARY COMMIT: base_ref vs the working tree, unchanged.
+
+    MID-MERGE: the SEMANTIC intersection of the diffs against BOTH parents. Two
+    corrections stack here and the second only became visible once the first shipped.
+
+    (1) A merge's working tree carries the other branch's entire accumulated delta,
+    whose pairing was satisfied commit-by-commit over there; any SINGLE-parent basis
+    re-asks for all of it at once. Measured on a real 382-file merge: HEAD~1 and HEAD
+    score identically (15 renderers, 5 captions, 10 flagged), because the basis was
+    never the problem -- the parent COUNT was.
+
+    (2) A textual intersection is then defeated by a whole-tree `ruff format` riding
+    the same commit: reformatting makes a file differ from BOTH parents, so it lands
+    in the intersection by construction. Measured on that same merge once a 110-file
+    reformat rode along, the textual intersection flagged 4 renderers and ALL FOUR
+    were ast-identical to MERGE_HEAD -- formatting only, semantically unchanged from a
+    parent already reviewed on its own branch. So compare ASTs, not text: a caption is
+    owed a re-read when the renderer's CODE moved, never when its formatting did.
+
+    Skipping on merge is NOT the alternative: that same merge carried a genuine
+    evil-merge renderer change, and a skip would have passed it unexamined -- trading
+    a false positive for a false negative on the one file that needed a human.
+    """
+    merge_head = subprocess.run(
+        ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merge_head.returncode != 0:
+        return _diff_names(base_ref)
+    textual = _diff_names("HEAD") & _diff_names(merge_head.stdout.strip())
+    parents = ("HEAD", merge_head.stdout.strip())
+    changed: set[str] = set()
+    for rel in textual:
+        p = REPO_ROOT / rel
+        if p.suffix != ".py" or not p.is_file():
+            changed.add(rel)  # non-Python: no AST to compare, keep the textual verdict
+            continue
+        try:
+            now = ast.dump(ast.parse(p.read_text()))
+        except SyntaxError:
+            changed.add(rel)  # unparseable: fail loud, never silently exempt
+            continue
+        for ref in parents:
+            r = subprocess.run(
+                ["git", "show", f"{ref}:{rel}"], cwd=REPO_ROOT, capture_output=True, text=True, check=False
+            )
+            if r.returncode == 0:
+                try:
+                    if ast.dump(ast.parse(r.stdout)) == now:
+                        break  # semantically identical to a parent -> not authored here
+                except SyntaxError:
+                    pass
+        else:
+            changed.add(rel)
+    return changed
 
 
 def _pairs_from_registry() -> list[tuple[str, str]]:

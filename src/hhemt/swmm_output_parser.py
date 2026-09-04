@@ -1,6 +1,5 @@
 import io
 import re
-import sys
 import warnings
 from collections import Counter
 from datetime import datetime
@@ -13,7 +12,7 @@ import pandas as pd
 import xarray as xr
 
 try:  # pragma: no cover - used by line_profiler
-    profile  # type: ignore[name-defined]  # noqa: B018 - name probe drives the except-NameError branch
+    profile  # type: ignore[name-defined]  # noqa: B018 - probing for line_profiler's injected global; the bare name IS the check
 except NameError:  # pragma: no cover
 
     def profile(func):  # type: ignore[no-redef]
@@ -28,6 +27,11 @@ from hhemt.constants import (
 
 TDELTA_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+):(\d+)")
 RPT_DATETIME_FORMAT = "%m/%d/%Y %H:%M:%S"
+
+_ADJACENT_VALUE_SOLUTION = (
+    "Two values in the rpt were right next to each other and couldn't be parsed "
+    "using spacing. Parsing by referencing a normal line."
+)
 
 # Bulk-parse regex patterns for parse_rpt_single_pass.
 # Each <<< Node|Link {id} >>> block has the structure:
@@ -94,7 +98,7 @@ def retrieve_swmm_performance_stats_from_rpt(
         attempted = ", ".join(attempted_encodings)
         details = " | ".join(decode_errors)
         raise UnicodeError(
-            f"Failed to decode SWMM report file {report_file_path} using encodings " f"[{attempted}]. Errors: {details}"
+            f"Failed to decode SWMM report file {report_file_path} using encodings [{attempted}]. Errors: {details}"
         )
 
     match_hms = re.search(r"Total elapsed time:\s*(\d{1,2}):(\d{2}):(\d{2})", content)
@@ -107,7 +111,7 @@ def retrieve_swmm_performance_stats_from_rpt(
     elif match_lt_1s is not None:
         result["wall_time_s"] = 1.0
     else:
-        raise ValueError(f"Could not find supported elapsed-time format in SWMM report file " f"{report_file_path}")
+        raise ValueError(f"Could not find supported elapsed-time format in SWMM report file {report_file_path}")
 
     thread_match = re.search(
         r"Number of Threads\s*\.{2,}\s*(\d+)",
@@ -540,9 +544,7 @@ def _bulk_parse_section(section_text, kind_filter, idx_colname, value_cols):
     df["date_time"] = pd.to_datetime(df["date"] + " " + df["time"], format=RPT_DATETIME_FORMAT, errors="coerce")
     if df["date_time"].isna().any():
         raise ValueError(
-            "Parsed RPT date_time values contained NaT. "
-            "Verify the RPT datetime format matches "
-            f"{RPT_DATETIME_FORMAT}."
+            f"Parsed RPT date_time values contained NaT. Verify the RPT datetime format matches {RPT_DATETIME_FORMAT}."
         )
     df = df.drop(columns=["date", "time"])
     df[idx_colname] = np.repeat(ids, row_counts)
@@ -781,7 +783,6 @@ def return_lines_for_section_of_rpt(section_header, f_rpt=None, lines=None):
         line_num += 1
         # return node flooding summaries
         if section_header in line:
-            _first_line = line_num
             # print("encountered header")
             encountered_header = True
         if encountered_header is False:
@@ -907,7 +908,24 @@ def return_node_time_series_results_from_outfile(f_outfile):
         d_nodes = out.nodes
         units = out.units
         if units["system"] != "SI":  # type: ignore
-            sys.exit("SWMM outputs are not in SI units!")
+            # RAISE, never sys.exit. SystemExit derives from BaseException, so no
+            # `except Exception` in any caller catches it and the process dies with
+            # no traceback -- the un-diagnosable shape that made an unrelated
+            # 123-scenario failure take a full session to attribute. ProcessingError
+            # is this module's own family (CLI exit 5) and carries the file.
+            from hhemt.exceptions import ProcessingError
+
+            raise ProcessingError(
+                operation="return_node_time_series_results_from_outfile",
+                filepath=Path(f_outfile),
+                reason=(
+                    f"SWMM outputs are not in SI units (unit system reported: "
+                    f"{units['system']!r}). The model's [OPTIONS] FLOW_UNITS must be one of "
+                    "CMS, LPS or MLD; CFS, GPM and MGD are US units, and an ABSENT "
+                    "FLOW_UNITS line defaults to CFS. Fix it in the SWMM template named by "
+                    "system_config, not in the generated per-scenario .inp, which inherits it."
+                ),
+            )
         # PROCESSING NODES
         dic_dfs = dict(depth_m=[], head_m=[], inflow_flow_cms=[], flooding_cms=[])
         for node_id in d_nodes.keys():
@@ -1029,9 +1047,7 @@ def create_tseries_ds(dict_lst_time_series, lst_col_headers, idx_colname):
     df_tseries["date_time"] = pd.to_datetime(df_tseries["date_time"], format=RPT_DATETIME_FORMAT, errors="coerce")
     if df_tseries["date_time"].isna().any():
         raise ValueError(
-            "Parsed RPT date_time values contained NaT. "
-            "Verify the RPT datetime format matches "
-            f"{RPT_DATETIME_FORMAT}."
+            f"Parsed RPT date_time values contained NaT. Verify the RPT datetime format matches {RPT_DATETIME_FORMAT}."
         )
     df_tseries = df_tseries.set_index([idx_colname, "date_time"])
     return df_tseries.to_xarray()
@@ -1082,7 +1098,6 @@ def return_data_from_rpt(lst_section_lines):
     lst_substrings_to_ignore = ["ltr\n"]
     # initialize vars
     dict_line_contents_aslist = {}
-    _dict_line_contents_asline = {}
     dict_content_lengths = {}
     # extract and parse data in each line using spaces
     line_contents = []
@@ -1097,7 +1112,6 @@ def return_data_from_rpt(lst_section_lines):
             line_strings.append(line)
             line_lengths.append(len(lst_substrings_with_content))
     dict_line_contents_aslist = {idx: contents for idx, contents in enumerate(line_contents)}
-    _dict_line_contents_asline = {idx: line for idx, line in enumerate(line_strings)}
     dict_content_lengths = {idx: length for idx, length in enumerate(line_lengths)}
     # make sure the lines all have the same lengths
     if not line_lengths:
@@ -1116,14 +1130,9 @@ def return_data_from_rpt(lst_section_lines):
             problem_row_list = dict_line_contents_aslist[idx_int]
             solution = None
             problem_row_lower = problem_row.lower()
-            # noqa: B007 justified — the loop `break`s and `prob_index` is read AFTER it
-            # (normal_row_list[prob_index] below), so the leaked loop variable is load-bearing.
-            for prob_index, val in enumerate(problem_row_list):  # noqa: B007
+            for prob_index, val in enumerate(problem_row_list):  # noqa: B007 - prob_index is read AFTER this loop at the normal_row_list lookups
                 if val.count(".") > 1:
-                    solution = (
-                        "Two values in the rpt were right next to each other and couldn't be parsed"
-                        " using spacing. Parsing by referencing a normal line."
-                    )
+                    solution = _ADJACENT_VALUE_SOLUTION
                     print("##################################")
                     print(f"Found problem. {solution}")
                     print("Normal row vs. problem row:")
@@ -1132,8 +1141,7 @@ def return_data_from_rpt(lst_section_lines):
                     break
                 if "orifice" in problem_row_lower:  # type: ignore
                     solution = (
-                        "Orifice conduits do not return max velocity or max over full flow."
-                        " Filling with empty string"
+                        "Orifice conduits do not return max velocity or max over full flow. Filling with empty string"
                     )
                     print("##################################")
                     print(f"Found problem. {solution}")
@@ -1141,19 +1149,14 @@ def return_data_from_rpt(lst_section_lines):
                     print(normal_row)
                     print(problem_row)
                     break
-            if (
-                solution == "Two values in the rpt were right next to each other and couldn't be parsed"
-                " using spacing. Parsing by referencing a normal line."
-            ):
+            if solution == _ADJACENT_VALUE_SOLUTION:
                 # problem_val = problem_row_list[prob_index]
                 normal_val_at_index = normal_row_list[prob_index]
                 normal_next_val_at_index = normal_row_list[prob_index + 1]
                 # identify string parsing location
-                ## deal with the possibility that there are multiple substrings with the same
-                ## value; find the pair with the smallest difference between the current val
-                ## and next val
+                ## deal with the possibility that there are multiple substrings with the same value;
+                ## find the pair with the smallest difference between the current val and next
                 closest_end_loc_of_val_at_index = 9999
-                _closest_begin_loc_of_next_val = -9999
                 dif_between_locs = 9999
                 for normal_val_at_index_string_ilocs in find_substring_indices(normal_row, normal_val_at_index):
                     if normal_val_at_index != extract_substring(normal_row, normal_val_at_index_string_ilocs):
@@ -1165,7 +1168,6 @@ def return_data_from_rpt(lst_section_lines):
                         begin_loc_next = min(normal_val_at_next_index_string_ilocs)
                         if (begin_loc_next - end_loc_prev) < dif_between_locs:
                             dif_between_locs = begin_loc_next - end_loc_prev
-                            _closest_begin_loc_of_next_val = begin_loc_next
                             closest_end_loc_of_val_at_index = end_loc_prev
                 #
                 split_loc = closest_end_loc_of_val_at_index
@@ -1273,13 +1275,9 @@ def split_at_index(main_string, index):
 
 def convert_coords_to_dtype(
     ds,
-    lst_dtypes_to_try=None,
-    coords_to_coerce=None,
+    lst_dtypes_to_try=(int, str),
+    coords_to_coerce=("node_id", "link_id", "model", "simtype"),
 ):
-    if coords_to_coerce is None:
-        coords_to_coerce = ["node_id", "link_id", "model", "simtype"]
-    if lst_dtypes_to_try is None:
-        lst_dtypes_to_try = [int, str]
     for coord in ds.coords:
         if (ds[coord].dtype == object) or (coord in coords_to_coerce):
             converted = False
@@ -1309,10 +1307,8 @@ def convert_coords_to_dtype(
     return ds
 
 
-def convert_datavars_to_dtype(ds, lst_dtypes_to_try=None, lst_vars_to_convert=None):
+def convert_datavars_to_dtype(ds, lst_dtypes_to_try=(str,), lst_vars_to_convert=None):
     # ds, lst_dtypes_to_try=[float, str]
-    if lst_dtypes_to_try is None:
-        lst_dtypes_to_try = [str]
     if lst_vars_to_convert is None:  # convert all variables
         lst_vars_to_convert = ds.data_vars
     for var in lst_vars_to_convert:

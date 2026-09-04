@@ -441,8 +441,9 @@ def _truncate(rpt_path):
     """
     from hhemt.process_simulation import TRITONSWMM_sim_post_processing as P
 
-    shim = P.__new__(P)
-    return P._truncate_coupled_rpt(shim, rpt_path, rpt_path.parent, False)
+    # No shim: _truncate_coupled_rpt is a @staticmethod (it binds no instance state),
+    # so the unbound call takes the three real arguments and nothing else.
+    return P._truncate_coupled_rpt(rpt_path, rpt_path.parent, False)
 
 
 def _markers_that_must_survive() -> list[str]:

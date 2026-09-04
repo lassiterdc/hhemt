@@ -337,9 +337,7 @@ class TestOutputEquivalence:
                     invalid_nans = ref_valid & new_nan
                     if invalid_nans.any():
                         count = invalid_nans.sum()
-                        pytest.fail(
-                            f"Node variable '{var}': {count} values became NaN " f"that were valid in reference"
-                        )
+                        pytest.fail(f"Node variable '{var}': {count} values became NaN that were valid in reference")
 
         # Check link data
         for var in reference_link_tseries.data_vars:
@@ -354,9 +352,7 @@ class TestOutputEquivalence:
                     invalid_nans = ref_valid & new_nan
                     if invalid_nans.any():
                         count = invalid_nans.sum()
-                        pytest.fail(
-                            f"Link variable '{var}': {count} values became NaN " f"that were valid in reference"
-                        )
+                        pytest.fail(f"Link variable '{var}': {count} values became NaN that were valid in reference")
 
 
 # =============================================================================
@@ -390,7 +386,7 @@ class TestWarningSuppression:
             write_zarr(ds, output_path, compression_level=5)
 
         assert len(caught_warnings) == 0, (
-            f"Found {len(caught_warnings)} warning(s): " f"{[str(w.message) for w in caught_warnings]}"
+            f"Found {len(caught_warnings)} warning(s): {[str(w.message) for w in caught_warnings]}"
         )
 
     def test_full_pipeline_no_warnings(self, test_case_analysis):
@@ -404,7 +400,7 @@ class TestWarningSuppression:
             wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
 
         assert len(caught_warnings) == 0, (
-            f"Found {len(caught_warnings)} warning(s): " f"{[str(w.message) for w in caught_warnings]}"
+            f"Found {len(caught_warnings)} warning(s): {[str(w.message) for w in caught_warnings]}"
         )
 
 
@@ -428,7 +424,7 @@ class TestConvertSwmmTdeltasToMinutes:
         result = convert_swmm_tdeltas_to_minutes(test_input)
 
         assert len(result) == len(expected)
-        for r, e in zip(result, expected, strict=False):
+        for r, e in zip(result, expected, strict=True):
             assert abs(r - e) < 0.01, f"Expected {e}, got {r}"
 
     def test_handles_nan_values(self):
@@ -454,7 +450,7 @@ class TestConvertSwmmTdeltasToMinutes:
 
         result = convert_swmm_tdeltas_to_minutes(test_input)
 
-        for r, e in zip(result, expected, strict=False):
+        for r, e in zip(result, expected, strict=True):
             assert abs(r - e) < 0.01
 
 

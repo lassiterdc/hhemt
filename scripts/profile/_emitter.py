@@ -210,8 +210,8 @@ def emit(
         lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|:---:|")
     else:
         lines.append(
-            "| Node ID | Setup (s) | Call (s) | Teardown (s) | Total (s, median) |"
-            " Child CPU (s) | Outlier flag | Outcome |"
+            "| Node ID | Setup (s) | Call (s) | Teardown (s) | Total (s, median) "
+            "| Child CPU (s) | Outlier flag | Outcome |"
         )
         lines.append("|---|---:|---:|---:|---:|---:|:---:|:---:|")
     all_nodeids = sorted({n for r in runs for n in r.per_test})
@@ -305,8 +305,8 @@ def emit(
             lines.append(f"    - {w}")
     lines.append("")
     lines.append(
-        "| Rule (verbatim) | Rule (normalized) | Jobs | Total (s) | Mean (s) |"
-        " Min (s) | Max (s) | Zero-duration jobs | Origin |"
+        "| Rule (verbatim) | Rule (normalized) | Jobs | Total (s) | Mean (s) "
+        "| Min (s) | Max (s) | Zero-duration jobs | Origin |"
     )
     lines.append("|---|---|---:|---:|---:|---:|---:|---:|---|")
     sm_acc: dict[tuple[str, str], list[_SnakemakeRollup]] = {}
@@ -365,7 +365,7 @@ def emit(
     lines.append("## Findings")
     lines.append("")
     total_corpus_wallclock = sum(rec.total_s for rec in primary.per_test.values())
-    lines.append(f"Total corpus wall-clock (median across kept reps): " f"**{total_corpus_wallclock:.3f} s**.")
+    lines.append(f"Total corpus wall-clock (median across kept reps): **{total_corpus_wallclock:.3f} s**.")
     lines.append("")
 
     # Findings A

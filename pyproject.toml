@@ -100,7 +100,7 @@ requires-python = ">= 3.11, < 3.13"
 
 [project.optional-dependencies]
 test = [
-    "ruff==0.15.10",
+    "ruff==0.15.17",
     "ty",
     "pytest",
     "pytest-xdist>=3.0",
@@ -148,16 +148,6 @@ select = [
     "I",   # isort
     "B",   # flake8-bugbear
     "UP",  # pyupgrade
-]
-
-# UP038 (non-pep604-isinstance) asks for `isinstance(x, A | B)` over `isinstance(x, (A, B))`.
-# Ruff REMOVED the rule upstream: the PEP 604 form in `isinstance` is not recommended practice,
-# it wrongly implies other typing syntaxes work there, and it is slightly slower at runtime.
-# The pinned `ruff-pre-commit` rev still carries it, so the commit hook and `just qa` disagree.
-# DELETE THIS IGNORE when that pin is raised past the rule's removal -- it exists only to make
-# the two rulers agree, and a pin that no longer has the rule makes it dead configuration.
-ignore = [
-    "UP038",
 ]
 
 [tool.ruff.lint.per-file-ignores]

@@ -98,6 +98,7 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "TRITON_raw_output_type": "experiment",
     "TRITON_reporting_timestep_s": "experiment",
     "additional_SBATCH_params": "experiment",
+    "allow_mixed_version_chapters": "experiment",
     "analysis_description": "experiment",
     "analysis_id": "experiment",
     "clear_raw": "experiment",

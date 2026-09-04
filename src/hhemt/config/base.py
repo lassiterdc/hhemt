@@ -252,9 +252,7 @@ class cfgBaseModel(BaseModel):
                 else:
                     trigger_field = cls.model_fields.get(trigger_name)
                     if trigger_field is None:
-                        raise TypeError(
-                            f"{cls.__name__}.{name}: required_when names an unknown " f"field {trigger_name!r}"
-                        )
+                        raise TypeError(f"{cls.__name__}.{name}: required_when names an unknown field {trigger_name!r}")
                     default = trigger_field.default
                     trigger = None if default is PydanticUndefined else default
                 if trigger in clause["in"] and values.get(name) is None:

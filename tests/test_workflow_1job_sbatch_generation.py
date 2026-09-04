@@ -102,9 +102,9 @@ def test_1job_sbatch_script_cpu_only(norfolk_1job_cpu_only):
     assert "--mem=0" not in script_content, "Should NOT have --mem=0 (redundant with --exclusive)"
 
     # Verify dynamic CPU calculation
-    assert (
-        "TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))" in script_content
-    ), "Should calculate TOTAL_CPUS dynamically"
+    assert "TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))" in script_content, (
+        "Should calculate TOTAL_CPUS dynamically"
+    )
     assert "--cores $TOTAL_CPUS" in script_content, "Should pass dynamic cores to Snakemake"
 
     # Verify GPU directive NOT present for CPU-only
@@ -147,9 +147,9 @@ def test_1job_sbatch_script_with_gpus(norfolk_1job_with_gpus):
     assert "--gres=gpu:a100:8" in script_content, "Should request 8 a100 GPUs per node with --gres"
 
     # Verify GPU calculation in bash script
-    assert (
-        "TOTAL_GPUS=$((SLURM_JOB_NUM_NODES * 8))" in script_content
-    ), "Should calculate TOTAL_GPUS dynamically (2 nodes × 8 GPUs/node = 16 total)"
+    assert "TOTAL_GPUS=$((SLURM_JOB_NUM_NODES * 8))" in script_content, (
+        "Should calculate TOTAL_GPUS dynamically (2 nodes × 8 GPUs/node = 16 total)"
+    )
 
     # Verify GPU resources passed via CLI
     assert "--resources gpu=$TOTAL_GPUS" in script_content, "Should pass GPU resources via CLI argument"
@@ -244,16 +244,16 @@ def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
 
     # Verify conda initialization logic is present
     assert "Initialize conda for non-interactive shell" in script_content, "Should include conda initialization comment"
-    assert (
-        'if [ -f "${CONDA_PREFIX}/../etc/profile.d/conda.sh" ]' in script_content
-    ), "Should check for conda.sh using CONDA_PREFIX"
-    assert (
-        'source "${CONDA_PREFIX}/../etc/profile.d/conda.sh"' in script_content
-    ), "Should source conda.sh from CONDA_PREFIX path"
+    assert 'if [ -f "${CONDA_PREFIX}/../etc/profile.d/conda.sh" ]' in script_content, (
+        "Should check for conda.sh using CONDA_PREFIX"
+    )
+    assert 'source "${CONDA_PREFIX}/../etc/profile.d/conda.sh"' in script_content, (
+        "Should source conda.sh from CONDA_PREFIX path"
+    )
     assert 'eval "$(${CONDA_EXE} shell.bash hook)' in script_content, "Should use using CONDA_EXE"
-    assert (
-        "ERROR: Cannot find conda initialization. CONDA_EXE and CONDA_PREFIX are both unset" in script_content
-    ), "Should warn if conda.sh not found"
+    assert "ERROR: Cannot find conda initialization. CONDA_EXE and CONDA_PREFIX are both unset" in script_content, (
+        "Should warn if conda.sh not found"
+    )
 
     # Verify conda initialization happens BEFORE conda activate
     init_pos = script_content.find("Initialize conda for non-interactive shell")

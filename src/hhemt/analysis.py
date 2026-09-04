@@ -4869,6 +4869,15 @@ class TRITONSWMM_analysis:
         # the deleted thing.
         if spec.stage in ("simulate", "process"):
             self._invalidate_processing_log_for_force_rerun(spec, dry_run=dry_run)
+            # The chapter set is a PROCESS-stage artifact and gates the RESUME decision
+            # the way processing_log gates _already_written, so the same act must reach
+            # it. Without this, a force-rerun clears the log, leaves the previous run's
+            # flagged chapters, and covered_timesteps then covers every timestep -- the
+            # loop body never runs and the merge REPUBLISHES the previous run's data
+            # under a fresh unified flag. dry_run is THREADED, not used to skip the
+            # call: the guard lives at the destructive site, per this method's own
+            # comment on the layer above.
+            self._delete_chapter_sets_for_force_rerun(spec, dry_run=dry_run)
 
     def _invalidate_consolidate_flag_on_scenario_set_change(self) -> None:
         """Delete e_consolidate_complete.flag (and orphan per-event flags) when the
@@ -5007,9 +5016,9 @@ class TRITONSWMM_analysis:
         # path from either would miss (wrong dir and/or doubled "member-member_" token),
         # silently breaking the rebuild. None/None => non-sensitivity: flags live
         # in THIS analysis's own _status/.
-        assert (member_id is None) == (
-            master_dir is None
-        ), "member_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
+        assert (member_id is None) == (master_dir is None), (
+            "member_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
+        )
         is_sub = member_id is not None
 
         reconciled: set[tuple[str, str]] = set()
@@ -5201,6 +5210,80 @@ class TRITONSWMM_analysis:
                 if model_log.raw_SWMM_outputs_cleared is not None:
                     model_log.raw_SWMM_outputs_cleared.set(False)
                 model_log.write()
+
+    def _delete_chapter_sets_for_force_rerun(self, spec, *, dry_run: bool = False) -> None:
+        """THIRD invalidation layer: delete per-chapter stores and the unified flag.
+
+        Gotcha 28 makes force-rerun TWO-layer because `_already_written` gates on the
+        per-model processing_log rather than on `.exists()`, so a single-layer
+        invalidator produces fresh flags over stale outputs. The chapter set is a
+        THIRD artifact class reached by the SAME act, and it needs the same treatment
+        for the same reason: `covered_timesteps` gates the resume on the chapter set,
+        so clearing the log while leaving the chapters produces a run whose resume
+        predicate already covers every timestep -- the loop body never executes and
+        the merge REPUBLISHES the previous run's data under a fresh unified flag. A
+        silent no-op regenerate, which is the same failure SHAPE Gotcha 28 describes
+        one layer up.
+
+        NOT NEEDED on the `regenerate_existing` reprocess path:
+        `_delete_processed_outputs_for_reprocess` already fast_rmtree's the whole
+        `sims/{event_id}/processed/` directory, and both artifacts are siblings of the
+        store inside it. Adding a second deletion there would be a second place to
+        keep in sync.
+
+        Deletes by GLOB rather than by reconstructing store stems: `*.chapters` and
+        `*.done` under `processed/` are these artifacts and nothing else, so the
+        helper does not depend on the summary-path stem convention and cannot drift
+        from it.
+
+        dry_run returns early, mirroring the log layer. The reprocess dry-run contract
+        forbids destructive mutation, and a chapter set is the most EXPENSIVE artifact
+        in the tree to recreate -- it is the accumulated work a resume exists to keep.
+        """
+        if spec.scope == "none":
+            return
+        if dry_run:
+            return  # dry run performs no destructive filesystem mutation
+
+        from hhemt.scenario import TRITONSWMM_scenario
+        from hhemt.workflow import ResolvedForceRerunSpec
+
+        if spec.scope == "member":
+            # members are full Analysis instances (Gotcha 11) and own their own
+            # scenarios, so each recurses with an "all" spec. Inlined rather than
+            # dispatched through a sibling sensitivity method: the loop is the same
+            # five lines and a second method would be a second undefined name.
+            sensitivity = getattr(self, "sensitivity", None)  # Gotcha 26: not always present
+            if sensitivity is None:
+                raise RuntimeError("force_rerun scope='member' on an analysis with no sensitivity attribute")
+            all_spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage=spec.stage)
+            for member_id in spec.tokens:
+                member = sensitivity.members.get(member_id)
+                if member is None:
+                    raise RuntimeError(f"force_rerun member_id {member_id!r} is not in the members dict")
+                member._delete_chapter_sets_for_force_rerun(all_spec, dry_run=dry_run)
+            return
+
+        if spec.scope == "all":
+            target_event_ids = set(self._all_event_id_slugs())
+        elif spec.scope == "event":
+            target_event_ids = set(spec.tokens)
+        else:
+            raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
+
+        analysis_dir = self.analysis_paths.analysis_dir
+        for event_iloc in range(len(self.df_sims)):
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            if scen.event_id not in target_event_ids:
+                continue
+            # No `processed.exists()` guard: TRITONSWMM_scenario's constructor mkdirs
+            # `processed/` (scenario.py:385) and it ran one line above, so the guard would
+            # be dead code reading as a safety check.
+            processed = scen.scen_paths.sim_folder / "processed"
+            for artifact in sorted(processed.glob("*.chapters")) + sorted(processed.glob("*.done")):
+                # fast_rmtree handles a dir OR a file and re-stamps DU internally,
+                # so PATTERN A is satisfied and no EXEMPT-DU annotation is owed.
+                fast_rmtree(artifact, analysis_dir=analysis_dir)
 
     def _all_event_id_slugs(self) -> list[str]:
         """Helper: enumerate every scenario's event_id slug for ``"all"`` scope.

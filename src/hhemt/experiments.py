@@ -741,7 +741,7 @@ class TRITON_SWMM_experiment:
             raise ProcessingError(
                 operation="doi_ingest_bundle_zip",
                 filepath=str(payload_root),
-                reason=(f"expected exactly one bundle .zip in the fetched deposit, found " f"{len(candidates)}: {rel}"),
+                reason=(f"expected exactly one bundle .zip in the fetched deposit, found {len(candidates)}: {rel}"),
             )
         zip_path = candidates[0]
         if expected_sha256 is not None:
@@ -759,7 +759,7 @@ class TRITON_SWMM_experiment:
             raise ProcessingError(
                 operation="doi_ingest_sha256",
                 filepath=str(path),
-                reason=(f"sha256 mismatch on the fetched bundle: expected " f"{expected_sha256}, got {actual}"),
+                reason=(f"sha256 mismatch on the fetched bundle: expected {expected_sha256}, got {actual}"),
             )
 
     @staticmethod
@@ -1070,7 +1070,7 @@ class TRITON_SWMM_experiment:
         )
         cfg_template = cls._load_config_filepath(case_name, system_config_template)
         filled_yaml_data = cls._return_filled_template_yaml_dictionary(cfg_template, mapping)
-        _cfg_system = load_system_config_from_dict(filled_yaml_data)
+        load_system_config_from_dict(filled_yaml_data)  # validation side effect; binding intentionally dropped
 
         # download data if it doesn't exist
         if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
@@ -1251,7 +1251,7 @@ class TRITON_SWMM_experiment:
                     raise ProcessingError(
                         operation="hydroshare_bag_validation",
                         filepath=str(bag_root),
-                        reason=("bagit manifest validation failed (bag is not " "self-consistent)."),
+                        reason=("bagit manifest validation failed (bag is not self-consistent)."),
                     )
             cls._verify_manifest(bag_root, expected_manifest)
             bag_root.rename(dest)

@@ -527,8 +527,8 @@ def _parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help="Output doc path (overwritten); default = $AGENTIC_WORKSPACE/library/knowledge"
-        "/triton-swmm-toolkit/routine test profile results.md",
+        help="Output doc path (overwritten); default = "
+        "$AGENTIC_WORKSPACE/library/knowledge/triton-swmm-toolkit/routine test profile results.md",
     )
     parser.add_argument("--cprofile", dest="cprofile", action="store_true", default=True)
     parser.add_argument("--no-cprofile", dest="cprofile", action="store_false")
@@ -548,7 +548,7 @@ def main() -> int:
 
     tmp_root = _make_tmp_root()
     print(
-        f"[profile] PID={os.getpid()} output={args.output} repetitions={args.repetitions} " f"tmp_root={tmp_root}",
+        f"[profile] PID={os.getpid()} output={args.output} repetitions={args.repetitions} tmp_root={tmp_root}",
         flush=True,
     )
 
@@ -579,7 +579,7 @@ def main() -> int:
         plugin_payload: dict = {}
         if args.pyspy:
             print(
-                f"[profile] {tag}: py-spy pass starting " "(slowest stage; --subprocesses ptraces every fork)...",
+                f"[profile] {tag}: py-spy pass starting (slowest stage; --subprocesses ptraces every fork)...",
                 flush=True,
             )
             pyspy_path, plugin_json_path = _run_pyspy_pass(per_rep_env, per_rep_root)
@@ -605,7 +605,7 @@ def main() -> int:
         if args.snakemake_harvest:
             tmp_paths = plugin_payload.get("tmp_paths", [])
             print(
-                f"[profile] {tag}: harvesting Snakemake metadata " f"from {len(tmp_paths)} tmp_paths...",
+                f"[profile] {tag}: harvesting Snakemake metadata from {len(tmp_paths)} tmp_paths...",
                 flush=True,
             )
             for tmp_path_str in tmp_paths:
@@ -685,7 +685,7 @@ def main() -> int:
     # cost biases the median upward when measured N times).
     if args.repetitions >= 3:
         print(
-            f"[profile] discarding rep 1 as warmup; emitting median across " f"reps 2..{args.repetitions}",
+            f"[profile] discarding rep 1 as warmup; emitting median across reps 2..{args.repetitions}",
             flush=True,
         )
         runs = runs[1:]

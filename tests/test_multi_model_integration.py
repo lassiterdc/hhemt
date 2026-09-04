@@ -89,7 +89,7 @@ class TestSWMMOnlyIntegration:
     def test_swmm_only_compilation(self, swmm_only_case):
         """Test that SWMM compiles successfully."""
         system = swmm_only_case.system
-        _analysis = system.analysis
+        analysis = system.analysis  # noqa: F841 - system.analysis is a property that RAISES when unset; the bind IS the check
 
         # Verify toggles are set correctly
         assert system.cfg_system.toggle_triton_model is False

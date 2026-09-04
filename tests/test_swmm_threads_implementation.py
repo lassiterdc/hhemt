@@ -100,7 +100,7 @@ def test_swmm_threads_different_values():
                 content = fp.read()
                 expected_line = f"THREADS              {n_threads}"
                 assert expected_line in content, (
-                    f"full.inp should have THREADS={n_threads} but got: " f"{_extract_options_section(content)}"
+                    f"full.inp should have THREADS={n_threads} but got: {_extract_options_section(content)}"
                 )
 
 
