@@ -222,23 +222,41 @@ unpaired_allowlist:
       change to this file rather than on arrival.
   - renderer: system_overview
     caption: src/hhemt/report_templates/captions/system_map.rst
-    renderer_sha256: 43e350a7f310d742fcdadcb635cedbd11bf5a93be0c87208fd048c103aac974f
+    renderer_sha256: 38cd0ab96dc315afe7f1a96943cafad37140d09e9ded15754860b7f5eebbc7b3
     justification: >-
-      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
-      not by judgement. This renderer's abstract syntax tree, parsed from the working
-      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
-      merge took the other branch's version of this file wholesale). The only textual
-      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
-      commit. A formatting change cannot alter a column, a unit, a section, or any
-      other claim a caption can make, so this caption cannot have gone stale and a
-      re-read has no possible finding. The renderer's semantics were reviewed on the
-      branch that authored them. Reproduce with:
-      python -c "import ast,subprocess;
-      f='src/hhemt/report_renderers/system_overview.py';
-      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
-      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
-      Digest recorded AFTER the reformat, so the exemption expires on the next real
-      change to this file rather than on arrival.
+      Vocabulary-rename fallout repair. THIS SUPERSEDES A FORMATTING-ONLY ENTRY AND ITS
+      DISCHARGE DOES NOT CARRY OVER. The prior entry recorded digest 43e350a7 and
+      discharged the re-read BY MEASUREMENT -- the AST was identical to MERGE_HEAD and
+      only a ruff-format pass differed -- while stating that the exemption "expires on the
+      next real change to this file rather than on arrival". This IS that next real
+      change, so the guard fired exactly as that entry predicted, and the AST-identity
+      argument is unavailable here: this change alters behaviour.
+      THE CHANGE IS ONE WORD, at _master_renders_swmm: the sensitivity branch read
+      getattr(getattr(analysis, "sensitivity", None), "analyses", {}), and
+      TRITONSWMM_sensitivity_analysis binds `members`, never `analyses`
+      (sensitivity_analysis.py:355). The getattr DEFAULT swallowed the miss, so `subs`
+      was always {} and the union over members never executed -- a defence that did not
+      defend, silent by construction rather than raising.
+      THE RE-READ WAS PERFORMED AND IS THE POINT OF THIS ENTRY, since this guard checks
+      PAIRING rather than agreement. The caption states what the map OVERLAYS: the
+      watershed polygon, the TRITON DEM extent, the boundary-condition shapefile
+      location, SWMM nodes and links from a representative scenario, and the CRS from
+      system_config.crs.horizontal_epsg. It makes NO claim about the master/member
+      predicate that decides WHETHER the SWMM overlay is drawn on a sensitivity master,
+      which is the only thing this change touches. Every claim the caption makes is
+      therefore unaffected and it is accurate as written.
+      HONEST BOUND ON WHAT CHANGED, so a later reader is not told more than was
+      established: the observable difference requires a master and its members to
+      DISAGREE on enabled models. A sensitivity analysis is single-model by a hard raise,
+      which bounds the master's enabled-set SIZE but NOT master/member agreement, and
+      validation.py::_validate_per_member_system_configs returns early unless the legacy
+      system_config_yaml column is present -- so a system.toggle_* overlay column reaches
+      an unchecked divergence. That path is reachable and rare; on every other path the
+      union was inert and the rendered output is unchanged.
+      Concurred: authored by hhemt-specialist, refuted to concurrence by
+      software-engineering-specialist over a per-spec ledger; the paired stub at
+      tests/test_system_overview_model_gate.py:19 lands in the same commit, verified by a
+      four-arm probe in which either half alone fails.
   - renderer: cross_experiment_compatibility
     caption: src/hhemt/report_templates/captions/cross_experiment_compatibility.rst
     renderer_sha256: d8ca3825cbd41486d54601632bdcd6315319c86c7a84467cafeed804ce06ba5b

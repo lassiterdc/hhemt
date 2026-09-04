@@ -1,0 +1,21 @@
+use-conda: false
+conda-frontend: mamba
+printshellcmds: true
+rerun-incomplete: true
+keep-going: true
+rerun-triggers:
+- mtime
+executor: slurm
+jobs: 16
+latency-wait: 60
+max-jobs-per-second: 5
+max-status-checks-per-second: 10
+slurm-keep-successful-logs: true
+slurm-delete-logfiles-older-than: 0
+restart-times: 2
+default-resources:
+- nodes=1
+- mem_mb=2000
+- runtime=30
+- slurm_partition=None
+- slurm_account=test_alloc

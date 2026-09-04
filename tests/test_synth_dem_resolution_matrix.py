@@ -87,8 +87,8 @@ def test_rows_carry_the_resolution_and_a_fixed_compute_config(tmp_path):
     assert {r["system.target_dem_resolution"] for r in rows} == {3.5, 7.0, 14.0}
     # The control: ONE compute config across the whole sweep.
     assert {(r["run_mode"], r["n_mpi_procs"], r["n_omp_threads"], r["n_gpus"]) for r in rows} == {("serial", 1, 1, 0)}
-    assert len({r["sa_id"] for r in rows}) == len(rows)
-    assert all(r["sa_id"].startswith("dem_") for r in rows)
+    assert len({r["member_id"] for r in rows}) == len(rows)
+    assert all(r["member_id"].startswith("dem_") for r in rows)
 
 
 def test_coupling_precheck_returns_retained_counts_at_a_safe_ladder(tmp_path):

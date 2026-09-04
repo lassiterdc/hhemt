@@ -143,7 +143,48 @@ non_breaking_allowlist:
       a test on the re-prep path. It belongs to the authoring session's review.
       SCOPE OF THIS ATTESTATION: process_simulation.py only. check-b named one file and
       one file was adjudicated; this says nothing about the rest of merge 9bde88dc.
-    layout_signature: "44d3387eda21a3a016b8cde58b5eaf58d6905a65387f2918f49b0999f1e476c9"
+
+      RE-STAMPED for the roadmap-3f re-entry guard (an import plus an early return in
+      _streaming_chunked_zarr_write). JUDGED NON-BREAKING, and the counter-argument is
+      recorded rather than omitted so the judgement is auditable. FOR: the change
+      creates, renames and removes NO on-disk artifact -- no path, no filename, no
+      schema, no log field. It adds a single .exists() read of an artifact that ALREADY
+      EXISTS (the unified .done flag that merge_chapters_to_unified has written since the
+      per-chapter round above) and, on a hit, DECLINES to rewrite a store that is already
+      complete and flagged. A tree carrying no .done takes the pre-change path
+      byte-identically, so no existing on-disk analysis needs a migration. AGAINST: the
+      on-disk OUTCOME of a re-entry does change -- an older toolkit meeting the same tree
+      would rebuild the chapter set from whatever raw survived and could republish a
+      TRUNCATED store under the surviving flag (measured 30 -> 10 timesteps against the
+      real merge). That is the DEFECT BEING FIXED rather than a layout break: the artifact
+      class is unchanged, and the divergence is that the older toolkit destroys data the
+      newer one preserves -- not a state a migration could or should transform.
+
+      >>> MERGE RESOLUTION 2026-09-04 — docs-and-experiment-system into sidequest-clearing-08-30. <<<
+      BOTH SIDES amended THIS ENTRY and each supplied its own layout_signature, so the conflict was a
+      genuine two-author collision on one attestation rather than a formatting clash. BOTH attestations
+      are RETAINED above, in the order the changes landed: the reviewer's reclaim-guard attestation first
+      (it adjudicates merge 9bde88dc), then the roadmap-3f re-entry-guard attestation. Neither is a
+      summary of the other and neither was dropped.
+      THE SIGNATURE IS OURS (4b3d1469), AND THAT IS A MEASUREMENT RATHER THAN A PREFERENCE: sha256 of
+      src/hhemt/process_simulation.py in the MERGED tree is 4b3d1469..., byte-identical to the value the
+      re-entry-guard entry stamped. THE INCOMING 44d3387e WAS NOT WRONG, AND SAYING SO WOULD
+      MISATTRIBUTE AN ERROR: it is the content at the MERGE BASE 653e32be, at hhemt b8427c8d, AND at
+      the incoming tip 93953a71 -- `git diff 653e32be 93953a71 -- src/hhemt/process_simulation.py` is
+      EMPTY, so the sister branch never touched this file and 44d3387e was the correct sha256 of its
+      tree at the moment it was stamped. It lost only because OUR side moved: the re-entry guard (11
+      insertions) is ours, so the merged content is ours, and taking the incoming value would have
+      re-fired Check B against content that HAD genuinely changed since 44d3387e was written.
+      The reclaim guard the reviewer attestation describes is ALREADY PRESENT in that same 4b3d1469
+      content, so one signature covers both attested changes -- but NO MERGE TRANSPORTED IT, IN EITHER
+      DIRECTION. It was introduced by 2c176dc9 ("fix: reclaim scenario inputs only after every model
+      has run"), which is an ANCESTOR OF THE MERGE BASE: `git merge-base --is-ancestor 2c176dc9
+      653e32be` exits 0. Shared ancestry is the whole mechanism -- the fork post-dates the commit, so
+      both tips carry it by descent rather than by transport. Both candidate carrier merges are
+      refuted by the same instrument: `git merge-base --is-ancestor 2c176dc9 53d3e052` exits 1, and
+      `git merge-base --is-ancestor 2c176dc9 9bde88dc` exits 1 as well -- 9bde88dc is dated 2026-09-01
+      while 2c176dc9 is dated 2026-09-03, so the earlier merge could not have carried the later commit.
+    layout_signature: "4b3d1469f53d08d1aacfc2a367d21d88aa6d56ad99dc79d06d48b7b06007acb0"
   - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
     justification: >-
       DU-sentinel gate closure — a one-character correction inside an existing
@@ -545,3 +586,113 @@ non_breaking_allowlist:
       log key, a flag name or a directory name -- those WOULD owe a migration. The schema this
       DOES break is the render bundle, so BUNDLE_SCHEMA_VERSION is bumped 4 -> 5 and both
       checked-in fixture bundles are regenerated in the same commit.
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      T15(iv) Shape B -- _retrieve_combined_output gains a COMPLETENESS check before it opens
+      an existing per-scenario summary store: it consults the per-model processing-log record
+      and raises when that record is absent or unsuccessful. FOR (non-breaking): the change is
+      READ-SIDE ONLY. No path, filename, zarr group, dtype, attr, chunk, encoding or
+      _version.json value differs, no artifact is created, renamed or removed, and an existing
+      on-disk analysis opens and re-consolidates unchanged whenever its processing-log records
+      are intact -- which is every analysis whose processing completed normally, since
+      add_sim_processing_entry writes the record on the success path. AGAINST, stated rather
+      than elided because the entry is the audit record: an analysis whose
+      processing_log.outputs were CLEARED while its summary stores survived -- the deliberate
+      Gotcha-28 force-rerun state -- would now raise where it previously proceeded. The defence
+      is checkable and was checked at workflow.py:1907-1909 (_FLOOR_FLAG_PREFIXES): both stages
+      that reach _invalidate_processing_log_for_force_rerun ("simulate" and "process") also
+      clear the d_process_ flags, so consolidation is DAG-unreachable in that state until
+      processing re-runs and re-writes BOTH the store and the record. The raise is deliberately
+      FileNotFoundError and the type is load-bearing: six live call sites across three modules
+      reach this method and four enclosing handlers catch exactly (FileNotFoundError,
+      ValueError), so a distinct type would convert Gotcha 36's tolerated skip into a master
+      abort and strip both EDA calc members of their skip arms.
+      CHANGE-SCOPED via layout_signature -- and this is the FIRST signature this path has
+      carried. The three prior processing_analysis.py rows are path-keyed with no signature,
+      which under _load_allowlist's last-wins merge had made the exemption PERMANENT: every
+      later edit to this file passed Check B silently, which is the same fail-open this file
+      already records against report_plot_ids.py and which `## M-16` measured across four
+      entries on 2026-09-01. This row closes it for this path. Per that same merge rule a later
+      row omitting layout_signature INHERITS this one, so re-opening the permanent exemption
+      must be an EDIT that deletes this signature -- never an append that quietly outranks it.
+    layout_signature: "fa7d7758c1722ef38d3589aca3e7e55d0710df05b33bf58c792a02cfec93b529"
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      MERGE RE-STAMP 2026-09-04, docs-and-experiment-system into sidequest-clearing-08-30.
+      Re-stamps fa7d7758 -> 953d1474. TWO deltas compose into this content and BOTH are
+      read-side; the digest does NOT cross a breaking change, contrary to the first framing
+      of this resolution.
+      OURS (653e32be..b36c6502, 41 insertions): the T15(iv) completeness gate attested by
+      the row directly above. Unchanged by the merge.
+      THEIRS (653e32be..93953a71): THREE insertions and one deletion, total. One import of
+      resolve_member_id_column, and inside _stamp_coupled_resume_evidence a swap of
+      row.get("sa_id") for row.get(_id_col) if _id_col else None. An AST function-hash
+      comparison of ours-at-HEAD against the merged tree reports exactly ONE changed
+      function, _stamp_coupled_resume_evidence. The V0020/V0021 vocabulary rename is NOT in
+      this file's diff.
+      RESIDUAL, stated rather than elided because it is a real on-disk difference: theirs'
+      change RESTORES A DEAD WRITE. Pre-change the hardcoded row.get("sa_id") returned None
+      against a post-V0019 df_status, so every row hit `continue`, `evidence` stayed empty,
+      and the `if evidence:` guard wrote nothing. Post-change the root attr
+      coupled_resume_replay_evidence appears, so an old tree and a new tree differ.
+      WHY NON-BREAKING ANYWAY, by measurement: (1) the attr is ADDITIVE and PLAIN -- it is
+      not a member of metadata._EMBEDDED_PROV_KEYS, and
+      `grep -rl coupled_resume_replay_evidence tests/fixtures/legacy_layouts/` returns
+      nothing, so no byte-identity golden can churn. (2) The consumer is graceful-absent by
+      construction: check_coupled_resume_validity's docstring states an unstamped tree
+      yields INDETERMINATE INFO with passed=True, never a false warn, so an old tree read by
+      new code classifies exactly as it does today. (3) The whole stamp is wrapped in a
+      best-effort `except Exception` that never blocks consolidation. (4) A backfill
+      migration is prohibited in kind, not merely unnecessary: it could only fabricate
+      evidence about runs it never observed, which this repo already refused in
+      `2026-06-27_v0016 migration body is a no-op not a backfill`.
+      This is the same class as the version-provenance-four-axes row above, on this same
+      path, which reads "so an old tree lacking them classifies exactly as it does today and
+      a new tree read" by an old toolkit shows them absent rather than wrong.
+      APPENDED rather than edited in place, deliberately: the prior row's own text records
+      that it was the FIRST signature this path carried, and an in-place re-stamp would
+      falsify that sentence. Per _load_allowlist this stamped append is the sanctioned way
+      to advance a change-scoped exemption; the shape that row forbids is a SIGNATURE-LESS
+      append, which would inherit fa7d7758 and silently outrank nothing.
+    layout_signature: "953d1474abff7b7bf72c8ef1db64bd8a202565bfa58ef58c717a8b7dfad1b37a"
+  - path: src/hhemt/report_plot_ids.py
+    justification: >-
+      MERGE RE-STAMP 2026-09-04, docs-and-experiment-system into sidequest-clearing-08-30.
+      Re-stamps a43e91a4 -> e584bdfb.
+      ASSERTED POST-HOC BY A REVIEWER, NOT BY THE CHANGE'S AUTHOR. The change is theirs
+      (ac489eef, "fix(member-identity): repair the sa_id -> member_id consumer set, the
+      prefix-slice defect, and the one-sided strip"); the merge-base and our side are
+      byte-identical at a43e91a4, so nothing on this branch touched the file. Non-authorship
+      is disclosed rather than cured, and the deciding command below is what makes the claim
+      falsifiable by the next reader in one step.
+      DECIDING COMMAND, RUNNABLE AS WRITTEN -- for each FunctionDef in this file at the
+      merge-base 653e32be and in the merged tree, hash ast.unparse(node) and compare
+      (the same normalization scripts/check_layout_version.py::_slug_function_hash already
+      applies to compute_event_id_slug, so formatting and comments do not register but real
+      signature or body drift does). Re-verified independently under a second normalization
+      (ast.dump-hash), which returns the identical partition. NOTE THE COMMAND'S BLIND SPOT,
+      stated so its silence is not read as coverage: it examines FunctionDefs only, and the
+      diff's FIRST of three hunks is a module-level import of member_id_from and
+      resolve_member_id_column from the new module src/hhemt/member_identity.py. That module
+      is absent at 653e32be, present and staged in the merged tree, and matched by NO
+      layout_relevant path or glob, so the new dependency is real and layout-inert:
+        changed:   humanize_plot_id, member_labels_from_status
+        unchanged: canonical_plot_id, plot_output_template, output_ext_for,
+                   escape_label_braces, event_display_name, event_labels_from_status,
+                   event_page_reference, report_label_value
+      EVERY STEM DETERMINANT IS UNCHANGED. canonical_plot_id, plot_output_template and
+      output_ext_for are byte-identical after normalization, and the module-level
+      _OUTPUT_EXT_BY_RENDERER dict is untouched (the diff has three hunks and none reaches
+      it). The two changed functions are display-side: member_labels_from_status resolves
+      the member-id column from the artifact's own header instead of hardcoding "sa_id",
+      and humanize_plot_id replaces seg[3:] with seg[len("member.") :] -- a residual
+      three-character slice left over from the retired `sa.` grammar, which under the
+      post-V0019 `member.` prefix was returning `ber.{id}`. That second change REPAIRS a
+      defect V0019's rename introduced; it does not introduce a grammar.
+      Same test, same words, as the two rows above this one: touches NO figure stem, so the
+      C-LAYOUT property this file is listed for (figure filenames) is untouched.
+      A SIGNATURE IS REQUIRED HERE AND AN UNSTAMPED APPEND WOULD NOT WORK. The two prior
+      rows for this path carry no signature and INHERIT row 1's a43e91a4 under
+      _load_allowlist's merge, so the effective value would stay stale and check-b would
+      still re-fire. Measured per-row: ['a43e91a4', 'NONE', 'NONE'].
+    layout_signature: "e584bdfbbf04a500676b38a6fe207bf19487eb06a9989fc2fa0aaa0b1beb2799"

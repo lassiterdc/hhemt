@@ -1,0 +1,21 @@
+# CAPPED fixture for the T15(iii) in-flight CPU cap. See the header of
+# hpc_system_config_slurm_test.yaml for why these live apart from
+# EXAMPLE_HPC_CONFIG.
+#
+# TWO PARTITIONS ON PURPOSE. `standard` declares cpus_per_node and is the
+# computable arm; `nocpn` omits it -- legal, since PartitionSpec.cpus_per_node is
+# `int | None` -- and is the input class for the ONE legitimate generation-time
+# raise (a full-node --exclusive GPU shape whose node size is unknowable). Keeping
+# both here makes the contrast a partition property, visible in one read.
+#
+# max_concurrent_cpus is the field S1 introduces. hpc_system_config is
+# extra="forbid", so this file raises ValidationError against a model that does
+# not yet carry it -- S1 must land before anything loads this fixture.
+system_name: test_cluster
+default_account: test_alloc
+max_concurrent_jobs: 16
+max_concurrent_cpus: 480
+partitions:
+  standard:
+    cpus_per_node: 40
+  nocpn: {}

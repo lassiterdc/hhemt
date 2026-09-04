@@ -78,6 +78,11 @@ if TYPE_CHECKING:
 
 from dataclasses import dataclass
 
+# T15(iii) Part 2: seconds between DU-guard statvfs polls. A module CONSTANT and
+# not a config field: a knob that is inert whenever the feature is off is a knob
+# nobody can tune meaningfully.
+_DU_POLL_INTERVAL_S = 60
+
 # Sentinel env var: when set to "1", _check_and_clear_snakemake_lock silently
 # rmtrees .snakemake/locks/ and .snakemake/incomplete/ before every snakemake
 # invocation instead of prompting the user. The tests/conftest.py session
@@ -2172,6 +2177,74 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                     block += f',\n        gres="gpu:{gpu_hardware}:{gpus_per_node}"'
                 else:
                     block += f',\n        gres="gpu:{gpus_per_node}"'
+
+        # ---- T15(iii): the global in-flight CPU weight. -----------------------
+        # ABSENT-NOT-INFINITE: when max_concurrent_cpus is unset we append NOTHING,
+        # so this block is byte-identical to a tree without the feature and both
+        # Snakefile goldens are untouched. The name is namespaced so it can never
+        # collide with an executor-read resource: submit_string.py reads only named
+        # keys (runtime/constraint/qos/mem_mb/nodes/gres/tasks/tasks_per_gpu/mpi/
+        # slurm_extra/...) with ZERO generic loops, and partitions.py:292 iterates a
+        # FIXED 7-key limit dict, so `hhemt_cpus` reaches neither sbatch nor
+        # partition eligibility.
+        #
+        # THE WEIGHT IS WHAT SLURM METERS, NEVER WHAT THE JOB REQUESTS. Under
+        # `--exclusive` (Gotcha 32's full-node hold) SLURM charges the WHOLE NODE
+        # while tasks*cpus_per_task under-counts it -- MEASURED at 6x on job
+        # 14452815 (ReqTRES cpu=16 vs AllocTRES cpu=96, a 2-node a6000 hold at
+        # 48 CPU/node). A budget that under-counts permits breaching the ceiling
+        # while reporting compliance, which is worse than no budget.
+        #
+        # TWO EMITTERS BYPASS THIS METHOD AND CARRY NO WEIGHT. NEITHER LEAKS:
+        # _delete_rule_resources emits its own `resources:` line, but the delete
+        # workflow runs from its OWN Snakefile.delete with its own driver and its
+        # own global_resources -- a separate bag, not an unweighted hole in this
+        # one. The wait_for_* block is a localrules: job that polls a sentinel and
+        # holds no cluster CPU at all. Do not "fix" either by routing it through
+        # here; that would put delete jobs into the sim bag.
+        #
+        # POSITION IS NOT LOAD-BEARING. The weight is appended last only because
+        # every shape-determining local is settled by here; the tests parse it via
+        # _hhemt_cpus_weight rather than assuming it is the final resource, so a
+        # later resource appended after it does not break them.
+        _budget = self.cfg_hpc_system.max_concurrent_cpus if self.cfg_hpc_system else None
+        if _budget is not None:
+            if full_node_gpu:
+                # Shapes 4/5: --exclusive holds every CPU on every allocated node.
+                _cpn = self._resolve_cpus_per_node(partition)
+                if _cpn is None:
+                    # THE ONLY LEGITIMATE GENERATION-TIME RAISE. All six emitted
+                    # shapes are computable; this is not an unmodelled shape but a
+                    # genuinely ABSENT operand. Refusing here is deliberate and the
+                    # alternative was rejected: the conservative over-estimate for a
+                    # full-node hold is the whole node, which silently converts a
+                    # safety rail into a throttle the operator sees only as a slow
+                    # campaign with no error.
+                    raise ConfigurationError(
+                        field="hpc_system_config.partitions.cpus_per_node",
+                        message=(
+                            f"max_concurrent_cpus is set, but partition {partition!r} is not "
+                            f"declared in hpc_system_config.partitions, or declares no "
+                            f"cpus_per_node. This rule takes the --exclusive full-node GPU path "
+                            f"(gpus_total={gpus_total} >= gpus_per_node_config="
+                            f"{gpus_per_node_config}), where SLURM meters every CPU on the node, "
+                            f"so its weight cannot be computed. Declare cpus_per_node on that "
+                            f"partition, or unset max_concurrent_cpus."
+                        ),
+                        config_path=None,
+                    )
+                _weight = sim_nodes * _cpn
+            elif gres_multi_gpu:
+                _weight = gpus_total * cpus_per_task  # shape 3: tasks == gpus_total
+            elif gpus_total >= 1:
+                # Shape 6 (Frontier gpus-mode) and shape 2. tasks_per_gpu is emitted
+                # ONLY on the gres_multi_gpu branch above, so it is None here and
+                # submit_string.py:83-88 falls back to `tasks`, which is 1 -- giving
+                # --ntasks-per-gpu=1 and deterministically gpus_total tasks.
+                _weight = gpus_total * cpus_per_task
+            else:
+                _weight = tasks * cpus_per_task  # shape 1: CPU rule
+            block += f",\n        hhemt_cpus={_weight}"
         return block
 
     @staticmethod
@@ -3861,6 +3934,19 @@ def _per_sim_event_page_sources(wildcards):
                         f"slurm_partition={slurm_partition}",
                         f"slurm_account={self._resolve_account()}",
                     ],
+                    # T15(iii): the global in-flight CPU bag, registered ONLY when
+                    # hpc_system_config.max_concurrent_cpus is set. Absent-not-null:
+                    # the dict-splat contributes no key when unset, so the emitted
+                    # config.yaml gains no line and is byte-identical to today's.
+                    # slurm mode ONLY -- under local/single_job the driver sits in a
+                    # fixed allocation where `_cores` actually binds (it is forced to
+                    # sys.maxsize only when `_nodes` is set, job_scheduler.py:104-106),
+                    # so a second ceiling there would be inert.
+                    **(
+                        {"resources": [f"hhemt_cpus={self.cfg_hpc_system.max_concurrent_cpus}"]}
+                        if self.cfg_hpc_system is not None and self.cfg_hpc_system.max_concurrent_cpus is not None
+                        else {}
+                    ),
                     # NOTE: the legacy `slurm: {sbatch: {...}}` block was deleted
                     # in Phase 2 — it is a `--cluster`-generic-executor key shape
                     # the modern `executor: slurm` plugin ignores (slurm_partition/
@@ -5933,6 +6019,37 @@ exit $snakemake_status
         matches = re.findall(r"Snakemake completed at .*?\(exit:\s*(\d+)\)", text)
         return int(matches[-1]) if matches else None
 
+    def _write_du_halt_record(self, *, free_bytes: int, floor: int):
+        """Record WHY the DU guard fired, before anything is cancelled."""
+        import json
+        from datetime import datetime
+
+        adir = self.analysis_paths.analysis_dir
+        du_total, du_mtime = None, None
+        try:
+            _du = adir / "_status" / "_du.json"
+            if _du.exists():
+                du_total = json.loads(_du.read_text()).get("total_bytes")
+                du_mtime = datetime.fromtimestamp(_du.stat().st_mtime).astimezone().isoformat(timespec="seconds")
+        except Exception:
+            pass
+        rec = adir / "_status" / "_halted_du.json"
+        rec.parent.mkdir(parents=True, exist_ok=True)
+        rec.write_text(
+            json.dumps(
+                {
+                    "halted_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "free_bytes_observed": free_bytes,
+                    "floor_bytes": floor,
+                    "analysis_dir": str(adir),
+                    "du_sentinel_total_bytes": du_total,
+                    "du_sentinel_mtime": du_mtime,
+                },
+                indent=2,
+            )
+        )
+        return rec
+
     def _wait_for_tmux_session_completion(
         self,
         session_name: str,
@@ -5996,6 +6113,8 @@ exit $snakemake_status
         last_fp = self._status_progress_fingerprint()
         last_progress_t = time.monotonic()
         all_pending_since: float | None = None
+        last_du_check_t = 0.0
+        du_read_error_logged = False
         queue_starved_seconds = float(getattr(self.cfg_analysis, "hpc_max_queue_wait_min", None) or 720.0) * 60.0
         try:
             while True:
@@ -6024,6 +6143,46 @@ exit $snakemake_status
                         "completed": False,
                         "message": f"Workflow failed: tmux session ended with snakemake exit {exit_code}",
                     }
+
+                # T15(iii) Part 2: the DU guard. UNSET -> no statvfs, no branch.
+                # OWN CLOCK, deliberately: the loop's `now` is not bound until two
+                # lines below, and borrowing a name bound elsewhere in the loop is
+                # exactly what produced the defect this corrects. A self-contained
+                # reference cannot break under a later reordering.
+                _floor = self.cfg_hpc_system.halt_sims_below_free_bytes if self.cfg_hpc_system else None
+                # TYPE-CHECK, not a null-check. `_floor is not None` admits any
+                # non-None value -- a Mock attribute in a test fixture, a mis-typed
+                # YAML value -- and the first `_free < _floor` then raises TypeError
+                # INSIDE the supervisor loop, taking the driver down. Measured: four
+                # pre-existing watchdog tests using a Mock analysis went red on the
+                # null-check form. Mirrors generate_snakemake_config's
+                # `assert isinstance(max_concurrent, int)` for the same reason.
+                if isinstance(_floor, int) and _floor > 0:
+                    import os  # function-local, matching this module's seven other os uses
+
+                    _du_now = time.monotonic()
+                    if _du_now - last_du_check_t >= _DU_POLL_INTERVAL_S:
+                        last_du_check_t = _du_now
+                        try:
+                            _st = os.statvfs(self.analysis_paths.analysis_dir)
+                            _free = _st.f_bavail * _st.f_frsize
+                        except OSError as _e:
+                            if not du_read_error_logged:
+                                du_read_error_logged = True
+                                print(f"[DU guard] statvfs unreadable ({_e}); guard inactive.", flush=True)
+                            _free = None
+                        if _free is not None and _free < _floor:
+                            _rec = self._write_du_halt_record(free_bytes=_free, floor=_floor)
+                            _res = self.analysis.cancel(verbose=verbose, rule_classes=("run_", "simulation_member_"))
+                            return {
+                                "completed": False,
+                                "message": (
+                                    f"DU guard: {_free / 1e9:.1f} GB free is below the "
+                                    f"{_floor / 1e9:.1f} GB floor. Cancelled "
+                                    f"{len(_res.get('cancelled', []))} simulation job(s); PROCESSING "
+                                    f"jobs left running deliberately ([Q212]). Details: {_rec}."
+                                ),
+                            }
 
                 # Session alive: check forward progress against the stall window.
                 fp = self._status_progress_fingerprint()

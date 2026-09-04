@@ -33,6 +33,7 @@ from hhemt.utils import (
     paths_to_strings,
     reap_unflagged_chapters,
     return_dic_zarr_encodings,
+    unified_flag_for,
     verify_and_flag_chapter,
     write_zarr,
     write_zarr_then_netcdf,
@@ -276,6 +277,16 @@ class TRITONSWMM_sim_post_processing:
         _ad = self._analysis.analysis_paths.analysis_dir
         _chapters.mkdir(parents=True, exist_ok=True)
         reap_unflagged_chapters(_chapters, analysis_dir=_ad)
+        if unified_flag_for(fname_out).exists():
+            warnings.warn(
+                f"{Path(fname_out).name} already carries its unified completion flag; "
+                "skipping the CHAPTER WRITER only -- the caller still consolidates this "
+                "store's metadata. Re-entering the writer would rebuild a chapter set "
+                "from whatever raw files survived the per-chapter clear and republish a "
+                "TRUNCATED store under a flag that still certifies it complete.",
+                stacklevel=2,
+            )
+            return
         # Chapter-set build guard ([Q235] / [Q238]). Reuses provenance.py's
         # producing-stamp family: the same (sha, dirty) key append_stage_provenance
         # already writes, and the same refuse-with-declared-bypass shape

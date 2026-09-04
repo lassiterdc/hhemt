@@ -1,0 +1,17 @@
+# UNCAPPED slurm-mode fixture for the T15(iii) profile golden.
+#
+# Two reasons this is not EXAMPLE_HPC_CONFIG (hpc_system_config_test.yaml):
+#   1. That file feeds BOTH Snakefile byte-identity goldens. Adding keys to it
+#      re-couples what these fixtures exist to decouple.
+#   2. It declares no max_concurrent_jobs, and generate_snakemake_config's slurm
+#      arm asserts on it (workflow.py:3808-3811), so it cannot reach the profile
+#      emission at all.
+#
+# max_concurrent_cpus is DELIBERATELY ABSENT: this is the arm that must emit no
+# `resources:` key. system_name and partitions are the model's two required fields.
+system_name: test_cluster
+default_account: test_alloc
+max_concurrent_jobs: 16
+partitions:
+  standard:
+    cpus_per_node: 40

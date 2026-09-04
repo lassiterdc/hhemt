@@ -217,7 +217,7 @@ def _fake_master(tmp_path, subs: dict):
     master_dir.mkdir(parents=True, exist_ok=True)
     return SimpleNamespace(
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=True),
-        sensitivity=SimpleNamespace(analyses=subs),
+        sensitivity=SimpleNamespace(members=subs),
         analysis_paths=SimpleNamespace(analysis_dir=str(master_dir)),
     )
 
