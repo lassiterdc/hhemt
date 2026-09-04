@@ -5040,9 +5040,9 @@ class TRITONSWMM_analysis:
         # path from either would miss (wrong dir and/or doubled "member-member_" token),
         # silently breaking the rebuild. None/None => non-sensitivity: flags live
         # in THIS analysis's own _status/.
-        assert (member_id is None) == (
-            master_dir is None
-        ), "member_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
+        assert (member_id is None) == (master_dir is None), (
+            "member_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
+        )
         is_sub = member_id is not None
 
         reconciled: set[tuple[str, str]] = set()
@@ -5787,7 +5787,14 @@ class TRITONSWMM_analysis:
     def _swmm_only_link_summary(self):
         return self.process.swmm_only_link_summary
 
-    def cancel(self, verbose: bool = True, wait_timeout: int = 120, debug: bool = False) -> dict:
+    def cancel(
+        self,
+        verbose: bool = True,
+        wait_timeout: int = 120,
+        debug: bool = False,
+        *,
+        rule_classes: tuple[str, ...] | None = None,
+    ) -> dict:
         """
         Cancel ongoing tmux workflow for this analysis.
 
@@ -5928,6 +5935,60 @@ class TRITONSWMM_analysis:
                 "analysis_id": analysis_id,
                 "message": "Tmux session killed (PID not found - worker cleanup uncertain)",
                 "errors": ["Could not find Snakemake PID for clean cancellation"],
+            }
+
+        # Step 1b: SELECTIVE arm ([Q212]/[Q213]). Step 2's SIGINT reaches Snakemake's
+        # cancel_jobs(), which cancels EVERY in-flight job -- sims and processing alike
+        # -- and cannot be made selective, so a filtered cancel scancels the chosen
+        # jobids itself. That is ONE methodology with two arms, not a parallel path.
+        #
+        # WHY tmux kill-session AFTER, and why its weakness is the point. SIGHUP does
+        # NOT reach Snakemake's handler (it registers SIGTERM only), so the executor's
+        # scancel path is never invoked -- MEASURED 2026-08-29, three queued jobs
+        # survived with their submit times intact. That is exactly what this arm needs:
+        # the driver is removed WITHOUT cancelling the processing jobs we deliberately
+        # spared. They are independent allocations, they run to completion, and a later
+        # run resumes through the v2 sentinels.
+        #
+        # HOST-LOCALITY is NOT addressed here and is not this mechanism's problem: these
+        # tmux calls have no ssh and no-op against a compute-node driver (T11). The DU
+        # guard's caller runs WHERE the driver runs, guarding that driver's own disk.
+        if rule_classes is not None:
+            import json as _json
+
+            _sub = self.analysis_paths.analysis_dir / "_status" / "_submitted"
+            _matched: list[tuple[str, str]] = []
+            for _p in sorted(_sub.glob("*.json")) if _sub.is_dir() else []:
+                _tok = _p.stem
+                if not any(_tok.startswith(pfx) for pfx in rule_classes):
+                    continue
+                try:
+                    _jid = _json.loads(_p.read_text()).get("slurm_jobid")
+                except Exception:
+                    _jid = None
+                if _jid:
+                    _matched.append((_tok, str(_jid)))
+            if _matched:
+                subprocess.run(["scancel", *[j for _, j in _matched]], capture_output=True)
+            subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+            if verbose:
+                print(
+                    f"[Cancel] Selective cancel: {len(_matched)} job(s) matching "
+                    f"{list(rule_classes)}; driver session killed, other jobs left running.",
+                    flush=True,
+                )
+            return {
+                "success": True,
+                "session_canceled": True,
+                "workers_canceled": bool(_matched),
+                "jobs_were_running": bool(_matched),
+                "message": (
+                    f"Cancelled {len(_matched)} job(s) matching {list(rule_classes)}; "
+                    f"processing jobs left running; driver session killed."
+                ),
+                "session_name": session_name,
+                "errors": [],
+                "cancelled": _matched,
             }
 
         # Step 2: Send SIGINT to Snakemake process

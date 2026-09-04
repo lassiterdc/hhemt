@@ -205,6 +205,7 @@ class hpc_system_config(BaseModel):
     #                                          for the retired analysis_config.hpc_max_simultaneous_sims
     max_concurrent_cpus: int | None = Field(
         None,
+        gt=0,
         description=(
             "OPTIONAL global cap on the total CPUs this workflow holds in flight across all "
             "cluster jobs at once. Leave UNSET (the default) and the toolkit emits nothing: no "
@@ -239,6 +240,35 @@ class hpc_system_config(BaseModel):
     )  # EXTENSION (T15(iii)): global in-flight CPU cap. CPU is the right denomination because it
     #  is the binding resource -- per node at 4 CPU / 16000 MB, CPU admits 10 sims against
     #  memory's 24 (2.4x), and NO per-user memory ceiling exists on our path at all.
+    halt_sims_below_free_bytes: int | None = Field(
+        None,
+        gt=0,
+        description=(
+            "OPTIONAL disk floor. When free space on the analysis directory's filesystem falls "
+            "below this many bytes, the driver CANCELS the in-flight SIMULATIONS, leaves every "
+            "processing job running, and exits so a later run resumes via the v2 sentinels. "
+            "Leave UNSET (the default) and no polling happens and no branch is taken.\n\n"
+            "SIMS ONLY, NEVER PROCESSING ([Q212]). Processing is what CONVERTS raw output into "
+            "the summaries the campaign is for and is what makes reclaim eligible; cancelling it "
+            "during a disk squeeze removes the only thing draining the disk.\n\n"
+            "FREE BYTES, not a free fraction: the campaign shares this filesystem, so the "
+            "denominator in a percentage is a number we neither control nor can interpret. "
+            "VERIFY WHAT statvfs SEES BEFORE RELYING ON THIS. It reports the FILESYSTEM's free "
+            "space, which equals a quota only where the quota is a GPFS fileset with filesetdf "
+            "enabled; otherwise a quota-exhausted run gets EDQUOT on write while statvfs still "
+            "reports free space and this guard never fires. One command decides it:\n"
+            '    python3 -c "import os,sys; s=os.statvfs(sys.argv[1]); '
+            "print(s.f_blocks*s.f_frsize/1e12,'TB total')\" {analysis_dir}\n"
+            "Measured on UVA /scratch 2026-09-03: 13.19 TB total, i.e. the real filesystem "
+            "ceiling rather than a synthetic 10 TB soft limit, so the guard covers the binding "
+            "one there. Re-run the command on any other cluster.\n\n"
+            "The guard runs ONLY while the driver's supervisor loop is running, i.e. when the "
+            "workflow was submitted with wait_for_job_completion=True. A fire-and-forget "
+            "submission has no guard."
+        ),
+    )  # EXTENSION (T15(iii) Part 2): statvfs TRIGGER, _du.json DIAGNOSTIC. The analysis-scope
+    #  DU sentinel FREEZES when processing stops, so a guard reading it would be reading a value
+    #  frozen by the very failure it guards against -- worse than no guard.
     partitions: dict[str, PartitionSpec] = Field(
         ...,
         description="The partitions a run may select by name, each with the caps preflight "

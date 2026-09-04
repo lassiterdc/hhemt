@@ -77,6 +77,11 @@ if TYPE_CHECKING:
 
 from dataclasses import dataclass
 
+# T15(iii) Part 2: seconds between DU-guard statvfs polls. A module CONSTANT and
+# not a config field: a knob that is inert whenever the feature is off is a knob
+# nobody can tune meaningfully.
+_DU_POLL_INTERVAL_S = 60
+
 # Sentinel env var: when set to "1", _check_and_clear_snakemake_lock silently
 # rmtrees .snakemake/locks/ and .snakemake/incomplete/ before every snakemake
 # invocation instead of prompting the user. The tests/conftest.py session
@@ -6015,6 +6020,37 @@ exit $snakemake_status
         matches = re.findall(r"Snakemake completed at .*?\(exit:\s*(\d+)\)", text)
         return int(matches[-1]) if matches else None
 
+    def _write_du_halt_record(self, *, free_bytes: int, floor: int):
+        """Record WHY the DU guard fired, before anything is cancelled."""
+        import json
+        from datetime import datetime
+
+        adir = self.analysis_paths.analysis_dir
+        du_total, du_mtime = None, None
+        try:
+            _du = adir / "_status" / "_du.json"
+            if _du.exists():
+                du_total = json.loads(_du.read_text()).get("total_bytes")
+                du_mtime = datetime.fromtimestamp(_du.stat().st_mtime).astimezone().isoformat(timespec="seconds")
+        except Exception:
+            pass
+        rec = adir / "_status" / "_halted_du.json"
+        rec.parent.mkdir(parents=True, exist_ok=True)
+        rec.write_text(
+            json.dumps(
+                {
+                    "halted_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "free_bytes_observed": free_bytes,
+                    "floor_bytes": floor,
+                    "analysis_dir": str(adir),
+                    "du_sentinel_total_bytes": du_total,
+                    "du_sentinel_mtime": du_mtime,
+                },
+                indent=2,
+            )
+        )
+        return rec
+
     def _wait_for_tmux_session_completion(
         self,
         session_name: str,
@@ -6078,6 +6114,8 @@ exit $snakemake_status
         last_fp = self._status_progress_fingerprint()
         last_progress_t = time.monotonic()
         all_pending_since: float | None = None
+        last_du_check_t = 0.0
+        du_read_error_logged = False
         queue_starved_seconds = float(getattr(self.cfg_analysis, "hpc_max_queue_wait_min", None) or 720.0) * 60.0
         try:
             while True:
@@ -6106,6 +6144,46 @@ exit $snakemake_status
                         "completed": False,
                         "message": f"Workflow failed: tmux session ended with snakemake exit {exit_code}",
                     }
+
+                # T15(iii) Part 2: the DU guard. UNSET -> no statvfs, no branch.
+                # OWN CLOCK, deliberately: the loop's `now` is not bound until two
+                # lines below, and borrowing a name bound elsewhere in the loop is
+                # exactly what produced the defect this corrects. A self-contained
+                # reference cannot break under a later reordering.
+                _floor = self.cfg_hpc_system.halt_sims_below_free_bytes if self.cfg_hpc_system else None
+                # TYPE-CHECK, not a null-check. `_floor is not None` admits any
+                # non-None value -- a Mock attribute in a test fixture, a mis-typed
+                # YAML value -- and the first `_free < _floor` then raises TypeError
+                # INSIDE the supervisor loop, taking the driver down. Measured: four
+                # pre-existing watchdog tests using a Mock analysis went red on the
+                # null-check form. Mirrors generate_snakemake_config's
+                # `assert isinstance(max_concurrent, int)` for the same reason.
+                if isinstance(_floor, int) and _floor > 0:
+                    import os  # function-local, matching this module's seven other os uses
+
+                    _du_now = time.monotonic()
+                    if _du_now - last_du_check_t >= _DU_POLL_INTERVAL_S:
+                        last_du_check_t = _du_now
+                        try:
+                            _st = os.statvfs(self.analysis_paths.analysis_dir)
+                            _free = _st.f_bavail * _st.f_frsize
+                        except OSError as _e:
+                            if not du_read_error_logged:
+                                du_read_error_logged = True
+                                print(f"[DU guard] statvfs unreadable ({_e}); guard inactive.", flush=True)
+                            _free = None
+                        if _free is not None and _free < _floor:
+                            _rec = self._write_du_halt_record(free_bytes=_free, floor=_floor)
+                            _res = self.analysis.cancel(verbose=verbose, rule_classes=("run_", "simulation_member_"))
+                            return {
+                                "completed": False,
+                                "message": (
+                                    f"DU guard: {_free / 1e9:.1f} GB free is below the "
+                                    f"{_floor / 1e9:.1f} GB floor. Cancelled "
+                                    f"{len(_res.get('cancelled', []))} simulation job(s); PROCESSING "
+                                    f"jobs left running deliberately ([Q212]). Details: {_rec}."
+                                ),
+                            }
 
                 # Session alive: check forward progress against the stall window.
                 fp = self._status_progress_fingerprint()
