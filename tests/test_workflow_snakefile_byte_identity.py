@@ -155,6 +155,181 @@ def test_master_snakefile_byte_identity() -> None:
     _check(got, "sensitivity_master.Snakefile.golden")
 
 
+# --- T15(iii) fixtures. DELIBERATELY NOT EXAMPLE_HPC_CONFIG, which is threaded
+# into BOTH Snakefile goldens: declaring the cap there would emit a per-rule
+# weight into both and force a recapture -- the signal that [Q246]'s default-OFF
+# is broken. SLURM_HPC_CONFIG is the UNCAPPED arm and exists separately only
+# because EXAMPLE_HPC_CONFIG declares no max_concurrent_jobs and so cannot reach
+# generate_snakemake_config(mode="slurm") past its assert at workflow.py:3808-3811.
+SLURM_HPC_CONFIG = Path(__file__).parent / "fixtures" / "hpc_system_config_slurm_test.yaml"
+CAPPED_HPC_CONFIG = Path(__file__).parent / "fixtures" / "hpc_system_config_capped_test.yaml"
+
+
+def _hhemt_cpus_weight(block: str) -> int | None:
+    """The single hhemt_cpus weight in an emitted resources block, or None.
+
+    PARSES rather than substring-matching, and the difference is not stylistic:
+    `"hhemt_cpus=8" in block` is TRUE for an emitted 80, so a substring assertion
+    on the discriminating full-node test would pass on a 10x OVER-count -- the
+    same mis-count-while-reporting-compliance shape the weight itself exists to
+    prevent. `endswith` also closes that, but only while the weight is the LAST
+    resource emitted, which nothing pins; this does not depend on emission order.
+    The len==1 check catches a double emission, which no per-line assertion sees.
+    """
+    lines = [ln.strip().rstrip(",") for ln in block.splitlines() if ln.strip().startswith("hhemt_cpus=")]
+    if not lines:
+        return None
+    assert len(lines) == 1, f"expected one hhemt_cpus line, got {lines}"
+    return int(lines[0].split("=", 1)[1])
+
+
+def test_slurm_profile_byte_identity_unset() -> None:
+    """UNSET path: the emitted slurm profile is byte-identical to golden.
+
+    This is the artifact [Q246]'s "byte-identical generated profile" half was
+    missing. Before this test that half was ASSERTED; the two Snakefile goldens
+    demonstrated only that the *Snakefile* was unchanged.
+    """
+    import yaml  # not imported at module scope in this file
+
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=SLURM_HPC_CONFIG,
+    )
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    got = yaml.dump(
+        builder.generate_snakemake_config(mode="slurm"),
+        default_flow_style=False,
+        sort_keys=False,
+    )
+    _check(got, "slurm_profile.config.yaml.golden")
+
+
+def test_slurm_profile_declares_the_bag_when_set() -> None:
+    """SET path: the profile gains exactly one `resources:` entry, and its value
+    is the configured cap.
+
+    Deliberately NOT a golden. A golden here would be captured from the same
+    generator it checks, so it would pass on any value the emitter produced; the
+    assertion below fails if the number is wrong, which a golden cannot do.
+    """
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=CAPPED_HPC_CONFIG,
+    )
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    cfg = builder.generate_snakemake_config(mode="slurm")
+    assert cfg["resources"] == ["hhemt_cpus=480"]
+
+
+def test_slurm_profile_omits_the_bag_when_unset() -> None:
+    """UNSET path, asserted rather than left to the golden.
+
+    The golden above proves the profile did not CHANGE; this proves the key is
+    ABSENT rather than present-and-null, which is the [Q246] property and is not
+    something a byte comparison can distinguish from "we never looked".
+    """
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=SLURM_HPC_CONFIG,
+    )
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    assert "resources" not in builder.generate_snakemake_config(mode="slurm")
+
+
+def test_per_rule_weight_is_metered_not_requested_when_set() -> None:
+    """SET path: a CPU rule carries `hhemt_cpus = tasks * cpus_per_task`.
+
+    The unset arm gets a free green from the two Snakefile goldens; this is the
+    arm that does the work and nothing else covers it.
+    """
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=CAPPED_HPC_CONFIG,
+    )
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    block = builder._build_resource_block(
+        partition="standard",
+        runtime_min=30,
+        mem_mb=2000,
+        nodes=1,
+        tasks=2,
+        cpus_per_task=4,
+    )
+    assert _hhemt_cpus_weight(block) == 8
+
+
+def test_full_node_gpu_weight_is_the_whole_node_not_the_request() -> None:
+    """SET path: the --exclusive shape is charged nodes * cpus_per_node.
+
+    THE REGRESSION THIS PINS. Pre-fix arithmetic would give tasks*cpus_per_task
+    = 4*1 = 4 for the block below; SLURM charges 1*40 = 40, a 10x under-count of
+    the same class measured at 6x on job 14452815. An assertion on 4 would pass
+    while permitting a tenfold ceiling breach.
+    """
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=CAPPED_HPC_CONFIG,
+    )
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    block = builder._build_resource_block(
+        partition="standard",
+        runtime_min=30,
+        mem_mb=2000,
+        nodes=1,
+        tasks=1,
+        cpus_per_task=1,
+        gpus_total=4,
+        gpus_per_node_config=4,
+        gpu_alloc_mode="gres",
+    )
+    assert 'slurm_extra="--exclusive"' in block  # the shape under test really is 4/5
+    assert _hhemt_cpus_weight(block) == 40  # 1 node * 40 cpus_per_node
+
+
+def test_raise_when_full_node_gpu_partition_declares_no_cpus_per_node() -> None:
+    """SET path: the one legitimate generation-time raise, and only there.
+
+    Both arms come from ONE fixture with TWO partitions, so the contrast under
+    test is a partition property rather than a config-file property.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=CAPPED_HPC_CONFIG,
+    )
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    with pytest.raises(ConfigurationError, match="cpus_per_node"):
+        builder._build_resource_block(
+            partition="nocpn",
+            runtime_min=30,
+            mem_mb=2000,
+            nodes=1,
+            tasks=1,
+            cpus_per_task=1,
+            gpus_total=4,
+            gpus_per_node_config=4,
+            gpu_alloc_mode="gres",
+        )
+    # And NOT on a shape that computes without it, from the SAME partition.
+    block = builder._build_resource_block(
+        partition="nocpn",
+        runtime_min=30,
+        mem_mb=2000,
+        nodes=1,
+        tasks=2,
+        cpus_per_task=4,
+    )
+    assert _hhemt_cpus_weight(block) == 8
+
+
 # ========== Phase 3b: Snakemake `group:` directive assertions (R8) ==========
 
 # Per-rule `cpus_per_task` for the three process_* rules. Snakemake's
@@ -208,9 +383,7 @@ def test_process_rule_group_resources_do_not_overallocate() -> None:
         block = re.search(rf"rule {rule_name}:[\s\S]*?(?=\nrule |\Z)", got)
         assert block is not None, f"rule {rule_name} not found in Snakefile"
         m = re.search(r"cpus_per_task=(\d+)", block.group(0))
-        assert m is not None, (
-            f"rule {rule_name} does not declare `cpus_per_task=`; cannot " f"verify group-resource sum."
-        )
+        assert m is not None, f"rule {rule_name} does not declare `cpus_per_task=`; cannot verify group-resource sum."
         per_rule_cpus.append(int(m.group(1)))
 
     assert len(per_rule_cpus) == _EXPECTED_PROCESS_RULES_PER_EVENT
@@ -353,9 +526,9 @@ def test_home_data_dir_mask_survives_a_symlinked_home() -> None:
             f"{arm} arm: the home-data-dir mask did not fire, so a machine-specific path "
             f"survives into the byte-identity comparison. got={got!r}"
         )
-        assert (
-            "gpfs" not in got and "/home/u/" not in got
-        ), f"{arm} arm: a machine-specific segment leaked past the mask. got={got!r}"
+        assert "gpfs" not in got and "/home/u/" not in got, (
+            f"{arm} arm: a machine-specific segment leaked past the mask. got={got!r}"
+        )
 
 
 def test_no_shell_prefix_or_executable_disables_pipefail() -> None:

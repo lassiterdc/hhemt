@@ -2173,6 +2173,74 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                     block += f',\n        gres="gpu:{gpu_hardware}:{gpus_per_node}"'
                 else:
                     block += f',\n        gres="gpu:{gpus_per_node}"'
+
+        # ---- T15(iii): the global in-flight CPU weight. -----------------------
+        # ABSENT-NOT-INFINITE: when max_concurrent_cpus is unset we append NOTHING,
+        # so this block is byte-identical to a tree without the feature and both
+        # Snakefile goldens are untouched. The name is namespaced so it can never
+        # collide with an executor-read resource: submit_string.py reads only named
+        # keys (runtime/constraint/qos/mem_mb/nodes/gres/tasks/tasks_per_gpu/mpi/
+        # slurm_extra/...) with ZERO generic loops, and partitions.py:292 iterates a
+        # FIXED 7-key limit dict, so `hhemt_cpus` reaches neither sbatch nor
+        # partition eligibility.
+        #
+        # THE WEIGHT IS WHAT SLURM METERS, NEVER WHAT THE JOB REQUESTS. Under
+        # `--exclusive` (Gotcha 32's full-node hold) SLURM charges the WHOLE NODE
+        # while tasks*cpus_per_task under-counts it -- MEASURED at 6x on job
+        # 14452815 (ReqTRES cpu=16 vs AllocTRES cpu=96, a 2-node a6000 hold at
+        # 48 CPU/node). A budget that under-counts permits breaching the ceiling
+        # while reporting compliance, which is worse than no budget.
+        #
+        # TWO EMITTERS BYPASS THIS METHOD AND CARRY NO WEIGHT. NEITHER LEAKS:
+        # _delete_rule_resources emits its own `resources:` line, but the delete
+        # workflow runs from its OWN Snakefile.delete with its own driver and its
+        # own global_resources -- a separate bag, not an unweighted hole in this
+        # one. The wait_for_* block is a localrules: job that polls a sentinel and
+        # holds no cluster CPU at all. Do not "fix" either by routing it through
+        # here; that would put delete jobs into the sim bag.
+        #
+        # POSITION IS NOT LOAD-BEARING. The weight is appended last only because
+        # every shape-determining local is settled by here; the tests parse it via
+        # _hhemt_cpus_weight rather than assuming it is the final resource, so a
+        # later resource appended after it does not break them.
+        _budget = self.cfg_hpc_system.max_concurrent_cpus if self.cfg_hpc_system else None
+        if _budget is not None:
+            if full_node_gpu:
+                # Shapes 4/5: --exclusive holds every CPU on every allocated node.
+                _cpn = self._resolve_cpus_per_node(partition)
+                if _cpn is None:
+                    # THE ONLY LEGITIMATE GENERATION-TIME RAISE. All six emitted
+                    # shapes are computable; this is not an unmodelled shape but a
+                    # genuinely ABSENT operand. Refusing here is deliberate and the
+                    # alternative was rejected: the conservative over-estimate for a
+                    # full-node hold is the whole node, which silently converts a
+                    # safety rail into a throttle the operator sees only as a slow
+                    # campaign with no error.
+                    raise ConfigurationError(
+                        field="hpc_system_config.partitions.cpus_per_node",
+                        message=(
+                            f"max_concurrent_cpus is set, but partition {partition!r} is not "
+                            f"declared in hpc_system_config.partitions, or declares no "
+                            f"cpus_per_node. This rule takes the --exclusive full-node GPU path "
+                            f"(gpus_total={gpus_total} >= gpus_per_node_config="
+                            f"{gpus_per_node_config}), where SLURM meters every CPU on the node, "
+                            f"so its weight cannot be computed. Declare cpus_per_node on that "
+                            f"partition, or unset max_concurrent_cpus."
+                        ),
+                        config_path=None,
+                    )
+                _weight = sim_nodes * _cpn
+            elif gres_multi_gpu:
+                _weight = gpus_total * cpus_per_task  # shape 3: tasks == gpus_total
+            elif gpus_total >= 1:
+                # Shape 6 (Frontier gpus-mode) and shape 2. tasks_per_gpu is emitted
+                # ONLY on the gres_multi_gpu branch above, so it is None here and
+                # submit_string.py:83-88 falls back to `tasks`, which is 1 -- giving
+                # --ntasks-per-gpu=1 and deterministically gpus_total tasks.
+                _weight = gpus_total * cpus_per_task
+            else:
+                _weight = tasks * cpus_per_task  # shape 1: CPU rule
+            block += f",\n        hhemt_cpus={_weight}"
         return block
 
     @staticmethod
@@ -3782,9 +3850,9 @@ def _per_sim_event_page_sources(wildcards):
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
         }
-        assert isinstance(
-            self.cfg_analysis.local_cpu_cores_for_workflow, int
-        ), "local_cpu_cores_for_workflow must be specified for local runs"
+        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
+            "local_cpu_cores_for_workflow must be specified for local runs"
+        )
         if mode == "local":
             config.update(
                 {
@@ -3806,9 +3874,9 @@ def _per_sim_event_page_sources(wildcards):
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
             max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
-            assert isinstance(
-                max_concurrent, int
-            ), "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
+            assert isinstance(max_concurrent, int), (
+                "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
+            )
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -3862,6 +3930,19 @@ def _per_sim_event_page_sources(wildcards):
                         f"slurm_partition={slurm_partition}",
                         f"slurm_account={self._resolve_account()}",
                     ],
+                    # T15(iii): the global in-flight CPU bag, registered ONLY when
+                    # hpc_system_config.max_concurrent_cpus is set. Absent-not-null:
+                    # the dict-splat contributes no key when unset, so the emitted
+                    # config.yaml gains no line and is byte-identical to today's.
+                    # slurm mode ONLY -- under local/single_job the driver sits in a
+                    # fixed allocation where `_cores` actually binds (it is forced to
+                    # sys.maxsize only when `_nodes` is set, job_scheduler.py:104-106),
+                    # so a second ceiling there would be inert.
+                    **(
+                        {"resources": [f"hhemt_cpus={self.cfg_hpc_system.max_concurrent_cpus}"]}
+                        if self.cfg_hpc_system is not None and self.cfg_hpc_system.max_concurrent_cpus is not None
+                        else {}
+                    ),
                     # NOTE: the legacy `slurm: {sbatch: {...}}` block was deleted
                     # in Phase 2 — it is a `--cluster`-generic-executor key shape
                     # the modern `executor: slurm` plugin ignores (slurm_partition/
@@ -4045,9 +4126,9 @@ echo ""
             # per-node count is required) — _resolve_gpus_per_node resolves an
             # absent value to 0, which is a misconfiguration in the GPU branch.
             gpus_per_node = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
-            assert (
-                isinstance(gpus_per_node, int) and gpus_per_node > 0
-            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            assert isinstance(gpus_per_node, int) and gpus_per_node > 0, (
+                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            )
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self._resolve_gpu_hardware(self.cfg_analysis.hpc_ensemble_partition)
             if gpu_hardware:
