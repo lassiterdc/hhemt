@@ -25,3 +25,5 @@ Task-oriented recipes for getting specific jobs done with the toolkit.
   bundle, then fetch and run it on another machine.
 - [Running a synthetic compute-sensitivity experiment](synthetic-compute-sensitivity-experiment.md):
   sweep a fully-generated synthetic experiment to measure compute sensitivity.
+- [Run the exploratory analysis](running-eda.md): produce the EDA notebook, the
+  standalone figures, and the verdicts the report reads.

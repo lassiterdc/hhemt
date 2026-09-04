@@ -14,3 +14,5 @@ rationale behind the toolkit.
   and the cases that surprise people.
 - [Branching and release model](branching-and-release-model.md): the
   `develop`/`main` gitflow-lite model.
+- [Exploratory analysis](exploratory-analysis.md): what the post-run
+  exploratory step is for, and why it sits outside the workflow graph.
