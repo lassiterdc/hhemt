@@ -272,6 +272,24 @@ def emit_bundle(
     # values are the renderers' INPUT paths keyed by figure stem, disjoint from the outputs.
     pruned_orphan_figures = _prune_undeclared_figures(analysis_dir, plots_dir)
     sources_by_renderer = harvest_source_paths(plots_dir, analysis_dir)
+    # SECOND HARVEST ROOT (bundle completeness). The EDA calc members write their own
+    # manifest sidecars under {analysis_dir}/eda/ via emit_data_artifact_with_sources, and
+    # those sidecars declare the RAW inputs each calc actually read. Nothing walked eda/
+    # before this, so those inputs were never carried and eda/{plot_id}.zarr shipped as a
+    # "derived" dataset nothing in the bundle could derive.
+    #
+    # harvest_source_paths is root-agnostic: its only position-specific branch re-roots
+    # against members/member_{N} when the manifest sits under plots/sensitivity/per_sim/
+    # member-{N}/, and it keys on the path's FIRST part being "sensitivity", which an
+    # eda/ root never is. If a future derived/ reshape nests per-member artifacts under
+    # this root, that branch becomes reachable here and would re-root paths that were
+    # relativized against the master -- re-check it then.
+    #
+    # Keys are NAMESPACED because an eda/ sidecar's stem equals its plots/eda/ figure
+    # stem, so a plain dict merge would clobber one with the other. The map is written to
+    # the bundle manifest and read by nothing, so the key form is free.
+    for _stem, _paths in harvest_source_paths(analysis_dir / "eda", analysis_dir).items():
+        sources_by_renderer[f"eda::{_stem}"] = _paths
     git_sha = _get_toolkit_git_sha()
     analysis_id = analysis.cfg_analysis.analysis_id
 

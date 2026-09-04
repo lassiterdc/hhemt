@@ -42,7 +42,12 @@ import xarray as xr
 
 from hhemt.analysis_validation import CheckResult, _iter_members_or_self
 from hhemt.eda._result import EdaResult
-from hhemt.eda.cross_sim_identity import TRACKED_VARS, _enabled_modes, compare_variable_exact
+from hhemt.eda.cross_sim_identity import (
+    TRACKED_VARS,
+    _enabled_modes,
+    _summary_paths,
+    compare_variable_exact,
+)
 from hhemt.member_identity import resolve_member_id_column, warn_missing_member_id_column
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
@@ -358,11 +363,11 @@ def _emit(master: TRITONSWMM_analysis, renderer_kind: str, ds_vars: dict, source
     ds = xr.Dataset(ds_vars)
     encoding = {v: {"dtype": "float64"} for v in ds.data_vars}
     ds.to_zarr(artifact_path, mode="w", consolidated=False, encoding=encoding)
-    # Declare each contributing sub's consolidated zarr as the provenance source
-    # (a real .zarr dir that passes _validate_source_path), mirroring
-    # cross_sim_identity — the artifact reads FLAT summaries but declares the
-    # consolidated store because the emit gate rejects a bare non-zarr directory.
-    source_paths = [Path(sub.analysis_paths.analysis_dir) / "analysis_datatree.zarr" for sub in source_subs.values()]
+    # Declare the FLAT per-scenario summary files this member actually read
+    # (_retrieve_combined_output, per the flat-summary stipulation), not the consolidated
+    # store — which this member is forbidden to open and which the old declaration named
+    # anyway. _validate_source_path accepts files; only a bare non-zarr DIRECTORY is refused.
+    source_paths = [p for sub in source_subs.values() for p in _summary_paths(sub)]
     emit_data_artifact_with_sources(
         artifact_path=artifact_path,
         source_paths=source_paths,

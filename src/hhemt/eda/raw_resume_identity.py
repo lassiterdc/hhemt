@@ -341,8 +341,8 @@ def build_binary_timestep_figure(
 #
 # check_raw_b4b is single-arm by construction (master R12(b)): it reads ONLY the passed
 # master's own members' raw per-timestep rasters and NEVER reaches a sibling master.
-# It writes TWO backing artifacts (one per registered b4b figure) ALWAYS -- real grids or
-# an honest-degradation marker -- so neither report() target raises WorkflowError:
+# It writes ONE backing artifact ALWAYS -- real grids or an honest-degradation marker --
+# so the registered report() target never raises WorkflowError:
 #   * eda/b4b_clean_identity.zarr   config-vs-config raw identity over the master's CLEAN
 #                                   subs (the raw-per-timestep analog of check_cross_sim_identity)
 #   * eda/b4b_clean_vs_resume.zarr  clean-vs-resume raw identity, pairing each resume sub with
@@ -732,7 +732,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         if ref_self:
             per_config[ref[0]] = ref_self
             meta[ref[0]] = ref_meta
-            contrib.append(ref[1])
+            contrib.append((ref[1], ref[3]))
         for s in members:
             if s is ref:
                 continue
@@ -740,7 +740,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
             if tri:
                 per_config[s[0]] = tri
                 meta[s[0]] = _meta_for(s, family, False)
-                contrib.append(s[1])
+                contrib.append((s[1], s[3]))
 
     # N4: collapse r1/r2 replicates so the figure draws ONE row per compute config.
     # Done AFTER the per-family comparison loop (each replicate is compared against the
@@ -775,9 +775,21 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     if "max_abs_diff" in ds:
         _encoding["max_abs_diff"] = {"dtype": "float64"}
     ds.to_zarr(artifact, mode="w", consolidated=False, encoding=_encoding)
-    srcs = [Path(s.analysis_paths.analysis_dir) / "analysis_datatree.zarr" for s in contrib] or [
-        analysis_dir / "analysis_datatree.zarr"
-    ]
+    # DECLARE WHAT WAS READ. This check never opens analysis_datatree.zarr; it byte-compares
+    # the RAW TRITON per-timestep rasters and nothing else. The file list is exactly what
+    # return_fpath_wlevels globs -- the four MH/H/QX/QY prefixes named in the disclosed-
+    # denominator comment below -- so the declaration is those files, per member, deduped.
+    # It is NOT the SWMM hydraulics.inp/.rpt: compare_swmm_raw exists in this module but has
+    # no caller, and check_raw_b4b invokes only compare_triton_raw_timeseries.
+    # _validate_source_path refuses a bare non-zarr DIRECTORY but accepts FILES, so the raw
+    # dirs are expanded to their enclosed per-timestep files -- the remedy the gate's own
+    # rejection message prescribes. Absent files are non-fatal at harvest (ADR-6 D3 skip-with-
+    # warning), so a raw-cleared master degrades rather than failing the bundle.
+    srcs: list[Path] = []
+    for _sub, _raw_bin in contrib:
+        _df = return_fpath_wlevels(_raw_bin, interval)
+        srcs.extend(Path(_p) for _col in _df.columns for _p in _df[_col].dropna())
+    srcs = list(dict.fromkeys(srcs)) or [analysis_dir / "analysis_datatree.zarr"]
     emit_data_artifact_with_sources(
         artifact_path=artifact, source_paths=srcs, analysis_dir=analysis_dir, plot_id=plot_id
     )

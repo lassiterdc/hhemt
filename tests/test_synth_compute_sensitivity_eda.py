@@ -169,6 +169,23 @@ def _fake_sub(analysis_dir, grid, *, run_mode, n_mpi, partition, n_gpus=0, calls
     analysis_dir.mkdir(parents=True, exist_ok=True)
     # Real .zarr store so the emit provenance gate (_validate_source_path) passes.
     xr.Dataset({"placeholder": (("a",), [1])}).to_zarr(analysis_dir / "analysis_datatree.zarr", mode="w")
+    # Flat summary tier at its real relative layout, so the _summary_paths glob the
+    # declaration now uses is non-empty. Same motive as the .zarr above, one tier down.
+    # BOTH KINDS are materialized so each clause of _summary_paths' predicate has a
+    # witness in this file, exactly as in the sibling stub.
+    _proc = analysis_dir / "sims" / "s0" / "processed"
+    _proc.mkdir(parents=True, exist_ok=True)
+    (_proc / "TRITONSWMM_TRITON_summary.nc").touch()
+    # A second summary as a zarr STORE -- a DIRECTORY -- matching production, where
+    # target_processed_output_type defaults to "zarr" (config/analysis.py:692) and
+    # every summary on a real master is a store: measured 20 of 20 across 4 subs,
+    # scoped to members/ only (the subanalyses/sa_* sibling is retired vocabulary
+    # that mirrors it and doubles every count).
+    # Without it this file exercises only the is_file() clause of _summary_paths'
+    # predicate, and narrowing it back to is_file() alone stays green here.
+    _zarr = _proc / "TRITONSWMM_SWMM_link_summary.zarr"
+    _zarr.mkdir(exist_ok=True)
+    (_zarr / ".zgroup").write_text("{}")
     proc = _FakeProcess(grid, calls if calls is not None else [])
     proc._MODE_CONFIG = {mode: object()}
     proc._mode = mode
