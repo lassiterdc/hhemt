@@ -120,9 +120,12 @@ def test_bundle_schema_version_matches_the_fixtures():
 
     from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION
 
-    assert BUNDLE_SCHEMA_VERSION == 4
     fixtures = Path(__file__).parent / "fixtures" / "bundles"
-    for manifest in sorted(fixtures.glob("*/bundle_manifest.json")):
+    manifests = sorted(fixtures.glob("*/bundle_manifest.json"))
+    # Disclosed denominator: without this, an emptied/renamed fixtures dir makes the
+    # loop below iterate zero times and the test passes having checked nothing.
+    assert manifests, f"no bundle fixtures under {fixtures}; run `python -m tests.fixtures.bundles.build_fixtures`"
+    for manifest in manifests:
         declared = json.loads(manifest.read_text())["bundle_schema_version"]
         assert declared == BUNDLE_SCHEMA_VERSION, (
             f"{manifest.parent.name} declares bundle_schema_version={declared} "

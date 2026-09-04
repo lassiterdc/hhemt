@@ -93,7 +93,7 @@ def test_combine_cells_single_and_multi():
     cell = xr.DataArray(0.0).expand_dims({"sa_id": ["container"], "event_iloc": [0]})
     # Single cell: must return the lone array intact (no combine_by_coords degeneracy).
     single = _combine_cells([cell])
-    assert single.sel(member_id="container", event_iloc=0).item() == 0.0
+    assert single.sel(sa_id="container", event_iloc=0).item() == 0.0
     assert list(single["sa_id"].values) == ["container"]
 
     # N>=2 across member_id: assembled into the (member_id, event_iloc) grid (manual build, no
@@ -101,23 +101,23 @@ def test_combine_cells_single_and_multi():
     cell2 = xr.DataArray(1.0).expand_dims({"sa_id": ["native_dup"], "event_iloc": [0]})
     multi = _combine_cells([cell, cell2])
     assert set(multi["sa_id"].values) == {"container", "native_dup"}
-    assert multi.sel(member_id="container", event_iloc=0).item() == 0.0
-    assert multi.sel(member_id="native_dup", event_iloc=0).item() == 1.0
+    assert multi.sel(sa_id="container", event_iloc=0).item() == 0.0
+    assert multi.sel(sa_id="native_dup", event_iloc=0).item() == 1.0
 
     # N>=2 across event_iloc for one sub: grid spans both events.
     ev0 = xr.DataArray(0.0).expand_dims({"sa_id": ["c"], "event_iloc": [0]})
     ev1 = xr.DataArray(2.5).expand_dims({"sa_id": ["c"], "event_iloc": [1]})
     grid = _combine_cells([ev0, ev1])
     assert list(grid["event_iloc"].values) == [0, 1]
-    assert grid.sel(member_id="c", event_iloc=1).item() == 2.5
+    assert grid.sel(sa_id="c", event_iloc=1).item() == 2.5
 
     # Bool dtype (the `identical__{var}` artifact) is preserved through the manual build.
     b0 = xr.DataArray(True).expand_dims({"sa_id": ["c"], "event_iloc": [0]})
     b1 = xr.DataArray(False).expand_dims({"sa_id": ["c"], "event_iloc": [1]})
     bgrid = _combine_cells([b0, b1])
     assert bgrid.dtype == bool
-    assert bool(bgrid.sel(member_id="c", event_iloc=0)) is True
-    assert bool(bgrid.sel(member_id="c", event_iloc=1)) is False
+    assert bool(bgrid.sel(sa_id="c", event_iloc=0)) is True
+    assert bool(bgrid.sel(sa_id="c", event_iloc=1)) is False
 
 
 # ---- Slow tier (one real build, session-cached): summaries-present sensitivity ----
@@ -543,7 +543,7 @@ def test_within_family_cpu_divergence_still_fails(tmp_path):
     # The divergent row names the family reference it was measured against, not just a member_id.
     assert {r["ref_member_id"] for r in rows} == {"serial_0_r1"}
     ds = xr.open_zarr(result.artifact_path, consolidated=False)
-    mad = float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(member_id="mpi_8_r1").values))
+    mad = float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(sa_id="mpi_8_r1").values))
     assert mad == pytest.approx(_ULP32)
 
 
@@ -575,8 +575,8 @@ def test_cross_family_gpu_divergence_no_longer_fails(tmp_path):
     ds = xr.open_zarr(result.artifact_path, consolidated=False)
     member_ids = {str(s) for s in np.atleast_1d(ds["sa_id"].values)}
     assert "gpu_0_r1" in member_ids
-    assert bool(np.all(ds["identical__max_wlevel_m"].sel(member_id="gpu_0_r1").values))
-    assert float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(member_id="gpu_0_r1").values)) == 0.0
+    assert bool(np.all(ds["identical__max_wlevel_m"].sel(sa_id="gpu_0_r1").values))
+    assert float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(sa_id="gpu_0_r1").values)) == 0.0
 
 
 def test_artifact_member_id_coord_excludes_only_the_primary_reference(tmp_path):

@@ -496,7 +496,7 @@ class TRITONSWMM_analysis:
             # The canonical per-(member_id, event_id) enumeration is owned by the
             # members; the member-flag glob is the existing sensitivity count
             # (``c_run_*_member-*`` flags are likewise post-completion + durable).
-            sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_sa*_complete.flag"))
+            sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_member-*_evt-*_complete.flag"))
             n_complete = len(sim_flags)
         else:
             from hhemt.scenario import compute_event_id_slug

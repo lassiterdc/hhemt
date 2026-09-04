@@ -899,7 +899,7 @@ def _master_renders_swmm(analysis: TRITONSWMM_analysis) -> bool:
 
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
         types: set = set()
-        subs = getattr(getattr(analysis, "sensitivity", None), "analyses", {}) or {}
+        subs = getattr(getattr(analysis, "sensitivity", None), "members", {}) or {}
         for sub in subs.values():
             types |= _enabled(sub)
         types |= _enabled(analysis)
