@@ -131,7 +131,7 @@ def test_sensitivity_master_identical_passes(synthetic_sensitivity_completed):
     + verdict JSON are written under {analysis_dir}/eda/.
 
     Substrate: synthetic_sensitivity_completed (conftest.py) runs the synth
-    sensitivity master once per session to the f_consolidate_master_complete
+    sensitivity master once per session to the f_consolidate_experiment_complete
     state, materializing per-member summaries on disk. Per the plan's bit-repro
     empirical precondition, if the synth solver is NOT bit-reproducible across
     the 4 compute modes this assertion is re-scoped to 'check ran + well-formed

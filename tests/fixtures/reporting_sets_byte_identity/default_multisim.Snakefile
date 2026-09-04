@@ -366,6 +366,8 @@ rule consolidate_scenario:
     priority: 100
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    params:
+        event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
         runtime=10,
@@ -382,6 +384,7 @@ rule consolidate_scenario:
             --flag-output {output.flag} \
             --rule-name consolidate_scenario \
             --event-id {wildcards.event_id} \
+            --event-iloc {params.event_iloc} \
             2>&1 | tee {log}
         """
 

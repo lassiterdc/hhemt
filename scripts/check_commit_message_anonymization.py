@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """commit-msg guard: fail if a commit MESSAGE carries a blocklisted private identifier.
 
 Companion to scripts/check_anonymization.py, which scans tracked file CONTENTS and is

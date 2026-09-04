@@ -11,6 +11,46 @@ repos:
         args: [--fix]
       - id: ruff-format
 
+  # ---------------------------------------------------------------------------
+  # INTERPRETER CONTRACT for every `local` hook in this file.
+  #
+  # A git hook inherits no shell state, and Debian/Ubuntu ship no unversioned
+  # `python`, so `entry: python ...` aborts with `Executable python not found`
+  # on a stock machine. Every local hook therefore runs through
+  # `uv run --locked`, which:
+  #   - resolves the project environment from the working directory and IGNORES
+  #     any active conda/venv (it warns `VIRTUAL_ENV ... will be ignored` and
+  #     proceeds), so the sanctioned `conda run -n agentic ... git_stage
+  #     --commit` actuator reaches a working interpreter;
+  #   - binds to the tree BEING COMMITTED. A conda-env pin does not: the hhemt
+  #     env's `__editable__.hhemt-0.1.0.pth` names the MAIN clone, so from a
+  #     worktree it grades that worktree's files against main's code;
+  #   - creates and populates `.venv` from the committed `uv.lock` on a fresh
+  #     clone, so a new contributor needs no environment step for hooks to work;
+  #   - refuses legibly when `uv.lock` is stale (that is what `--locked` buys
+  #     over `--frozen`, which runs the guards against an environment that does
+  #     not match the declared dependencies and reports a bare ModuleNotFoundError).
+  #
+  # `uv` is a hard prerequisite for committing; see docs/contributing.md.
+  #
+  # DEPENDENCY UNION of the nine scripts below: hhemt, openpyxl, packaging,
+  # pyyaml, Python >= 3.11 -- all supplied by the default (no-extra) sync.
+  # `openpyxl` is a core dependency; `packaging` arrives TRANSITIVELY via core
+  # `snakemake`. check_env_lock_consistency.py raises SystemExit without
+  # `packaging`, so dropping snakemake from core deps would break that guard.
+  # Two of the needs are DEFERRED imports and are invisible to a module-level
+  # import grep: `yaml` inside check_caption_vocabulary.load_retired(), and
+  # `openpyxl` inside check_retired_field_overlay_columns._overlay_columns().
+  #
+  # `default_language_version` is deliberately ABSENT: it governs managed-language
+  # environments only and is inert for `language: system` (measured -- a system
+  # hook ran on ambient 3.12.3 under `default_language_version: python:
+  # python3.11`, while a managed hook in the same run honoured it). The
+  # interpreter floor is `requires-python = ">= 3.11, < 3.13"` in pyproject.toml,
+  # which uv honours when it selects an interpreter and `--locked` enforces at
+  # every hook invocation.
+  # ---------------------------------------------------------------------------
+
   # Version-migration discipline (scripts/check_layout_version.py)
   # Check A: LAYOUT_VERSION bump => migration module + fixtures
   # Check B: layout-relevant file change => bump or non_breaking_allowlist entry
@@ -18,32 +58,28 @@ repos:
     hooks:
       - id: check-layout-version-a
         name: check LAYOUT_VERSION bump implies migration + fixtures
-        entry: python scripts/check_layout_version.py check-a HEAD~1
-        language: python
-        additional_dependencies: [pyyaml]
+        entry: uv run --locked python scripts/check_layout_version.py check-a HEAD~1
+        language: system
         pass_filenames: false
         always_run: true
       - id: check-layout-version-b
         name: check layout-relevant files trigger LAYOUT_VERSION bump
-        entry: python scripts/check_layout_version.py check-b HEAD~1
-        language: python
-        additional_dependencies: [pyyaml]
+        entry: uv run --locked python scripts/check_layout_version.py check-b HEAD~1
+        language: system
         pass_filenames: false
         always_run: true
 
       - id: check-caption-pairing
         name: check captioned renderer changes are paired with caption edits
-        entry: python scripts/check_caption_pairing.py HEAD~1
-        language: python
-        additional_dependencies: [pyyaml]
+        entry: uv run --locked python scripts/check_caption_pairing.py HEAD~1
+        language: system
         pass_filenames: false
         always_run: true
 
       - id: check-caption-vocabulary
         name: retired-vocabulary guard over the report template tree
-        entry: python scripts/check_caption_vocabulary.py
-        language: python
-        additional_dependencies: [pyyaml]
+        entry: uv run --locked python scripts/check_caption_vocabulary.py
+        language: system
         pass_filenames: false
         always_run: true
 
@@ -54,8 +90,8 @@ repos:
     hooks:
       - id: check-du-sentinel-sites
         name: DU-sentinel mutation-site restamp check
-        entry: python scripts/check_du_sentinel_sites.py
-        language: python
+        entry: uv run --locked python scripts/check_du_sentinel_sites.py
+        language: system
         pass_filenames: false
         always_run: true
 
@@ -76,8 +112,8 @@ repos:
     hooks:
       - id: anonymization-guard
         name: anonymization blocklist guard
-        entry: python scripts/check_anonymization.py
-        language: python
+        entry: uv run --locked python scripts/check_anonymization.py
+        language: system
         pass_filenames: false
         always_run: true
         stages: [pre-commit, pre-push]
@@ -91,8 +127,8 @@ repos:
     hooks:
       - id: anonymization-guard-commit-msg
         name: anonymization blocklist guard (commit message)
-        entry: python scripts/check_commit_message_anonymization.py
-        language: python
+        entry: uv run --locked python scripts/check_commit_message_anonymization.py
+        language: system
         stages: [commit-msg]
 
   # Vocabulary freeze (scripts/check_vocabulary_freeze.py)
@@ -105,9 +141,8 @@ repos:
     hooks:
       - id: vocabulary-freeze
         name: migration vocabulary freeze
-        entry: python scripts/check_vocabulary_freeze.py
-        language: python
-        additional_dependencies: [pyyaml]
+        entry: uv run --locked python scripts/check_vocabulary_freeze.py
+        language: system
         pass_filenames: false
         always_run: true
 
@@ -118,17 +153,13 @@ repos:
     hooks:
       - id: check-retired-field-overlay-columns
         name: check retired-field overlay columns
-        # This is the ONLY hook in this file that imports `hhemt`, and `language: system`
-        # resolves `python` from the ambient PATH. The sanctioned staging actuator runs as
-        # `conda run -n agentic ... python -m scripts.utils.git_stage --commit`, whose
-        # `git commit` subprocess inherits the agentic PATH -- an interpreter that cannot
-        # import hhemt. Measured 2026-09-01: identical tree, `Passed` under `-n hhemt`,
-        # `ModuleNotFoundError: No module named 'hhemt'` under `-n agentic`. PYTHONPATH=src
-        # does NOT repair it: agentic also lacks pandas and openpyxl, and
-        # hhemt/__init__ eagerly imports Toolkit -> system -> pandas. The durable fix is to
-        # drop the hhemt import (AST-parse model_fields) and move to `language: python`
-        # with additional_dependencies: [openpyxl]; this pin is the interim.
-        entry: conda run --no-capture-output -n hhemt python scripts/check_retired_field_overlay_columns.py
+      # This is the ONLY hook here that imports `hhemt`, so the interpreter
+      # contract above is load-bearing rather than uniform-for-tidiness: it must
+      # grade THIS tree's fixtures against THIS tree's model_fields. Measured
+      # 2026-09-03 mid-merge, with src/hhemt/utils.py carrying conflict markers:
+      # `uv run --locked` surfaced the broken tree, while `conda run -n hhemt`
+      # imported main's hhemt and reported success on it.
+        entry: uv run --locked python scripts/check_retired_field_overlay_columns.py
         language: system
         pass_filenames: false
         always_run: true
@@ -142,8 +173,7 @@ repos:
     hooks:
       - id: check-env-lock-consistency
         name: environment-lock.yaml swmm-provenance consistency
-        entry: python scripts/check_env_lock_consistency.py
-        language: python
-        additional_dependencies: [pyyaml, packaging]
+        entry: uv run --locked python scripts/check_env_lock_consistency.py
+        language: system
         pass_filenames: false
         files: ^environment(-lock)?\.yaml$

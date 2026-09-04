@@ -73,7 +73,7 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
         master_snakefile_content,
         [
             "all",
-            "master_consolidation",
+            "experiment_consolidation",
             "prepare_member",
             "simulation_member",
             "process_member",
@@ -271,9 +271,13 @@ def test_snakemake_sensitivity_workflow_dry_run(
     assert "snakemake_allocated_nTasks" in df_status.columns
     assert "snakemake_allocated_omp_threads" in df_status.columns
     assert "snakemake_allocated_total_cpus" in df_status.columns
-    assert "sa_id" in df_status.columns
+    # `sa_id` is a member of sensitivity_analysis._RETIRED_ID_COLUMNS; the master
+    # emits `member_id`. Asserting POSITION as well as presence, because the defect
+    # this caught was the column surviving but being demoted out of the identity block.
+    assert "member_id" in df_status.columns
+    assert df_status.columns[0] == "member_id"
     expected_ids = [str(i) for i in range(len(df_status))]
-    assert df_status["sa_id"].tolist() == expected_ids
+    assert df_status["member_id"].tolist() == expected_ids
 
 
 @pytest.mark.slow
@@ -486,11 +490,11 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
 
 
 @pytest.mark.slow
-def test_master_consolidation_tolerates_incomplete_analysis(synth_sensitivity_analysis):
+def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivity_analysis):
     """Regression (sensitivity-consolidation-tolerate-incomplete).
 
     Reproduces the FUNCTION-LEVEL crash behind the live uva_sensitivity_suite
-    master_consolidation FileNotFoundError: consolidate_sensitivity_datatree
+    experiment_consolidation FileNotFoundError: consolidate_sensitivity_datatree
     raising when one member is incomplete (its per-scenario summary was
     never produced, its analysis_datatree.zarr was never built, and its
     datatree_consolidation_complete log is False — the real never-consolidated
@@ -1137,8 +1141,22 @@ def _rule_block(content: str, rule_name: str) -> str:
     return content[start:] if nxt == -1 else content[start:nxt]
 
 
+from hhemt.report_renderers._reporting_sets import (  # noqa: E402
+    compose_reporting_sets,
+    eda_rule_spec_templates,
+    get_reporting_set,
+)
+
+
+@pytest.mark.parametrize(
+    "active_set, expected_template_count",
+    [
+        pytest.param(get_reporting_set("dem-resolution"), 4, id="registry"),
+        pytest.param(compose_reporting_sets(("dem-resolution", "compute-sensitivity")), 5, id="composed"),
+    ],
+)
 def test_dem_resolution_set_emits_one_eda_rule_per_registry_template(
-    synth_sensitivity_analysis,
+    synth_sensitivity_analysis, active_set, expected_template_count
 ):
     """Phase 4 / D13 — the dem-resolution set emits ONE EDA rule per registry template.
 
@@ -1148,22 +1166,31 @@ def test_dem_resolution_set_emits_one_eda_rule_per_registry_template(
     single source. Assertions are membership PARITY against the registry rather than a
     bare count of four, so adding, removing or renaming a template without updating the
     emission path fails here.
-    """
-    from hhemt.report_renderers._reporting_sets import get_reporting_set
 
+    S19: parametrized over (registry object, composed object). The registry arm is the
+    differently-positioned satisfying arm and must stay green -- it is what catches a
+    composition that changed single-set emission. The composed arm is the one that is
+    red before _emit_active_set_plot_rules handles a merged template tuple.
+    """
     analysis = synth_sensitivity_analysis
-    # The run-entry attr is the documented selection surface (_resolve_active_reporting_set
-    # prefers it over the cfg fallback), so this selects the set without mutating a
-    # frozen config model.
-    analysis._active_reporting_set = get_reporting_set("dem-resolution")
+    # Hand-assign the run-entry attr because _resolve_active_reporting_set PREFERS it
+    # over the cfg fallback -- that is the reason, not frozenness. report_config is NOT
+    # frozen; it also has validate_assignment unset, so assigning the CONFIG field would
+    # skip the normalizing field_validator and install a value construction can never
+    # produce. The attr is the honest surface.
+    analysis._active_reporting_set = active_set
     assert analysis.cfg_analysis.eda.enabled_plots, "the has_eda_artifact gate requires a non-empty eda.enabled_plots"
 
     content = analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
         which="both", compression_level=5
     )
 
-    templates = _eda_templates_for("dem-resolution")
-    assert len(templates) == 4, "the dem-resolution set must carry four EDA templates"
+    # T2: the expectation is CONTRIBUTOR-derived on the composed arm. A registry-derived
+    # expectation is correct for the registry arm and WRONG for the composed one, where
+    # the union over contributors is the answer -- and using one expectation for both
+    # arms is what makes the assertion an identity over the registry.
+    templates = tuple(eda_rule_spec_templates(active_set))
+    assert len(templates) == expected_template_count
 
     # (a) one emitted rule per registry template — membership parity, not a count.
     emitted = {t.rule_name for t in templates if f"rule {t.rule_name}:" in content}
@@ -1171,8 +1198,6 @@ def test_dem_resolution_set_emits_one_eda_rule_per_registry_template(
         "EDA rule emission is not one-per-registry-template.\n  missing from Snakefile: "
         f"{sorted({t.rule_name for t in templates} - emitted)}"
     )
-    # The shipped compute-sensitivity rule must NOT appear — it belongs to another set.
-    assert "rule plot_eda_compute_sensitivity:" not in content
 
     # (b) rule all lists every template's output path.
     expected_paths = [t.output_path_template.replace("__OUTPUT_EXT__", ".html") for t in templates]
@@ -1215,7 +1240,9 @@ def test_compute_sensitivity_set_still_emits_its_single_eda_rule(
         which="both", compression_level=5
     )
 
-    (tmpl,) = _eda_templates_for("compute-sensitivity")
+    templates = _eda_templates_for("compute-sensitivity")
+    assert len(templates) == 1, "compute-sensitivity must carry exactly one EDA template (15c, folded)"
+    (tmpl,) = templates
     assert f"rule {tmpl.rule_name}:" in content
     assert f'"{tmpl.output_path_template.replace("__OUTPUT_EXT__", ".html")}"' in content
     assert "_logs/plots/eda_compute_sensitivity.log" in content

@@ -175,16 +175,19 @@ def _harvest_rule_specs(
     the bundle carries no _status/*.flag inputs).
 
     The active set NAME is read from cfg_analysis["report"]["reporting_set"] and
-    resolved through config.report.resolve_reporting_set_name -- the shared
+    resolved through config.report.resolve_reporting_set_names -- the shared
     sentinel-plus-validation helper that config.report's own config-object
-    resolver wraps. A non-"default" name is taken verbatim (so a "dem-resolution"
-    bundle regenerates the DEM set); the "default" sentinel and an absent field
-    resolve to "benchmarking" when is_sensitivity else the standard set; an
-    unknown name raises a field-named ConfigurationError.
+    resolver wraps. The value may be one name or a LIST of names, and a bundle's
+    cfg_analysis.yaml is dumped from the VALIDATED model, so this site receives a
+    list even when the source config was written with a bare string. A
+    non-"default" name is taken verbatim (so a "dem-resolution" bundle regenerates
+    the DEM set); the "default" sentinel and an absent or empty field resolve to
+    "benchmarking" when is_sensitivity else the standard set; an unknown name
+    raises a field-named ConfigurationError.
     """
-    from hhemt.config.report import resolve_reporting_set_name
+    from hhemt.config.report import resolve_reporting_set_names
     from hhemt.report_renderers._reporting_sets import (
-        get_reporting_set,
+        compose_reporting_sets,
         renderer_active,
     )
 
@@ -193,18 +196,19 @@ def _harvest_rule_specs(
     # selected a non-default set (e.g. "compute-sensitivity") must regenerate the
     # SAME renderer set the source side emitted, or the bundle Snakefile diverges
     # from the source Snakefile. Resolution DELEGATES to
-    # config.report.resolve_reporting_set_name -- the single implementation the
+    # config.report.resolve_reporting_set_names -- the single implementation the
     # config-object resolver also wraps -- rather than reimplementing the sentinel
     # rule here. Delegating is what keeps the bundle path's VALIDATION: the helper
     # raises a field-named ConfigurationError on an unknown set, whereas a
     # hand-inlined sentinel followed by the bare get_reporting_set accessor
     # surfaces a typo'd reporting_set as an opaque KeyError.
     _report = (cfg_analysis or {}).get("report") or {}
-    _set_name = resolve_reporting_set_name(
-        _report.get("reporting_set"),
-        is_sensitivity=is_sensitivity,
+    active_set = compose_reporting_sets(
+        resolve_reporting_set_names(
+            _report.get("reporting_set"),
+            is_sensitivity=is_sensitivity,
+        )
     )
-    active_set = get_reporting_set(_set_name)
     # Phase 3: per-plot disable. Filtering the harvest's renderer_selection drops
     # the renderer's RuleSpec(s), which in turn drops its plot_output_paths from
     # BOTH rule all and render_report (both derive from rule_specs in

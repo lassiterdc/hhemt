@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from hhemt.member_identity import resolve_member_id_column
 from hhemt.report_renderers._tabulator_defaults import (
     build_columns_spec,
     build_html_document,
@@ -97,7 +98,10 @@ def render(
         for member_id, sub in analysis.sensitivity.members.items():
             n = len(sub.df_sims.index)
             if use_csv:
-                member_rows = status_df[status_df["sa_id"].astype(str) == str(member_id)]
+                _id_col = resolve_member_id_column(status_df.columns)
+                member_rows = (
+                    status_df[status_df[_id_col].astype(str) == str(member_id)] if _id_col else status_df.iloc[0:0]
+                )
                 succ_by_event = member_rows.groupby("event_iloc")["run_completed"].all()
                 n_succ = int(succ_by_event.sum())
                 setup_by_event = member_rows.groupby("event_iloc")["scenario_setup"].any()

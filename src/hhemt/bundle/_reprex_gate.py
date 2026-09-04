@@ -8,6 +8,7 @@ case-insensitive grep of every text file), re-aimed from the git working tree to
 emitted bundle tree. Independence invariant (load-bearing): the blocklist is NOT
 derived from the scrub/taxonomy — else it weakens with each scrub change.
 """
+
 from __future__ import annotations
 
 import re

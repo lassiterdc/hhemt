@@ -19,7 +19,6 @@ dispatch, so no Snakefile rule / caption-RST resolution is involved.
 
 from __future__ import annotations
 
-import html as _html
 import json as _json
 from pathlib import Path
 

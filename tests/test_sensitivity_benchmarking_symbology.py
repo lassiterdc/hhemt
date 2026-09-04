@@ -24,8 +24,11 @@ on the CPU column with extra ticks `[3.0, 5.0, 6.0, 7.0]`.
 
 The public helpers below (`build_figure`, `legend_symbol_sets`, `panel_marker_xs`,
 `panel_labelled_ticks`, `tick_violations`) take the renderer MODULE as a parameter so the
-identical assertion code can be pointed at a historical revision of the renderer. That is what
-makes the pre-fix failure a MEASUREMENT rather than a prediction.
+identical assertion code can be pointed at another revision of the renderer. That reach now
+STOPS at the `_compute_scaling_series` extraction: `build_figure` calls it, so a revision
+predating it raises `AttributeError` rather than building a figure. The pre-fix numbers quoted
+above were MEASURED at `867a76e2^` while the inline mirror still existed; they are a record of
+a measurement, not a check this suite can re-run against that revision today.
 """
 
 from __future__ import annotations
@@ -133,51 +136,25 @@ def _matrix_frame() -> pd.DataFrame:
 def build_figure(module=sb, tmp_path: Path | None = None):
     """Build the real four-row figure through `module`'s own builder.
 
-    `module` is a parameter, not a hard import, so the pre-fix revision of the renderer can
-    be loaded from git and driven through this identical code path.
+    `module` is a parameter, not a hard import, so another revision of the renderer can be
+    loaded from git and driven through this identical code path. That reach is BOUNDED
+    BELOW by the `_compute_scaling_series` extraction called just below: a revision
+    predating it has no such attribute and raises here rather than building.
 
-    The per-family baseline wiring below MIRRORS `render()`'s own: resolve one anchor per
-    hardware family via `_resolve_family_baselines`, then compute the metrics against that
-    anchor. Calling `_compute_speedup_per_group` bare instead would use
-    `baseline_mode='per_group'`, which drops every group lacking an N=1 row -- and in this
-    matrix openmp, mpi and hybrid all lack one, so the scaling panels would come back empty
-    and the tick assertion would silently have nothing to check on two of four rows.
+    The per-family baseline wiring this call replaced was a hand MIRROR of `render()`'s
+    own, and the mirror is why this suite could not detect the rename that broke it -- the
+    same edit landed on both sides, so the test stayed consistent with the code it mirrored
+    while both diverged from the consumer. Calling `_compute_speedup_per_group` bare instead
+    of the extracted function would use `baseline_mode='per_group'`, which drops every group
+    lacking an N=1 row -- and in this matrix openmp, mpi and hybrid all lack one, so the
+    scaling panels would come back empty and the tick assertion would silently have nothing
+    to check on two of four rows.
     """
     tmp_path = tmp_path or Path("/tmp")
     df = _matrix_frame()
     sens_cfg = report_config().sensitivity or SensitivityReportConfig(independent_vars=["n_devices"])
 
-    df_avg = df.groupby(["group_value", "n_devices", "config_id"], as_index=False).agg(
-        wallclock_s=("wallclock_s", "mean"), member_id=("sa_id", "first")
-    )
-    family_baselines = module._resolve_family_baselines(
-        df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value"
-    )
-    speedup, efficiency, speedup_all, efficiency_all = {}, {}, {}, {}
-    for group_value, anchor in family_baselines.items():
-        sub_avg = df_avg[df_avg["group_value"].astype(str) == group_value]
-        sub_raw = df[df["group_value"].astype(str) == group_value]
-        if sub_avg.empty:
-            continue
-        line_sub = sub_avg.loc[sub_avg.groupby("n_devices")["wallclock_s"].idxmin()]
-        for target, kind, src in (
-            (speedup, "speedup", line_sub),
-            (efficiency, "efficiency", line_sub),
-            (speedup_all, "speedup", sub_raw),
-            (efficiency_all, "efficiency", sub_raw),
-        ):
-            if src.empty:
-                continue
-            target.update(
-                module._compute_metric_all_rows_per_group(
-                    src,
-                    t_col="wallclock_s",
-                    indep_col="n_devices",
-                    group_col="group_value",
-                    kind=kind,
-                    anchor=anchor,
-                )
-            )
+    speedup, efficiency, speedup_all, efficiency_all = module._compute_scaling_series(df)
 
     fig, _cfg = module._build_sensitivity_benchmarking_figure(
         df,
@@ -372,7 +349,12 @@ def marker_fills(fig) -> dict[str, set]:
         fill = getattr(getattr(trace, "marker", None), "color", None)
         if fill is None:
             continue
-        key = tuple(str(f) for f in fill) if isinstance(fill, list | tuple) else str(fill)
+        # noqa on UP038: the PINNED ruff-pre-commit v0.6.0 hook demands `isinstance(fill, X | Y)`,
+        # but ruff REMOVED UP038 (it is slower, and it wrongly implies other typing syntaxes work
+        # in isinstance). The installed ruff 0.15.17 does not know the rule, so this directive is
+        # inert under the project's E,W,F,I,B,UP select list. DELETE IT when .pre-commit-config.yaml
+        # bumps past the removal -- RUF100 will flag it as unused if RUF is ever selected.
+        key = tuple(str(f) for f in fill) if isinstance(fill, (list, tuple)) else str(fill)  # noqa: UP038
         out.setdefault(str(trace.name), set()).add(key)
     return out
 

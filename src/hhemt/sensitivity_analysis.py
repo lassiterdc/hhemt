@@ -646,8 +646,8 @@ class TRITONSWMM_sensitivity_analysis:
         start_with
             Stage to re-fire from. ``"consolidate"`` (default) deletes per-member
             ``e_consolidate_member-{id}_complete.flag`` files and the master
-            ``f_consolidate_master_complete.flag``, then re-runs the consolidate
-            + master_consolidation + plot/render rule chain. ``"render"``
+            ``f_consolidate_experiment_complete.flag``, then re-runs the consolidate
+            + experiment_consolidation + plot/render rule chain. ``"render"``
             invalidates only the report artifacts. ``"process"`` reconciles
             stale ``d_process`` flags against summary existence and re-emits the
             per-(member, event) rebuild rules (Gotcha 34/40); it does NOT collapse
@@ -750,7 +750,7 @@ class TRITONSWMM_sensitivity_analysis:
                 # EXEMPT-DU: status-flag
                 (status_dir / f"e_consolidate_member-{member_id}_complete.flag").unlink(missing_ok=True)
             # EXEMPT-DU: status-flag
-            (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
+            (status_dir / "f_consolidate_experiment_complete.flag").unlink(missing_ok=True)
             # R7 (D2 Option a) — consolidate-stage divergence preflight. Login-node
             # fail-fast that converts the SILENT-partial-master-tree hazard into a
             # clear ConfigurationError. On start_with="consolidate" the generator's
@@ -1141,41 +1141,15 @@ class TRITONSWMM_sensitivity_analysis:
         # Navbar upper-left brand text: brand_theme.upper_left_text (ADR-7),
         # defaulting to analysis_id when None (D-6). _theme is resolved above.
         _navbar = _theme.upper_left_text or self.cfg_analysis.analysis_id
-        # Resolve the active set's category_order. render_report() is dominantly
-        # invoked from render_report_runner.main() on a FRESH analysis that never
-        # called run() (see the _brand_theme getattr-fallback above for the
-        # identical hazard), so self._active_reporting_set may not exist. getattr-
-        # fallback to a config-only resolution (no CSV cross-validation at render
-        # time) mirroring the _theme fallback above. Never let the bare attribute
-        # AttributeError be swallowed by the surrounding `except Exception: pass`.
-        _active_set = getattr(self, "_active_reporting_set", None)
-        if _active_set is None:
-            # render-without-run() fallback. Fail SOFT (SE F-I-3): the render path
-            # bypasses validate_active_reporting_set, so a stale/unknown
-            # reporting_set would raise here and surface as an opaque Snakemake
-            # rule failure. Degrade to the historical "default" sidebar order + a
-            # one-line warning instead of crashing the render rule.
-            import logging
+        # Resolve the active set's category_order. The block that used to live here was
+        # byte-identical to the one in analysis.py, and it is extracted so the S19
+        # narrowing is one repair rather than two copies that must be proven to still
+        # agree. The shared helper lives outside both twins because they already form
+        # an import cycle (this module imports hhemt.analysis at module level and
+        # analysis imports TRITONSWMM_sensitivity_analysis back).
+        from .render_category_order import resolve_render_path_category_order
 
-            from .config.report import resolve_active_reporting_set_name
-            from .report_renderers._reporting_sets import get_reporting_set
-
-            try:
-                _cfg_report = getattr(self, "_cfg_report", None)
-                if _cfg_report is None:
-                    _cfg_report = self.cfg_analysis.report
-                _set_name = resolve_active_reporting_set_name(
-                    _cfg_report,
-                    is_sensitivity=self.cfg_analysis.toggle_sensitivity_analysis,
-                )
-                _active_set = get_reporting_set(_set_name)
-            except Exception as _e:
-                logging.getLogger(__name__).warning(
-                    "render-path reporting_set resolution failed (%s); falling back to 'default' category order",
-                    _e,
-                )
-                _active_set = get_reporting_set("default")
-        _category_order = list(_active_set.category_order)
+        _category_order = resolve_render_path_category_order(self)
         # S4: resolve member_id card names to derived compute-config labels. Threaded to
         # BOTH branches -- the html and the zip carry the same card names, and
         # resolving one alone would ship a divergence between two delivered artifacts.
@@ -1795,7 +1769,7 @@ class TRITONSWMM_sensitivity_analysis:
         the D6 fold) + a bounded own-files walk excluding the child-scope dirs —
         NEVER a full-tree ``compute_and_write_scope_sentinel`` walk on the
         largest tree in the system. Ordering is structurally safe: the
-        ``master_consolidation`` rule fans in on every per-sub completion flag,
+        ``experiment_consolidation`` rule fans in on every per-sub completion flag,
         so all per-sub sentinels exist before this runs. Compare-and-write keeps
         the call idempotent (mtime preserved on unchanged bytes), so it is safe
         to invoke on the already-consolidated early-return path too.
@@ -2266,7 +2240,7 @@ class TRITONSWMM_sensitivity_analysis:
         When any orphan is detected and deletion proceeds, the entire
         ``sensitivity_datatree.zarr`` is removed (rebuild approach — see plan
         D-SURGICAL) and the master-consolidation status flag is also removed so
-        Snakemake re-runs the master_consolidation rule on the next workflow run.
+        Snakemake re-runs the experiment_consolidation rule on the next workflow run.
 
         Parameters
         ----------
@@ -2354,7 +2328,7 @@ class TRITONSWMM_sensitivity_analysis:
                     )
                 fast_rmtree(zarr_path, analysis_dir=experiment_dir)  # PATTERN A
                 result["sensitivity_datatree_removed"] = True
-            master_flag = self.analysis_paths.analysis_dir / "_status" / "f_consolidate_master_complete.flag"
+            master_flag = self.analysis_paths.analysis_dir / "_status" / "f_consolidate_experiment_complete.flag"
             if master_flag.exists():
                 if verbose:
                     print(

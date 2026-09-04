@@ -70,14 +70,14 @@ def test_fast_rmtree_without_analysis_dir_kwarg_does_not_restamp(tmp_path: Path)
     fast_rmtree(scope_dir / "a.bin")
 
     assert sentinel.exists(), "Parent sentinel was deleted by fast_rmtree without kwarg"
-    assert sentinel.stat().st_mtime == before_mtime, (
-        "Parent sentinel mtime advanced even though analysis_dir kwarg was NOT passed"
-    )
+    assert (
+        sentinel.stat().st_mtime == before_mtime
+    ), "Parent sentinel mtime advanced even though analysis_dir kwarg was NOT passed"
     after_payload = read_du_sentinel(sentinel)
     assert after_payload is not None
-    assert after_payload["disk_utilization_bytes"] == 3000, (
-        "Parent sentinel payload changed without the analysis_dir kwarg"
-    )
+    assert (
+        after_payload["disk_utilization_bytes"] == 3000
+    ), "Parent sentinel payload changed without the analysis_dir kwarg"
 
 
 def test_fast_rmtree_root_wipe_short_circuits(tmp_path: Path) -> None:

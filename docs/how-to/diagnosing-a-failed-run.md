@@ -56,7 +56,7 @@ The leading letter encodes phase order, so a sorted listing reads as progress:
 | `c_run_*` | Simulation |
 | `d_process_*` | Per-scenario output processing |
 | `e_consolidate_member-*` | Per-member consolidation |
-| `f_consolidate_master_*` | Master consolidation |
+| `f_consolidate_experiment_*` | Experiment consolidation |
 
 **The last prefix present is the phase that completed; the failure is in the next
 one.** Each flag has a `.flag.json` sidecar naming the rule, model type,

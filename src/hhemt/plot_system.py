@@ -18,7 +18,6 @@ class TRITONSWMM_system_plotting:
         self.sys_paths = system.sys_paths
 
     def processed_dem(self, ax=None):
-
         dem_outside_watershed_height = self.cfg_system.dem_outside_watershed_height
         dem_building_height = self.cfg_system.dem_building_height
         dem_processed = self.sys_paths.dem_processed
@@ -52,7 +51,6 @@ class TRITONSWMM_system_plotting:
         return ax
 
     def processed_mannings(self, ax=None):
-
         rds_mannings = self._system.mannings_rds
         vmin = rds_mannings.min()  # type: ignore
         vmax = rds_mannings.max()  # type: ignore

@@ -152,9 +152,9 @@ def consolidate_analysis_flag(member_id: str) -> str:
     return f"{STATUS_DIR_NAME}/e_consolidate_member-{member_id}_complete.flag"
 
 
-def consolidate_master_flag() -> str:
-    """Master consolidate completion flag (sensitivity workflow)."""
-    return f"{STATUS_DIR_NAME}/f_consolidate_master_complete.flag"
+def consolidate_experiment_flag() -> str:
+    """Experiment-level consolidate completion flag (sensitivity workflow)."""
+    return f"{STATUS_DIR_NAME}/f_consolidate_experiment_complete.flag"
 
 
 def member_inputs_fingerprint_flag(member_id: str) -> str:

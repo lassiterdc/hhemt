@@ -191,8 +191,132 @@ def test_pair_round_trip(from_v: int, to_v: int, tmp_path: Path) -> None:
     runner.run_migration(work, target=to_v, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
     expected_files = _walk_relative(expected) - {"_version.json"}
     actual_files = _walk_relative(work) - {"_version.json"}
-    assert expected_files == actual_files, (
-        f"v{from_v} -> v{to_v} mismatch: missing={expected_files - actual_files}, extra={actual_files - expected_files}"
+    assert (
+        expected_files == actual_files
+    ), f"v{from_v} -> v{to_v} mismatch: missing={expected_files - actual_files}, extra={actual_files - expected_files}"
+
+    # CONTENT projection. The path-set comparison above cannot see a divergence living
+    # in a value, a dtype, or an attr, and a confluence break is free to hide there --
+    # measured: six leaf arrays zeroed left every path intact. Guarded on the store
+    # because only v21+ carries `experiment_datatree.zarr`.
+    if (expected / "experiment_datatree.zarr").is_dir():
+        expected_content = _content_projection(expected)
+        actual_content = _content_projection(work)
+        differing = sorted(
+            k for k in set(expected_content) | set(actual_content) if expected_content.get(k) != actual_content.get(k)
+        )
+        assert not differing, (
+            f"v{from_v} -> v{to_v} CONTENT mismatch at {differing}. The file set matched, so this is a "
+            f"value/dtype/attr divergence. Fields excluded by declaration: "
+            f"{sorted(_PROJECTION_EXCLUDED_FIELDS)}"
+        )
+
+
+#: Fields the content projection deliberately does NOT compare, WHEREVER they appear --
+#: as a `parameters` column, a root attr, or a node attr. An entry here is a DEFERRAL,
+#: not a dispensation: every excluded field must be pinned by a test that fails when the
+#: deferral ends.
+_PROJECTION_EXCLUDED_FIELDS = {
+    "analysis_id": (
+        "path-dependent at V0004__cf_conventions_backfill:27, which derives it from "
+        "ctx.target_dir.name -- a DEFERRED defect against a landed migration, not drift "
+        "introduced by V0021. Pinned by test_v0004_analysis_id_is_still_path_determined."
+    ),
+}
+
+
+def _value_digest(values) -> str:
+    """Stable content hash of one variable's values.
+
+    A hash rather than the values themselves so the projection stays a fixed-size
+    declaration; `repr(tolist())` for object arrays because `tobytes()` on an object
+    array hashes POINTERS, which are not stable across processes.
+    """
+    import hashlib
+
+    import numpy as np
+
+    arr = np.ascontiguousarray(np.asarray(values))
+    payload = repr(arr.tolist()).encode("utf-8") if arr.dtype == object else arr.tobytes()
+    return hashlib.sha256(payload).hexdigest()[:16]
+
+
+def _node_fingerprint(ds) -> tuple:
+    """Name, dtype, dims and VALUE digest per variable, plus the node's attrs.
+
+    `ds.variables` rather than `ds.data_vars` on purpose: coordinates are excluded from
+    `data_vars` by definition, so a dropped or re-valued coordinate was invisible to the
+    previous form.
+    """
+    variables = tuple(
+        (str(name), str(var.dtype), tuple(var.dims), _value_digest(var.values))
+        for name, var in sorted(ds.variables.items(), key=lambda kv: str(kv[0]))
+        if str(name) not in _PROJECTION_EXCLUDED_FIELDS
+    )
+    attrs = tuple(sorted((str(k), repr(v)) for k, v in ds.attrs.items() if str(k) not in _PROJECTION_EXCLUDED_FIELDS))
+    return (variables, attrs)
+
+
+def _content_projection(root: Path) -> dict[str, object]:
+    """The declared VALUE-level projection of a migrated tree.
+
+    `_walk_relative` compares PATH SETS, so it cannot see a divergence that lives in a
+    value, a dtype, or an attr. This covers all three, per node, and is deliberately
+    SILENT on chunk encodings, which vary legitimately.
+
+    WHAT THIS DOES NOT DECLARE, stated because a projection is a coverage claim and its
+    non-coverage is part of the claim: chunk/codec encoding, file mtimes, and any field
+    named in `_PROJECTION_EXCLUDED_FIELDS`.
+    """
+    import xarray as xr
+
+    tree = xr.open_datatree(root / "experiment_datatree.zarr", engine="zarr", consolidated=False, chunks={})
+    return {f"node:{path}": _node_fingerprint(node.dataset) for path, node in tree.subtree_with_keys}
+
+
+def test_v0004_analysis_id_is_still_path_determined(tmp_path: Path) -> None:
+    """PINS a KNOWN, DEFERRED defect so it cannot be forgotten or mistaken for drift.
+
+    `V0004__cf_conventions_backfill:27` derives the root `analysis_id` attr from
+    `ctx.target_dir.name`, so a tree carries the name of the DIRECTORY it occupied when
+    V0004 ran. This asserts the DEFECT ITSELF -- that the entry point determines the
+    value -- rather than the particular values it currently produces. A value table
+    would keep passing under a repair that re-derives `analysis_id` from configuration
+    and happens to land on the same string, which is a plausible repair for fixtures
+    named after their own rungs.
+
+    WHEN IT FAILS, the deferral has ended: delete this test and remove "analysis_id"
+    from `_PROJECTION_EXCLUDED_FIELDS` in the same commit.
+    """
+    import xarray as xr
+
+    observed: dict[int, str | None] = {}
+    for from_v, _ in _discover_fixture_pairs():
+        if from_v in observed:
+            continue
+        work = _copy_fixture(f"v{from_v}", tmp_path / f"entry{from_v}")
+        runner.run_migration(work, target=21, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
+        params = xr.open_datatree(work / "experiment_datatree.zarr", engine="zarr", consolidated=False, chunks={})[
+            "parameters"
+        ].dataset
+        observed[from_v] = str(params["analysis_id"].values.tolist()[0]) if "analysis_id" in params.variables else None
+
+    missing = sorted(n for n, v in observed.items() if v is None)
+    if missing:
+        pytest.fail(
+            f"V0021 parameters carries no 'analysis_id' column at entry point(s) {missing}. "
+            "If it was REMOVED to end V0004's path-dependence, delete this test and drop "
+            "'analysis_id' from _PROJECTION_EXCLUDED_FIELDS in the same commit. If it was "
+            "removed for any other reason, the content projection's exclusion is now "
+            "silently covering nothing."
+        )
+
+    values = set(observed.values())
+    assert len(values) > 1, (
+        f"analysis_id is now identical ({sorted(values)}) across all {len(observed)} entry "
+        "points, so it is no longer determined by the migration path. "
+        "V0004__cf_conventions_backfill:27 appears REPAIRED: delete this test and remove "
+        "'analysis_id' from _PROJECTION_EXCLUDED_FIELDS in the same commit."
     )
 
 
@@ -392,9 +516,9 @@ def test_v6_to_v7_clears_snakemake_metadata_with_backup(tmp_path: Path) -> None:
         "trigger Snakemake's set-change rerun cascade"
     )
     backup_dir = work / ".snakemake" / "metadata.bak.V0007"
-    assert backup_dir.is_dir(), (
-        "V0007 must back up the cleared metadata to .snakemake/metadata.bak.V0007 for audit + recovery"
-    )
+    assert (
+        backup_dir.is_dir()
+    ), "V0007 must back up the cleared metadata to .snakemake/metadata.bak.V0007 for audit + recovery"
     assert (backup_dir / "fake_rule_record.json").is_file(), "Backup must contain the original metadata files"
     # And the flag rename must have happened
     assert not legacy_flag.exists()

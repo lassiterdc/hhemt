@@ -45,15 +45,24 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: 9af752907fa02320901e1e849a3fbeed61a94eefc7927bdf6686c3c7d87d30e1
+    renderer_sha256: f0a3493fe4a55074b6a543b302d055aff4fef7f612976900fcee3f41b48a37c5
     justification: >-
-      Iteration-8 caption-geometry group (D1.2 width declaration, D1.3
-      content_width_px adoption, R5.6 literal-subtraction retirement), plus a
-      whole-file ruff-format pass. Caption re-read: it describes the dependent
-      variable, aggregation mode, SWMM-only routing and the wallclock-reduction
-      stipulation, and makes no structural claim about panels, columns or
-      caption geometry, so none of those changes falsifies it. Looked; no
-      change needed.
+      Item (A) extraction (ruling ## 18, option 2). Caption RE-READ in full; the finding is
+      that this change is a PURE MOVE and the caption makes no claim a pure move can touch.
+      `_compute_scaling_series` was lifted out of `render()` verbatim -- the four returned
+      objects are the same objects built by the same calls, established by a refute round
+      that rebuilt ten mutants and ran seventy test-mutant pairs, plus seven further mutants
+      including both 4-tuple return-order swaps.
+      The caption describes the DEPENDENT VARIABLE and its aggregation mode, and warns that
+      axis ranges are auto-scaled per report so equal bar heights across reports do not
+      denote equal values. Both are SEMANTIC claims about what the figure means. The
+      extraction changes no value, no axis, no aggregation and no rendering path -- it moves
+      where a computation is defined, not what it computes. Verify by reading the caption
+      against the diff: git diff -- src/hhemt/report_renderers/sensitivity_benchmarking.py
+      This is a PAIRING discharge on a re-read, not a formatting exemption: the change is
+      structural, and the re-read found the caption's claims invariant under it. Digest
+      recorded after the extraction, so the exemption expires on the next change to this
+      renderer.
   - renderer: cross_experiment_intercomparison_maps
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
     renderer_sha256: 882640f7f4e440bddad564484d61b4dbe149cd60e25a83e564105459fddb2fc1
@@ -114,26 +123,68 @@ unpaired_allowlist:
       change to this file rather than on arrival.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 5fccf9b946a2d380cc3feb1ab0f9f9149cba0636f42974ce3aa88b40d7841041
+    renderer_sha256: d4d4b255d7a54248106457f71b81e811de0d3bdefbc99e489454ae9f8221aa2c
+    justification_2026_09_03b: >-
+      path-tree leaf-run collapse (four-spec set). Caption RE-READ IN FULL, and it makes
+      no claim this change can touch. The caption describes WHAT the Provenance summary
+      contains -- sidecar identity and license, toolkit git-SHA, container and SIF digest,
+      input digests, the per-run process graph, and the consolidated outputs with their CF
+      variable dictionary. This change alters only HOW the path tree DISPLAYS those
+      outputs: whether a run of sibling leaves collapses, what the sentinel label reads,
+      and the roster's own sentence about how membership is decided. The caption states
+      nothing about collapsing, sentinels, labels, or membership, and no value it
+      characterises changes.
+      SCOPE, recorded so a later reader need not re-derive it: the change is LEAVES ONLY.
+      Directory runs keep the subtree-only grouping, so the delivered crate -- whose
+      members are directories -- renders byte-identically today. The repair targets the
+      row explosion the RO-Crate member-reference repair will introduce by turning member
+      references into bare directories.
+      The caption COMPLETENESS gap recorded in the 2026-09-03 entry above is UNCHANGED and
+      NOT discharged here: the caption enumerates three sections while the page carries at
+      least a fourth. A caption rewrite is not part of a rendering change; it stays on the
+      work stack as its own item.
+    justification_2026_09_03: >-
+      member-identity repair (case-8 Spec 2). Caption RE-READ IN FULL, and it makes no
+      claim this change can touch. The caption describes exactly three sections --
+      Provenance summary, Data availability, Reproduction guide. Spec 2 edits
+      _read_scenario_status, which feeds the scenario/efficiency JOIN consumed by
+      _enrich_efficiency_rows -- a section the caption does not describe at all. The
+      repair also changes no rendered VALUE the caption characterises: it restores the
+      member slot in a join key that was silently collapsing to "" on every row.
+      A FINDING the re-read produced, recorded because this guard cannot see it: the
+      caption enumerates three sections while the page carries at least a fourth (the
+      efficiency table). That is a caption COMPLETENESS gap, it predates this change,
+      and it is NOT discharged by this entry -- routed to the doc feedback tracker
+      rather than fixed here, because a caption rewrite is not part of a column repair.
     justification: >-
-      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
-      not by judgement. This renderer's abstract syntax tree, parsed from the working
-      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
-      merge took the other branch's version of this file wholesale). The only textual
-      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
-      commit. A formatting change cannot alter a column, a unit, a section, or any
-      other claim a caption can make, so this caption cannot have gone stale and a
-      re-read has no possible finding. The renderer's semantics were reviewed on the
-      branch that authored them. Reproduce with:
-      python -c "import ast,subprocess;
-      f='src/hhemt/report_renderers/metadata.py';
-      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
-      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
-      Digest recorded AFTER the reformat, so the exemption expires on the next real
-      change to this file rather than on arrival.
+      V0020 vocabulary rename (spec S7). Caption RE-READ in full, and the finding is
+      that it makes no claim this change can touch. S7 edits ONE object:
+      _RULE_PREFIX_TO_PURPOSE, the rule-name-to-purpose label map. It adds an
+      experiment_consolidation entry, RETAINS the retired master_consolidation entry
+      deliberately (two on-disk carriers keep producing that name and V0020 renames
+      neither), and points both at the same label. That map feeds only the
+      SLURM-efficiency table.
+      The caption describes three sections -- Provenance summary, Data availability,
+      and Reproduction guide -- and does not describe the SLURM-efficiency table, name
+      any rule, or name any purpose label. So no column, unit, section, or claim it
+      makes changes. Verify by reading the caption against the S7 diff:
+      git diff -- src/hhemt/report_renderers/metadata.py
+      This is a PAIRING discharge on a re-read, not a formatting exemption: the change
+      is semantic, and the re-read found the caption's scope disjoint from it. Digest
+      recorded after S7, so the exemption expires on the next change to this renderer.
   - renderer: per_analysis_summary
     caption: src/hhemt/report_templates/captions/per_analysis_summary_table.rst
-    renderer_sha256: 5101456a3a8a06645385ef08bb0756c2f25677e5f275173b0862d9ed3dd505d8
+    renderer_sha256: 23eab4d358490fa4c6c7fdaddd3e034f241dd8203e9c36c5dac514d1a4a8d1ce
+    justification_2026_09_03: >-
+      member-identity repair (case-8 Spec 9). Caption RE-READ IN FULL, and it makes no
+      claim this change can touch. The caption describes aggregate scenario status and
+      SWMM flow-routing continuity error parsed from each scenario's .rpt. Spec 9 edits
+      how MEMBER ROWS ARE SELECTED from status_df -- resolving the identity column
+      instead of subscripting a retired literal that raised KeyError on a post-rename
+      CSV. Selection is not a property the caption states, and the metrics it does
+      state (continuity error, their source and their threshold) are untouched. The
+      None-branch now yields an empty frame rather than raising, which changes a crash
+      into an empty section; the caption characterises neither.
     justification: >-
       docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
       not by judgement. This renderer's abstract syntax tree, parsed from the working
@@ -188,3 +239,63 @@ unpaired_allowlist:
       print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
       Digest recorded AFTER the reformat, so the exemption expires on the next real
       change to this file rather than on arrival.
+  - renderer: cross_experiment_compatibility
+    caption: src/hhemt/report_templates/captions/cross_experiment_compatibility.rst
+    renderer_sha256: d8ca3825cbd41486d54601632bdcd6315319c86c7a84467cafeed804ce06ba5b
+    justification: >-
+      docs-and-experiment-system <- sidequest-clearing-08-30 merge. FORMATTING ONLY --
+      discharged by measurement, not by judgement, and following the AST-equivalence
+      pattern the sibling entries in this file established. This renderer's abstract
+      syntax tree, parsed from the working tree, is IDENTICAL to its AST at BOTH
+      MERGE_HEAD and HEAD -- a stronger result than the sibling entries, which differ
+      from HEAD because the merge took the other branch's file wholesale. Here the two
+      branches' versions are semantically the same file and differ only in the pinned
+      ruff-format v0.6.0 reflow (conditional expressions parenthesised, a string
+      concatenation and a set literal re-wrapped). A formatting change cannot alter a
+      column, a unit, a section, or any other claim a caption can make, so this caption
+      cannot have gone stale and a re-read has no possible finding. Reproduce with:
+      python -c "import ast,subprocess;
+      f='src/hhemt/report_renderers/cross_experiment_compatibility.py';
+      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
+      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
+      Digest recorded AFTER the reformat, so the exemption expires on the next real
+      change to this file rather than on arrival. This renderer was the one the
+      authoring branch's own sweep missed; its siblings are allowlisted above.
+  - renderer: cross_experiment_intercomparison
+    caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison.rst
+    renderer_sha256: 801a266b2893eda088131064678016e7b0837823448d2462203cc61f5dde5b49
+    justification: >-
+      Tree-wide ruff pass over the merged file set. IMPORT-ONLY -- discharged by
+      measurement, not by judgement. The sibling entries in this file prove
+      formatting-only changes via whole-AST equivalence; that instrument cannot be
+      used here, because REMOVING an import necessarily changes the AST. The
+      correct proof is two-part and both parts were run. (1) The only imported name
+      that changed is `_html` (F401, `import html as _html`), REMOVED, and it has
+      ZERO references in the module: an ast.walk finds 0 Name nodes and 0 Attribute
+      value-nodes bearing that identifier. Note that a plain `grep -c _html`
+      returns 7 and is the WRONG instrument -- every hit is a substring of a
+      different identifier (`build_html_document`, `_build_intercomparison_html`,
+      `_plain_html`, `body_heading_html`), none of them the bare alias. (2) With
+      imports stripped from every body list, the module's AST is IDENTICAL to its
+      AST at HEAD, so no rendering statement moved. A caption cannot be falsified
+      by the removal of a name nothing reads. Digest recorded AFTER the
+      ruff-format pass riding this same commit, so the exemption expires on the
+      next real change to this renderer rather than on arrival.
+
+  - renderer: per_sim_peak_flood_depth
+    caption: src/hhemt/report_templates/captions/per_sim_peak_flood_depth.rst
+    renderer_sha256: 5f2f050945fddd676c792d3bc3ba6153c0bd677ae66b01cf8caafdf96496c181
+    justification: >-
+      Tree-wide ruff pass over the merged file set. IMPORT-ONLY -- discharged by
+      measurement, not by judgement. The change is an I001 REORDER of one
+      function-local import (`report_renderers._model_arms.resolve_arm_group`)
+      within its own block, so whole-AST equivalence cannot hold (node order moved)
+      even though nothing semantic did. Two measurements discharge it. (1) The SET
+      of imported names is identical before and after -- zero added, zero removed
+      -- so no name this module binds has changed. (2) With imports stripped from
+      every body list, the module's AST is IDENTICAL to its AST at HEAD, so no
+      panel, colour scale, tick derivation or emitted string moved. The caption
+      describes the three-panel depth / WSE / event-hydrology figure and its data
+      sources; none of that is reachable by reordering an import. Digest recorded
+      AFTER the ruff-format pass riding this same commit, so the exemption expires
+      on the next real change to this renderer rather than on arrival.

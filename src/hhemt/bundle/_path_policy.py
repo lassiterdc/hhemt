@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import typing
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 
-class PathPolicy(str, Enum):
+class PathPolicy(StrEnum):
     """Policy applied to a Pydantic ``Path``-typed cfg field at emit time."""
 
     BUNDLE_RELATIVE = "bundle_relative"
@@ -146,7 +146,7 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
     "landuse_raster": ExcludableInput(
         description="Landuse raster the spatially-varying Manning's n grid is built from.",
         reproducibility_cost=(
-            "Large. Excluding it blocks Manning's preprocessing when " "toggle_use_constant_mannings=False."
+            "Large. Excluding it blocks Manning's preprocessing when toggle_use_constant_mannings=False."
         ),
     ),
     "landuse_lookup_file": ExcludableInput(

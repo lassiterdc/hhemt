@@ -9,6 +9,7 @@ from hhemt.cf_conventions import (
     apply_cf_attributes,
     apply_global_attributes,
 )
+from hhemt.member_identity import resolve_member_id_column
 from hhemt.scenario import TRITONSWMM_scenario
 from hhemt.utils import (
     current_datetime_string,
@@ -747,8 +748,9 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
             return
         subs = {(str(k) if k is not None else None): v for k, v in _iter_members_or_self(analysis)}
         evidence: dict[str, dict[str, bool]] = {}
+        _id_col = resolve_member_id_column(getattr(cands, "columns", []))
         for _, row in cands.iterrows():
-            _sa = row.get("sa_id")
+            _sa = row.get(_id_col) if _id_col else None
             sub = subs.get(str(_sa) if _sa is not None else None)
             if sub is None:
                 continue

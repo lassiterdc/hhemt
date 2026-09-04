@@ -23,7 +23,7 @@ in the delete CLI closure, so capture is via `capsys`, not `caplog`.
 Warm-cache caveat: `synthetic_sensitivity_completed` is session-scoped and cached
 (`start_from_scratch=False`). A tree cached before the Phase 2 master-write fold
 landed will lack the master analysis-scope sentinel until its
-`f_consolidate_master_complete.flag` is deleted to force re-materialization (the
+`f_consolidate_experiment_complete.flag` is deleted to force re-materialization (the
 same one-time transition cost the D6 sub-fold documented; the master write is
 idempotent on the early-return path, so a flag-only delete suffices). See the
 captured follow-up to add a flag-deleting fixture variant for durable robustness.

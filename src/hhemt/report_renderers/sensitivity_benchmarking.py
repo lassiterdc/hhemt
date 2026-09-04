@@ -52,6 +52,7 @@ import plotly.io as pio
 import xarray as xr
 from plotly.subplots import make_subplots
 
+from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
@@ -127,7 +128,6 @@ _CFG_HOVER_LABELS: dict[str, str] = {
     "n_nodes": "Nodes",
     "n_replicates": "Runs of this config",
 }
-
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -744,152 +744,7 @@ def render(
     # is never promoted to publication (KEEP-no-hybrid invariant).
     use_plotly = False if static_cfg is not None else (static_backend == "plotly")
     if use_plotly:
-        # Panels 3+4 carry TWO series per group and they answer different questions.
-        # The LINE is the per-N envelope over replicate-AVERAGED configs, so a vertex
-        # is the best distinct CONFIG at that device count rather than the luckiest RUN.
-        # The MARKERS are every raw row, so the replicate spread stays visible. Before
-        # this change the "line" was itself an all-rows series (measured: panel-3 line
-        # x = [1,1,2,2,3,3], not [1,2,3]), so the min rule the comment claimed was never
-        # applied on these two panels and the two series were the same points twice.
-        #
-        # Both series anchor on the SAME per-family baseline. They share an axis, a
-        # colour and a legendgroup, which asserts to the reader that they are one
-        # series; a global-serial anchor against a per-family anchor made that
-        # assertion false for every GPU family and made the y-axis title's t_family(1)
-        # true of the line only.
-        #
-        # THE ANCHOR IS RESOLVED FROM THE RAW FRAME. This reverses a deliberate earlier
-        # choice, and the earlier reasoning is preserved because it is still true:
-        # resolving from the raw frame divides averaged line values by an un-averaged
-        # minimum, so the reference config no longer lands at EXACTLY 1.0 under its own
-        # line -- it lands slightly below.
-        #
-        # That was traded away because of what the averaged anchor cost. _resolve_family_
-        # baselines takes float(ref[t_col].min()) over the min-N rows of whatever frame it
-        # is handed, so an AVERAGED frame yields `min over configs of (mean over
-        # replicates)`. The line is then pinned to anchor/anchor = 1.0000 at min-N, while a
-        # marker is anchor/T_i over RAW rows -- and a single replicate that beat the mean
-        # including its slower sibling plots ABOVE 1.0. The line sat outside the spread of
-        # the points it summarises. MEASURED on the e581fffb0b1c generation:
-        # synth_cc_resume_triton panel x4/y4, gpu (a100-80), line 1.0000 vs BOTH markers at
-        # 1.2586; across all four masters, 18 of 208 line-vs-marker points deviate >1%,
-        # worst 25.85%.
-        #
-        # A raw anchor is <= every raw row at min-N by construction, so no marker can plot
-        # above its own family's reference. A line beginning marginally under 1.0 says "the
-        # averaged configuration is slower than the single best run", which is true and
-        # readable; a line beneath which its own points float says something false about the
-        # relationship between the two series. BM-2 ("use averages for drawing all lines")
-        # is unaffected -- the LINE is still built from _df_avg; only the shared scalar it
-        # divides by changes.
-        #
-        # This scalar feeds ALL FOUR metric calls below -- speedup line, speedup markers,
-        # efficiency line, efficiency markers -- so this one argument moves BOTH panels.
-        _df_avg = df.groupby(["group_value", "n_devices", "config_id"], as_index=False).agg(
-            wallclock_s=("wallclock_s", "mean"), member_id=("sa_id", "first")
-        )
-        family_baselines = _resolve_family_baselines(
-            df,
-            t_col="wallclock_s",
-            indep_col="n_devices",
-            group_col="group_value",
-        )
-        if family_baselines:
-            speedup_pg, strong_eff_pg = {}, {}
-            speedup_all, efficiency_all = {}, {}
-            for _gv, _anchor in family_baselines.items():
-                _sub_avg = _df_avg[_df_avg["group_value"].astype(str) == _gv]
-                _sub_raw = df[df["group_value"].astype(str) == _gv]
-                if _sub_avg.empty:
-                    continue
-                # Line: per-N minimum over the replicate-averaged configs.
-                _line_sub = _sub_avg.loc[_sub_avg.groupby("n_devices")["wallclock_s"].idxmin()]
-                speedup_pg.update(
-                    _compute_metric_all_rows_per_group(
-                        _line_sub,
-                        t_col="wallclock_s",
-                        indep_col="n_devices",
-                        group_col="group_value",
-                        kind="speedup",
-                        anchor=_anchor,
-                    )
-                )
-                strong_eff_pg.update(
-                    _compute_metric_all_rows_per_group(
-                        _line_sub,
-                        t_col="wallclock_s",
-                        indep_col="n_devices",
-                        group_col="group_value",
-                        kind="efficiency",
-                        anchor=_anchor,
-                    )
-                )
-                # Markers: every raw row, same anchor.
-                if _sub_raw.empty:
-                    continue
-                speedup_all.update(
-                    _compute_metric_all_rows_per_group(
-                        _sub_raw,
-                        t_col="wallclock_s",
-                        indep_col="n_devices",
-                        group_col="group_value",
-                        kind="speedup",
-                        anchor=_anchor,
-                    )
-                )
-                efficiency_all.update(
-                    _compute_metric_all_rows_per_group(
-                        _sub_raw,
-                        t_col="wallclock_s",
-                        indep_col="n_devices",
-                        group_col="group_value",
-                        kind="efficiency",
-                        anchor=_anchor,
-                    )
-                )
-            speedup_all = speedup_all or None
-            efficiency_all = efficiency_all or None
-        else:
-            speedup_pg = _compute_speedup_per_group(
-                df,
-                t_col="wallclock_s",
-                indep_col="n_devices",
-                group_col="group_value",
-                baseline_mode="serial",
-            )
-            strong_eff_pg = _compute_efficiency_per_group(
-                df,
-                t_col="wallclock_s",
-                indep_col="n_devices",
-                group_col="group_value",
-                mode="strong",
-                baseline_mode="serial",
-            )
-            serial_anchor = _resolve_serial_baseline(
-                df,
-                t_col="wallclock_s",
-                group_col="group_value",
-            )
-            if serial_anchor is not None:
-                speedup_all = _compute_metric_all_rows_per_group(
-                    df,
-                    t_col="wallclock_s",
-                    indep_col="n_devices",
-                    group_col="group_value",
-                    kind="speedup",
-                    anchor=serial_anchor,
-                )
-                efficiency_all = _compute_metric_all_rows_per_group(
-                    df,
-                    t_col="wallclock_s",
-                    indep_col="n_devices",
-                    group_col="group_value",
-                    kind="efficiency",
-                    anchor=serial_anchor,
-                )
-            else:
-                speedup_all = None
-                efficiency_all = None
+        speedup_pg, strong_eff_pg, speedup_all, efficiency_all = _compute_scaling_series(df)
         if analysis.cfg_analysis.sensitivity_analysis is not None:
             source_paths.append(Path(analysis.cfg_analysis.sensitivity_analysis))
         # F1: GPU hardware suffix (e.g., "gpu (a6000)"). Phase-4 (4c, D3): gpu_hardware
@@ -1287,6 +1142,50 @@ def _resolve_serial_baseline(
     return t_baseline
 
 
+#: The per-member identity column on every frame the metric helpers below consume.
+#: It is STILL `sa_id` after the member-vocabulary rename, and that is a DECLARED
+#: deferral rather than an oversight: the column interoperates BY VALUE with
+#: `df_status` / `scenario_status.csv` and with the `override_force_rerun` API key,
+#: so renaming it here would break a contract that crosses this module's boundary.
+#:
+#: SCOPE, measured rather than asserted -- read this before treating the constant as a
+#: rename lever. It binds FOUR of the seventeen live `"sa_id"` literals in this module:
+#: the aggregation at `_df_avg` and the three metric-helper reads below. THIRTEEN remain
+#: literals, including the two row-builder writes that CONSTRUCT the frame. A rename is
+#: therefore fourteen edits, not one, and the constant's presence must not be read as
+#: making it one. What it does buy is real and narrower: producers bind it via
+#: `**{_MEMBER_KEY: (_MEMBER_KEY, "first")}` -- the plain keyword form CANNOT, because a
+#: kwarg name is not an expression -- so both sides of the ONE aggregation that feeds the
+#: metric helpers name the same constant. That is exactly the producer/consumer pair the
+#: `KeyError: 'sa_id'` defect spanned, and no wider claim is available from it.
+#:
+#: This is a PARTIAL adoption of the `EVENT_LABEL_COLUMN` pattern (report_plot_ids.py),
+#: not an instance of it: that constant works because EVERY consumer imports it, and this
+#: one does not reproduce that property. Binding the remaining thirteen is a static-check
+#: question, filed separately.
+_MEMBER_KEY = "sa_id"
+
+
+def _require_member_key(frame, *, caller: str) -> None:
+    """Raise a NAMED error when a frame reaches a metric helper without `_MEMBER_KEY`.
+
+    The failure this replaces was a bare `KeyError: 'sa_id'` raised inside a per-point
+    loop, which names neither the frame nor the producer that built it. Raising at the
+    boundary names the caller, so the next producer/consumer disagreement is diagnosable
+    from the traceback instead of requiring the reader to walk back to the aggregation.
+    """
+    if _MEMBER_KEY not in frame.columns:
+        raise ProcessingError(
+            operation=f"benchmarking: {caller} received a frame without the member identity column",
+            filepath=None,
+            reason=(
+                f"expected column {_MEMBER_KEY!r}; got {sorted(frame.columns)}. A producer "
+                f"upstream renamed or dropped it -- check any .agg(...) or .rename(columns=...) "
+                f"between the source frame and this call."
+            ),
+        )
+
+
 def _compute_speedup_per_group(
     df: pd.DataFrame,
     *,
@@ -1325,6 +1224,7 @@ def _compute_speedup_per_group(
         global_anchor = None
     if baseline_mode in ("global", "serial") and global_anchor is None:
         return {}
+    _require_member_key(df, caller="_compute_speedup_per_group")
     out: dict[str, list[tuple[float, float, str]]] = {}
     for group_value, sub in df.groupby(group_col):
         # Keep the wallclock-min row per N so we can recover member_id of the winning config.
@@ -1341,7 +1241,7 @@ def _compute_speedup_per_group(
         pts: list[tuple[float, float, str]] = []
         for n_val, row in per_n_min.iterrows():
             n = int(n_val) if float(n_val).is_integer() else float(n_val)
-            pts.append((n, anchor / float(row[t_col]), str(row["sa_id"])))
+            pts.append((n, anchor / float(row[t_col]), str(row[_MEMBER_KEY])))
         pts.sort(key=lambda r: r[0])
         out[str(group_value)] = pts
     return out
@@ -1380,6 +1280,7 @@ def _compute_efficiency_per_group(
         global_anchor = None
     if baseline_mode in ("global", "serial") and global_anchor is None:
         return {}
+    _require_member_key(df, caller="_compute_efficiency_per_group")
     out: dict[str, list[tuple[float, float, str]]] = {}
     for group_value, sub in df.groupby(group_col):
         min_rows = sub.loc[sub.groupby(indep_col)[t_col].idxmin()]
@@ -1402,7 +1303,7 @@ def _compute_efficiency_per_group(
                 eff = anchor / (n * tN)
             else:
                 eff = anchor / tN
-            pts.append((n, eff, str(row["sa_id"])))
+            pts.append((n, eff, str(row[_MEMBER_KEY])))
         pts.sort(key=lambda r: r[0])
         out[str(group_value)] = pts
     return out
@@ -1434,6 +1335,7 @@ def _compute_metric_all_rows_per_group(
         raise ValueError(f"kind must be 'speedup' or 'efficiency'; got {kind!r}")
     if df.empty or anchor is None or anchor <= 0:
         return {}
+    _require_member_key(df, caller="_compute_metric_all_rows_per_group")
     out: dict[str, list[tuple[float, float, str]]] = {}
     for group_value, sub in df.groupby(group_col):
         pts: list[tuple[float, float, str]] = []
@@ -1447,11 +1349,176 @@ def _compute_metric_all_rows_per_group(
                 y = anchor / tN
             else:
                 y = anchor / (n * tN)
-            pts.append((n, y, str(row["sa_id"])))
+            pts.append((n, y, str(row[_MEMBER_KEY])))
         pts.sort(key=lambda r: (r[0], r[1]))
         if pts:
             out[str(group_value)] = pts
     return out
+
+
+def _compute_scaling_series(
+    df: pd.DataFrame,
+) -> tuple[dict, dict, dict | None, dict | None]:
+    """Compute the four scaling-panel series from the raw per-run frame.
+
+    Returns ``(speedup_pg, strong_eff_pg, speedup_all, efficiency_all)``: the
+    per-group speedup and strong-efficiency LINE series, then the all-rows
+    MARKER series (``None`` when no anchor resolves). All four share one
+    per-family anchor resolved from the RAW frame.
+    """
+    # Panels 3+4 carry TWO series per group and they answer different questions.
+    # The LINE is the per-N envelope over replicate-AVERAGED configs, so a vertex
+    # is the best distinct CONFIG at that device count rather than the luckiest RUN.
+    # The MARKERS are every raw row, so the replicate spread stays visible. Before
+    # this change the "line" was itself an all-rows series (measured: panel-3 line
+    # x = [1,1,2,2,3,3], not [1,2,3]), so the min rule the comment claimed was never
+    # applied on these two panels and the two series were the same points twice.
+    #
+    # Both series anchor on the SAME per-family baseline. They share an axis, a
+    # colour and a legendgroup, which asserts to the reader that they are one
+    # series; a global-serial anchor against a per-family anchor made that
+    # assertion false for every GPU family and made the y-axis title's t_family(1)
+    # true of the line only.
+    #
+    # THE ANCHOR IS RESOLVED FROM THE RAW FRAME. This reverses a deliberate earlier
+    # choice, and the earlier reasoning is preserved because it is still true:
+    # resolving from the raw frame divides averaged line values by an un-averaged
+    # minimum, so the reference config no longer lands at EXACTLY 1.0 under its own
+    # line -- it lands slightly below.
+    #
+    # That was traded away because of what the averaged anchor cost. _resolve_family_
+    # baselines takes float(ref[t_col].min()) over the min-N rows of whatever frame it
+    # is handed, so an AVERAGED frame yields `min over configs of (mean over
+    # replicates)`. The line is then pinned to anchor/anchor = 1.0000 at min-N, while a
+    # marker is anchor/T_i over RAW rows -- and a single replicate that beat the mean
+    # including its slower sibling plots ABOVE 1.0. The line sat outside the spread of
+    # the points it summarises. MEASURED on the e581fffb0b1c generation:
+    # synth_cc_resume_triton panel x4/y4, gpu (a100-80), line 1.0000 vs BOTH markers at
+    # 1.2586; across all four masters, 18 of 208 line-vs-marker points deviate >1%,
+    # worst 25.85%.
+    #
+    # A raw anchor is <= every raw row at min-N by construction, so no marker can plot
+    # above its own family's reference. A line beginning marginally under 1.0 says "the
+    # averaged configuration is slower than the single best run", which is true and
+    # readable; a line beneath which its own points float says something false about the
+    # relationship between the two series. BM-2 ("use averages for drawing all lines")
+    # is unaffected -- the LINE is still built from _df_avg; only the shared scalar it
+    # divides by changes.
+    #
+    # This scalar feeds ALL FOUR metric calls below -- speedup line, speedup markers,
+    # efficiency line, efficiency markers -- so this one argument moves BOTH panels.
+    _df_avg = df.groupby(["group_value", "n_devices", "config_id"], as_index=False).agg(
+        # Emit the identity column under `_MEMBER_KEY`, matching this frame's own
+        # constructor at :1824/:1844 (`rows.append({"sa_id": member_id, ...})` -- the
+        # COLUMN is sa_id, the VARIABLE is member_id). The `**{...}` form binds the
+        # emitted name AND the source column to one constant; a plain keyword would
+        # bind neither, because a kwarg NAME cannot be a variable in this syntax.
+        wallclock_s=("wallclock_s", "mean"),
+        **{_MEMBER_KEY: (_MEMBER_KEY, "first")},
+    )
+    family_baselines = _resolve_family_baselines(
+        df,
+        t_col="wallclock_s",
+        indep_col="n_devices",
+        group_col="group_value",
+    )
+    if family_baselines:
+        speedup_pg, strong_eff_pg = {}, {}
+        speedup_all, efficiency_all = {}, {}
+        for _gv, _anchor in family_baselines.items():
+            _sub_avg = _df_avg[_df_avg["group_value"].astype(str) == _gv]
+            _sub_raw = df[df["group_value"].astype(str) == _gv]
+            if _sub_avg.empty:
+                continue
+            # Line: per-N minimum over the replicate-averaged configs.
+            _line_sub = _sub_avg.loc[_sub_avg.groupby("n_devices")["wallclock_s"].idxmin()]
+            speedup_pg.update(
+                _compute_metric_all_rows_per_group(
+                    _line_sub,
+                    t_col="wallclock_s",
+                    indep_col="n_devices",
+                    group_col="group_value",
+                    kind="speedup",
+                    anchor=_anchor,
+                )
+            )
+            strong_eff_pg.update(
+                _compute_metric_all_rows_per_group(
+                    _line_sub,
+                    t_col="wallclock_s",
+                    indep_col="n_devices",
+                    group_col="group_value",
+                    kind="efficiency",
+                    anchor=_anchor,
+                )
+            )
+            # Markers: every raw row, same anchor.
+            if _sub_raw.empty:
+                continue
+            speedup_all.update(
+                _compute_metric_all_rows_per_group(
+                    _sub_raw,
+                    t_col="wallclock_s",
+                    indep_col="n_devices",
+                    group_col="group_value",
+                    kind="speedup",
+                    anchor=_anchor,
+                )
+            )
+            efficiency_all.update(
+                _compute_metric_all_rows_per_group(
+                    _sub_raw,
+                    t_col="wallclock_s",
+                    indep_col="n_devices",
+                    group_col="group_value",
+                    kind="efficiency",
+                    anchor=_anchor,
+                )
+            )
+        speedup_all = speedup_all or None
+        efficiency_all = efficiency_all or None
+    else:
+        speedup_pg = _compute_speedup_per_group(
+            df,
+            t_col="wallclock_s",
+            indep_col="n_devices",
+            group_col="group_value",
+            baseline_mode="serial",
+        )
+        strong_eff_pg = _compute_efficiency_per_group(
+            df,
+            t_col="wallclock_s",
+            indep_col="n_devices",
+            group_col="group_value",
+            mode="strong",
+            baseline_mode="serial",
+        )
+        serial_anchor = _resolve_serial_baseline(
+            df,
+            t_col="wallclock_s",
+            group_col="group_value",
+        )
+        if serial_anchor is not None:
+            speedup_all = _compute_metric_all_rows_per_group(
+                df,
+                t_col="wallclock_s",
+                indep_col="n_devices",
+                group_col="group_value",
+                kind="speedup",
+                anchor=serial_anchor,
+            )
+            efficiency_all = _compute_metric_all_rows_per_group(
+                df,
+                t_col="wallclock_s",
+                indep_col="n_devices",
+                group_col="group_value",
+                kind="efficiency",
+                anchor=serial_anchor,
+            )
+        else:
+            speedup_all = None
+            efficiency_all = None
+    return speedup_pg, strong_eff_pg, speedup_all, efficiency_all
 
 
 def _draw_metric_panel(
@@ -2163,7 +2230,8 @@ def _build_sensitivity_benchmarking_figure(
     # hardware-column count grows -- which is why the middle column's long
     # "Number of Devices (CPUs or GPUs)" title is the one that reaches the block first.
     _bench_caption = (
-        "The number beside each hybrid point is its MPI rank count."
+        "The number beside each hybrid point is its OpenMP threads per rank."
+        " The x axis is total devices N = ranks x threads/rank, so ranks = N divided by that number."
         " Speedup and efficiency are measured against each hardware family's own"
         " minimum-device run (CPU → serial CPU; each GPU → its own 1-GPU run),"
         " so S = 1.0 denotes a different wall-clock on each curve."

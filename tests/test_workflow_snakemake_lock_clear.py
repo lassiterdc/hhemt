@@ -114,9 +114,9 @@ def test_non_tty_with_locks_refuses_with_actionable_error(tmp_path, monkeypatch)
     # The lock is keyed on the WORKING DIRECTORY, so the pasteable command must
     # scope itself to wd — otherwise it is a no-op from the operator's cwd on the
     # run path and unlocks the wrong namespace on the delete path.
-    assert f"cd {analysis_dir} &&" in str(excinfo.value), (
-        "manual unlock command must cd into the lock's working directory"
-    )
+    assert f"cd {analysis_dir} &&" in str(
+        excinfo.value
+    ), "manual unlock command must cd into the lock's working directory"
 
 
 def test_non_tty_delete_path_names_the_delete_namespace(tmp_path, monkeypatch):

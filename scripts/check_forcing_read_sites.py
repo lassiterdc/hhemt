@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """CI check: every read of cfg_analysis.weather_timeseries is audited.
 
 Mirrors scripts/check_du_sentinel_sites.py. Pure-stdlib ast.NodeVisitor over
@@ -30,9 +30,9 @@ MARKER = "# FORCING-READ:"
 
 EXEMPT_CATEGORIES = frozenset(
     {
-        "choke-point",        # scenario.py::_write_sim_weather_nc, the ONE forcing read
-        "preflight",          # validation.py existence / variable-name / extent checks
-        "render-hydrology",   # report_renderers plot the master series; they do not force
+        "choke-point",  # scenario.py::_write_sim_weather_nc, the ONE forcing read
+        "preflight",  # validation.py existence / variable-name / extent checks
+        "render-hydrology",  # report_renderers plot the master series; they do not force
         "test-subset-slice",  # analysis.test() builds a short weather file
     }
 )

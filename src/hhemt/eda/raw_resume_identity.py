@@ -33,6 +33,7 @@ import yaml
 
 from hhemt.analysis_validation import _TRITON_REPLAY_MARKER
 from hhemt.eda.cross_sim_identity import compare_variable_exact
+from hhemt.member_identity import resolve_member_id_column, warn_missing_member_id_column
 from hhemt.process_simulation import load_triton_output_w_xarray, return_fpath_wlevels
 
 #: TRITON raw per-timestep variables, in the order load_triton_output_w_xarray tags them
@@ -393,16 +394,20 @@ def _b4b_n_resumes(master, member_id) -> int:
     except Exception:  # noqa: BLE001 -- df_status is best-effort; absence -> clean
         return 0
     cols = getattr(df, "columns", [])
-    if df is None or "n_resumes" not in cols or "sa_id" not in cols:
+    _id_col = resolve_member_id_column(cols)
+    if df is None or "n_resumes" not in cols:
+        return 0
+    if _id_col is None:
+        warn_missing_member_id_column("df_status (b4b resume census)", cols)
         return 0
 
     def _norm(v: object) -> str:
         s = str(v)
-        return s[3:] if s.startswith("member_") else s
+        return s[len("member_") :] if s.startswith("member_") else s
 
     want = _norm(member_id)
     vals: list[int] = []
-    for raw_id, n in zip(df["sa_id"], df["n_resumes"], strict=False):
+    for raw_id, n in zip(df[_id_col], df["n_resumes"], strict=False):
         if _norm(raw_id) != want:
             continue
         if n is None or (isinstance(n, float) and np.isnan(n)):

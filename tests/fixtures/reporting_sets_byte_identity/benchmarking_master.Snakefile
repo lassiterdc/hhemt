@@ -47,7 +47,7 @@ onerror:
 
 rule all:
     input:
-        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_member-0_complete.flag", "_status/e_consolidate_member-1_complete.flag", "_status/e_consolidate_member-2_complete.flag", "_status/e_consolidate_member-3_complete.flag", "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
+        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_member-0_complete.flag", "_status/e_consolidate_member-1_complete.flag", "_status/e_consolidate_member-2_complete.flag", "_status/e_consolidate_member-3_complete.flag", "_status/f_consolidate_experiment_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
 
 rule setup_target_0:
     output: "_status/a_setup_target_0_complete.flag"
@@ -560,10 +560,10 @@ rule consolidate_member_3:
             2>&1 | tee {log}
         """
 
-rule master_consolidation:
+rule experiment_consolidation:
     input: "_status/e_consolidate_member-0_complete.flag", "_status/e_consolidate_member-1_complete.flag", "_status/e_consolidate_member-2_complete.flag", "_status/e_consolidate_member-3_complete.flag"
-    output: "_status/f_consolidate_master_complete.flag"
-    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/master_consolidation.log"
+    output: "_status/f_consolidate_experiment_complete.flag"
+    log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/experiment_consolidation.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -582,13 +582,13 @@ rule master_consolidation:
             --which both \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name master_consolidation \
+            --rule-name experiment_consolidation \
             2>&1 | tee {log}
         """
 
 rule plot_system_overview:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/system_overview.html",
@@ -614,7 +614,7 @@ rule plot_system_overview:
 rule plot_per_analysis_summary_table:
     input:
         "scenario_status.csv",
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/per_analysis/summary_table.html",
@@ -641,7 +641,7 @@ rule plot_per_analysis_summary_table:
 rule plot_scenario_status_appendix:
     input:
         "scenario_status.csv",
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/appendix/scenario_status.html",
@@ -669,7 +669,7 @@ rule plot_errors_and_warnings:
     input:
         "scenario_status.csv",
         "validation_report.json",
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/errors_and_warnings/validation_report.html",
@@ -695,7 +695,7 @@ rule plot_errors_and_warnings:
 
 rule plot_disk_utilization:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/disk_utilization.html",
@@ -720,7 +720,7 @@ rule plot_disk_utilization:
 
 rule plot_metadata:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/metadata.html",
@@ -745,7 +745,7 @@ rule plot_metadata:
 
 rule plot_workflow_performance:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/workflow_performance.html",
@@ -771,7 +771,7 @@ rule plot_workflow_performance:
 localrules: export_scenario_status
 
 rule export_scenario_status:
-    input: "_status/f_consolidate_master_complete.flag"
+    input: "_status/f_consolidate_experiment_complete.flag"
     output:
         csv = "scenario_status.csv",
         md  = "workflow_summary.md",
@@ -849,7 +849,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
 
 rule plot_per_sim_per_member_peak_flood_depth:
     input:
-        master = "_status/f_consolidate_master_complete.flag",
+        master = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}.html",
@@ -880,7 +880,7 @@ rule plot_per_sim_per_member_peak_flood_depth:
 
 rule plot_per_sim_per_member_conduit_flow:
     input:
-        master = "_status/f_consolidate_master_complete.flag",
+        master = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}.html",
@@ -923,7 +923,7 @@ def _sensitivity_source_paths(wildcards):
 rule plot_sensitivity_benchmarking:
     input:
         "scenario_status.csv",
-        master = "_status/f_consolidate_master_complete.flag",
+        master = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html",

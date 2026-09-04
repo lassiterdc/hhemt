@@ -8,12 +8,16 @@ type aliases so a model field is just ``cmap: MplColormap``, and the SAME
 module is imported by the plotting functions -- legal values live in exactly
 one place (user O-f requirement; TO-3).
 
-Enum base is ``(str, Enum)``, NOT ``enum.StrEnum``: the project floor is
-``requires-python = ">= 3.10"`` and ``just testall`` collects the suite on
-3.10, but ``StrEnum`` is 3.11+. ``(str, Enum)`` is JSON-byte-identical to
-``StrEnum`` under Pydantic v2 (members serialize by value; identical
-JSON-schema ``enum`` emission) and mirrors ``bundle/_path_policy.py``
-(ADR-1 decision D1).
+Enum base is ``enum.StrEnum``. The project floor is
+``requires-python = ">= 3.11, < 3.13"`` and ``just testall`` collects the suite on
+3.11 and 3.12, so ``StrEnum`` (3.11+) is available on every supported interpreter.
+The earlier ``(str, Enum)`` base predates that floor. The two bases are
+interchangeable for every serialization path this module feeds -- Pydantic v2
+serializes by value and emits an identical JSON-schema ``enum``, and ``json.dumps``
+writes the same bytes for a member used as a value or as a dict key. They differ
+only in implicit string conversion: ``str()``, f-strings, ``format()`` and ``%s``
+yield the member value under ``StrEnum`` and ``Class.MEMBER`` under ``(str, Enum)``
+on 3.11+. Mirrors ``bundle/_path_policy.py`` (ADR-1 decision D1).
 
 Registry membership is resolved LAZILY inside each validator body, never at
 module import, so ``import ...config.viz_vocabulary`` does not eagerly import
@@ -23,7 +27,7 @@ matplotlib/plotly on every path that reaches it (notably the D2-rewired
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import AfterValidator
@@ -31,20 +35,20 @@ from pydantic import AfterValidator
 # ---- (1) project-owned tokens (typed, JSON-schema-enumerated) ---------------
 
 
-class VminVmaxStrategy(str, Enum):
+class VminVmaxStrategy(StrEnum):
     absolute = "absolute"
     quantile = "quantile"
     per_panel_max = "per_panel_max"
     shared_across_panels = "shared_across_panels"
 
 
-class ValueEncodingPolicy(str, Enum):
+class ValueEncodingPolicy(StrEnum):
     colorscale = "colorscale"
     one_to_one_dict = "one_to_one_dict"
     value_to_shape = "value_to_shape"
 
 
-class FontTarget(str, Enum):
+class FontTarget(StrEnum):
     figure_title = "figure_title"
     axis_label = "axis_label"
     tick_label = "tick_label"
@@ -55,12 +59,12 @@ class FontTarget(str, Enum):
     subplot_label = "subplot_label"
 
 
-class PanelScalePolicy(str, Enum):
+class PanelScalePolicy(StrEnum):
     shared = "shared"
     independent = "independent"
 
 
-class EncodingChannel(str, Enum):
+class EncodingChannel(StrEnum):
     """Visual encoding channels a data variable may drive in a figure.
 
     Single source for ``report_renderers/_provenance._Channel`` (ADR-1, D2).

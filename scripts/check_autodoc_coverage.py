@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """CI check: every public class/function in a public module's __all__ renders as a
 mkdocstrings doc-object anchor in the built site (ADR-7 docs-accuracy proxy).
 
@@ -24,6 +24,7 @@ Exit 0 = both hold. 1 = >=1 failure of either (enumerated separately).
 2 = usage/environment error (site dir absent, import failure, api.md absent or
 declaring no directives). Pure stdlib.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,6 +46,7 @@ from pathlib import Path
 # the top level and rendered by ``::: hhemt`` as ``hhemt.Toolkit``.)
 API_REFERENCE_PAGE = Path(__file__).resolve().parent.parent / "docs" / "reference" / "api.md"
 
+
 def public_modules(api_page: Path = API_REFERENCE_PAGE) -> tuple[str, ...]:
     """Module names from the ``::: {module}`` directives on the API reference page.
 
@@ -62,6 +64,7 @@ def public_modules(api_page: Path = API_REFERENCE_PAGE) -> tuple[str, ...]:
         raise ValueError(f"{api_page} declares no ``:::`` directives — nothing to check.")
     return mods
 
+
 def expected_qualnames() -> set[str]:
     """{module}.{symbol} for every non-underscore class/function in each __all__."""
     out: set[str] = set()
@@ -75,6 +78,7 @@ def expected_qualnames() -> set[str]:
                 out.add(f"{modname}.{sym}")
             # bare constants/data: no heading anchor under default config -> skip
     return out
+
 
 def undocumented_symbols() -> list[str]:
     """Public symbols that render an anchor but carry NO docstring.
@@ -108,7 +112,7 @@ def undocumented_symbols() -> list[str]:
                         continue
                     if isinstance(val, property):
                         doc = inspect.getdoc(val.fget) or ""
-                    elif isinstance(val, (classmethod, staticmethod)):
+                    elif isinstance(val, classmethod | staticmethod):
                         doc = inspect.getdoc(val.__func__) or ""
                     elif inspect.isfunction(val):
                         doc = inspect.getdoc(val) or ""
@@ -117,6 +121,7 @@ def undocumented_symbols() -> list[str]:
                     if not doc.strip():
                         missing.append(f"{modname}.{sym}.{attr}")
     return missing
+
 
 class _AnchorCollector(HTMLParser):
     def __init__(self) -> None:
@@ -128,6 +133,7 @@ class _AnchorCollector(HTMLParser):
             if key == "id" and val:
                 self.ids.add(val)
 
+
 def rendered_anchors(site_dir: Path) -> set[str]:
     ids: set[str] = set()
     for html in site_dir.rglob("*.html"):
@@ -136,16 +142,18 @@ def rendered_anchors(site_dir: Path) -> set[str]:
         ids |= parser.ids
     return ids
 
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
-        "--site-dir", type=Path, default=Path("site"),
+        "--site-dir",
+        type=Path,
+        default=Path("site"),
         help="built mkdocs site directory (default: ./site)",
     )
     args = ap.parse_args(argv)
     if not args.site_dir.is_dir():
-        print(f"ERROR: site dir not found: {args.site_dir} (run `mkdocs build` first)",
-              file=sys.stderr)
+        print(f"ERROR: site dir not found: {args.site_dir} (run `mkdocs build` first)", file=sys.stderr)
         return 2
     try:
         expected = expected_qualnames()
@@ -155,8 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     anchors = rendered_anchors(args.site_dir)
     missing = sorted(q for q in expected if q not in anchors)
     if missing:
-        print("autodoc coverage FAILED — public symbols with no rendered doc anchor:",
-              file=sys.stderr)
+        print("autodoc coverage FAILED — public symbols with no rendered doc anchor:", file=sys.stderr)
         for qual in missing:
             print(f"  - {qual}", file=sys.stderr)
         print(
@@ -169,8 +176,7 @@ def main(argv: list[str] | None = None) -> int:
 
     undocumented = undocumented_symbols()
     if undocumented:
-        print("autodoc coverage FAILED — public symbols that render with NO docstring:",
-              file=sys.stderr)
+        print("autodoc coverage FAILED — public symbols that render with NO docstring:", file=sys.stderr)
         for qual in undocumented:
             print(f"  - {qual}", file=sys.stderr)
         print(
@@ -187,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         f"rendered, and every public symbol carries a docstring."
     )
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -157,6 +157,168 @@ def test_reprocess_master_byte_identical(synth_sensitivity_analysis):
     _check(generated, "benchmarking_reprocess_master.Snakefile")
 
 
+_RULE_RE = re.compile(r"(?m)^rule ([A-Za-z0-9_]+):")
+
+# predicate name -> the predicate_inputs KEY that predicate reads. NOT derivable from
+# the name: three of the five coincide and two do not, which is exactly enough
+# coincidence to survive a spot check. Verbatim from workflow.py's lambda bodies.
+_PREDICATE_INPUT_KEY = {
+    "has_independent_vars": "independent_vars",
+    "has_member_event_pairs": "member_event_pairs_member",
+    "has_eda_artifact": "has_eda_artifact",
+    "has_preserved_raw_outputs": "has_preserved_raw_outputs",
+    "has_swmm_link_outputs": "has_swmm_link_outputs",
+}
+
+
+def _emitted_rule_names(content: str) -> list[str]:
+    """Every rule name in generated Snakefile text.
+
+    The character class is established from the REGISTRY, not from the three names
+    an author happens to be looking at: `plot_b4b_clean_identity` carries a digit,
+    so `[a-z_]+` drops it from BOTH sides of A1a's comparison and passes green on a
+    composition that dropped the b4b family entirely. Anchored at both ends so it
+    cannot match the word "rule" inside a docstring or a shell string.
+    """
+    return _RULE_RE.findall(content)
+
+
+def _renderer_vocabulary() -> set:
+    """Every rule_name any registered set declares -- the live read that separates
+    renderer rules from workflow rules. TEMPLATES, not selections."""
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS
+
+    return {
+        t.rule_name for s in REPORTING_SETS.values() for sel in s.renderer_selection for t in sel.rule_spec_template
+    }
+
+
+def _assert_predicate_inputs_complete(composed, predicate_inputs):
+    """PRECONDITION of A1a, not a separate test -- its whole value is running on the
+    same call. Every _RENDERER_PREDICATES entry is `bool(inp.get(...))`, so a MISSING
+    key is indistinguishable from False: the template silently drops out of `passing`
+    and A1a stops checking it.
+    """
+    from hhemt.workflow import _ReportingSetDispatchMixin
+
+    # Co-sourcing guard: a new predicate without a mapping entry fails HERE rather than
+    # silently widening the hole this precondition exists to close.
+    assert set(_PREDICATE_INPUT_KEY) == set(_ReportingSetDispatchMixin._RENDERER_PREDICATES), (
+        "_PREDICATE_INPUT_KEY has drifted from _RENDERER_PREDICATES: "
+        f"{set(_ReportingSetDispatchMixin._RENDERER_PREDICATES) ^ set(_PREDICATE_INPUT_KEY)}"
+    )
+    required = {
+        _PREDICATE_INPUT_KEY[k]
+        for sel in composed.renderer_selection
+        for k in (sel.predicate_key, *(t.predicate_key for t in sel.rule_spec_template))
+        if k is not None
+    }
+    missing = sorted(required - set(predicate_inputs))
+    assert not missing, (
+        f"predicate_inputs is missing {missing}; a missing key reads as False and would "
+        "silently remove those templates from A1a's expectation"
+    )
+
+
+def assert_a1a_no_duplication_or_omission(content: str, composed, passing_rule_names: set) -> None:
+    """A1a: exactly one emitted rule per predicate-PASSING composed template.
+
+    The predicate qualifier is load-bearing: has_eda_artifact depends on whether the
+    fixture carries an EDA artifact, so an unqualified A1a reddens on a property of
+    the fixture rather than of the code -- and the natural repair for that is to
+    change the fixture until it passes.
+    """
+    emitted = _emitted_rule_names(content)
+    for name in sorted(passing_rule_names):
+        assert emitted.count(name) == 1, f"A1a: rule {name!r} emitted {emitted.count(name)} times, expected exactly 1"
+
+
+def assert_a1b_no_over_emission(content: str, composed) -> None:
+    """A1b: no emitted rule from the renderer vocabulary that the composed set does
+    not carry. Catches a renderer emitted from a set the config never named -- the
+    mirror of the drop, which neither A1a nor A2 sees."""
+    composed_names = {t.rule_name for sel in composed.renderer_selection for t in sel.rule_spec_template}
+    strays = sorted((set(_emitted_rule_names(content)) & _renderer_vocabulary()) - composed_names)
+    assert not strays, f"A1b: renderer rules emitted from an unnamed set: {strays}"
+
+
+def assert_a2_no_silent_drop(composed, member_names) -> None:
+    """A2: the composed template MULTISET reduced to names with multiplicity one
+    equals the UNION of the members' name sets.
+
+    A1a cannot see a first-wins drop -- a composition missing four templates is
+    internally consistent and passes A1a green. Only A2 compares the composition
+    against its INPUTS. The length assertion below is a CONSTRUCTOR tripwire, not
+    merge coverage: compose_reporting_sets already enforces it by de-duplicating on
+    rule_name, so its value is catching a later edit to the constructor.
+    """
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS
+
+    templates = [t for sel in composed.renderer_selection for t in sel.rule_spec_template]
+    names = [t.rule_name for t in templates]
+    assert len(templates) == len(set(names)), (
+        f"A2 constructor tripwire: {len(templates)} templates carry {len(set(names))} "
+        "distinct rule_names -- the merge emitted a duplicate"
+    )
+    expected = set()
+    for m in member_names:
+        expected |= {t.rule_name for sel in REPORTING_SETS[m].renderer_selection for t in sel.rule_spec_template}
+    assert set(names) == expected, (
+        "A2: composition is not the union of its members.\n  dropped: "
+        f"{sorted(expected - set(names))}\n  added: {sorted(set(names) - expected)}"
+    )
+
+
+def test_composed_master_byte_identical(synth_sensitivity_analysis):
+    """ADDITIVE fourth golden: [dem-resolution, compute-sensitivity].
+
+    This pair and not another: it is the only admissible pair whose composed EDA
+    TEMPLATE count (5) differs from BOTH members' (4 and 1), so a first-wins drop
+    changes the emitted rule count. [benchmarking, sensitivity] is a pure-subset
+    pair whose composition is indistinguishable from benchmarking alone.
+
+    A golden captured in the session that authors the composition records whatever
+    the composition produced -- a photograph, not a pin. The three assertions above
+    are what make it a pin: they state what composition must produce independently
+    of what it did produce. Run them BEFORE _check, so a capture cannot record a
+    composition the assertions would have rejected.
+    """
+    from hhemt.report_renderers._reporting_sets import compose_reporting_sets
+
+    members = ("dem-resolution", "compute-sensitivity")
+    composed = compose_reporting_sets(members)
+    analysis = synth_sensitivity_analysis
+    analysis._active_reporting_set = composed
+    content = analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
+        which="both", compression_level=5
+    )
+
+    passing = {
+        t.rule_name
+        for sel in composed.renderer_selection
+        for t in sel.rule_spec_template
+        if f"rule {t.rule_name}:" in content
+    }
+    predicate_inputs = {
+        "independent_vars": list(getattr(analysis.sensitivity, "analysis_independent_vars", []) or [])
+        + list(getattr(analysis.sensitivity, "system_independent_vars", []) or []),
+        "member_event_pairs_member": True,
+        "has_eda_artifact": bool(analysis.cfg_analysis.eda.enabled_plots),
+        "has_preserved_raw_outputs": False,
+        "has_swmm_link_outputs": True,
+    }
+    _assert_predicate_inputs_complete(composed, predicate_inputs)
+    assert_a1a_no_duplication_or_omission(content, composed, passing)
+    assert_a1b_no_over_emission(content, composed)
+    assert_a2_no_silent_drop(composed, members)
+    # Capture-time gate (obligation, not discretionary): before committing the golden
+    # fixture this _check writes, confirm the composed output's rule-name character
+    # class still holds — grep -oE '^rule [^:]+:' over `content` — because today's
+    # 22-name census establishes the class over the three EXISTING single-set goldens,
+    # not over composed text, which does not exist until this test runs.
+    _check(content, "composed_dem_resolution_compute_sensitivity_master.Snakefile")
+
+
 def test_synth_models_mask_converges_across_a_symlinked_home() -> None:
     """``_normalize_volatile`` must converge across a symlinked and a non-symlinked ``$HOME``.
 
@@ -183,18 +345,18 @@ def test_synth_models_mask_converges_across_a_symlinked_home() -> None:
         "the normalizer did not converge across homes, so the byte-identity comparison "
         f"is machine-bound. laptop={got_laptop!r} cluster={got_cluster!r}"
     )
-    assert "{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson" in got_laptop, (
-        f"the synth-models mask did not fire. got={got_laptop!r}"
-    )
+    assert (
+        "{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson" in got_laptop
+    ), f"the synth-models mask did not fire. got={got_laptop!r}"
     assert "gpfs" not in got_cluster, f"a machine-specific segment leaked. got={got_cluster!r}"
     assert "../" not in got_cluster, f"a relative-climb residual survived. got={got_cluster!r}"
 
     # differently-positioned satisfying input: a ../-relative path carrying no
     # model-cache token is real signal and must be returned byte-unchanged.
     unrelated = "source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}]"
-    assert _normalize_volatile(unrelated) == unrelated, (
-        f"an unrelated ../-relative path was mangled. got={_normalize_volatile(unrelated)!r}"
-    )
+    assert (
+        _normalize_volatile(unrelated) == unrelated
+    ), f"an unrelated ../-relative path was mangled. got={_normalize_volatile(unrelated)!r}"
 
 
 def test_pytest_tmp_mask_survives_an_explicitly_chosen_basetemp(
@@ -235,6 +397,6 @@ def test_pytest_tmp_mask_survives_an_explicitly_chosen_basetemp(
     # differently-positioned satisfying input: a line carrying no basetemp is real
     # signal and must be returned byte-unchanged.
     unrelated = "shell: 'python -m hhemt.setup_workflow --analysis-config cfg.yaml'"
-    assert _normalize_volatile(unrelated) == unrelated, (
-        f"an unrelated line was mangled. got={_normalize_volatile(unrelated)!r}"
-    )
+    assert (
+        _normalize_volatile(unrelated) == unrelated
+    ), f"an unrelated line was mangled. got={_normalize_volatile(unrelated)!r}"

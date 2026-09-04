@@ -149,9 +149,9 @@ def test_clear_raw_outputs_deletes_subdirs_preserves_files_and_swmm(
     # assertion below holds for both out_tritonswmm and out_triton seeds
     # even though only the coupled tritonswmm path uses the .rpt downstream.
     assert (out_dir / "swmm").exists(), "swmm/ subdir must be preserved"
-    assert (out_dir / "swmm" / "hydraulics.rpt").exists(), (
-        "out_tritonswmm/swmm/hydraulics.rpt must survive _clear_raw_outputs"
-    )
+    assert (
+        out_dir / "swmm" / "hydraulics.rpt"
+    ).exists(), "out_tritonswmm/swmm/hydraulics.rpt must survive _clear_raw_outputs"
 
 
 def test_clear_raw_outputs_swmm_deletes_only_out_file(tmp_path: Path):

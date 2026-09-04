@@ -357,7 +357,8 @@ class TRITONSWMM_system:
         # og_dem_res_xy, og_dem_avg_gridsize = compute_grid_resolution(rds_dem)
         if (rds_dem.data < -100).sum() > 0:  # type: ignore
             sys.exit(
-                "Error - gaps found in DEM. Consider interpolating elevations using method = 'nearest' (see below in this function)"
+                "Error - gaps found in DEM. Consider interpolating elevations using"
+                " method = 'nearest' (see below in this function)"
             )
             rds_dem = rds_dem.rio.interpolate_na(method="nearest")
         # coarsen
@@ -655,15 +656,17 @@ class TRITONSWMM_system:
                 print("=" * 60, flush=True)
 
             if backend == "cpu":
-                _built.append(self._compile_backend(
-                    backend="cpu",
-                    build_dir=self.sys_paths.TRITONSWMM_build_dir_cpu,
-                    compilation_script=self.sys_paths.compilation_script_cpu,
-                    compilation_logfile=self.sys_paths.compilation_logfile_cpu,
-                    cmake_backend_flag="-DKokkos_ENABLE_OPENMP=ON",
-                    recompile=recompile_if_already_done_successfully,
-                    verbose=verbose,
-                ))
+                _built.append(
+                    self._compile_backend(
+                        backend="cpu",
+                        build_dir=self.sys_paths.TRITONSWMM_build_dir_cpu,
+                        compilation_script=self.sys_paths.compilation_script_cpu,
+                        compilation_logfile=self.sys_paths.compilation_logfile_cpu,
+                        cmake_backend_flag="-DKokkos_ENABLE_OPENMP=ON",
+                        recompile=recompile_if_already_done_successfully,
+                        verbose=verbose,
+                    )
+                )
             elif backend == "gpu":
                 if self.gpu_compilation_backend is None:
                     raise ConfigurationError(
@@ -685,15 +688,17 @@ class TRITONSWMM_system:
                         config_path=self.system_config_yaml,
                     )
 
-                _built.append(self._compile_backend(
-                    backend="gpu",
-                    build_dir=self.sys_paths.TRITONSWMM_build_dir_gpu,  # type: ignore
-                    compilation_script=self.sys_paths.compilation_script_gpu,  # type: ignore
-                    compilation_logfile=self.sys_paths.compilation_logfile_gpu,  # type: ignore
-                    cmake_backend_flag=cmake_backend_flag,
-                    recompile=recompile_if_already_done_successfully,
-                    verbose=verbose,
-                ))
+                _built.append(
+                    self._compile_backend(
+                        backend="gpu",
+                        build_dir=self.sys_paths.TRITONSWMM_build_dir_gpu,  # type: ignore
+                        compilation_script=self.sys_paths.compilation_script_gpu,  # type: ignore
+                        compilation_logfile=self.sys_paths.compilation_logfile_gpu,  # type: ignore
+                        cmake_backend_flag=cmake_backend_flag,
+                        recompile=recompile_if_already_done_successfully,
+                        verbose=verbose,
+                    )
+                )
             else:
                 raise ConfigurationError(
                     field="backends",
@@ -1167,8 +1172,12 @@ class TRITONSWMM_system:
                     # into a clear, early error. NOTE: the fallback hardcodes the env
                     # name `hhemt` (consistent with workflow.py's `conda activate
                     # hhemt`) and the standard envs/ layout.
-                    'if [ -z "${CONDA_LIB:-}" ] && [ -n "${CONDA_EXE:-}" ]; then CONDA_LIB="$(dirname "$(dirname "${CONDA_EXE}")")/envs/hhemt/lib"; fi',
-                    'if [ -z "${CONDA_LIB:-}" ] || [ ! -e "${CONDA_LIB}/libstdc++.so.6" ]; then echo "ERROR: conda env lib dir not resolved (CONDA_LIB=${CONDA_LIB:-(empty)}); the libstdc++/libgcc_s ABI fix would degrade to -L/lib and ld.lld would bind the wrong-arch /lib/libgcc_s.so.1" >&2; exit 1; fi',
+                    'if [ -z "${CONDA_LIB:-}" ] && [ -n "${CONDA_EXE:-}" ]; then'
+                    ' CONDA_LIB="$(dirname "$(dirname "${CONDA_EXE}")")/envs/hhemt/lib"; fi',
+                    'if [ -z "${CONDA_LIB:-}" ] || [ ! -e "${CONDA_LIB}/libstdc++.so.6" ]; then'
+                    ' echo "ERROR: conda env lib dir not resolved (CONDA_LIB=${CONDA_LIB:-(empty)});'
+                    " the libstdc++/libgcc_s ABI fix would degrade to -L/lib and ld.lld would bind"
+                    ' the wrong-arch /lib/libgcc_s.so.1" >&2; exit 1; fi',
                     'echo "[compile] CONDA_LIB=${CONDA_LIB}"',
                     "",
                 ]
@@ -1376,12 +1385,14 @@ class TRITONSWMM_system:
                 'find "${BUILD_DIR}" -mindepth 1 -maxdepth 1 ! -name compilation.log -exec rm -rf {} +',
                 'cd "${BUILD_DIR}"',
                 "",
-                f'cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
+                f"cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags}"
+                f' "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
                 "",
             ]
             + [
                 "echo '=== CMAKE CONFIGURATION ==='",
-                "grep -E 'CMAKE_CXX_FLAGS|TRITON_IGNORE_MACHINE|Kokkos.*ENABLE' CMakeCache.txt | head -20 || echo 'CMakeCache.txt not found'",
+                "grep -E 'CMAKE_CXX_FLAGS|TRITON_IGNORE_MACHINE|Kokkos.*ENABLE' CMakeCache.txt"
+                " | head -20 || echo 'CMakeCache.txt not found'",
                 "",
                 "make -j4",
                 "",
@@ -1552,7 +1563,8 @@ class TRITONSWMM_system:
         verbose : bool
             If True, print progress messages
         """
-        # TODO - if TRITON-SWMM is enabled, re-downloading should only be allowed to occur once. Otherwise, previous compilations could be overwritten.
+        # TODO - if TRITON-SWMM is enabled, re-downloading should only be allowed to occur
+        # once. Otherwise, previous compilations could be overwritten.
         if not self.cfg_system.toggle_triton_model:
             if verbose:
                 print("[TRITON-only] Skipped (toggle_triton_model=False)", flush=True)
@@ -1600,21 +1612,25 @@ class TRITONSWMM_system:
                 print("=" * 60, flush=True)
 
             if backend == "cpu":
-                _built.append(self._compile_triton_only_backend(
-                    backend="cpu",
-                    build_dir=self.sys_paths.TRITON_build_dir_cpu,
-                    recompile=recompile_if_already_done_successfully,
-                    verbose=verbose,
-                ))
+                _built.append(
+                    self._compile_triton_only_backend(
+                        backend="cpu",
+                        build_dir=self.sys_paths.TRITON_build_dir_cpu,
+                        recompile=recompile_if_already_done_successfully,
+                        verbose=verbose,
+                    )
+                )
             elif backend == "gpu":
                 if self.gpu_compilation_backend is None:
                     raise ValueError("GPU backend requested but gpu_compilation_backend not set in config.")
-                _built.append(self._compile_triton_only_backend(
-                    backend="gpu",
-                    build_dir=self.sys_paths.TRITON_build_dir_gpu,  # type: ignore
-                    recompile=recompile_if_already_done_successfully,
-                    verbose=verbose,
-                ))
+                _built.append(
+                    self._compile_triton_only_backend(
+                        backend="gpu",
+                        build_dir=self.sys_paths.TRITON_build_dir_gpu,  # type: ignore
+                        recompile=recompile_if_already_done_successfully,
+                        verbose=verbose,
+                    )
+                )
             else:
                 raise ConfigurationError(
                     field="backends",
@@ -1902,7 +1918,8 @@ class TRITONSWMM_system:
     def compilation_triton_only_successful(self) -> bool:
         """
         Returns True if TRITON-only (CPU and GPU if configured AND RESOLVABLE) compiled successfully.
-        For individual backend checks, use compilation_triton_only_cpu_successful and compilation_triton_only_gpu_successful.
+        For individual backend checks, use compilation_triton_only_cpu_successful and
+        compilation_triton_only_gpu_successful.
 
         The GPU term is evaluated ONLY when this system resolves a GPU build dir.
         A system may declare a truthy `gpu_compilation_backend` and still resolve
@@ -2338,7 +2355,8 @@ def spatial_resampling(xds_to_resample, xds_target, missingfillval=-9999):
     xds_to_resampled = xds_to_resample.rio.reproject_match(  # type: ignore
         xds_target, resampling=Resampling.average
     )
-    # fill missing values with prespecified val (this should just corresponds to areas where one dataset has pieces outside the other)
+    # fill missing values with prespecified val (this should just corresponds to areas
+    # where one dataset has pieces outside the other)
     xds_to_resampled = xr.where(xds_to_resampled >= 3.403e37, x=missingfillval, y=xds_to_resampled)
     return xds_to_resampled
 

@@ -33,15 +33,19 @@ _CHECK_TABLE_LEVELS = {"system", "resource", "aggregate"}
 #: Every module that mints a CheckResult. eda/ is included because its verdicts are
 #: persisted as eda/*.verdict.json and read back by `_read_persisted_eda_verdicts`, so they
 #: reach the same tables as the analysis_validation ones.
-_MINTING_MODULES = ("analysis_validation.py", "eda/compute_sensitivity.py",
-                    "eda/cross_sim_identity.py", "eda/raw_resume_identity.py")
+_MINTING_MODULES = (
+    "analysis_validation.py",
+    "eda/compute_sensitivity.py",
+    "eda/cross_sim_identity.py",
+    "eda/raw_resume_identity.py",
+)
 
 
 def _string_bindings(scope_node) -> dict[str, str]:
     """Simple `x = "literal"` bindings visible inside one scope."""
     out: dict[str, str] = {}
     for node in ast.walk(scope_node):
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        if isinstance(node, ast.Assign | ast.AnnAssign):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                 for t in targets:
@@ -69,7 +73,7 @@ def _declared_check_table_names() -> set[str]:
         module_bindings = _string_bindings_module_level(tree)
         scopes = [(tree, module_bindings)]
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 scopes.append((node, {**module_bindings, **_string_bindings(node)}))
         for scope_node, bindings in scopes:
             for node in ast.walk(scope_node):
@@ -89,7 +93,7 @@ def _declared_check_table_names() -> set[str]:
 def _string_bindings_module_level(tree) -> dict[str, str]:
     out: dict[str, str] = {}
     for n in tree.body:
-        if isinstance(n, (ast.Assign, ast.AnnAssign)):
+        if isinstance(n, ast.Assign | ast.AnnAssign):
             targets = n.targets if isinstance(n, ast.Assign) else [n.target]
             if isinstance(n.value, ast.Constant) and isinstance(n.value.value, str):
                 for t in targets:

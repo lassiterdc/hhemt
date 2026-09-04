@@ -15,6 +15,7 @@ the migration. No fallback, no stub, no heuristic — the operator's manual
 edit reflects ground truth about which backend the analysis was actually
 rendered with.
 """
+
 from __future__ import annotations
 
 import re
@@ -25,9 +26,7 @@ from hhemt.version_migration.exceptions import MigrationBlockedError
 
 version_from: int = 4
 version_to: int = 5
-description: str = (
-    "Inline source-side report_config.yaml into cfg_analysis.yaml::report per F2 canonicalization"
-)
+description: str = "Inline source-side report_config.yaml into cfg_analysis.yaml::report per F2 canonicalization"
 
 
 def _recover_source_report_cfg_path(
@@ -52,10 +51,7 @@ def _recover_source_report_cfg_path(
         return None, "Snakefile present but contains no `--report-config <path>` substring"
     candidate = Path(match.group(1))
     if not candidate.exists():
-        return None, (
-            f"Snakefile references `--report-config {match.group(1)}` "
-            f"but that path is missing"
-        )
+        return None, (f"Snakefile references `--report-config {match.group(1)}` " f"but that path is missing")
     return candidate, None
 
 
@@ -90,16 +86,15 @@ def upgrade(ctx: MigrationContext) -> None:
     # Read + validate the source-side YAML against the report_config model.
     # A validation failure here is fail-fast: the operator must repair the
     # source cfg or hand-write the `report:` block.
-    from hhemt.config.report import report_config
     from hhemt.config.loaders import yaml_to_model
+    from hhemt.config.report import report_config
 
     try:
         cfg = yaml_to_model(source_cfg_path, report_config)
     except Exception as exc:
         raise _blocked_error(
             ctx.target_dir,
-            f"source-side report_config at {source_cfg_path} failed to "
-            f"load/validate ({exc})",
+            f"source-side report_config at {source_cfg_path} failed to " f"load/validate ({exc})",
         ) from exc
     payload = cfg.model_dump(mode="json")
 

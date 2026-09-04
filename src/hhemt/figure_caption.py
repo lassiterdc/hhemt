@@ -257,7 +257,10 @@ def add_figure_caption(
     # plotly.graph_objs.layout.Annotation: 'meta'`. Measured on plotly 5.24.1:
     # `go.layout.Annotation()._valid_props` has 43 entries and `meta` is not among them.
     # `name` is, so the annotation carries the KEY and the layout carries the VALUE.
-    _key = f"figure-caption-{sum(1 for a in fig.layout.annotations if str(getattr(a, 'name', '') or '').startswith('figure-caption-'))}"
+    _n_existing = sum(
+        1 for a in fig.layout.annotations if str(getattr(a, "name", "") or "").startswith("figure-caption-")
+    )
+    _key = f"figure-caption-{_n_existing}"
     _w = getattr(fig.layout, "width", None)
     # READ-MERGE-WRITE, not assignment. `update_layout(meta=...)` REPLACES the whole
     # object rather than merging into it (measured: two successive calls with {"a": 1}

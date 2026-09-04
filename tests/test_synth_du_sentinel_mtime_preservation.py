@@ -45,9 +45,9 @@ def test_idempotent_write_preserves_mtime(tmp_path: Path) -> None:
     # Second write — same bytes-affecting fields, must skip and preserve mtime.
     rewrote_second = _write(tmp_path)
     assert rewrote_second is False, "write_du_sentinel returned True on unchanged payload"
-    assert sentinel.stat().st_mtime == first_mtime, (
-        "mtime advanced on idempotent re-write — compare-and-write contract violated"
-    )
+    assert (
+        sentinel.stat().st_mtime == first_mtime
+    ), "mtime advanced on idempotent re-write — compare-and-write contract violated"
 
 
 def test_payload_change_bumps_mtime(tmp_path: Path) -> None:

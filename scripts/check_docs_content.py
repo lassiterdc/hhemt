@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """CI check: the published docs carry no self-declared placeholder, no bare
 ``path:line`` citation into a live source file, and no banned vocabulary.
 

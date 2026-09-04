@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from hhemt.member_identity import member_id_from, resolve_member_id_column
+
 #: Per-renderer output extension under each static backend. Part of the
 #: on-disk figure filename, hence co-located with the ID grammar (both are
 #: stem determinants governed by C-LAYOUT). Lifted verbatim from workflow.py.
@@ -190,8 +192,10 @@ def member_labels_from_status(analysis_dir) -> dict[str, str]:
     out: dict[str, str] = {}
     try:
         with path.open() as fh:
-            for row in _csv.DictReader(fh):
-                member_id = str(row.get("sa_id") or "")
+            _reader = _csv.DictReader(fh)
+            _id_col = resolve_member_id_column(_reader.fieldnames or [])
+            for row in _reader:
+                member_id = member_id_from(row, _id_col)
                 if not member_id:
                     continue
                 label = _derive_config_label(row)
@@ -379,7 +383,7 @@ def humanize_plot_id(plot_id: str, member_labels=None, event_labels=None) -> str
             # the reader is being shown a compute-config variation -- which is what a
             # card name in a list of sibling figures is. Falls back to the id when no
             # map is supplied, so every non-threading caller renders unchanged.
-            _member = seg[3:]
+            _member = seg[len("member.") :]
             extras.append((member_labels or {}).get(_member) or f"member {_member}")
         elif seg.startswith("evt."):
             # Mirrors the member. branch above: a supplied display label wins, the raw

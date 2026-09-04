@@ -74,9 +74,9 @@ def test_unreadable_absence_does_not_clobber_on_disk_state(tmp_path, monkeypatch
         pass  # post-fix terminal: refusing is correct
     monkeypatch.undo()
 
-    assert json.loads(p.read_text()) == before, (
-        "write() persisted this instance's unchanged fields over on-disk state it never read"
-    )
+    assert (
+        json.loads(p.read_text()) == before
+    ), "write() persisted this instance's unchanged fields over on-disk state it never read"
 
 
 def test_unparseable_log_refuses_and_preserves_the_bytes_that_failed(tmp_path):
@@ -89,9 +89,9 @@ def test_unparseable_log_refuses_and_preserves_the_bytes_that_failed(tmp_path):
         log.write()
 
     assert p.read_bytes() == b"{ this is not json", "the corrupt log was overwritten"
-    assert (tmp_path / "log.json.unreadable").read_bytes() == b"{ this is not json", (
-        "the quarantine must hold the bytes that actually failed to parse"
-    )
+    assert (
+        tmp_path / "log.json.unreadable"
+    ).read_bytes() == b"{ this is not json", "the quarantine must hold the bytes that actually failed to parse"
 
 
 def test_genuine_first_create_still_works(tmp_path):

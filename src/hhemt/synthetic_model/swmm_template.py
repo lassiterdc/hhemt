@@ -811,9 +811,7 @@ def _write_variant(
     # Hydrology-only (conduit-free) variant routes with KINWAVE so its terminal
     # nodes book External Outflow instead of stranding 100% on the routing
     # ledger; see _options_df. Coupling output (TOTAL_INFLOW) is unaffected.
-    m.inp.options = _options_df(
-        flow_routing="KINWAVE" if (include_hydrology and not include_hydraulics) else "DYNWAVE"
-    )
+    m.inp.options = _options_df(flow_routing="KINWAVE" if (include_hydrology and not include_hydraulics) else "DYNWAVE")
     # JUNCTIONS / OUTFALLS / COORDINATES — always present.
     #
     # The runoff nodes MUST stay JUNCTIONS and MUST NOT be promoted to
@@ -837,7 +835,8 @@ def _write_variant(
     # changing node types or adding conduits — both are refuted above. It is a
     # DYNWAVE artifact on a link-free network and is addressed via FLOW_ROUTING
     # in _options_df. See the stipulation:
-    # `library/docs/stipulations/hhemt/synthetic hydrology variant is conduit-free with junction runoff nodes and kinwave routing.md`
+    # `library/docs/stipulations/hhemt/synthetic hydrology variant is conduit-free
+    # with junction runoff nodes and kinwave routing.md`
     m.inp.junctions = _junctions_df(params)
     m.inp.outfalls = _outfalls_df(params)
     m.inp.coordinates = _coordinates_df(params)

@@ -9,6 +9,7 @@ the REAL campaign verdict is produced by the estate driver on Rivanna against sc
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from hhemt.eda.raw_resume_identity import (
     build_binary_timestep_figure,
@@ -114,6 +115,40 @@ def test_parse_resume_timestep(tmp_path):
     assert parse_resume_timestep(no_marker) is None
     missing = tmp_path / "gone.log"
     assert parse_resume_timestep(missing) is None
+
+
+@pytest.mark.parametrize(
+    "column, value, expected",
+    [
+        # The producer's spelling today. Red pre-fix: the guard tests for the retired
+        # column name, so the function returns a plausible-looking 0.
+        ("member_id", "serial_6_r1", 3),
+        # The legacy on-disk spelling. Green pre-fix — the differently-positioned
+        # satisfying arm, which catches a repair that merely swaps the literal.
+        ("sa_id", "serial_6_r1", 3),
+        # A prefixed identity value, which the function's own docstring says it
+        # normalises. Red pre-fix for a SECOND reason: the normaliser strips 3
+        # characters from a 7-character prefix, so the comparison can never match.
+        ("member_id", "member_serial_6_r1", 3),
+        ("sa_id", "member_serial_6_r1", 3),
+    ],
+)
+def test_b4b_n_resumes_reads_the_producers_column(column, value, expected):
+    """Max n_resumes for one member, whichever accepted spelling the frame carries."""
+    import types
+
+    import pandas as pd
+
+    import hhemt.eda.raw_resume_identity as rri
+
+    df = pd.DataFrame({column: [value], "n_resumes": [expected]})
+    master = types.SimpleNamespace(df_status=df)
+    got = rri._b4b_n_resumes(master, "serial_6_r1")
+    assert got == expected, (
+        f"column={column!r} value={value!r} carries n_resumes={expected}, but "
+        f"_b4b_n_resumes returned {got}. A plausible resume count of 0 is the most "
+        f"misleading failure mode in this repair."
+    )
 
 
 def test_compare_variable_exact_object_dtype_no_raise():

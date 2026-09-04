@@ -157,7 +157,7 @@ def _mapping_items(node):
 
 
 def _numeric(node) -> bool:
-    return isinstance(node, ast.Constant) and isinstance(node.value, (int, float))
+    return isinstance(node, ast.Constant) and isinstance(node.value, int | float)
 
 
 def _callee_name(node) -> str:
@@ -181,7 +181,7 @@ def _function_owner(tree: ast.AST) -> dict[int, str]:
 
     def visit(node: ast.AST, fname: str) -> None:
         for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                 for ln in range(child.lineno, (child.end_lineno or child.lineno) + 1):
                     owner[ln] = child.name
                 visit(child, child.name)

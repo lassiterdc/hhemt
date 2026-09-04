@@ -18,6 +18,25 @@ layout_relevant:
     - "src/hhemt/config/**/*.py"
     - "src/hhemt/version_migration/versions/*.py"
 non_breaking_allowlist:
+  - path: src/hhemt/constants.py
+    layout_signature: 78b5736a26c281bba52c5d8de684b7f4d527dd26def6d95cbbb8e63ffbdaa89a
+    justification: >-
+      COVERED BY V0020 (22fa8162), not non-breaking — this field's name does not fit
+      this case; see the follow-up to add a migration-coverage list. The change IS
+      breaking: S3 renamed consolidate_master_flag -> consolidate_experiment_flag,
+      which renames the on-disk _status flag this module mints. V0020 performs exactly
+      that rename and shipped in 22fa8162, one commit BEFORE the builder edit landed in
+      e8108a96.
+      Check-B cannot see that coverage: it passes when head_v != base_v, and at
+      HEAD~1=22fa8162 both endpoints read LAYOUT_VERSION 20, so the window slid past
+      its own bump. check_a's three-artifact requirement (module + v{base} + v{head})
+      is what forced the bump into a separate commit from the builder rename, so the
+      two gates are jointly unsatisfiable for a change of this shape.
+      A migration_covered_allowlist was designed and REFUTED by execution: its
+      nonexistent-migration arm printed FAIL and exited 0, because check_b assigns
+      failed = False after the loop the new arm sets it in. Recorded so the follow-up
+      starts from a spec that has been run rather than one that reads correctly.
+      layout_signature expires this entry on the next change to constants.py.
   - path: src/hhemt/process_simulation.py
     justification: >-
       cleanup-rerun-delete-redesign Phase 3 — replaces structurally broken
@@ -82,6 +101,48 @@ non_breaking_allowlist:
       scenario log and are inert until the deferred log-schema round adds those fields
       there. That is a disclosure regression, not a layout break -- there is no old
       on-disk state for a migration to transform -- and the scheduled round closes it.
+      (origin/sidequest-clearing-08-30). ASSERTED POST-HOC BY A REVIEWER, NOT BY THE
+      CHANGE'S AUTHOR -- stated explicitly because this entry's own history above
+      records that a path-keyed exemption on this file once concealed
+      numeric-correctness edits to the per-scenario perf zarrs, and a non-author
+      re-stamp is the nearest available thing to re-creating that blanket. The
+      reviewer is named in the commit that carries this change.
+      THE CHANGE: 25 insertions inside the model_type == "tritonswmm" branch adding
+      an `if "prep_inputs" in classes:` guard that computes
+      `_unrun = [m for m in self._run.model_types_enabled
+                 if not self._scenario.model_run_completed(m)]`
+      and, when non-empty, drops "prep_inputs" from the reclaim classes. Net effect
+      is strictly FEWER deletions: dats/ and extbc/ survive when a model has not run.
+      WHY NON-BREAKING, by measurement rather than by the direction of the change
+      (the "more files retained must be safe" argument is UNSOUND in general, because
+      absence is observable, and it is not the argument relied on here):
+      (1) `grep -rn "dats\|extbc" src/hhemt/version_migration/ tests/fixtures/legacy_layouts/`
+          returns ZERO. Neither token appears in the migration package or in any
+          golden-fixture tree, so no V{NNNN} module can act on these paths and the
+          golden sweep -- the instrument a bump exists to satisfy -- is blind to this
+          change by construction. A V0020 would have no assertion to make.
+      (2) The MigrationContext primitive set is 48 methods and every data-touching one
+          renames, reshapes, adds-a-field-with-a-default, regenerates a derived file,
+          or removes. NONE creates a data artifact from nothing, so "a file that used
+          to be deleted now survives" is not a class this machinery can express.
+      (3) Consumers enumerated rather than assumed. scenario.py
+          _assert_scenario_forcing_window_agreement is permissively gated -- absence
+          causes it to SKIP and is never read as a signal. analysis_validation.py
+          _RECLAIM_LOG_FIELDS sees a log VALUE change; the field and its schema are
+          untouched, and none of log_add_field / log_rename_field / log_transform_field
+          is engaged.
+      DEPENDENCY CONFIRMED: the guard's own comment declares a dependency on Spec 12
+      repairing model_run_completed soundness for SWMM. Spec 12 rode this same merge
+      (run_simulation.py, +63 lines, "adjudicate sim completion from the run artifact"),
+      so the guard does not rest on an unsound predicate.
+      KNOWN RESIDUAL, recorded because it is real and is NOT a layout matter: because
+      the forcing-window observer is permissively gated, retention makes it RUN where
+      it previously SKIPPED, so a re-prep whose dats/ survive may raise ProcessingError
+      where the pre-9bde88dc code was silent. That is the fail-loud direction and is a
+      RUNTIME risk, not a layout one -- no migration could prevent it, and its remedy is
+      a test on the re-prep path. It belongs to the authoring session's review.
+      SCOPE OF THIS ATTESTATION: process_simulation.py only. check-b named one file and
+      one file was adjudicated; this says nothing about the rest of merge 9bde88dc.
 
       RE-STAMPED for the roadmap-3f re-entry guard (an import plus an early return in
       _streaming_chunked_zarr_write). JUDGED NON-BREAKING, and the counter-argument is
@@ -98,6 +159,31 @@ non_breaking_allowlist:
       real merge). That is the DEFECT BEING FIXED rather than a layout break: the artifact
       class is unchanged, and the divergence is that the older toolkit destroys data the
       newer one preserves -- not a state a migration could or should transform.
+
+      >>> MERGE RESOLUTION 2026-09-04 — docs-and-experiment-system into sidequest-clearing-08-30. <<<
+      BOTH SIDES amended THIS ENTRY and each supplied its own layout_signature, so the conflict was a
+      genuine two-author collision on one attestation rather than a formatting clash. BOTH attestations
+      are RETAINED above, in the order the changes landed: the reviewer's reclaim-guard attestation first
+      (it adjudicates merge 9bde88dc), then the roadmap-3f re-entry-guard attestation. Neither is a
+      summary of the other and neither was dropped.
+      THE SIGNATURE IS OURS (4b3d1469), AND THAT IS A MEASUREMENT RATHER THAN A PREFERENCE: sha256 of
+      src/hhemt/process_simulation.py in the MERGED tree is 4b3d1469..., byte-identical to the value the
+      re-entry-guard entry stamped. THE INCOMING 44d3387e WAS NOT WRONG, AND SAYING SO WOULD
+      MISATTRIBUTE AN ERROR: it is the content at the MERGE BASE 653e32be, at hhemt b8427c8d, AND at
+      the incoming tip 93953a71 -- `git diff 653e32be 93953a71 -- src/hhemt/process_simulation.py` is
+      EMPTY, so the sister branch never touched this file and 44d3387e was the correct sha256 of its
+      tree at the moment it was stamped. It lost only because OUR side moved: the re-entry guard (11
+      insertions) is ours, so the merged content is ours, and taking the incoming value would have
+      re-fired Check B against content that HAD genuinely changed since 44d3387e was written.
+      The reclaim guard the reviewer attestation describes is ALREADY PRESENT in that same 4b3d1469
+      content, so one signature covers both attested changes -- but NO MERGE TRANSPORTED IT, IN EITHER
+      DIRECTION. It was introduced by 2c176dc9 ("fix: reclaim scenario inputs only after every model
+      has run"), which is an ANCESTOR OF THE MERGE BASE: `git merge-base --is-ancestor 2c176dc9
+      653e32be` exits 0. Shared ancestry is the whole mechanism -- the fork post-dates the commit, so
+      both tips carry it by descent rather than by transport. Both candidate carrier merges are
+      refuted by the same instrument: `git merge-base --is-ancestor 2c176dc9 53d3e052` exits 1, and
+      `git merge-base --is-ancestor 2c176dc9 9bde88dc` exits 1 as well -- 9bde88dc is dated 2026-09-01
+      while 2c176dc9 is dated 2026-09-03, so the earlier merge could not have carried the later commit.
     layout_signature: "4b3d1469f53d08d1aacfc2a367d21d88aa6d56ad99dc79d06d48b7b06007acb0"
   - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
     justification: >-
@@ -159,7 +245,42 @@ non_breaking_allowlist:
       unchanged (41e679d6...), so V0001's slug-derivation invariant is intact. No path,
       filename, zarr group, log field, Snakemake rule, fingerprint payload, or _version.json
       value is added, removed, renamed, or altered in value.
+      RE-STAMPED for the tree-wide ruff pass. FORMATTING-AND-EQUIVALENT-REWRITE ONLY,
+      discharged by measurement. Whole-AST equality is the WRONG instrument here and
+      reports a false difference: ruff applied F541 (dropping the f prefix from
+      placeholder-free f-strings, JoinedStr -> Constant) and UP032 (.format() -> f-string,
+      Call -> JoinedStr), both of which change NODE TYPE while preserving VALUE. After
+      normalising placeholder-free JoinedStr nodes to Constant and stripping imports,
+      the canonical unparse of this file differs from HEAD~1 in exactly THREE lines --
+      three UP032 rewrites of print() calls inside a single `if verbose:` diagnostic
+      block. '{}'.format(x) and f'{x}' both dispatch to format(x, ''), so output and
+      evaluation order are identical. The remaining delta is the F401 removal of an
+      unused `typing.Optional` import, plus whitespace. No path, filename, zarr group,
+      log field, Snakemake rule, fingerprint payload or _version.json value moves.
     layout_signature: "90dc1f68dfd2835cf851971624653437d9d7b1eb7e1aa16007dcbe326dadad1f"
+  - path: src/hhemt/version_migration/versions/V0005__inline_report_config.py
+    justification: >-
+      Tree-wide ruff pass. IMPORT-SORT AND FORMATTING ONLY, discharged by measurement
+      rather than by inspection: with imports stripped, this module's AST is IDENTICAL
+      to its AST at HEAD~1, and the imported-name SET is unchanged (zero added, zero
+      removed) -- so the change is a reordering plus whitespace. A migration module is
+      layout-relevant because its APPLIED OPERATIONS decide on-disk state; none of
+      version_from, version_to, or the upgrade() body is touched, so the on-disk result
+      of applying this migration is byte-unchanged. Re-stamp layout_signature on any
+      further non-breaking edit; a change to the applied operations must bump
+      LAYOUT_VERSION instead.
+    layout_signature: "b6ba6fbec714fecfad4b35860593649fbc50bfcffaa57600adf01716b419cf9c"
+  - path: src/hhemt/version_migration/versions/V0009__crs_config_composite_submodel.py
+    justification: >-
+      Tree-wide ruff pass. IMPORT-ONLY, discharged by measurement. With imports stripped
+      this module's AST is IDENTICAL to its AST at HEAD~1; the single imported-name
+      delta is the F401 removal of an unused `pathlib.Path`, which has zero references
+      in the module. As above, a migration module is layout-relevant because its APPLIED
+      OPERATIONS decide on-disk state, and version_from, version_to and the upgrade()
+      body are all byte-unchanged, so the on-disk result of applying this migration is
+      identical. Re-stamp layout_signature on any further non-breaking edit; a change to
+      the applied operations must bump LAYOUT_VERSION instead.
+    layout_signature: "e92636738d721ce5402312af1390a475cf815ee2b5e6e64be3cb1b82d42a87aa"
   - path: src/hhemt/config/analysis.py
     justification: >-
       synthetic-event-window-padding [Q85] scrub — ADDITIVE optional fields
@@ -495,3 +616,83 @@ non_breaking_allowlist:
       row omitting layout_signature INHERITS this one, so re-opening the permanent exemption
       must be an EDIT that deletes this signature -- never an append that quietly outranks it.
     layout_signature: "fa7d7758c1722ef38d3589aca3e7e55d0710df05b33bf58c792a02cfec93b529"
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      MERGE RE-STAMP 2026-09-04, docs-and-experiment-system into sidequest-clearing-08-30.
+      Re-stamps fa7d7758 -> 953d1474. TWO deltas compose into this content and BOTH are
+      read-side; the digest does NOT cross a breaking change, contrary to the first framing
+      of this resolution.
+      OURS (653e32be..b36c6502, 41 insertions): the T15(iv) completeness gate attested by
+      the row directly above. Unchanged by the merge.
+      THEIRS (653e32be..93953a71): THREE insertions and one deletion, total. One import of
+      resolve_member_id_column, and inside _stamp_coupled_resume_evidence a swap of
+      row.get("sa_id") for row.get(_id_col) if _id_col else None. An AST function-hash
+      comparison of ours-at-HEAD against the merged tree reports exactly ONE changed
+      function, _stamp_coupled_resume_evidence. The V0020/V0021 vocabulary rename is NOT in
+      this file's diff.
+      RESIDUAL, stated rather than elided because it is a real on-disk difference: theirs'
+      change RESTORES A DEAD WRITE. Pre-change the hardcoded row.get("sa_id") returned None
+      against a post-V0019 df_status, so every row hit `continue`, `evidence` stayed empty,
+      and the `if evidence:` guard wrote nothing. Post-change the root attr
+      coupled_resume_replay_evidence appears, so an old tree and a new tree differ.
+      WHY NON-BREAKING ANYWAY, by measurement: (1) the attr is ADDITIVE and PLAIN -- it is
+      not a member of metadata._EMBEDDED_PROV_KEYS, and
+      `grep -rl coupled_resume_replay_evidence tests/fixtures/legacy_layouts/` returns
+      nothing, so no byte-identity golden can churn. (2) The consumer is graceful-absent by
+      construction: check_coupled_resume_validity's docstring states an unstamped tree
+      yields INDETERMINATE INFO with passed=True, never a false warn, so an old tree read by
+      new code classifies exactly as it does today. (3) The whole stamp is wrapped in a
+      best-effort `except Exception` that never blocks consolidation. (4) A backfill
+      migration is prohibited in kind, not merely unnecessary: it could only fabricate
+      evidence about runs it never observed, which this repo already refused in
+      `2026-06-27_v0016 migration body is a no-op not a backfill`.
+      This is the same class as the version-provenance-four-axes row above, on this same
+      path, which reads "so an old tree lacking them classifies exactly as it does today and
+      a new tree read" by an old toolkit shows them absent rather than wrong.
+      APPENDED rather than edited in place, deliberately: the prior row's own text records
+      that it was the FIRST signature this path carried, and an in-place re-stamp would
+      falsify that sentence. Per _load_allowlist this stamped append is the sanctioned way
+      to advance a change-scoped exemption; the shape that row forbids is a SIGNATURE-LESS
+      append, which would inherit fa7d7758 and silently outrank nothing.
+    layout_signature: "953d1474abff7b7bf72c8ef1db64bd8a202565bfa58ef58c717a8b7dfad1b37a"
+  - path: src/hhemt/report_plot_ids.py
+    justification: >-
+      MERGE RE-STAMP 2026-09-04, docs-and-experiment-system into sidequest-clearing-08-30.
+      Re-stamps a43e91a4 -> e584bdfb.
+      ASSERTED POST-HOC BY A REVIEWER, NOT BY THE CHANGE'S AUTHOR. The change is theirs
+      (ac489eef, "fix(member-identity): repair the sa_id -> member_id consumer set, the
+      prefix-slice defect, and the one-sided strip"); the merge-base and our side are
+      byte-identical at a43e91a4, so nothing on this branch touched the file. Non-authorship
+      is disclosed rather than cured, and the deciding command below is what makes the claim
+      falsifiable by the next reader in one step.
+      DECIDING COMMAND, RUNNABLE AS WRITTEN -- for each FunctionDef in this file at the
+      merge-base 653e32be and in the merged tree, hash ast.unparse(node) and compare
+      (the same normalization scripts/check_layout_version.py::_slug_function_hash already
+      applies to compute_event_id_slug, so formatting and comments do not register but real
+      signature or body drift does). Re-verified independently under a second normalization
+      (ast.dump-hash), which returns the identical partition. NOTE THE COMMAND'S BLIND SPOT,
+      stated so its silence is not read as coverage: it examines FunctionDefs only, and the
+      diff's FIRST of three hunks is a module-level import of member_id_from and
+      resolve_member_id_column from the new module src/hhemt/member_identity.py. That module
+      is absent at 653e32be, present and staged in the merged tree, and matched by NO
+      layout_relevant path or glob, so the new dependency is real and layout-inert:
+        changed:   humanize_plot_id, member_labels_from_status
+        unchanged: canonical_plot_id, plot_output_template, output_ext_for,
+                   escape_label_braces, event_display_name, event_labels_from_status,
+                   event_page_reference, report_label_value
+      EVERY STEM DETERMINANT IS UNCHANGED. canonical_plot_id, plot_output_template and
+      output_ext_for are byte-identical after normalization, and the module-level
+      _OUTPUT_EXT_BY_RENDERER dict is untouched (the diff has three hunks and none reaches
+      it). The two changed functions are display-side: member_labels_from_status resolves
+      the member-id column from the artifact's own header instead of hardcoding "sa_id",
+      and humanize_plot_id replaces seg[3:] with seg[len("member.") :] -- a residual
+      three-character slice left over from the retired `sa.` grammar, which under the
+      post-V0019 `member.` prefix was returning `ber.{id}`. That second change REPAIRS a
+      defect V0019's rename introduced; it does not introduce a grammar.
+      Same test, same words, as the two rows above this one: touches NO figure stem, so the
+      C-LAYOUT property this file is listed for (figure filenames) is untouched.
+      A SIGNATURE IS REQUIRED HERE AND AN UNSTAMPED APPEND WOULD NOT WORK. The two prior
+      rows for this path carry no signature and INHERIT row 1's a43e91a4 under
+      _load_allowlist's merge, so the effective value would stay stale and check-b would
+      still re-fire. Measured per-row: ['a43e91a4', 'NONE', 'NONE'].
+    layout_signature: "e584bdfbbf04a500676b38a6fe207bf19487eb06a9989fc2fa0aaa0b1beb2799"

@@ -817,3 +817,115 @@ def eda_rule_spec_templates(reporting_set: ReportingSet) -> tuple[RuleSpecTempla
         if sel.builder_key == "eda_compute_sensitivity":
             return sel.rule_spec_template
     return ()
+
+
+class ReportingSetCompositionError(ValueError):
+    """Raised when a list of reporting-set names cannot be composed into one set."""
+
+
+def compose_reporting_sets(names: list[str] | tuple[str, ...]) -> ReportingSet:
+    """Compose a list of registered reporting-set names into ONE ReportingSet.
+
+    A ONE-NAME list returns the registered object ITSELF, not a copy, so a
+    single-set config is byte-identical to today at every consumer. Every
+    consumer takes the OBJECT (the workflow dispatcher, the bundle generators,
+    analysis_validation, the render-path category-order blocks), so composition
+    is the whole of the list widening on the registry side.
+
+    Merging is at the TEMPLATE level, not the selection level: two members
+    contributing the same builder_key yield ONE selection carrying the union of
+    their rule_spec_templates, because the dispatcher calls one builder per
+    selection and eda_rule_spec_templates returns only the first same-key
+    selection's templates.
+
+    shape is the homogeneity key for a list, as declared on ReportingSet.shape.
+    required_axes is ALL-of over the outer tuple, so composing concatenates the
+    members' families and a composed sweep must satisfy every one of them.
+    """
+    names = tuple(names)
+    if not names:
+        raise ReportingSetCompositionError(
+            "report.reporting_set resolved to an empty list; name at least one "
+            f"registered set. Registered sets: {sorted(REPORTING_SETS)}."
+        )
+    duplicated = sorted({n for n in names if names.count(n) > 1})
+    if duplicated:
+        raise ReportingSetCompositionError(
+            f"report.reporting_set names the same set more than once: {duplicated}. "
+            "Each set may appear at most once."
+        )
+    members = [REPORTING_SETS[n] for n in names]
+    if len(members) == 1:
+        return members[0]
+
+    shapes = {m.shape for m in members}
+    if len(shapes) != 1:
+        raise ReportingSetCompositionError(
+            "report.reporting_set composes sets of differing analysis shapes: "
+            f"{ {m.name: m.shape for m in members} }. Every named set must declare "
+            "the same shape."
+        )
+    orders = {m.category_order for m in members}
+    if len(orders) != 1:  # forward guard: unreachable while all sets share one order
+        raise ReportingSetCompositionError(
+            "report.reporting_set composes sets with differing sidebar category "
+            f"orders: {sorted(m.name for m in members)}. A composed report has one "
+            "sidebar, so every named set must declare the same category_order."
+        )
+
+    required: list[tuple[str, ...]] = []
+    for m in members:
+        for family in m.required_axes or ():
+            if family not in required:
+                required.append(family)
+
+    key_order: list[str] = []
+    contributors: dict[str, list[tuple[str, RendererSelection]]] = {}
+    for m in members:
+        for sel in m.renderer_selection:
+            if sel.builder_key not in contributors:
+                key_order.append(sel.builder_key)  # first-appearance order
+                contributors[sel.builder_key] = []
+            contributors[sel.builder_key].append((m.name, sel))
+
+    merged: list[RendererSelection] = []
+    for key in key_order:
+        contribs = contributors[key]
+        predicates = {sel.predicate_key for _, sel in contribs if sel.predicate_key}
+        if len(predicates) > 1:
+            raise ReportingSetCompositionError(
+                f"report.reporting_set composes sets that gate renderer {key!r} on "
+                f"different conditions: { {n: sel.predicate_key for n, sel in contribs} }. "
+                "A composed report emits each renderer once, under one condition, so "
+                "these sets cannot be combined. Name one of them."
+            )
+        templates: list[RuleSpecTemplate] = []
+        claimed: dict[str, tuple[str, RuleSpecTemplate]] = {}
+        for owner, sel in contribs:
+            for tmpl in sel.rule_spec_template:
+                prior = claimed.get(tmpl.rule_name)
+                if prior is None:
+                    claimed[tmpl.rule_name] = (owner, tmpl)
+                    templates.append(tmpl)
+                elif prior[1] != tmpl:  # forward guard: colliding names are equal today
+                    raise ReportingSetCompositionError(
+                        f"report.reporting_set composes sets whose rule "
+                        f"{tmpl.rule_name!r} is declared differently by {prior[0]!r} "
+                        f"and {owner!r}. One rule name must mean one rule."
+                    )
+        merged.append(
+            RendererSelection(
+                builder_key=key,
+                predicate_key=(next(iter(predicates)) if predicates else None),
+                rule_spec_template=tuple(templates),
+            )
+        )
+
+    return ReportingSet(
+        name="+".join(names),
+        category_order=next(iter(orders)),
+        renderer_selection=tuple(merged),
+        validator_key=("benchmarking" if any(m.validator_key == "benchmarking" for m in members) else "none"),
+        shape=next(iter(shapes)),
+        required_axes=tuple(required),
+    )

@@ -74,9 +74,9 @@ def test_du_via_sentinel_reads_sentinel_when_present(tmp_path, capsys):
     _print_delete_dry_run_summary(analysis)
     captured = capsys.readouterr()
 
-    assert "DU sentinel absent" not in captured.err, (
-        f"Expected zero sentinel-absent warnings on populated tree; got: {captured.err!r}"
-    )
+    assert (
+        "DU sentinel absent" not in captured.err
+    ), f"Expected zero sentinel-absent warnings on populated tree; got: {captured.err!r}"
 
 
 def test_du_via_sentinel_falls_back_when_absent(tmp_path, capsys):
@@ -98,9 +98,9 @@ def test_du_via_sentinel_falls_back_when_absent(tmp_path, capsys):
     captured = capsys.readouterr()
 
     # One warning per scope visited (one scen + one analysis-level).
-    assert captured.err.count("DU sentinel absent") >= 2, (
-        f"Expected ≥2 sentinel-absent warnings on fresh tree; got: {captured.err!r}"
-    )
+    assert (
+        captured.err.count("DU sentinel absent") >= 2
+    ), f"Expected ≥2 sentinel-absent warnings on fresh tree; got: {captured.err!r}"
 
 
 # ---------------------------------------------------------------------------

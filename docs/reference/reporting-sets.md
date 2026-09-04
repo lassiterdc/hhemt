@@ -6,35 +6,87 @@ bundle. Choosing a set decides which figures and tables a rendered report
 contains, and in what order its sidebar lists them. You select a set with a
 single config field, without editing code.
 
-!!! tip "One report always comes from exactly one set"
+!!! tip "Most reports come from one set, and one set is usually enough"
     A report showing benchmarking results alongside compute-configuration
-    comparisons has not combined two sets. It has selected one set that bundles
-    both kinds of renderer. `b4b` is the clearest case: it carries ten
-    renderers, including `sensitivity_benchmarking` and
-    `eda_compute_sensitivity` together, so its report shows both. If you are
-    trying to work out which set produced a report you are looking at, read the
+    comparisons has usually selected one set that bundles both kinds of
+    renderer, rather than naming two. `b4b` is the clearest case: it carries
+    ten renderers, including `sensitivity_benchmarking` and
+    `eda_compute_sensitivity` together, so its report shows both. Reach for a
+    list only when no single set carries everything you want. If you are
+    trying to work out what produced a report you are looking at, read the
     bundle contents below rather than reasoning from the figures present.
 
-## Selecting one
+## Selecting one or more
 
 The field is `reporting_set`, on the `report` block of the analysis config. It
-takes **one** set name. It is a single string, so a list of names is not
-accepted:
+takes either one set name or a list of them. One name is the common case:
 
 ```yaml
 report:
   reporting_set: benchmarking
 ```
 
-Its default value is the literal string `default`, which is a sentinel rather
-than an ordinary set name. At `analysis.run()` entry it resolves to
-`benchmarking` when `toggle_sensitivity_analysis` is true, and to the standard
-`default` set otherwise. Setting any other registered name selects that set
-directly.
+Its default value is the one-element list `["default"]`, whose single member is
+a sentinel rather than an ordinary set name. At `analysis.run()` entry that
+sentinel resolves to `benchmarking` when `toggle_sensitivity_analysis` is true,
+and to the standard `default` set otherwise. Setting any other registered name
+selects that set directly.
+
+Writing the field but leaving it empty means the same as omitting it. A bare
+`reporting_set:` with nothing after it, its explicit form `null`, an empty
+string, and an empty list are all read as absent values rather than as requests
+for a report with no figures, so each of them falls back to the sentinel above.
+
+The sentinel then resolves from the analysis rather than from the blank. On a
+sensitivity analysis an empty field therefore produces the `benchmarking`
+report, carrying its run-time, compute-cost and scaling figures.
+
+The value must be a name or a list of names. An unordered container such as a
+YAML set (`!!set`) is refused rather than quietly accepted, because the order
+you write the names in decides the order their renderers merge, and an
+unordered container carries no order to read.
 
 The name is validated at `analysis.run()` entry against the registry. An
 unregistered name raises `ConfigurationError` naming both what you asked for and
 the registered names, so a typo fails before any compute is committed.
+
+## Composing several sets
+
+Naming more than one set composes them into a single report. A renderer carried
+by more than one of them appears once, carrying the figures both contribute, so
+listing `dem-resolution` alongside `compute-sensitivity` gives you both EDA
+families rather than whichever one happens to be first:
+
+```yaml
+report:
+  reporting_set:
+    - compute-sensitivity
+    - dem-resolution
+```
+
+Four rules apply, and all four are checked at `analysis.run()` entry, before any
+compute is committed:
+
+- **Every named set must describe the same kind of analysis.** You cannot mix an
+  event-ensemble set with a sensitivity set, and `combined` is never selectable
+  on an analysis at all.
+- **Your sweep must vary an axis for each named set that requires one.** The
+  requirements add up rather than replacing one another, so a list of
+  `compute-sensitivity` and `dem-resolution` needs a sweep that varies both a
+  compute-configuration field and `target_dem_resolution`.
+- **`default` cannot be listed alongside another set.** It is a sentinel that
+  resolves to whichever set suits the analysis, so it has no meaning as one
+  member of a composition. Name the set you want instead.
+- **Two sets that gate the same renderer on different conditions cannot be
+  combined.** A composed report emits each renderer once, under one condition,
+  so two sets that disagree about that condition have no single answer. `b4b`
+  gates `eda_compute_sensitivity` on preserved raw outputs, while
+  `compute-sensitivity` and `dem-resolution` gate it on an EDA artifact, so
+  `b4b` composes with `benchmarking` and `sensitivity` but not with those two.
+
+All four rules fail with a message naming both the set and the reason, so a
+combination that cannot work is refused on the login node rather than after the
+compute is spent.
 
 ## The registered sets
 
@@ -63,7 +115,7 @@ For a sweep, where members vary along a declared axis. All five replace
 | Set | Use it for |
 |---|---|
 | `benchmarking` | A sweep whose axis is compute configuration. Adds run-time, compute-cost and scaling figures. This is what `default` resolves to on a sensitivity analysis. |
-| `sensitivity` | A sweep that wants per-member results without any specialized figure family — no run-time and scaling figures, no EDA comparison. It is the sweep-shaped bundle minus `sensitivity_benchmarking`, so it imposes no axis requirement and suits a sweep varying any axis. |
+| `sensitivity` | A sweep that wants per-member results without any specialized figure family: no run-time and scaling figures, no EDA comparison. It is the sweep-shaped bundle minus `sensitivity_benchmarking`, so it imposes no axis requirement and suits a sweep varying any axis. |
 | `compute-sensitivity` | A compute-configuration sweep where the question is whether results are invariant to the compute config, rather than only how fast each one runs. Expects the compute-sensitivity EDA artifacts. |
 | `dem-resolution` | A sweep whose axis is DEM cell size. Its figures compare peak flood depth across resolution rungs, so it expects a varying grid and rejects a mixed-resolution experiment. |
 | `b4b` | A raw-output byte-for-byte identity study across compute configurations. The benchmarking bundle plus a per-timestep check on whether the raw TRITON rasters are bit-identical across compute configs within one device class (CPU or GPU). It is not a resume study: the clean-versus-resume comparison lives on the combined report. Requires preserved raw outputs. |
@@ -97,8 +149,8 @@ bundles, not examples.
 | `benchmarking` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 9 |
 | `sensitivity` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `system_overview`, `workflow_performance` | 8 |
 | `compute-sensitivity` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
-| `dem-resolution` | same ten as `compute-sensitivity` | 10 |
-| `b4b` | same ten as `compute-sensitivity` | 10 |
+| `dem-resolution` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
+| `b4b` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
 | `combined` | `cross_experiment_compatibility`, `cross_experiment_disk_utilization`, `cross_experiment_errors_and_warnings`, `cross_experiment_intercomparison`, `cross_experiment_intercomparison_maps` | 5 |
 
 The three sensitivity EDA sets bundle the same ten renderers. They differ in the

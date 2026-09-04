@@ -255,9 +255,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_ORNL_GHOST_RING_AND_GPU,
             }
         ),
-        also_present_in=frozenset(
-            {SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}
-        ),
+        also_present_in=frozenset({SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}),
         trigger="resumed_coupled",
         remedy="Re-run at a TRITON carrying the node-depth scatter fix (9db367d or a descendant).",
     ),
@@ -281,9 +279,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
         # identifier that the anonymization guard blocks from this public tree.
         # The dated slug is what makes the report findable to someone who has
         # access; naming the repo adds nothing for a reader who does not.
-        bug_report=(
-            "bug_reports/2026-08-04_triton-swmm_resume-extbc-boundary-perturbation-amplified-by-coupling"
-        ),
+        bug_report=("bug_reports/2026-08-04_triton-swmm_resume-extbc-boundary-perturbation-amplified-by-coupling"),
         provenance_note=(
             "The fix sha 5d2ad1e8 sits on the fork branch `instrumented/extbc-ghost-probe`, whose "
             "name describes the branch's diagnostic commits (fc807d1, 2372793 -- both `diag:`), NOT "

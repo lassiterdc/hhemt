@@ -98,7 +98,7 @@ def retrieve_swmm_performance_stats_from_rpt(
         attempted = ", ".join(attempted_encodings)
         details = " | ".join(decode_errors)
         raise UnicodeError(
-            f"Failed to decode SWMM report file {report_file_path} using encodings " f"[{attempted}]. Errors: {details}"
+            f"Failed to decode SWMM report file {report_file_path} using encodings [{attempted}]. Errors: {details}"
         )
 
     match_hms = re.search(r"Total elapsed time:\s*(\d{1,2}):(\d{2}):(\d{2})", content)
@@ -111,7 +111,7 @@ def retrieve_swmm_performance_stats_from_rpt(
     elif match_lt_1s is not None:
         result["wall_time_s"] = 1.0
     else:
-        raise ValueError(f"Could not find supported elapsed-time format in SWMM report file " f"{report_file_path}")
+        raise ValueError(f"Could not find supported elapsed-time format in SWMM report file {report_file_path}")
 
     thread_match = re.search(
         r"Number of Threads\s*\.{2,}\s*(\d+)",
@@ -544,9 +544,7 @@ def _bulk_parse_section(section_text, kind_filter, idx_colname, value_cols):
     df["date_time"] = pd.to_datetime(df["date"] + " " + df["time"], format=RPT_DATETIME_FORMAT, errors="coerce")
     if df["date_time"].isna().any():
         raise ValueError(
-            "Parsed RPT date_time values contained NaT. "
-            "Verify the RPT datetime format matches "
-            f"{RPT_DATETIME_FORMAT}."
+            f"Parsed RPT date_time values contained NaT. Verify the RPT datetime format matches {RPT_DATETIME_FORMAT}."
         )
     df = df.drop(columns=["date", "time"])
     df[idx_colname] = np.repeat(ids, row_counts)
@@ -1049,9 +1047,7 @@ def create_tseries_ds(dict_lst_time_series, lst_col_headers, idx_colname):
     df_tseries["date_time"] = pd.to_datetime(df_tseries["date_time"], format=RPT_DATETIME_FORMAT, errors="coerce")
     if df_tseries["date_time"].isna().any():
         raise ValueError(
-            "Parsed RPT date_time values contained NaT. "
-            "Verify the RPT datetime format matches "
-            f"{RPT_DATETIME_FORMAT}."
+            f"Parsed RPT date_time values contained NaT. Verify the RPT datetime format matches {RPT_DATETIME_FORMAT}."
         )
     df_tseries = df_tseries.set_index([idx_colname, "date_time"])
     return df_tseries.to_xarray()

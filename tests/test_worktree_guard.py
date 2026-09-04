@@ -5,6 +5,7 @@ pytester fixture to run *inner* pytest sessions with controlled environment
 variables, exercising each branch of the guard without relying on filesystem
 tricks or main-tree fallback behavior.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,10 +28,12 @@ def _copy_rootdir_conftest(pytester: pytest.Pytester) -> Path:
 
 
 def _make_trivial_test(pytester: pytest.Pytester) -> None:
-    pytester.makepyfile(test_trivial=dedent("""
+    pytester.makepyfile(
+        test_trivial=dedent("""
         def test_noop():
             assert True
-    """))
+    """)
+    )
 
 
 def test_guard_fires_on_wrong_src(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,7 +49,9 @@ def test_guard_fires_on_wrong_src(pytester: pytest.Pytester, monkeypatch: pytest
     assert f"worktree-test-guard: hhemt.__file__ = {_WRONG_SRC}" in combined, combined
 
 
-def test_guard_downgrades_to_warning_with_allow_installed(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_guard_downgrades_to_warning_with_allow_installed(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """ALLOW_INSTALLED=1 + FORCE_WRONG_SRC → WARNING emitted, inner exit 0."""
     _copy_rootdir_conftest(pytester)
     _make_trivial_test(pytester)

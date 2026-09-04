@@ -169,12 +169,10 @@ def test_registry_raw_url_targets_the_public_repo():
     here is the one thing the guard cannot see: that the URL points at the intended PUBLIC
     target at all. Enforcement of the anonymization property itself is the guard's.
     """
-    assert _REGISTRY_REMOTE_OWNER == "lassiterdc", (
-        f"registry owner is {_REGISTRY_REMOTE_OWNER!r}, not the public handle"
-    )
-    assert _REGISTRY_REMOTE_REPO == "hhemt", (
-        f"registry repo is {_REGISTRY_REMOTE_REPO!r}, not the public repository"
-    )
+    assert (
+        _REGISTRY_REMOTE_OWNER == "lassiterdc"
+    ), f"registry owner is {_REGISTRY_REMOTE_OWNER!r}, not the public handle"
+    assert _REGISTRY_REMOTE_REPO == "hhemt", f"registry repo is {_REGISTRY_REMOTE_REPO!r}, not the public repository"
     assert _REGISTRY_RAW_URL.startswith(
         "https://raw.githubusercontent.com/lassiterdc/hhemt/"
     ), f"pinned registry URL does not target the public repo: {_REGISTRY_RAW_URL!r}"

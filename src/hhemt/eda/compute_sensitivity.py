@@ -43,6 +43,7 @@ import xarray as xr
 from hhemt.analysis_validation import CheckResult, _iter_members_or_self
 from hhemt.eda._result import EdaResult
 from hhemt.eda.cross_sim_identity import TRACKED_VARS, _enabled_modes, compare_variable_exact
+from hhemt.member_identity import resolve_member_id_column, warn_missing_member_id_column
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
 
@@ -272,13 +273,14 @@ def _resumes_by_member_id(master: TRITONSWMM_analysis, member_ids: list[str]) ->
         return out
     if df is None or "n_resumes" not in getattr(df, "columns", []):
         return out
-    id_col = "sa_id" if "sa_id" in df.columns else None
+    id_col = resolve_member_id_column(df.columns)
     if id_col is None:
+        warn_missing_member_id_column("df_status (compute_sensitivity resume census)", df.columns)
         return out
 
     def _norm(v: str) -> str:
         v = str(v)
-        return v[3:] if v.startswith("member_") else v
+        return v[len("member_") :] if v.startswith("member_") else v
 
     grouped = df.groupby(id_col)["n_resumes"].max()
     for raw_id, val in grouped.items():

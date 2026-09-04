@@ -170,7 +170,7 @@ def _pyproject_constraints() -> dict[str, tuple[str, str]]:
 
 def _canon(name: str) -> str:
     """Canonical distribution name: lowercase, PEP-503 separators unified, extras dropped."""
-    base = re.split(r"[<>=!~;\[ ]", name.strip().strip('"').strip("'"), 1)[0]
+    base = re.split(r"[<>=!~;\[ ]", name.strip().strip('"').strip("'"), maxsplit=1)[0]
     return base.lower().replace("_", "-").replace(".", "-")
 
 
@@ -266,7 +266,7 @@ def main() -> int:
                     f"block with a single `pip install -U -r`, and pip will downgrade "
                     f"the conda pyswmm 2.0.1 -> 1.5.1 to satisfy it (swmmio 0.8.5 caps "
                     f"`pyswmm<2.0`; PyPI pyswmm/swmm-toolkit additionally re-ship the "
-                    f'exit-134 teardown crash). Install swmmio post-create with '
+                    f"exit-134 teardown crash). Install swmmio post-create with "
                     f'`pip install --no-deps "swmmio==0.8.2"` instead.'
                 )
 

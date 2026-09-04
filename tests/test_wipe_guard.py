@@ -105,12 +105,6 @@ def test_run_calls_the_guard_before_the_wipe():
         )
     ]
     assert len(blocks) == 1, f"expected exactly one from_scratch wipe block, found {len(blocks)}"
-    names = [
-        c.func.id
-        for c in ast.walk(blocks[0])
-        if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
-    ]
+    names = [c.func.id for c in ast.walk(blocks[0]) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)]
     assert "assert_wipe_is_deliberate" in names, "the wipe block does not call the guard"
-    assert names.index("assert_wipe_is_deliberate") < names.index("fast_rmtree"), (
-        "the guard must run BEFORE the delete"
-    )
+    assert names.index("assert_wipe_is_deliberate") < names.index("fast_rmtree"), "the guard must run BEFORE the delete"

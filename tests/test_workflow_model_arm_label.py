@@ -50,7 +50,7 @@ def _spec(labels: str) -> RuleSpec:
     return RuleSpec(
         rule_name="plot_sensitivity_benchmarking",
         renderer_module="sensitivity_benchmarking",
-        input_flags=("_status/f_consolidate_master_complete.flag",),
+        input_flags=("_status/f_consolidate_experiment_complete.flag",),
         output_path_template="plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total__OUTPUT_EXT__",
         source_paths=("sensitivity_datatree.zarr",),
         wildcards=("independent_var",),
@@ -106,9 +106,7 @@ def test_arm_iv_a_real_sensitivity_master_builder_resolves_a_nonempty_arm(
     synth_sensitivity_analysis,
 ):
     builder = synth_sensitivity_analysis.sensitivity._workflow_builder._base_builder
-    ctx = builder._make_rule_emission_context(
-        static_backend=builder._get_report_cfg_static_backend()
-    )
+    ctx = builder._make_rule_emission_context(static_backend=builder._get_report_cfg_static_backend())
     assert ctx.model_arm, (
         "a sensitivity master must resolve a non-empty model arm; an empty arm makes the "
         "whole labels channel silently inert (Round 8: 3 benchmarking goldens, 0 models keys)"

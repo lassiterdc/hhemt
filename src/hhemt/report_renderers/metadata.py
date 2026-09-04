@@ -71,6 +71,7 @@ if TYPE_CHECKING:
 # leak into the bundle-shippable render. `metadata._VOLATILE_GRAPH_KEYS` is
 # empty, so the sidecar DOES carry these volatile keys; the projection simply
 # never reaches for them, and `_prop` raises if a maintainer tries.
+from hhemt.member_identity import member_id_from, resolve_member_id_column
 from hhemt.report_renderers._tabulator_defaults import (
     TableFragment,
     build_columns_spec,
@@ -107,10 +108,26 @@ _SCENARIO_STATUS_FILENAME = "scenario_status.csv"
 
 # rule_name prefix -> human-readable purpose. Deterministic, not heuristic: these are the
 # rule-name stems `workflow.py` emits, and `status_flags.write_status_flag` records the stem
-# verbatim. Ordered longest-prefix-first so `master_consolidation` is not eaten by
+# verbatim. Ordered longest-prefix-first so `experiment_consolidation` is not eaten by
 # `consolidate`. An unmatched rule_name renders its raw stem rather than a guessed verb.
+# The retired `master_consolidation` entry is RETAINED, and it is NOT transitional.
+# (CORRECTED: an earlier draft justified this by render bundles carrying `_status/`. That is
+#  FALSE -- `bundle/_emit.py:735` carries ONLY the DU sentinel, measured on a real Norfolk
+#  emit. The real mechanism is below.)
+# `_purpose_for_rule` is fed by `status_flags.harvest_slurm_job_index`, which derives rule
+# identity from `.snakemake/slurm_logs/rule_{name}/` DIRECTORY NAMES, and by
+# `_status/_job_index.json`, which MERGES without eviction so an entry is permanent once
+# written. V0020 renames neither. The Tier-2 log path is NOT inert here: the generated
+# profile sets `slurm-keep-successful-logs: True` (workflow.py:3811), which resolves the
+# caveat at metadata.py:678-683. So a migrated tree keeps yielding `master_consolidation`
+# indefinitely, and dropping this entry renders a raw identifier into a PUBLISHED report's
+# SLURM-efficiency table.
+# It goes only if the render path gains a layout-version gate that refuses an un-migrated
+# tree -- NOT by renaming the log directories, which cannot reach a tree that never migrated
+# and which the executor's own log pruning would undo regardless.
 _RULE_PREFIX_TO_PURPOSE: tuple[tuple[str, str], ...] = (
-    ("master_consolidation", "consolidate (master)"),
+    ("experiment_consolidation", "consolidate (experiment)"),
+    ("master_consolidation", "consolidate (experiment)"),
     ("consolidate", "consolidate"),
     ("simulation", "simulate"),
     ("run_", "simulate"),
@@ -812,6 +829,59 @@ def _common_prefix(names: list[str]) -> str:
     return head
 
 
+def _name_skeleton(name: str) -> tuple[str | None, ...]:
+    """The name's token sequence with every digit run blanked.
+
+    Two names share a skeleton iff they are identical except at digit runs. This is the
+    LEAF analogue of the subtree signature `_sibling_runs` uses for directories: a leaf
+    has no subtree (every leaf serializes to "{}"), so without this five unrelated files
+    would form one run and collapse behind an empty-stemmed sentinel.
+    """
+    return tuple(None if tok.isdigit() else tok for tok in re.findall(r"\d+|\D+", name))
+
+
+def _index_template(names: list[str]) -> tuple[str, str] | None:
+    """`(template, spans)` for a run whose names differ ONLY at integer indices, else None.
+
+    Returned as a PAIR rather than one string so the caller places the span clause. It sits
+    OUTSIDE the braces: the user ruled on 2026-08-17 that a trailing count reads as a
+    quantity applied to the placeholder while a nested one reads as part of the parameter's
+    NAME, and a range clause is equally not part of the template.
+
+    Parameterises only digit positions that actually VARY. A position that is a digit run
+    but identical across the run (`epsg4326_tile_0.tif`, `..._1`, `..._2`) is kept literal --
+    rendering it as `{i1}` would tell the reader that position varies, which is a false
+    claim in user-facing text.
+
+    Each varying position also reports its span. Values are DEDUPLICATED before the
+    contiguity test: a two-index sweep repeats each outer index once per inner value, so
+    testing the raw list would mark every contiguous run as gappy. The `(n of m)` qualifier
+    therefore appears only where an index genuinely skips -- which is the audit fact the
+    expanded listing showed and a bare sentinel would hide.
+
+    KNOWN LIMIT: variance is tested on token STRINGS while the span is computed on
+    `int()`, so distinct-width spellings of one integer ('01', '1', '001') read as
+    varying yet collapse to a single-value span. Self-announcing rather than silently
+    wrong -- the label shows `x 3` beside `i = 1...1` -- and unreachable from this
+    project's writer, so it is recorded rather than designed around.
+    """
+    if len(names) < 2 or len({_name_skeleton(n) for n in names}) != 1:
+        return None
+    toks = [re.findall(r"\d+|\D+", n) for n in names]
+    varying = [i for i in range(len(toks[0])) if len({t[i] for t in toks}) > 1]
+    if not varying or not all(all(t[i].isdigit() for t in toks) for i in varying):
+        return None
+    out = list(toks[0])
+    spans = []
+    for k, i in enumerate(varying):
+        nm = "i" if len(varying) == 1 else f"i{k + 1}"
+        out[i] = f"{{{nm}}}"
+        vals = sorted({int(t[i]) for t in toks})
+        gap = "" if vals == list(range(vals[0], vals[-1] + 1)) else f" ({len(vals)} of {vals[-1] - vals[0] + 1})"
+        spans.append(f"{nm} = {vals[0]}…{vals[-1]}{gap}")
+    return "".join(out), ", ".join(spans)
+
+
 def _sentinel_label(names: list[str]) -> str:
     """`{stem…} × N` -- the parameterised stand-in for a run of N identical siblings.
 
@@ -824,6 +894,10 @@ def _sentinel_label(names: list[str]) -> str:
     of the parameter's NAME; a trailing multiplier reads as a quantity applied to the
     placeholder, which is what it is. The user ruled for this form on 2026-08-17.
     """
+    indexed = _index_template(names)
+    if indexed is not None:
+        tmpl, spans = indexed
+        return f"{{{tmpl}}} × {len(names)}, {spans}"
     stem = _common_prefix(names)
     return f"{{{stem}…}} × {len(names)}" if stem else f"{{…}} × {len(names)}"
 
@@ -847,7 +921,11 @@ def _sibling_runs(node: dict) -> list[tuple[list[str], dict]]:
     runs: list[tuple[list[str], dict]] = []
     last_sig: str | None = None
     for name, child in sorted(node.items()):
-        sig = json.dumps(child, sort_keys=True)
+        # A directory run is grouped by its SUBTREE; a leaf run has no subtree to compare
+        # (every leaf serializes to "{}"), so it is grouped by its NAME SKELETON. `child`
+        # used to do both jobs; lifting the leaf refusal removes the second one, and
+        # without this replacement five unrelated files form one run above threshold.
+        sig = json.dumps(child, sort_keys=True) if child else repr(_name_skeleton(name))
         if runs and sig == last_sig:
             runs[-1][0].append(name)
         else:
@@ -902,7 +980,7 @@ def _path_tree_html(paths: list[str]) -> str:
             # non-empty) and enough members to pay for the extra sentinel line. A run of
             # leaves has no subtree, so collapsing it would replace N names with a
             # sentinel and nothing beneath -- pure information loss.
-            if child and len(names) >= _TREE_SENTINEL_MIN_SIBLINGS:
+            if len(names) >= _TREE_SENTINEL_MIN_SIBLINGS:
                 label = _sentinel_label(names)
                 collapsed.append((label, names))
                 lines.append(f"{prefix}{'└── ' if last else '├── '}{_esc(label)}")
@@ -926,8 +1004,9 @@ def _path_tree_html(paths: list[str]) -> str:
     total = sum(len(names) for _, names in collapsed)
     return (
         tree_html + f"<details><summary class='note'>Collapsed runs — show the {_esc(total)} member name(s)"
-        "</summary><p class='note'>Membership is decided by comparing each sibling's subtree, "
-        "never inferred from its name. " + members + "</p></details>"
+        "</summary><p class='note'>Membership is always decided, never assumed: by comparing "
+        "each sibling's stored contents where there are any, and otherwise by the name's "
+        "shape — identical but for one or more integer indices. " + members + "</p></details>"
     )
 
 
@@ -3202,8 +3281,9 @@ def _read_scenario_status(analysis_dir: Path) -> tuple[dict[tuple[str, str, str]
     except OSError:
         return ({}, None)
     out: dict[tuple[str, str, str], dict[str, str]] = {}
+    identity_column = resolve_member_id_column(csv.DictReader(io.StringIO(text)).fieldnames or [])
     for record in csv.DictReader(io.StringIO(text)):
-        member_id = (record.get("sa_id") or "").strip()
+        member_id = member_id_from(record, identity_column)
         model_type = (record.get("model_type") or "").strip()
         iloc = (record.get("event_iloc") or "").strip()
         slug = os.path.basename((record.get("scenario_directory") or "").rstrip("/\\"))

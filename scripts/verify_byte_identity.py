@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Byte-identity verification for a compute-config sensitivity master (D5 ground truth).
 
 Compares each member's FLAT per-scenario summaries (max_wlevel_m over (y,x);

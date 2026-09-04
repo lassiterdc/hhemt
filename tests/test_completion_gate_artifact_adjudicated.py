@@ -93,9 +93,7 @@ def _gate(tmp_path, *, recorded, rpt: Path | None, model_type="swmm", marker_tex
     """Drive the REAL `_coupled_swmm_report_finalized` -- deliberately NOT stubbed."""
     log_file = tmp_path / f"model_{model_type}.log"
     log_file.write_text(marker_text)
-    fake_log = types.SimpleNamespace(
-        simulation_completed=types.SimpleNamespace(get=lambda: recorded)
-    )
+    fake_log = types.SimpleNamespace(simulation_completed=types.SimpleNamespace(get=lambda: recorded))
     fake_self = types.SimpleNamespace(
         _scenario=types.SimpleNamespace(
             get_log=lambda mt: fake_log,
@@ -103,9 +101,7 @@ def _gate(tmp_path, *, recorded, rpt: Path | None, model_type="swmm", marker_tex
         ),
         _analysis_level_model_logfile=lambda mt: log_file,
     )
-    fake_self._coupled_swmm_report_finalized = (
-        lambda mt: TRITONSWMM_run._coupled_swmm_report_finalized(fake_self, mt)
-    )
+    fake_self._coupled_swmm_report_finalized = lambda mt: TRITONSWMM_run._coupled_swmm_report_finalized(fake_self, mt)
     return TRITONSWMM_run.model_run_completed(fake_self, model_type)
 
 

@@ -74,4 +74,4 @@ def test_known_key_does_not_raise():
     """A key present in the resolved set's renderer_selection validates cleanly."""
     cfg = report_config(disabled_renderers=["per_sim"])  # per_sim is in the default set
     name = validate_active_reporting_set(cfg, is_sensitivity=False, sensitivity_csv_path=None)
-    assert name == "default"
+    assert name.name == "default"

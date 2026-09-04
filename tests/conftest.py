@@ -412,7 +412,7 @@ def synth_sensitivity_mixed_prefixed_columns():
 
 # ========== Builder completion markers (fixture-owned, provenance-stamped) ==========
 # A tree's builder owns the claim that the tree is DONE. The toolkit's own workflow flags
-# (`e_consolidate_complete.flag`, `f_consolidate_master_complete.flag`) attest that a
+# (`e_consolidate_complete.flag`, `f_consolidate_experiment_complete.flag`) attest that a
 # workflow STAGE ran; they do not attest that the artifacts these fixtures' consumers
 # require are present, and gating on them let an incomplete tree be re-read indefinitely.
 # Measured 2026-08-23: `synth_sensitivity` carried no `sensitivity_datatree.zarr` for 13
@@ -599,7 +599,7 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     Used by Phase 3 sensitivity-reprocess tests. Session-scoped: the first
     invocation in a pytest session runs the synth sensitivity master through
     ``sensitivity.submit_workflow(mode="local")`` if the analysis is not
-    already at the ``f_consolidate_master_complete.flag`` state; subsequent
+    already at the ``f_consolidate_experiment_complete.flag`` state; subsequent
     invocations reuse the materialized analysis from the test-case cache.
 
     Returns the ``TRITONSWMM_sensitivity_analysis`` object (master analysis
@@ -638,10 +638,10 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
             (sub_root / "log").mkdir(parents=True, exist_ok=True)
 
     # Ensure the master analysis is in a "post-master-consolidate" state. If
-    # ``f_consolidate_master_complete.flag`` is absent, run the master
+    # ``f_consolidate_experiment_complete.flag`` is absent, run the master
     # sensitivity workflow once locally to materialize per-member flags + the
     # master flag + the sensitivity_datatree.zarr.
-    payload = ("sensitivity_datatree.zarr", "_status/f_consolidate_master_complete.flag")
+    payload = ("sensitivity_datatree.zarr", "_status/f_consolidate_experiment_complete.flag")
     state = _marker_state(analysis_dir, payload)
     if state == "unsatisfied":
         _warn_unsatisfied(analysis_dir, payload, "synthetic_sensitivity_completed")

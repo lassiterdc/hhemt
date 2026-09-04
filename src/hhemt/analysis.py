@@ -2436,7 +2436,7 @@ class TRITONSWMM_analysis:
         )
         from .exceptions import ConfigurationError
         from .orchestration import WorkflowResult, translate_mode, translate_phases
-        from .report_renderers._reporting_sets import get_reporting_set, renderer_active
+        from .report_renderers._reporting_sets import renderer_active
 
         # _test/ deletion offer (R9): if a leftover smoke-test subtree from a
         # prior analysis.test() exists, offer to delete it before the real run.
@@ -2500,14 +2500,16 @@ class TRITONSWMM_analysis:
             _varied_axes = frozenset(self.sensitivity.analysis_independent_vars) | frozenset(
                 self.sensitivity.system_independent_vars
             )
-        _resolved_set_name = validate_active_reporting_set(
+        self._active_reporting_set = validate_active_reporting_set(
             cfg_report,
             is_sensitivity=self.cfg_analysis.toggle_sensitivity_analysis,
             sensitivity_csv_path=member_csv,
             varied_axes=_varied_axes,
         )
-        self._active_reporting_set_name = _resolved_set_name
-        self._active_reporting_set = get_reporting_set(_resolved_set_name)
+        # Display name only. The write-only _active_reporting_set_name attribute is
+        # gone (zero readers in src/ and tests/); this local is what the
+        # static_backend='matplotlib' message below interpolates.
+        _resolved_set_name = self._active_reporting_set.name
         self._cfg_report = cfg_report
         # The composite per-scenario page is plotly-only by construction: it
         # composes the `go.Figure` builder seams, which exist only on each
@@ -3238,41 +3240,15 @@ class TRITONSWMM_analysis:
         # Navbar upper-left brand text: brand_theme.upper_left_text (ADR-7),
         # defaulting to analysis_id when None (D-6). _theme is resolved above.
         _navbar = _theme.upper_left_text or self.cfg_analysis.analysis_id
-        # Resolve the active set's category_order. render_report() is dominantly
-        # invoked from render_report_runner.main() on a FRESH analysis that never
-        # called run() (see the _brand_theme getattr-fallback above for the
-        # identical hazard), so self._active_reporting_set may not exist. getattr-
-        # fallback to a config-only resolution (no CSV cross-validation at render
-        # time) mirroring the _theme fallback above. Never let the bare attribute
-        # AttributeError be swallowed by the surrounding `except Exception: pass`.
-        _active_set = getattr(self, "_active_reporting_set", None)
-        if _active_set is None:
-            # render-without-run() fallback. Fail SOFT (SE F-I-3): the render path
-            # bypasses validate_active_reporting_set, so a stale/unknown
-            # reporting_set would raise here and surface as an opaque Snakemake
-            # rule failure. Degrade to the historical "default" sidebar order + a
-            # one-line warning instead of crashing the render rule.
-            import logging
+        # Resolve the active set's category_order. The block that used to live here was
+        # byte-identical to the one in sensitivity_analysis.py, and it is extracted so
+        # the S19 narrowing is one repair rather than two copies that must be proven to
+        # still agree. The shared helper lives outside both twins because they already
+        # form an import cycle (sensitivity_analysis imports hhemt.analysis at module
+        # level and analysis imports TRITONSWMM_sensitivity_analysis back).
+        from .render_category_order import resolve_render_path_category_order
 
-            from .config.report import resolve_active_reporting_set_name
-            from .report_renderers._reporting_sets import get_reporting_set
-
-            try:
-                _cfg_report = getattr(self, "_cfg_report", None)
-                if _cfg_report is None:
-                    _cfg_report = self.cfg_analysis.report
-                _set_name = resolve_active_reporting_set_name(
-                    _cfg_report,
-                    is_sensitivity=self.cfg_analysis.toggle_sensitivity_analysis,
-                )
-                _active_set = get_reporting_set(_set_name)
-            except Exception as _e:
-                logging.getLogger(__name__).warning(
-                    "render-path reporting_set resolution failed (%s); falling back to 'default' category order",
-                    _e,
-                )
-                _active_set = get_reporting_set("default")
-        _category_order = list(_active_set.category_order)
+        _category_order = resolve_render_path_category_order(self)
         # S4: resolve member_id card names to derived compute-config labels. Threaded to
         # BOTH branches -- the html and the zip carry the same card names, and
         # resolving one alone would ship a divergence between two delivered artifacts.
@@ -3991,7 +3967,7 @@ class TRITONSWMM_analysis:
         # that consumes from `analysis_dir/sims/`, which for sensitivity layouts does
         # not exist — sims live under `members/member_*/sims/`. The sensitivity-master
         # generator (SensitivityAnalysisWorkflowBuilder.generate_reprocess_master_snakefile_content)
-        # emits per-member consolidate rules + a master_consolidation rule that consume
+        # emits per-member consolidate rules + a experiment_consolidation rule that consume
         # from the correct paths. Pattern mirrors analysis.py:683-801 property
         # dispatches and the bundle CLI dispatch at cli.py:1026.
         if self.cfg_analysis.toggle_sensitivity_analysis:
@@ -5492,8 +5468,13 @@ class TRITONSWMM_analysis:
         pd.DataFrame
             DataFrame with columns in canonical order.
         """
+        # `member_id` is the post-rename identity column the sensitivity master emits
+        # (sensitivity_analysis.py sets it FIRST). Naming the retired "sa_id" here did
+        # not DROP it -- non-canonical columns are appended -- but it demoted the most
+        # important identity column on a sensitivity run into the dynamic block, so
+        # scenario_status.csv stopped leading with it.
         fixed_identity = [
-            "sa_id",
+            "member_id",
             "sub_analysis_iloc",
             "event_iloc",
             "model_type",

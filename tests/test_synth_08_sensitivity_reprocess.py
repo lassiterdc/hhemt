@@ -8,7 +8,7 @@ flag) without re-running any simulation rule.
 
 The session-scoped ``synthetic_sensitivity_completed`` fixture
 (``tests/conftest.py``) runs the synth sensitivity master once per pytest
-session to the ``f_consolidate_master_complete.flag`` state; these tests
+session to the ``f_consolidate_experiment_complete.flag`` state; these tests
 consume the per-test ``synthetic_sensitivity_completed_isolated`` copy-on-read
 wrapper (D1) so the reprocess mutation lands on a ``tmp_path`` clone, then
 assert the master datatree zarr's mtime advances.
@@ -96,7 +96,7 @@ def test_sensitivity_reprocess_consolidate_subset_member_ids(synthetic_sensitivi
     The invalidation step only deletes the named per-member consolidate flags; the
     master consolidate flag is invalidated regardless. After reprocess, both the
     subset's per-member flags and the master flag must be re-created (success exit
-    proves Snakemake completed the consolidate + master_consolidation chain).
+    proves Snakemake completed the consolidate + experiment_consolidation chain).
     """
     member = synthetic_sensitivity_completed_isolated
     status_dir = member.experiment.analysis_paths.analysis_dir / "_status"
@@ -110,7 +110,7 @@ def test_sensitivity_reprocess_consolidate_subset_member_ids(synthetic_sensitivi
     )
     assert result["success"], f"reprocess(subset) failed: {result.get('message')!r}"
     # Master flag re-created after reprocess.
-    assert (status_dir / "f_consolidate_master_complete.flag").exists()
+    assert (status_dir / "f_consolidate_experiment_complete.flag").exists()
     # Every per-member flag exists post-reprocess (the subset ones re-created, the
     # others were never invalidated).
     for sid in all_member_ids:
@@ -238,7 +238,7 @@ def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed_isol
     """FIX 1 end-to-end: sensitivity ``reprocess(start_with='process',
     regenerate_existing=True)`` re-fires the per-member ``process_*`` rebuild rules
     AND clears the per-model processing log so the runner actually re-writes the
-    per-scenario summaries — then the consolidate + master_consolidation chain
+    per-scenario summaries — then the consolidate + experiment_consolidation chain
     rebuilds ``sensitivity_datatree.zarr`` against the freshly-written summaries
     (no ``FileNotFoundError``).
 

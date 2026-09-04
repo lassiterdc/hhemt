@@ -495,7 +495,7 @@ def read_rows(analysis_dir: Path) -> list[dict[str, str]]:
         row: dict[str, str] = {}
         for col in ds.data_vars:
             value = ds[col].values[i]
-            if isinstance(value, (float, np.floating)):
+            if isinstance(value, float | np.floating):
                 # NOT `%g`: it renders to 6 significant digits, so a value that survived
                 # storage as float64 is narrowed on the way out. `format_float_positional`
                 # with `trim='-'` round-trips an integral float as its integer spelling and

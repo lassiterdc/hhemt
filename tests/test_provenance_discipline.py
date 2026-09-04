@@ -29,54 +29,58 @@ import pytest
 # Excluded: text-annotation methods (annotate, text, set_title, ...), colorbar,
 # layout setters. The list is the enforcement surface; adding a method here
 # expands the lint without code change.
-_ARTIST_METHODS: frozenset[str] = frozenset({
-    "plot",
-    "scatter",
-    "imshow",
-    "add_collection",
-    "add_patch",
-    "fill_between",
-    "fill_betweenx",
-    "contour",
-    "contourf",
-    "quiver",
-    "streamplot",
-    "bar",
-    "barh",
-    "step",
-    "stem",
-    "hexbin",
-    "pcolor",
-    "pcolormesh",
-    "matshow",
-    "errorbar",
-    "tricontour",
-    "tricontourf",
-    "tripcolor",
-})
+_ARTIST_METHODS: frozenset[str] = frozenset(
+    {
+        "plot",
+        "scatter",
+        "imshow",
+        "add_collection",
+        "add_patch",
+        "fill_between",
+        "fill_betweenx",
+        "contour",
+        "contourf",
+        "quiver",
+        "streamplot",
+        "bar",
+        "barh",
+        "step",
+        "stem",
+        "hexbin",
+        "pcolor",
+        "pcolormesh",
+        "matshow",
+        "errorbar",
+        "tricontour",
+        "tricontourf",
+        "tripcolor",
+    }
+)
 
 
 # Plotly trace classes (constructor names from `plotly.graph_objects`).
 # Curated; extend as new trace types appear in renderer bodies. Phase 1
 # substrate; Phases 2-5 add Plotly-using renderers that exercise this check.
-_PLOTLY_TRACE_CLASSES: frozenset[str] = frozenset({
-    "Heatmap",
-    "Scatter",
-    "Scattergl",
-    "Scattergeo",
-    "Scattermapbox",
-    "Bar",
-    "Box",
-    "Histogram",
-    "Histogram2d",
-    "Contour",
-    "Surface",
-    "Violin",
-    "Pie",
-    "Choropleth",
-    "Densitymapbox",
-    "Image",
-})
+_PLOTLY_TRACE_CLASSES: frozenset[str] = frozenset(
+    {
+        "Heatmap",
+        "Scatter",
+        "Scattergl",
+        "Scattergeo",
+        "Scattermapbox",
+        "Bar",
+        "Box",
+        "Histogram",
+        "Histogram2d",
+        "Contour",
+        "Surface",
+        "Violin",
+        "Pie",
+        "Choropleth",
+        "Densitymapbox",
+        "Image",
+    }
+)
 
 
 # go-import alias guard: every Plotly-using renderer must import as
@@ -87,17 +91,11 @@ _PLOTLY_TRACE_CLASSES: frozenset[str] = frozenset({
 _REQUIRED_GO_IMPORT_ALIAS = "go"
 
 
-_RENDERERS_DIR = (
-    Path(__file__).resolve().parents[1]
-    / "src" / "hhemt" / "report_renderers"
-)
+_RENDERERS_DIR = Path(__file__).resolve().parents[1] / "src" / "hhemt" / "report_renderers"
 
 
 def _renderer_files() -> list[Path]:
-    return sorted(
-        p for p in _RENDERERS_DIR.glob("*.py")
-        if not p.stem.startswith("_")
-    )
+    return sorted(p for p in _RENDERERS_DIR.glob("*.py") if not p.stem.startswith("_"))
 
 
 def _attach_parents(tree: ast.AST) -> None:
@@ -108,10 +106,7 @@ def _attach_parents(tree: ast.AST) -> None:
 
 def _is_artist_context_call(call: ast.Call) -> bool:
     """True if `call` looks like `<expr>.artist(...)`."""
-    return (
-        isinstance(call.func, ast.Attribute)
-        and call.func.attr == "artist"
-    )
+    return isinstance(call.func, ast.Attribute) and call.func.attr == "artist"
 
 
 def _is_plotly_trace_call(call: ast.Call) -> bool:
@@ -191,10 +186,7 @@ def _lint_source(src: str, filename: str = "<synthetic>") -> list[str]:
         if not isinstance(node, ast.Call):
             continue
         # matplotlib branch: <expr>.<artist_method>(...)
-        if (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr in _ARTIST_METHODS
-        ):
+        if isinstance(node.func, ast.Attribute) and node.func.attr in _ARTIST_METHODS:
             if not _has_artist_with_ancestor(node):
                 violations.append(
                     f"{filename}:{node.lineno}: "
@@ -220,9 +212,7 @@ def test_artist_calls_enclosed_in_provenance_block(path: Path) -> None:
     violations = _lint_source(source, filename=path.name)
     if violations:
         msg = "\n".join(violations)
-        raise AssertionError(
-            f"Provenance discipline violations in {path.name}:\n{msg}"
-        )
+        raise AssertionError(f"Provenance discipline violations in {path.name}:\n{msg}")
 
 
 # Renderers that create ZERO artists locally and therefore cannot satisfy the
@@ -281,24 +271,16 @@ def _binds_provenance_log(tree: ast.AST) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
             func = node.value.func
-            ctor = (
-                func.id if isinstance(func, ast.Name)
-                else func.attr if isinstance(func, ast.Attribute)
-                else None
-            )
+            ctor = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
             if ctor == "ProvenanceLog":
-                names.update(
-                    t.id for t in node.targets if isinstance(t, ast.Name)
-                )
+                names.update(t.id for t in node.targets if isinstance(t, ast.Name))
     return names
 
 
 def _threads_provenance_kwarg(tree: ast.AST, names: set[str]) -> bool:
     """True if some call receives `provenance=<one of names>`."""
     return any(
-        kw.arg == "provenance"
-        and isinstance(kw.value, ast.Name)
-        and kw.value.id in names
+        kw.arg == "provenance" and isinstance(kw.value, ast.Name) and kw.value.id in names
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         for kw in node.keywords
@@ -343,10 +325,7 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
             for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and (
-                (
-                    isinstance(node.func, ast.Attribute)
-                    and node.func.attr in _ARTIST_METHODS
-                )
+                (isinstance(node.func, ast.Attribute) and node.func.attr in _ARTIST_METHODS)
                 or _is_plotly_trace_call(node)
             )
         ]
@@ -386,8 +365,7 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
             )
         else:  # pragma: no cover -- guarded by the mapping's own vocabulary
             raise AssertionError(
-                f"{path.name}: unknown exemption kind {kind!r}; expected one of "
-                f"{{'pure_delegate', 'composer'}}."
+                f"{path.name}: unknown exemption kind {kind!r}; expected one of " f"{{'pure_delegate', 'composer'}}."
             )
         return
 
@@ -418,7 +396,7 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
 def test_plotly_trace_in_provenance_block_compliant() -> None:
     """Lint must accept ``go.Heatmap(...)`` wrapped in
     ``with prov.artist(...):``."""
-    src = textwrap.dedent('''
+    src = textwrap.dedent("""
         import plotly.graph_objects as go
 
         def render(analysis, report_cfg, output_path, **kwargs):
@@ -427,7 +405,7 @@ def test_plotly_trace_in_provenance_block_compliant() -> None:
             with prov.artist("depth_raster"):
                 fig.add_trace(go.Heatmap(z=[[1, 2], [3, 4]]))
             return fig
-    ''')
+    """)
     violations = _lint_source(src)
     assert violations == [], f"Expected zero violations, got {violations}"
 
@@ -435,18 +413,16 @@ def test_plotly_trace_in_provenance_block_compliant() -> None:
 def test_plotly_trace_outside_provenance_block_rejected() -> None:
     """Lint must reject ``go.Heatmap(...)`` outside any
     ``with prov.artist(...):`` block."""
-    src = textwrap.dedent('''
+    src = textwrap.dedent("""
         import plotly.graph_objects as go
 
         def render(analysis, report_cfg, output_path, **kwargs):
             fig = go.Figure()
             fig.add_trace(go.Heatmap(z=[[1, 2], [3, 4]]))
             return fig
-    ''')
+    """)
     violations = _lint_source(src)
-    assert any(
-        "Heatmap" in v for v in violations
-    ), f"Expected violation for unprotected go.Heatmap; got {violations}"
+    assert any("Heatmap" in v for v in violations), f"Expected violation for unprotected go.Heatmap; got {violations}"
 
 
 def test_plotly_alias_rebind_rejected() -> None:
@@ -454,7 +430,7 @@ def test_plotly_alias_rebind_rejected() -> None:
     renderer modules — alias rebinds bypass the ``go.<TraceClass>`` matcher
     in :func:`_is_plotly_trace_call`. Parallel to the matplotlib-side
     alias-rebind guard the existing module documents (per its docstring)."""
-    src = textwrap.dedent('''
+    src = textwrap.dedent("""
         import plotly.graph_objects as go_alias
 
         def render(analysis, report_cfg, output_path, **kwargs):
@@ -462,7 +438,7 @@ def test_plotly_alias_rebind_rejected() -> None:
             with prov.artist("depth_raster"):
                 fig.add_trace(go_alias.Heatmap(z=[[1, 2], [3, 4]]))
             return fig
-    ''')
+    """)
     violations = _lint_source(src)
     assert any(
         "alias" in v.lower() or "go_alias" in v for v in violations
@@ -483,11 +459,7 @@ def _emit_call_source_paths_arg(tree: ast.AST) -> list[ast.AST]:
     """
     args: list[ast.AST] = []
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "emit_plot_with_sources"
-        ):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "emit_plot_with_sources":
             kw = {k.arg: k.value for k in node.keywords}
             if "source_paths" in kw:
                 args.append(kw["source_paths"])
@@ -504,9 +476,7 @@ def test_renderer_declares_nonliteral_empty_sources(path: Path) -> None:
     gate (Gate-A in _figure_emission), not here."""
     tree = ast.parse(path.read_text(), filename=str(path))
     for arg in _emit_call_source_paths_arg(tree):
-        is_empty_literal = (
-            isinstance(arg, (ast.List, ast.Tuple)) and len(arg.elts) == 0
-        )
+        is_empty_literal = isinstance(arg, ast.List | ast.Tuple) and len(arg.elts) == 0
         assert not is_empty_literal, (
             f"{path.name}: emit_plot_with_sources called with a literal "
             f"empty source_paths. Pass real sources or, for a genuinely "
