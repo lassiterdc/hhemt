@@ -150,6 +150,16 @@ select = [
     "UP",  # pyupgrade
 ]
 
+# UP038 (non-pep604-isinstance) asks for `isinstance(x, A | B)` over `isinstance(x, (A, B))`.
+# Ruff REMOVED the rule upstream: the PEP 604 form in `isinstance` is not recommended practice,
+# it wrongly implies other typing syntaxes work there, and it is slightly slower at runtime.
+# The pinned `ruff-pre-commit` rev still carries it, so the commit hook and `just qa` disagree.
+# DELETE THIS IGNORE when that pin is raised past the rule's removal -- it exists only to make
+# the two rulers agree, and a pin that no longer has the rule makes it dead configuration.
+ignore = [
+    "UP038",
+]
+
 [tool.ruff.lint.per-file-ignores]
 # Typer declares CLI params as `name: type = typer.Option(...)` / `typer.Argument(...)`,
 # i.e. a function call in the parameter default — the idiomatic Typer API. B008
