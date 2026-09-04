@@ -926,17 +926,20 @@ class report_config(cfgBaseModel):
             "main analyses. Cross-field validation occurs at analysis.run() entry."
         ),
     )
-    reporting_set: str = Field(
-        "default",
+    reporting_set: str | list[str] | None = Field(
+        ["default"],
+        validate_default=True,
         description=(
-            "ADR-5/ADR-7 layer-3 active reporting-set selector. Names an entry in "
-            "the ReportingSet registry (report_renderers/_reporting_sets.py). The "
-            "sentinel 'default' resolves at analysis.run() entry to 'benchmarking' "
-            "when toggle_sensitivity_analysis is True, else to the standard set. "
-            "Validated against the registry at run-entry (NOT at field-construction "
-            "time — that would create a config.report -> report_renderers import "
-            "cycle). A future named set is selected by writing its registered name "
-            "here, with no code edit (TO-8)."
+            "ADR-5/ADR-7 layer-3 active reporting-set selector. Names one or more "
+            "entries in the ReportingSet registry (report_renderers/_reporting_sets.py); "
+            "a bare string is normalized to a one-element list (S19), and an empty "
+            "list means the field is absent and takes the sentinel path (D72). The sentinel "
+            "'default' resolves at analysis.run() entry to 'benchmarking' when "
+            "toggle_sensitivity_analysis is True, else to the standard set, and cannot "
+            "be named alongside another set. Validated against the registry at "
+            "run-entry (NOT at field-construction time — that would create a "
+            "config.report -> report_renderers import cycle). A future named set is "
+            "selected by writing its registered name here, with no code edit (TO-8)."
         ),
     )
     disabled_renderers: list[str] = Field(
@@ -949,6 +952,52 @@ class report_config(cfgBaseModel):
         ),
     )
     interactive: InteractiveBackendConfig = Field(default_factory=InteractiveBackendConfig)
+
+    @field_validator("reporting_set", mode="before")
+    @classmethod
+    def _normalize_reporting_set_value(cls, v):
+        """Normalize the selection to a non-empty list of distinct set names.
+
+        mode="before" is load-bearing, not incidental. At mode="after" this body
+        would run on the value the ANNOTATION already coerced, so b"" would arrive
+        as "" and set() as [], and both would be swallowed by the absent arm --
+        turning D72's four-form ruling into a six-form behaviour with nothing in
+        the diff saying so. Running before the annotation also means a scalar is
+        refused by the guard below with one field-named message rather than by the
+        union with one opaque error per member.
+
+        SHAPE only; every registry question stays at run entry, because a
+        field-time reach into REPORTING_SETS creates the cycle
+        config.report -> report_renderers._reporting_sets -> config.report.
+        A bare string is the common spelling and stays valid permanently.
+        Order is load-bearing: first-appearance order determines renderer merge
+        order, so this must never normalize through a set.
+
+        D72: None, "", [] and () are four ways of writing "no selection was made",
+        and each stores the default. They are matched by MEMBERSHIP against
+        ABSENT_REPORTING_SET_FORMS, never by truthiness -- `not v` would also
+        swallow 0, False, b"" and set(), each of which is a type error the config
+        author needs to see. This is the config-object half of the decision; the
+        raw-dict half is rule 1 of resolve_reporting_set_names, which the bundle
+        callers reach without a model. Both call the same predicate, so widening
+        what counts as ABSENT is a one-site edit. The duplicate-member and
+        member-type arms stand; the isinstance(name, str) guard downstream was
+        never about emptiness.
+        """
+        if _is_absent_reporting_set(v):
+            return ["default"]
+        if isinstance(v, str):
+            return [v]
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("reporting_set must be a set name or a list of set names")
+        v = list(v)
+        non_strings = [m for m in v if not isinstance(m, str)]
+        if non_strings:
+            raise ValueError(f"reporting_set members must be strings; got {non_strings!r}")
+        repeated = sorted({m for m in v if v.count(m) > 1})
+        if repeated:  # a duplicate doubles a contributor's templates into the merge
+            raise ValueError(f"reporting_set names the same set more than once: {repeated}")
+        return list(v)
 
 
 def validate_sensitivity_independent_vars(
@@ -1028,32 +1077,67 @@ def validate_sensitivity_independent_vars(
         )
 
 
-def resolve_reporting_set_name(
-    reporting_set: str | None,
+ABSENT_REPORTING_SET_FORMS: tuple[object, ...] = (None, "", [], ())
+"""The four spellings that mean "no reporting set was selected" (D72).
+
+Membership, NOT truthiness. `not value` additionally swallows 0, False, 0.0,
+b"", bytearray(), set(), frozenset() and {} -- ten values that are type errors
+the config author needs to see. Written as a tuple so a reviewer can diff it
+against the ruling text without reasoning about Python's truth table.
+"""
+
+
+def _is_absent_reporting_set(value: object) -> bool:
+    """True for exactly the four D72 absent forms, and for nothing else."""
+    return value in ABSENT_REPORTING_SET_FORMS
+
+
+def resolve_reporting_set_names(
+    reporting_set: str | list[str] | tuple[str, ...] | None,
     *,
     is_sensitivity: bool,
-) -> str:
-    """Resolve a raw reporting-set NAME through the sentinel + registry rule.
+) -> tuple[str, ...]:
+    """Resolve a raw reporting-set selection into a tuple of registered NAMES.
 
     This is the single implementation of the resolution rule, taking the raw
-    name rather than a report_config so that BOTH config-object callers and
-    raw-dict callers share it. Two properties, and callers depend on both:
+    value rather than a report_config so that BOTH config-object callers and
+    raw-dict callers share it. The raw-dict callers matter more than they used
+    to: a bundle's cfg_analysis.yaml is dumped from the VALIDATED model, so
+    after the list widening those sites receive a LIST unconditionally and no
+    field validator has ever run on their input.
 
-    1. SENTINEL — "default" (and an absent/empty value) resolves to
-       "benchmarking" when is_sensitivity else "default" (the standard set).
-       A non-"default" value is taken verbatim.
-    2. VALIDATION — the resolved name is checked against the ReportingSet
-       registry and an unknown name raises a named ConfigurationError listing
-       the registered sets.
+    Five ordered rules, and the ORDER carries the semantics:
 
-    Property 2 is not optional decoration. `get_reporting_set` is a bare
+    1. RESOLVE AN ABSENT SELECTION. None, "", [] and () all mean "no selection
+       was made" (D72) and all resolve to ("default",). Matched by MEMBERSHIP
+       via _is_absent_reporting_set, never by truthiness: `not value` would also
+       swallow 0, False and b"", each of which must stay a type error at rule 2's
+       else-arm. This is the raw-dict half of the decision -- the bundle callers
+       pass _report.get("reporting_set"), which is None for an absent key and
+       never passes through a model. report_config's field validator is the
+       config-object half, and calls the same predicate.
+    2. NORMALIZE BY TYPE. A str becomes a one-tuple; a list or tuple becomes
+       tuple(value). A bare string is normalized to a one-element tuple, so a
+       single-set config resolves exactly as it does today and
+       compose_reporting_sets returns the registered object itself. Rule 1 has
+       already removed the empty sequences, so this arm cannot produce an empty
+       tuple and no emptiness guard is needed below it.
+    3. REJECT A DUPLICATE MEMBER, naming the repeated name.
+    4. FENCE THE SENTINEL. "default" resolves by analysis shape, so it has no
+       meaning as one member of a composition and is refused alongside others.
+    5. PER MEMBER, RESOLVE THEN VALIDATE. Expand "default" by is_sensitivity,
+       then check the member is a str AND a registry key. The isinstance guard
+       is the repair, not decoration: without it a non-str member reaches
+       dict.__contains__ and raises TypeError instead of a field-named error.
+
+    Registry validation is not optional decoration. `get_reporting_set` is a bare
     `REPORTING_SETS[name]` accessor whose docstring states it is for callers
     "which receive an already-validated name" — so a caller that performs the
     sentinel resolution WITHOUT this membership check turns a typo'd
     reporting_set into a bare `KeyError` at the lookup instead of a field-named
     ConfigurationError. That is exactly the divergence this helper exists to
-    prevent: the bundle-side harvest previously reimplemented property 1 inline
-    and silently dropped property 2.
+    prevent: the bundle-side harvest previously reimplemented the sentinel inline
+    and silently dropped the membership check.
 
     REPORTING_SETS is imported LAZILY so this module never imports
     report_renderers at module load — that would create the cycle
@@ -1063,32 +1147,78 @@ def resolve_reporting_set_name(
         REPORTING_SETS,
     )
 
-    requested = reporting_set or "default"
-    name = requested
-    if name == "default":
-        name = "benchmarking" if is_sensitivity else "default"
-    if name not in REPORTING_SETS:
+    # Rule 1.
+    if _is_absent_reporting_set(reporting_set):
+        requested: tuple[str, ...] = ("default",)
+    # Rule 2.
+    elif isinstance(reporting_set, str):
+        requested = (reporting_set,)
+    elif isinstance(reporting_set, (list, tuple)):
+        requested = tuple(reporting_set)
+    else:
         raise ConfigurationError(
             field="reporting_set",
             message=(
-                f"report.reporting_set='{requested}' resolves to "
-                f"unknown set '{name}'. Registered sets: {sorted(REPORTING_SETS)}."
+                "report.reporting_set must be a set name or a list of set names, got "
+                f"{type(reporting_set).__name__}. Registered sets: {sorted(REPORTING_SETS)}."
             ),
             config_path=None,
         )
-    return name
+    # Rule 3.
+    repeated = sorted({n for n in requested if requested.count(n) > 1})
+    if repeated:
+        raise ConfigurationError(
+            field="reporting_set",
+            message=(
+                f"report.reporting_set names the same set more than once: {repeated}. "
+                "Each set may appear at most once."
+            ),
+            config_path=None,
+        )
+    # Rule 4.
+    if len(requested) > 1 and "default" in requested:
+        raise ConfigurationError(
+            field="reporting_set",
+            message=(
+                "report.reporting_set lists 'default' alongside "
+                f"{sorted(n for n in requested if n != 'default')}. 'default' is a sentinel "
+                "that resolves to whichever set suits this analysis, so it cannot be one "
+                "member of a composition. Name the set you want instead."
+            ),
+            config_path=None,
+        )
+    # Rule 5.
+    resolved: list[str] = []
+    for raw in requested:
+        name = raw
+        if name == "default":
+            name = "benchmarking" if is_sensitivity else "default"
+        if not isinstance(name, str) or name not in REPORTING_SETS:
+            raise ConfigurationError(
+                field="reporting_set",
+                message=(
+                    f"report.reporting_set entry {raw!r} resolves to unknown set "
+                    f"{name!r}. Registered sets: {sorted(REPORTING_SETS)}."
+                ),
+                config_path=None,
+            )
+        resolved.append(name)
+    return tuple(resolved)
 
 
-def resolve_active_reporting_set_name(
+def resolve_active_reporting_set(
     cfg: report_config,
     *,
     is_sensitivity: bool,
-) -> str:
-    """Resolve the active reporting-set NAME, CSV-free (F-B-1).
+):
+    """Resolve the active ReportingSet OBJECT, CSV-free (F-B-1).
 
-    Thin config-object wrapper over resolve_reporting_set_name, which carries
-    the sentinel resolution and the registry validation. See that helper for
-    the rule itself.
+    Thin config-object wrapper over resolve_reporting_set_names (the sentinel
+    resolution and the registry validation) followed by compose_reporting_sets
+    (the template-level merge). Returns the composed ReportingSet, because a
+    composed set is not a registry key and a name cannot be round-tripped back
+    to an object. A one-name selection composes to the registered object
+    ITSELF, so a single-set config is unchanged at every consumer.
 
     This is the CSV-free resolver: it performs no sensitivity-CSV
     cross-validation, so it is safe to call from the render-without-run() path
@@ -1096,9 +1226,15 @@ def resolve_active_reporting_set_name(
     available. validate_active_reporting_set delegates name resolution here and
     layers the run-entry CSV cross-validation on top.
     """
-    return resolve_reporting_set_name(
-        cfg.reporting_set,
-        is_sensitivity=is_sensitivity,
+    from hhemt.report_renderers._reporting_sets import (  # lazy: cycle-break
+        compose_reporting_sets,
+    )
+
+    return compose_reporting_sets(
+        resolve_reporting_set_names(
+            cfg.reporting_set,
+            is_sensitivity=is_sensitivity,
+        )
     )
 
 
@@ -1108,93 +1244,110 @@ def validate_active_reporting_set(
     is_sensitivity: bool,
     sensitivity_csv_path: Path | None,
     varied_axes: frozenset[str] | None = None,
-) -> str:
+):
     """Resolve and validate the active reporting set at analysis.run() entry.
 
-    Delegates name resolution + registry validation to
-    resolve_active_reporting_set_name (CSV-free). For a set whose validator_key
-    is "benchmarking", layers the run-entry CSV cross-validation by delegating to
-    validate_sensitivity_independent_vars (ADR-5: benchmarking's validation IS
-    that function). Returns the resolved set name for the caller to thread to the
-    renderer CLI / surgery.
+    Delegates name resolution + registry validation to resolve_reporting_set_names
+    (CSV-free), checks each NAMED member for suitability, then composes. Returns
+    the composed ReportingSet: a composed set is not a registry key, so the caller
+    cannot round-trip a name back to an object.
+
+    Which check is PER MEMBER and which is COMPOSED:
+      * shape and required_axes are PER MEMBER, so the error names the set that
+        does not fit rather than the composition. Per-member agreement with the
+        analysis's single shape also IMPLIES member-to-member homogeneity, so
+        homogeneity is derived and is not a second check.
+      * disabled_renderers is COMPOSED. A builder_key carried by one member and
+        not another is valid for the selection as a whole, and a per-member check
+        would reject it.
+      * the "benchmarking" validator runs ONCE if ANY member declares it, because
+        validate_sensitivity_independent_vars is config-scoped and idempotent, so
+        running it per member would emit N identical errors for one defect.
     """
     from hhemt.report_renderers._reporting_sets import (  # lazy: cycle-break
         REPORTING_SETS,
+        compose_reporting_sets,
     )
 
-    name = resolve_active_reporting_set_name(cfg, is_sensitivity=is_sensitivity)
-    active = REPORTING_SETS[name]
+    names = resolve_reporting_set_names(cfg.reporting_set, is_sensitivity=is_sensitivity)
+    # S16 (D51): membership is not suitability. A set declares the analysis SHAPE it
+    # applies to and the sensitivity AXES its figures plot against; a set fitting
+    # neither is refused here, on the login node, before compute is committed.
+    # PER MEMBER, so the message names the set that does not fit.
+    _analysis_shape = "sensitivity" if is_sensitivity else "event_ensemble"
+    for name in names:
+        active = REPORTING_SETS[name]
+        if active.shape != _analysis_shape:
+            _fits = sorted(n for n, s in REPORTING_SETS.items() if s.shape == _analysis_shape)
+            if active.shape == "cross_experiment":
+                # Not selectable from an analysis config at all: the combine path reaches
+                # this set through hardcoded get_reporting_set("combined") literals, never
+                # through config resolution. Without this branch the message would name a
+                # "cross_experiment analysis", which is not a thing a user can create.
+                _why = "a set the `hhemt combine` verb selects for you, not one you set on an analysis"
+            elif active.shape == "sensitivity":
+                # The literal below is pinned by tests/test_config_validation.py's
+                # test_test_reference_report_scoping_passes_and_guard_intact, whose match=
+                # string bound validate_sensitivity_independent_vars before this check
+                # pre-empted it. Rewording this branch reds that test.
+                _why = "not a sensitivity analysis"
+            else:
+                _why = "not an event-ensemble analysis"
+            raise ConfigurationError(
+                field="reporting_set",
+                message=(
+                    f"report.reporting_set names '{name}', which declares shape "
+                    f"'{active.shape}', but this is {_why}. Sets that fit this analysis: {_fits}."
+                ),
+                config_path=None,
+            )
+        if active.required_axes:
+            if varied_axes is None:
+                raise ValueError(
+                    f"validate_active_reporting_set: reporting set '{name}' declares required_axes, "
+                    "so the caller must supply varied_axes. Passing None here would silently skip "
+                    "the compatibility check."
+                )
+            _unmet = [fam for fam in active.required_axes if not (set(fam) & varied_axes)]
+            if _unmet:
+                _fits = sorted(
+                    n
+                    for n, s in REPORTING_SETS.items()
+                    if s.shape == _analysis_shape and not [f for f in s.required_axes if not (set(f) & varied_axes)]
+                )
+                raise ConfigurationError(
+                    field="reporting_set",
+                    message=(
+                        f"report.reporting_set names '{name}', which plots against axes this sweep "
+                        f"does not vary. It requires at least one of each of "
+                        f"{[sorted(f) for f in _unmet]}; the sweep varies {sorted(varied_axes)}. "
+                        f"Sets that fit this sweep: {_fits}."
+                    ),
+                    config_path=None,
+                )
+    composed = compose_reporting_sets(names)
     # Phase 3: an unknown disabled_renderers key is a ConfigurationError at run()
     # entry, not a silent no-op. renderer_active() never matches a typo'd key to a
     # selection entry, so it would drop nothing; this run-entry check (the sanctioned
     # ReportingSet run-entry validation home, alongside the sensitivity cross-check
     # below) is what closes the silent-typo gap the field description promises.
-    known_builder_keys = {sel.builder_key for sel in active.renderer_selection}
+    # COMPOSED, not per member: a key one member carries and another does not is
+    # valid for the selection as a whole.
+    known_builder_keys = {sel.builder_key for sel in composed.renderer_selection}
     unknown = [k for k in cfg.disabled_renderers if k not in known_builder_keys]
     if unknown:
         raise ConfigurationError(
             field="disabled_renderers",
             message=(
                 f"report_config.disabled_renderers contains keys not present in the "
-                f"active reporting set '{name}': {unknown}. Valid builder_key values "
-                f"for this set: {sorted(known_builder_keys)}."
+                f"active reporting set '{composed.name}': {unknown}. Valid builder_key "
+                f"values for this set: {sorted(known_builder_keys)}."
             ),
             config_path=None,
         )
-    # S16 (D51): membership is not suitability. A set declares the analysis SHAPE it
-    # applies to and the sensitivity AXES its figures plot against; a set fitting
-    # neither is refused here, on the login node, before compute is committed.
-    _analysis_shape = "sensitivity" if is_sensitivity else "event_ensemble"
-    if active.shape != _analysis_shape:
-        _fits = sorted(n for n, s in REPORTING_SETS.items() if s.shape == _analysis_shape)
-        if active.shape == "cross_experiment":
-            # Not selectable from an analysis config at all: the combine path reaches
-            # this set through hardcoded get_reporting_set("combined") literals, never
-            # through config resolution. Without this branch the message would name a
-            # "cross_experiment analysis", which is not a thing a user can create.
-            _why = "a set the `hhemt combine` verb selects for you, not one you set on an analysis"
-        elif active.shape == "sensitivity":
-            # The literal below is pinned by tests/test_config_validation.py's
-            # test_test_reference_report_scoping_passes_and_guard_intact, whose match=
-            # string bound validate_sensitivity_independent_vars before this check
-            # pre-empted it. Rewording this branch reds that test.
-            _why = "not a sensitivity analysis"
-        else:
-            _why = "not an event-ensemble analysis"
-        raise ConfigurationError(
-            field="reporting_set",
-            message=(
-                f"report.reporting_set='{name}' declares shape '{active.shape}', but this is "
-                f"{_why}. Sets that fit this analysis: {_fits}."
-            ),
-            config_path=None,
-        )
-    if active.required_axes:
-        if varied_axes is None:
-            raise ValueError(
-                f"validate_active_reporting_set: reporting set '{name}' declares required_axes, "
-                "so the caller must supply varied_axes. Passing None here would silently skip "
-                "the compatibility check."
-            )
-        _unmet = [fam for fam in active.required_axes if not (set(fam) & varied_axes)]
-        if _unmet:
-            _fits = sorted(
-                n
-                for n, s in REPORTING_SETS.items()
-                if s.shape == _analysis_shape and not [f for f in s.required_axes if not (set(f) & varied_axes)]
-            )
-            raise ConfigurationError(
-                field="reporting_set",
-                message=(
-                    f"report.reporting_set='{name}' plots against axes this sweep does not vary. "
-                    f"It requires at least one of each of {[sorted(f) for f in _unmet]}; the sweep "
-                    f"varies {sorted(varied_axes)}. Sets that fit this sweep: {_fits}."
-                ),
-                config_path=None,
-            )
-    if active.validator_key == "benchmarking":
+    if composed.validator_key == "benchmarking":
         validate_sensitivity_independent_vars(cfg, sensitivity_csv_path)
-    return name
+    return composed
 
 
 DEFAULT_REPORT_CONFIG = report_config()

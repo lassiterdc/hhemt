@@ -1627,18 +1627,19 @@ def _enumerated_eda_templates(analysis: TRITONSWMM_analysis) -> tuple:
        default_factory), which is why it cannot carry the predicate alone.
     4. The builder key must not be in ``report_config.disabled_renderers``.
 
-    Set resolution goes through ``resolve_active_reporting_set_name``, the helper that
-    carries BOTH the sentinel rule and the registry membership check — never an inline
-    re-derivation of the sentinel branch, which is the exact shortcut
-    ``resolve_reporting_set_name``'s docstring records the bundle-side harvest taking.
+    Set resolution goes through ``resolve_active_reporting_set``, which carries BOTH
+    the sentinel rule and the registry membership check and then composes the named
+    sets — never an inline re-derivation of the sentinel branch. That shortcut drops
+    the membership check, turning a typo'd reporting_set into a bare ``KeyError`` at
+    the registry lookup instead of a field-named ``ConfigurationError``; the
+    bundle-side harvest took it once and it had to be repaired.
     The ``_active_reporting_set`` / ``_cfg_report`` fallback chain mirrors
     ``workflow.py::_resolve_active_reporting_set`` so validate-time and generate-time
     resolve the same set on a generate-without-run() tree.
     """
-    from hhemt.config.report import resolve_active_reporting_set_name
+    from hhemt.config.report import resolve_active_reporting_set
     from hhemt.report_renderers._reporting_sets import (
         eda_rule_spec_templates,
-        get_reporting_set,
         renderer_active,
     )
 
@@ -1652,7 +1653,7 @@ def _enumerated_eda_templates(analysis: TRITONSWMM_analysis) -> tuple:
     active = getattr(analysis, "_active_reporting_set", None)
     if active is None:
         try:
-            active = get_reporting_set(resolve_active_reporting_set_name(cfg_report, is_sensitivity=True))
+            active = resolve_active_reporting_set(cfg_report, is_sensitivity=True)
         except Exception:  # unresolvable/typo'd set -> run-entry validation owns the error
             return ()
     return tuple(eda_rule_spec_templates(active))

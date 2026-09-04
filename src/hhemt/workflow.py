@@ -913,17 +913,15 @@ class _ReportingSetDispatchMixin:
         active = getattr(analysis, "_active_reporting_set", None)
         if active is not None:
             return active
-        from hhemt.config.report import resolve_active_reporting_set_name
-        from hhemt.report_renderers._reporting_sets import get_reporting_set
+        from hhemt.config.report import resolve_active_reporting_set
 
         cfg_report = getattr(analysis, "_cfg_report", None)
         if cfg_report is None:
             cfg_report = analysis.cfg_analysis.report
-        name = resolve_active_reporting_set_name(
+        return resolve_active_reporting_set(
             cfg_report,
             is_sensitivity=analysis.cfg_analysis.toggle_sensitivity_analysis,
         )
-        return get_reporting_set(name)
 
     def _resolve_disabled_renderers(self, analysis) -> list[str]:
         """Resolve ``analysis``'s report_config.disabled_renderers (Phase 3).

@@ -253,7 +253,7 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
     # resolves to the standard set and passes validation.
     scoped = report_config.model_validate({**unscoped.model_dump(), "sensitivity": None, "reporting_set": "default"})
     resolved = validate_active_reporting_set(scoped, is_sensitivity=False, sensitivity_csv_path=None)
-    assert resolved == "default"
+    assert resolved.name == "default"
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +291,43 @@ def test_reporting_sets_registry_imports_cleanly():
 def test_reporting_set_field_defaults_to_default():
     from hhemt.config.report import report_config
 
-    assert report_config().reporting_set == "default"
+    # S19: the field_validator normalizes every value to a list; the sentinel
+    # string is the DEFAULT and normalizes like any other bare string.
+    assert report_config().reporting_set == ["default"]
+
+
+def test_reporting_set_field_normalizes_a_bare_string_to_a_list():
+    """The differently-positioned satisfying arm: coercion, not validation.
+
+    A pass-through 'fix' that only rejects bad lists satisfies every list arm and
+    fails here, which is why this arm and not a two-name list is the one that
+    discriminates.
+    """
+    from hhemt.config.report import report_config
+
+    assert report_config(reporting_set="benchmarking").reporting_set == ["benchmarking"]
+
+
+def test_reporting_set_field_preserves_member_order():
+    """The ORDER arm. First-appearance order determines renderer merge order, so a
+    normalization through sorted(set(...)) is wrong and is indistinguishable from a
+    correct one on every other arm in this file."""
+    from hhemt.config.report import report_config
+
+    IN_A = ["dem-resolution", "compute-sensitivity"]
+    IN_B = ["compute-sensitivity", "dem-resolution"]
+    a = report_config(reporting_set=IN_A).reporting_set
+    b = report_config(reporting_set=IN_B).reporting_set
+    assert a == IN_A
+    assert b == IN_B
+    # The two inputs are the same multiset in two different orders, so every
+    # order-insensitive normalization returns one list for both, and the two equality
+    # assertions above then catch it. Guarded here rather than asserted about the
+    # results, because an inequality between the results is entailed by those two
+    # assertions and cannot fail, while an edit to these two literals can silently
+    # make this test assert nothing.
+    assert sorted(IN_A) == sorted(IN_B)
+    assert IN_A != IN_B
 
 
 def test_legacy_mode_key_rewritten_with_deprecation_warning():
@@ -317,109 +353,233 @@ def test_legacy_mode_key_rewritten_with_deprecation_warning():
     assert not hasattr(cfg.sensitivity, "mode")
 
 
-def test_resolve_active_reporting_set_name_sentinel_resolution():
+def test_resolve_active_reporting_set_sentinel_resolution():
     """The 'default' sentinel resolves to 'benchmarking' for sensitivity
     analyses and to the standard 'default' set otherwise (CSV-free)."""
     from hhemt.config.report import (
         report_config,
-        resolve_active_reporting_set_name,
+        resolve_active_reporting_set,
     )
 
-    cfg = report_config()  # reporting_set == "default"
-    assert resolve_active_reporting_set_name(cfg, is_sensitivity=False) == "default"
-    assert resolve_active_reporting_set_name(cfg, is_sensitivity=True) == "benchmarking"
+    cfg = report_config()  # reporting_set == ["default"]
+    assert resolve_active_reporting_set(cfg, is_sensitivity=False).name == "default"
+    assert resolve_active_reporting_set(cfg, is_sensitivity=True).name == "benchmarking"
 
 
-def test_resolve_active_reporting_set_name_explicit_value_taken_verbatim():
+def test_resolve_active_reporting_set_explicit_value_taken_verbatim():
     from hhemt.config.report import (
         report_config,
-        resolve_active_reporting_set_name,
+        resolve_active_reporting_set,
     )
 
     cfg = report_config(reporting_set="benchmarking")
     # Explicit value is honored regardless of is_sensitivity.
-    assert resolve_active_reporting_set_name(cfg, is_sensitivity=False) == "benchmarking"
+    assert resolve_active_reporting_set(cfg, is_sensitivity=False).name == "benchmarking"
 
 
-def test_resolve_active_reporting_set_name_unknown_raises():
+def test_resolve_active_reporting_set_unknown_raises():
     """R2 — an unknown reporting_set raises ConfigurationError naming the
     registered sets (CSV-free resolver; this is what the render-path fail-soft
     catches before degrading to 'default')."""
     from hhemt.config.report import (
         report_config,
-        resolve_active_reporting_set_name,
+        resolve_active_reporting_set,
     )
     from hhemt.exceptions import ConfigurationError
 
     cfg = report_config(reporting_set="does_not_exist")
     with pytest.raises(ConfigurationError) as exc:
-        resolve_active_reporting_set_name(cfg, is_sensitivity=False)
+        resolve_active_reporting_set(cfg, is_sensitivity=False)
     msg = str(exc.value)
     assert "does_not_exist" in msg
     assert "benchmarking" in msg and "default" in msg  # registered sets named
 
 
-# --- resolve_reporting_set_name: the shared name-taking helper (Plan Phase 5 / D14) ---
+# --- resolve_reporting_set_names: the shared name-taking helper (Plan Phase 5 / D14) ---
 #
-# resolve_active_reporting_set_name above is now a thin config-object wrapper over
+# resolve_active_reporting_set above is now a thin config-object wrapper over
 # this helper. The helper exists so raw-dict callers -- specifically the bundle
 # Snakefile harvest, which holds a yaml.safe_load'd cfg_analysis and no
 # report_config -- share ONE implementation of the sentinel-plus-validation rule
 # instead of reimplementing the sentinel half and silently dropping validation.
 
 
-def test_resolve_reporting_set_name_sentinel_matches_config_object_path():
+def test_resolve_reporting_set_names_sentinel_matches_config_object_path():
     """The helper and its config-object wrapper agree on the sentinel."""
     from hhemt.config.report import (
         report_config,
-        resolve_active_reporting_set_name,
-        resolve_reporting_set_name,
+        resolve_active_reporting_set,
+        resolve_reporting_set_names,
     )
 
-    cfg = report_config()  # reporting_set == "default"
+    cfg = report_config()  # reporting_set == ["default"]
     for is_sensitivity in (False, True):
-        assert resolve_reporting_set_name("default", is_sensitivity=is_sensitivity) == (
-            resolve_active_reporting_set_name(cfg, is_sensitivity=is_sensitivity)
+        assert resolve_reporting_set_names("default", is_sensitivity=is_sensitivity) == (
+            resolve_active_reporting_set(cfg, is_sensitivity=is_sensitivity).name,
         )
 
 
-def test_resolve_reporting_set_name_treats_none_and_empty_as_the_sentinel():
-    """An absent report.reporting_set key resolves like the explicit sentinel.
+# ---------------------------------------------------------------------------
+# The four spellings of an ABSENT report.reporting_set, held once so the
+# resolver-side and model-side oracles below cannot drift apart -- D72's whole
+# content is that those two entry points agree.
+#
+#   None  -- a blank YAML scalar, and what `_report.get("reporting_set")`
+#            returns at the three bundle-harvest call sites when the key is
+#            absent.
+#   ""    -- an explicitly-blank YAML scalar.
+#   []    -- an explicitly-empty YAML sequence.
+#   ()    -- not reachable from YAML; it is reachable from the resolver's
+#            published signature, which admits tuple[str, ...]. At the MODEL it
+#            is not a distinct form at all: pydantic coerces it to [] before
+#            this module's validator runs. Kept to pin that acceptance.
+# ---------------------------------------------------------------------------
+_ABSENT_FORMS = (None, "", [], ())
+_ABSENT_IDS = ("none", "empty-string", "empty-list", "empty-tuple")
 
-    The bundle harvest passes `_report.get("reporting_set")`, which is None when
-    the key is absent -- the common case for a bundle whose source run took the
-    default set.
+# The sentinel's two resolutions. Keyed by is_sensitivity so a mutant that
+# hardcodes either arm is red in exactly one column.
+_SENTINEL_NAME = {False: "default", True: "benchmarking"}
+
+
+@pytest.mark.parametrize("is_sensitivity", [False, True], ids=["main", "sensitivity"])
+@pytest.mark.parametrize("absent", _ABSENT_FORMS, ids=_ABSENT_IDS)
+def test_resolve_reporting_set_names_treats_none_and_empty_as_the_sentinel(absent, is_sensitivity):
+    """D72, RAW-RESOLVER half: all four absent forms take the sentinel path."""
+    from hhemt.config.report import resolve_reporting_set_names
+
+    assert resolve_reporting_set_names(absent, is_sensitivity=is_sensitivity) == (_SENTINEL_NAME[is_sensitivity],)
+
+
+@pytest.mark.parametrize("is_sensitivity", [False, True], ids=["main", "sensitivity"])
+@pytest.mark.parametrize("absent", _ABSENT_FORMS, ids=_ABSENT_IDS)
+def test_absent_reporting_set_resolves_to_the_sentinel_through_the_model(absent, is_sensitivity):
+    """D72, CONFIG-MODEL half -- the entry point a user's YAML actually takes.
+
+    Asserted on the RESOLVED set name rather than on cfg.reporting_set, because
+    the stored shape is a free choice between normalizing at the field and
+    carrying the sentinel to the resolver. Both designs satisfy D72; only this
+    oracle is silent about which one was picked.
     """
-    from hhemt.config.report import resolve_reporting_set_name
+    from hhemt.config.report import report_config, resolve_active_reporting_set
 
-    for absent in (None, ""):
-        assert resolve_reporting_set_name(absent, is_sensitivity=True) == "benchmarking"
-        assert resolve_reporting_set_name(absent, is_sensitivity=False) == "default"
+    cfg = report_config(reporting_set=absent)
+    assert resolve_active_reporting_set(cfg, is_sensitivity=is_sensitivity).name == (_SENTINEL_NAME[is_sensitivity])
 
 
-def test_resolve_reporting_set_name_takes_non_default_verbatim():
+@pytest.mark.parametrize("is_sensitivity", [False, True], ids=["main", "sensitivity"])
+def test_omitted_reporting_set_resolves_to_the_sentinel_through_the_model(is_sensitivity):
+    """The reference the four forms above are claimed EQUAL to.
+
+    Not a case of that parametrize: an omitted field takes the Field default and
+    pydantic does not run a mode="after" validator on a default, so this is the
+    one form whose value never passes through the normalization at all.
+    """
+    from hhemt.config.report import report_config, resolve_active_reporting_set
+
+    cfg = report_config()
+    assert resolve_active_reporting_set(cfg, is_sensitivity=is_sensitivity).name == (_SENTINEL_NAME[is_sensitivity])
+
+
+@pytest.mark.parametrize("falsy", [0, set()], ids=["zero", "empty-set"])
+def test_falsy_reporting_set_is_a_type_error_at_the_resolver(falsy):
+    """The absent forms must not be recognised by TRUTHINESS.
+
+    Two cases, not five: 0 == False == 0.0 is one equivalence class under the
+    `==` an idiomatic `if not value:` mutant would collapse, and set() / {} is
+    the other. A third case buys nothing this pair does not already buy.
+    """
+    from hhemt.config.report import resolve_reporting_set_names
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError):
+        resolve_reporting_set_names(falsy, is_sensitivity=False)
+
+
+@pytest.mark.parametrize("falsy", [0, 0.0], ids=["zero", "zero-float"])
+def test_falsy_scalar_reporting_set_is_rejected_by_the_model(falsy):
+    """Same guard at the model, restricted to the SCALAR class deliberately.
+
+    pydantic coerces a set into list[str], so set() is ACCEPTED here and stored
+    as []. That divergence is a finding awaiting a ruling, not a property to
+    freeze -- see the round output, not an assertion.
+    """
+    from hhemt.config.report import report_config
+
+    with pytest.raises(ValidationError):
+        report_config(reporting_set=falsy)
+
+
+def test_resolve_reporting_set_names_takes_non_default_verbatim():
     """A non-sentinel name is honored regardless of is_sensitivity."""
-    from hhemt.config.report import resolve_reporting_set_name
+    from hhemt.config.report import resolve_reporting_set_names
 
     for is_sensitivity in (False, True):
-        assert resolve_reporting_set_name("dem-resolution", is_sensitivity=is_sensitivity) == "dem-resolution"
+        assert resolve_reporting_set_names("dem-resolution", is_sensitivity=is_sensitivity) == ("dem-resolution",)
 
 
-def test_resolve_reporting_set_name_unknown_raises_naming_the_requested_value():
+def test_resolve_reporting_set_names_unknown_raises_naming_the_requested_value():
     """The VALIDATION half -- the property the bundle path had lost.
 
     The message must name the value the CALLER supplied, not just the resolved
     one, so a typo is greppable in the error.
     """
-    from hhemt.config.report import resolve_reporting_set_name
+    from hhemt.config.report import resolve_reporting_set_names
     from hhemt.exceptions import ConfigurationError
 
     with pytest.raises(ConfigurationError) as exc:
-        resolve_reporting_set_name("dem-resolutoin", is_sensitivity=True)
+        resolve_reporting_set_names("dem-resolutoin", is_sensitivity=True)
     msg = str(exc.value)
     assert "reporting_set" in msg
     assert "dem-resolutoin" in msg
     assert "dem-resolution" in msg  # registered sets named
+
+
+def test_resolve_reporting_set_names_fences_the_sentinel_in_a_list():
+    """S19 rule 4: 'default' cannot be listed alongside another set -- it is a
+    sentinel that resolves by analysis shape, so it has no meaning as one member
+    of a composition."""
+    from hhemt.config.report import resolve_reporting_set_names
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as exc:
+        resolve_reporting_set_names(["default", "dem-resolution"], is_sensitivity=False)
+    msg = str(exc.value)
+    assert "default" in msg
+    assert "dem-resolution" in msg
+
+
+def test_compose_single_name_returns_registry_object():
+    """FQ2's byte-identity guarantee expressed as an executable assertion: a
+    one-name composition returns the registered object itself, not a copy."""
+    from hhemt.report_renderers._reporting_sets import (
+        REPORTING_SETS,
+        compose_reporting_sets,
+    )
+
+    for name in REPORTING_SETS:
+        assert compose_reporting_sets([name]) is REPORTING_SETS[name]
+
+
+def test_validate_composed_disabled_renderers_accepts_a_key_only_one_member_carries():
+    """disabled_renderers is checked against the COMPOSED key set, not per member:
+    a key valid in member 2 must not raise against member 1."""
+    from hhemt.config.report import (
+        report_config,
+        validate_active_reporting_set,
+    )
+
+    cfg = report_config(
+        reporting_set=["sensitivity", "compute-sensitivity"],
+        disabled_renderers=["eda_compute_sensitivity"],
+    )
+    active = validate_active_reporting_set(
+        cfg,
+        is_sensitivity=True,
+        sensitivity_csv_path=None,
+        varied_axes=frozenset({"n_omp_threads"}),
+    )
+    assert active.name == "sensitivity+compute-sensitivity"
 
 
 def test_validate_active_reporting_set_unknown_raises():
@@ -461,9 +621,11 @@ def test_validate_active_reporting_set_benchmarking_delegates_csv(tmp_path: Path
         )
 
 
-def test_validate_active_reporting_set_returns_resolved_name(tmp_path: Path):
+def test_validate_active_reporting_set_returns_the_composed_set(tmp_path: Path):
     """Happy path: resolves to 'benchmarking' for a sensitivity analysis whose
-    independent_vars all match the CSV, and returns that name."""
+    independent_vars all match the CSV, and returns that SET. A one-name selection
+    composes to the registered object ITSELF, which is the byte-identity guarantee
+    expressed as an assertion."""
     import pandas as pd
 
     from hhemt.config.report import (
@@ -471,17 +633,54 @@ def test_validate_active_reporting_set_returns_resolved_name(tmp_path: Path):
         report_config,
         validate_active_reporting_set,
     )
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS
 
     csv_path = tmp_path / "member.csv"
     pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads"]))
-    name = validate_active_reporting_set(
+    active = validate_active_reporting_set(
         cfg,
         is_sensitivity=True,
         sensitivity_csv_path=csv_path,
         varied_axes=frozenset({"n_omp_threads"}),
     )
-    assert name == "benchmarking"
+    assert active.name == "benchmarking"
+    assert active is REPORTING_SETS["benchmarking"]
+
+
+def test_composition_preserves_first_appearance_order():
+    """Composed order is pinned by NOTHING else in the S19 test set.
+
+    Every other order assertion stops at the field or resolver layer, and A2 compares
+    rule-name SETS, so compose_reporting_sets could emit its merged templates reversed
+    or sorted and every other assertion would stay green.
+
+    Asserted over the TEMPLATE sequence, not the builder_key sequence: for this pair
+    the builder_key sequences are IDENTICAL in both orders because both members carry
+    the same ten keys, so a builder_key assertion is red on correct code.
+
+    And asserted by RELATIVE POSITION, not by a total or an offset. `len(ab) == 15`
+    and `ab[-5]` are both true today and both go red on correct code the moment either
+    EDA family gains a template.
+    """
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS, compose_reporting_sets
+
+    def _t(s):
+        return [t.rule_name for sel in s.renderer_selection for t in sel.rule_spec_template]
+
+    A, B = REPORTING_SETS["dem-resolution"], REPORTING_SETS["compute-sensitivity"]
+    ab = _t(compose_reporting_sets(("dem-resolution", "compute-sensitivity")))
+    ba = _t(compose_reporting_sets(("compute-sensitivity", "dem-resolution")))
+
+    # Together these two kill a sorted- or set-based merge.
+    assert ab != ba, "composition is order-insensitive"
+    assert set(ab) == set(ba), "the two orders must carry the same templates"
+
+    a_only = [n for n in ab if n in set(_t(A)) - set(_t(B))]
+    b_only = [n for n in ab if n in set(_t(B)) - set(_t(A))]
+    assert a_only and b_only, "the pair must have templates unique to each member"
+    assert ab.index(a_only[0]) < ab.index(b_only[0])
+    assert ba.index(b_only[0]) < ba.index(a_only[0])
 
 
 def test_required_axes_derivation_matches_template_wildcards():
@@ -912,3 +1111,60 @@ def test_model_arms_exempt_from_pydantic_protected_namespace():
     assert synthetic_experiment_config.model_config.get("protected_namespaces") == ()
     # The relaxation must not clobber the strictness guard inherited from cfgBaseModel.
     assert synthetic_experiment_config.model_config.get("extra") == "forbid"
+
+
+def test_reporting_set_field_treats_every_absent_form_as_the_default():
+    """D72 at the FIELD, not only at the resolver.
+
+    A YAML `reporting_set:` with nothing after it parses to None; `reporting_set: ""`
+    to the empty string; `reporting_set: []` to the empty list. All are ways of
+    writing "I made no selection" and must store the default, exactly as an omitted
+    key does. Before this arm, None was rejected by the ANNOTATION (so no validator
+    ever ran) and "" was stored as [""], which the resolver then refused as an
+    unknown set name -- a regression no existing arm could see, because every other
+    absent-value test enters at resolve_reporting_set_names directly and so misses
+    the normalization the field interposes above it.
+    """
+    from hhemt.config.report import report_config
+
+    for absent in (None, "", [], ()):
+        assert report_config(reporting_set=absent).reporting_set == ["default"], absent
+    assert report_config().reporting_set == ["default"]
+
+
+def test_reporting_set_field_refuses_a_falsy_non_selection():
+    """The trap the absent arm must not swallow.
+
+    0, False and b"" are FALSY but are not selections; a truthiness test would turn
+    each into the default set silently. Membership against the four D72 forms is
+    what keeps them a field-named error. b"" and set() are the arms that also
+    require mode="before": at mode="after" the annotation coerces them to "" and []
+    respectively, and the absent arm would then accept both.
+    """
+    from hhemt.config.report import report_config
+
+    for bad in (0, False, 0.0, b"", set(), {}):
+        with pytest.raises(ValidationError):
+            report_config(reporting_set=bad)
+
+
+def test_reporting_set_field_refuses_an_unordered_container():
+    """First-appearance order is load-bearing, so an unordered input is refused.
+
+    `reporting_set: !!set {a: null, b: null}` is reachable from a YAML config and
+    parses to a Python set. Before S19 the field was annotated `str` and refused
+    it; the list widening made the union's `list[str]` arm coerce ANY iterable,
+    so a set began storing in whatever order that interpreter's hash seed
+    produced -- observed to differ across fresh interpreters. mode="before" runs
+    ahead of that coercion, so the isinstance guard sees the set and refuses it,
+    matching what resolve_reporting_set_names has always done on the raw-dict
+    path. This arm asserts the FIELD and the RESOLVER accept the same shapes.
+    """
+    from hhemt.config.report import report_config, resolve_reporting_set_names
+    from hhemt.exceptions import ConfigurationError
+
+    unordered = {"dem-resolution", "compute-sensitivity"}
+    with pytest.raises(ValidationError):
+        report_config(reporting_set=unordered)
+    with pytest.raises(ConfigurationError):
+        resolve_reporting_set_names(unordered, is_sensitivity=False)

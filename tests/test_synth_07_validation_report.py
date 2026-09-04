@@ -364,17 +364,23 @@ def _eda_stub(analysis_dir, enabled_plots, *, sensitivity=True, reporting_set="b
     """
     import types
 
-    from hhemt.report_renderers._reporting_sets import get_reporting_set
+    from hhemt.config.report import resolve_active_reporting_set
 
     ns = types.SimpleNamespace(
         cfg_analysis=types.SimpleNamespace(
             eda=types.SimpleNamespace(enabled_plots=list(enabled_plots)),
             toggle_sensitivity_analysis=sensitivity,
-            report=types.SimpleNamespace(disabled_renderers=[], reporting_set=reporting_set),
+            report=types.SimpleNamespace(
+                disabled_renderers=[],
+                reporting_set=[reporting_set] if isinstance(reporting_set, str) else list(reporting_set),
+            ),
         ),
         analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
     )
-    ns._active_reporting_set = get_reporting_set(reporting_set)
+    # ONE source of truth: the attribute is DERIVED from the config field through the
+    # same resolver production uses, so the stub can no longer hold a config/attribute
+    # pair that run entry could not produce.
+    ns._active_reporting_set = resolve_active_reporting_set(ns.cfg_analysis.report, is_sensitivity=sensitivity)
     return ns
 
 

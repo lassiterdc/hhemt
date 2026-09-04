@@ -2,7 +2,7 @@
 # Declares the independent variables that the benchmarking renderer wildcards over.
 
 # Pinned explicitly rather than left to the sentinel: with no `reporting_set` key,
-# resolve_reporting_set_name maps "default" -> "benchmarking" on a sensitivity
+# resolve_reporting_set_names maps "default" -> ("benchmarking",) on a sensitivity
 # analysis, so this fixture's set is decided by a rule the taxonomy work removes.
 # Pinning it here makes the zero-delta criterion of later golden comparisons a real
 # check. BOTH this file and its mirror are pinned: the byte-identity goldens read the

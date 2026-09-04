@@ -393,7 +393,7 @@ def test_unknown_reporting_set_raises_named_configuration_error(sensitivity_bund
     """A typo'd reporting_set names the field, not a bare KeyError.
 
     Regression lock on the validation half of the resolution rule: the harvest
-    delegates to config.report.resolve_reporting_set_name, so an unknown set is
+    delegates to config.report.resolve_reporting_set_names, so an unknown set is
     rejected with a ConfigurationError listing the registered sets instead of
     reaching the bare get_reporting_set accessor and raising KeyError.
     """

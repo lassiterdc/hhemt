@@ -353,7 +353,9 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
         _load_source_paths,
     )
     from hhemt.config.eda import _RETIRED_EDA_FIGURE_STEMS
+    from hhemt.config.report import resolve_reporting_set_names
     from hhemt.eda._sensitivity_figures import _PENDING_EDA_FIGURE_STEMS
+    from hhemt.exceptions import ConfigurationError
     from hhemt.report_renderers._reporting_sets import get_reporting_set
 
     def _figures_of(eid: str) -> list[tuple]:
@@ -361,10 +363,32 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
         template-claimed figures first then defensively-globbed leftovers."""
         child = bundle_root / "child_crates" / eid
         cfg = _yaml.safe_load((child / "cfg_analysis.yaml").read_text())
-        set_name = (cfg.get("report") or {}).get("reporting_set")
-        if not set_name or set_name == "default":
-            set_name = "benchmarking" if cfg.get("toggle_sensitivity_analysis") else "default"
-        active_set = get_reporting_set(set_name)
+        # S19: the shared helper carries the sentinel AND the membership check, and it
+        # accepts the LIST this raw dict now holds -- a bundle's cfg_analysis.yaml is
+        # dumped from the validated model, so it carries a list even when the source
+        # config was written with a bare string. Hand-inlining the sentinel here drops
+        # the membership check, which is the divergence the shared helper exists to
+        # prevent.
+        _names = resolve_reporting_set_names(
+            (cfg.get("report") or {}).get("reporting_set"),
+            is_sensitivity=bool(cfg.get("toggle_sensitivity_analysis")),
+        )
+        if len(_names) > 1:
+            # RAISE rather than harvest the first: this function globs a child's figures
+            # from ONE set's output-path templates, so a multi-member child would be
+            # harvested partially and the combined report would look complete while
+            # omitting a member set's figures. Raising keeps a partial harvest loud.
+            raise ConfigurationError(
+                field="report.reporting_set",
+                message=(
+                    f"child experiment {eid!r} was run with a composed reporting set "
+                    f"({', '.join(_names)}), which this combine path cannot read: it "
+                    "reads one set's templates. Re-run combine once it composes, or "
+                    "combine children that each name a single set."
+                ),
+                config_path=child / "cfg_analysis.yaml",
+            )
+        active_set = get_reporting_set(_names[0])
         out: list[tuple] = []
         claimed: set[Path] = set()
         for sel in active_set.renderer_selection:
@@ -662,16 +686,33 @@ def _distinct_child_categories(bundle_root: Path) -> list[str]:
     experiment-category collapse in the combined sidebar order (line 371)."""
     import yaml as _yaml
 
+    from hhemt.config.report import resolve_reporting_set_names
+    from hhemt.exceptions import ConfigurationError
     from hhemt.report_renderers._reporting_sets import get_reporting_set
 
     combined_cats = set(get_reporting_set("combined").category_order)
     seen: list[str] = []
     for eid in _child_experiment_ids(bundle_root):
         cfg = _yaml.safe_load((bundle_root / "child_crates" / eid / "cfg_analysis.yaml").read_text())
-        set_name = (cfg.get("report") or {}).get("reporting_set")
-        if not set_name or set_name == "default":
-            set_name = "benchmarking" if cfg.get("toggle_sensitivity_analysis") else "default"
-        active_set = get_reporting_set(set_name)
+        # S19: see the twin in _figures_of. Same helper, same multi-member refusal --
+        # this enumeration reads ONE set's declared categories, so a partial read would
+        # silently drop a member set's sidebar categories from the combined report.
+        _names = resolve_reporting_set_names(
+            (cfg.get("report") or {}).get("reporting_set"),
+            is_sensitivity=bool(cfg.get("toggle_sensitivity_analysis")),
+        )
+        if len(_names) > 1:
+            raise ConfigurationError(
+                field="report.reporting_set",
+                message=(
+                    f"child experiment {eid!r} was run with a composed reporting set "
+                    f"({', '.join(_names)}), which this category enumeration cannot read: it "
+                    "reads one set's declared categories. Re-run combine once the enumeration "
+                    "composes, or combine children that each name a single set."
+                ),
+                config_path=bundle_root / "child_crates" / eid / "cfg_analysis.yaml",
+            )
+        active_set = get_reporting_set(_names[0])
         # Only categories the set's rule-spec TEMPLATES actually declare can reach a composed
         # page. category_order is the sidebar VOCABULARY and is deliberately non-exhaustive in
         # both directions (tests/test_reporting_set_cosourcing.py): it also carries chrome-only
