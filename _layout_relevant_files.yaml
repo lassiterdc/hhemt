@@ -185,6 +185,16 @@ non_breaking_allowlist:
       `git merge-base --is-ancestor 2c176dc9 9bde88dc` exits 1 as well -- 9bde88dc is dated 2026-09-01
       while 2c176dc9 is dated 2026-09-03, so the earlier merge could not have carried the later commit.
     layout_signature: "4b3d1469f53d08d1aacfc2a367d21d88aa6d56ad99dc79d06d48b7b06007acb0"
+  - path: src/hhemt/version_migration/versions/V0021__experiment_tree_unification.py
+    justification: >-
+      Layout-guard documentation repair — the module's LANDING CONSTRAINT docstring
+      asserted a "skip window" that b19fcb41 deleted, and instructed authors to land
+      edits in the commit immediately after a bump, which is the state check-b
+      deterministically refuses. DOCSTRING-ONLY: version_from/version_to, the applied
+      operations and the upgrade() body are byte-unchanged, so no on-disk state this
+      migration produces can differ. Re-stamp layout_signature on any further
+      non-breaking edit; a change to the applied operations must bump LAYOUT_VERSION.
+    layout_signature: "4e6327b3bef1245629f8895b7d55969309e976db1cc3d79d2ebc8aa2972b3a15"
   - path: src/hhemt/version_migration/versions/V0018__ledger_driven_resume_reset.py
     justification: >-
       DU-sentinel gate closure — a one-character correction inside an existing
