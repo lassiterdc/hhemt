@@ -232,19 +232,31 @@ class TRITONSWMM_analysis_post_processing:
             else None
         )
         _inputs_match = _stamped_fingerprint == _inputs_fingerprint
-        if fname_out.exists() and _log_complete and _inputs_match:
+        # Third reuse input, alongside _log_complete and _inputs_match. Gate B's
+        # early-return is the FIRST branch below, so this term must appear in BOTH
+        # conditions: a disjunct added only to the rebuild branch would be unreachable.
+        from hhemt.provenance import store_build_mismatch
+
+        _build_why = store_build_mismatch(fname_out)
+        _build_mismatch = _build_why is not None
+        if fname_out.exists() and _log_complete and _inputs_match and not _build_mismatch:
             if verbose:
                 print(f"DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
             return fname_out
-        if fname_out.exists() and _log_complete and not _inputs_match:
+        if fname_out.exists() and _log_complete and (not _inputs_match or _build_mismatch):
             from hhemt.utils import fast_rmtree
 
             fast_rmtree(fname_out, analysis_dir=self._analysis.analysis_paths.analysis_dir)
             if verbose:
-                print(
-                    f"DataTree zarr present at {fname_out} but consolidation inputs changed "
-                    f"(stamped={_stamped_fingerprint!r}, current={_inputs_fingerprint!r}) — rebuilding."
+                _why = (
+                    _build_why
+                    if _build_mismatch
+                    else (
+                        "consolidation inputs changed "
+                        f"(stamped={_stamped_fingerprint!r}, current={_inputs_fingerprint!r})"
+                    )
                 )
+                print(f"DataTree zarr present at {fname_out} but {_why} — rebuilding.")
         if fname_out.exists() and not _log_complete:
             from hhemt.utils import fast_rmtree
 
