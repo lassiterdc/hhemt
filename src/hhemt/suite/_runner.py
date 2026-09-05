@@ -1173,6 +1173,15 @@ def run_chunk(args: argparse.Namespace) -> int:
     # under concurrent readers is a hazard the TTL happens to prevent rather than one
     # the design excludes. One env var, defence in depth.
     env["HHEMT_DISABLE_RUN_DIR_REAPER"] = "1"
+    # ROLE, NOT SITE. There are three compile sites (system.py:1254, :1688, :2009) and
+    # three process roles (warm, chunk, ad-hoc local), and the same fixture code runs in
+    # all of them -- so a policy keyed on a site would either miss two sites or grant
+    # rebuild rights to a chunk. A chunk is one of N array elements: a re-provision there
+    # is N concurrent destructive deletes of one shared tier plus N cold borrows against a
+    # rate limit whose threshold is unknown and whose 403 is sticky for at least 20s.
+    # Warm and local are unmarked and keep today's rebuild behaviour; that is a decision,
+    # and it makes the ad-hoc local session a second unsupervised rebuild site.
+    env["HHEMT_SUITE_ROLE"] = "chunk"
     env["PYTHONUNBUFFERED"] = "1"
     # THE LEVER THE README NAMES AND THE HARNESS DID NOT PULL. rerun.sh:242 and :389 unset
     # HHEMT_TEST_RUNS_ROOT_OVERRIDE, and a repo-wide grep finds no site that ever set it --
