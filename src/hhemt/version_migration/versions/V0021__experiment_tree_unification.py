@@ -39,7 +39,6 @@ import json
 import logging
 from pathlib import Path
 
-from hhemt.version_migration.constants import LAYOUT_VERSION
 from hhemt.version_migration.context import MigrationContext
 
 logger = logging.getLogger(__name__)
@@ -132,8 +131,14 @@ def _repoint(doc: dict, old_relpath: str) -> bool:
         if _same_store(entity.get("@id"), old_relpath):
             entity["@id"] = new_dir_id
             changed = True
-        if entity.get("@id") == "./" and entity.get("schemaVersion") != str(LAYOUT_VERSION):
-            entity["schemaVersion"] = str(LAYOUT_VERSION)
+        # The LITERAL via `version_to`, never `LAYOUT_VERSION`. This migration's terminus
+        # is layout 21 at every future value of the module constant, and a crate is a
+        # PUBLISHED artifact: stamping the current constant makes a tree migrated to
+        # target=21 declare schemaVersion 22. Measured at the 21->22 bump, that turned
+        # tests/test_version_migration_V0021.py::test_provenance_is_repointed_in_BOTH_
+        # the_sidecar_and_the_embedded_core red. Same defect class as the state.py rung.
+        if entity.get("@id") == "./" and entity.get("schemaVersion") != str(version_to):
+            entity["schemaVersion"] = str(version_to)
             changed = True
         parts = entity.get("hasPart")
         if isinstance(parts, list):
