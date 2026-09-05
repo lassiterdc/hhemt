@@ -312,6 +312,141 @@ def assert_plots_match_running_build(analysis_dir: Path, *, declare_stale_plots:
     raise StalePlotsError(msg)
 
 
+#: Break-glass for the consolidation build gate below. An ENV VAR rather than a
+#: keyword argument because consolidation runs in a SUBPROCESS
+#: (`python -m hhemt.consolidate_workflow`), so a caller-passed kwarg cannot reach
+#: the gate without a new CLI arg threaded through argparse and the Snakefile shell.
+#: Precedent for the env-var shape: HHEMT_ENABLE_PROVENANCE_AUDIT, HHEMT_ALLOW_INSTALLED.
+_DECLARE_STALE_BUILD_ENV = "HHEMT_DECLARE_STALE_BUILD"
+
+#: Values a sha resolver returns when it resolved NOTHING. `_toolkit_git_sha` delegates
+#: to `bundle/_emit._get_toolkit_git_sha(strict=False)`, which returns the literal
+#: "unknown" on CalledProcessError/FileNotFoundError or an empty rev-parse -- the
+#: wheel-install case its own strict-mode message names. "unknown" is TRUTHY, so a
+#: falsy-check misses it and two different builds both resolving "unknown" compare
+#: EQUAL. These are absences wearing a value, and absent is never equal.
+_SENTINEL_SHAS = frozenset({"", "unknown", "0+unknown"})
+
+
+def store_build_mismatch(store: Path) -> str | None:
+    """Return a reason string when `store` was NOT produced by the running build, else None.
+
+    The consolidation-tier sibling of `assert_plots_match_running_build` above, and the
+    fifth instance of that pattern. Three properties are inherited deliberately and a
+    reviewer must not soften any of them:
+
+    ABSENT IS NEVER EQUAL, including absent on both sides -- and ABSENCE INCLUDES A
+    SENTINEL. A store with no `hhemt_producing_sha` is a MISMATCH, and so is one whose
+    sha is `"unknown"`, because that is what `_toolkit_git_sha` returns when it resolved
+    nothing. A falsy-check does not catch it: `"unknown"` is truthy, so two different
+    wheel installs both stamping `"unknown"` would compare equal and reuse each other's
+    store with no output at all. Reading absence as "no objection" would silently reuse
+    every tree built before the ADR-15 capture site existed, which is precisely the
+    population most likely to be stale. This is the one property that distinguishes this
+    function from `check_provenance_completeness`, whose graceful-absent posture is
+    correct for a REPORT (a provenance check that can abort validate_analysis takes the
+    whole Errors-and-Warnings sidebar down with it) and wrong for a GATE.
+
+    A DIRTY RUNNING CHECKOUT IS A MISMATCH WHEN THE SHAS OTHERWISE AGREE, and this arm
+    is deliberate rather than incidental. `git rev-parse` succeeds on a dirty tree and
+    returns the COMMITTED sha (`_is_dirty`'s own docstring says so), so a developer
+    editing a consolidation module and re-running gets an unchanged sha -- which is
+    exactly the workflow this gate exists to serve, and exactly the change class that
+    caused the incident it was written for. When the shas DIFFER the store already
+    rebuilds and dirty adds nothing; when they AGREE the sha check says "reuse" and
+    dirty is precisely the condition under which that verdict cannot be trusted. So the
+    arm fires only in the second case.
+
+    THE COST, AND THE PROPERTY THAT COST BUYS: while the checkout is dirty this gate
+    DOES NOT CONVERGE -- a rebuild re-stamps the same committed sha against the same
+    dirty tree, so the next consolidation rebuilds again. That is intended. What it
+    costs is the CONSOLIDATION tier only: `process_*` sits upstream of this gate and is
+    not re-triggered by it (measured on the synth sensitivity tree: 28.9 s to rebuild
+    every consolidate rule, against 274 s of process rules the gate never touches).
+
+    AND THAT COST SCALES LINEARLY IN MEMBER COUNT, which is the part a reader at
+    ensemble scale will otherwise be surprised by. One `consolidate_member_*` rule runs
+    per member, so the measured figures are per-tree and not per-analysis: 28.9 s at four
+    synth members, ~60 s at Norfolk case-study scale, and near EIGHT MINUTES at a
+    fifty-member production ensemble. Seconds at development scale and minutes at
+    ensemble scale is the same non-convergence priced very differently, and an operator
+    who knows their edits cannot affect consolidation arms
+    HHEMT_DECLARE_STALE_BUILD=1, which prints and reuses.
+
+    THE RUNNING VALUE IS MINTED, NEVER READ BACK. `producing_stamp()` is called inline
+    here, per its own documented rule that a stamp "may never be resolved from a
+    module-level constant, a config field, or a value carried over from an earlier stage."
+    The persisted `validation_report.json` is exactly such a carried-over value: it is
+    written AFTER consolidation completes (consolidate_workflow.py, immediately before
+    `_emit_runner_flag`) and by whichever of three call sites ran last
+    (consolidate_workflow, export_scenario_status, analysis.eda), so at the moment this
+    gate runs it is a receipt of indeterminate authorship about a PRIOR run.
+
+    THE ESCAPE PRINTS AND RECORDS. `HHEMT_DECLARE_STALE_BUILD=1` returns None so the
+    caller reuses the store, but only after emitting the reason to stdout. A silent
+    bypass reintroduces the failure with a flag on it.
+
+    Reads the store's root attributes directly rather than through `xr.open_datatree`:
+    the gate runs on every consolidation and a JSON read of one file is the cheap form.
+    Both zarr layouts are handled because a pre-V0021 store may be v2.
+    """
+    import json
+    import os
+
+    def _root_attrs() -> dict:
+        try:
+            meta = json.loads((store / "zarr.json").read_text(encoding="utf-8"))
+            return meta.get("attributes") or {}
+        except Exception:
+            pass
+        try:
+            return json.loads((store / ".zattrs").read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    if not store.exists():
+        # Inert by construction: every branch that consumes this value also requires
+        # `fname_out.exists()`, so a mismatch reported here can never trigger a rebuild
+        # of a store that is not there. Reported as a mismatch anyway, because
+        # absent-is-never-equal is the rule and a silent None here would be the one
+        # place the rule is quietly suspended.
+        why = "no consolidated store present at the reuse gate"
+    else:
+        stored = str(_root_attrs().get("hhemt_producing_sha") or "").strip()
+        _stamp = producing_stamp()
+        running = str(_stamp.get("hhemt_sha") or "").strip()
+        running_dirty = str(_stamp.get("hhemt_dirty") or "").strip().lower() == "true"
+        # Order matters: the two sentinel arms come FIRST so a sentinel can never reach
+        # the equality test, which is the whole of the AB-1 fold.
+        if stored in _SENTINEL_SHAS:
+            why = (
+                f"the store's hhemt_producing_sha is the sentinel {stored!r} -- it names no "
+                "commit, so the store cannot be shown to match this build"
+            )
+        elif running in _SENTINEL_SHAS:
+            why = f"the running build resolved to the sentinel sha {running!r} (no git checkout?)"
+        elif stored != running:
+            why = f"store built at {stored[:12]}, consolidation running at {running[:12]}"
+        elif running_dirty:
+            why = (
+                f"the shas agree at {running[:12]} but the running checkout is DIRTY, so the "
+                "sha names a commit whose content is not what is running"
+            )
+        else:
+            return None
+
+    msg = (
+        f"Consolidated-store build mismatch at {store}: {why}. The store may not reflect "
+        "the consolidation code now reading it. Rebuild it with force_rerun "
+        '{"subject": "all", "stage": "consolidate"}, or set '
+        f"{_DECLARE_STALE_BUILD_ENV}=1 to reuse it and record the mismatch."
+    )
+    if os.environ.get(_DECLARE_STALE_BUILD_ENV) == "1":
+        print(f"[consolidate] DECLARED STALE BUILD: {msg}", flush=True)
+        return None
+    return msg
+
+
 #: Stage key for the per-chapter-set producing-build history. Declared ONCE here and
 #: referenced by no other literal, exactly as _HISTORY_FILENAME above is.
 _CHAPTER_STAGE = "chapters"

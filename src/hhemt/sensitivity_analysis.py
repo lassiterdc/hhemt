@@ -1648,15 +1648,20 @@ class TRITONSWMM_sensitivity_analysis:
             if _stamped != _cur:
                 _subs_stale = True
                 break
-        if fname_out.exists() and _log_complete and _subs_stale:
+        # Third reuse input, alongside _log_complete and _subs_stale: was this store
+        # produced by the build now reading it? Absent-is-never-equal, minted inline
+        # rather than read from validation_report.json. See provenance.store_build_mismatch.
+        from hhemt.provenance import store_build_mismatch
+
+        _build_why = store_build_mismatch(fname_out)
+        _build_mismatch = _build_why is not None
+        if fname_out.exists() and _log_complete and (_subs_stale or _build_mismatch):
             from hhemt.utils import fast_rmtree
 
             fast_rmtree(fname_out, analysis_dir=self.analysis_paths.analysis_dir)
             if verbose:
-                print(
-                    f"Sensitivity DataTree zarr present at {fname_out} but at least one "
-                    "member's consolidation inputs changed — rebuilding."
-                )
+                _why = _build_why if _build_mismatch else "at least one member's consolidation inputs changed"
+                print(f"Sensitivity DataTree zarr present at {fname_out} but {_why} — rebuilding.")
         elif fname_out.exists() and _log_complete:
             if verbose:
                 print(f"Sensitivity DataTree zarr already present at {fname_out} and log complete. Not overwriting.")

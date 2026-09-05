@@ -696,3 +696,75 @@ non_breaking_allowlist:
       _load_allowlist's merge, so the effective value would stay stale and check-b would
       still re-fire. Measured per-row: ['a43e91a4', 'NONE', 'NONE'].
     layout_signature: "e584bdfbbf04a500676b38a6fe207bf19487eb06a9989fc2fa0aaa0b1beb2799"
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      Consolidation build gate (M19 gate 3) -- consolidate_to_datatree's artifact-reuse
+      decision gains a third input alongside _log_complete and _inputs_match: whether the
+      store's own hhemt_producing_sha equals the running build's. Two condition edits (the
+      early return gains `and not _build_mismatch`; the rebuild branch gains
+      `or _build_mismatch`) plus a read-only predicate call and a reason string.
+      FOR (non-breaking), stated as the question the checker's message asks. NOTHING a
+      reader of an existing on-disk tree observes differs. No path, directory name,
+      filename, zarr group, dtype, chunk, encoding or root-attr KEY is added, renamed or
+      removed; no _version.json value changes; no _status flag token changes; the
+      consolidation-inputs fingerprint payload (_consolidation_inputs_fingerprint, three
+      values) is untouched, so its format and its stamped comparisons are unchanged; no
+      log key is added or renamed. The store's WRITE path is byte-unchanged -- this edit
+      alters only WHEN that write is triggered, never WHAT it writes. What I checked to
+      establish that rather than assert it: the full diff of this file is Spec 4's
+      six-line read-only computation plus two boolean conditions plus one f-string, and
+      the predicate it calls (provenance.store_build_mismatch) opens zarr.json/.zattrs,
+      reads one attr, and returns a string or None -- it creates, renames and deletes
+      nothing.
+      AGAINST, stated rather than elided because this entry is the audit record and both
+      items are real. (1) ONE-SHOT REBUILD ON PRE-ADR-15 TREES: a consolidated store
+      carrying no hhemt_producing_sha is a mismatch by the absent-is-never-equal rule, so
+      the next consolidation rebuilds it once instead of reusing it. That is the same
+      bounded first-run rerun class this repo has accepted before (Gotchas 17/29/38/42),
+      and it is content-idempotent: the rebuild runs the unchanged write path and produces
+      the same tree, with the volatile provenance values (output_creation_date,
+      hhemt_producing_sha) refreshed exactly as any rebuild refreshes them. No migration
+      could improve on it, because there is no old-shaped state to transform -- only a
+      decision about whether to re-derive. (2) DIRTY-TREE IDEMPOTENCE EXPOSURE, and this
+      is the one a committer needs before merging rather than after:
+      tests/test_metadata_consolidation.py:53-57 asserts that a SECOND
+      consolidate_to_datatree() leaves ro-crate-metadata.json's mtime unchanged, and its
+      own comment names the mechanism it depends on -- "the log-complete early-return".
+      Under the AB-2 ruling that early return is now additionally gated on the running
+      checkout being clean, so on a DIRTY checkout the second call rebuilds. The sidecar
+      write is compare-and-write, so the assertion survives if the regenerated content is
+      byte-identical and fails if it is not. I could not settle which: that test is
+      compile-bearing (tritonswmm_cpu_compiled) and running it is a hard halt in this
+      project. DECIDING COMMAND for whoever holds the commit, from a CLEAN checkout first
+      and then a dirty one: `pytest tests/test_metadata_consolidation.py -k rocrate`.
+      A clean-tree CI run is unaffected by construction, because hhemt_dirty is false
+      there and the early return is reached exactly as before.
+      WHY NOT A LAYOUT_VERSION BUMP. LAYOUT_VERSION governs the on-disk analysis tree, and
+      a V0022 migration would have nothing to do: there is no old-shaped artifact to
+      rename, no field to backfill, and no directory to move. A migration written for this
+      change could only re-derive a store the running code already re-derives on its own,
+      which is the "no-op migration is not a backfill" position this repo took at
+      2026-06-27_v0016. The precedent row this most resembles is the
+      reprocess-regeneration-toggle Phase 2 R4 entry on this same path (an early-return
+      re-key from .exists() to .exists() AND datatree_consolidation_complete); the analogy
+      HOLDS and I tested it rather than inheriting it -- both add a conjunct to a reuse
+      gate, both route the excluded case to a pre-existing rebuild branch rather than to a
+      new destructive path, and neither changes what the rebuild writes. Where this change
+      goes further than that precedent is that its new conjunct reads a value from OUTSIDE
+      the analysis tree (the running git checkout), which is what makes exposure (2)
+      possible; that is a behavioural surface, not a layout one.
+      CHANGE-SCOPED via layout_signature, re-stamping 953d1474 -> 02053c7c. APPENDED
+      rather than edited in place, per the sanctioned shape the two prior stamped rows on
+      this path record: a signature-less append would INHERIT 953d1474 under
+      _load_allowlist's last-wins merge and check-b would still re-fire.
+      NOT COVERED BY THIS ROW, and disclosed because its absence is silent:
+      src/hhemt/sensitivity_analysis.py received the SAME change class in the same commit
+      (the Gate A twin) and did NOT trip check-b, because every allowlist row for that
+      path is signature-less and therefore path-permanent -- the exact fail-open this file
+      records against itself at the constants.py and report_plot_ids.py rows. Closing it
+      is a one-row addition carrying that file's current sha256
+      (d9609d865585880096475f805e1d93bd2c0ae07d9fee205d1dd2b1b03d7933f5), and it is
+      deliberately NOT done here: converting a path from permanent to change-scoped is a
+      governance change affecting every future edit to a 3,128-line high-churn module, and
+      it is not this blocker's resolution. Surfaced for the commit holder to rule on.
+    layout_signature: "02053c7c5e1057529197127915db0b0dcf2d01adbc02d704baf3c9508381ee69"

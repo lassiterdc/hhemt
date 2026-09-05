@@ -24,7 +24,7 @@ def synth_member_two_row(tmp_path):
     csv_path = tmp_path / "sensitivity_2row.csv"
     pd.DataFrame(
         {
-            "sa_id": ["0", "1"],
+            "member_id": ["0", "1"],
             "run_mode": ["openmp", "openmp"],
             "n_mpi_procs": [1, 1],
             "n_omp_threads": [2, 4],
@@ -71,8 +71,8 @@ def test_fingerprint_files_written_on_first_invocation(synth_member_two_row):
     assert fp0["fields"]["n_omp_threads"] == 2
     assert fp1["fields"]["n_omp_threads"] == 4
     # member_id excluded; only independent_vars + sentinel
-    assert "sa_id" not in fp0["fields"]
-    assert "sa_id" not in fp1["fields"]
+    assert "member_id" not in fp0["fields"]
+    assert "member_id" not in fp1["fields"]
 
 
 def test_fingerprint_idempotent_when_csv_unchanged(synth_member_two_row):
@@ -182,7 +182,7 @@ def test_row_removal_does_not_rerun_remaining_chains(tmp_path):
     csv_path = tmp_path / "sensitivity_3row.csv"
     pd.DataFrame(
         {
-            "sa_id": ["0", "1", "2"],
+            "member_id": ["0", "1", "2"],
             "run_mode": ["openmp", "openmp", "openmp"],
             "n_mpi_procs": [1, 1, 1],
             "n_omp_threads": [2, 4, 8],
@@ -209,7 +209,7 @@ def test_row_removal_does_not_rerun_remaining_chains(tmp_path):
     # Remove member_id=1 from the CSV
     pd.DataFrame(
         {
-            "sa_id": ["0", "2"],
+            "member_id": ["0", "2"],
             "run_mode": ["openmp", "openmp"],
             "n_mpi_procs": [1, 1],
             "n_omp_threads": [2, 8],

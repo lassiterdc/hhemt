@@ -21,6 +21,7 @@ from .exceptions import (
     WorkflowPlanningError,
 )
 from .recompute import RecomputeScope  # typer reads the --scope enum annotation at import time
+from .suite._cli import test_app as _test_app
 
 
 def _parse_override_clear_raw(value: str | None) -> str | list | None:
@@ -102,6 +103,14 @@ def _root(ctx: typer.Context) -> None:
 
     assert_worktree_source(strict=True)
 
+
+# `hhemt test {subject} {action}`. Mounted here rather than declared inline so the
+# subject seam lives in `suite/_cli.py` and a session adding a subject edits ONE file.
+# The root `_root` callback still fires through both nesting levels (measured
+# CALLCHAIN=root>test>plan on Typer 0.26.7 / Click 8.4.1), so the worktree-source
+# guard is not bypassed by the nesting. The import lives in the top block; only the
+# mount needs `app`, so nothing here requires a module-level import out of order.
+app.add_typer(_test_app, name="test")
 
 console = Console()
 console_err = Console(stderr=True)
