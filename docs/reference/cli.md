@@ -67,6 +67,29 @@ safe to inspect first: each has a listing mode before it has a deleting mode.
 | Command | What it does |
 |---|---|
 | `synth-experiment` | Load-smoke a synthetic compute-config experiment: validate the config and build the partition-as-axis matrix. `--dry-run` writes nothing. See [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md). |
+| `test` | Run a test campaign against a chosen SUBJECT. Today the only subject is `toolkit`, the toolkit's own pytest suite run as a scheduler array. See the subsection below. |
+
+### `hhemt test toolkit`
+
+The toolkit's own pytest suite, chunked across a scheduler array. Hours, not seconds — this
+is not the tier you run while iterating.
+
+| Command | What it does |
+|---|---|
+| `plan --toolkit {path} --runs-root {path}` | Collect the universe, derive chunk membership, write `manifest.json`, print the run id. **It also compiles: `plan` runs the warm inline, on the invoking node, unless the underlying module is given `--warm-performed-externally` — and this CLI does not expose that flag.** Do not run it on a shared login node. A harness that dispatches chunks should invoke `python -m hhemt.suite._runner` with that flag and supply its own awaited warm. |
+| `chunk --chunk {n} --run-dir {path}` | Execute one chunk. The exit code is pytest's. |
+| `aggregate --run-dir {path}` | Compute the cross-chunk verdict and write the summary pair. `--allow-not-green` exits 0 even when the verdict is not GREEN. |
+| `triage --toolkit {path} --runs-root {path}` | **PLANS** a re-run of only the prior run's failed and unevaluated set: it writes a manifest, prints `run_id=`, and returns. **It executes nothing** — submit that run's single chunk to actually run the set. `--from-run {id}` names the source run. |
+
+**A triage result is not a suite result, and the filenames enforce it.** A triage manifest
+declares `scope_intent: triage`, which the aggregator BINDS as the scope regardless of what
+the caller passed, so the verdict line carries `scope=triage`. The summary is then written as
+`summary.triage.json` and `summary.triage.md` rather than `summary.json` and `summary.md` —
+deliberately, so that no later reader can pick a triage up as a suite summary. That split is
+one of two independent arms guarding it; the other is the `.triage` run-directory suffix.
+
+Only `scope=union` — the array plus its complement — supports a suite-level green claim.
+A `scope=array` result does not cover the complement's tests at all.
 
 ## Exit codes
 

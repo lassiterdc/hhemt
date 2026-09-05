@@ -101,7 +101,7 @@ def _triage(
     runs_root: str = typer.Option(..., "--runs-root"),
     from_run: str = typer.Option("", "--from-run"),
 ) -> None:
-    """Re-run only the prior run's failed+unevaluated set. NOT a suite result."""
+    """PLAN a re-run of the prior run's failed+unevaluated set; executes nothing. NOT a suite result."""
     from hhemt.suite._runner import main
 
     raise typer.Exit(code=main(_argv(triage=True, toolkit=toolkit, runs_root=runs_root, from_run=from_run or None)))
