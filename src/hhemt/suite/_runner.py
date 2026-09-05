@@ -938,7 +938,11 @@ def triage(args: argparse.Namespace) -> int:
     # legible line -- and a vanished id is usually GOOD NEWS, since the fix removed or
     # renamed the failing test. Vanished ids are DROPPED and REPORTED, never silently
     # omitted; the run refuses only when nothing survives.
-    live = set(collect(repo, args.python)[0])
+    # BIND the closures rather than discarding them with `[0]`. The triage manifest needs the
+    # same closure-derived `expected_fixtures` the normal path gets, and this collect pass has
+    # already computed them -- `collect()` returns `(node_ids, closures)`.
+    live_ids, closures = collect(repo, args.python)
+    live = set(live_ids)
     node_ids = [n for n in requested if n in live]
     vanished = [n for n in requested if n not in live]
     if vanished:
@@ -965,9 +969,32 @@ def triage(args: argparse.Namespace) -> int:
     # every chunk whose --toolkit differs from the installed toolkit. Keep it in here.
     from hhemt.suite import partition as _partition
 
-    expected = sorted(
-        {f for n in node_ids for f in _partition._fixtures_used(repo / n.split("::")[0], _partition.RECORDED_FIXTURES)}
-    )
+    # CLOSURE-DERIVED, matching partition.py's enrichment loop. A substring scan would keep
+    # the defect alive on exactly the path an operator uses most while iterating toward green:
+    # `test_partition_split.py` mentions `tritonswmm_cpu_compiled` seven times in string
+    # literals, the scan reads all seven as requests, and the single triage chunk VOIDs.
+    #
+    # REFUSE BY NAME rather than subscripting blind OR defaulting to empty. `node_ids` is a
+    # subset of `live` and `collect()` builds both halves in one invocation, so a miss is
+    # excluded by construction TODAY -- but only while the two halves agree on ID SHAPE:
+    # `node_ids` is parsed from `--collect-only -q` STDOUT, `closures` is keyed on
+    # `item.nodeid`. The stdout half accepts ANY line containing `::` (_runner.py:544), so a
+    # warnings-summary entry naming a nodeid, or a plugin banner, enters `node_ids` while
+    # `closures` -- keyed strictly on `item.nodeid` -- cannot contain it. Same invocation,
+    # genuine divergence, dependent on pytest's stdout shape rather than on this code.
+    # On the NORMAL path such a divergence is caught legibly by build_manifest's wholesale
+    # guard; THE TRIAGE PATH HAND-BUILDS ITS MANIFEST AND NEVER CALLS build_manifest, so it
+    # has nothing above it. This guard is therefore NOT redundant -- do not delete it by
+    # analogy with the redundant per-node guard in partition.py's enrichment loop.
+    _unkeyed = [n for n in node_ids if n not in closures]
+    if _unkeyed:
+        raise SystemExit(
+            f"refusing to triage: {len(_unkeyed)} collected node id(s) have no fixture closure, "
+            f"first {_unkeyed[0]!r}. The two halves of collect() disagree on id shape "
+            "(stdout-parsed ids vs item.nodeid); expected_fixtures cannot be derived from "
+            "absent evidence."
+        )
+    expected = sorted({fx for n in node_ids for fx in closures[n] if fx in _partition.RECORDED_FIXTURES})
     manifest = {
         "run_id": run_id,
         "source_sha": sha,

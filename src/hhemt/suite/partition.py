@@ -158,6 +158,27 @@ def _string_literals(src: str) -> set[str]:
     return {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
 
 
+def resolve_dynamic_literals(txt: str, sym: dict[str, set[str]]) -> dict[str, set[str]]:
+    """Resolved literal -> the trees it leads to, for the dynamic lookups in `txt`.
+
+    Returns the MAPPING rather than the literal list, because that is what both callers
+    actually consume: file_trees unions the tree sets, and the re-admission takes .keys().
+    Returning the list would leave file_trees re-deriving the trees from an intermediate --
+    the same one-question-two-answers shape this extraction exists to remove.
+
+    ONE answer to "what does this file's dynamic lookup resolve to", called from both
+    consumers. It was two answers for one round -- this composition inline in file_trees,
+    and a whole-file substring test at the enrichment loop -- which is the same divergence
+    the closure-derived expected_fixtures was written to close, re-created inside its own
+    repair. Callers supply the token gate themselves; this resolves and does not decide.
+    """
+    universe = dict(sym)
+    for name, seg in _defs_in(txt).items():
+        if name not in universe:
+            universe[name] = set(_ANALYSIS_NAME_RE.findall(seg))
+    return {lit: universe[lit] for lit in _string_literals(txt) if lit in universe}
+
+
 def file_trees(repo_root: Path, closures: dict[str, list[str]]) -> dict[str, set[str]]:
     """file -> trees, from pytest's REAL resolved fixture closure plus direct catalog calls.
 
@@ -197,12 +218,7 @@ def file_trees(repo_root: Path, closures: dict[str, list[str]]) -> dict[str, set
         # this derivation replaced.
         if _DYNAMIC_LOOKUP_MARKER not in txt:
             continue
-        universe = dict(sym)
-        local = _defs_in(txt)
-        for name, seg in local.items():
-            if name not in universe:
-                universe[name] = set(_ANALYSIS_NAME_RE.findall(seg))
-        resolved = [lit for lit in _string_literals(txt) if lit in universe]
+        resolved = resolve_dynamic_literals(txt, sym)
         # FAIL LOUD when a dynamic lookup resolves to nothing at all. An unresolvable
         # request is a hole in the derivation, and a hole that returns an empty tree set is
         # indistinguishable from a file that genuinely touches no tree -- which is exactly
@@ -213,8 +229,8 @@ def file_trees(repo_root: Path, closures: dict[str, list[str]]) -> dict[str, set
                 "known fixture or helper, so the request cannot be resolved and the file's "
                 "tree reach is unknown. Refusing to partition on an unresolvable lookup."
             )
-        for lit in resolved:
-            out[f] |= universe[lit]
+        for trees in resolved.values():
+            out[f] |= trees
     return out
 
 
@@ -530,6 +546,9 @@ def build_manifest(
         if b:
             chunks.append({"kind": "cheap", "files": sorted(b)})
 
+    # HOISTED: pure in repo_root and invariant across chunks; rebuilding it per iteration
+    # cost a measured 931 ms x chunk_count on the interactive plan step.
+    _sym = support_symbol_trees(repo_root)
     for i, c in enumerate(chunks):
         c["chunk_id"] = i
         # DO NOT re-derive node_ids when the splitter already set them. A node-split part is
@@ -538,9 +557,74 @@ def build_manifest(
         # then see each of those nodes in more than one chunk, and PartitionDriftError would
         # fire naming duplicates rather than the re-derivation that caused them.
         c.setdefault("node_ids", [n for f in c["files"] for n in by_file[f]])
-        expected: set[str] = set()
+        # CLOSURE-DERIVED, not scanned. `_fixtures_used` is a whole-file SUBSTRING scan
+        # answering "does this file MENTION the fixture"; `expected_fixtures` needs "does any
+        # node in this chunk REQUEST it". Those diverge the moment a test file's SUBJECT is
+        # fixture names: tests/test_partition_split.py mentions `tritonswmm_cpu_compiled`
+        # seven times, every one a string literal building a synthetic corpus, and the scan
+        # read all seven as requests -- so the chunk declared a fixture no node asks for,
+        # `dead = expected - ok` was non-empty, classify_chunk returned VOID and every member
+        # cascaded to ABSENT. `closures` already answers the right question per node and is
+        # already a parameter, so this removes the CLASS rather than exempting the file.
+        missing = [n for n in c["node_ids"] if n not in closures]
+        if missing:
+            raise PartitionDriftError(
+                f"chunk {i} carries {len(missing)} node id(s) with no fixture closure, first "
+                f"{missing[0]!r}. expected_fixtures cannot be derived from absent evidence; "
+                "refusing to partition. This is the per-node form of the wholesale guard above."
+            )
+        expected: set[str] = {fx for n in c["node_ids"] for fx in closures[n] if fx in RECORDED_FIXTURES}
+        # NARROW RE-ADMISSION, because the closure has a blind spot the scan did not.
+        # `getfixtureclosure` runs at COLLECTION over declared argnames, usefixtures and
+        # autouse; `request.getfixturevalue()` resolves at CALL time and never reaches
+        # `--collect-only`. Measured: a parametrized dynamic request stores ['name'] in the
+        # closure, not the fixture it will actually pull. Two live sites request a
+        # HEAVY_FIXTURES member that way (test_synth_08_bundle_round_trip.py:75, which is
+        # parametrized over two of them, and test_experiments_from_doi.py:47 inside a
+        # module-scoped fixture, so the name is in no item's argnames at all). Without this,
+        # a chunk whose heavy chain dies classifies as TEST FAILURES rather than as a LOST
+        # PRECONDITION -- the exact distinction classify_chunk exists to draw.
+        #
+        # Keyed on the token the dynamic route CANNOT avoid emitting, so the key is
+        # structural rather than a hand-maintained file list. tests/test_partition_split.py
+        # contains no `getfixturevalue` (verified: 0 of the 9 corpus hits), so the class this
+        # change closes stays closed.
+        #
+        # TWO residuals, in opposite directions. OVER-declaration: a file that both calls
+        # getfixturevalue AND names a heavy fixture in an unrelated literal can false-VOID.
+        # Zero such files today; the direction is LOUD, which is correct for a detector.
+        # UNDER-declaration, and this one bounds the claim above: the token is unavoidable for
+        # the ROUTE but this scan only sees `c["files"]`, which are TEST files. A
+        # getfixturevalue call in tests/conftest.py or under tests/fixtures/** puts the token
+        # OUTSIDE the scanned set and loses the heavy fixture again -- the same class,
+        # relocated. Measured 0 hits in either today, and it is NOT a regression because the
+        # old whole-file scan did not see them either.
+        # PRECONDITION, not an adjacent site: `node_split_candidates` (:369) EXCLUDES every
+        # marker-bearing file from node-splitting, so every chunk holding any of such a file's
+        # nodes holds ALL of them. That is what licenses attributing a WHOLE-FILE scan to a
+        # chunk. DELETE THAT EXCLUSION AND A NODE-SPLIT PART INHERITS A FIXTURE NO NODE IN THAT
+        # PART REQUESTS -- the false-VOID class this derivation exists to close, re-created at
+        # part granularity. A follow-up proposing to retire node_split_candidates (on the
+        # ground that it "exists only because _fixtures_used and closures disagree") is written
+        # down and has been RETRACTED by its author; if you meet it, this is why.
+        #
+        # OVER-DECLARATION RESIDUAL, at its real size. The realistic instance is not an
+        # unrelated mention -- it is a CORPUS-BUILDING TEST, and this corpus already contains
+        # one: tests/test_partition_split.py names `tritonswmm_cpu_compiled` seven times in
+        # string literals and is a single `getfixturevalue` call away from re-arming the
+        # original defect under a coarse instrument. Resolving through the shared resolver
+        # narrows it -- a name in a comment is not a literal -- but does NOT remove it: that
+        # file's literals DO resolve, measured, so the token gate is the only thing standing
+        # between it and a false declaration under EITHER instrument.
         for f in c["files"]:
-            expected |= _fixtures_used(repo_root / f, RECORDED_FIXTURES)
+            pth = repo_root / f
+            try:
+                txt = pth.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if _DYNAMIC_LOOKUP_MARKER not in txt:
+                continue
+            expected |= set(resolve_dynamic_literals(txt, _sym)) & set(RECORDED_FIXTURES)
         c["expected_fixtures"] = sorted(expected)
 
     assigned = [n for c in chunks for n in c["node_ids"]]
