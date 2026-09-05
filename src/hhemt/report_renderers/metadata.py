@@ -547,7 +547,9 @@ def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis
         declared = getattr(paths, attr, None) if paths is not None else None
         if declared is not None:
             candidates.append(Path(declared))
-    candidates.extend(analysis_dir / name for name in ("sensitivity_datatree.zarr", "analysis_datatree.zarr"))
+    from hhemt.utils import ROOT_TREE_NAMES
+
+    candidates.extend(analysis_dir / name for name in ROOT_TREE_NAMES)
     return next((c for c in candidates if c.exists()), None)
 
 
@@ -2550,8 +2552,7 @@ def _reduction_caption() -> str:
     for r in seen:
         if r.apply is None:
             method = (
-                "No reduction is applied. The value is carried from its source as-is, so "
-                "there is no function to link."
+                "No reduction is applied. The value is carried from its source as-is, so there is no function to link."
             )
         else:
             doc = (r.apply.__doc__ or "").strip().splitlines()

@@ -693,7 +693,9 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
     # on toggle_sensitivity_analysis -- a sensitivity master ships the sensitivity tree
     # and no regular one, and keying on the config would misreport a partially-built
     # tree as uncaptured.
-    for name in ("analysis_datatree.zarr", "sensitivity_datatree.zarr"):
+    from hhemt.utils import ROOT_TREE_NAMES
+
+    for name in ROOT_TREE_NAMES:
         got = _from_tree_attrs(adir / name)
         if got:
             out["consolidate"] = got

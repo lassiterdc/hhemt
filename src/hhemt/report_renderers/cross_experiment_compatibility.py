@@ -121,7 +121,7 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
         return f"{shown} *" if _build_split and str(raw) == _build_minority else shown
 
     body = "\n".join(
-        "<tr><td>{e}</td><td>{r}</td><td>{m}</td><td>{n}</td>" "<td>{s}</td><td>{tv}</td><td>{sv}</td></tr>".format(
+        "<tr><td>{e}</td><td>{r}</td><td>{m}</td><td>{n}</td><td>{s}</td><td>{tv}</td><td>{sv}</td></tr>".format(
             e=_html.escape(str(row.get("experiment_id"))),
             r=_html.escape(str(row.get("role"))),
             m=_html.escape(str(row.get("model"))),
@@ -147,7 +147,7 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
         _notes.append("Solver sha is identical across every row.")
     if _build_split:
         _notes.append(
-            "* on the hhemt build column marks an experiment produced by a different " "hhemt build than the others."
+            "* on the hhemt build column marks an experiment produced by a different hhemt build than the others."
         )
     elif rows:
         _notes.append(
@@ -259,7 +259,9 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
         # model + n_subs from the consolidated tree tiers
         model, n_subs = "TRITON", 0
         solver_sha, toolkit_version = "", ""
-        store = child / "sensitivity_datatree.zarr"
+        from hhemt.utils import resolve_experiment_tree
+
+        store = resolve_experiment_tree(child)
         if store.exists():
             try:
                 import xarray as _xr
@@ -392,7 +394,7 @@ def _divergence_message(d: dict) -> str:
             "environment is not part of experiment identity."
         )
     if field == "schemaVersion":
-        return "Layout-version skew between bundles; figures render, but cross-bundle field " "semantics may differ."
+        return "Layout-version skew between bundles; figures render, but cross-bundle field semantics may differ."
     # Must precede the `bucket == "experiment" and severity == "warning"` catch-all: a
     # solver-sha divergence carries exactly that bucket/severity pair, so without its own
     # branch it printed "the two bundles sweep different rows or columns of the compute
@@ -406,7 +408,7 @@ def _divergence_message(d: dict) -> str:
             "makes a bit-identical result evidence for both."
         )
     if bucket == "experiment" and severity == "warning":
-        return "Sensitivity-axis divergence: the two bundles sweep different rows or columns " "of the compute matrix."
+        return "Sensitivity-axis divergence: the two bundles sweep different rows or columns of the compute matrix."
     return f"Divergence in `{field}` ({bucket} bucket, {severity})."
 
 

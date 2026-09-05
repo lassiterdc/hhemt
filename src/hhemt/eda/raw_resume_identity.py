@@ -789,7 +789,9 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     for _sub, _raw_bin in contrib:
         _df = return_fpath_wlevels(_raw_bin, interval)
         srcs.extend(Path(_p) for _col in _df.columns for _p in _df[_col].dropna())
-    srcs = list(dict.fromkeys(srcs)) or [analysis_dir / "analysis_datatree.zarr"]
+    from hhemt.utils import resolve_experiment_tree
+
+    srcs = list(dict.fromkeys(srcs)) or [resolve_experiment_tree(analysis_dir)]
     emit_data_artifact_with_sources(
         artifact_path=artifact, source_paths=srcs, analysis_dir=analysis_dir, plot_id=plot_id
     )

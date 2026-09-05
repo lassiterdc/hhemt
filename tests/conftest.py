@@ -1022,7 +1022,7 @@ def synthetic_two_sensitivity_bundle_fixture(rendered_synth_sensitivity, tmp_pat
     import shutil
     import zipfile
 
-    from hhemt.bundle._combine_merge import SENSITIVITY_TREE_NAME
+    from hhemt.bundle._combine_merge import _resolve_root_tree
 
     analysis = rendered_synth_sensitivity
     zip_a = tmp_path / "sens_bundle_a.zip"
@@ -1030,10 +1030,14 @@ def synthetic_two_sensitivity_bundle_fixture(rendered_synth_sensitivity, tmp_pat
     dir_a = tmp_path / "sens_bundle_a"
     with zipfile.ZipFile(zip_a) as zf:
         zf.extractall(dir_a)
-    assert (dir_a / SENSITIVITY_TREE_NAME).exists(), (
-        f"sensitivity-master bundle must ship {SENSITIVITY_TREE_NAME} at its root "
-        f"for combine merge; got: {sorted(p.name for p in dir_a.iterdir())}"
-    )
+    # Assert the property combine NEEDS -- a RESOLVABLE root consolidated tree -- via the
+    # same resolver production uses, never a name. A name assertion here is invisible to
+    # every literal search and breaks on a store rename it never mentions; this one breaks
+    # only when the bundle genuinely ships no resolvable tree, and it breaks LOUDLY:
+    # _resolve_root_tree raises FileNotFoundError naming every accepted name and the
+    # bundle root. No `.exists()` assert is added beside it -- the resolver returns only
+    # existing stores, so such an assert would be true by construction.
+    _resolve_root_tree(dir_a)
     dir_b = tmp_path / "sens_bundle_b"
     # symlinks=True: copy links AS links instead of following them. A scenario dir carries
     # `build_triton -> {software}/build_triton_cpu`, a link into a SHARED cache another

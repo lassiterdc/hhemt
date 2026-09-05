@@ -75,12 +75,14 @@ def load_eda_context(root: Path | str) -> EdaContext:
     cfg_analysis = yaml_to_model(cfg_analysis_path, analysis_config)
     cfg_system = yaml_to_model(cfg_system_path, system_config)
 
+    from hhemt.utils import resolve_experiment_tree
+
     def _open_tree(p: Path) -> xr.DataTree | None:
         return xr.open_datatree(str(p), engine="zarr", consolidated=False) if p.exists() else None
 
     datatree = _open_tree(root / "analysis_datatree.zarr")
     sensitivity_datatree = (
-        _open_tree(root / "sensitivity_datatree.zarr") if cfg_analysis.toggle_sensitivity_analysis else None
+        _open_tree(resolve_experiment_tree(root)) if cfg_analysis.toggle_sensitivity_analysis else None
     )
 
     status_csv = root / "scenario_status.csv"

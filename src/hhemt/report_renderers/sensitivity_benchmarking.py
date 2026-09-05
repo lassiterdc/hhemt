@@ -57,6 +57,7 @@ from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 from hhemt.swmm_output_parser import parse_total_elapsed
+from hhemt.utils import EXPERIMENT_TREE_NAME
 
 # COLOUR IS THE DECOMPOSITION AXIS. Hardware is carried by the COLUMN FACET and by
 # nothing else; colour and marker symbol are LOCKED one-to-one and both key the
@@ -1590,14 +1591,14 @@ def _draw_metric_panel(
             kind="line",
             note=f"metric group {gv}",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             ax.plot(xs, ys, color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2)
         with prov.artist(
             axes_id="ax_metric",
             kind="scatter",
             note=f"metric points {gv}",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             ax.scatter(
                 xs,
                 ys,
@@ -1626,7 +1627,7 @@ def _draw_metric_panel(
             kind="line",
             note="ideal-reference line",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             ax.plot(
                 [1, x_max],
                 [1, x_max],
@@ -1698,7 +1699,7 @@ def _draw_panel(
                 kind="scatter",
                 note=f"single-point group {gv}",
             ) as a:
-                a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+                a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
                 ax.scatter(
                     sub["indep_value"],
                     sub[y_col],
@@ -1728,7 +1729,7 @@ def _draw_panel(
             kind="line",
             note=f"multi-point line {gv}",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             ax.plot(
                 per_x_min.index,
                 per_x_min.values,
@@ -1742,7 +1743,7 @@ def _draw_panel(
             kind="scatter",
             note=f"multi-point markers {gv}",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             ax.scatter(
                 sub["indep_value"],
                 sub[y_col],
@@ -2438,7 +2439,7 @@ def _plotly_metric_panel(
                 kind="line",
                 note=f"multi-point line {gv} (panel {panel_id})",
             ) as a:
-                a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+                a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
                 fig.add_trace(
                     go.Scatter(
                         x=per_x_min.index,
@@ -2484,7 +2485,7 @@ def _plotly_metric_panel(
             kind="scatter",
             note=f"markers {gv} (panel {panel_id})",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             # Every marker hollow, unconditionally (`_HOLLOW_FILL`). The per-point
             # `n_replicates` branch that used to build a fill LIST here is retired with
             # the encoding it served; a scalar is all that is left to pass.
@@ -2658,7 +2659,7 @@ def _plotly_metric_panel_precomputed(
                 kind="line",
                 note=f"metric min-line {gv} (panel {panel_id})",
             ) as a:
-                a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+                a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
                 fig.add_trace(go.Scatter(**line_trace), row=row, col=col)
         # Markers trace — all-row points (or fall back to per-N-min if all-row not provided).
         # Every marker hollow, unconditionally (`_HOLLOW_FILL`). The per-point fill list
@@ -2689,7 +2690,7 @@ def _plotly_metric_panel_precomputed(
             kind="scatter",
             note=f"metric markers {gv} (panel {panel_id})",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             fig.add_trace(go.Scatter(**marker_kwargs), row=row, col=col)
     # Ideal reference line: linear (S=N) or constant (E=1.0).
     if ideal_kind == "linear":

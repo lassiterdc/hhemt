@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import matplotlib.pyplot as plt
 
 from hhemt.exceptions import ProcessingError
+from hhemt.utils import EXPERIMENT_TREE_NAME
 
 if TYPE_CHECKING:
     from hhemt.report_renderers._provenance import ProvenanceLog
@@ -776,7 +777,7 @@ def collect_sensitivity_source_paths(
     del independent_var  # currently unused; the same source set serves all wildcards
     sources: list[dict] = [
         {
-            "path": "sensitivity_datatree.zarr",
+            "path": EXPERIMENT_TREE_NAME,
             "variables": [
                 "/member_{id}/tritonswmm/performance.Total (per member)",
             ],

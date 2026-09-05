@@ -41,6 +41,7 @@ from hhemt.report_renderers._table_presentation import (
     plotly_columnwidth,
     plotly_table_header,
 )
+from hhemt.utils import EXPERIMENT_TREE_NAME
 
 _TRUNCATION_CAVEAT = (
     "Absolute magnitudes inherit the variable-dt SWMM final-period truncation "
@@ -58,13 +59,13 @@ _TRUNCATION_CAVEAT = (
 def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     analysis_dir = Path(analysis.analysis_paths.analysis_dir)
     read_model = analysis_dir / "combined_intercomparison.json"
-    child_stores = sorted((analysis_dir / "child_crates").glob("*/sensitivity_datatree.zarr"))
+    child_stores = sorted((analysis_dir / "child_crates").glob(f"*/{EXPERIMENT_TREE_NAME}"))
 
     prov = ProvenanceLog()
     with prov.artist(
         axes_id="html_section",
         kind="figure",
-        note="cross-experiment clean-vs-resume spatial diff maps (child_crates/*/sensitivity_datatree.zarr)",
+        note=f"cross-experiment clean-vs-resume spatial diff maps (child_crates/*/{EXPERIMENT_TREE_NAME})",
     ) as artist:
         artist.add_channel("data", ProvenanceRef(source_path="combined_intercomparison.json"))
         for s in child_stores:
@@ -1129,8 +1130,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             for _tr in _watershed_boundary_traces(wpoly):
                 fig.add_trace(_tr, row=row, col=1)
             txt = (
-                f"{g_label} (resumed alternate) - {base_label} (clean reference), "
-                f"same byte-identity class, event {evt}"
+                f"{g_label} (resumed alternate) - {base_label} (clean reference), same byte-identity class, event {evt}"
             )
         else:
             z = _apply_mask(_signed_pct(d, np.asarray(base_da.values)), wmask)
@@ -1315,7 +1315,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         width=_FIG_W,
         margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
         title=(
-            f"{_page_title}<br><sup>resumed alternates vs the clean reference within " "each byte-identity class</sup>"
+            f"{_page_title}<br><sup>resumed alternates vs the clean reference within each byte-identity class</sup>"
         ),
         annotations=list(fig.layout.annotations) + annotations,
         showlegend=False,

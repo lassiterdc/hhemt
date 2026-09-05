@@ -791,7 +791,7 @@ class TRITONSWMM_sensitivity_analysis:
                             f"{sorted(_diverged)} — the simulation completed (c_run flag "
                             "present) but the per-scenario summary outputs are absent, so "
                             "the master consolidation would silently drop these "
-                            "members from sensitivity_datatree.zarr. Re-run with "
+                            "members from the consolidated experiment tree. Re-run with "
                             "start_with='process', regenerate_existing=True to rebuild the "
                             "missing summaries first."
                         ),
@@ -1274,7 +1274,7 @@ class TRITONSWMM_sensitivity_analysis:
             target=target,
             override_dataset_license=override_dataset_license,
             software_doi=software_doi,
-            consolidated_zarr_relpath="sensitivity_datatree.zarr",
+            consolidated_zarr_relpath="experiment_datatree.zarr",
         )
 
     def publish_reprex_bundle(
@@ -1726,7 +1726,7 @@ class TRITONSWMM_sensitivity_analysis:
         _emitted_vars = {str(v) for _n in tree.subtree for v in _n.dataset.data_vars}
         _core_json, _graph_json = emit_provenance(
             self.experiment,
-            consolidated_zarr_relpath="sensitivity_datatree.zarr",
+            consolidated_zarr_relpath="experiment_datatree.zarr",
             sub_dataset_relpaths=_sub_relpaths,
             with_run_units=False,
             emitted_vars=_emitted_vars,
@@ -2323,7 +2323,7 @@ class TRITONSWMM_sensitivity_analysis:
             if zarr_path is not None and zarr_path.exists():
                 if verbose:
                     print(
-                        f"[cleanup-orphans] Deleting sensitivity_datatree.zarr (rebuild on next run): {zarr_path}",
+                        f"[cleanup-orphans] Deleting {zarr_path.name} (rebuild on next run): {zarr_path}",
                         flush=True,
                     )
                 fast_rmtree(zarr_path, analysis_dir=experiment_dir)  # PATTERN A

@@ -962,8 +962,8 @@ rule plot_eda_dem_resolution_cost_error:
             labels={"figure": "Cost vs error"},
         )
     params:
-        source_paths = ['sensitivity_datatree.zarr'],
-        source_paths_rst = '- ``sensitivity_datatree.zarr``\n',
+        source_paths = ['experiment_datatree.zarr'],
+        source_paths_rst = '- ``experiment_datatree.zarr``\n',
     log: "_logs/plots/dem_resolution_cost_error.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=4000, time_min=10
@@ -988,8 +988,8 @@ rule plot_eda_dem_resolution_error_ecdf:
             labels={"figure": "Depth-error ECDF"},
         )
     params:
-        source_paths = ['sensitivity_datatree.zarr'],
-        source_paths_rst = '- ``sensitivity_datatree.zarr``\n',
+        source_paths = ['experiment_datatree.zarr'],
+        source_paths_rst = '- ``experiment_datatree.zarr``\n',
     log: "_logs/plots/dem_resolution_error_ecdf.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=4000, time_min=10
@@ -1014,8 +1014,8 @@ rule plot_eda_dem_resolution_diff_maps:
             labels={"figure": "Depth-difference maps"},
         )
     params:
-        source_paths = ['sensitivity_datatree.zarr'],
-        source_paths_rst = '- ``sensitivity_datatree.zarr``\n',
+        source_paths = ['experiment_datatree.zarr'],
+        source_paths_rst = '- ``experiment_datatree.zarr``\n',
     log: "_logs/plots/dem_resolution_diff_maps.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=4000, time_min=10
@@ -1040,8 +1040,8 @@ rule plot_eda_dem_resolution_coupling_table:
             labels={"figure": "Resolution x coupling junctions"},
         )
     params:
-        source_paths = ['sensitivity_datatree.zarr'],
-        source_paths_rst = '- ``sensitivity_datatree.zarr``\n',
+        source_paths = ['experiment_datatree.zarr'],
+        source_paths_rst = '- ``experiment_datatree.zarr``\n',
     log: "_logs/plots/dem_resolution_coupling_table.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=4000, time_min=10
@@ -1066,8 +1066,8 @@ rule plot_eda_compute_sensitivity:
             labels={"figure": "Config-diff maps"},
         )
     params:
-        source_paths = ['sensitivity_datatree.zarr'],
-        source_paths_rst = '- ``sensitivity_datatree.zarr``\n',
+        source_paths = ['experiment_datatree.zarr'],
+        source_paths_rst = '- ``experiment_datatree.zarr``\n',
     log: "_logs/plots/eda_compute_sensitivity.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=4000, time_min=10

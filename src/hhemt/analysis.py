@@ -384,7 +384,7 @@ class TRITONSWMM_analysis:
 
         # Sensitivity-level DataTree zarr (Phase 3) — aggregates members.
         if cfg_analysis.toggle_sensitivity_analysis:
-            analysis_paths_kwargs["sensitivity_datatree_zarr"] = analysis_dir / "sensitivity_datatree.zarr"
+            analysis_paths_kwargs["sensitivity_datatree_zarr"] = analysis_dir / "experiment_datatree.zarr"
 
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
         # Ensure the per-analysis simulation directory exists at construction time.

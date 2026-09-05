@@ -49,6 +49,7 @@ from hhemt.report_renderers._figure_emission import (
     emit_plot_with_sources,  # noqa: F401  # reserved for the /design-figure-authored bodies
 )
 from hhemt.report_renderers._table_presentation import plotly_table_header
+from hhemt.utils import resolve_experiment_tree
 
 if TYPE_CHECKING:
     from hhemt.config.analysis import analysis_config
@@ -77,7 +78,9 @@ def dem_resolution_source_paths(root: Path) -> list[Path]:
     Mirrors config_diff_source_paths' shape: the consolidated tree is the data, and it
     is always bundle-carried, so Bundle.eda(plots_only=True) re-renders locally.
     """
-    return [root / "sensitivity_datatree.zarr"]
+    from hhemt.utils import resolve_experiment_tree
+
+    return [resolve_experiment_tree(root)]
 
 
 def _gate_raster(
@@ -245,7 +248,9 @@ def _styled_diff_heatmap(
 def dem_resolution_diff_source_paths(root: Path) -> list[Path]:
     """fig-3 declares: the datatree + ONE conduit inp (shared geometry) + the watershed
     geojson when present (Gotcha-53 renderer-IO audit: actual reads must be a subset)."""
-    srcs: list[Path] = [root / "sensitivity_datatree.zarr"]
+    from hhemt.utils import resolve_experiment_tree
+
+    srcs: list[Path] = [resolve_experiment_tree(root)]
     inps = sorted(root.glob("members/*/sims/*/swmm/hydraulics.inp"))
     if inps:
         srcs.append(inps[0])
@@ -259,7 +264,9 @@ def dem_resolution_coupling_source_paths(root: Path) -> list[Path]:
     """fig-4 declares: the datatree (peak/error) + EVERY sub's hydraulics.inp (the
     `Coupling junctions` count is read per resolution from each sub's processed [INFLOWS]
     junctions; a universal, DATA-derived count decoupled from any generator constant)."""
-    srcs: list[Path] = [root / "sensitivity_datatree.zarr"]
+    from hhemt.utils import resolve_experiment_tree
+
+    srcs: list[Path] = [resolve_experiment_tree(root)]
     srcs += sorted(root.glob("members/*/sims/*/swmm/hydraulics.inp"))
     return srcs
 
@@ -328,7 +335,7 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config)
     epsg = cfg_system.crs.horizontal_epsg
 
-    dt = xr.open_datatree(str(root / "sensitivity_datatree.zarr"), engine="zarr", consolidated=False)
+    dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
 
     def _res_m(node_name: str) -> float:
         # "member_dem_3p5_r1" -> 3.5 ; the resolution is encoded in the member node name.
@@ -579,7 +586,7 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
     cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config)
     epsg = cfg_system.crs.horizontal_epsg
 
-    dt = xr.open_datatree(str(root / "sensitivity_datatree.zarr"), engine="zarr", consolidated=False)
+    dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
 
     def _res_m(node_name: str) -> float:
         return float(node_name.split("dem_")[1].split("_r")[0].replace("p", "."))
@@ -1115,7 +1122,7 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
     cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config)
     epsg = cfg_system.crs.horizontal_epsg
 
-    dt = xr.open_datatree(str(root / "sensitivity_datatree.zarr"), engine="zarr", consolidated=False)
+    dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
 
     def _res_m(node_name: str) -> float:
         return float(node_name.split("dem_")[1].split("_r")[0].replace("p", "."))
@@ -1356,7 +1363,7 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
     cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config)
     epsg = cfg_system.crs.horizontal_epsg
 
-    dt = xr.open_datatree(str(root / "sensitivity_datatree.zarr"), engine="zarr", consolidated=False)
+    dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
 
     def _res_m(n: str) -> float:
         return float(n.split("dem_")[1].split("_r")[0].replace("p", "."))

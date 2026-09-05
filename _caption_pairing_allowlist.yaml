@@ -45,7 +45,7 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: f0a3493fe4a55074b6a543b302d055aff4fef7f612976900fcee3f41b48a37c5
+    renderer_sha256: e434125b84736d410cbbcb96db12a0c690a50eca80e8de2c03b47a02481373ed
     justification: >-
       Item (A) extraction (ruling ## 18, option 2). Caption RE-READ in full; the finding is
       that this change is a PURE MOVE and the caption makes no claim a pure move can touch.
@@ -63,9 +63,17 @@ unpaired_allowlist:
       structural, and the re-read found the caption's claims invariant under it. Digest
       recorded after the extraction, so the exemption expires on the next change to this
       renderer.
+      S8b consolidated-store rename, 2026-09-05. Caption RE-READ: it contains no reference
+      to any store filename (`grep -c datatree` returns 0), and every hunk in this renderer is
+      a RESOLUTION SUBSTITUTION -- a hardcoded `sensitivity_datatree.zarr` literal replaced by
+      `resolve_experiment_tree()` or by the `EXPERIMENT_TREE_NAME` / `ROOT_TREE_NAMES` constants.
+      The substitution changes WHICH STORE PATH is read, never what the figure computes, its
+      axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the rename, so the exemption expires on the next change to this renderer.
   - renderer: cross_experiment_intercomparison_maps
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
-    renderer_sha256: 882640f7f4e440bddad564484d61b4dbe149cd60e25a83e564105459fddb2fc1
+    renderer_sha256: ed8ee0f78b6f9acbb5a018b30ac17d4919762f230aca0058d0b51bc3d8ef8753
     justification: >-
       Iteration-8 annotation-carrier group (D3 annotation split and the
       title-collision fix), plus a whole-file ruff-format pass. Caption re-read:
@@ -81,6 +89,14 @@ unpaired_allowlist:
       re-read in full; no change needed. NOTE: the
       cross-experiment RESTRUCTURE is still open on a user question, so this
       exemption expires with the next renderer change by construction.
+      S8b consolidated-store rename, 2026-09-05. Caption RE-READ: it contains no reference
+      to any store filename (`grep -c datatree` returns 0), and every hunk in this renderer is
+      a RESOLUTION SUBSTITUTION -- a hardcoded `sensitivity_datatree.zarr` literal replaced by
+      `resolve_experiment_tree()` or by the `EXPERIMENT_TREE_NAME` / `ROOT_TREE_NAMES` constants.
+      The substitution changes WHICH STORE PATH is read, never what the figure computes, its
+      axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the rename, so the exemption expires on the next change to this renderer.
   - renderer: errors_and_warnings
     caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
     renderer_sha256: 1632cee63a3bce0f8406c1b97abf207ca642694b375c888e64c59196b9ad5491
@@ -104,7 +120,7 @@ unpaired_allowlist:
       guard would have fired again with a stale-exemption message.
   - renderer: cross_experiment_disk_utilization
     caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst
-    renderer_sha256: 6f92bab4587a3a7f54a5701df7a7f7961eeaaa45648ffd0a0e3389ea5a35c140
+    renderer_sha256: b698ad22092661e1f49fa70f4e0df587f056383716bcad95ddd2f9c71e509d2d
     justification: >-
       docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
       not by judgement. This renderer's abstract syntax tree, parsed from the working
@@ -121,9 +137,17 @@ unpaired_allowlist:
       print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
       Digest recorded AFTER the reformat, so the exemption expires on the next real
       change to this file rather than on arrival.
+      S8b consolidated-store rename, 2026-09-05. Caption RE-READ: it contains no reference
+      to any store filename (`grep -c datatree` returns 0), and every hunk in this renderer is
+      a RESOLUTION SUBSTITUTION -- a hardcoded `sensitivity_datatree.zarr` literal replaced by
+      `resolve_experiment_tree()` or by the `EXPERIMENT_TREE_NAME` / `ROOT_TREE_NAMES` constants.
+      The substitution changes WHICH STORE PATH is read, never what the figure computes, its
+      axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: d4d4b255d7a54248106457f71b81e811de0d3bdefbc99e489454ae9f8221aa2c
+    renderer_sha256: 29283a55931c80caf051dd6d00658787b77813f19c783c3b3dccf45f39cdb8af
     justification_2026_09_03b: >-
       path-tree leaf-run collapse (four-spec set). Caption RE-READ IN FULL, and it makes
       no claim this change can touch. The caption describes WHAT the Provenance summary
@@ -143,6 +167,14 @@ unpaired_allowlist:
       NOT discharged here: the caption enumerates three sections while the page carries at
       least a fourth. A caption rewrite is not part of a rendering change; it stays on the
       work stack as its own item.
+      S8b consolidated-store rename, 2026-09-05. Caption RE-READ: it contains no reference
+      to any store filename (`grep -c datatree` returns 0), and every hunk in this renderer is
+      a RESOLUTION SUBSTITUTION -- a hardcoded `sensitivity_datatree.zarr` literal replaced by
+      `resolve_experiment_tree()` or by the `EXPERIMENT_TREE_NAME` / `ROOT_TREE_NAMES` constants.
+      The substitution changes WHICH STORE PATH is read, never what the figure computes, its
+      axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the rename, so the exemption expires on the next change to this renderer.
     justification_2026_09_03: >-
       member-identity repair (case-8 Spec 2). Caption RE-READ IN FULL, and it makes no
       claim this change can touch. The caption describes exactly three sections --
@@ -282,7 +314,7 @@ unpaired_allowlist:
       on the next real change to this file rather than on arrival.
   - renderer: cross_experiment_compatibility
     caption: src/hhemt/report_templates/captions/cross_experiment_compatibility.rst
-    renderer_sha256: d8ca3825cbd41486d54601632bdcd6315319c86c7a84467cafeed804ce06ba5b
+    renderer_sha256: 75b495c201f95b55bff1921c351580b25271876f5ab852f90a2027524c5baf70
     justification: >-
       docs-and-experiment-system <- sidequest-clearing-08-30 merge. FORMATTING ONLY --
       discharged by measurement, not by judgement, and following the AST-equivalence
@@ -302,6 +334,14 @@ unpaired_allowlist:
       Digest recorded AFTER the reformat, so the exemption expires on the next real
       change to this file rather than on arrival. This renderer was the one the
       authoring branch's own sweep missed; its siblings are allowlisted above.
+      S8b consolidated-store rename, 2026-09-05. Caption RE-READ: it contains no reference
+      to any store filename (`grep -c datatree` returns 0), and every hunk in this renderer is
+      a RESOLUTION SUBSTITUTION -- a hardcoded `sensitivity_datatree.zarr` literal replaced by
+      `resolve_experiment_tree()` or by the `EXPERIMENT_TREE_NAME` / `ROOT_TREE_NAMES` constants.
+      The substitution changes WHICH STORE PATH is read, never what the figure computes, its
+      axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the rename, so the exemption expires on the next change to this renderer.
   - renderer: cross_experiment_intercomparison
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison.rst
     renderer_sha256: 801a266b2893eda088131064678016e7b0837823448d2462203cc61f5dde5b49

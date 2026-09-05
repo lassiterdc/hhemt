@@ -403,8 +403,9 @@ def _load_intercomparison_subs(root: Path) -> dict:
     import xarray as xr
 
     from hhemt.eda.cross_sim_identity import config_identity_from_node_attrs
+    from hhemt.utils import resolve_experiment_tree
 
-    store = root / "sensitivity_datatree.zarr"
+    store = resolve_experiment_tree(root)
     out: dict = {}
     collapsed: dict = {}
     if not store.exists():

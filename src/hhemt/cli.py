@@ -597,7 +597,7 @@ def cleanup_orphans_command(
             master_flag_removed = result.get("master_flag_removed", False)
             extras = []
             if zarr_removed:
-                extras.append("sensitivity_datatree.zarr")
+                extras.append("the consolidated experiment tree")
             if master_flag_removed:
                 extras.append("f_consolidate_experiment_complete.flag")
             extras_msg = f" plus {' and '.join(extras)}" if extras else ""
@@ -2056,12 +2056,11 @@ def _list_excludable_callback(value: bool) -> bool:
     for name, entry in sorted(_EXCLUDABLE_CATALOG.items()):
         if entry.excludable:
             console.print(
-                f"  [green]{name}[/green]\n      {entry.description}\n" f"      cost: {entry.reproducibility_cost}"
+                f"  [green]{name}[/green]\n      {entry.description}\n      cost: {entry.reproducibility_cost}"
             )
         else:
             console.print(
-                f"  [red]{name}[/red] (NOT excludable)\n      {entry.description}\n"
-                f"      {entry.reproducibility_cost}"
+                f"  [red]{name}[/red] (NOT excludable)\n      {entry.description}\n      {entry.reproducibility_cost}"
             )
     console.print(
         "\nOrdering: the excluded input must ALREADY have a durable record — the toolkit has "
