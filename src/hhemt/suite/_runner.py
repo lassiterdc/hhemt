@@ -697,6 +697,44 @@ def plan(args: argparse.Namespace) -> int:
     run_id = f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}_{sha[:12]}"
     run_dir = Path(args.runs_root).resolve() / run_id
 
+    # DECLARE FIRST, then conform to the declaration like every other site. Drive is the
+    # site that PARSES the test tree (partition.py reads {repo_root}/tests/** to decide
+    # chunk membership), so a drive resolving `hhemt` from a different tree than it parses
+    # runs one version's parser over another version's source at the step that decides what
+    # each chunk contains. A detector keyed on the importing package reports the parser and
+    # is silent about the parsed -- which is why the declaration names the TREE.
+    from hhemt.suite import verify_version_conformance, write_version_expectation
+
+    write_version_expectation(run_dir, sha=sha, tree=str(repo))
+    _status, _rec = verify_version_conformance(run_dir, site="drive")
+    # MISMATCH *and* UNRESOLVABLE. The two non-MATCH states are NOT symmetric, and treating
+    # them alike in either direction is a defect: NO_EXPECTATION is a property of the RUN --
+    # a pre-floor run dir legitimately has no declaration and refusing there would make old
+    # runs unusable -- whereas UNRESOLVABLE is a property of THIS PROCESS, and here the
+    # expectation was written moments earlier BY THIS SAME PROCESS. A drive that cannot
+    # determine its own tree is not meeting a legacy artifact; it cannot certify anything
+    # about the run it is creating. Exempting it would wave through the most obviously broken
+    # configuration this floor exists for: a wheel-installed hhemt driving a source --toolkit,
+    # i.e. the parser deciding chunk membership being a different version from the tree parsed.
+    if _status in ("MISMATCH", "UNRESOLVABLE"):
+        if _status == "UNRESOLVABLE":
+            raise SystemExit(
+                "refusing to plan: this process cannot determine which source tree it resolved "
+                "hhemt from (no `src` component -- a wheel or non-src layout), so it cannot "
+                "certify the run it is about to create. Re-invoke with PYTHONPATH={--toolkit}/src."
+            )
+        raise SystemExit(
+            f"refusing to plan: drive resolved hhemt from {_rec['resolved_tree']!r} but this "
+            f"run is declared against {_rec['expected_tree']!r}. The manifest would be derived "
+            "by one version and executed by another. IF YOU REACHED THIS FROM THE ESTATE "
+            "HARNESS this is expected and the fix is one line: rerun.sh invokes this driver "
+            "as `python -m hhemt.suite._runner` with NO PYTHONPATH, deliberately and by a "
+            "stated design predating this floor (its comment at rerun.sh:79 reads `-m` rather "
+            "than a path so the estate needs no PYTHONPATH), so it resolves hhemt from the "
+            "conda env rather than from --toolkit. Export PYTHONPATH={--toolkit}/src at that "
+            "call site, exactly as submit_suite_uva.sh:72 already does for the array elements."
+        )
+
     node_ids, closures = collect(repo, args.python)
     # LAZY, and load-bearing. This module is loaded as a pytest PLUGIN in the child
     # (`-p _runner`), and a plugin module is imported BEFORE the toolkit's repo-root
@@ -960,6 +998,41 @@ def triage(args: argparse.Namespace) -> int:
     run_id = f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}_{sha[:12]}{TRIAGE_SUFFIX}"
     run_dir = runs_root / run_id
     (run_dir / "chunks").mkdir(parents=True, exist_ok=True)
+
+    # DECLARE HERE TOO, AND DECLARE EARLY. triage() hand-builds its run dir and never calls
+    # plan(), so without this the single triage chunk has nothing to conform to -- and the
+    # roster check in the aggregator would count `drive` and `chunk-00` as silent on every
+    # triage run. `repo` (:890), `sha` (:891) and `run_dir` (:961) are all bound above this
+    # line; nothing new is computed.
+    #
+    # THE PLACEMENT IS THE POINT, and it was wrong in the previous form of this spec, which
+    # inserted after the manifest and chunk_count writes. plan()'s check earns a STRUCTURAL
+    # bound -- its raise precedes collect() and long precedes the manifest write, so a
+    # mis-resolved drive never produces a manifest and the roster denominator a later
+    # aggregate reads is therefore only ever written by a drive whose own gate held. Placed
+    # after the manifest write, triage AUTHORS that denominator and then refuses, losing the
+    # bound for its own runs. Triage cannot check as early as plan() does -- it must collect
+    # to learn which ids survive, and run_dir does not exist until run_id is composed -- so
+    # this line is the EARLIEST point at which the record can be written, and it is early
+    # enough that a refusing triage leaves no manifest behind.
+    from hhemt.suite import verify_version_conformance, write_version_expectation
+
+    write_version_expectation(run_dir, sha=sha, tree=str(repo))
+    # AND CONFORM. Declaring without checking makes triage the one writer the roster trusts
+    # and never verifies: a triage process resolving a different tree than --toolkit would
+    # declare THAT tree, run its chunk against it, and every record would agree -- peer
+    # agreement with a population of one, which is exactly what a declaration exists to
+    # replace. The referent is NOT self-supplied: `repo = Path(args.toolkit).resolve()` comes
+    # from the CLI, so the comparison is "where this process imported hhemt from" against
+    # "the tree the operator named", identically to plan(). triage() is structurally the
+    # DRIVE of its own run, so it takes the drive's policy: MISMATCH and UNRESOLVABLE refuse,
+    # NO_EXPECTATION cannot occur here because the declaration is written on the line above.
+    _tstatus, _trec = verify_version_conformance(run_dir, site="drive")
+    if _tstatus in ("MISMATCH", "UNRESOLVABLE"):
+        raise SystemExit(
+            f"refusing to triage: resolved hhemt from {_trec['resolved_tree']!r} against a run "
+            f"declared for {_trec['expected_tree']!r} ({_tstatus})."
+        )
     (run_dir / "chunks" / "00.txt").write_text("\n".join(node_ids) + "\n", encoding="utf-8")
     # LAZY, and load-bearing. This module is loaded as a pytest PLUGIN in the child
     # (`-p _runner`), and a plugin module is imported BEFORE the toolkit's repo-root
@@ -1041,6 +1114,28 @@ def _sibling_resolution(repo: Path, python: str) -> str:
 
 def run_chunk(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir).resolve()
+
+    # Conform BEFORE reading the manifest. A chunk that resolves a different tree than the
+    # one the manifest was derived against would execute node ids selected by a parser it
+    # is not running -- and would do it silently, because every downstream artifact is
+    # keyed on the run dir rather than on the tree.
+    from hhemt.suite import chunk_site, verify_version_conformance
+
+    _status, _rec = verify_version_conformance(run_dir, site=chunk_site(args.chunk))
+    # MISMATCH *and* UNRESOLVABLE -- see U2-2 for why the two non-MATCH states are not
+    # symmetric. NO_EXPECTATION stays non-fatal: a hand re-invocation of run_chunk against a
+    # pre-floor run dir is a legitimate operator action and is untouched by this.
+    if _status in ("MISMATCH", "UNRESOLVABLE"):
+        if _status == "UNRESOLVABLE":
+            raise SystemExit(
+                f"refusing to run chunk {args.chunk}: this process cannot determine which source "
+                "tree it resolved hhemt from (no `src` component). Re-invoke with "
+                "PYTHONPATH={--toolkit}/src."
+            )
+        raise SystemExit(
+            f"refusing to run chunk {args.chunk}: resolved hhemt from "
+            f"{_rec['resolved_tree']!r} against a run declared for {_rec['expected_tree']!r}."
+        )
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     if args.n_chunks is not None and args.n_chunks != manifest["chunk_count"]:
         raise SystemExit(

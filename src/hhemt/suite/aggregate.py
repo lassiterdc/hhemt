@@ -731,6 +731,32 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     }
 
 
+def render_verdict_line(result: dict) -> str:
+    """Re-render the verdict line from `result`, byte-identically to aggregate()'s own.
+
+    TWO COMPOSERS, DELIBERATELY, AND THE DUPLICATE IS PINNED RATHER THAN REMOVED.
+    aggregate() still builds this string inline inside its return literal (:679) from
+    LOCALS (`passed`, `structural`, ...) rather than from `counts`; collapsing the two
+    would mean restructuring a 56-line dict literal that ten arms in
+    tests/test_verdict_partition.py depend on, in a change whose own purpose is to stop a
+    verdict from lying. The proportionate close is a COMPARISON rather than a refactor:
+    test_the_verdict_line_composer_agrees_with_aggregates_own reddens the moment an
+    interpolant is added to one and not the other. Byte-identity was verified by execution
+    across six shapes on 2026-09-05 -- healthy array, a real junit failure, a missing chunk
+    record at scope=union, a non-zero pytest exit, mechanism=UNREADABLE, and advisories=2 --
+    which covers every interpolant in the string including both values of `mechanism=`.
+    """
+    c = result["counts"]
+    return (
+        f"verdict={result['verdict']} scope={result['scope']} run_id={result['run_id']} "
+        f"covered={c['covered']} structurally_excluded={c['structurally_excluded']} "
+        f"failed={c['failed']} unevaluated={c['unevaluated']} absent={c['absent']} "
+        f"collected={c['collected']} "
+        f"advisories={len(result.get('advisories') or [])} "
+        f"mechanism={'readable' if result.get('mechanism_readable', True) else 'UNREADABLE'}"
+    )
+
+
 def render_summary_md(result: dict) -> str:
     triage = result["scope"] == "triage"
     lines = [
@@ -1003,7 +1029,99 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     run_dir = Path(args.run_dir).resolve()
+
+    # REPORT, do not raise. A run dir predating this mechanism carries no declaration and
+    # must stay aggregatable; a MISMATCH is a finding about the run, not a reason to
+    # produce no summary at all. The verdict job is the one site that cannot be verified by
+    # peer agreement -- it is a participant, and a mis-resolved one agrees with itself --
+    # so its record is written against the DECLARATION and surfaced in `problems`.
+    from hhemt.suite import missing_conformance_sites, verify_version_conformance
+
+    _vstatus, _vrec = verify_version_conformance(run_dir, site="verdict")
     result = aggregate(run_dir, scope=args.scope)
+
+    def _blocking(msg: str) -> None:
+        """Append a blocking problem AFTER aggregate() returned, AND re-render the verdict line.
+
+        MEASURED DEFECT, not a precaution. `verdict_line` is a PRE-RENDERED f-string built
+        inside aggregate() (:679) from the `problems` list as it stood THERE; mutating
+        result["verdict"] afterwards does not update it. Under the previous form of this
+        block a run whose only problem was a silent conformance site PRINTED
+        `verdict=GREEN ...` at :1020 and wrote a summary.md carrying that same GREEN line
+        (render_summary_md reads result["verdict_line"] at :742) while summary.json said
+        NOT-GREEN -- the two operator surfaces disagreeing, with the one an operator reads
+        saying GREEN. Executed 2026-09-05 against a copy of this module with the roster
+        applied: scenario "chunk-01 silent" printed verdict=GREEN and wrote NOT-GREEN.
+        The exit code was already right (main() reads result["verdict"]), and the harness
+        passes --allow-not-green, so the printed line is the ONLY operator-facing signal
+        the verdict job produces.
+
+        EVERY post-aggregate append goes through here. The rule "mutate, then re-render"
+        expressed as a comment is one a future editor forgets silently; expressed as the
+        only function that appends, a bypass is a visible `result["problems"].append(` in
+        main() that greps in one command.
+        """
+        result["problems"].append(msg)
+        result["verdict"] = "NOT-GREEN"
+        result["verdict_line"] = render_verdict_line(result)
+
+    # ROSTER, because a declaration fixes the REFERENCE POINT and not PARTICIPATION. A site
+    # running a version that predates this mechanism does not import verify_version_conformance,
+    # writes no record, and -- with nothing reading _conformance/ -- is INDISTINGUISHABLE from a
+    # conforming one. That converts "a mis-resolved participant agrees with itself" into "a
+    # mis-resolved participant is silent", which is the same empty-population shape applied to
+    # the floor's own motivating case. The denominator is machine-derived: manifest.json already
+    # carries chunk_count, so no new artifact is needed. Gated on NO_EXPECTATION so a pre-floor
+    # run dir stays aggregatable.
+    if _vstatus != "NO_EXPECTATION":
+        _n = None
+        try:
+            _n = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["chunk_count"]
+        except (OSError, KeyError, ValueError) as _exc:
+            # A swallowed failure here shrinks the denominator to two sites and reports
+            # NOTHING about chunks -- the same empty-population shape at a third scale.
+            _blocking(
+                f"cannot read chunk_count from manifest.json ({type(_exc).__name__}); the "
+                "conformance roster cannot be sized and reports nothing about chunk sites."
+            )
+        if _n is not None:
+            _silent = missing_conformance_sites(run_dir, chunk_count=_n)
+            if _silent:
+                _blocking(
+                    f"{len(_silent)} site(s) left no version-conformance record: {_silent}. A site "
+                    "that did not participate is not evidence that it conformed."
+                )
+
+    # BOTH NON-MATCH STATES, and this is the site the whole floor names as unverifiable.
+    # An UNRESOLVABLE verdict job writes its record, SATISFIES the roster (which checks
+    # PRESENCE, and the record is present), appended nothing under the MISMATCH-only form,
+    # and the summary stayed GREEN -- at the one site that cannot be checked by peer
+    # agreement, in the configuration it actually runs in (`rerun.sh:471` passes no
+    # --export, no `cd $TOOLKIT` and no PYTHONPATH, so it resolves hhemt from whatever the
+    # env installed, which is the single most likely place in the harness for a non-`src`
+    # layout to appear). The drive/chunk asymmetry applies here with ONE CHANGE OF VERB:
+    # NO_EXPECTATION is a property of the RUN and stays silent; UNRESOLVABLE is a property
+    # of THIS PROCESS and must be surfaced -- by REPORTING rather than raising, because
+    # refusing would make a pre-floor run dir unaggregatable.
+    #
+    # IT FLIPS NOT-GREEN, and the decisive reason is local rather than general: the roster
+    # block six lines above ALREADY flips NOT-GREEN for a purely provenance defect (a site
+    # that left no record). Leaving this branch un-flipped makes one block treat a silent
+    # PEER as disqualifying and an unidentifiable SELF as tolerable. NOT-GREEN here does not
+    # claim a test failed; in this module it claims the run does not support a suite-level
+    # green, and a verdict that cannot name its own source tree does not.
+    if _vstatus == "UNRESOLVABLE":
+        _blocking(
+            "verdict job cannot determine which source tree it resolved hhemt from (no `src` "
+            "component -- a wheel or non-src layout), so this verdict cannot certify which "
+            "version it describes."
+        )
+    elif _vstatus == "MISMATCH":
+        _blocking(
+            f"verdict job resolved hhemt from {_vrec['resolved_tree']!r} but this run is "
+            f"declared against {_vrec['expected_tree']!r}; the verdict describes a different "
+            "version than the run measured."
+        )
     # THE FILENAME SPLIT, keyed on the BOUND scope rather than on args.scope, because the
     # manifest can override the caller. Without it a triage run in a fresh dir writes a
     # file that any later reader -- including run_suite.py's own --from-run default
