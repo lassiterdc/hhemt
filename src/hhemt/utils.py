@@ -489,6 +489,36 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, analysis_dir=None) -
         [xr.open_zarr(parts[k], consolidated=False) for k in sorted(parts)],
         dim="timestep_min",
     )
+    # `open_zarr` returns DASK-backed arrays chunked on each chapter's STORED zarr
+    # grid, not on the chapter extent -- so a 132-timestep chapter stored at chunk 17
+    # contributes (17 x7, 13) and the next chapter's chunks follow it, putting a SHORT
+    # chunk in the interior. Zarr permits a short FINAL chunk only, and the interior
+    # short chunk also straddles the inherited grid, which xarray >= 2026.4 refuses via
+    # validate_grid_chunks_alignment. Dropping `encoding['chunks']` alone does NOT fix
+    # this: it removes the target grid and leaves zarr to derive one from the same
+    # non-uniform dask chunks, which then fails the uniformity requirement instead.
+    # Making the concat-axis dask grid UNIFORM at the inherited length satisfies both
+    # and preserves the published store's chunking ON THE CONCAT AXIS. That scope is
+    # deliberate: this touches `timestep_min` only, and a NON-concat axis whose grid
+    # differs across chapters is NOT covered. `xr.concat` unifies a non-concat axis to
+    # the FINER grid while chapter 0's encoding survives, so the same refusal would
+    # fire if chapter 0 were the COARSER side. It cannot be, under this writer: chunk
+    # coarseness falls as a chapter's time extent grows, chapters flush at a threshold
+    # so only the LAST is short, and chapter 0 is therefore never strictly coarser.
+    # Derive from data_vars ONLY -- coords carry their own grids and would send every
+    # case down the fallback branch, collapsing the time axis to a single chunk.
+    _time_chunks = {
+        int(_v.encoding["chunks"][_v.dims.index("timestep_min")])
+        for _v in ds.data_vars.values()
+        if "timestep_min" in _v.dims and _v.encoding.get("chunks")
+    }
+    if len(_time_chunks) == 1:
+        ds = ds.chunk({"timestep_min": _time_chunks.pop()})
+    elif _time_chunks:
+        for _v in (*ds.variables.values(), *ds.coords.values()):
+            _v.encoding.pop("chunks", None)
+            _v.encoding.pop("preferred_chunks", None)
+        ds = ds.chunk({"timestep_min": min(_time_chunks)})
     ds.to_zarr(final, mode="w", consolidated=False)
     tmp = flag.with_suffix(flag.suffix + ".tmp")
     tmp.write_text("ok", encoding="utf-8")
