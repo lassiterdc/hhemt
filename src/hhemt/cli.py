@@ -21,6 +21,7 @@ from .exceptions import (
     WorkflowPlanningError,
 )
 from .recompute import RecomputeScope  # typer reads the --scope enum annotation at import time
+from .suite._cli import test_app as _test_app
 
 
 def _parse_override_clear_raw(value: str | None) -> str | list | None:
@@ -102,6 +103,14 @@ def _root(ctx: typer.Context) -> None:
 
     assert_worktree_source(strict=True)
 
+
+# `hhemt test {subject} {action}`. Mounted here rather than declared inline so the
+# subject seam lives in `suite/_cli.py` and a session adding a subject edits ONE file.
+# The root `_root` callback still fires through both nesting levels (measured
+# CALLCHAIN=root>test>plan on Typer 0.26.7 / Click 8.4.1), so the worktree-source
+# guard is not bypassed by the nesting. The import lives in the top block; only the
+# mount needs `app`, so nothing here requires a module-level import out of order.
+app.add_typer(_test_app, name="test")
 
 console = Console()
 console_err = Console(stderr=True)
@@ -2056,12 +2065,11 @@ def _list_excludable_callback(value: bool) -> bool:
     for name, entry in sorted(_EXCLUDABLE_CATALOG.items()):
         if entry.excludable:
             console.print(
-                f"  [green]{name}[/green]\n      {entry.description}\n" f"      cost: {entry.reproducibility_cost}"
+                f"  [green]{name}[/green]\n      {entry.description}\n      cost: {entry.reproducibility_cost}"
             )
         else:
             console.print(
-                f"  [red]{name}[/red] (NOT excludable)\n      {entry.description}\n"
-                f"      {entry.reproducibility_cost}"
+                f"  [red]{name}[/red] (NOT excludable)\n      {entry.description}\n      {entry.reproducibility_cost}"
             )
     console.print(
         "\nOrdering: the excluded input must ALREADY have a durable record — the toolkit has "
