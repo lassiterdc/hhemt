@@ -12,7 +12,13 @@ qa:
     uv run --python=3.12 --extra test ty check .
     uv run --python=3.12 --extra test python scripts/check_du_sentinel_sites.py
     uv run --python=3.12 --extra test python scripts/check_vocabulary_freeze.py
-    uv run --python=3.12 --extra test pytest .
+    # Gate A's population, hosted on the low-barrier uv path so a contributor needs no
+    # conda env. The marker is stamped at COLLECTION by tests/conftest.py from each
+    # test's fixture closure, and the compile gate's skip fires later at fixture SETUP,
+    # so this selects the same tests under uv as under conda -- measured, 2996/3195 on
+    # both hosts with zero node-id difference. `just test-fast` is the conda-hosted
+    # sibling that additionally PROVES the marker did the deselecting rather than PATH.
+    uv run --python=3.12 --extra test pytest -m "not slow and not compile_tier and not requires_snakemake_subprocess"
 
 # Run all the tests for all the supported Python versions
 testall:
@@ -34,9 +40,25 @@ test *ARGS:
 # HHEMT_REQUIRE_COMPILE_TIER=1 turns any compile-tier skip into a HARD FAILURE,
 # so the coupled compile->run->process->report tier is GATED, not silently skipped.
 # This is the invocation a toolchain-bearing CI job (or a pre-merge check) should run.
+# GATE B. This is the invocation the D70 green-suite claim is made against, UNDESELECTED,
+# run detached by an external wrapper (never from this file). It is the only invocation
+# with no silent-skip arm, because HHEMT_REQUIRE_COMPILE_TIER=1 converts a compile-tier
+# skip into a hard failure. --no-capture-output is load-bearing under detachment: without
+# it `conda run` buffers the child's stdout AND stderr, so a killed run leaves an empty
+# log and pyproject's faulthandler dumps are discarded (measured: 0 bytes on disk 3s into
+# a 6s job). The JSONL ledger survives regardless -- the plugin writes its own fd.
 test-gated *ARGS:
     @echo "Running GATED (compile tier required) with arg: {{ARGS}}"
-    HHEMT_REQUIRE_COMPILE_TIER=1 conda run -n hhemt uv run --active --extra test pytest {{ARGS}}
+    HHEMT_REQUIRE_COMPILE_TIER=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_gated.jsonl" conda run --no-capture-output -n hhemt uv run --active --extra test pytest -p _runner {{ARGS}}
+
+# GATE A -- the fast, waitable contributor gate. NOT the D70 gate.
+# Runs under conda ON PURPOSE: the toolchain is present there, so a green result proves
+# the MARKER deselected the compile tier rather than the PATH having skipped it.
+# HHEMT_FORBID_COMPILE=1 arms the fail-closed guard in tests/conftest.py, so a test that
+# compiles here fails loudly instead of costing ten minutes.
+test-fast *ARGS:
+    @echo "Gate A (fast tier) with arg: {{ARGS}}"
+    HHEMT_FORBID_COMPILE=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_fast.jsonl" conda run --no-capture-output -n hhemt uv run --active --extra test pytest -p _runner -m "not slow and not compile_tier and not requires_snakemake_subprocess" {{ARGS}}
 
 # Run all the tests, but on failure, drop into the debugger
 pdb *ARGS:

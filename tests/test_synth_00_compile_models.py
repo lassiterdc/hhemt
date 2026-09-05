@@ -51,6 +51,7 @@ def test_create_mannings_file_for_TRITON(synth_all_models_analysis):
     assert rds.shape == (1, 30, 16)  # type: ignore
 
 
+@pytest.mark.compile_tier
 def test_compile_swmm(synth_all_models_analysis):
     analysis = synth_all_models_analysis
     analysis._system.compile_SWMM(
@@ -81,7 +82,5 @@ def test_compile_tritonswmm(synth_all_models_analysis):
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_compile_triton_only(synth_all_models_analysis):
     analysis = synth_all_models_analysis
-    analysis._system.compile_TRITON_only(
-        recompile_if_already_done_successfully=True, verbose=True
-    )
+    analysis._system.compile_TRITON_only(recompile_if_already_done_successfully=True, verbose=True)
     tst_ut.assert_triton_compiled(analysis)

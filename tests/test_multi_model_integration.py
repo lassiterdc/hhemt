@@ -23,6 +23,7 @@ class TestTRITONOnlyIntegration:
         """Retrieve TRITON-only test case."""
         return Local_TestCases.retrieve_norfolk_triton_only_test_case(start_from_scratch=True)
 
+    @pytest.mark.compile_tier
     def test_triton_only_compilation(self, triton_only_case):
         """Test that TRITON-only compiles with correct flags."""
         system = triton_only_case.system

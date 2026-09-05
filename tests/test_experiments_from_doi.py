@@ -39,12 +39,12 @@ _CARRIED = {
 
 
 @pytest.fixture(scope="module")
-def self_contained_bundle(request, tmp_path_factory):
+def self_contained_bundle(rendered_synth_multi_sim, tmp_path_factory):
     """Emit a self-contained reprex bundle from the rendered multi_sim synth analysis,
     extract it, and return (zip_path, bundle_root)."""
     from hhemt.bundle._reprex import extract_reprex_bundle
 
-    analysis = request.getfixturevalue("rendered_synth_multi_sim")
+    analysis = rendered_synth_multi_sim
     out = tmp_path_factory.mktemp("from_doi_bundle")
     bundle_path = analysis.bundle_report_data(out / "bundle.zip")
     bundle_root = extract_reprex_bundle(bundle_path)
@@ -447,6 +447,6 @@ def test_from_doi_node_local_guard_inert_on_non_slurm(self_contained_bundle, mon
         )
     # Lowercase both sides: the guard's message says "SHARED filesystem", so a case-SENSITIVE
     # check here would pass vacuously (it could never fail) and would not actually test the guard.
-    assert (
-        "shared filesystem" not in str(exc_info.value).lower()
-    ), "the defect-8 guard fired on a non-SLURM host (false positive)"
+    assert "shared filesystem" not in str(exc_info.value).lower(), (
+        "the defect-8 guard fired on a non-SLURM host (false positive)"
+    )

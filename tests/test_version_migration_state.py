@@ -12,14 +12,16 @@ import pytest
 from hhemt.version_migration import state
 from hhemt.version_migration.constants import LAYOUT_VERSION
 
-# Phase 4 (synth-test-isolation-and-runtime): the two stamp-wire regression
-# tests at the bottom of this file (test_analysis_run_stamps_version_file and
+# Phase 4 (synth-test-isolation-and-runtime): the two stamp-wire regression tests at
+# the bottom of this file (test_analysis_run_stamps_version_file and
 # test_submit_workflow_stamps_version_file) invoke analysis.run() and
-# analysis.submit_workflow() respectively, which launch snakemake subprocesses.
-# File-level marker chosen over per-function for uniformity with the rest of
-# the phase-4 marker set; the cost of serializing the unit tests above is
-# negligible because they are fast.
-pytestmark = pytest.mark.requires_snakemake_subprocess
+# analysis.submit_workflow() respectively, which launch snakemake subprocesses. Both
+# already carry @pytest.mark.slow, which is what keeps them out of the fast gate.
+# The file-level requires_snakemake_subprocess marker was removed when that marker
+# became a Gate A exclusion: at file scope it also evicted the six state-machine unit
+# tests above, which run on tmp_path and launch nothing. Its original rationale --
+# "the cost of serializing the unit tests is negligible" -- was written when the
+# marker meant "serialize under xdist" and does not transfer to tier exclusion.
 
 
 def test_read_returns_none_when_missing(tmp_path: Path) -> None:

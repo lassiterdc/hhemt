@@ -44,16 +44,38 @@ open an issue to discuss before submitting.
    only with the conda environment (`environment.yaml`); it is declared in no
    `pyproject.toml` extra, so if you installed via Option B of
    `docs/how-to/installation.md` you must `pip install pre-commit` first.
+   **If you already had hooks installed, re-run `pre-commit install` after pulling.**
+   This repo declares `default_install_hook_types: [pre-commit, pre-push, commit-msg]`,
+   and that key is read only at install time — a clone that installed before it was
+   added keeps `.git/hooks/pre-commit` alone, so the pre-push and commit-msg guards
+   never fire. Re-running is idempotent: it leaves existing hook files byte-identical
+   and adds only the missing ones.
 
 ## Workflow
 
 - Create a feature branch from `develop`
 - Make changes with tests
 - Run `just qa` before opening a pull request. It formats, lints, type-checks, runs
-  the two guard scripts listed in that recipe, and runs the test suite. `just` is
+  the two guard scripts listed in that recipe, and runs the fast test tier. `just` is
   installed by neither `environment.yaml` nor any `pyproject.toml` extra — install it
   separately (https://github.com/casey/just), or run the commands under the `qa:`
   recipe in `justfile` yourself, in the order they appear there.
+- The suite has two tiers, and `just qa` runs the first one:
+    - **Gate A — `just test-fast`.** Everything the toolkit decides before a simulation
+      starts, plus the on-disk layout contract. This is the gate a pull request must
+      pass, and `just qa` invokes exactly this recipe, so the two run the same tests.
+    - **Gate B — `just test-gated`.** The whole suite with no marker filter, including
+      every test that compiles TRITON-SWMM or asserts on a tree a simulation produced.
+      It requires the `hhemt` conda environment for `cmake` and `mpic++`, it takes
+      substantially longer than Gate A, and it is the invocation a release is gated on.
+      Run it detached rather than waiting on it interactively — `nohup … &`, `tmux`, or
+      your cluster's batch scheduler are all fine.
+  Which tier `just qa` gives you does NOT depend on your machine: `compile_tier` is
+  derived from each test's fixtures at collection time, so the split is the same
+  everywhere. Before this was declared it depended on whether `cmake` was on your PATH.
+  Your FIRST run of either gate downloads about 360 MB of example data from HydroShare
+  if `test_data/norfolk_coastal_flooding` is not already present. That is a one-time
+  cost per machine, not per run, and it can dominate the wall clock on a slow link.
 - Submit a pull request
 
 ## Documentation

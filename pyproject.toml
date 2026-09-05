@@ -204,7 +204,16 @@ markers = [
     "globus_e2e: end-to-end Globus transfer tests; require activated endpoints and HHEMT_GLOBUS_E2E=1",
     "publish_e2e: end-to-end publish (HydroShare/Zenodo) tests; require credentials and HHEMT_PUBLISH_E2E=1",
     "requires_snakemake_subprocess: test launches Snakemake subprocess; serialize under xdist",
+    "compile_tier: DERIVED at collection from the fixture closure (tests/conftest.py) for any test holding `tritonswmm_cpu_compiled`; hand-applied ONLY where a body compiles directly. Deselected by Gate A, required by Gate B.",
 ]
+# Dump every thread's traceback after this many seconds in ONE test, to the stderr fd
+# stashed at configure time (so it bypasses pytest's own capture). It does NOT kill:
+# faulthandler_exit_on_timeout stays at its default False, because the gated tier has
+# legitimate multi-minute simulations. One dump per exceeding test, not a repeat.
+# DEPENDENCY: this writes to stderr, which `conda run` CAPTURES. Under a detached Gate B
+# the dumps are buffered and lost on a kill unless the recipe passes --no-capture-output
+# (justfile). The setting and that flag are one instrument, not two.
+faulthandler_timeout = 300
 filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
     "ignore::DeprecationWarning:pkg_resources",
