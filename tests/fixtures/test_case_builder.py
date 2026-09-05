@@ -383,6 +383,18 @@ class retrieve_synth_TRITON_SWMM_test_case:
         if self._software_root.is_symlink():
             self._software_root.unlink()
         self._software_root.mkdir(parents=True, exist_ok=True)
+        # ORIGIN BREADCRUMB. The reaper's worktree arm matches a tier directory NAME
+        # against a git worktree BASENAME (_run_dir_reaper.py:142-146), so a path-derived
+        # address stops matching it and live tiers lose their protection. Record the
+        # checkout this tier belongs to, so liveness can be decided by asking whether that
+        # checkout still exists rather than by whether its name looks like something.
+        # Sited at the SLUG root, one level ABOVE `_software`, so it survives
+        # provision_borrower's fast_rmtree of `_software/triton`. Compare-and-write, so a
+        # steady-state re-run preserves its mtime and adds no rerun trigger.
+        _origin_path = self._software_root.parent / ".origin"
+        _origin_text = f"{Path.cwd().resolve()}\n"
+        if not _origin_path.exists() or _origin_path.read_text() != _origin_text:
+            _origin_path.write_text(_origin_text)
         # Provision triton's working tree from the SHARED canonical object store.
         # Runs BEFORE system.py's not-exists() clone gate, which then finds the
         # tree present + carrying CMakeLists.txt and skips its own full clone —
