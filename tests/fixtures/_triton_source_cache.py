@@ -594,18 +594,39 @@ def provision_borrower(dest: Path, *, pin: str = TRITON_PIN) -> Path:
                     stacklevel=2,
                 )
             return dest
-        # ROLE GATE. Reaching here means the tier is not adoptable and the next statement
-        # DELETES it -- and every TRITON build dir is nested inside `dest`, so that delete
-        # destroys a compiled binary a concurrent sibling may be running against. A chunk
-        # is one of N array elements and must never take that action: N chunks would issue
-        # N destructive deletes of one shared tier and N cold borrows against a sticky
-        # rate limit. Refuse loudly instead. The warm step is the role that repairs a
-        # tier, and it runs as its own awaited job before any array is submitted.
+        # ROLE GATE. Reaching here means the tier cannot be adopted as it stands, and that
+        # covers TWO states: it is ABSENT, or it exists and fails one of the reuse gate's
+        # later conjuncts. The predicate refuses in BOTH, deliberately -- a chunk is one of
+        # N array elements dispatched together, and provisioning from one is unsafe either
+        # way: for an existing tier because the next statement DELETES it and every TRITON
+        # build dir is nested inside `dest`; for an absent one because N chunks would clone
+        # into ONE path serialized only by a lock measured not to exclude across nodes on a
+        # parallel filesystem. What differs is the OPERATOR'S REMEDY, so the message names
+        # WHICH conjunct failed and WHAT to run. Naming the wrong conjunct is the same
+        # defect as naming the wrong hazard: the reuse gate has THREE, and blaming the pin
+        # for a remote mismatch sends the reader to look at the wrong thing.
         if os.environ.get(_SUITE_ROLE_ENV) == "chunk":
+            if not dest.exists():
+                _state = "the tier is ABSENT -- nothing has provisioned it yet"
+            elif not borrower_is_healthy(dest, pin):
+                _state = f"the tier exists but its checkout is not at pin {pin[:12]}"
+            elif not borrower_remote_matches(dest):
+                _state = "the tier exists and is at the pin, but its `origin` is not the expected TRITON remote"
+            else:
+                _state = (
+                    "the tier now satisfies every reuse conjunct -- it changed under "
+                    "this process between the reuse check and this message"
+                )
             raise RuntimeError(
-                f"refusing to re-provision {dest} from a suite chunk: the tier is not "
-                f"adoptable at pin {pin[:12]} and repairing it here would delete a "
-                "compiled tier a sibling chunk may be using. Re-run the warm step."
+                f"refusing to provision {dest} from a suite chunk: {_state}. A chunk "
+                "never provisions a shared tier, because N array elements would act on "
+                "one path at once. REMEDY: from the toolkit checkout, in a session that "
+                "is NOT a suite chunk, run `python -m pytest "
+                "tests/test_synth_00_compile_models.py` -- that is the warm, and it "
+                "materializes or repairs the tier. A harness that dispatches chunks "
+                "should run that warm itself before submitting; if yours did and you are "
+                "still reading this, the tier changed between the warm and this chunk, "
+                "and that is the thing to investigate."
             )
         if dest.exists():
             ut.fast_rmtree(dest)
