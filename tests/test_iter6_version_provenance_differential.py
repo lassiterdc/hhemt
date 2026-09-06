@@ -29,19 +29,34 @@ def test_s1_describe_version_is_pep440_local_not_the_static_pin():
 
 
 # ---- S2 provenance._is_dirty ---------------------------------------------- #
-def test_s2_is_dirty_agrees_with_git_status():
-    from hhemt.bundle._emit import _toolkit_source_dir
+def test_s2_is_dirty_ignores_untracked_and_reports_tracked_edits(tmp_path, monkeypatch):
+    """BEHAVIOURAL guard. The predecessor reimplemented `_is_dirty`'s own body and
+    asserted equality with it, so it reddened on any correct narrowing and passed on
+    any incorrect change the two sides shared. This asserts the PROPERTY instead, and
+    invokes git only to BUILD a fixture repo, never to compute the expected answer.
+    """
+    from hhemt.bundle import _emit
     from hhemt.provenance import _is_dirty
 
-    actual = bool(
-        subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=_toolkit_source_dir(),
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    )
-    assert _is_dirty() is actual
+    repo = tmp_path / "repo"
+    (repo / "pkg").mkdir(parents=True)
+    tracked = repo / "pkg" / "mod.py"
+    tracked.write_text("x = 1\n")
+    for cmd in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "t@example.invalid"],
+        ["git", "config", "user.name", "t"],
+        ["git", "add", "-A"],
+        ["git", "commit", "-qm", "seed"],
+    ):
+        subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
+    monkeypatch.setattr(_emit, "_toolkit_source_dir", lambda: repo / "pkg")
+
+    assert _is_dirty() is False, "a committed tree carries no uncommitted tracked change"
+    (repo / "stray.md").write_text("not tracked\n")
+    assert _is_dirty() is False, "an untracked path is not a change to tracked toolkit content"
+    tracked.write_text("x = 2\n")
+    assert _is_dirty() is True, "a modified TRACKED file is a change to toolkit content"
 
 
 # ---- S3 provenance.producing_stamp ---------------------------------------- #
@@ -240,9 +255,9 @@ def test_s12_check_provenance_completeness_constructs_and_is_registered():
     from hhemt import analysis_validation as av
 
     src = inspect.getsource(av.validate_analysis)
-    assert (
-        "check_provenance_completeness(analysis)" in src
-    ), "check_provenance_completeness is not registered in validate_analysis"
+    assert "check_provenance_completeness(analysis)" in src, (
+        "check_provenance_completeness is not registered in validate_analysis"
+    )
 
 
 def test_s13_controlled_pair_mixed_build_fails_uniform_build_passes(monkeypatch):
@@ -273,20 +288,36 @@ def test_s14_summary_discloses_its_denominator(monkeypatch):
 
     monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: dict.fromkeys(_PROVENANCE_STAGES))
     res = av.check_provenance_completeness(object())
-    assert (
-        f"/{len(_PROVENANCE_STAGES)}" in res.summary
-    ), "the summary must name how many stages were examined, not only how many were clean"
+    assert f"/{len(_PROVENANCE_STAGES)}" in res.summary, (
+        "the summary must name how many stages were examined, not only how many were clean"
+    )
     assert res.level == "aggregate"
 
 
-def test_s15_dirty_checkout_is_a_failure(monkeypatch):
+def test_s15_dirty_arm_names_every_stage_it_ranges_over(monkeypatch):
+    """The dirty arm must name its whole population, not only the dirty members.
+
+    Replaces a substring assertion on the message being repaired. A guard that pins a
+    token of a claim steers the repair of that claim, and cannot be the evidence that
+    the claim is now correct. This pins `passed` and `level`, and requires that every
+    stage the arm ranges over is named -- stage names are DATA, not wording.
+    """
     from hhemt import analysis_validation as av
 
-    dirty = _stage_stamps(plots={"hhemt_sha": "a" * 40, "hhemt_version": "v0.1.0+A", "hhemt_dirty": "true"})
-    monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: dirty)
+    stamps = _stage_stamps(
+        plots={"hhemt_sha": "a" * 40, "hhemt_version": "v0.1.0+A", "hhemt_dirty": "true"},
+        consolidate={"hhemt_sha": "a" * 40, "hhemt_version": "v0.1.0+A", "hhemt_dirty": "unknown"},
+        report=None,
+        bundle=None,
+    )
+    monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: stamps)
     res = av.check_provenance_completeness(object())
     assert res.passed is False
-    assert "DIRTY" in res.summary
+    assert res.level == "aggregate"
+    for stage in ("plots", "consolidate", "report", "bundle"):
+        # Word boundary, not `in`: the terminal arm's own prose carries "reports", so a
+        # bare substring test passes on a message that never names the `report` stage.
+        assert re.search(rf"\b{stage}\b", res.summary), f"the summary must name {stage}; the arm ranges over it"
 
 
 def test_s16_stage_carriers_are_pairwise_distinct_paths():
@@ -307,9 +338,9 @@ def test_s16_stage_carriers_are_pairwise_distinct_paths():
     src = inspect.getsource(av._collect_stage_stamps)
     for carrier in ("bundle_manifest.json", "combined_bundle_manifest.json", "report_manifest.json"):
         assert carrier == carrier and src.count(f'"{carrier}"') >= 1, f"{carrier} no longer read"
-    assert (
-        '"plots"' in src and "hhemt_producing_sha" in src
-    ), "the plots and consolidate carriers must remain separate reads"
+    assert '"plots"' in src and "hhemt_producing_sha" in src, (
+        "the plots and consolidate carriers must remain separate reads"
+    )
 
 
 # ---- S17-S20 append-only stage provenance history (FQ3 deliverable 2) ------ #
