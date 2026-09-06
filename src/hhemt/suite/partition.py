@@ -35,6 +35,61 @@ HEAVY_FIXTURES: tuple[str, ...] = (
 #: uses it and does not get it has lost a precondition, not a test.
 RECORDED_FIXTURES: tuple[str, ...] = HEAVY_FIXTURES + ("tritonswmm_cpu_compiled",)
 
+
+def solver_setup_signals(closures: dict[str, list[str]]) -> dict[str, list[str]]:
+    """node id -> the RECORDED_FIXTURES members in its collection-time fixture closure.
+
+    KEY ON `RECORDED_FIXTURES`, NEVER `HEAVY_FIXTURES`, AND NEVER `_fixtures_used`'s
+    DEFAULT. `tritonswmm_cpu_compiled` -- the compile fixture, which is the entire point of
+    this signal -- is DELIBERATELY ABSENT from HEAVY_FIXTURES because it constrains no chunk
+    boundary (see that constant's own comment), and `_fixtures_used` DEFAULTS to
+    HEAVY_FIXTURES. So the obvious constant, the one named for the property being detected,
+    is blind to the single most important member, and the default parameter makes that the
+    path of least resistance. This comment is the only thing standing between the next
+    author and re-introducing it.
+
+    Emits only node ids with a NON-EMPTY signal list: absence from the map IS the
+    no-signal answer, so a full-corpus map over ~2566 tests buys nothing.
+    """
+    recorded = set(RECORDED_FIXTURES)
+    out: dict[str, list[str]] = {}
+    for node_id, names in closures.items():
+        hits = sorted(recorded.intersection(names))
+        if hits:
+            out[node_id] = [f"fixture:{n}" for n in hits]
+    return out
+
+
+#: Marks carried into the evidence map. Deliberately NARROW: every test carries marks
+#: (parametrize, xdist grouping, ...) and unioning all of them would make the map the whole
+#: corpus. `slow` is the only one that corroborates the compile/solver question, and it does
+#: not answer it -- it is a DURATION marker, so it never classifies.
+_CORROBORATING_MARKS = frozenset({"slow"})
+
+
+def evidence_signals(closures: dict[str, list[str]], marks: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
+    """The per-node evidence map both manifest writers persist: fixture tokens + marks."""
+    return _merge_mark_signals(solver_setup_signals(closures), marks or {})
+
+
+def _merge_mark_signals(signals: dict[str, list[str]], marks: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Union the CORROBORATING `mark:` tokens into the classifying `fixture:` map.
+
+    `mark:` tokens never classify (see aggregate.classify_solver_setup) -- they are carried
+    so a reader of the evidence can see what else was declared. A node with marks and no
+    fixture is still recorded IN THIS MAP, because "declared slow, no compile fixture" is
+    exactly the row a reader will need. NOT YET RENDERED: the per-member row is specified
+    and the summary does not emit it today, so this map is written for a reader that does
+    not exist yet.
+    """
+    out = {k: list(v) for k, v in signals.items()}
+    for node_id, names in marks.items():
+        toks = [f"mark:{n}" for n in sorted(set(names) & _CORROBORATING_MARKS)]
+        if toks:
+            out[node_id] = sorted(set(out.get(node_id, [])) | set(toks))
+    return out
+
+
 _NODE_FILE_RE = re.compile(r"^([^:]+)::")
 
 
@@ -459,6 +514,8 @@ def build_manifest(
     source_sha: str,
     run_id: str,
     closures: dict[str, list[str]],
+    marks: dict[str, list[str]] | None = None,
+    declared_complement: list[str] | None = None,
     cheap_bins: int = 1,
     heavy_split_budget_s: float | None = None,
     durations: dict[str, float] | None = None,
@@ -636,6 +693,8 @@ def build_manifest(
         "run_id": run_id,
         "source_sha": source_sha,
         "collected": sorted(node_ids),
+        "signals": evidence_signals(closures, marks),
+        "declared_complement": sorted(declared_complement or []),
         "chunk_count": len(chunks),
         # The INPUT, beside the consequence. `chunk_count` alone forced a reader to
         # reverse-engineer which `--cheap-bins` produced a run -- which is how a run at the

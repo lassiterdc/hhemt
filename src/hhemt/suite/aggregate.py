@@ -55,7 +55,8 @@ IMPORT_GUARD_EXIT = 99
 #: widens the declared complement; it must never be widened to silence a real skip.
 #:
 #: EXACT-MATCH IS A CROSS-REPO COUPLING TO TOOLKIT PROSE, AND IT HAS ALREADY BROKEN ONCE.
-#: The first entry below matched 17 tests until the toolkit deleted every mark carrying
+#: A RETIRED entry, "Only runs on non-HPC systems.", matched 17 tests until the toolkit
+#: deleted every mark carrying
 #: it (see `tests/utils_for_testing.py::on_scheduler_node`, whose docstring records the
 #: deletion). From 2026-08-25 this tuple matched ZERO tests, so `structurally_excluded`
 #: read 0 and `summary.md` printed "None -- every collected test was evaluable at this
@@ -63,8 +64,15 @@ IMPORT_GUARD_EXIT = 99
 #: silent in the reassuring direction: a narrowed pattern makes the run look MORE
 #: complete, not less. Nothing in this repo can detect the next rename; when a toolkit
 #: `skipif` reason changes, this tuple must change with it.
+#:
+#: RUNTIME SHADOWING, a SECOND way this tuple silently under-matches: the entry
+#: "live-deposit run-proof; do not launch on an HPC scheduler node." is never PRODUCED on
+#: a scheduler node, because the three tests in tests/test_doi_roundtrip_e2e.py declare an
+#: operator env gate AHEAD of their scheduler gate and pytest's first truthy skipif wins.
+#: They skip with the OPERATOR reason, land in SKIPPED_INCIDENTAL, and never reach
+#: `structural`. The tuple can therefore match zero AND match one-of-four; both failures
+#: are silent in the reassuring direction.
 STRUCTURAL_SKIP_REASONS: tuple[str, ...] = (
-    "Only runs on non-HPC systems.",
     "Local coupled run-proof; do not launch on an HPC scheduler node.",
     "live-deposit run-proof; do not launch on an HPC scheduler node.",
 )
@@ -235,6 +243,99 @@ def classify_chunk(
     return "FAIL", []
 
 
+#: The three outcomes meaning THE SITE ATTEMPTED THE TEST, as opposed to declining it.
+#: `UNEVALUATED` is deliberately included: it is non-skip and already verdict-bearing, so
+#: counting it as attempted can never manufacture a green.
+_EVALUATED_OUTCOMES = frozenset({"PASSED", "FAILED", "UNEVALUATED"})
+
+#: Severity for resolving a disagreement between two EVALUATED outcomes. Severity, never
+#: arrival order -- resolving by order is the defect this function exists to remove, and
+#: it would be absurd to remove it with a rule that still depends on order.
+_OUTCOME_SEVERITY = {"PASSED": 0, "UNEVALUATED": 1, "FAILED": 2}
+
+#: Verdict-line field names, defined ONCE so the line and the `counts` dict cannot disagree
+#: and a rename is one mechanical edit.
+_FIELD_SIGNALLED = "solver_setup_signalled"
+_FIELD_UNSIGNALLED = "unsignalled"
+
+
+def _fmt_signal_count(n: int | None) -> str:
+    """Verdict-line rendering of a signal count. `None` means the plan step recorded no
+    signals at all, which is NOT zero: zero would report a bound as a measurement over
+    evidence never collected."""
+    return "unrecorded" if n is None else str(n)
+
+
+def merge_outcomes(existing: dict[str, str], incoming: dict[str, str], *, problems: list[str]) -> None:
+    """Fold one chunk's junit outcomes into the cross-chunk map BY RULE, not by order.
+
+    `parse_junit` emits FIVE outcomes -- PASSED, FAILED, UNEVALUATED, SKIPPED_STRUCTURAL,
+    SKIPPED_INCIDENTAL -- so the rule is stated over the whole partition and no ordered
+    pair is left undefined. An undefined pair is not academic: a test may be skipped for a
+    structural reason in one context and an INCIDENTAL one in another (an operator env
+    gate that shadows a scheduler gate is live in this corpus), so the evaluated-versus-
+    INCIDENTAL cell is the one a first real complement run hits.
+
+    Rule, over the two-class partition {evaluated} vs {SKIPPED_STRUCTURAL,
+    SKIPPED_INCIDENTAL}:
+
+    * unseen node id, or an identical repeat -> take the incoming value.
+    * evaluated vs EITHER skip class -> the EVALUATED value wins, in either arrival order.
+      For SKIPPED_STRUCTURAL the reason is that a site which ran the test outranks a site
+      that structurally could not. For SKIPPED_INCIDENTAL the reason is the same and the
+      need is stronger: an incidental skip records a local absence, which is precisely the
+      condition another context is expected to lack.
+    * the two skip classes disagreeing -> SKIPPED_STRUCTURAL wins, because a site that can
+      never evaluate the test is a stronger statement about coverage than a site that
+      merely did not this time, and the complement listing must not lose the member.
+    * two EVALUATED values disagreeing -> record a problem naming the node id and both
+      values, and keep the MORE SEVERE under _OUTCOME_SEVERITY.
+    """
+    for node_id, new in incoming.items():
+        old = existing.get(node_id)
+        if old is None or old == new:
+            existing[node_id] = new
+        elif old in _EVALUATED_OUTCOMES and new in _EVALUATED_OUTCOMES:
+            problems.append(
+                f"{node_id} reported two different evaluated outcomes across chunks: "
+                f"{old} and {new}. Keeping the more severe."
+            )
+            existing[node_id] = old if _OUTCOME_SEVERITY[old] >= _OUTCOME_SEVERITY[new] else new
+        elif new in _EVALUATED_OUTCOMES:
+            existing[node_id] = new
+        elif old in _EVALUATED_OUTCOMES:
+            existing[node_id] = old
+        else:
+            existing[node_id] = "SKIPPED_STRUCTURAL" if "SKIPPED_STRUCTURAL" in (old, new) else new
+
+
+def classify_solver_setup(node_ids: list[str], signals: dict[str, list[str]]) -> tuple[list[str], list[str]]:
+    """(signalled, unsignalled) over `node_ids`, from PLAN-TIME evidence only.
+
+    Signalled means the node's evidence list contains a `fixture:` token. A `mark:slow`
+    token alone does NOT signal: `slow` is a DURATION marker and does not answer whether a
+    test compiles or runs a solver -- tests carry it for being long. `mark:` tokens are
+    still carried into the rendered evidence, where they corroborate; they just do not
+    classify.
+
+    `NO` IS NEVER ASSERTED. These signals detect a DECLARATION; the project's
+    simulation-bearing halt rule defines membership by BEHAVIOUR -- compiles or executes a
+    solver, "directly or through a fixture" -- and the two extensions provably diverge: a
+    test drawing a compile fixture through `request.getfixturevalue()` is simulation-bearing
+    by that rule and emits no signal, because a run-time fixture request never enters the
+    collection-time closure. That is why the field is named for the EVIDENCE. A field
+    wearing the halt rule's word would carry its authority without its extension, and a
+    reader meeting an unsignalled member would read the licence that rule refuses to grant.
+
+    Both counts are BOUNDS. `signalled` is a floor and `unsignalled` bounds this
+    classifier's silence, not any property of the tests.
+    """
+    signalled, unsignalled = [], []
+    for n in node_ids:
+        (signalled if any(s.startswith("fixture:") for s in signals.get(n) or []) else unsignalled).append(n)
+    return signalled, unsignalled
+
+
 def aggregate(run_dir: Path, scope: str = "array") -> dict:
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     pinned = manifest["source_sha"]
@@ -263,6 +364,7 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     statuses: dict[int, dict] = {}
     outcomes: dict[str, str] = {}
     reasons_by_fixture: dict[str, list[str]] = {}
+    merge_problems: list[str] = []
 
     for c in manifest["chunks"]:
         cid = c["chunk_id"]
@@ -272,13 +374,21 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         statuses[cid] = status or {}
         state, why = classify_chunk(status, jp if jp.exists() else None, pinned, c.get("expected_fixtures"))
         if jp.exists():
-            outcomes.update(parse_junit(jp))
+            merge_outcomes(outcomes, parse_junit(jp), problems=merge_problems)
             for k, v in unevaluated_reasons(jp).items():
                 reasons_by_fixture.setdefault(k, []).extend(v)
         # `diagnostics` is threaded so render_summary_md can NAME the directory. The
         # harvest has always written it and the summary has never mentioned it, which is
         # the whole defect: an unnamed directory gets read past, and that is what an
         # unnamed directory gets rather than a lapse by the reader.
+        # `kind` is the chunk-PACKING axis: producers write "heavy" (partition.py:520,
+        # :533), "cheap" (:547) and "triage" (_runner.py:1086). The array-versus-complement
+        # distinction is a DIFFERENT axis and takes a separate per-chunk field,
+        # `covers: "array" | "complement"`, absent-meaning "array" -- NEVER a fourth `kind`
+        # value, whose vocabulary already spends the words "heavy" and "cheap" on cost.
+        # Its consumer is the union guard below, which needs to know whether any chunk
+        # reported complement evidence at all; its PRODUCER is the complement runner, which
+        # does not exist yet, so today every chunk reads through the default.
         chunk_rows.append(
             {
                 "chunk_id": cid,
@@ -312,6 +422,52 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     uneval = _of("UNEVALUATED")
     structural = _of("SKIPPED_STRUCTURAL")
     incidental = _of("SKIPPED_INCIDENTAL")
+
+    # UNION REQUIRES EVIDENCE, AND `structural` IS NOT IT. Two independent reasons, and a
+    # predicate keyed on `structural` alone fails BOTH.
+    #
+    # (a) `structural` is what SURVIVED the skip-reason match at runtime, and a test can
+    # carry several skipif gates of which the first truthy one wins. Measured: the three
+    # tests in tests/test_doi_roundtrip_e2e.py declare an operator env gate AHEAD of their
+    # scheduler gate, so on a scheduler node they skip with the OPERATOR reason and land in
+    # SKIPPED_INCIDENTAL -- structurally excluded in fact, invisible to `structural`.
+    # The DECLARED complement (every node id whose declared skipif reasons include a
+    # STRUCTURAL_SKIP_REASONS member) is computed at plan time, where every gate is visible.
+    #
+    # (b) When STRUCTURAL_SKIP_REASONS matches nothing -- the state this file's own header
+    # comment records for 2026-08-25 -- both `structural` and the declared complement are
+    # empty, and an emptiness-only predicate would ADMIT the union claim on no evidence.
+    # So a POSITIVE conjunct is required: some chunk must have declared `covers=complement`.
+    if scope == "union":
+        declared_complement = set(manifest.get("declared_complement") or [])
+        unevaluated_complement = sorted(n for n in declared_complement if outcomes.get(n) not in _EVALUATED_OUTCOMES)
+        complement_reported = any((c.get("covers") or "array") == "complement" for c in manifest["chunks"])
+        if not complement_reported or unevaluated_complement:
+            scope_problems.append(
+                "scope=union requires complement evidence: "
+                f"complement_chunk_reported={complement_reported}, "
+                f"declared_complement={len(declared_complement)}, "
+                f"still_unevaluated={len(unevaluated_complement)}"
+                + (f" (first: {unevaluated_complement[:3]})" if unevaluated_complement else "")
+                + ". Scope forced to array."
+            )
+            scope = "array"
+
+    # SIGNAL EVIDENCE, recorded at PLAN time. A manifest that predates the recording carries
+    # no `signals` key, and the counts are then UNRECORDED -- never 0, which would report a
+    # bound as a measurement over evidence that was never collected.
+    _signals_recorded = "signals" in manifest
+    _sig, _unsig = classify_solver_setup(structural, manifest.get("signals") or {})
+    # TYPED, and `None` rather than a magic string. `counts` is the machine surface --
+    # "for humans; this key is for programs", four lines above the dict -- and every other
+    # member is an int, so a string sentinel there would make `counts[...] > 0` a string
+    # comparison, `int(...)` raise, and `"10" < "9"` true. None serializes to JSON null,
+    # which a consumer can test for without knowing the token. The TOKEN belongs to the
+    # verdict LINE, where a reader needs a word; `_fmt_signal_count` is the one place it is
+    # produced, so both composers cannot disagree.
+    _sig_count = len(_sig) if _signals_recorded else None
+    _unsig_count = len(_unsig) if _signals_recorded else None
+    _completeness = "FLOOR" if _signals_recorded else "UNRECORDED"
     absent = sorted(collected - set(outcomes))
     # Junit entries naming tests the manifest does not contain. Previously discarded
     # by the `n in collected` filter above, which is what made the id-shape defect
@@ -507,7 +663,7 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             "instrument, not the run."
         )
 
-    problems: list[str] = list(scope_problems) + list(entry_problems)
+    problems: list[str] = list(scope_problems) + list(entry_problems) + list(merge_problems)
     # Everything BELOW that stays in `problems` is verdict-bearing and unchanged. Only the
     # three sites this spec set names move, and each moves for a reason its own comment
     # already gave. `scope_problems` is NOT demoted: a caller asking for a scope the
@@ -685,6 +841,10 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             # appears only when non-zero teaches a reader to skim for its absence, and an
             # absent count is indistinguishable from a reporting layer too old to emit it
             # -- the same defect the README records for a bare `GREEN`.
+            f"incidental_skips={len(incidental)} "
+            f"{_FIELD_SIGNALLED}={_fmt_signal_count(_sig_count)} "
+            f"{_FIELD_UNSIGNALLED}={_fmt_signal_count(_unsig_count)} "
+            f"signal_completeness={_completeness} "
             f"advisories={len(advisories)} "
             f"mechanism={'readable' if mechanism_readable else 'UNREADABLE'}"
         ),
@@ -705,6 +865,9 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             "covered": len(passed),
             "structurally_excluded": len(structural),
             "incidental_skips": len(incidental),
+            _FIELD_SIGNALLED: _sig_count,
+            _FIELD_UNSIGNALLED: _unsig_count,
+            "signal_completeness": _completeness,
             "failed": len(failed),
             "unevaluated": len(uneval),
             "absent": len(absent),
@@ -752,6 +915,10 @@ def render_verdict_line(result: dict) -> str:
         f"covered={c['covered']} structurally_excluded={c['structurally_excluded']} "
         f"failed={c['failed']} unevaluated={c['unevaluated']} absent={c['absent']} "
         f"collected={c['collected']} "
+        f"incidental_skips={c['incidental_skips']} "
+        f"{_FIELD_SIGNALLED}={_fmt_signal_count(c[_FIELD_SIGNALLED])} "
+        f"{_FIELD_UNSIGNALLED}={_fmt_signal_count(c[_FIELD_UNSIGNALLED])} "
+        f"signal_completeness={c['signal_completeness']} "
         f"advisories={len(result.get('advisories') or [])} "
         f"mechanism={'readable' if result.get('mechanism_readable', True) else 'UNREADABLE'}"
     )
@@ -997,6 +1164,25 @@ def render_summary_md(result: dict) -> str:
         ]
     else:
         lines.append("None — every collected test was evaluable at this scope.")
+
+    # PER-MEMBER EVIDENCE, NEVER A VERDICT. SPECIFIED BUT NOT YET EMITTED: the per-member
+    # table this rule governs is not rendered here today, and the paragraphs below state
+    # what it MUST carry when it lands, not what the code emits now. The counts reach the
+    # verdict line and `counts`; the per-node rows do not.
+    #
+    # Each row will carry the signal tokens observed for that node id and nothing derived
+    # from them: a `classification` cell would be `len(signals) > 0`, which is one question
+    # with two answers.
+    #
+    # READING RULE, to be emitted beside the rows it qualifies rather than in a header, per
+    # the precedent this harness sets for its SHARED_BY_DESIGN class: signals PRESENT means the
+    # member almost certainly compiles or runs a solver; NO SIGNALS ESTABLISHES NOTHING --
+    # the project's simulation-bearing halt rule decides whether it may be run, and a
+    # signal-derived field carries no permission.
+    #
+    # The word for a member listed here is UNEVALUATED, never "deferred": "deferred" grants
+    # a permission the governing ruling withdrew, and any red such a member produces --
+    # whenever and wherever it is run -- must be fixed.
 
     if result["incidental_skips"]:
         lines += [

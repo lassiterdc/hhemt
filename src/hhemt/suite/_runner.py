@@ -347,6 +347,8 @@ def pytest_collection_modifyitems(items):  # noqa: D103 - pytest hook
     if not out:
         return
     closures = {}
+    marks: dict[str, list[str]] = {}
+    reasons: dict[str, list[str]] = {}
     for it in items:
         info = getattr(it, "_fixtureinfo", None)
         # FAIL LOUD, at collect time. `_fixtureinfo` is a pytest internal; if a version
@@ -359,7 +361,20 @@ def pytest_collection_modifyitems(items):  # noqa: D103 - pytest hook
                 "derivation cannot be computed. Refusing to emit a partial closure."
             )
         closures[it.nodeid] = sorted(info.name2fixturedefs)
-    Path(out).write_text(json.dumps(closures) + "\n", encoding="utf-8")
+        # `iter_markers`, NEVER `own_markers`. A module-scope `pytestmark` list is NOT in
+        # `own_markers` -- probed: own=[] iter=['slow'] -- and all four complement node ids
+        # declare `slow` at module scope, so `own_markers` would emit no mark token for any
+        # of them. `iter_markers` walks the node chain and sees the module-level marks.
+        marks[it.nodeid] = sorted({m.name for m in it.iter_markers()})
+        # EVERY skipif reason, not the one that wins. pytest evaluates the conditions in
+        # order and the first truthy one supplies the junit message, so a test carrying an
+        # operator gate ahead of a scheduler gate reports the operator reason and its
+        # structural exclusion is invisible downstream. Only here is the full set visible.
+        reasons[it.nodeid] = [r for m in it.iter_markers("skipif") if (r := m.kwargs.get("reason")) is not None]
+    Path(out).write_text(
+        json.dumps({"closures": closures, "marks": marks, "skipif_reasons": reasons}) + "\n",
+        encoding="utf-8",
+    )
 
 
 _LOGREPORT_FAILED = False
@@ -512,8 +527,14 @@ def _pytest_cmd(python: str) -> list[str]:
 # --------------------------------------------------------------------------
 # drive mode
 # --------------------------------------------------------------------------
-def collect(repo: Path, python: str) -> tuple[list[str], dict[str, list[str]]]:
-    """Return (node ids, per-test fixture closures), refusing on any collection error.
+def collect(repo: Path, python: str) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]], list[str]]:
+    """Return (node ids, fixture closures, per-test marks, declared complement).
+
+    The DECLARED COMPLEMENT is the set of node ids whose DECLARED skipif reasons include
+    a STRUCTURAL_SKIP_REASONS member -- every gate, not the one that wins at runtime.
+    Only this collect pass can see all of them: pytest's first truthy skipif supplies the
+    junit message, so a test carrying an operator env gate ahead of a scheduler gate
+    reports the operator reason and its structural exclusion is invisible downstream.
 
     The closure rides THIS invocation rather than a second one: the collection pass was
     already being paid, and `--collect-only` populates `_fixtureinfo` without executing a
@@ -549,8 +570,14 @@ def collect(repo: Path, python: str) -> tuple[list[str], dict[str, list[str]]]:
             "under-connects on 28 known files, and the failure would surface as a flaky "
             "suite rather than as an error."
         )
-    closures = json.loads(closure_out.read_text(encoding="utf-8"))
-    return node_ids, closures
+    payload = json.loads(closure_out.read_text(encoding="utf-8"))
+    closures = payload["closures"]
+    marks = payload.get("marks") or {}
+    reasons = payload.get("skipif_reasons") or {}
+    from hhemt.suite.aggregate import STRUCTURAL_SKIP_REASONS
+
+    declared_complement = sorted(n for n, rs in reasons.items() if any(r in STRUCTURAL_SKIP_REASONS for r in rs))
+    return node_ids, closures, marks, declared_complement
 
 
 def warm(repo: Path, python: str, target: str) -> None:
@@ -735,7 +762,7 @@ def plan(args: argparse.Namespace) -> int:
             "call site, exactly as submit_suite_uva.sh:72 already does for the array elements."
         )
 
-    node_ids, closures = collect(repo, args.python)
+    node_ids, closures, marks, declared_complement = collect(repo, args.python)
     # LAZY, and load-bearing. This module is loaded as a pytest PLUGIN in the child
     # (`-p _runner`), and a plugin module is imported BEFORE the toolkit's repo-root
     # conftest runs its `sys.path.insert(0, _SRC)` -- measured. A module-level
@@ -750,6 +777,8 @@ def plan(args: argparse.Namespace) -> int:
         source_sha=sha,
         run_id=run_id,
         closures=closures,
+        marks=marks,
+        declared_complement=declared_complement,
         cheap_bins=args.cheap_bins,
         heavy_split_budget_s=(None if args.heavy_split_budget_min is None else args.heavy_split_budget_min * 60.0),
         durations=_file_durations(Path(args.durations_from)) if args.durations_from else None,
@@ -979,7 +1008,7 @@ def triage(args: argparse.Namespace) -> int:
     # BIND the closures rather than discarding them with `[0]`. The triage manifest needs the
     # same closure-derived `expected_fixtures` the normal path gets, and this collect pass has
     # already computed them -- `collect()` returns `(node_ids, closures)`.
-    live_ids, closures = collect(repo, args.python)
+    live_ids, closures, marks, declared_complement = collect(repo, args.python)
     live = set(live_ids)
     node_ids = [n for n in requested if n in live]
     vanished = [n for n in requested if n not in live]
@@ -1079,6 +1108,8 @@ def triage(args: argparse.Namespace) -> int:
         "vanished_at_head": vanished,
         "collected": node_ids,
         "chunk_count": 1,
+        "signals": _partition.evidence_signals(closures, marks),
+        "declared_complement": [n for n in declared_complement if n in set(node_ids)],
         "shared_tree_exposure": [],
         "chunks": [
             {

@@ -26,6 +26,27 @@ This is the reason the two documentation versions differ. `latest` tracks
 `develop` and shows unreleased content; `stable` tracks the newest tag and is
 what a visitor arriving without a version in the URL should see.
 
+## Tests the suite harness cannot evaluate
+
+Some tests cannot run inside a SLURM allocation and are therefore **UNEVALUATED** by a
+harness array run rather than passed. They are reported by node id in every run's
+`summary.md`, under `## Complement`; read the list there rather than from a copy here,
+because a hand-maintained copy drifts and the generated one cannot. At the time of
+writing the list is 4 node ids across 2 modules.
+
+They compile and run a solver, so running them needs a venue permitted to do that — not
+a login node.
+
+**Any red they produce, whenever and wherever they are run, must be fixed. Being
+unevaluated is not an exemption from the zero-red bar.**
+
+To make such a red visible rather than lost: save the run's `--junitxml` into a suite run
+directory under the existing `chunk-NN.junit.xml` convention, beside a
+`chunk-NN.status.json`, and add the chunk to the manifest's chunk list. The aggregator
+then reports the red on the same surface as any array red. This is recording, not
+blocking — nothing refuses and nothing is computed as a disposition. The cost is low but
+not zero: the minimum `status.json` shape is not yet specified.
+
 ## Two independent version axes
 
 Do not conflate these:
