@@ -19,8 +19,27 @@ pytestmark = pytest.mark.requires_snakemake_subprocess
 
 
 @pytest.fixture
-def synth_member_two_row(tmp_path):
-    """Build a 2-row synthetic sensitivity analysis with distinct independent_vars values."""
+def synth_member_two_row(tmp_path, monkeypatch):
+    """Build a 2-row synthetic sensitivity analysis with distinct independent_vars values.
+
+    PINS THE RUNS ROOT, AND THE PLACEMENT IS THE WHOLE POINT. The consuming test
+    rebuilds this same `analysis_name` with `start_from_scratch=False`; without a pin
+    the two builds resolve to DIFFERENT roots, because test_case_builder.py:373-375
+    sends a `start_from_scratch=True` build with no override to a private mkdtemp while
+    a `False` build keeps the slug root. The rebuild then sees none of this build's
+    flags and every rule re-queues.
+
+    The setenv MUST live here and not in the consuming test body. A fixture body runs
+    BEFORE the test body, so a pin written in the test has not executed when THIS build
+    runs. Measured both ways: pin-in-test-body leaves the two builds disagreeing,
+    pin-here makes them agree, and monkeypatch's function scope carries the value
+    through the test body so the rebuild is pinned too. Same construction as
+    tests/conftest.py:1088.
+
+    tmp_path is per-test-item, so the four consumers of this fixture each get their own
+    root and no longer wipe one another under one analysis_name.
+    """
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
     csv_path = tmp_path / "sensitivity_2row.csv"
     pd.DataFrame(
         {
@@ -177,8 +196,24 @@ def test_one_row_edit_triggers_only_that_chain(synth_member_two_row):
 
 
 @pytest.mark.slow
-def test_row_removal_does_not_rerun_remaining_chains(tmp_path):
-    """R6: removing a row leaves the orphan fingerprint and does not invalidate siblings (slow)."""
+def test_dry_run_orphan_cleanup_does_not_mutate(tmp_path, monkeypatch):
+    """FORBIDS: cleanup_all_orphans(dry_run=True) mutating anything. That, and only that.
+
+    RENAMED because the old name claimed more than the body checked. The call below is a
+    DRY run, and all three assertions are "nothing changed", so they hold whatever the
+    deleting path does -- the test had no power over row-removal invalidation (its title)
+    or over delete-everything (its assertion message). Those two are now
+    test_row_removal_preserves_surviving_fingerprints and
+    test_orphan_cleanup_deletes_only_the_orphan, each with a call that can fail it.
+
+    What survives here is real: a regression that made dry_run=True mutate would redden
+    all three assertions, and that is the guarantee this test now names.
+
+    THE PIN GOES IN THE TEST BODY HERE, unlike synth_member_two_row's, because BOTH of
+    this test's builds are in the body -- so the placement that is wrong for a
+    fixture/test pair is the correct one for this shape.
+    """
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
     csv_path = tmp_path / "sensitivity_3row.csv"
     pd.DataFrame(
         {
@@ -237,8 +272,74 @@ def test_row_removal_does_not_rerun_remaining_chains(tmp_path):
     # cleanup_orphans integration is covered by test_cleanup_orphans_on_run.py.
     case.analysis.sensitivity.cleanup_all_orphans(dry_run=True, force=True, verbose=False)
 
-    # Orphan fingerprint left in place per R6
-    assert orphan_path.exists(), "R6: orphan fingerprint file should be left in place by this plan"
-    # Sibling fingerprints' mtimes unchanged
-    assert (analysis_dir / "_status" / "member-0_inputs.json").stat().st_mtime == mtime_0_before
-    assert (analysis_dir / "_status" / "member-2_inputs.json").stat().st_mtime == mtime_2_before
+    # ASSERT ON THE TREE THAT WAS ACTED ON. `analysis_dir` was bound from the FIRST build
+    # and `case` was rebound before the call above, so the two were different directories
+    # whenever the roots diverged -- the action could not reach the files being asserted.
+    # Re-deriving from the acting object makes them the same tree BY CONSTRUCTION rather
+    # than by coincidence, and the equality below is what says so out loud.
+    acted_dir = case.analysis.analysis_paths.analysis_dir
+    assert acted_dir == analysis_dir, (
+        "the rebuild resolved to a different tree than the first build; the assertions "
+        "below would be reading a directory this test never touched"
+    )
+    assert (acted_dir / "_status" / "member-1_inputs.json").exists(), (
+        "a dry run must leave the orphan fingerprint in place"
+    )
+    assert (acted_dir / "_status" / "member-0_inputs.json").stat().st_mtime == mtime_0_before
+    assert (acted_dir / "_status" / "member-2_inputs.json").stat().st_mtime == mtime_2_before
+
+
+@pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+@pytest.mark.xfail(
+    strict=True,
+    raises=NotImplementedError,
+    reason=(
+        "BODY NOT YET WRITTEN. Completing it needs a full non-dry-run 3-row workflow, "
+        "which compiles a solver and is simulation-bearing, so it needs the permission "
+        "that governs solver-executing runs. strict=True is deliberate: when the body "
+        "lands and passes, XPASS fails this test until the marker is removed."
+    ),
+)
+def test_row_removal_preserves_surviving_fingerprints(tmp_path, monkeypatch):
+    """FORBIDS: a row removal invalidating the fingerprints of the members that remain.
+
+    This is the intent the old test's TITLE claimed and its body never exercised: it
+    asserted unchanged mtimes across a dry-run cleanup, which mutates nothing, so the
+    assertion held whatever row removal did. Here the mtimes are read after the REBUILD
+    -- the path that actually rewrites fingerprints -- so a compare-and-write regression
+    that bumped every member's mtime would redden this and nothing else.
+    """
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    # Build the 3-row case, run it, record survivors' fingerprint mtimes, remove one row,
+    # rebuild and re-submit, then assert only the removed member's chain moved.
+    raise NotImplementedError("body follows the 3-row construction of test_dry_run_orphan_cleanup_does_not_mutate")
+
+
+@pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+@pytest.mark.xfail(
+    strict=True,
+    raises=NotImplementedError,
+    reason=(
+        "BODY NOT YET WRITTEN. Completing it needs cleanup_all_orphans(dry_run=False) "
+        "over a real 3-row run, which compiles a solver and is simulation-bearing, so it "
+        "needs the permission that governs solver-executing runs. strict=True is "
+        "deliberate: when the body lands and passes, XPASS fails this test until the "
+        "marker is removed."
+    ),
+)
+def test_orphan_cleanup_deletes_only_the_orphan(tmp_path, monkeypatch):
+    """FORBIDS: orphan cleanup deleting anything beyond the orphan.
+
+    POSITIVE AND MIXED, because all-negative assertions cannot express this: the orphan
+    MUST be gone and the survivors MUST remain, and a test that only asserted absence of
+    change would fail on the first half while a test that only asserted deletion would
+    pass on a delete-everything regression. This is the call the old test could not make
+    -- dry_run=False -- and is why it cannot share a test with the dry-run arm.
+    """
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    raise NotImplementedError(
+        "body follows the 3-row construction of test_dry_run_orphan_cleanup_does_not_mutate, then "
+        "case.analysis.sensitivity.cleanup_all_orphans(dry_run=False, force=True, verbose=False)"
+    )
