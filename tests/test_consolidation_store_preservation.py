@@ -163,3 +163,40 @@ def test_a_failed_rebuild_leaves_the_prior_consolidated_store_intact(tmp_path, m
         "deleting it before the replacement is written destroys it with nothing to restore"
     )
     assert (store / "zarr.json").read_text(encoding="utf-8") == "ORIGINAL"
+
+
+def test_induce_incomplete_analysis_preserves_the_master_tree_by_default():
+    """A DEFAULT-LOCK, and deliberately NOT a behavioural witness.
+
+    This asserts the VALUE and KIND of a keyword-only default, not any effect of them. It
+    covers exactly one population -- future callers that omit the flag -- and that
+    population is empty at authoring time. The census is CALL-scoped,
+    `git grep -nE "induce_incomplete_analysis[(]"`, which returns the helper's own
+    definition plus exactly one call, and that call passes `delete_master_tree=True`
+    explicitly. Call-scoped rather than name-scoped on purpose: a name-scoped count would
+    be changed by this very docstring, whereas the pattern above cannot match itself and
+    this test never invokes the helper, so the census is stable across its own landing.
+
+    A behavioural witness for the flip IS constructible without a simulation -- it needs a
+    duck-typed sensitivity stub with several contact points onto the helper's internals.
+    That instrument is stronger and costlier; this is the single-contact-point alternative,
+    chosen on COST and not on impossibility. What is genuinely unavailable is an end-to-end
+    check: the helper's only consumer, tests/test_synth_08_sensitivity_reprocess.py, is
+    simulation-bearing.
+
+    Drop-witness, measured rather than argued: run before the flip, `.default` is True and
+    the second assertion below FAILS.
+    """
+    import inspect
+
+    from tests.fixtures.test_case_builder import induce_incomplete_analysis
+
+    param = inspect.signature(induce_incomplete_analysis).parameters["delete_master_tree"]
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY, (
+        "delete_master_tree must stay keyword-only so a caller cannot pass it positionally "
+        "and destroy the master tree without naming the flag"
+    )
+    assert param.default is False, (
+        "induce_incomplete_analysis must preserve the master tree unless a caller asks for "
+        "its deletion; a destructive default erases the artifact a narrowing test observes"
+    )
