@@ -58,6 +58,10 @@ class LiveSignals:
     live_worktree_slugs: frozenset[str]
     live_branch_slugs: frozenset[str]
     locked_slugs: frozenset[str]
+    # Fourth arm. The three above all key on a NAME; under a path-derived address a
+    # tier's name is not a worktree basename and not a branch slug, so none of them
+    # fires and only the 7-day TTL stands between a live tier and deletion.
+    live_path_slugs: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -82,10 +86,8 @@ def owner_of(candidate: Path, runs_root: Path) -> str:
     return candidate.relative_to(runs_root).parts[0]
 
 
-def collect_live_signals(
-    repo_root: Path, *, runs_root: Path, candidate_slugs: frozenset[str]
-) -> LiveSignals:
-    """Gather the three liveness signals. The ONLY impure function.
+def collect_live_signals(repo_root: Path, *, runs_root: Path, candidate_slugs: frozenset[str]) -> LiveSignals:
+    """Gather the four liveness signals. The ONLY impure function.
 
     `repo_root` is derived by `sweep_with_live_signals` as
     `Path(__file__).resolve().parents[2]` — the clone that HOSTS this test tree —
@@ -136,13 +138,9 @@ def collect_live_signals(
         text=True,
     )
     if wt.returncode != 0:
-        raise RuntimeError(
-            f"git worktree list failed in {repo_root}: {wt.stderr.strip()}"
-        )
+        raise RuntimeError(f"git worktree list failed in {repo_root}: {wt.stderr.strip()}")
     live_worktree_slugs = frozenset(
-        Path(line[len("worktree ") :]).name
-        for line in wt.stdout.splitlines()
-        if line.startswith("worktree ")
+        Path(line[len("worktree ") :]).name for line in wt.stdout.splitlines() if line.startswith("worktree ")
     )
 
     # Branch arm — LOCAL heads only, prefixes stripped.
@@ -159,9 +157,7 @@ def collect_live_signals(
         text=True,
     )
     if br.returncode != 0:
-        raise RuntimeError(
-            f"git for-each-ref failed in {repo_root}: {br.stderr.strip()}"
-        )
+        raise RuntimeError(f"git for-each-ref failed in {repo_root}: {br.stderr.strip()}")
     live_branch_slugs = frozenset(
         refname[len(prefix) :]
         for refname in br.stdout.splitlines()
@@ -185,10 +181,37 @@ def collect_live_signals(
             else:
                 lock.release()
 
+    # Path arm. A tier records its owning checkout in `{slug}/.origin` (VMS-2); if that
+    # checkout still exists, someone is using this tier, in this clone or any other. This
+    # is the only arm that survives a path-derived address, and it REPLACES nothing --
+    # the three arms above still fire for the slugs they were written for.
+    #
+    # FAILS SAFE ON AN UNREADABLE BREADCRUMB, and only for path-shaped names. A slug root
+    # can be materialized by a site that never writes a breadcrumb -- measured:
+    # tests/fixtures/test_case_catalog.py:455 and :757 both mkdir(parents=True) on
+    # `{slug}/_sensitivity_configs`, and neither reaches the builder's write. Treating
+    # that as "not live" reaps a LIVE tier once the TTL elapses. The `path` prefix is the
+    # bound that makes fail-safe safe to state: only the new address mints it, so a
+    # legacy `main` or a worktree-basename tier is unaffected and stays reclaimable.
+    # The prefix literal is duplicated here and in tests/fixtures/__init__.py rather than
+    # shared, to avoid a new import edge from this module into the fixtures package,
+    # whose __init__ imports the builder; the duplication is named, not hidden.
+    live_path = set()
+    for slug in candidate_slugs:
+        try:
+            recorded = (runs_root / slug / ".origin").read_text().strip()
+        except OSError:
+            if slug.startswith("path"):
+                live_path.add(slug)
+            continue
+        if recorded and Path(recorded).is_dir():
+            live_path.add(slug)
+
     return LiveSignals(
         live_worktree_slugs=live_worktree_slugs,
         live_branch_slugs=live_branch_slugs,
         locked_slugs=frozenset(locked),
+        live_path_slugs=frozenset(live_path),
     )
 
 
@@ -198,6 +221,7 @@ def is_reapable(
     live_worktree_slugs: frozenset[str],
     live_branch_slugs: frozenset[str],
     locked_slugs: frozenset[str],
+    live_path_slugs: frozenset[str] = frozenset(),
     ttl_days: int,
     now: float,
     mtime: float,
@@ -215,6 +239,8 @@ def is_reapable(
         return (False, "live-branch")
     if owner in locked_slugs:
         return (False, "compile-lock")
+    if owner in live_path_slugs:
+        return (False, "live-path")
     if now - mtime < ttl_days * 86400:
         return (False, "ttl-not-elapsed")
     return (True, "reapable")
@@ -235,10 +261,7 @@ def sweep(
     symlinked run dir cannot cause a delete outside the tree.
     """
     if runs_root == default_runs_root() and os.environ.get("PYTEST_CURRENT_TEST"):
-        raise RuntimeError(
-            "refusing to sweep the real cache root from a test body; "
-            "pass a tmp_path root instead"
-        )
+        raise RuntimeError("refusing to sweep the real cache root from a test body; pass a tmp_path root instead")
     report = ReapReport(applied=not dry_run)
     if not runs_root.is_dir():
         return report
@@ -270,6 +293,7 @@ def sweep(
             live_worktree_slugs=signals.live_worktree_slugs,
             live_branch_slugs=signals.live_branch_slugs,
             locked_slugs=signals.locked_slugs,
+            live_path_slugs=signals.live_path_slugs,
             ttl_days=ttl_days,
             now=now,
             mtime=child.stat().st_mtime,
@@ -315,18 +339,10 @@ def sweep_with_live_signals(runs_root: Path, *, ttl_days: int = 7) -> ReapReport
     """
     repo_root = Path(__file__).resolve().parents[2]
     candidate_slugs = (
-        frozenset(
-            child.name
-            for child in runs_root.iterdir()
-            if child.is_dir() and not child.is_symlink()
-        )
+        frozenset(child.name for child in runs_root.iterdir() if child.is_dir() and not child.is_symlink())
         if runs_root.is_dir()
         else frozenset()
     )
-    signals = collect_live_signals(
-        repo_root, runs_root=runs_root, candidate_slugs=candidate_slugs
-    )
+    signals = collect_live_signals(repo_root, runs_root=runs_root, candidate_slugs=candidate_slugs)
     acknowledged = _reaper_ack_path(runs_root).is_file()
-    return sweep(
-        runs_root, signals=signals, ttl_days=ttl_days, dry_run=not acknowledged
-    )
+    return sweep(runs_root, signals=signals, ttl_days=ttl_days, dry_run=not acknowledged)

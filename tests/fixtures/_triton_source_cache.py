@@ -86,6 +86,12 @@ _PROVISION_LOCK_TIMEOUT_SECONDS = 1800
 #: fall back to `system.py`'s own not-exists() clone gate.
 _DISABLE_ENV = "HHEMT_DISABLE_TRITON_CANONICAL"
 
+#: The PROCESS ROLE, set to "chunk" by `hhemt.suite._runner.run_chunk` and by nothing
+#: else. Declared here as a literal rather than imported because `src/hhemt/**` may not
+#: import `tests/**`, so the string is necessarily stated in two files; the other
+#: statement is `src/hhemt/suite/_runner.py`'s env assignment.
+_SUITE_ROLE_ENV = "HHEMT_SUITE_ROLE"
+
 
 def synthetic_runs_root() -> Path:
     """The un-slugged synthetic-test cache root. SINGLE SOURCE.
@@ -194,6 +200,23 @@ def borrower_is_healthy(tree: Path, pin: str) -> bool:
     return resolved["HEAD"] == resolved[pin]
 
 
+def borrower_remote_matches(tree: Path, expected_remote: str = TRITON_GIT_URL) -> bool:
+    """True iff `tree`'s `origin` is `expected_remote`, compared in normalized form.
+
+    THE THIRD SINGLE-AXIS PREDICATE, and it is deliberately NOT folded into either
+    sibling. `borrower_is_healthy` is a PIN gate and three tests define it that way;
+    `is_borrowing` is a SHARE gate and two tests define it that way. Repository
+    IDENTITY is a third question: ORNL upstream and the maintainer fork are BOTH named
+    `triton.git` and 3a832f7d resolves on both, so a commit-only gate adopts the wrong
+    codebase and verifies clean -- measured on this machine, the `_ctl_develop` tier is
+    checked out at 3a832f7d from code.ornl.gov/hydro/triton.git while every other tier
+    is at 21e666d6 from the fork. `system.py:793-796` records the same trap on the
+    production clone. Comparison goes through `_normalize_remote` because a raw `!=`
+    reports a mismatch for `.../triton/` against `.../triton.git`.
+    """
+    return _normalize_remote(_canonical_origin(tree)) == _normalize_remote(expected_remote)
+
+
 def is_borrowing(tree: Path) -> bool:
     """True iff `tree`'s superproject object store borrows from a directory that
     still exists.
@@ -271,12 +294,15 @@ def _reborrow_in_place(tree: Path, canonical: Path, pin: str) -> bool:
         info = tree / ".git" / "objects" / "info"
         info.mkdir(parents=True, exist_ok=True)
         (info / "alternates").write_text(f"{canonical_objects}\n")
-        subprocess.run(
-            ["git", "-C", str(tree), "repack", "-a", "-d", "-l", "-q"], check=True
-        )
+        subprocess.run(["git", "-C", str(tree), "repack", "-a", "-d", "-l", "-q"], check=True)
         subprocess.run(
             [
-                "git", "-C", str(tree), "submodule", "foreach", "--recursive",
+                "git",
+                "-C",
+                str(tree),
+                "submodule",
+                "foreach",
+                "--recursive",
                 submodule_script,
             ],
             check=True,
@@ -288,9 +314,7 @@ def _reborrow_in_place(tree: Path, canonical: Path, pin: str) -> bool:
             ("submodule.alternateLocation", "superproject"),
             ("submodule.alternateErrorStrategy", "die"),
         ):
-            subprocess.run(
-                ["git", "-C", str(tree), "config", key, value], check=True
-            )
+            subprocess.run(["git", "-C", str(tree), "config", key, value], check=True)
     except (subprocess.CalledProcessError, OSError):
         return False
     return is_borrowing(tree) and borrower_is_healthy(tree, pin)
@@ -350,12 +374,15 @@ def ensure_canonical(*, pin: str = TRITON_PIN) -> Path:
                 ["git", "clone", "--recurse-submodules", TRITON_GIT_URL, str(canonical)],
                 check=True,
             )
-            subprocess.run(
-                ["git", "-C", str(canonical), "config", "gc.auto", "0"], check=True
-            )
+            subprocess.run(["git", "-C", str(canonical), "config", "gc.auto", "0"], check=True)
             subprocess.run(
                 [
-                    "git", "-C", str(canonical), "submodule", "foreach", "--recursive",
+                    "git",
+                    "-C",
+                    str(canonical),
+                    "submodule",
+                    "foreach",
+                    "--recursive",
                     "git config gc.auto 0",
                 ],
                 check=True,
@@ -375,9 +402,7 @@ def ensure_canonical(*, pin: str = TRITON_PIN) -> Path:
         # twice over — as an ancestor of the new pin, and via its own refs/pins anchor,
         # which the narrowed refspec below cannot prune.
         origin = _canonical_origin(canonical)
-        force_fetch = origin is not None and _normalize_remote(origin) != _normalize_remote(
-            TRITON_GIT_URL
-        )
+        force_fetch = origin is not None and _normalize_remote(origin) != _normalize_remote(TRITON_GIT_URL)
         if force_fetch:
             subprocess.run(
                 ["git", "-C", str(canonical), "remote", "set-url", "origin", TRITON_GIT_URL],
@@ -387,7 +412,12 @@ def ensure_canonical(*, pin: str = TRITON_PIN) -> Path:
         if force_fetch or _rev_parse(canonical, pin) is None:
             subprocess.run(
                 [
-                    "git", "-C", str(canonical), "fetch", "--prune", "origin",
+                    "git",
+                    "-C",
+                    str(canonical),
+                    "fetch",
+                    "--prune",
+                    "origin",
                     # DESTINATION IS refs/remotes/origin/*, NOT refs/heads/*. Git REFUSES
                     # to fetch into the checked-out branch of a non-bare repo — measured
                     # `fatal: refusing to fetch into branch 'refs/heads/main' checked out
@@ -426,7 +456,12 @@ def ensure_canonical(*, pin: str = TRITON_PIN) -> Path:
         # so nothing otherwise protects it from a submodule-side gc.
         subprocess.run(
             [
-                "git", "-C", str(canonical), "submodule", "foreach", "--recursive",
+                "git",
+                "-C",
+                str(canonical),
+                "submodule",
+                "foreach",
+                "--recursive",
                 'git update-ref "refs/pins/$(git rev-parse HEAD)" "$(git rev-parse HEAD)"',
             ],
             check=True,
@@ -538,7 +573,7 @@ def provision_borrower(dest: Path, *, pin: str = TRITON_PIN) -> Path:
     with lock:
         # Re-check INSIDE the lock: a sibling session may have provisioned while
         # we waited.
-        if dest.exists() and borrower_is_healthy(dest, pin):
+        if dest.exists() and borrower_is_healthy(dest, pin) and borrower_remote_matches(dest):
             # HEALTHY BUT NOT BORROWING. `borrower_is_healthy` is a PIN gate, so a
             # plain standalone clone checked out at `pin` passes it and would be
             # adopted untouched FOREVER — the saving is lost for the life of the
@@ -559,6 +594,40 @@ def provision_borrower(dest: Path, *, pin: str = TRITON_PIN) -> Path:
                     stacklevel=2,
                 )
             return dest
+        # ROLE GATE. Reaching here means the tier cannot be adopted as it stands, and that
+        # covers TWO states: it is ABSENT, or it exists and fails one of the reuse gate's
+        # later conjuncts. The predicate refuses in BOTH, deliberately -- a chunk is one of
+        # N array elements dispatched together, and provisioning from one is unsafe either
+        # way: for an existing tier because the next statement DELETES it and every TRITON
+        # build dir is nested inside `dest`; for an absent one because N chunks would clone
+        # into ONE path serialized only by a lock measured not to exclude across nodes on a
+        # parallel filesystem. What differs is the OPERATOR'S REMEDY, so the message names
+        # WHICH conjunct failed and WHAT to run. Naming the wrong conjunct is the same
+        # defect as naming the wrong hazard: the reuse gate has THREE, and blaming the pin
+        # for a remote mismatch sends the reader to look at the wrong thing.
+        if os.environ.get(_SUITE_ROLE_ENV) == "chunk":
+            if not dest.exists():
+                _state = "the tier is ABSENT -- nothing has provisioned it yet"
+            elif not borrower_is_healthy(dest, pin):
+                _state = f"the tier exists but its checkout is not at pin {pin[:12]}"
+            elif not borrower_remote_matches(dest):
+                _state = "the tier exists and is at the pin, but its `origin` is not the expected TRITON remote"
+            else:
+                _state = (
+                    "the tier now satisfies every reuse conjunct -- it changed under "
+                    "this process between the reuse check and this message"
+                )
+            raise RuntimeError(
+                f"refusing to provision {dest} from a suite chunk: {_state}. A chunk "
+                "never provisions a shared tier, because N array elements would act on "
+                "one path at once. REMEDY: from the toolkit checkout, in a session that "
+                "is NOT a suite chunk, run `python -m pytest "
+                "tests/test_synth_00_compile_models.py` -- that is the warm, and it "
+                "materializes or repairs the tier. A harness that dispatches chunks "
+                "should run that warm itself before submitting; if yours did and you are "
+                "still reading this, the tier changed between the warm and this chunk, "
+                "and that is the thing to investigate."
+            )
         if dest.exists():
             ut.fast_rmtree(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -566,23 +635,35 @@ def provision_borrower(dest: Path, *, pin: str = TRITON_PIN) -> Path:
         # an undeduped clone via --reference-if-able.
         subprocess.run(
             [
-                "git", "clone", "--reference", str(canonical / ".git"),
-                TRITON_GIT_URL, str(dest),
+                "git",
+                "clone",
+                "--reference",
+                str(canonical / ".git"),
+                TRITON_GIT_URL,
+                str(dest),
             ],
             check=True,
         )
         subprocess.run(["git", "-C", str(dest), "config", "gc.auto", "0"], check=True)
         subprocess.run(
             [
-                "git", "-C", str(dest), "config",
-                "submodule.alternateLocation", "superproject",
+                "git",
+                "-C",
+                str(dest),
+                "config",
+                "submodule.alternateLocation",
+                "superproject",
             ],
             check=True,
         )
         subprocess.run(
             [
-                "git", "-C", str(dest), "config",
-                "submodule.alternateErrorStrategy", "die",
+                "git",
+                "-C",
+                str(dest),
+                "config",
+                "submodule.alternateErrorStrategy",
+                "die",
             ],
             check=True,
         )

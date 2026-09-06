@@ -347,6 +347,8 @@ def pytest_collection_modifyitems(items):  # noqa: D103 - pytest hook
     if not out:
         return
     closures = {}
+    marks: dict[str, list[str]] = {}
+    reasons: dict[str, list[str]] = {}
     for it in items:
         info = getattr(it, "_fixtureinfo", None)
         # FAIL LOUD, at collect time. `_fixtureinfo` is a pytest internal; if a version
@@ -359,7 +361,20 @@ def pytest_collection_modifyitems(items):  # noqa: D103 - pytest hook
                 "derivation cannot be computed. Refusing to emit a partial closure."
             )
         closures[it.nodeid] = sorted(info.name2fixturedefs)
-    Path(out).write_text(json.dumps(closures) + "\n", encoding="utf-8")
+        # `iter_markers`, NEVER `own_markers`. A module-scope `pytestmark` list is NOT in
+        # `own_markers` -- probed: own=[] iter=['slow'] -- and all four complement node ids
+        # declare `slow` at module scope, so `own_markers` would emit no mark token for any
+        # of them. `iter_markers` walks the node chain and sees the module-level marks.
+        marks[it.nodeid] = sorted({m.name for m in it.iter_markers()})
+        # EVERY skipif reason, not the one that wins. pytest evaluates the conditions in
+        # order and the first truthy one supplies the junit message, so a test carrying an
+        # operator gate ahead of a scheduler gate reports the operator reason and its
+        # structural exclusion is invisible downstream. Only here is the full set visible.
+        reasons[it.nodeid] = [r for m in it.iter_markers("skipif") if (r := m.kwargs.get("reason")) is not None]
+    Path(out).write_text(
+        json.dumps({"closures": closures, "marks": marks, "skipif_reasons": reasons}) + "\n",
+        encoding="utf-8",
+    )
 
 
 _LOGREPORT_FAILED = False
@@ -512,8 +527,14 @@ def _pytest_cmd(python: str) -> list[str]:
 # --------------------------------------------------------------------------
 # drive mode
 # --------------------------------------------------------------------------
-def collect(repo: Path, python: str) -> tuple[list[str], dict[str, list[str]]]:
-    """Return (node ids, per-test fixture closures), refusing on any collection error.
+def collect(repo: Path, python: str) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]], list[str]]:
+    """Return (node ids, fixture closures, per-test marks, declared complement).
+
+    The DECLARED COMPLEMENT is the set of node ids whose DECLARED skipif reasons include
+    a STRUCTURAL_SKIP_REASONS member -- every gate, not the one that wins at runtime.
+    Only this collect pass can see all of them: pytest's first truthy skipif supplies the
+    junit message, so a test carrying an operator env gate ahead of a scheduler gate
+    reports the operator reason and its structural exclusion is invisible downstream.
 
     The closure rides THIS invocation rather than a second one: the collection pass was
     already being paid, and `--collect-only` populates `_fixtureinfo` without executing a
@@ -549,8 +570,14 @@ def collect(repo: Path, python: str) -> tuple[list[str], dict[str, list[str]]]:
             "under-connects on 28 known files, and the failure would surface as a flaky "
             "suite rather than as an error."
         )
-    closures = json.loads(closure_out.read_text(encoding="utf-8"))
-    return node_ids, closures
+    payload = json.loads(closure_out.read_text(encoding="utf-8"))
+    closures = payload["closures"]
+    marks = payload.get("marks") or {}
+    reasons = payload.get("skipif_reasons") or {}
+    from hhemt.suite.aggregate import STRUCTURAL_SKIP_REASONS
+
+    declared_complement = sorted(n for n, rs in reasons.items() if any(r in STRUCTURAL_SKIP_REASONS for r in rs))
+    return node_ids, closures, marks, declared_complement
 
 
 def warm(repo: Path, python: str, target: str) -> None:
@@ -697,7 +724,45 @@ def plan(args: argparse.Namespace) -> int:
     run_id = f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}_{sha[:12]}"
     run_dir = Path(args.runs_root).resolve() / run_id
 
-    node_ids, closures = collect(repo, args.python)
+    # DECLARE FIRST, then conform to the declaration like every other site. Drive is the
+    # site that PARSES the test tree (partition.py reads {repo_root}/tests/** to decide
+    # chunk membership), so a drive resolving `hhemt` from a different tree than it parses
+    # runs one version's parser over another version's source at the step that decides what
+    # each chunk contains. A detector keyed on the importing package reports the parser and
+    # is silent about the parsed -- which is why the declaration names the TREE.
+    from hhemt.suite import verify_version_conformance, write_version_expectation
+
+    write_version_expectation(run_dir, sha=sha, tree=str(repo))
+    _status, _rec = verify_version_conformance(run_dir, site="drive")
+    # MISMATCH *and* UNRESOLVABLE. The two non-MATCH states are NOT symmetric, and treating
+    # them alike in either direction is a defect: NO_EXPECTATION is a property of the RUN --
+    # a pre-floor run dir legitimately has no declaration and refusing there would make old
+    # runs unusable -- whereas UNRESOLVABLE is a property of THIS PROCESS, and here the
+    # expectation was written moments earlier BY THIS SAME PROCESS. A drive that cannot
+    # determine its own tree is not meeting a legacy artifact; it cannot certify anything
+    # about the run it is creating. Exempting it would wave through the most obviously broken
+    # configuration this floor exists for: a wheel-installed hhemt driving a source --toolkit,
+    # i.e. the parser deciding chunk membership being a different version from the tree parsed.
+    if _status in ("MISMATCH", "UNRESOLVABLE"):
+        if _status == "UNRESOLVABLE":
+            raise SystemExit(
+                "refusing to plan: this process cannot determine which source tree it resolved "
+                "hhemt from (no `src` component -- a wheel or non-src layout), so it cannot "
+                "certify the run it is about to create. Re-invoke with PYTHONPATH={--toolkit}/src."
+            )
+        raise SystemExit(
+            f"refusing to plan: drive resolved hhemt from {_rec['resolved_tree']!r} but this "
+            f"run is declared against {_rec['expected_tree']!r}. The manifest would be derived "
+            "by one version and executed by another. IF YOU REACHED THIS FROM THE ESTATE "
+            "HARNESS this is expected and the fix is one line: rerun.sh invokes this driver "
+            "as `python -m hhemt.suite._runner` with NO PYTHONPATH, deliberately and by a "
+            "stated design predating this floor (its comment at rerun.sh:79 reads `-m` rather "
+            "than a path so the estate needs no PYTHONPATH), so it resolves hhemt from the "
+            "conda env rather than from --toolkit. Export PYTHONPATH={--toolkit}/src at that "
+            "call site, exactly as submit_suite_uva.sh:72 already does for the array elements."
+        )
+
+    node_ids, closures, marks, declared_complement = collect(repo, args.python)
     # LAZY, and load-bearing. This module is loaded as a pytest PLUGIN in the child
     # (`-p _runner`), and a plugin module is imported BEFORE the toolkit's repo-root
     # conftest runs its `sys.path.insert(0, _SRC)` -- measured. A module-level
@@ -712,6 +777,8 @@ def plan(args: argparse.Namespace) -> int:
         source_sha=sha,
         run_id=run_id,
         closures=closures,
+        marks=marks,
+        declared_complement=declared_complement,
         cheap_bins=args.cheap_bins,
         heavy_split_budget_s=(None if args.heavy_split_budget_min is None else args.heavy_split_budget_min * 60.0),
         durations=_file_durations(Path(args.durations_from)) if args.durations_from else None,
@@ -938,7 +1005,11 @@ def triage(args: argparse.Namespace) -> int:
     # legible line -- and a vanished id is usually GOOD NEWS, since the fix removed or
     # renamed the failing test. Vanished ids are DROPPED and REPORTED, never silently
     # omitted; the run refuses only when nothing survives.
-    live = set(collect(repo, args.python)[0])
+    # BIND the closures rather than discarding them with `[0]`. The triage manifest needs the
+    # same closure-derived `expected_fixtures` the normal path gets, and this collect pass has
+    # already computed them -- `collect()` returns `(node_ids, closures)`.
+    live_ids, closures, marks, declared_complement = collect(repo, args.python)
+    live = set(live_ids)
     node_ids = [n for n in requested if n in live]
     vanished = [n for n in requested if n not in live]
     if vanished:
@@ -956,6 +1027,41 @@ def triage(args: argparse.Namespace) -> int:
     run_id = f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}_{sha[:12]}{TRIAGE_SUFFIX}"
     run_dir = runs_root / run_id
     (run_dir / "chunks").mkdir(parents=True, exist_ok=True)
+
+    # DECLARE HERE TOO, AND DECLARE EARLY. triage() hand-builds its run dir and never calls
+    # plan(), so without this the single triage chunk has nothing to conform to -- and the
+    # roster check in the aggregator would count `drive` and `chunk-00` as silent on every
+    # triage run. `repo` (:890), `sha` (:891) and `run_dir` (:961) are all bound above this
+    # line; nothing new is computed.
+    #
+    # THE PLACEMENT IS THE POINT, and it was wrong in the previous form of this spec, which
+    # inserted after the manifest and chunk_count writes. plan()'s check earns a STRUCTURAL
+    # bound -- its raise precedes collect() and long precedes the manifest write, so a
+    # mis-resolved drive never produces a manifest and the roster denominator a later
+    # aggregate reads is therefore only ever written by a drive whose own gate held. Placed
+    # after the manifest write, triage AUTHORS that denominator and then refuses, losing the
+    # bound for its own runs. Triage cannot check as early as plan() does -- it must collect
+    # to learn which ids survive, and run_dir does not exist until run_id is composed -- so
+    # this line is the EARLIEST point at which the record can be written, and it is early
+    # enough that a refusing triage leaves no manifest behind.
+    from hhemt.suite import verify_version_conformance, write_version_expectation
+
+    write_version_expectation(run_dir, sha=sha, tree=str(repo))
+    # AND CONFORM. Declaring without checking makes triage the one writer the roster trusts
+    # and never verifies: a triage process resolving a different tree than --toolkit would
+    # declare THAT tree, run its chunk against it, and every record would agree -- peer
+    # agreement with a population of one, which is exactly what a declaration exists to
+    # replace. The referent is NOT self-supplied: `repo = Path(args.toolkit).resolve()` comes
+    # from the CLI, so the comparison is "where this process imported hhemt from" against
+    # "the tree the operator named", identically to plan(). triage() is structurally the
+    # DRIVE of its own run, so it takes the drive's policy: MISMATCH and UNRESOLVABLE refuse,
+    # NO_EXPECTATION cannot occur here because the declaration is written on the line above.
+    _tstatus, _trec = verify_version_conformance(run_dir, site="drive")
+    if _tstatus in ("MISMATCH", "UNRESOLVABLE"):
+        raise SystemExit(
+            f"refusing to triage: resolved hhemt from {_trec['resolved_tree']!r} against a run "
+            f"declared for {_trec['expected_tree']!r} ({_tstatus})."
+        )
     (run_dir / "chunks" / "00.txt").write_text("\n".join(node_ids) + "\n", encoding="utf-8")
     # LAZY, and load-bearing. This module is loaded as a pytest PLUGIN in the child
     # (`-p _runner`), and a plugin module is imported BEFORE the toolkit's repo-root
@@ -965,9 +1071,32 @@ def triage(args: argparse.Namespace) -> int:
     # every chunk whose --toolkit differs from the installed toolkit. Keep it in here.
     from hhemt.suite import partition as _partition
 
-    expected = sorted(
-        {f for n in node_ids for f in _partition._fixtures_used(repo / n.split("::")[0], _partition.RECORDED_FIXTURES)}
-    )
+    # CLOSURE-DERIVED, matching partition.py's enrichment loop. A substring scan would keep
+    # the defect alive on exactly the path an operator uses most while iterating toward green:
+    # `test_partition_split.py` mentions `tritonswmm_cpu_compiled` seven times in string
+    # literals, the scan reads all seven as requests, and the single triage chunk VOIDs.
+    #
+    # REFUSE BY NAME rather than subscripting blind OR defaulting to empty. `node_ids` is a
+    # subset of `live` and `collect()` builds both halves in one invocation, so a miss is
+    # excluded by construction TODAY -- but only while the two halves agree on ID SHAPE:
+    # `node_ids` is parsed from `--collect-only -q` STDOUT, `closures` is keyed on
+    # `item.nodeid`. The stdout half accepts ANY line containing `::` (_runner.py:544), so a
+    # warnings-summary entry naming a nodeid, or a plugin banner, enters `node_ids` while
+    # `closures` -- keyed strictly on `item.nodeid` -- cannot contain it. Same invocation,
+    # genuine divergence, dependent on pytest's stdout shape rather than on this code.
+    # On the NORMAL path such a divergence is caught legibly by build_manifest's wholesale
+    # guard; THE TRIAGE PATH HAND-BUILDS ITS MANIFEST AND NEVER CALLS build_manifest, so it
+    # has nothing above it. This guard is therefore NOT redundant -- do not delete it by
+    # analogy with the redundant per-node guard in partition.py's enrichment loop.
+    _unkeyed = [n for n in node_ids if n not in closures]
+    if _unkeyed:
+        raise SystemExit(
+            f"refusing to triage: {len(_unkeyed)} collected node id(s) have no fixture closure, "
+            f"first {_unkeyed[0]!r}. The two halves of collect() disagree on id shape "
+            "(stdout-parsed ids vs item.nodeid); expected_fixtures cannot be derived from "
+            "absent evidence."
+        )
+    expected = sorted({fx for n in node_ids for fx in closures[n] if fx in _partition.RECORDED_FIXTURES})
     manifest = {
         "run_id": run_id,
         "source_sha": sha,
@@ -979,6 +1108,8 @@ def triage(args: argparse.Namespace) -> int:
         "vanished_at_head": vanished,
         "collected": node_ids,
         "chunk_count": 1,
+        "signals": _partition.evidence_signals(closures, marks),
+        "declared_complement": [n for n in declared_complement if n in set(node_ids)],
         "shared_tree_exposure": [],
         "chunks": [
             {
@@ -1014,6 +1145,28 @@ def _sibling_resolution(repo: Path, python: str) -> str:
 
 def run_chunk(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir).resolve()
+
+    # Conform BEFORE reading the manifest. A chunk that resolves a different tree than the
+    # one the manifest was derived against would execute node ids selected by a parser it
+    # is not running -- and would do it silently, because every downstream artifact is
+    # keyed on the run dir rather than on the tree.
+    from hhemt.suite import chunk_site, verify_version_conformance
+
+    _status, _rec = verify_version_conformance(run_dir, site=chunk_site(args.chunk))
+    # MISMATCH *and* UNRESOLVABLE -- see U2-2 for why the two non-MATCH states are not
+    # symmetric. NO_EXPECTATION stays non-fatal: a hand re-invocation of run_chunk against a
+    # pre-floor run dir is a legitimate operator action and is untouched by this.
+    if _status in ("MISMATCH", "UNRESOLVABLE"):
+        if _status == "UNRESOLVABLE":
+            raise SystemExit(
+                f"refusing to run chunk {args.chunk}: this process cannot determine which source "
+                "tree it resolved hhemt from (no `src` component). Re-invoke with "
+                "PYTHONPATH={--toolkit}/src."
+            )
+        raise SystemExit(
+            f"refusing to run chunk {args.chunk}: resolved hhemt from "
+            f"{_rec['resolved_tree']!r} against a run declared for {_rec['expected_tree']!r}."
+        )
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     if args.n_chunks is not None and args.n_chunks != manifest["chunk_count"]:
         raise SystemExit(
@@ -1051,6 +1204,15 @@ def run_chunk(args: argparse.Namespace) -> int:
     # under concurrent readers is a hazard the TTL happens to prevent rather than one
     # the design excludes. One env var, defence in depth.
     env["HHEMT_DISABLE_RUN_DIR_REAPER"] = "1"
+    # ROLE, NOT SITE. There are three compile sites (system.py:1254, :1688, :2009) and
+    # three process roles (warm, chunk, ad-hoc local), and the same fixture code runs in
+    # all of them -- so a policy keyed on a site would either miss two sites or grant
+    # rebuild rights to a chunk. A chunk is one of N array elements: a re-provision there
+    # is N concurrent destructive deletes of one shared tier plus N cold borrows against a
+    # rate limit whose threshold is unknown and whose 403 is sticky for at least 20s.
+    # Warm and local are unmarked and keep today's rebuild behaviour; that is a decision,
+    # and it makes the ad-hoc local session a second unsupervised rebuild site.
+    env["HHEMT_SUITE_ROLE"] = "chunk"
     env["PYTHONUNBUFFERED"] = "1"
     # THE LEVER THE README NAMES AND THE HARNESS DID NOT PULL. rerun.sh:242 and :389 unset
     # HHEMT_TEST_RUNS_ROOT_OVERRIDE, and a repo-wide grep finds no site that ever set it --

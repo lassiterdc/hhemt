@@ -56,7 +56,9 @@ open an issue to discuss before submitting.
 - Create a feature branch from `develop`
 - Make changes with tests
 - Run `just qa` before opening a pull request. It formats, lints, type-checks, runs
-  the two guard scripts listed in that recipe, and runs the fast test tier. `just` is
+  the two guard scripts listed in that recipe, and runs the fast test tier. To gate the
+  compile tier explicitly, run `just test-gated`, which invokes pytest under the conda env
+  with `HHEMT_REQUIRE_COMPILE_TIER=1` so a compile-tier skip becomes a hard failure. `just` is
   installed by neither `environment.yaml` nor any `pyproject.toml` extra — install it
   separately (https://github.com/casey/just), or run the commands under the `qa:`
   recipe in `justfile` yourself, in the order they appear there.
