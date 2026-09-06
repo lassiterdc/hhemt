@@ -316,3 +316,60 @@ def test_scope_problems_are_never_demoted(tmp_path, scope):
     assert r["scope"] == "triage"
     if scope == "union":
         assert any("triage" in p for p in r["problems"])
+
+
+def test_complement_reports_declared_and_not_attempted(tmp_path):
+    """The two derivations BRACKET the complement; the section must confuse neither.
+
+    EXPECTATIONS ARE AUTHORED LITERALS. A guard that re-derived the declared set from
+    STRUCTURAL_SKIP_REASONS would read the same tuple both derivations read and would go
+    green on a rename exactly as they do. The fixture is synthetic for the same reason:
+    built from the live tests/ corpus the numbers would drift with the repo and the author
+    would be pushed straight back to computing them.
+
+    THE DISAGREEING CASE IS THE POINT. `shadowed` declares a structural gate and skips
+    under a NON-structural message, so it is declared-but-not-observed-structural and the
+    difference set is non-empty by construction. A fixture where the two derivations agree
+    is green before this change and after it, which is the both-states failure.
+    """
+    nodes = _build(tmp_path, chunk_entries=[{SOFTWARE: _entry("_software")}])
+    observed, shadowed = nodes[0], nodes[1]
+
+    m = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    m["declared_complement"] = [observed, shadowed]
+    (tmp_path / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+
+    structural_msg = "Local coupled run-proof; do not launch on an HPC scheduler node."
+    cases = (
+        f'<testcase classname="tests.test_x" file="tests/test_x.py" name="{observed.split("::")[1]}">'
+        f'<skipped message="{structural_msg}"/></testcase>'
+        f'<testcase classname="tests.test_x" file="tests/test_x.py" name="{shadowed.split("::")[1]}">'
+        f'<skipped message="operator-gated live-deposit e2e."/></testcase>'
+    )
+    (tmp_path / "chunk-00.junit.xml").write_text(
+        f'<testsuites><testsuite name="pytest" tests="2">{cases}</testsuite></testsuites>',
+        encoding="utf-8",
+    )
+
+    r = A.aggregate(tmp_path, scope="array")
+
+    assert r["structurally_excluded"] == [observed], "the OBSERVED partition cell is unchanged"
+    # `.get(... ) or []` rather than `[...]`: pre-fix the keys are ABSENT, and a KeyError
+    # would make this guard discriminate on the SCHEMA. Anchored on a value comparison, it
+    # discriminates on the PROPERTY and reports what the set actually was.
+    assert sorted(r.get("declared_complement") or []) == sorted([observed, shadowed])
+    assert sorted(r.get("declared_not_attempted") or []) == sorted([observed, shadowed])
+
+    assert any(a.startswith("[complement-derivation]") and shadowed in a for a in r["advisories"])
+    assert not any("complement-derivation" in p for p in r["problems"]), "advisory, never blocking"
+
+    md = A.render_summary_md(r)
+    # SEPARATE THE SURFACES BEFORE ASSERTING. Every advisory is rendered into `md`, so a bare
+    # `shadowed in md` is ENTAILED by the advisory assertion above: it would pass unchanged if
+    # the runnable block were reverted to `structurally_excluded`, which is the exact
+    # regression it would claim to pin. Extract the fenced block under the copy-verbatim line
+    # and assert over THAT, then pin that the two surfaces really are separate.
+    block = md.split("Copy the block verbatim:")[1].split("```")[1]
+    assert "[complement-derivation]" not in block, "the advisory must not bleed into the block"
+    assert observed in block and shadowed in block, block
+    assert "this scope cannot evaluate" not in md, "regression pin on one known-false phrase"
