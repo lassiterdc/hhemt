@@ -43,9 +43,7 @@ _SOFTWARE_TO_DATA_RELATION = "IsSourceOf"
 # personal creators via publish_analysis(creators=...) for proper authorship credit. The
 # crate sidecar carries no author/creator entity, so this is the only creators source
 # unless the operator overrides it.
-_DEFAULT_CREATORS: list[dict] = [
-    {"person_or_org": {"type": "organizational", "name": "H&H Ensemble Modeling Toolkit"}}
-]
+_DEFAULT_CREATORS: list[dict] = [{"person_or_org": {"type": "organizational", "name": "H&H Ensemble Modeling Toolkit"}}]
 
 # DataCite-mandatory publisher (the entity issuing the resource). Required for DOI
 # registration; Zenodo's own deposit UI defaults it to "Zenodo" for records it issues.
@@ -637,14 +635,37 @@ def publish_analysis(
     """
     analysis_dir = analysis.analysis_paths.analysis_dir
     license_spdx = _read_license_from_sidecar(analysis_dir)
+    cfg_license = str(analysis.cfg_analysis.dataset_license)
+    if cfg_license != license_spdx:
+        _shadowed = (
+            f" The override_dataset_license={override_dataset_license!r} you passed was NOT"
+            f" evaluated: this check runs first, because an override is compared against the"
+            f" crate and the crate is stale."
+            if override_dataset_license is not None
+            else ""
+        )
+        raise PublishError(
+            target=target,
+            doi=None,
+            status=(
+                f"analysis_config.dataset_license={cfg_license!r} differs from the crate "
+                f"license {license_spdx!r}; the emitted crate is STALE with respect to the "
+                f"config and publish does not re-stamp it. Re-emit the crate with "
+                f"reprocess(start_with='consolidate', regenerate_existing=True), then publish "
+                f"again. regenerate_existing=True is REQUIRED: it defaults to False, which "
+                f"deletes no consolidated zarr, so consolidation early-returns and the crate "
+                f"is never re-emitted.{_shadowed}"
+            ),
+        )
     if override_dataset_license is not None and override_dataset_license != license_spdx:
         raise PublishError(
             target=target,
             doi=None,
             status=(
                 f"override_dataset_license={override_dataset_license!r} differs from the crate "
-                f"license {license_spdx!r}; set analysis_config.dataset_license and "
-                f"reprocess(start_with='consolidate') first — publish does not re-stamp the archived zarr."
+                f"license {license_spdx!r}; set analysis_config.dataset_license and re-emit the "
+                f"crate with reprocess(start_with='consolidate', regenerate_existing=True) "
+                f"first — publish does not re-stamp the archived zarr."
             ),
         )
 

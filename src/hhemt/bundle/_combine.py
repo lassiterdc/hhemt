@@ -31,9 +31,17 @@ Determinism (CR4): ro-crate-py stamps a per-run ``datePublished`` wall-clock on
 the root Dataset at ``crate.metadata.generate()`` time, and ``_emit._write_bundle_manifest``
 stamps a per-run ``created_at_utc`` — two volatile surfaces that would make two
 combines of the same N bundles diverge byte-wise. Both are neutralized here: the
-combined crate strips ``metadata._VOLATILE_PROV_KEYS`` (which includes
+combined crate strips ``metadata._COMBINED_EMIT_STRIP_KEYS`` (which includes
 ``datePublished``) before serialization, and ``_write_combined_bundle_manifest``
 OMITS ``created_at_utc`` (its deterministic provenance surface is ``combined_of``).
+
+``_COMBINED_EMIT_STRIP_KEYS`` is this tier's OWN set and is not interchangeable with
+``_BUNDLE_TRANSFER_STRIP_KEYS``, which the bundle tier uses, even though the two are
+byte-equal today. This tier constructs a fresh ``ROCrate()`` and emits a FIRST
+publication OF THE COMBINATION, so it owes an authored ``datePublished`` rather than an
+inherited one; the bundle tier transports an existing crate and owes preservation. The
+RO-Crate spec makes ``datePublished`` a MUST on the Root Data Entity, so neither tier may
+simply omit it, and the two tiers cannot discharge that MUST by the same rule.
 Inputs are sorted before harvest and the archive reuses ``_emit._emit_bundle_zip``.
 """
 
@@ -243,14 +251,20 @@ def _write_combined_rocrate(output_path: Path, child_crates: list[str]) -> None:
     A base RO-Crate 1.2 + Provenance-Run-Crate whose root Dataset hasPart-references
     each intact child crate directory (NOT N mainEntity — A8), plus one combine
     ``CreateAction`` recording the operation. Serialized via the toolkit's canonical
-    JSON-LD post-process (sorted @graph + sorted keys), with ``metadata._VOLATILE_PROV_KEYS``
-    (notably ro-crate-py's per-run ``datePublished``) stripped so two combines are
-    byte-identical (CR4).
+    JSON-LD post-process (sorted @graph + sorted keys), with
+    ``metadata._COMBINED_EMIT_STRIP_KEYS`` (notably ro-crate-py's per-run
+    ``datePublished``) stripped so two combines are byte-identical (CR4).
+
+    This tier's set is SEPARATE from the bundle tier's ``_BUNDLE_TRANSFER_STRIP_KEYS`` and
+    must stay separate. A combined crate is a first publication of the combination, so it
+    owes an authored ``datePublished`` under the RO-Crate MUST rather than an inherited
+    one; stripping the key is what this tier does BEFORE it has an authored value to put
+    there, and the two halves must be able to move independently of the bundle tier.
     """
     from rocrate.model.contextentity import ContextEntity
     from rocrate.rocrate import ROCrate
 
-    from hhemt.metadata import _VOLATILE_PROV_KEYS, canonical_jsonld_from_doc
+    from hhemt.metadata import _COMBINED_EMIT_STRIP_KEYS, canonical_jsonld_from_doc
 
     crate = ROCrate()
     root = crate.root_dataset
@@ -294,7 +308,7 @@ def _write_combined_rocrate(output_path: Path, child_crates: list[str]) -> None:
 
     doc = crate.metadata.generate()
     for entity in doc["@graph"]:  # strip per-run wall-clocks (datePublished, ...) — CR4
-        for volatile in _VOLATILE_PROV_KEYS:
+        for volatile in _COMBINED_EMIT_STRIP_KEYS:
             entity.pop(volatile, None)
     (output_path / _COMBINED_ROCRATE_FILENAME).write_text(canonical_jsonld_from_doc(doc))
 
