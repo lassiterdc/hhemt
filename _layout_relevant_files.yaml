@@ -870,3 +870,63 @@ non_breaking_allowlist:
       c1d20a4d035bd4e3fe9c03ed0597e52fee84dce7ec2df7c46fd39d127082f4c5) remains a one-line
       change whenever the holder rules that way; note the value differs from the
       d9609d86 the prior row quoted, because this file has since changed.
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      Delete-before-ensure removal (unit 2) -- consolidate_to_datatree's two rebuild arms
+      STOP calling fast_rmtree(fname_out) before the rebuild. The store is still replaced,
+      by the crash-safe publish that write_datatree_zarr already routes through
+      (utils._publish_store_crash_safe), which writes to {final}.tmp, renames final to
+      .aside, os.replace()s tmp over final and drops .aside -- so the destination is either
+      ABSENT or COMPLETE, never missing. The pre-delete was what voided that guarantee.
+      FOR (non-breaking), stated as the question the checker's message asks. The change is a
+      pure DELETION of two statements plus their local imports; no code is added except
+      comments. No path, directory name, filename, zarr group, dtype, chunk, encoding or
+      root-attr KEY is added, renamed or removed; no _version.json value changes; no _status
+      flag token changes; the consolidation-inputs fingerprint payload is untouched; no log
+      key is added or renamed. The store's WRITE path is byte-unchanged -- this edit alters
+      only whether the destination is destroyed BEFORE that write, never what the write
+      produces. A reader of any existing on-disk tree observes nothing different.
+      AGAINST, stated rather than elided; three items, and the third was added after review
+      because the first framing claimed completeness without it. (1) DU: the removed calls
+      passed analysis_dir and therefore restamped the DU sentinels. Both functions re-derive
+      DU AFTER the write -- the member tier at its analysis-level sentinel write, the master
+      at _write_master_du_sentinel -- so the removed restamp was redundant with an authority
+      that still runs. (2) A .tmp DIRECTORY MAY SURVIVE A CRASH where previously nothing
+      did; _recover_and_clear_publish_temps sweeps it on the next publish with a
+      UserWarning, which is the primitive's documented and already-shipped behaviour.
+      (3) TRANSIENT PEAK DISK AT THESE SITES ROUGHLY DOUBLES, because removing the
+      pre-delete moves them onto the publisher's REWRITE path, which its own docstring
+      prices at 2.00x "where old and new coexist" against 1.00x on the fresh path. Bounded
+      three ways, and the bound is what makes this a disclosure rather than a blocker: only
+      the CONSOLIDATED STORE duplicates, never the sims/ tree that dominates an analysis;
+      the fresh path (no prior store) pays nothing, so a first consolidation is unaffected;
+      and the duplicate lives only between os.replace and the .aside removal. Measured on
+      the synth sensitivity fixture for order of magnitude -- master store 0.3 MiB, one
+      member store 0.1 MiB, against a 248.8 MiB analysis tree, about a tenth of one percent
+      -- so what doubles is a small fraction of the tree, not the tree. The Norfolk absolute
+      figure is NOT measured here, and a campaign operating near a filesystem cap should
+      size it rather than assume the ratio transfers.
+      WHY NOT A LAYOUT_VERSION BUMP. A V0022 migration would have nothing to transform:
+      no artifact is renamed, no field backfilled, no directory moved. The change removes a
+      deletion; there is no old-shaped state.
+      CHANGE-SCOPED via layout_signature, re-stamping 1dda4784 -> 05a68430. APPENDED rather
+      than edited in place, per the sanctioned shape the four prior stamped rows on this
+      path record: a signature-less append would INHERIT 1dda4784 under _load_allowlist's
+      merge rule (scripts/check_layout_version.py:357-359) and check-b would still re-fire.
+    layout_signature: "05a684303fb3512cb6cdba19d199d8011f1a09692109d2da992de15593b0fb16"
+  - path: src/hhemt/sensitivity_analysis.py
+    justification: >-
+      Delete-before-ensure removal (unit 2), master tier -- consolidate_sensitivity_datatree's
+      two rebuild arms stop calling fast_rmtree(fname_out) before the rebuild, for the reasons
+      the processing_analysis.py row above states in full; that FOR/AGAINST analysis covers
+      this file unchanged, including the transient-peak disclosure. The master tier is where
+      the hazard was largest: the deletion sat about ninety lines before the replacement
+      write, with the member-ensure loop between them, and that loop skips a raising member
+      under the allow_incomplete=True default.
+      THIS ROW IS NOT REQUIRED BY THE CHECKER, and is signature-LESS by deliberate choice.
+      Every existing row for this path is signature-less and therefore path-permanent, so
+      under _load_allowlist's merge a signature-less append inherits None and this addition
+      is mechanically INERT. Adding a signature WOULD convert a 3,133-line high-churn module
+      from permanently exempt to change-scoped, a governance change affecting every future
+      edit to it -- the identical judgement recorded at the 02053c7c row and again in this
+      workstream's unit-1 rows, and surfaced for the commit holder rather than taken here.

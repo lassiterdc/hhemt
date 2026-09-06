@@ -249,9 +249,12 @@ class TRITONSWMM_analysis_post_processing:
                 print(f"DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
             return fname_out
         if fname_out.exists() and _log_complete and (not _inputs_match or _build_mismatch):
-            from hhemt.utils import fast_rmtree
-
-            fast_rmtree(fname_out, analysis_dir=self._analysis.analysis_paths.analysis_dir)
+            # NO PRE-DELETE. Same reasoning as the sensitivity-master twin, plus one this
+            # tier owns: _retrieve_combined_output below raises FileNotFoundError when a
+            # summary is absent, and when this method is called from the master's
+            # member-ensure loop that exception is swallowed by allow_incomplete=True and
+            # the member is skipped -- so a pre-delete here destroyed the member's store
+            # AND dropped it from the master tree in one pass, silently.
             if verbose:
                 _why = (
                     _build_why
@@ -263,9 +266,7 @@ class TRITONSWMM_analysis_post_processing:
                 )
                 print(f"DataTree zarr present at {fname_out} but {_why} — rebuilding.")
         if fname_out.exists() and not _log_complete:
-            from hhemt.utils import fast_rmtree
-
-            fast_rmtree(fname_out, analysis_dir=self._analysis.analysis_paths.analysis_dir)
+            # NO PRE-DELETE -- see the sibling arm above.
             if verbose:
                 print(f"DataTree zarr present at {fname_out} but log incomplete — rebuilding (treating as corrupt).")
 
