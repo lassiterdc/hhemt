@@ -27,6 +27,7 @@ import subprocess
 import pytest
 
 from hhemt import orchestrator_sentinels as osent
+from hhemt.provenance import store_build_mismatch
 from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV, WorkflowError
 
 pytestmark = [pytest.mark.requires_snakemake_subprocess]
@@ -69,9 +70,9 @@ def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sens
     master_dir = member.experiment.analysis_paths.analysis_dir
     html = master_dir / "analysis_report.html"
     zf = master_dir / "analysis_report.zip"
-    assert (
-        html.exists() or zf.exists()
-    ), f"Default sensitivity reprocess must re-render the master report; none found at {master_dir}."
+    assert html.exists() or zf.exists(), (
+        f"Default sensitivity reprocess must re-render the master report; none found at {master_dir}."
+    )
 
 
 def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_sensitivity_completed_isolated):
@@ -80,6 +81,25 @@ def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(syn
     member = synthetic_sensitivity_completed_isolated
     mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture precondition: master zarr present"
+    # DROP-WITNESS PRECONDITION. This test asserts an mtime ADVANCE, which is only
+    # evidence about regenerate_existing=True while the consolidation build gate is
+    # DISARMED. An armed gate rebuilds unconditionally, so the advance would occur
+    # whether or not the flag did anything and the assertion would pass vacuously.
+    # This ERRORS rather than skipping, and the distinction is the entire value of the
+    # guard: a skip is green, so a warm cache would silently delete this coverage on
+    # every run and nothing would report it -- which is exactly the invisible loss this
+    # precondition exists to prevent. One character apart in pytest; do not soften it.
+    member.experiment._refresh_log()
+    _stamped_build = (
+        member.experiment.log.consolidation_build_stamp.get()
+        if hasattr(member.experiment.log, "consolidation_build_stamp")
+        else None
+    )
+    _armed = store_build_mismatch(mdt, _stamped_build)
+    assert _armed is None, (
+        "INCONCLUSIVE, not a product failure: the consolidation build gate is armed on "
+        f"this tree, so the mtime advance below would be unconditional. {_armed}"
+    )
     mtime_target = _zarr_mtime_target(mdt)
     mtime0 = mtime_target.stat().st_mtime
     result = member.reprocess(start_with="consolidate", execution_mode="local", regenerate_existing=True)
@@ -253,6 +273,20 @@ def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed_isol
     member = synthetic_sensitivity_completed_isolated
     mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture precondition: master sensitivity_datatree.zarr present"
+    # DROP-WITNESS PRECONDITION -- see the identical guard in
+    # test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr for why
+    # this ERRORS rather than skips. Same reasoning, same one-character hazard.
+    member.experiment._refresh_log()
+    _stamped_build = (
+        member.experiment.log.consolidation_build_stamp.get()
+        if hasattr(member.experiment.log, "consolidation_build_stamp")
+        else None
+    )
+    _armed = store_build_mismatch(mdt, _stamped_build)
+    assert _armed is None, (
+        "INCONCLUSIVE, not a product failure: the consolidation build gate is armed on "
+        f"this tree, so the mtime advance below would be unconditional. {_armed}"
+    )
     mtime_target = _zarr_mtime_target(mdt)
     mtime0 = mtime_target.stat().st_mtime
 
@@ -325,9 +359,9 @@ def test_reprocess_conditional_emit_over_partial_state(synth_partial_state_analy
     path fires only for the incomplete sub; complete subs are untouched)."""
     member, target_member_id = synth_partial_state_analysis
     result = member.reprocess(start_with="process", regenerate_existing=True, execution_mode="local")
-    assert result[
-        "success"
-    ], f"conditional-emit reprocess over partial state must succeed; got {result.get('message')!r}"
+    assert result["success"], (
+        f"conditional-emit reprocess over partial state must succeed; got {result.get('message')!r}"
+    )
     mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "master sensitivity_datatree.zarr must be rebuilt after partial-state reprocess"
 
@@ -444,7 +478,7 @@ def test_failed_scoped_delete_raises_instead_of_consolidating_stale(
     msg = str(excinfo.value)
     # The message must point at the executor-INDEPENDENT capture Edit 4 creates.
     assert "logs/delete_reprocess/" in msg, (
-        "the WorkflowError must name the toolkit-owned per-rule log directory; " f"got: {msg!r}"
+        f"the WorkflowError must name the toolkit-owned per-rule log directory; got: {msg!r}"
     )
     assert "NOT invalidated" in msg, "the message must state that the trees survived"
 

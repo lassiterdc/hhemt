@@ -886,6 +886,14 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     # so a consolidation-affecting config change (e.g. toggle_consolidate_timeseries)
     # invalidates an otherwise-complete tree without any operator action.
     consolidation_inputs_fingerprint: LogField[str] = Field(default_factory=LogField)
+    # The git sha of the build that WROTE the consolidated store, minted inline from
+    # provenance.producing_stamp() at the write site immediately below the fingerprint
+    # set. Deliberately NOT the tree-root hhemt_producing_sha, which apply_producing_stamp
+    # derives from the per-event coordinates frozen at PROCESSING time -- comparing that
+    # against the running consolidation build can never converge, because a rebuild
+    # re-derives the same processing-stage value. Same absent-is-stale semantics as the
+    # fingerprint above: a tree consolidated before this stamp existed rebuilds once.
+    consolidation_build_stamp: LogField[str] = Field(default_factory=LogField)
     # Sensitivity-level DataTree consolidation (Phase 3)
     sensitivity_datatree_consolidation_complete: LogField[bool] = Field(default_factory=LogField)
     # Track which backends are available at analysis creation time
@@ -937,6 +945,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "workflow_submission_node",
         "orchestrator_slurm_jobid",
         "consolidation_inputs_fingerprint",
+        "consolidation_build_stamp",
         mode="before",
     )(_create_logfield_validator(str))
 
@@ -953,6 +962,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "datatree_consolidation_complete",
         "consolidation_version",
         "consolidation_inputs_fingerprint",
+        "consolidation_build_stamp",
         "sensitivity_datatree_consolidation_complete",
         "cpu_backend_available",
         "gpu_backend_available",

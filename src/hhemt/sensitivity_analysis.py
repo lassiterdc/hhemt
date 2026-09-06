@@ -1653,7 +1653,12 @@ class TRITONSWMM_sensitivity_analysis:
         # rather than read from validation_report.json. See provenance.store_build_mismatch.
         from hhemt.provenance import store_build_mismatch
 
-        _build_why = store_build_mismatch(fname_out)
+        _stamped_build = (
+            self.experiment.log.consolidation_build_stamp.get()
+            if hasattr(self.experiment.log, "consolidation_build_stamp")
+            else None
+        )
+        _build_why = store_build_mismatch(fname_out, _stamped_build)
         _build_mismatch = _build_why is not None
         if fname_out.exists() and _log_complete and (_subs_stale or _build_mismatch):
             from hhemt.utils import fast_rmtree
@@ -1754,6 +1759,13 @@ class TRITONSWMM_sensitivity_analysis:
         self.experiment._refresh_log()
         if hasattr(self.experiment.log, "sensitivity_datatree_consolidation_complete"):
             self.experiment.log.sensitivity_datatree_consolidation_complete.set(True)
+        # Master-tier twin of the member-tier stamp in processing_analysis: the
+        # CONSOLIDATION build that wrote this master store, so the build gate above
+        # compares two values minted by the same stage and therefore converges.
+        if hasattr(self.experiment.log, "consolidation_build_stamp"):
+            from hhemt.provenance import producing_stamp as _producing_stamp
+
+            self.experiment.log.consolidation_build_stamp.set(str(_producing_stamp().get("hhemt_sha") or ""))
 
         if verbose:
             print(f"Wrote sensitivity DataTree zarr to {fname_out}")

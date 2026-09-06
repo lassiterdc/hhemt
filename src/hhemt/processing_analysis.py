@@ -237,7 +237,12 @@ class TRITONSWMM_analysis_post_processing:
         # conditions: a disjunct added only to the rebuild branch would be unreachable.
         from hhemt.provenance import store_build_mismatch
 
-        _build_why = store_build_mismatch(fname_out)
+        _stamped_build = (
+            self._analysis.log.consolidation_build_stamp.get()
+            if hasattr(self._analysis.log, "consolidation_build_stamp")
+            else None
+        )
+        _build_why = store_build_mismatch(fname_out, _stamped_build)
         _build_mismatch = _build_why is not None
         if fname_out.exists() and _log_complete and _inputs_match and not _build_mismatch:
             if verbose:
@@ -338,6 +343,15 @@ class TRITONSWMM_analysis_post_processing:
             self._analysis.log.consolidation_version.set(self.CONSOLIDATION_VERSION)
         if hasattr(self._analysis.log, "consolidation_inputs_fingerprint"):
             self._analysis.log.consolidation_inputs_fingerprint.set(_inputs_fingerprint)
+        # The convergent operand for the build gate: stamp the CONSOLIDATION build that
+        # just wrote this store, minted inline per producing_stamp()'s rule that a stamp
+        # records the code that actually ran the stage. Placed beside the fingerprint set
+        # deliberately -- these two are the same mechanism and drifting them apart is what
+        # produced the non-convergent gate this replaces.
+        if hasattr(self._analysis.log, "consolidation_build_stamp"):
+            from hhemt.provenance import producing_stamp as _producing_stamp
+
+            self._analysis.log.consolidation_build_stamp.set(str(_producing_stamp().get("hhemt_sha") or ""))
         elapsed_s = time.time() - start_time
         self._analysis.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 

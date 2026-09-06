@@ -328,7 +328,7 @@ _DECLARE_STALE_BUILD_ENV = "HHEMT_DECLARE_STALE_BUILD"
 _SENTINEL_SHAS = frozenset({"", "unknown", "0+unknown"})
 
 
-def store_build_mismatch(store: Path) -> str | None:
+def store_build_mismatch(store: Path, stored: str | None) -> str | None:
     """Return a reason string when `store` was NOT produced by the running build, else None.
 
     The consolidation-tier sibling of `assert_plots_match_running_build` above, and the
@@ -386,23 +386,22 @@ def store_build_mismatch(store: Path) -> str | None:
     caller reuses the store, but only after emitting the reason to stdout. A silent
     bypass reintroduces the failure with a flag on it.
 
-    Reads the store's root attributes directly rather than through `xr.open_datatree`:
-    the gate runs on every consolidation and a JSON read of one file is the cheap form.
-    Both zarr layouts are handled because a pre-V0021 store may be v2.
-    """
-    import json
-    import os
+    THE STORED OPERAND IS SUPPLIED, NOT READ OFF THE STORE, and this is the whole of
+    the 2026-09-06 repair. The tree root's `hhemt_producing_sha` is derived by
+    `cf_conventions.apply_producing_stamp` from the per-`event_iloc` coordinates that
+    `process_simulation._write_output` freezes at PROCESSING time -- deliberately, so a
+    later reprocess reads the OLD stamp. Comparing that against a CONSOLIDATION-stage
+    running build can never converge: the rebuild this gate triggers re-derives the same
+    processing-stage value and the next call mismatches identically. Measured: a warm
+    tree whose members' summaries were written at 3fe13978bcf5 re-stamped 3fe13978bcf5
+    on every rebuild while the running build was e69c4fae7fcb. The caller now passes the
+    CONSOLIDATION build stamp its own log recorded at the previous write, which is the
+    convergent form already used by `consolidation_inputs_fingerprint` in the same
+    function -- writer and reader agree because they are the same expression.
 
-    def _root_attrs() -> dict:
-        try:
-            meta = json.loads((store / "zarr.json").read_text(encoding="utf-8"))
-            return meta.get("attributes") or {}
-        except Exception:
-            pass
-        try:
-            return json.loads((store / ".zattrs").read_text(encoding="utf-8"))
-        except Exception:
-            return {}
+    `store` is still taken, and only for the existence branch below.
+    """
+    import os
 
     if not store.exists():
         # Inert by construction: every branch that consumes this value also requires
@@ -412,7 +411,7 @@ def store_build_mismatch(store: Path) -> str | None:
         # place the rule is quietly suspended.
         why = "no consolidated store present at the reuse gate"
     else:
-        stored = str(_root_attrs().get("hhemt_producing_sha") or "").strip()
+        stored = str(stored or "").strip()
         _stamp = producing_stamp()
         running = str(_stamp.get("hhemt_sha") or "").strip()
         running_dirty = str(_stamp.get("hhemt_dirty") or "").strip().lower() == "true"
@@ -420,8 +419,8 @@ def store_build_mismatch(store: Path) -> str | None:
         # the equality test, which is the whole of the AB-1 fold.
         if stored in _SENTINEL_SHAS:
             why = (
-                f"the store's hhemt_producing_sha is the sentinel {stored!r} -- it names no "
-                "commit, so the store cannot be shown to match this build"
+                f"the consolidation build stamp supplied for this store is the sentinel {stored!r} "
+                "-- it names no commit, so the store cannot be shown to match this build"
             )
         elif running in _SENTINEL_SHAS:
             why = f"the running build resolved to the sentinel sha {running!r} (no git checkout?)"

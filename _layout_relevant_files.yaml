@@ -768,3 +768,105 @@ non_breaking_allowlist:
       governance change affecting every future edit to a 3,128-line high-churn module, and
       it is not this blocker's resolution. Surfaced for the commit holder to rule on.
     layout_signature: "02053c7c5e1057529197127915db0b0dcf2d01adbc02d704baf3c9508381ee69"
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      Consolidation build gate, non-convergence repair (unit 1) -- consolidate_to_datatree's
+      build-mismatch operand MOVES from the consolidated store's root hhemt_producing_sha to
+      the analysis LOG's new consolidation_build_stamp, and the function stamps that field
+      immediately after the existing consolidation_inputs_fingerprint set. This SUPERSEDES
+      the 02053c7c row above on this same path: that row added the gate, this one corrects
+      the value it compares.
+      WHY THE CORRECTION WAS NEEDED, because it bears on whether this row is honest. The
+      root hhemt_producing_sha is derived by cf_conventions.apply_producing_stamp from the
+      per-event_iloc coordinates that process_simulation._write_output freezes at PROCESSING
+      time, deliberately, so a later reprocess reads the OLD stamp. Comparing that against a
+      CONSOLIDATION-stage running build can never converge: the rebuild the gate triggers
+      re-derives the same processing-stage value. Measured on the warm synth fixture -- the
+      members' frozen coordinate, their tree roots and the value a rebuild writes back are
+      all 3fe13978bcf5 while the running build was e69c4fae7fcb, on a CLEAN checkout, so the
+      documented dirty-tree non-convergence was not the cause.
+      FOR (non-breaking), stated as the question the checker's message asks, and established
+      by command rather than asserted. (1) NO STORE-WRITE SURFACE IS TOUCHED: the + side of
+      the diff across this file, sensitivity_analysis.py and log.py contains ZERO code lines
+      matching tree.attrs / assign_coords / apply_producing_stamp / apply_cf_attributes /
+      write_datatree_zarr / to_zarr / .zattrs / zarr.json / write_rocrate_sidecar /
+      LAYOUT_VERSION (the single grep hit was a COMMENT naming apply_producing_stamp in
+      prose). The added code is one read-only local, one predicate argument, and one LogField
+      set. No path, directory name, filename, zarr group, dtype, chunk, encoding or root-attr
+      KEY is added, renamed or removed; no _version.json value changes; no _status flag token
+      changes; the consolidation-inputs fingerprint payload is untouched. (2) BACKWARD
+      COMPATIBLE: a legacy analysis log written before this field existed loads unchanged
+      under the new model, consolidation_build_stamp.get() returns None, and every
+      pre-existing field is preserved -- measured directly via model_validate on a payload
+      carrying only logfile, datatree_consolidation_complete and
+      consolidation_inputs_fingerprint. (3) FORWARD COMPATIBLE: TRITONSWMM_log declares no
+      extra= policy, so pydantic's default `ignore` applies and a NEW log carrying this key
+      loads under code that does not declare it -- measured with a genuinely unknown key.
+      AGAINST, stated rather than elided. ONE-SHOT REBUILD ON EVERY EXISTING TREE: no tree
+      written before this field existed carries the stamp, so absent-is-never-equal fires
+      once per tree and the next consolidation rebuilds it instead of reusing it. That is the
+      same bounded first-run rerun class the 02053c7c row above already accepted, and it is
+      the sibling consolidation_inputs_fingerprint's already-shipped and already-reviewed
+      behaviour ("every tree consolidated before this stamp existed rebuilds exactly once").
+      It is content-idempotent: the rebuild runs the unchanged write path. The operator-facing
+      consequence is that the acceptance test for this unit is green on the SECOND consecutive
+      run, or the first against a rebuilt fixture -- a first-run red there is convergence, not
+      a failed fix.
+      WHY NOT A LAYOUT_VERSION BUMP. The same reasoning the 02053c7c row records, and one
+      addition specific to this change: the new state lives in the LOG (JSON), not in the
+      zarr store, and a V0022 migration would have nothing to transform -- there is no
+      old-shaped artifact to rename and no field to backfill, only a decision about whether
+      to re-derive, which the running code already makes. A LAYOUT_VERSION bump is also on
+      this workstream's concurred cut list, so authoring one here would have been a halt
+      rather than a resolution.
+      CHANGE-SCOPED via layout_signature, re-stamping 02053c7c -> 1dda4784. APPENDED rather
+      than edited in place, per the sanctioned shape the three prior stamped rows on this
+      path record; a signature-less append would INHERIT 02053c7c under _load_allowlist's
+      merge rule (verified by reading the loader at scripts/check_layout_version.py:357-359,
+      not by inheriting the prior row's prose) and check-b would still re-fire.
+    layout_signature: "1dda4784def58b6ed248ff98a11ac4013114f61058c801e19e0b23d6f9bfe026"
+  - path: src/hhemt/log.py
+    justification: >-
+      Consolidation build gate, non-convergence repair (unit 1) -- ADDITIVE
+      LogField[str] consolidation_build_stamp on TRITONSWMM_analysis_log, plus its two
+      registrations in the _validate_workflow_str_fields and _serialize_logfields tuples.
+      default_factory=LogField, so every pre-existing analysis log.json deserialises
+      unchanged with the field absent and .get() returning None, which the consolidate gate
+      treats as stale and rebuilds once. Same change class as this file's already-allowlisted
+      "ADDITIVE LogField[str] quartet" and additive n_resumes rows. Both registrations are
+      load-bearing and fail LOUDLY if only one lands (serializer-only raises at
+      model_validate, validator-only at serialization), and the round-trip is now covered on
+      the permitted surface by tests/test_consolidation_build_gate.py::
+      test_the_consolidation_build_stamp_field_round_trips.
+      THIS ROW IS NOT REQUIRED BY THE CHECKER, AND THAT IS WHY IT IS HERE. Both existing rows
+      for this path are signature-less and therefore path-permanent, so this change was never
+      graded -- the same fail-open this file already records against constants.py and
+      report_plot_ids.py. The row is signature-LESS by deliberate choice: under
+      _load_allowlist's merge a signature-less row on a path carrying no prior signature
+      inherits None, so this addition is mechanically INERT and changes no gate behaviour.
+      Adding a signature here WOULD convert a 970-line high-churn module from permanently
+      exempt to change-scoped, which is a governance change affecting every future edit to it
+      and is not this blocker's resolution -- the identical judgement the 02053c7c row above
+      recorded for sensitivity_analysis.py, and it is surfaced for the commit holder to rule
+      on rather than taken unilaterally.
+  - path: src/hhemt/sensitivity_analysis.py
+    justification: >-
+      Consolidation build gate, non-convergence repair (unit 1), Gate A twin --
+      consolidate_sensitivity_datatree's build-mismatch operand moves from the master store's
+      root hhemt_producing_sha to the experiment log's consolidation_build_stamp, and the
+      function stamps that field immediately after the existing
+      sensitivity_datatree_consolidation_complete set. Byte-for-byte the same change class as
+      the processing_analysis.py row above; the FOR/AGAINST analysis there covers this file
+      unchanged, including the three deciding commands (no store-write surface touched,
+      backward-compatible legacy log load, forward-compatible extra-key policy).
+      THIS ROW IS NOT REQUIRED BY THE CHECKER. The 02053c7c row above disclosed exactly this
+      gap -- "src/hhemt/sensitivity_analysis.py received the SAME change class in the same
+      commit (the Gate A twin) and did NOT trip check-b, because every allowlist row for that
+      path is signature-less and therefore path-permanent" -- and deliberately left it for the
+      commit holder. This row closes the RECORD half of that gap and leaves the GOVERNANCE
+      half open, for the reason that row already gave: converting a 3,133-line high-churn
+      module from permanently exempt to change-scoped affects every future edit to it. Adding
+      the signature (current sha256
+      c1d20a4d035bd4e3fe9c03ed0597e52fee84dce7ec2df7c46fd39d127082f4c5) remains a one-line
+      change whenever the holder rules that way; note the value differs from the
+      d9609d86 the prior row quoted, because this file has since changed.
