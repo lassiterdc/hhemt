@@ -701,22 +701,24 @@ def test_isolated_fixture_does_not_perturb_session_tree(
 
 @pytest.fixture(scope="session")
 def tritonswmm_cpu_compiled():
-    """Pre-compile TRITON-SWMM CPU once per test session for each test-case
-    family used by the coupled-mode tests.
+    """Pre-compile TRITON-SWMM CPU once per test session for each synthetic
+    test-case family used by the coupled-mode tests.
 
-    Required by coupled-mode tests whose `prepare_scenario` gate at
-    scenario.py:800-811 checks `_system.compilation_cpu_successful`.
-    The property reads the in-memory system log; a fresh system init
-    shows compile-not-yet-done even when a valid build artifact exists
-    on disk. Each test-case family has its own `_software_root`, so the
-    fixture iterates over the 4 families touched by the marked tests
-    (synth_all_models, synth_multi_sim, norfolk_multi_sim,
-    norfolk_single_sim); norfolk families are skipped when their example
-    data is absent.
+    Required by coupled-mode tests whose `prepare_scenario` CPU gate
+    (scenario.py:1274-1279) checks `_system.compilation_cpu_successful`.
+    That property does NOT read the system log: it reads
+    `sys_paths.compilation_logfile_cpu` — `{tritonswmm_dir}/
+    build_tritonswmm_cpu/compilation.log` (system.py:191) — greps two build
+    markers, and WRITES the system-log field as a side effect
+    (system.py:2219-2231). Since `_software_root` is shared across every
+    synth family (test_case_builder.py:354 pins it to the slug root), that
+    log is one file for all of them. No causal justification for iterating
+    families is offered here, because the measured mechanism does not
+    supply one; the loop covers synth_all_models and synth_multi_sim.
 
-    Process-safety note: this fixture writes to ~/.cache/.../_software/
-    or test_data/.../triton/. Concurrent test sessions compiling against
-    the same cache dir are serialized by the per-build-dir lock in
+    Process-safety note: this fixture writes to the slug `_software/` tree
+    under platformdirs. Concurrent test sessions compiling against the same
+    cache dir are serialized by the per-build-dir lock in
     system.py::_compile_backend; a second entrant re-reads the success
     marker inside the lock and skips rather than racing the first.
     """
@@ -757,43 +759,6 @@ def tritonswmm_cpu_compiled():
         Local_TestCases.retrieve_synth_all_models_test_case,
         Local_TestCases.retrieve_synth_multi_sim_test_case,
     )
-    norfolk_retrievers = (
-        Local_TestCases.retrieve_norfolk_multi_sim_test_case,
-        Local_TestCases.retrieve_norfolk_single_sim_test_case,
-    )
-
-    def _norfolk_example_data_present() -> bool:
-        """True iff the Norfolk HydroShare DATA_DIR is already cached locally.
-        Pure path computation — never triggers a download (unlike retrieve(),
-        which downloads-on-absence via NorfolkIreneExperiment.load)."""
-        from hhemt import constants as cnst
-        from hhemt.experiments import TRITON_SWMM_experiment
-
-        mapping = TRITON_SWMM_experiment._get_case_data_and_package_directory_mapping_dict(case_name=cnst.NORFOLK_EX)
-        return Path(mapping["DATA_DIR"]).exists()
-
-    for retrieve in norfolk_retrievers:
-        # Norfolk families are unused by every consumer of this fixture
-        # (test_synth_00/04/07, test_metadata_consolidation all use synth
-        # fixtures). Skip them BEFORE retrieve() can trigger a HydroShare
-        # download: NorfolkIreneExperiment.load downloads-on-absence
-        # (experiments.py:294), so a try/except cannot prevent the download, and a
-        # download failure raises ProcessingError/RuntimeError/bare Exception
-        # (NOT FileNotFoundError/OSError). The pre-check computes DATA_DIR from
-        # local package paths only (no network), so the synth CI tier makes
-        # ZERO HydroShare calls. Local dev boxes with norfolk cached still
-        # compile them.
-        if not _norfolk_example_data_present():
-            continue
-        case = retrieve(start_from_scratch=False)
-        case.analysis._system.compile_TRITON_SWMM(
-            backends=["cpu"],
-            recompile_if_already_done_successfully=False,
-        )
-        if case.analysis._system.cfg_system.toggle_swmm_model:
-            case.analysis._system.compile_SWMM(
-                recompile_if_already_done_successfully=False,
-            )
     for retrieve in synth_retrievers:
         case = retrieve(start_from_scratch=False)
         case.analysis._system.compile_TRITON_SWMM(
@@ -804,6 +769,45 @@ def tritonswmm_cpu_compiled():
             case.analysis._system.compile_SWMM(
                 recompile_if_already_done_successfully=False,
             )
+
+
+@pytest.fixture(scope="session")
+def triton_only_cpu_compiled(tritonswmm_cpu_compiled):
+    """Ensure the SHARED TRITON-only CPU build exists, for tests whose case
+    carries ``toggle_triton_model=True`` and reaches ``prepare_scenario``.
+
+    Distinct from ``tritonswmm_cpu_compiled``, which builds the COUPLED target
+    (``build_tritonswmm_cpu``). The TRITON-only target is a different build dir
+    (``build_triton_cpu``, system.py:180) with a different marker, and nothing
+    else in the suite produces it — ``grep -rn 'compile_TRITON_only' tests/``
+    returns only ``test_synth_00_compile_models.py``, which is a TEST rather
+    than a fixture and therefore cannot be depended on for ordering.
+
+    Requested PER TEST rather than at module scope, and the warrant is COST,
+    not safety. Do NOT hoist this to module scope: the module-level pytestmark
+    (test_multi_model_integration.py:17-19) covers TestSWMMOnlyIntegration too,
+    so hoisting would force a TRITON-only build on tests that never reach the
+    guard.
+
+    DO NOT read the per-test placement as self-policing. A sibling that needs
+    this build and forgets to request it fails loudly ONLY on a COLD
+    ~/.cache/hhemt/synthetic_test_runs/{slug}/_software/. On a WARM one -- the
+    developer's own machine, and any box that has run the compile tier once --
+    the shared build_triton_cpu tier already exists, the property reads True,
+    and the omission is INVISIBLE until someone runs on a clean checkout or CI.
+    There is no gate that catches a missing request here.
+
+    Depends on ``tritonswmm_cpu_compiled`` for its skip/escalate gate (toolchain
+    absent, or pyswmm-stack mismatch) rather than duplicating it, so this
+    fixture adds a build and no new gating policy.
+    """
+    from tests.fixtures.test_case_catalog import Local_TestCases
+
+    case = Local_TestCases.retrieve_synth_all_models_test_case(start_from_scratch=False)
+    case.analysis._system.compile_TRITON_only(
+        backends=["cpu"],
+        recompile_if_already_done_successfully=False,
+    )
 
 
 # ========== Phase 3a: Session-scope rendered_synth_* fixtures (R7) ==========
