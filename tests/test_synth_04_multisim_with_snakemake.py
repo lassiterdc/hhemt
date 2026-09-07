@@ -169,7 +169,7 @@ def test_snakemake_workflow_config_generation(synth_multi_sim_analysis):
                 "process_timeseries": True,
             },
             ["prepare_scenario_runner", "process_timeseries_runner"],
-            [],
+            ["--compile-triton-swmm"],
         ),
     ],
 )
