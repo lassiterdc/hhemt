@@ -70,9 +70,6 @@ rule setup_target_0:
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
-            --compile-triton-swmm \
-            \
-            \
             \
             --flag-output {output} \
             --rule-name setup_target_0 \

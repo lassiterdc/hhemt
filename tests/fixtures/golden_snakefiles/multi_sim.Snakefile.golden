@@ -86,9 +86,6 @@ rule setup:
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
-            --compile-triton-swmm \
-            --compile-triton-only \
-            --compile-swmm \
             \
             --flag-output {output} \
             --rule-name setup \
