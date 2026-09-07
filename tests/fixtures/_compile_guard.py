@@ -5,15 +5,36 @@ arming DECISION lives there (a fail-closed default relaxed only by
 HHEMT_COMPILE_VENUE); this module owns only the MECHANISM.
 """
 
-#: Every public compile entry point plus every shared backend, as of LAYOUT_VERSION 22.
-#: `_compile_backend_locked`, `_compile_SWMM_locked` and `_compile_triton_only_backend_locked`
-#: are reached ONLY from the members below (system.py:1665 and siblings), so they are covered
-#: transitively. Re-derive with: grep -n "    def .*compile" src/hhemt/system.py
+#: The PUBLIC compile entry points, as of LAYOUT_VERSION 22 -- and nothing below them.
+#:
+#: WHY THIS LAYER AND NOT A DEEPER ONE. The criterion is structural: guard the layer
+#: whose members have NO BEHAVIOUR OTHER THAN the guarded operation. `compile_TRITON_SWMM`
+#: and its siblings mean "compile a solver" and mean nothing else. Everything below them
+#: does something else as well -- `_compile_backend` is a lock wrapper, and
+#: `_compile_SWMM_locked` assembles a bash script (system.py:2107), chmods it (:2108) and
+#: shells out (:2116), so it is a generator and a delegator rather than a builder.
+#:
+#: The supporting EVIDENCE, which is a census and therefore decays: measured across the
+#: suite, legitimate non-compiling callers rise with depth -- 0 at this layer, 2 at the
+#: lock wrappers (tests/test_compile_lock.py drives one deliberately), 3 at the `_locked`
+#: compilers (tests/test_setup_target_resources.py stubs subprocess.run and drives one),
+#: and unbounded at subprocess.run. Two earlier versions of this tuple included wrappers
+#: and each refused a legitimate caller. The `hasattr` loop below catches a RENAMED member
+#: and never catches a NEW CALLER, so treat the counts as evidence for the structural
+#: criterion rather than as the criterion itself.
+#:
+#: WHAT THIS DOES NOT COVER, stated because it is a real residual rather than an absence.
+#: A test that calls a lock wrapper or a `_locked` compiler AND lets it build is not
+#: refused here. That set is EMPIRICALLY EMPTY today -- every such caller in the suite
+#: either forces a lock timeout, stubs the inner function, or stubs subprocess.run -- and
+#: it is empty by measurement, NOT by construction: `pytest --collect-only -m compile_tier`
+#: over those two files returns "no tests collected (13 deselected)", so reaching a real
+#: build by that route would NOT imply the compile_tier marker and would NOT be deselected
+#: from Gate A. A future test of that shape needs this tuple revisited.
+#: Re-derive with: grep -n "    def .*compile" src/hhemt/system.py
 COMPILE_ENTRY_POINTS = (
     "compile_TRITON_SWMM",
-    "_compile_backend",
     "compile_TRITON_only",
-    "_compile_triton_only_backend",
     "compile_SWMM",
 )
 
@@ -24,8 +45,8 @@ def _forbid_compile(name):
     def _raise(*_args, **_kwargs):
         raise RuntimeError(
             f"System.{name} was reached while the compile guard was armed. A test that "
-            "compiles belongs in the compile tier. Either mark it "
-            "`@pytest.mark.compile_tier`, or make its dependency on "
+            "compiles belongs in the compile tier. If this test DOES build a solver, "
+            "either mark it `@pytest.mark.compile_tier`, or make its dependency on "
             "`tritonswmm_cpu_compiled` visible to the collection-time fixture closure -- "
             "a `request.getfixturevalue(...)` request is NOT visible, which is why this "
             "guard exists. The guard arms unless HHEMT_COMPILE_VENUE names a permitted "
