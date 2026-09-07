@@ -257,7 +257,72 @@ non_breaking_allowlist:
       evaluation order are identical. The remaining delta is the F401 removal of an
       unused `typing.Optional` import, plus whitespace. No path, filename, zarr group,
       log field, Snakemake rule, fingerprint payload or _version.json value moves.
-    layout_signature: "90dc1f68dfd2835cf851971624653437d9d7b1eb7e1aa16007dcbe326dadad1f"
+      AND [Q281] regression-(A) accessor fix — the three model guards in
+      _link_native_builds_into_sim swap their boolean operand from the
+      system_log.json LOG FIELD (self._system.log.compilation_*.get()) to the
+      file-derived PROPERTY (self._system.compilation_*), plus three explanatory
+      comments. Executable log-field reads in this file go 5 -> 0.
+      Semantic extent MEASURED rather than asserted: ast.unparse of HEAD versus
+      the working tree is 887 lines on both sides and differs in exactly THREE
+      lines, each a boolean operand inside an `if not` guard condition. No Path is
+      constructed, no string literal is added, no function is added or removed,
+      and neither workflow.py nor sensitivity_analysis.py is touched — so the
+      path, filename, zarr-group, Snakemake-rule, fingerprint-payload and
+      _version.json classes are inert by construction.
+      Check-b's SLUG arm is INDEPENDENT of this entry's layout_signature and is
+      therefore enumerated separately rather than assumed covered:
+      compute_event_id_slug's AST-normalized hash is 41e679d6 (prefix) on both sides,
+      unchanged, so V0001's slug-derivation invariant is intact. Re-stamping this
+      path's signature would NOT have silenced that arm.
+      The LOG FIELD class is the only non-obvious one. Reading a compilation
+      property is NOT inert — each calls _sync_compilation_log_field, which
+      persists through LogField.set or LogField.clear, and both call _log.write()
+      — so the new guard can WRITE where the old one only read. Key-set equality
+      is NOT what settles this and must not be cited as though it were: the five
+      properties the guards read sync exactly the five log fields the guards
+      previously read, so no key is added, but a same-key value change is
+      precisely what most log-schema migrations exist for. What settles it is
+      that the field is a SELF-HEALING CACHE of an on-disk measurement.
+      _sync_compilation_status_on_init (system.py:586-591, called unconditionally
+      from __init__ at :219) re-derives all five at EVERY construction from
+      compilation.log under the build dir, and _sync_compilation_log_field is a
+      FIXED POINT: over all twelve combinations of start-value, measured success
+      and derived_from_resolvable_input, a second call with the same inputs writes
+      zero times and leaves the value unchanged. The added prep-time reads
+      therefore write NOTHING unless the build tier changed between construction
+      and prep; where they do write, the value is fresher rather than
+      differently-typed or differently-meant, the domain stays true/false/null and
+      the writer stays the same function.
+      BOTH migration directions are clean and forward-only is not needed as a
+      defence. New code reading an old tree never consults these fields for these
+      guards (it reads compilation.log) and re-derives them at construction
+      regardless; old code reading a new tree finds every key present, same type,
+      same domain, with a value strictly closer to the filesystem. No V0022 could
+      have a body: the correct value is not computable from the old tree, and the
+      constructor already performs the only transform a migration could attempt.
+      A whole-repo census of the five field names finds the system.py writer and
+      property sites; exactly ONE non-test log-field read, analysis.py:3401, a
+      status-progress rollup; the pydantic validator and serializer name lists in
+      log.py; a source_paths PROVENANCE declaration in workflow.py for the
+      errors-and-warnings report rule; and test-side reads. No consumer treats
+      these fields as durable cross-version state.
+      The runtime delta this change also carries is a BEHAVIOUR concern rather
+      than a layout one, and it runs in both directions: the guard now raises
+      where a stale persisted true would have let prep proceed, and proceeds where
+      a stale null would have made it raise. A raise produces no tree to migrate,
+      and a tree that now gets built is structurally identical to any other at
+      this LAYOUT_VERSION. The change also aligns the guards with a convention
+      already stated in-tree at tests/test_multi_model_integration.py — read the
+      PROPERTY, never the log field, because the two live on different tiers — and
+      no test asserts the old operand or these guards' messages.
+      ON THE MECHANISM, stated so a later reader does not conflate two opposite
+      acts on this same file: this is the DESIGNED signature-scoped workflow, an
+      existing layout_signature row correctly FAILING CLOSED after a real edit and
+      being re-stamped once the change is classified. It is NOT the fail-open case
+      where a row carrying NO layout_signature makes its exemption permanent and
+      lets later edits pass Check B silently. Those are opposite failure
+      directions and only the second one is a defect.
+    layout_signature: "2e4e55e4d755efa6de0e057934bb0af0abdc026c867467fbbeb5b479f12c73c4"
   - path: src/hhemt/version_migration/versions/V0005__inline_report_config.py
     justification: >-
       Tree-wide ruff pass. IMPORT-SORT AND FORMATTING ONLY, discharged by measurement

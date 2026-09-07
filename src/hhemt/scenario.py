@@ -1322,8 +1322,22 @@ class TRITONSWMM_scenario:
         # TRITON-SWMM: Check toggle and compilation status
         if self._system.cfg_system.toggle_tritonswmm_model:
             if not (
-                self._system.log.compilation_tritonswmm_cpu_successful.get()
-                or self._system.log.compilation_tritonswmm_gpu_successful.get()
+                # PROPERTY, not `log.compilation_*.get()`. The log field is a
+                # SNAPSHOT, not an empty field: `_sync_compilation_status_on_init`
+                # (system.py:219) reads all five compile properties once, at
+                # __init__, and persists each verdict into
+                # system_dir/"system_log.json". The property is a LIVE read of the
+                # build tier. The two diverge only when the tier is built AFTER
+                # this system object was constructed; there the snapshot is stale
+                # and the property is current, which is why the guard reads the
+                # property.
+                # This particular raise is UNREACHABLE and is kept only so the
+                # redundant check cannot disagree with the reachable one:
+                # prepare_scenario calls _verify_native_build_or_skip_in_container
+                # (:1159) before _link_native_builds_into_sim (:1227), and on
+                # toggle_tritonswmm_model=True that verify already selects these
+                # same two properties and raises.
+                self._system.compilation_cpu_successful or self._system.compilation_gpu_successful
             ):
                 raise RuntimeError(
                     "toggle_tritonswmm_model is enabled but TRITON-SWMM was not successfully compiled. "
@@ -1335,8 +1349,19 @@ class TRITONSWMM_scenario:
         # TRITON-only: Check toggle and compilation status
         if self._system.cfg_system.toggle_triton_model:
             if not (
-                self._system.log.compilation_triton_cpu_successful.get()
-                or self._system.log.compilation_triton_gpu_successful.get()
+                # PROPERTY, not the log field. The log field is the __init__-time
+                # snapshot written by _sync_compilation_status_on_init
+                # (system.py:219); the property is a live read of
+                # TRITON_build_dir_cpu/"compilation.log" (system.py:180,
+                # 1869-1876). Measured three ways: tier already warm when this
+                # system was constructed -> both read True; tier absent -> both
+                # falsy; tier built after construction -> snapshot None (the
+                # absent-artifact branch abstains rather than persisting False)
+                # while the property reads True. Only the third case differs, and
+                # it is the case a session that compiles between construction and
+                # prep lands in.
+                self._system.compilation_triton_only_cpu_successful
+                or self._system.compilation_triton_only_gpu_successful
             ):
                 raise RuntimeError(
                     "toggle_triton_model is enabled but TRITON-only was not successfully compiled. "
@@ -1348,7 +1373,18 @@ class TRITONSWMM_scenario:
         # SWMM: Check toggle and compilation status
         # Note: SWMM doesn't need build folder copying - uses absolute path to executable
         if self._system.cfg_system.toggle_swmm_model:
-            if not self._system.log.compilation_swmm_successful.get():
+            # PROPERTY, not the log field: the log field is the __init__-time
+            # snapshot (_sync_compilation_status_on_init, system.py:219) and the
+            # property is a live read of SWMM_build_dir/"compilation.log"
+            # (system.py:2147-2176). NOT symmetric with the two guards above in
+            # one respect: an absent log under a resolvable SWMM_build_dir is
+            # persisted here as a measured False, whereas the triton-only term
+            # abstains. SWMM_build_dir is also None when toggle_swmm_model is off
+            # OR SWMM_software_directory is unset (system.py:185 is a
+            # conjunction), and the property then abstains to False — so this
+            # guard raises at prep rather than deferring a None executable into
+            # command construction at sim time (run_simulation.py:891).
+            if not self._system.compilation_swmm_successful:
                 raise RuntimeError(
                     "toggle_swmm_model is enabled but SWMM was not successfully compiled. "
                     "Either compile SWMM (system.compile_SWMM()) or disable the toggle "
