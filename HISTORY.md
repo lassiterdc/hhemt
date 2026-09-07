@@ -1,6 +1,6 @@
 # Release history
 
-## v0.1.0 (2026-XX-XX)
+## v0.1.0 (2026-07-14)
 
 First public release of the H&H Ensemble Modeling Toolkit (hhemt). Coupled
 TRITON-SWMM flood-ensemble orchestration across local + HPC (NVIDIA/AMD), full
