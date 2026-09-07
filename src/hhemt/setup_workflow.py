@@ -207,7 +207,23 @@ def main() -> int:
                 config_path=str(args.hpc_system_config) if args.hpc_system_config else None,
             )
         any_compile = args.compile_triton_swmm or args.compile_triton_only or args.compile_swmm
-        if (not any_compile) and not (args.process_system_inputs):
+        # ASSERT-NOT-BUILD (D84). With the compile flags removed from every emitted
+        # setup rule, `any_compile` is False for every workflow-driven invocation, so
+        # this early return became reachable for the first time -- and it emits the
+        # completion flag WITHOUT reaching the three verify arms below. That is
+        # fail-OPEN at the one rule whose remaining job is to assert the tier.
+        # Scoped to NATIVE mode on purpose: ADR-1/M-7 (see the comment at the
+        # `_native_compile` binding below) records that container mode skips both the
+        # compile and its enabled-but-not-compiled verification guard, because the SIF
+        # carries the binary. Gating on `_native_compile` here is not available -- it
+        # binds 29 lines below this point -- so this reads `_exec_env_container`
+        # directly, which is bound above at :176 and is the same fact.
+        _tier_must_be_asserted = not _exec_env_container and (
+            system.cfg_system.toggle_tritonswmm_model
+            or system.cfg_system.toggle_triton_model
+            or system.cfg_system.toggle_swmm_model
+        )
+        if (not any_compile) and not (args.process_system_inputs) and not _tier_must_be_asserted:
             logger.info("No compilation or processing flags were passed. Doing nothing.")
             _emit_runner_flag(args)
             return 0

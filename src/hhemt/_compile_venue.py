@@ -50,4 +50,17 @@ def swmm_execution_refused() -> bool:
     what makes a public user's session permitted BY CONSTRUCTION rather than by
     configuration. The second only ever relaxes.
     """
+    return refused_in_undeclared_test_venue()
+
+
+def refused_in_undeclared_test_venue() -> bool:
+    """THE conjunction, named for what it tests rather than for who asks.
+
+    Refuse iff inside a pytest test phase AND no permitted venue is declared. Both
+    guards consume this: SWMM execution (swmm_runoff_modeling.py) and solver
+    compilation (system.py). ``swmm_execution_refused`` remains as a delegation so
+    its existing consumers are unaffected -- the predicate is composed HERE and
+    nowhere else, which is the property that keeps a future third conjunct from
+    reaching one guard and not the other.
+    """
     return in_test_session() and not venue_is_permitted()
