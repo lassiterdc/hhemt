@@ -92,9 +92,10 @@ def _refuse_swmm_in_undeclared_test_venue() -> None:
         raise RuntimeError(
             "Refusing to run SWMM from a test session on an undeclared machine. This "
             "test would execute the SWMM engine, which is only intended to run where "
-            f"the machine has been declared as a permitted venue. Set {COMPILE_VENUE_ENV} "
-            "to the venue you are on (see docs/how-to/installation.md) to allow it, or "
-            "run the fast test tier, which does not execute the engine."
+            f"the machine has been declared as a permitted venue. Run `just test-gated`, "
+            f"which sets {COMPILE_VENUE_ENV} for you; or run the fast test tier, which does "
+            f"not execute the engine. To invoke pytest directly, set "
+            f"{COMPILE_VENUE_ENV}=toolchain. See the compile-venue note in docs/contributing.md."
         )
 
 

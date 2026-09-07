@@ -88,6 +88,17 @@ from hhemt.config.loaders import (
 )
 from hhemt.exceptions import ConfigurationError, ProcessingError
 
+#: The published surface of this module. Declared because `docs/reference/api.md`
+#: renders `::: hhemt.experiments` and `scripts/check_autodoc_coverage.py` derives
+#: its expected set from each rendered module's `__all__`: without this the
+#: directive contributes ZERO expected symbols and the gate certifies a surface
+#: that excludes the class every tutorial's first line imports.
+__all__ = [
+    "TRITON_SWMM_experiment",
+    "NorfolkIreneExperiment",
+    "NorfolkObservedExperiment",
+]
+
 
 class TRITON_SWMM_experiment:
     """
@@ -144,6 +155,21 @@ class TRITON_SWMM_experiment:
 
     @classmethod
     def retrieve_test_data_directory(cls, case_name: str):
+        """Locate the on-disk directory holding a case study's example data.
+
+        Parameters
+        ----------
+        case_name : str
+            Case-study directory name under ``test_data``, e.g.
+            ``"norfolk_coastal_flooding"``.
+
+        Returns
+        -------
+        Path
+            The ``test_data/{case_name}/`` directory beside the installed
+            package. The path is returned whether or not it exists; callers that
+            need the data present are responsible for downloading it.
+        """
         test_data_dir = files(cnst.APP_NAME).parents[1].joinpath(f"test_data/{case_name}/")  # type: ignore
         return test_data_dir
 

@@ -54,6 +54,17 @@ PLACEHOLDER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("coming-soon", re.compile(r"\bcoming soon\b", re.I)),
     ("bare-todo-marker", re.compile(r"(?:^|\s)(?:TODO|TBD|FIXME):", re.I)),
     ("stub-self-declaration", re.compile(r"\bis a stub\b", re.I)),
+    # An unfilled DATE, which is the placeholder form a release file takes.
+    # `2026-XX-XX` declares the entry unfinished exactly as `**Placeholder.**`
+    # does, and no pattern above matches it: measured 2026-09-07, all six
+    # returned zero on `## v0.1.0 (2026-XX-XX)`. Anchored on a 4-digit year so
+    # an `XX-XX` elsewhere in prose is not matched. The trailing guard is a
+    # NEGATIVE LOOKAHEAD rather than `\b`: `?` is a non-word character, so a
+    # trailing `\b` can never match after `??` and silenced that whole
+    # alternative in final position (`2026-??-XX` fired, `2026-XX-??` did not).
+    # The `-` inside the class is load-bearing too -- it stops `2026-XX-XX-1`,
+    # which a bare `(?!\w)` would still match.
+    ("unfilled-date-placeholder", re.compile(r"\b\d{4}-(?:XX|\?\?)-(?:XX|\?\?)(?![\w-])", re.I)),
 )
 
 # A source-file reference carrying a line number. Anchored on a real source
@@ -253,14 +264,15 @@ def _unfenced_lines(text: str):
             yield i, line
 
 
-def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
-    """The four FAILING tiers, for one file.
+def _binary_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
+    """The two FILE-TYPE-INDEPENDENT tiers: placeholder leakage and line citations.
 
-    Factored out so `scan()` and `scan_advisory()` apply the SAME patterns to
-    the same bytes. Routing a generated page to the advisory tier only means
-    anything if the tier reports the findings the gate would have reported;
-    running a different pattern set there would silently drop them while
-    looking like routing.
+    Split out of `_gate_findings` so a second population -- shipped package
+    metadata, which is not product prose -- can run THESE classes without also
+    inheriting the vocabulary and punctuation contracts, which are contracts
+    about prose written for a reader of the software and do not bind a TOML
+    comment. Extraction rather than duplication is the point: a pattern added
+    to `PLACEHOLDER_PATTERNS` reaches both populations with no second edit.
     """
     findings: list[tuple[str, Path, int, str]] = []
     for lineno, line in _unfenced_lines(text):
@@ -279,6 +291,19 @@ def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
         m = LINE_CITATION.search(line)
         if m:
             findings.append(("bare-line-citation", md, lineno, m.group(0)))
+    return findings
+
+
+def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
+    """The four FAILING tiers, for one file.
+
+    Factored out so `scan()` and `scan_advisory()` apply the SAME patterns to
+    the same bytes. Routing a generated page to the advisory tier only means
+    anything if the tier reports the findings the gate would have reported;
+    running a different pattern set there would silently drop them while
+    looking like routing.
+    """
+    findings: list[tuple[str, Path, int, str]] = _binary_findings(md, text)
     for lineno, line in _prose_lines(text):
         for code, pat in PUNCTUATION_PATTERNS:
             if pat.search(line):
@@ -327,6 +352,44 @@ def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
     return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
 
 
+#: Files that ship to PyPI or are rendered on the project page, and are therefore
+#: PUBLIC artifacts, but are not `docs/` prose. `README.md` and `CONTRIBUTING.md`
+#: are rendered by PyPI and GitHub; `HISTORY.md` is what `[project.urls]
+#: changelog` resolves to; `pyproject.toml` and `CITATION.cff` ARE the published
+#: metadata. Only the two file-type-independent classes run here -- see
+#: `_binary_findings` for why the prose contracts do not.
+#:
+#: A LIST rather than a glob, deliberately. A repo-root `rglob("*.md")` would
+#: sweep `site/`, `.venv/`, `.claude/` and every planning artifact, and the
+#: resulting false-positive volume is how a gate gets routed around. The cost of
+#: the list is that a NEW shipped file is not covered until someone adds it, and
+#: `main()` prints the population in both branches so that omission is visible
+#: rather than silent -- the same design `generated_files` already uses.
+SHIPPED_METADATA: tuple[str, ...] = (
+    "README.md",
+    "CONTRIBUTING.md",
+    "HISTORY.md",
+    "pyproject.toml",
+    "CITATION.cff",
+)
+
+
+def scan_shipped_metadata(repo_root: Path) -> list[tuple[str, Path, int, str]]:
+    """Binary-class findings over `SHIPPED_METADATA`, sorted.
+
+    A named entry that does not exist is SKIPPED rather than raising: this list
+    is a superset claim about what a project of this shape ships, and a repo
+    without a `CITATION.cff` is not a failing repo.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    for name in SHIPPED_METADATA:
+        path = repo_root / name
+        if not path.is_file():
+            continue
+        findings.extend(_binary_findings(path, path.read_text(encoding="utf-8", errors="ignore")))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -363,12 +426,16 @@ def main(argv: list[str] | None = None) -> int:
         rels = ", ".join(str(m.relative_to(args.docs_dir.parent)) for m in paths)
         return f"skipped {len(paths)} {label} file(s), routed to --advisory: {rels}"
 
+    repo_root = args.docs_dir.parent
+    shipped = [name for name in SHIPPED_METADATA if (repo_root / name).is_file()]
     skip_lines = [
         _skip_line("generated", generated_files(args.docs_dir)),
         _skip_line("personal-voice", personal_voice_files(args.docs_dir)),
+        f"scanned {len(shipped)} shipped-metadata file(s) for placeholders and line "
+        f"citations only: {', '.join(shipped) if shipped else '(none found)'}",
     ]
 
-    findings = scan(args.docs_dir)
+    findings = scan(args.docs_dir) + scan_shipped_metadata(repo_root)
     if findings:
         print("docs content check FAILED:", file=sys.stderr)
         for code, path, lineno, excerpt in findings:
@@ -385,8 +452,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(
-        f"docs content OK under {args.docs_dir} — no placeholder leakage, bare line "
-        f"citation, banned vocabulary, development provenance, or em dash."
+        f"docs content OK under {args.docs_dir}, and shipped metadata clean — no "
+        f"placeholder leakage, bare line citation, banned vocabulary, development "
+        f"provenance, or em dash."
     )
     for line in skip_lines:
         print(line)

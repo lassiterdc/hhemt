@@ -423,13 +423,16 @@ class Toolkit:
     def analysis_dir(self) -> Path:
         """Get analysis directory path.
 
-        Returns:
-            Path to analysis output directory
+        Returns
+        -------
+        Path
+            Path to analysis output directory.
 
-        Example:
-            >>> tk = Toolkit.from_configs(system_cfg, analysis_cfg)
-            >>> print(f"Outputs at: {tk.analysis_dir}")
-            Outputs at: /path/to/norfolk_coastal_flooding_2024-01-15_143022
+        Examples
+        --------
+        >>> tk = Toolkit.from_configs(system_cfg, analysis_cfg)
+        >>> print(f"Outputs at: {tk.analysis_dir}")
+        Outputs at: /path/to/norfolk_coastal_flooding_2024-01-15_143022
         """
         return self.analysis.analysis_paths.analysis_dir
 

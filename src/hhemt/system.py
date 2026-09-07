@@ -54,8 +54,10 @@ def _refuse_compile_in_undeclared_test_venue(entry_point: str) -> None:
                 f"solver is only performed where the venue is declared."
             ),
             fix_hint=(
-                f"Set {COMPILE_VENUE_ENV} to the venue you are on (see "
-                f"docs/how-to/installation.md), or run the fast test tier, which builds nothing."
+                f"Run `just test-gated`, which sets {COMPILE_VENUE_ENV} for you; or run the "
+                f"fast test tier, which builds nothing. To invoke pytest directly, set "
+                f"{COMPILE_VENUE_ENV}=toolchain. See the compile-venue note in "
+                f"docs/contributing.md."
             ),
         )
 
