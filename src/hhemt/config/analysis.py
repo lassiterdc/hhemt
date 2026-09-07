@@ -837,6 +837,10 @@ class analysis_config(cfgBaseModel):
         description="Optional path to analysis directory. If not specified, the analysis directory will be placed "
         "within the "
         "system directory named named with the analysis_id",
+        # A toolkit-owned OUTPUT: the analysis tree is created by the run, not supplied
+        # by the user. Also the FORCED_DOT "." bundle-root marker in a bundle's
+        # cfg_analysis (bundle/_path_policy.py). Exempt from the load-time check.
+        json_schema_extra={"toolkit_owned_output": True},
     )
     is_experiment_member: bool = Field(
         False,

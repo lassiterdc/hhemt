@@ -200,6 +200,7 @@ def validate_system_config(cfg: system_config) -> ValidationResult:
 
     # Core path checks (section 3: Core path checks)
     _validate_system_paths(cfg, result)
+    _warn_output_dir_parent_absent(cfg, result)
 
     # Toggle dependency checks (section 3: Toggle dependency checks)
     _validate_toggle_dependencies_system(cfg, result)
@@ -250,6 +251,70 @@ def _validate_system_paths(cfg: system_config, result: ValidationResult):
                 current_value=str(path_val),
                 fix_hint="Create the file/directory or correct the path in system config",
             )
+
+
+def assert_both_configs_load(system_yaml: Path, analysis_yaml: Path) -> None:
+    """Load BOTH config documents and report every failure from both, together.
+
+    The loader validates one model at a time and raises on the first, so a user with
+    errors in both configs fixes one set, re-runs, and only then learns about the other.
+    `docs/how-to/config-filling.md` promises the opposite. This runs both loads, collects
+    both `ValidationError`s, and raises ONE `ConfigurationError` carrying both.
+
+    Purely additive: on the all-clear path it returns None and the caller constructs as
+    before. The double read of two small YAMLs is deliberate -- it keeps this helper from
+    having to hand its parsed models to two constructors with different signatures.
+    """
+    from pydantic import ValidationError
+
+    from hhemt.config.loaders import load_analysis_config, load_system_config
+
+    problems: list[str] = []
+    for label, path, loader in (
+        ("system", system_yaml, load_system_config),
+        ("analysis", analysis_yaml, load_analysis_config),
+    ):
+        try:
+            loader(Path(path))
+        except ValidationError as exc:
+            problems.append(f"{label} config ({path}):\n{exc}")
+    if problems:
+        raise ConfigurationError(
+            field="config",
+            message=(
+                "Configuration validation failed. Every problem found in BOTH configs is "
+                "listed below so one round of edits clears them:\n\n" + "\n\n".join(problems)
+            ),
+        )
+
+
+def _warn_output_dir_parent_absent(cfg: system_config, result: ValidationResult):
+    """WARN when `system_directory`'s parent does not exist.
+
+    `system_directory` carries `toolkit_owned_output`, so both `_validate_system_paths`
+    and `cfgBaseModel._check_paths_exist` skip it entirely -- the skip precedes both
+    arms. That is CORRECT: the directory legitimately does not exist yet. The residue is
+    that a misspelt path is then created rather than noticed.
+
+    A WARNING and not an error, deliberately. Every creating site uses
+    `mkdir(parents=True, exist_ok=True)`, so an absent parent is a working configuration
+    -- a first run under a fresh `/scratch/{user}/{campaign}/` root has one. This is a
+    typo SIGNAL, not a validity claim, and an error here would refuse legitimate configs.
+
+    SCOPED TO `system_directory` ONLY. `analysis_dir` carries the identical residue and
+    is deliberately NOT covered here: reading it would couple this system-side validator
+    to the analysis config's OBJECT, and a SimpleNamespace stub that legitimately omits
+    the attribute already reaches this call path. Tracked as a follow-up.
+    """
+    parent = Path(cfg.system_directory).expanduser().parent
+    if not parent.exists():
+        result.add_warning(
+            field="system.system_directory",
+            message=f"Parent of system_directory does not exist and will be created: {parent}",
+            current_value=str(cfg.system_directory),
+            fix_hint="If this is a fresh campaign root the run will create it. If it is a "
+            "typo, correct system_directory now rather than after a tree is created.",
+        )
 
 
 def _validate_toggle_dependencies_system(cfg: system_config, result: ValidationResult):

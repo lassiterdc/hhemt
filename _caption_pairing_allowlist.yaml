@@ -269,7 +269,29 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 29283a55931c80caf051dd6d00658787b77813f19c783c3b3dccf45f39cdb8af
+    renderer_sha256: fdc3d9a124ce777d2f95240c6f443035e0aba6cb700b0031fee184e8959f45f1
+    justification_2026_09_07: >-
+      load-mode VMS commit. Caption RE-READ IN FULL against the diff, and its scope is
+      DISJOINT from the change. The change renames `_is_toolkit_owned` to
+      `_toolkit_clones_into` and re-keys it from the `toolkit_owned_output` sentinel to a
+      new `toolkit_clones_into` one, so the Reproduction Guide's REQUIREDNESS cell stops
+      inheriting a sentinel carried by four fields when only two of them are directories
+      the clone/build gate builds into. Without it `system_directory` would render as
+      "the toolkit clones/builds into it" (it does not -- outputs are written there) and
+      `analysis_dir` as Required (it is `Path | None`, default None, and its own
+      description says the run places it for you).
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than have to reconstruct it: the caption's Reproduction-guide bullet
+      describes the BUCKET axis and only that -- "grouped by what a reproducer must do
+      with it: supply / amend / keep" -- and bucket assignment comes from
+      `reprex_taxonomy.all_field_bucket`, which this change does not touch. The
+      REQUIREDNESS cell is a different column, and the caption is silent on it BEFORE
+      this change as well as after. So the change makes no caption claim false and leaves
+      none incomplete that was complete.
+      This is a PAIRING discharge on a re-read, not a formatting exemption: the change is
+      semantic, and the re-read found the caption's scope disjoint from it. Digest
+      recorded after the load-mode apply, so the exemption expires on the next change to
+      this renderer.
     justification_2026_09_03b: >-
       path-tree leaf-run collapse (four-spec set). Caption RE-READ IN FULL, and it makes
       no claim this change can touch. The caption describes WHAT the Provenance summary

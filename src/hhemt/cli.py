@@ -359,7 +359,11 @@ def run_command(
 
         from .analysis import TRITONSWMM_analysis
         from .system import TRITONSWMM_system
+        from .validation import assert_both_configs_load
 
+        # Report BOTH documents' load errors in one round, which is what
+        # docs/how-to/config-filling.md promises of this command.
+        assert_both_configs_load(system_config, analysis_config)
         system = TRITONSWMM_system(system_config)
         analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis  # Link back

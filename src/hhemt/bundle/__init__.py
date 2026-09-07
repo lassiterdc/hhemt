@@ -189,7 +189,6 @@ class Bundle:
         # self._cfg_analysis.report.interactive.static_backend) is
         # guaranteed safe by R1's required-field contract.
         from hhemt.config.analysis import analysis_config
-        from hhemt.config.loaders import yaml_to_model
 
         cfg_analysis_path = root / "cfg_analysis.yaml"
         if not cfg_analysis_path.exists():
@@ -198,7 +197,13 @@ class Bundle:
                 f"required by R1 (analysis_config.report "
                 f"load-time-required)."
             )
-        cfg_analysis = yaml_to_model(cfg_analysis_path, analysis_config)
+        # READER 2. The MODEL is deliberate and cannot become a dict: six consumers read
+        # it (.eda, the whole model into render_eda_plots, .report.interactive
+        # .static_backend, .brand_theme -- itself a Path field -- and .analysis_id).
+        # Rebasing makes those paths resolvable.
+        from hhemt.bundle._path_policy import load_bundle_config
+
+        cfg_analysis = load_bundle_config(cfg_analysis_path, analysis_config, root)
         return cls(root=root, manifest=manifest, cfg_analysis=cfg_analysis)
 
     @property
@@ -304,6 +309,73 @@ class Bundle:
         # so test code can monkey-patch for backend-override coverage.
         return self._cfg_analysis.report.interactive.static_backend
 
+    _RENDER_OPENED_CFG_FIELDS = ("brand_theme",)
+    """cfg_analysis fields the REGENERATE path OPENS, as opposed to reads as a scalar.
+
+    A field belongs here iff regenerate_report (or something it calls) resolves it to a
+    file and reads that file. One member today; that is the honest size of the set.
+    """
+
+    def _assert_render_inputs_present(self) -> None:
+        """Fail closed, and actionably, when the bundle declares a render input it does
+        not carry.
+
+        Not a duplicate of experiments.py::_assert_declared_inputs_exist: that gate
+        covers the DOI/run path and is not on this one, and it is scoped to the
+        carried-input policies rather than to what render opens. Every field named here
+        is ``excludable=False`` in the emit-side catalog, so a declared-but-absent value
+        can only mean a broken bundle -- there is no by-reference reading to fall back
+        on, and defaulting silently would emit a correct-looking report with wrong
+        branding and no signal.
+
+        Raises ProcessingError (CLI exit 5) rather than letting ``load_brand_theme``
+        raise: that path surfaces a bare FileNotFoundError which, when the bundle sits
+        under a temp root, ``_load_config`` decorates with a cross-node-visibility
+        explanation that is actively wrong for a local re-render.
+
+        KNOWN LIMITATION, stated rather than implied. Inside ``regenerate_report`` this
+        raise leaves no half-written state: it is the THIRD statement, after
+        ``assert_plots_match_running_build`` and ``_read_static_backend``, neither of
+        which mutates. That property does NOT extend through the CLI verb: ``hhemt
+        report-from-bundle`` (``cli.py``) unlinks ``analysis_report.html`` and
+        ``analysis_report.zip`` BEFORE calling ``regenerate_report``, so a raise here
+        leaves those two files deleted. Pre-existing rather than introduced -- that flow
+        destroyed the same two files and then raised ``FileNotFoundError`` from
+        ``load_brand_theme`` -- and ``bundle_baseline/`` retains the HPC copies. Moving
+        this check to ``from_directory`` or to the CLI verb ahead of its unlink is what
+        would extend the property; neither is done here. NOTE the ordinal: a future edit
+        that inserts a side effect into either of the two preceding statements silently
+        breaks the in-method half of this property.
+        """
+        from hhemt.exceptions import ProcessingError
+
+        if self._cfg_analysis is None:
+            return
+        for name in self._RENDER_OPENED_CFG_FIELDS:
+            value = getattr(self._cfg_analysis, name, None)
+            if value is None:
+                continue
+            target = self._root / value
+            if not target.exists():
+                # Echo the DECLARED, bundle-relative form -- what an operator will
+                # actually find in cfg_analysis.yaml. `value` here is the absolute path
+                # rebase_bundle_relative_paths produced in memory, and quoting that
+                # sends the reader searching the YAML for a string it does not contain.
+                try:
+                    declared = Path(target).relative_to(self._root)
+                except ValueError:
+                    declared = Path(value)
+                raise ProcessingError(
+                    operation="regenerate_report",
+                    filepath=target,
+                    reason=(
+                        f"the bundle's cfg_analysis declares {name}: {declared} but the "
+                        f"file is not present under the bundle root. {name} is not an "
+                        f"excludable input, so it cannot be a by-reference deposit -- "
+                        f"this bundle is incomplete. Re-emit it from the source analysis."
+                    ),
+                )
+
     def regenerate_report(self, *, format: Literal["html", "zip"] = "zip", declare_stale_plots: bool = False) -> Path:
         """Regenerate the analysis report from bundled data.
 
@@ -345,6 +417,13 @@ class Bundle:
         from hhemt.config.loaders import load_brand_theme
         from hhemt.workflow import _brand_theme_css_map
 
+        # RENDER-PATH INPUT CHECK. load_bundle_config validates the archive record's
+        # SHAPE under the `metadata` intent and asserts nothing about files on disk --
+        # true for its other two callers, which read scalars only. This path is the
+        # exception: it OPENS brand_theme. The requirement lives here, so the check does
+        # too, rather than being smuggled into the loader's intent where it would be
+        # wrong for everyone else.
+        self._assert_render_inputs_present()
         _bt = self._cfg_analysis.brand_theme if self._cfg_analysis else None
         _theme = load_brand_theme(self._root / _bt) if _bt else DEFAULT_BRAND_THEME
         _emit_report_artifacts(self._root, brand_theme=_brand_theme_css_map(_theme))

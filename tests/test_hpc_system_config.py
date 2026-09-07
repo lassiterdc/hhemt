@@ -154,22 +154,26 @@ def test_check_runtime_no_cap_partition_imposes_no_limit():
         ("additional_modules_needed_to_run_TRITON_SWMM_on_hpc", "cuda/12.4"),
     ],
 )
-def test_system_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, retired_val):
+def test_system_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, retired_val, tmp_path):
     """Phase-4 (4c): the system_config pop-and-warn shim (folded into
     validate_toggle_dependencies) lets an un-migrated YAML carrying any of the four
     retired HPC keys LOAD with a DeprecationWarning instead of being rejected by
     extra="forbid". The retired key is dropped (the field no longer exists)."""
+    import sys
     from pathlib import Path
 
-    import yaml as _yaml
+    from hhemt.config.system import system_config
 
-    from hhemt.config.loaders import load_system_config
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_config_validation import _minimal_system_config_dict
 
-    # A known-good system config (the shipped template) + a retired HPC key.
-    template = Path("test_data/norfolk_coastal_flooding/template_system_config.yaml")
-    base = load_system_config(template)
+    # A known-good system config + a retired HPC key. Deliberately NOT the shipped
+    # template: a template is not a config (its ${DATA_DIR} placeholders are not paths),
+    # and this test asserts nothing about templates -- it needs a VALID dict and nothing
+    # more. Sourcing one from the shipped template coupled a deprecation-shim test to the
+    # case-study data layout for no assertion's benefit.
+    base = system_config.model_validate(_minimal_system_config_dict(tmp_path))
     d = base.model_dump(mode="json")
-    assert _yaml  # imported for symmetry with the YAML-load path
     d[retired_key] = retired_val
 
     cfg_type = type(base)
@@ -191,19 +195,22 @@ def test_system_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, reti
         ("hpc_max_simultaneous_sims", 32),
     ],
 )
-def test_analysis_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, retired_val):
+def test_analysis_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, retired_val, tmp_path):
     """Phase-4 (4d): the analysis_config pop-and-warn shim (folded into
     check_consistency) lets an un-migrated YAML carrying any of the six retired HPC
     fields LOAD with a DeprecationWarning instead of being rejected by
     extra="forbid". The retired key is dropped (the field no longer exists); the two
     partition selectors are KEPT."""
+    import sys
     from pathlib import Path
 
     from hhemt.config.analysis import analysis_config
-    from hhemt.config.loaders import load_analysis_config
 
-    template = Path("test_data/norfolk_coastal_flooding/template_analysis_config.yaml")
-    base = load_analysis_config(template)
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_config_validation import _minimal_analysis_config_dict
+
+    # See the system-config sibling: a valid dict is all this asserts against.
+    base = analysis_config.model_validate(_minimal_analysis_config_dict(tmp_path))
     d = base.model_dump(mode="json")
     d[retired_key] = retired_val
 
@@ -230,7 +237,7 @@ def test_analysis_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, re
 # sharing a helper, so it cannot be broken by unrelated fixture churn.
 
 
-def _preflight_result_for_processing_cap(max_runtime: int):
+def _preflight_result_for_processing_cap(max_runtime: int, tmp_path):
     """Run the real HPC preflight with one partition capped at ``max_runtime``.
 
     ``batch_job`` is required because the per-rule runtime check is gated on it
@@ -238,16 +245,18 @@ def _preflight_result_for_processing_cap(max_runtime: int):
     ``hpc_total_job_duration_min`` (analysis.py required_when). Both partition
     selectors name the same declared partition so the ONLY variable is the cap.
     """
+    import sys
     from pathlib import Path
 
     from hhemt.config.analysis import analysis_config
-    from hhemt.config.loaders import load_analysis_config
     from hhemt.validation import ValidationResult, _validate_hpc_configuration
 
-    template = (
-        Path(__file__).resolve().parents[1] / "test_data" / "norfolk_coastal_flooding" / "template_analysis_config.yaml"
-    )
-    d = load_analysis_config(template).model_dump(mode="json")
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_config_validation import _minimal_analysis_config_dict
+
+    # See the shim siblings: the ONLY variable this helper wants is the partition cap,
+    # so the base config needs to be valid and nothing else.
+    d = analysis_config.model_validate(_minimal_analysis_config_dict(tmp_path)).model_dump(mode="json")
     d["multi_sim_run_method"] = "batch_job"
     d["hpc_total_job_duration_min"] = 4320
     d["hpc_ensemble_partition"] = "standard"
@@ -267,17 +276,17 @@ def _preflight_result_for_processing_cap(max_runtime: int):
     return cfg, [i for i in result.errors if "output processing" in str(i.message)]
 
 
-def test_output_processing_runtime_row_fires_inside_the_permissive_window():
+def test_output_processing_runtime_row_fires_inside_the_permissive_window(tmp_path):
     """FAILS PRE-FIX: the row compared a hardcoded 120 against the cap, so a
     partition capped at 180 passed while the emitter requested 240."""
-    cfg, hits = _preflight_result_for_processing_cap(180)
+    cfg, hits = _preflight_result_for_processing_cap(180, tmp_path)
     assert cfg.hpc_runtime_min_for_sim_output_processing == 240
     assert len(hits) == 1, "a 240-min request must be rejected by a 180-min cap"
     assert "240" in str(hits[0].message)
 
 
-def test_output_processing_runtime_row_does_not_over_fire_above_the_request():
+def test_output_processing_runtime_row_does_not_over_fire_above_the_request(tmp_path):
     """Passes in BOTH states by design -- the no-false-positive arm. Pinned so a
     future tightening of the row cannot start rejecting satisfiable configs."""
-    _cfg, hits = _preflight_result_for_processing_cap(300)
+    _cfg, hits = _preflight_result_for_processing_cap(300, tmp_path)
     assert hits == []

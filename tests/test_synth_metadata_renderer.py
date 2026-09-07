@@ -509,8 +509,8 @@ def test_supply_block_names_the_fields_a_reproducer_actually_supplies():
     assert "system_config.SWMM_software_directory" in user_labels
 
 
-def test_toolkit_owned_fields_are_reported_as_supplied_and_required():
-    """`toolkit_owned_output` exempts an existence check; it is NOT a supply signal.
+def test_clone_target_fields_are_reported_as_supplied_and_required():
+    """`toolkit_clones_into` marks a directory the user names and the toolkit builds into.
 
     The two software-directory fields sit in the Supply bucket, and the renderer used to
     tell the reader they were "Not supplied by you" — a contradiction inside one table,
@@ -620,9 +620,9 @@ def test_a_constant_sweep_column_returns_the_same_shape_as_a_varied_one():
     # 1. The return shape is UNIFORM across both branches -- this is the invariant.
     for label, out in (("constant", constant), ("varied", varied)):
         cell_tip = out["analysis_config.run_mode"]
-        assert (
-            isinstance(cell_tip, tuple) and len(cell_tip) == 2
-        ), f"{label} column returned {type(cell_tip).__name__}, not a (cell, tooltip) 2-tuple"
+        assert isinstance(cell_tip, tuple) and len(cell_tip) == 2, (
+            f"{label} column returned {type(cell_tip).__name__}, not a (cell, tooltip) 2-tuple"
+        )
 
     # A constant column is NOT a varied parameter: it shows its value, with no hover.
     cell, tip = constant["analysis_config.run_mode"]
@@ -1170,9 +1170,9 @@ def test_bucket_heading_does_not_repeat_badge_verb(bucket):
     badge_text = re.sub(r"<[^>]+>", "", metadata._bucket_badge(bucket)).strip()
     verb = metadata._BUCKET_VERB[bucket]
     assert badge_text == verb, "precondition: the badge renders the verb"
-    assert not metadata._BUCKET_HEADING[bucket].startswith(
-        verb
-    ), f"heading repeats the badge verb {verb!r} immediately after it"
+    assert not metadata._BUCKET_HEADING[bucket].startswith(verb), (
+        f"heading repeats the badge verb {verb!r} immediately after it"
+    )
 
 
 def test_table_interaction_note_is_single_sourced():
@@ -1374,7 +1374,7 @@ def test_every_closed_set_field_declares_its_option_glossary():
                 if declared(fi, "options") is None:
                     missing.append(f"{label}.{name}")
     assert not missing, (
-        "closed-set fields rendered in the Reproduction Guide with no option " f"glossary: {sorted(missing)}"
+        f"closed-set fields rendered in the Reproduction Guide with no option glossary: {sorted(missing)}"
     )
 
 
@@ -1404,16 +1404,16 @@ def test_varied_values_cell_carries_the_tooltip_affordance_as_one_rule():
     # test would pass over an empty match set and certify nothing.
     match = re.search(r"(?:^|\}|\n)\s*([^{}]*\bstrong\.tip-affordance\b[^{}]*)\{([^}]*)\}", css)
     assert match is not None, f"no strong.tip-affordance rule in the emitted CSS:\n{css}"
-    assert "strong.tip-affordance" in match.group(
-        1
-    ), f"strong.tip-affordance is not a member of the matched selector list: {match.group(1)!r}"
+    assert "strong.tip-affordance" in match.group(1), (
+        f"strong.tip-affordance is not a member of the matched selector list: {match.group(1)!r}"
+    )
     block = match.group(2)
 
     assert "cursor: help" in block, f"affordance rule lacks the help cursor: {block!r}"
     assert re.search(r"border-bottom:\s*1px\s+dotted", block), f"affordance rule lacks the dotted underline: {block!r}"
-    assert re.search(
-        rf"(?<!-)color:\s*{re.escape(expected_color)}", block
-    ), f"affordance colour is not the resolved brand colour {expected_color!r}: {block!r}"
+    assert re.search(rf"(?<!-)color:\s*{re.escape(expected_color)}", block), (
+        f"affordance colour is not the resolved brand colour {expected_color!r}: {block!r}"
+    )
 
 
 def test_varied_values_affordance_is_absent_from_the_single_value_branch():

@@ -1021,12 +1021,15 @@ def test_static_plot_configs_nonexistent_path_raises(tmp_path: Path):
 def test_toolkit_owned_output_dirs_exempt_from_existence_check(tmp_path: Path):
     """R1/R2: a toolkit-owned-output software-dir field validates even when its
     value is a non-existent Path (the json_schema_extra sentinel exempts it
-    BEFORE the isinstance(v, Path) existence check — the overlay-revalidation
-    shape); a genuine INPUT path field still fails fast on a non-existent Path."""
+    BEFORE the isinstance(v, Path) existence check, which under mode="after"
+    reaches EVERY entry shape and not only the model_dump(mode="python")
+    re-validation path this line originally qualified); a genuine INPUT path
+    field still fails fast on a non-existent Path."""
     cfg = _minimal_system_config_dict(tmp_path)
-    # Pass the software dir as a non-existent Path (not str) so the validator's
-    # isinstance(v, Path) branch is exercised. Pre-fix this raised; post-fix the
-    # toolkit_owned_output sentinel exempts it.
+    # A non-existent Path. The "(not str)" qualifier this comment used to carry is
+    # obsolete under mode="after": pydantic coerces a str to Path before the validator
+    # runs, so the isinstance(v, Path) branch is reached either way and the Path
+    # construction is now a readability choice, not the thing that arms the check.
     cfg["TRITONSWMM_software_directory"] = tmp_path / "_software" / "triton"  # absent
     cfg["SWMM_software_directory"] = (
         tmp_path / "_software" / "swmm"
@@ -1037,9 +1040,19 @@ def test_toolkit_owned_output_dirs_exempt_from_existence_check(tmp_path: Path):
         not validated.SWMM_software_directory.exists()
     )  # R2: Optional sentinel field is exempted when SET to an absent Path (not merely when None)
 
+    # A5-1/A5-2 widen the sentinel from TWO fields to FOUR. A FORWARD GUARD: it is green
+    # both pre- and post-fix, so it demonstrates no gap was open -- it fails only if a
+    # later change drops the sentinel or arms the check ahead of the skip.
+    outs = _minimal_system_config_dict(tmp_path)
+    outs["system_directory"] = str(tmp_path / "absent_root" / "system")  # absent, exempt
+    assert not Path(system_config.model_validate(outs).system_directory).exists()
+
     # R2: a genuine INPUT Path field pointing at an absent file still raises.
     bad = _minimal_system_config_dict(tmp_path)
-    bad["DEM_fullres"] = tmp_path / "inputs" / "does_not_exist.tif"  # absent Path
+    # Deliberately a str here, not a Path: under mode="after" both are coerced, and a
+    # str is the shape a YAML load actually produces -- which is the entry path this
+    # check was inert on before the mode flip.
+    bad["DEM_fullres"] = str(tmp_path / "inputs" / "does_not_exist.tif")  # absent
     with pytest.raises(ValidationError, match="does not exist"):
         system_config.model_validate(bad)
 

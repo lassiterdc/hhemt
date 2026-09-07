@@ -41,6 +41,7 @@ from hhemt.bundle._path_policy import (
     PathPolicy,
     RewriteResult,
     enumerate_path_fields,
+    rebase_bundle_relative_paths,
 )
 from hhemt.report_renderers._figure_emission import (
     harvest_source_paths,
@@ -1357,17 +1358,7 @@ def reconstitute_runnable_config(
 
     bundle_root = Path(bundle_root).resolve()
     cfg_dict = yaml.safe_load((bundle_root / "cfg_system.yaml").read_text())
-    path_fields = set(enumerate_path_fields(system_config))
-    out = dict(cfg_dict)
-    for name in path_fields:
-        value = out.get(name)
-        if value is None:
-            continue
-        if isinstance(value, list):  # BUNDLE_RELATIVE_LIST (none on system_config today)
-            out[name] = [str((bundle_root / v).resolve()) if not Path(v).is_absolute() else v for v in value]
-            continue
-        if isinstance(value, str) and not Path(value).is_absolute():
-            out[name] = str((bundle_root / value).resolve())
+    out = rebase_bundle_relative_paths(cfg_dict, system_config, bundle_root)
     if software_dir is None:
         # RENDER path: toolkit-owned build dirs stay null (bundle-local EDA only).
         out["SWMM_software_directory"] = None
@@ -1394,8 +1385,11 @@ def reconstitute_runnable_analysis_config(bundle_root: Path, *, target_path: Pat
     rewrites every non-absolute Path value to ``str((bundle_root / v).resolve())`` — which
     maps ``analysis_dir: "."`` to ``bundle_root`` (honoring the FORCED_DOT invariant) and
     rebases ``sensitivity_analysis`` and the rest onto the carried, self-contained inputs.
-    It is the SINGLE rebase implementation: ``reprex()`` composes it rather than
-    hand-rebasing ``sensitivity_analysis`` inline. Returns the written path
+    The rebase itself is delegated to ``_path_policy.rebase_bundle_relative_paths``, which
+    is the SINGLE rebase implementation shared with the system-side sibling and with the
+    three render-path readers; this function composes it and writes the result, and
+    ``reprex()`` composes THIS rather than hand-rebasing ``sensitivity_analysis`` inline.
+    Returns the written path
     (``bundle_root/analysis_config.yaml`` unless ``target_path`` overrides).
     """
     import yaml
@@ -1404,17 +1398,7 @@ def reconstitute_runnable_analysis_config(bundle_root: Path, *, target_path: Pat
 
     bundle_root = Path(bundle_root).resolve()
     cfg_dict = yaml.safe_load((bundle_root / "cfg_analysis.yaml").read_text())
-    path_fields = set(enumerate_path_fields(analysis_config))
-    out = dict(cfg_dict)
-    for name in path_fields:
-        value = out.get(name)
-        if value is None:
-            continue
-        if isinstance(value, list):  # BUNDLE_RELATIVE_LIST (e.g. static_plot_configs)
-            out[name] = [str((bundle_root / v).resolve()) if not Path(v).is_absolute() else v for v in value]
-            continue
-        if isinstance(value, str) and not Path(value).is_absolute():
-            out[name] = str((bundle_root / value).resolve())
+    out = rebase_bundle_relative_paths(cfg_dict, analysis_config, bundle_root)
     target = target_path if target_path is not None else bundle_root / "analysis_config.yaml"
     Path(target).write_text(yaml.safe_dump(out, sort_keys=False))
     return Path(target)

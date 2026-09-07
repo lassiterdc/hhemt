@@ -86,6 +86,7 @@ from hhemt.config.loaders import (
     load_system_config,
     load_system_config_from_dict,
 )
+from hhemt.config.system import system_config
 from hhemt.exceptions import ConfigurationError, ProcessingError
 
 
@@ -881,9 +882,20 @@ class TRITON_SWMM_experiment:
         reconstituted input Path that does not exist on disk.
 
         The reconstituted configs carry ABSOLUTE resolved paths under ``bundle_root``.
-        ``cfgBaseModel._check_paths_exist`` is ``mode='before'`` + ``isinstance(v, Path)``
-        -gated, so it never fires on these YAML strings — this gate is the only thing
-        standing between a partial bundle and a silent hours-later setup failure.
+        ``cfgBaseModel._check_paths_exist`` now runs in ``mode='after'`` and WOULD fire on
+        these paths — but nothing constructs a model over them before this gate, for two
+        independent reasons, and BOTH must hold for that to stay true. (1) The functions
+        that produce them, ``reconstitute_runnable_config`` and
+        ``reconstitute_runnable_analysis_config``, read the bundle archive with a bare
+        ``yaml.safe_load`` and write it back with ``yaml.safe_dump`` — they construct no
+        model, so no validator sees the values. (2) Each file's first model construction
+        happens LATER: ``system_config.yaml`` in ``TRITONSWMM_system(...)`` and
+        ``analysis_config.yaml`` in ``TRITONSWMM_analysis(...)``, both after this gate has
+        run. This gate is therefore the first and only check they meet, and it is the only
+        one that fetches via ``contentUrl``, sha256-verifies, and reports citation +
+        place-it-at. Do NOT read this as "every bundle-archive read is covered" — it is
+        not, and the two bare reads above are the counterexamples. It is an ORDERING
+        property of THIS call path.
 
         Only CARRIED-INPUT fields are checked (the same ``BUNDLE_RELATIVE`` family the
         self-contained harvest carries). The toolkit-owned build dirs
@@ -1070,7 +1082,12 @@ class TRITON_SWMM_experiment:
         )
         cfg_template = cls._load_config_filepath(case_name, system_config_template)
         filled_yaml_data = cls._return_filled_template_yaml_dictionary(cfg_template, mapping)
-        load_system_config_from_dict(filled_yaml_data)  # validation side effect; binding intentionally dropped
+        # PRE-DOWNLOAD: schema/enum/toggle-dependency validity only. The declared inputs
+        # legitimately do not exist yet -- this call PRECEDES the download branch below
+        # that creates them, so a `runnable` intent here is a deadlock: validating the
+        # pre-download config is what would block the download that makes it valid.
+        # The post-download `runnable` load two blocks down is the discharge.
+        system_config.model_validate(filled_yaml_data, context={"existence": "template"})
 
         # download data if it doesn't exist
         if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
@@ -1094,6 +1111,12 @@ class TRITON_SWMM_experiment:
                     download_if_exists=download_if_exists,
                     expected_manifest=case_manifest.manifest,
                 )
+
+        # POST-DOWNLOAD: the deferred existence obligation is discharged here. This is
+        # the check that the fetch delivered what the config declares -- it has no
+        # counterpart in the pre-fix code, where the validator was inert on the str
+        # values a YAML load produces.
+        load_system_config_from_dict(filled_yaml_data)
 
         cfg_yaml = Path(filled_yaml_data["system_directory"]) / "config_system.yaml"
         cfg_yaml.parent.mkdir(parents=True, exist_ok=True)

@@ -139,6 +139,11 @@ class Toolkit:
         """
         from .analysis import TRITONSWMM_analysis
         from .system import TRITONSWMM_system
+        from .validation import assert_both_configs_load
+
+        # Report BOTH documents' load errors in one round -- see validation.py's
+        # assert_both_configs_load for why the constructors alone cannot.
+        assert_both_configs_load(Path(system_config), Path(analysis_config))
 
         # Load system and analysis
         system = TRITONSWMM_system(Path(system_config))

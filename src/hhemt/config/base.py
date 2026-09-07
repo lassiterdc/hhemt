@@ -23,9 +23,13 @@ from hhemt.plot_utils import print_json_file_tree
 # `1_job_many_srun_tasks` while its validator required it under `batch_job`.
 #
 # Precedent: `json_schema_extra={"toolkit_owned_output": True}` is already read
-# by three consumers (validation.py, `_check_paths_exist` below, and
-# metadata._is_toolkit_owned). This extends that idiom rather than opening a
-# second metadata channel.
+# by two consumers (validation.py and `_check_paths_exist` below). A THIRD key,
+# `toolkit_clones_into`, rides the same channel and is read by exactly one
+# consumer, `report_renderers/metadata._toolkit_clones_into` -- deliberately a
+# separate key, because the existence-skip sentinel and the Reproduction
+# Guide's "the toolkit builds into it" cell are unrelated claims and one flag
+# carrying both rendered `analysis_dir` as Required when it is optional. This
+# extends that idiom rather than opening a second metadata channel.
 #
 # PINNED-VERSION CONSTRAINT: pydantic is pinned to 2.7.* (pyproject.toml). The
 # additive merge of STACKED `json_schema_extra` payloads landed in 2.9, so a
@@ -57,7 +61,8 @@ def field_meta(
     execution methods and required under only one of them, and a single key
     cannot say that without lying about one of the two.
 
-    `passthrough` carries any pre-existing key (today: `toolkit_owned_output`)
+    `passthrough` carries any pre-existing key (today `toolkit_owned_output` and
+    `toolkit_clones_into`, which the two software-directory fields carry together)
     so one payload can hold both without stacking.
     """
     extra: dict[str, Any] = dict(passthrough)
@@ -261,7 +266,20 @@ class cfgBaseModel(BaseModel):
             raise ValueError("; ".join(errors))
         return values
 
-    @field_validator("*", mode="before")
+    # mode="after" is LOAD-BEARING. Under mode="before" the value arrives in whatever
+    # shape the caller supplied, so the isinstance(v, Path) below was not a type guard
+    # on a "*" validator -- it was the de facto FIELD SELECTOR, selecting only fields
+    # that already held a Path object. A config parsed from YAML carries str, so the
+    # existence check never fired on the load path and this validator's docstring
+    # promise held only for the model_dump(mode="python") re-validation path. Widening
+    # the isinstance to (str, Path) is NOT the fix: in before mode that reaches every
+    # string field in every config (colormaps, markers, partition names) and makes the
+    # package unimportable at report.py's DEFAULT_REPORT_CONFIG. In after mode pydantic
+    # has already coerced, so a Path-annotated field arrives as a Path whatever the
+    # entry shape was and isinstance(v, Path) becomes a CORRECT selector: Path | None is
+    # handled by the None short-circuit, and list[Path] correctly declines because
+    # analysis.py::_check_static_plot_configs_exist already owns the element-wise case.
+    @field_validator("*", mode="after")
     @classmethod
     def _check_paths_exist(cls, v: Any, info) -> Any:
         """
@@ -275,18 +293,38 @@ class cfgBaseModel(BaseModel):
             return v  # allow optional
         # Skip toolkit-owned OUTPUT path fields (created by the clone/build
         # gate at run/setup, not user-provided inputs). Must precede the
-        # isinstance(v, Path) check because model_dump() (mode="python")
-        # passes these fields as Path objects, so the existence branch would
-        # otherwise fire. See system.py TRITONSWMM/SWMM clone gates.
+        # isinstance(v, Path) check. Under mode="after" pydantic has coerced
+        # EVERY Path-annotated field, so the existence branch would otherwise
+        # fire on all of them, not only on the model_dump(mode="python")
+        # re-validation path this comment originally described. The skip is
+        # therefore load-bearing on every entry shape. Do not move it below
+        # the isinstance check. See system.py TRITONSWMM/SWMM clone gates.
         field_info = cls.model_fields.get(info.field_name)
         extra = field_info.json_schema_extra if field_info is not None else None
         if isinstance(extra, dict) and extra.get("toolkit_owned_output"):
             return v
-        # Only handle Path or str values
+        # In mode="after" a Path-annotated field ALWAYS arrives as a Path, whatever the
+        # entry shape was, so this isinstance is the FIELD SELECTOR, not a fallback.
+        # A list[Path] arrives as a list and correctly declines here.
         if isinstance(v, Path):
             p = Path(v).expanduser()
+            # DOCUMENT-LEVEL LOAD MODE, read from pydantic's validation context because the
+            # claim is about the DOCUMENT being validated, not about any field.
+            #   runnable (default) -- every declared input resolves now.
+            #   template           -- the path strings are not yet paths (an unexpanded
+            #                         ${DATA_DIR} placeholder); existence is ill-formed.
+            #   metadata           -- the paths are final, but THIS read does not require
+            #                         them and asserts nothing about them.
+            # The skip is deliberately here, INSIDE the selector and AFTER expanduser, so
+            # the ONLY thing a non-runnable intent changes is the existence assertion --
+            # the stored value is normalized identically on every path.
+            # ABSENT CONTEXT IS STRICT: a caller that says nothing gets the check, and a
+            # direct constructor cannot carry context and so cannot opt out.
+            context = getattr(info, "context", None) or {}
+            if context.get("existence", "runnable") != "runnable":
+                return p
             if not p.exists():
                 raise ValueError(f"File does not exist: {p}")
-            return p  # convert str → Path
-        # everything else is ignored
+            return p  # pydantic already coerced; this returns the expanduser-normalized value
+        # every non-Path-annotated field is ignored
         return v
