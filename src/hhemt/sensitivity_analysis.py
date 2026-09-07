@@ -1653,12 +1653,21 @@ class TRITONSWMM_sensitivity_analysis:
         # rather than read from validation_report.json. See provenance.store_build_mismatch.
         from hhemt.provenance import store_build_mismatch
 
-        _build_why = store_build_mismatch(fname_out)
+        _stamped_build = (
+            self.experiment.log.consolidation_build_stamp.get()
+            if hasattr(self.experiment.log, "consolidation_build_stamp")
+            else None
+        )
+        _build_why = store_build_mismatch(fname_out, _stamped_build)
         _build_mismatch = _build_why is not None
         if fname_out.exists() and _log_complete and (_subs_stale or _build_mismatch):
-            from hhemt.utils import fast_rmtree
-
-            fast_rmtree(fname_out, analysis_dir=self.analysis_paths.analysis_dir)
+            # NO PRE-DELETE. write_datatree_zarr routes through
+            # utils._publish_store_crash_safe, whose contract is that fname_out is either
+            # ABSENT or a COMPLETE store: it writes to {final}.tmp, renames final to
+            # .aside, os.replace()s tmp over final, then drops .aside. Deleting final here
+            # made that rename preserve nothing, so a failure between this branch and the
+            # write at the end of this method left NO store at all. Falling through to the
+            # rebuild is the whole action; the store is replaced atomically there.
             if verbose:
                 _why = _build_why if _build_mismatch else "at least one member's consolidation inputs changed"
                 print(f"Sensitivity DataTree zarr present at {fname_out} but {_why} — rebuilding.")
@@ -1672,9 +1681,9 @@ class TRITONSWMM_sensitivity_analysis:
             self._write_master_du_sentinel()
             return fname_out
         if fname_out.exists() and not _log_complete:
-            from hhemt.utils import fast_rmtree
-
-            fast_rmtree(fname_out, analysis_dir=self.analysis_paths.analysis_dir)
+            # NO PRE-DELETE -- see the sibling arm above. A present-but-incomplete store is
+            # still replaced, by the crash-safe publish at the end of this method rather
+            # than by a deletion ~90 lines before its replacement exists.
             if verbose:
                 print(
                     f"Sensitivity DataTree zarr present at {fname_out} but log incomplete — "
@@ -1754,6 +1763,13 @@ class TRITONSWMM_sensitivity_analysis:
         self.experiment._refresh_log()
         if hasattr(self.experiment.log, "sensitivity_datatree_consolidation_complete"):
             self.experiment.log.sensitivity_datatree_consolidation_complete.set(True)
+        # Master-tier twin of the member-tier stamp in processing_analysis: the
+        # CONSOLIDATION build that wrote this master store, so the build gate above
+        # compares two values minted by the same stage and therefore converges.
+        if hasattr(self.experiment.log, "consolidation_build_stamp"):
+            from hhemt.provenance import producing_stamp as _producing_stamp
+
+            self.experiment.log.consolidation_build_stamp.set(str(_producing_stamp().get("hhemt_sha") or ""))
 
         if verbose:
             print(f"Wrote sensitivity DataTree zarr to {fname_out}")

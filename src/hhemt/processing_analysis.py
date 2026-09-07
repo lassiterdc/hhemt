@@ -237,16 +237,24 @@ class TRITONSWMM_analysis_post_processing:
         # conditions: a disjunct added only to the rebuild branch would be unreachable.
         from hhemt.provenance import store_build_mismatch
 
-        _build_why = store_build_mismatch(fname_out)
+        _stamped_build = (
+            self._analysis.log.consolidation_build_stamp.get()
+            if hasattr(self._analysis.log, "consolidation_build_stamp")
+            else None
+        )
+        _build_why = store_build_mismatch(fname_out, _stamped_build)
         _build_mismatch = _build_why is not None
         if fname_out.exists() and _log_complete and _inputs_match and not _build_mismatch:
             if verbose:
                 print(f"DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
             return fname_out
         if fname_out.exists() and _log_complete and (not _inputs_match or _build_mismatch):
-            from hhemt.utils import fast_rmtree
-
-            fast_rmtree(fname_out, analysis_dir=self._analysis.analysis_paths.analysis_dir)
+            # NO PRE-DELETE. Same reasoning as the sensitivity-master twin, plus one this
+            # tier owns: _retrieve_combined_output below raises FileNotFoundError when a
+            # summary is absent, and when this method is called from the master's
+            # member-ensure loop that exception is swallowed by allow_incomplete=True and
+            # the member is skipped -- so a pre-delete here destroyed the member's store
+            # AND dropped it from the master tree in one pass, silently.
             if verbose:
                 _why = (
                     _build_why
@@ -258,9 +266,7 @@ class TRITONSWMM_analysis_post_processing:
                 )
                 print(f"DataTree zarr present at {fname_out} but {_why} — rebuilding.")
         if fname_out.exists() and not _log_complete:
-            from hhemt.utils import fast_rmtree
-
-            fast_rmtree(fname_out, analysis_dir=self._analysis.analysis_paths.analysis_dir)
+            # NO PRE-DELETE -- see the sibling arm above.
             if verbose:
                 print(f"DataTree zarr present at {fname_out} but log incomplete — rebuilding (treating as corrupt).")
 
@@ -338,6 +344,15 @@ class TRITONSWMM_analysis_post_processing:
             self._analysis.log.consolidation_version.set(self.CONSOLIDATION_VERSION)
         if hasattr(self._analysis.log, "consolidation_inputs_fingerprint"):
             self._analysis.log.consolidation_inputs_fingerprint.set(_inputs_fingerprint)
+        # The convergent operand for the build gate: stamp the CONSOLIDATION build that
+        # just wrote this store, minted inline per producing_stamp()'s rule that a stamp
+        # records the code that actually ran the stage. Placed beside the fingerprint set
+        # deliberately -- these two are the same mechanism and drifting them apart is what
+        # produced the non-convergent gate this replaces.
+        if hasattr(self._analysis.log, "consolidation_build_stamp"):
+            from hhemt.provenance import producing_stamp as _producing_stamp
+
+            self._analysis.log.consolidation_build_stamp.set(str(_producing_stamp().get("hhemt_sha") or ""))
         elapsed_s = time.time() - start_time
         self._analysis.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 

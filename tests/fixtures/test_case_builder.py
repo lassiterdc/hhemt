@@ -558,7 +558,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         self.analysis_yaml.write_text(yaml.safe_dump(analysis_cfg, sort_keys=False))
 
 
-def induce_incomplete_analysis(sensitivity, member_id, *, delete_master_tree=True):
+def induce_incomplete_analysis(sensitivity, member_id, *, delete_master_tree=False):
     """Induce the flag-present / summary-absent (or summary-absent generally)
     partial-completion state for ONE member of a completed sensitivity
     analysis, for reprocess regression coverage.
@@ -569,10 +569,19 @@ def induce_incomplete_analysis(sensitivity, member_id, *, delete_master_tree=Tru
       * the sub's ``analysis_datatree.zarr``,
       * the sub's consolidation log-success record (so completion is not
         falsely reported),
-    and (when ``delete_master_tree``) the master ``sensitivity_datatree.zarr``
-    plus ``f_consolidate_experiment_complete.flag`` so the next reprocess rebuilds.
+    and, only when ``delete_master_tree=True`` is passed explicitly, the master
+    ``sensitivity_datatree.zarr`` plus ``f_consolidate_experiment_complete.flag`` so
+    the next reprocess rebuilds. That flag DEFAULTS TO FALSE.
     Leaves the sub's ``d_process_*`` and ``c_run_*`` flags INTACT — that is the
     divergence state under test. Returns the list of deleted summary paths.
+
+    ``delete_master_tree`` was flipped from True to False on 2026-09-06. At that time the
+    helper had exactly one call site and it passed the flag explicitly, so the flip changed
+    no behaviour -- it removes a latent footgun for a future caller, who would otherwise
+    have to know to pass the flag to keep the master tree it is most likely to want to
+    observe. That is a claim about a past state and needs no keeper. No live census is
+    recorded here on purpose: a count embedded in installed source is a decaying
+    measurement with nobody maintaining it.
     """
     from hhemt.scenario import TRITONSWMM_scenario
     from hhemt.utils import fast_rmtree

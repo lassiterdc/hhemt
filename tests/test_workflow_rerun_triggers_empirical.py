@@ -47,6 +47,14 @@ def _run_full_workflow(analysis, *, pickup: bool) -> dict:
         rerun_swmm_hydro_if_outputs_exist=False,
         process_timeseries=True,
         which="both",
+        # Retained-output size is a PRODUCT: this setting times the domain cell
+        # count times timesteps. The setting must stay "none" — forced reclamation
+        # updates output mtimes and this test's whole assertion is that untouched
+        # scenarios' mtimes are UNCHANGED across two invocations. The bound comes
+        # from the other two factors, both SyntheticModelParams defaults:
+        # n_cols=16 / n_rows=30 (_build.py:28,31) = 480 cells, and
+        # sim_duration_min=180 / reporting_timestep_s=10.0 (_build.py:40,48).
+        # Raising ANY of the four raises retained bytes proportionally.
         override_clear_raw="none",
         compression_level=5,
         pickup_where_leftoff=pickup,
@@ -89,13 +97,13 @@ def _exercise_add_remove_rerun(analysis, *, kind: str) -> None:
     )
 
 
-def test_rerun_triggers_multi_sim_add_remove(norfolk_multi_sim_analysis):
+def test_rerun_triggers_multi_sim_add_remove(synth_multi_sim_analysis):
     """Multi-sim: add+remove a scenario row in weather_events_to_simulate, re-run,
     assert untouched scenarios were not re-executed."""
-    _exercise_add_remove_rerun(norfolk_multi_sim_analysis, kind="multi_sim")
+    _exercise_add_remove_rerun(synth_multi_sim_analysis, kind="multi_sim")
 
 
-def test_rerun_triggers_sensitivity_add_remove(norfolk_sensitivity_analysis):
+def test_rerun_triggers_sensitivity_add_remove(synth_sensitivity_analysis):
     """Sensitivity: add+remove a member row in the sensitivity CSV, re-run,
     assert untouched members' scenarios were not re-executed."""
-    _exercise_add_remove_rerun(norfolk_sensitivity_analysis, kind="sensitivity")
+    _exercise_add_remove_rerun(synth_sensitivity_analysis, kind="sensitivity")
