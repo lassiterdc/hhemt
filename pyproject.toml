@@ -55,13 +55,15 @@ dependencies = [
     "hsclient",
     "requests>=2.25",
     # SWMM Python stack — deliberately under-constrained for the immutable v0.1.0 wheel.
-    # The VALIDATED engine (swmm-toolkit 0.15.x + pyswmm 2.0.1) ships ONLY from
-    # conda-forge and cannot be expressed here: swmmio 0.8.5 (validated) caps
+    # The VALIDATED engine is NOT conda-exclusive: the Option C pin below resolves a
+    # stack _assert_validated_swmm_stack ACCEPTS from PyPI alone. What conda-forge
+    # supplies that pip cannot is the --no-deps swmmio install: swmmio 0.8.5 caps
     # pyswmm<2.0 — UNSATISFIABLE with the pyswmm 2.x prepare_scenario requires — and
     # the conda env installs swmmio with `--no-deps`, which pip metadata has no way to
-    # express. A fresh `pip install hhemt` therefore resolves an UNVALIDATED SWMM stack
-    # (swmm-toolkit 0.16.2 on py3.12); the fail-closed guard in swmm_runoff_modeling.py
-    # refuses SWMM execution on it and points to the conda install
+    # express -- which is why the swmmio pin below is explicit rather than resolved.
+    # A fresh `pip install hhemt` resolves a stack the fail-closed guard in
+    # swmm_runoff_modeling.py ACCEPTS: the Option C pin caps swmm-toolkit below the
+    # abi3 lineage. Conda remains the recommended path for the HPC pins
     # (docs/how-to/installation.md Option A). Non-SWMM use (reporting, consolidation,
     # publishing, .inp parsing) works regardless. See
     # library/knowledge/environment-management/pip metadata cannot reproduce a --no-deps conda environment.md.

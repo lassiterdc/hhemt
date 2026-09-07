@@ -7,6 +7,7 @@ import pytest
 
 import tests.fixtures.test_case_catalog as cases
 from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV
+from tests.fixtures._compile_guard import arm_compile_guard
 
 _SYNTH_SENSITIVITY_REPORT_CONFIG = (
     Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
@@ -41,55 +42,6 @@ def _runs_root_override_env(path):
 
 _COMPILE_GUARD_ENV = "HHEMT_FORBID_COMPILE"
 
-#: Every public compile entry point plus every shared backend, as of LAYOUT_VERSION 22.
-#: `_compile_backend_locked`, `_compile_SWMM_locked` and `_compile_triton_only_backend_locked`
-#: are reached ONLY from the members below (system.py:1665 and siblings), so they are covered
-#: transitively. Re-derive with: grep -n "    def .*compile" src/hhemt/system.py
-_COMPILE_ENTRY_POINTS = (
-    "compile_TRITON_SWMM",
-    "_compile_backend",
-    "compile_TRITON_only",
-    "_compile_triton_only_backend",
-    "compile_SWMM",
-)
-
-
-def _forbid_compile(name):
-    """Return a stand-in for a compile entry point that refuses instead of building."""
-
-    def _raise(*_args, **_kwargs):
-        raise RuntimeError(
-            f"System.{name} was reached inside the fast gate (Gate A). A test that compiles "
-            "does not belong there. Either mark it `@pytest.mark.compile_tier`, or make its "
-            "dependency on `tritonswmm_cpu_compiled` visible to the collection-time fixture "
-            "closure -- a `request.getfixturevalue(...)` request is NOT visible, which is why "
-            "this guard exists."
-        )
-
-    return _raise
-
-
-def _arm_compile_guard():
-    """Replace every compile entry point with a refusal. Armed only by Gate A.
-
-    Scoped to COMPILE and deliberately NOT to `TRITONSWMM_analysis.run`: a guard on
-    `run` over-fires on the legitimate `run(dry_run=True)`-over-a-patched-
-    `submit_workflow` pattern (three such tests in tests/test_from_scratch_honesty.py),
-    while the compile guard fires on genuine leaks only.
-
-    Fails loudly if an entry point is renamed or removed, because a guard that silently
-    patches nothing is indistinguishable from a guard that found nothing.
-    """
-    from hhemt.system import TRITONSWMM_system
-
-    for name in _COMPILE_ENTRY_POINTS:
-        if not hasattr(TRITONSWMM_system, name):
-            raise RuntimeError(
-                f"compile guard: TRITONSWMM_system has no attribute {name!r}. The entry-point "
-                "census in tests/conftest.py is stale; re-derive it before running Gate A."
-            )
-        setattr(TRITONSWMM_system, name, _forbid_compile(name))
-
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
@@ -103,8 +55,12 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "tritonswmm_cpu_compiled" in item.fixturenames:
             item.add_marker(pytest.mark.compile_tier)
+    # ARMING now defaults ON and lives in the REPO-ROOT conftest (see there for why).
+    # HHEMT_FORBID_COMPILE is retained as an explicit force-arm so every existing
+    # invocation keeps its behaviour; it is now redundant with the default, not
+    # load-bearing. HHEMT_COMPILE_VENUE is what RELAXES.
     if os.environ.get(_COMPILE_GUARD_ENV) == "1":
-        _arm_compile_guard()
+        arm_compile_guard()
 
 
 def pytest_report_header(config):

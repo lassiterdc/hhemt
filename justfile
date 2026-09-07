@@ -50,7 +50,7 @@ test *ARGS:
 # a 6s job). The JSONL ledger survives regardless -- the plugin writes its own fd.
 test-gated *ARGS:
     @echo "Running GATED (compile tier required) with arg: {{ARGS}}"
-    HHEMT_REQUIRE_COMPILE_TIER=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_gated.jsonl" conda run --no-capture-output -n hhemt uv run --active --extra test pytest -p _runner {{ARGS}}
+    HHEMT_COMPILE_VENUE=toolchain HHEMT_REQUIRE_COMPILE_TIER=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_gated.jsonl" conda run --no-capture-output -n hhemt uv run --active --extra test pytest -p _runner {{ARGS}}
 
 # GATE A -- the fast, waitable contributor gate. NOT the D70 gate.
 # Runs under conda ON PURPOSE: the toolchain is present there, so a green result proves

@@ -1,4 +1,5 @@
 """Worktree-aware import guard. See worktree-aware project testing protocol."""
+
 import os
 import sys
 from pathlib import Path
@@ -47,3 +48,22 @@ if not _DISABLE:
         sys.__stderr__.write(f"[worktree-test-guard] {msg}\n")
         sys.__stderr__.flush()
         sys.exit(99)
+
+
+# --- Compile-venue guard (fail-closed default) -------------------------------
+# The compile guard is ARMED BY DEFAULT and RELAXED only by an explicit venue
+# declaration. HHEMT_COMPILE_VENUE names the VENUE and governs BOTH compilation
+# (here) and SWMM execution (src/hhemt/swmm_runoff_modeling.py); the single
+# reader is hhemt._compile_venue, imported by both so the token has one meaning.
+#
+# This lives in the REPO-ROOT conftest, not tests/conftest.py, because
+# pyproject.toml's testpaths=["tests"] makes that file conditional on the
+# invocation shape -- and a fail-closed default that is absent under some
+# invocation is opt-in again, silently.
+def pytest_collection_modifyitems(config, items):
+    """Arm the compile guard unless the session declares a permitted venue."""
+    from hhemt._compile_venue import venue_is_permitted
+    from tests.fixtures._compile_guard import arm_compile_guard
+
+    if not venue_is_permitted():
+        arm_compile_guard()
