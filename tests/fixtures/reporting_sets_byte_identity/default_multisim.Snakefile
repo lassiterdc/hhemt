@@ -84,9 +84,6 @@ rule setup:
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --process-system-inputs \
             \
-            --compile-triton-swmm \
-            --compile-triton-only \
-            --compile-swmm \
             \
             --flag-output {output} \
             --rule-name setup \

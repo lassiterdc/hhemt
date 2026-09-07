@@ -15,6 +15,7 @@ from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 
 import hhemt.utils as ut
+from hhemt._compile_venue import COMPILE_VENUE_ENV, refused_in_undeclared_test_venue
 from hhemt._filelock_compat import resolve_filelock
 from hhemt.analysis import TRITONSWMM_analysis
 from hhemt.config.loaders import load_system_config
@@ -22,6 +23,42 @@ from hhemt.exceptions import CompilationError, ConfigurationError, ProcessingErr
 from hhemt.log import TRITONSWMM_system_log
 from hhemt.paths import SysPaths
 from hhemt.plot_system import TRITONSWMM_system_plotting
+
+
+def _refuse_compile_in_undeclared_test_venue(entry_point: str) -> None:
+    """Refuse to build a solver from a test session that declared no permitted venue.
+
+    WHY A TEST-FRAMEWORK NAME APPEARS IN SHIPPED CODE. The predicate is a CONJUNCTION
+    whose first term is an ambient environment fact, false for every process not inside
+    a pytest test phase -- so no user can reach this refusal, even though compiling is
+    something users legitimately do. This mirrors
+    ``swmm_runoff_modeling._refuse_swmm_in_undeclared_test_venue``, whose guarded act is
+    likewise on an ordinary user path.
+
+    WHY IT EXISTS ALONGSIDE tests/fixtures/_compile_guard.py. That guard is armed from a
+    pytest conftest hook and REPLACES the method; while armed, this body never runs. They
+    cover DISJOINT populations -- a conftest hook reaches only its own process, and a
+    Snakemake rule shelling ``python -m hhemt.setup_workflow`` creates one that has none.
+    Deleting either leaves a population unguarded.
+
+    ConfigurationError, not CompilationError: nothing failed to build. Raising the
+    compile type renders "compilation failed / Return code / Run: cat {log}" and hands
+    the reader a log path that does not exist.
+    """
+    if refused_in_undeclared_test_venue():
+        raise ConfigurationError(
+            field=COMPILE_VENUE_ENV,
+            message=(
+                f"{entry_point} was called from a test session on a machine that has not "
+                f"been declared a permitted build venue. Nothing has failed: building a "
+                f"solver is only performed where the venue is declared."
+            ),
+            fix_hint=(
+                f"Set {COMPILE_VENUE_ENV} to the venue you are on (see "
+                f"docs/how-to/installation.md), or run the fast test tier, which builds nothing."
+            ),
+        )
+
 
 _ROW_BLOCK_SIZE = 1024  # row-streaming block size for _write_raster (D-PR-5 B)
 
@@ -385,8 +422,7 @@ class TRITONSWMM_system:
         configured = self.cfg_system.crs.horizontal_epsg
         if epsg is not None and configured != epsg:
             raise ConfigurationError(
-                f"DEM CRS (EPSG:{epsg}) does not match configured "
-                f"cfg_system.crs.horizontal_epsg (EPSG:{configured})."
+                f"DEM CRS (EPSG:{epsg}) does not match configured cfg_system.crs.horizontal_epsg (EPSG:{configured})."
             )
         if epsg is None:
             raise ConfigurationError(
@@ -614,6 +650,7 @@ class TRITONSWMM_system:
         verbose : bool
             If True, print progress messages
         """
+        _refuse_compile_in_undeclared_test_venue("System.compile_TRITON_SWMM")
 
         # Determine which backends to compile
         if backends is None:
@@ -684,7 +721,7 @@ class TRITONSWMM_system:
                 else:
                     raise ConfigurationError(
                         field="gpu_compilation_backend",
-                        message=f"Invalid value '{self.gpu_compilation_backend}'.\n" "  Must be 'HIP' or 'CUDA'.",
+                        message=f"Invalid value '{self.gpu_compilation_backend}'.\n  Must be 'HIP' or 'CUDA'.",
                         config_path=self.system_config_yaml,
                     )
 
@@ -1570,6 +1607,8 @@ class TRITONSWMM_system:
                 print("[TRITON-only] Skipped (toggle_triton_model=False)", flush=True)
             return
 
+        _refuse_compile_in_undeclared_test_venue("System.compile_TRITON_only")
+
         # Determine which backends to compile
         if backends is None:
             backends = ["cpu"]
@@ -1964,6 +2003,8 @@ class TRITONSWMM_system:
             if verbose:
                 print("[SWMM] Skipped (toggle_swmm_model=False)", flush=True)
             return
+
+        _refuse_compile_in_undeclared_test_venue("System.compile_SWMM")
 
         build_dir = self.sys_paths.SWMM_build_dir
         if build_dir is None:

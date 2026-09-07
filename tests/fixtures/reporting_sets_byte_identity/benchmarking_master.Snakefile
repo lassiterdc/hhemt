@@ -68,9 +68,6 @@ rule setup_target_0:
             --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             \
             \
-            --compile-triton-swmm \
-            \
-            \
             \
             --flag-output {output} \
             --rule-name setup_target_0 \

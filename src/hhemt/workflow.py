@@ -2940,15 +2940,11 @@ rule consolidate_scenario:
         """
         '''
         else:
-            tritonswmm_model = self.system.cfg_system.toggle_tritonswmm_model
             setup_shell = f'''"""
         {self.python_executable} -m hhemt.setup_workflow \\
             {gpu_compile_config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
-            {"--compile-triton-swmm " if compile_TRITON_SWMM and tritonswmm_model else ""}\\
-            {"--compile-triton-only " if compile_TRITON_SWMM and self.system.cfg_system.toggle_triton_model else ""}\\
-            {"--compile-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
             --flag-output {{output}} \\
             --rule-name setup \\
@@ -8763,7 +8759,6 @@ onerror:
                 system_config_yaml=target.system_config_yaml,
                 target_partition=target.target_partition,
             )
-            target_cfg_system = target.system.cfg_system
             snakefile_content += f'''rule setup_target_{target.target_id}:
     output: "_status/a_setup_target_{target.target_id}_complete.flag"
     log: "{log_dir_str}/setup_target_{target.target_id}.log"
@@ -8786,9 +8781,6 @@ onerror:
             {target_config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
-            {"--compile-triton-swmm " if compile_TRITON_SWMM and target_cfg_system.toggle_tritonswmm_model else ""}\\
-            {"--compile-triton-only " if compile_TRITON_SWMM and target_cfg_system.toggle_triton_model else ""}\\
-            {"--compile-swmm " if compile_TRITON_SWMM and target_cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
             --flag-output {{output}} \\
             --rule-name setup_target_{target.target_id} \\

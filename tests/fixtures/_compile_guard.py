@@ -38,6 +38,17 @@ COMPILE_ENTRY_POINTS = (
     "compile_SWMM",
 )
 
+#: Entry points as they were BEFORE arming, keyed by name. Populated by
+#: `arm_compile_guard` with `setdefault` so a second arming in one session cannot
+#: record a stand-in as the original. Read via `pre_arming_entry_point`.
+#: MAIN-AGENT V13 DISCLOSE-AND-PROCEED, 2026-09-07: hhemt round 33's File 4a uses this
+#: name four times and lists it under its own "Minted identifiers", but no spec declares
+#: it and it was absent from this file -- applied as written, File 4a is a NameError.
+#: The declaration is tree-determinable from its two uses and preserves the spec's
+#: stated intent ("Retaining them costs one dict"). Verified by the node the spec itself
+#: named for running.
+_PRE_ARMING_ENTRY_POINTS: dict[str, object] = {}
+
 
 def _forbid_compile(name):
     """Return a stand-in for a compile entry point that refuses instead of building."""
@@ -77,4 +88,22 @@ def arm_compile_guard():
                 "census in tests/fixtures/_compile_guard.py is stale; re-derive it before "
                 "running any gate."
             )
+        # setdefault, never assignment: arming twice in one session must not record the
+        # stand-in as the original.
+        _PRE_ARMING_ENTRY_POINTS.setdefault(name, getattr(TRITONSWMM_system, name))
         setattr(TRITONSWMM_system, name, _forbid_compile(name))
+
+
+def pre_arming_entry_point(name: str):
+    """Return the entry point as it was BEFORE arming, or the live one if never armed.
+
+    A guard that replaces callables and keeps no handle on them cannot be introspected
+    or unwound by anything, which makes any test of what those entry points DO
+    structurally unrunnable in a default (armed) session. This is the seam that lets
+    such a test drive the real callable DELIBERATELY; it weakens nothing, because the
+    guard exists to stop an ACCIDENTAL compile and a caller reaching for this one is
+    not that.
+    """
+    from hhemt.system import TRITONSWMM_system
+
+    return _PRE_ARMING_ENTRY_POINTS.get(name) or getattr(TRITONSWMM_system, name)
