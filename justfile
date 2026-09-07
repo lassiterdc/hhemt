@@ -15,8 +15,9 @@ qa:
     # Gate A's population, hosted on the low-barrier uv path so a contributor needs no
     # conda env. The marker is stamped at COLLECTION by tests/conftest.py from each
     # test's fixture closure, and the compile gate's skip fires later at fixture SETUP,
-    # so this selects the same tests under uv as under conda -- measured, 2996/3195 on
-    # both hosts with zero node-id difference. `just test-fast` is the conda-hosted
+    # so this selects the same tests under uv as under conda. That equality is ASSERTED
+    # here and checked by nothing -- do not record a count in this comment; the last one
+    # (2996/3195) was stale within weeks. `just test-fast` is the conda-hosted
     # sibling that additionally PROVES the marker did the deselecting rather than PATH.
     uv run --python=3.12 --extra test pytest -m "not slow and not compile_tier and not requires_snakemake_subprocess"
 

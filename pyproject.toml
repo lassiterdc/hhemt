@@ -203,7 +203,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "globus_e2e: end-to-end Globus transfer tests; require activated endpoints and HHEMT_GLOBUS_E2E=1",
     "publish_e2e: end-to-end publish (HydroShare/Zenodo) tests; require credentials and HHEMT_PUBLISH_E2E=1",
-    "requires_snakemake_subprocess: test launches Snakemake subprocess; serialize under xdist",
+    "requires_snakemake_subprocess: deselected by Gate A. Measured NOT to spawn in 36 of the 107 tests this marker removes from Gate A; population under re-derivation. Rationale: incompatible with pytest-xdist nested parallelism, never wired.",
     "compile_tier: DERIVED at collection from the fixture closure (tests/conftest.py) for any test holding `tritonswmm_cpu_compiled`; hand-applied ONLY where a body compiles directly. Deselected by Gate A, required by Gate B.",
 ]
 # Dump every thread's traceback after this many seconds in ONE test, to the stderr fd

@@ -64,8 +64,17 @@ open an issue to discuss before submitting.
   recipe in `justfile` yourself, in the order they appear there.
 - The suite has two tiers, and `just qa` runs the first one:
     - **Gate A — `just test-fast`.** Everything the toolkit decides before a simulation
-      starts, plus the on-disk layout contract. This is the gate a pull request must
-      pass, and `just qa` invokes exactly this recipe, so the two run the same tests.
+      starts, plus the on-disk layout contract. Run it before opening a pull request —
+      it is NOT what CI runs: `.github/workflows/test.yml` runs bare `pytest` with no
+      marker filter, and `compile-tests.yml` is the job that must be a required status
+      check before a release PR. `just qa` does NOT invoke this recipe either — it
+      inlines its own `pytest` carrying the same `-m` expression, so the two apply the
+      same marker FILTERING. That does not make the collected populations equal: the
+      two resolve different dependency sets — `qa` runs `uv run --python=3.12 --extra
+      test`, while `test-fast` uses the conda `hhemt` environment, which
+      `environment.yaml` pins to Python 3.11 — and a module-level import present in one
+      resolution and absent from the other changes what is collected before any marker
+      is evaluated.
     - **Gate B — `just test-gated`.** The whole suite with no marker filter, including
       every test that compiles TRITON-SWMM or asserts on a tree a simulation produced.
       It requires the `hhemt` conda environment for `cmake` and `mpic++`, it takes

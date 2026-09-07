@@ -39,14 +39,6 @@ def _runs_root_override_env(path):
 # import tests.fixtures.test_case_catalog as cases
 
 
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers",
-        "requires_snakemake_subprocess: test launches Snakemake as a subprocess; "
-        "incompatible with pytest-xdist parallel workers (nested parallelism)",
-    )
-
-
 _COMPILE_GUARD_ENV = "HHEMT_FORBID_COMPILE"
 
 #: Every public compile entry point plus every shared backend, as of LAYOUT_VERSION 22.

@@ -21,7 +21,9 @@ Three in-session correctness gates for the containerization seams:
    first surface at a Phase-5 cluster run.
 
 Note: these tests do NOT carry ``@pytest.mark.requires_snakemake_subprocess`` —
-that marker means "launches Snakemake as a subprocess; serialize under xdist", but
+that marker is a Gate A tier exclusion, not a serialization directive (its
+"serialize under xdist" wording named a mechanism that was never wired). These tests
+are excluded from it on the ground that
 ``generate_snakefile_content()`` is pure in-process generation (the byte-identity
 model test in ``test_workflow_snakefile_byte_identity.py`` is likewise unmarked),
 and the runtime-seam test mocks the scenario/analysis with no subprocess.
@@ -505,9 +507,7 @@ def test_container_prefixed_shells_never_invoke_a_host_interpreter() -> None:
     got = builder.generate_snakefile_content()
 
     declared_in_sif = {cspec.python_in_sif, *cspec.exe_in_sif.values()}
-    found = re.findall(
-        r"apptainer exec\s+(?:-\S+\s+|\S+:\S+\s+)*" + re.escape(cspec.sif_path) + r"\s+(\S+)", got
-    )
+    found = re.findall(r"apptainer exec\s+(?:-\S+\s+|\S+:\S+\s+)*" + re.escape(cspec.sif_path) + r"\s+(\S+)", got)
     assert found, "container mode emitted no `apptainer exec {sif} <exe>` command to check"
     for exe in found:
         assert exe in declared_in_sif or "/" not in exe, (
@@ -566,9 +566,7 @@ def test_container_process_prefix_loads_the_apptainer_module_when_declared() -> 
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
-    tc.analysis.cfg_hpc_system.container = ContainerSpec(
-        sif_path="/opt/test.sif", apptainer_module="apptainer/1.5.0"
-    )
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif", apptainer_module="apptainer/1.5.0")
     got = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
 
     for line in got.splitlines():
@@ -700,4 +698,3 @@ def test_native_absent_cpu_build_log_raises_configuration_not_compilation(
     msg = str(excinfo.value)
     assert "does not exist" in msg, msg
     assert "not a compile" in msg, msg
-
