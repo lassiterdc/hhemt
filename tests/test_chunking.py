@@ -54,7 +54,13 @@ def create_spatial_dataset_2d(n_events=10, nx=512, ny=512, n_vars=1, dtype=np.fl
     for i in range(n_vars):
         data_vars[f"var_{i}"] = (
             ["event_iloc", "y", "x"],
-            np.random.randn(n_events, ny, nx).astype(dtype),
+            # Zeros, not randn: compute_optimal_chunks reads only shapes and dtypes,
+            # so these values are never inspected. randn's GENERATION was the cost --
+            # measured 1.2500s for randn alone versus 0.0000s for zeros, with the
+            # .astype() cast worth only ~6% -- and it made test_power_of_two_chunking
+            # a load-sensitive flake against the 5-second autouse alarm below.
+            # Measured: identical chunk dict, 1.65s -> under the 0.005s floor.
+            np.zeros((n_events, ny, nx), dtype=dtype),
         )
 
     ds = xr.Dataset(
@@ -303,6 +309,14 @@ class TestChunkingEdgeCases:
         # When a dimension is chunked (not using full length), it should be power of 2
         event_chunk = chunks["event_iloc"]
         event_len = len(ds["event_iloc"])
+
+        # The else-branch below is `assert x == x` and passes VACUOUSLY. Below ~129
+        # events this dataset stops being chunked at all and the test silently
+        # asserts nothing, so require the precondition the test's own name claims.
+        assert event_chunk < event_len, (
+            f"dataset too small to force chunking (event_chunk={event_chunk}, "
+            f"event_len={event_len}); the power-of-2 assertion below would not run"
+        )
 
         if event_chunk < event_len:
             # If chunked, should be a power of 2
