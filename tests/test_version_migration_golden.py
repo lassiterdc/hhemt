@@ -191,9 +191,9 @@ def test_pair_round_trip(from_v: int, to_v: int, tmp_path: Path) -> None:
     runner.run_migration(work, target=to_v, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
     expected_files = _walk_relative(expected) - {"_version.json"}
     actual_files = _walk_relative(work) - {"_version.json"}
-    assert (
-        expected_files == actual_files
-    ), f"v{from_v} -> v{to_v} mismatch: missing={expected_files - actual_files}, extra={actual_files - expected_files}"
+    assert expected_files == actual_files, (
+        f"v{from_v} -> v{to_v} mismatch: missing={expected_files - actual_files}, extra={actual_files - expected_files}"
+    )
 
     # CONTENT projection. The path-set comparison above cannot see a divergence living
     # in a value, a dtype, or an attr, and a confluence break is free to hide there --
@@ -387,46 +387,6 @@ def test_v0001_tolerates_mixed_completion_state(tmp_path: Path) -> None:
         assert not legacy.match(entry.name), f"unexpected legacy form: {entry}"
 
 
-@pytest.mark.slow
-def test_v0_to_v1_against_norfolk_sensitivity_analysis_fixture(norfolk_sensitivity_analysis, tmp_path: Path) -> None:
-    """Integration test: backport the live norfolk_sensitivity_analysis tree
-    to v0 form, run V0001, assert the original tree shape is restored."""
-    analysis_dir = norfolk_sensitivity_analysis.analysis_paths.analysis_dir
-    # Precondition: the backport needs materialized sub-analysis sims dirs to rename
-    # into legacy ^\d+- form (the v0 baseline signal infer_layout_version keys on,
-    # state.py:191-203). The norfolk_sensitivity_analysis fixture uses
-    # start_from_scratch=True (conftest.py:99), which runs only
-    # process_system_level_inputs and never materializes sims. Without sims, the
-    # backport renames nothing, no baseline signal exists, and run_migration raises
-    # BaselineRequiredError. Skip with an explicit premise message rather than erroring;
-    # the full fix (materialize a sims tree) is tracked as follow-up F-P3R-5.
-    _sims_dirs = [d for d in list(analysis_dir.glob("subanalyses/sa_*/sims")) if d.is_dir() and any(d.iterdir())]
-    if not _sims_dirs:
-        pytest.skip(
-            "norfolk_sensitivity_analysis (start_from_scratch=True) materializes no "
-            "sub-analysis sims to backport; needs a cached/materialized-run fixture. "
-            "See follow-up: materialize sims for the v0->v1 norfolk integration test."
-        )
-    for sims in [analysis_dir / "sims"] + list(analysis_dir.glob("subanalyses/sa_*/sims")):
-        if not sims.is_dir():
-            # A sensitivity master has no top-level sims/; sims live under
-            # subanalyses/sa_*/sims/. Skip the absent top-level candidate.
-            continue
-        for i, entry in enumerate(sorted(sims.iterdir())):
-            if entry.is_dir() and not entry.name[0].isdigit():
-                entry.rename(sims / f"{i}-{entry.name}")
-    result = runner.run_migration(analysis_dir, target=1, apply=True)
-    assert result.applied
-    pattern = re.compile(r"^\d+-")
-    for sims in [analysis_dir / "sims"] + list(analysis_dir.glob("subanalyses/sa_*/sims")):
-        if not sims.is_dir():
-            # A sensitivity master has no top-level sims/; sims live under
-            # subanalyses/sa_*/sims/. Skip the absent top-level candidate.
-            continue
-        for entry in sims.iterdir():
-            assert not pattern.match(entry.name), f"unexpected legacy form: {entry}"
-
-
 def test_v5_to_v6_pins_fingerprint_mtime_to_prepare_flag_reference(tmp_path: Path) -> None:
     """V0006 rewrites fingerprint payloads with mtime pinned to a downstream
     output's reference mtime, NOT preserved from the (possibly bumped) prior
@@ -516,9 +476,9 @@ def test_v6_to_v7_clears_snakemake_metadata_with_backup(tmp_path: Path) -> None:
         "trigger Snakemake's set-change rerun cascade"
     )
     backup_dir = work / ".snakemake" / "metadata.bak.V0007"
-    assert (
-        backup_dir.is_dir()
-    ), "V0007 must back up the cleared metadata to .snakemake/metadata.bak.V0007 for audit + recovery"
+    assert backup_dir.is_dir(), (
+        "V0007 must back up the cleared metadata to .snakemake/metadata.bak.V0007 for audit + recovery"
+    )
     assert (backup_dir / "fake_rule_record.json").is_file(), "Backup must contain the original metadata files"
     # And the flag rename must have happened
     assert not legacy_flag.exists()

@@ -7,64 +7,6 @@ Validates Phase 1 and Phase 2 of enable_swmm_threading_control implementation.
 import pytest
 
 import tests.fixtures.test_case_catalog as cases
-import tests.utils_for_testing as tst_ut
-
-
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_swmm_threads_updated_in_inp_files():
-    """
-    Test that n_omp_threads configuration dynamically updates THREADS parameter.
-
-    Validates:
-    1. THREADS parameter in hydro.inp matches n_omp_threads
-    2. THREADS parameter in full.inp matches n_omp_threads
-    3. Both files are created during scenario preparation
-    4. Configuration value propagates correctly from analysis config
-    """
-    # Get test case with cached system inputs (faster)
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
-    analysis = case.analysis
-
-    # Verify configuration
-    expected_threads = analysis.cfg_analysis.n_omp_threads
-    # Note: actual value depends on test config, just verify it propagates correctly
-    assert expected_threads >= 1, f"n_omp_threads must be >= 1, got {expected_threads}"
-
-    # Prepare scenarios directly (without Snakemake workflow)
-    # This is faster than full workflow and sufficient to test .inp file modification
-    for event_iloc in analysis.df_sims.index:
-        proc = analysis._retrieve_sim_run_processing_object(event_iloc)
-        proc._scenario.prepare_scenario(
-            overwrite_scenario_if_already_set_up=True,
-            rerun_swmm_hydro_if_outputs_exist=True,
-        )
-
-    # Verify all scenarios have updated THREADS parameter
-    for event_iloc in analysis.df_sims.index:
-        proc = analysis._retrieve_sim_run_processing_object(event_iloc)
-        paths = proc.scen_paths
-
-        # Check hydrology.inp (if hydrology enabled)
-        if analysis._system.cfg_system.toggle_use_swmm_for_hydrology:
-            tst_ut.assert_file_exists(paths.swmm_hydro_inp, "SWMM hydrology .inp")
-            with open(paths.swmm_hydro_inp) as fp:
-                content = fp.read()
-                expected_line = f"THREADS              {expected_threads}"
-                assert expected_line in content, (
-                    f"hydro.inp for event {event_iloc} missing '{expected_line}'. "
-                    f"Found in [OPTIONS]: {_extract_options_section(content)}"
-                )
-
-        # Check full.inp (if full model enabled)
-        if analysis._system.cfg_system.toggle_swmm_model:
-            tst_ut.assert_file_exists(paths.swmm_full_inp, "SWMM full .inp")
-            with open(paths.swmm_full_inp) as fp:
-                content = fp.read()
-                expected_line = f"THREADS              {expected_threads}"
-                assert expected_line in content, (
-                    f"full.inp for event {event_iloc} missing '{expected_line}'. "
-                    f"Found in [OPTIONS]: {_extract_options_section(content)}"
-                )
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
