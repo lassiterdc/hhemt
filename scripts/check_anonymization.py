@@ -194,7 +194,7 @@ def tracked_files(root: Path) -> list[str]:
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode("utf-8", "replace").strip() if exc.stderr else ""
         raise SystemExit(
-            f"check_anonymization: 'git ls-files' failed in {root!r} " f"(not a git repository?): {stderr}"
+            f"check_anonymization: 'git ls-files' failed in {root!r} (not a git repository?): {stderr}"
         ) from exc
     return [p for p in proc.stdout.decode("utf-8").split("\0") if p]
 

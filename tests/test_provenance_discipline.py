@@ -98,6 +98,69 @@ def _renderer_files() -> list[Path]:
     return sorted(p for p in _RENDERERS_DIR.glob("*.py") if not p.stem.startswith("_"))
 
 
+#: Root-store names V0021 retired. A renderer that hardcodes one is a provenance-
+#: fragility site: the value reaches a written `*.manifest.json` through
+#: `asdict(ProvenanceRef)`, and a name embedded in a GLOB fails silently rather than
+#: loudly (an empty match collapses the declared channel set without emptying it, so
+#: the ADR-6 Gate-A non-empty check never fires).
+_RETIRED_ROOT_STORES = ("sensitivity_datatree.zarr",)
+
+
+def _all_renderer_modules() -> list[Path]:
+    """Every renderer module INCLUDING `_`-prefixed ones.
+
+    `_renderer_files()` excludes them; `_figure_emission.py` is `_`-prefixed and does
+    hardcode a store name, so this check needs the wider set.
+    """
+    return sorted(_RENDERERS_DIR.rglob("*.py"))
+
+
+def _docstring_constant_ids(tree: ast.AST) -> set[int]:
+    """Ids of the `ast.Constant` nodes that ARE docstrings.
+
+    Docstrings legitimately name retired stores when describing history or a
+    per-member store, so they are excluded by identity rather than by heuristic.
+    """
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            body = getattr(node, "body", [])
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                out.add(id(body[0].value))
+    return out
+
+
+@pytest.mark.parametrize("path", _all_renderer_modules(), ids=lambda p: p.name)
+def test_renderer_does_not_hardcode_a_retired_root_store_name(path: Path) -> None:
+    """A renderer must resolve the root consolidated store by NAME CONSTANT, never
+    by a hardcoded literal.
+
+    Anchored on a property that exists in both the pre-fix and post-fix worlds --
+    the COUNT of non-docstring string constants embedding a retired store name --
+    so it discriminates on behaviour rather than on any wording the fix introduces.
+    """
+    tree = ast.parse(path.read_text(), filename=str(path))
+    docstrings = _docstring_constant_ids(tree)
+    offenders = [
+        (node.lineno, node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+        and any(retired in node.value for retired in _RETIRED_ROOT_STORES)
+    ]
+    assert not offenders, (
+        f"{path.name}: {len(offenders)} hardcoded retired root-store name(s) at "
+        f"line(s) {[ln for ln, _ in offenders]}. Import EXPERIMENT_TREE_NAME / "
+        f"ROOT_TREE_NAMES from hhemt.utils instead."
+    )
+
+
 def _attach_parents(tree: ast.AST) -> None:
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
@@ -365,7 +428,7 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
             )
         else:  # pragma: no cover -- guarded by the mapping's own vocabulary
             raise AssertionError(
-                f"{path.name}: unknown exemption kind {kind!r}; expected one of " f"{{'pure_delegate', 'composer'}}."
+                f"{path.name}: unknown exemption kind {kind!r}; expected one of {{'pure_delegate', 'composer'}}."
             )
         return
 
@@ -440,9 +503,9 @@ def test_plotly_alias_rebind_rejected() -> None:
             return fig
     """)
     violations = _lint_source(src)
-    assert any(
-        "alias" in v.lower() or "go_alias" in v for v in violations
-    ), f"Expected violation for non-`go` Plotly alias; got {violations}"
+    assert any("alias" in v.lower() or "go_alias" in v for v in violations), (
+        f"Expected violation for non-`go` Plotly alias; got {violations}"
+    )
 
 
 # ============================================================================

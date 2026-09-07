@@ -521,16 +521,6 @@ class TestPerformance:
 
 
 # =============================================================================
-# Marker Configuration
-# =============================================================================
-
-
-def pytest_configure(config):
-    """Configure custom pytest markers."""
-    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
-
-
-# =============================================================================
 # parse_total_elapsed (Phase 6)
 # =============================================================================
 

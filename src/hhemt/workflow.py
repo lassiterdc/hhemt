@@ -9830,7 +9830,7 @@ rule render_report:
                 renderer_module=tmpl.renderer_module,
                 input_flags=(consolidate_experiment_flag(),),
                 output_path_template=tmpl.output_path_template,
-                source_paths=("sensitivity_datatree.zarr",),
+                source_paths=("experiment_datatree.zarr",),
                 wildcards=tmpl.wildcards,
                 extra_cli_flags=(),
                 extra_params=(),

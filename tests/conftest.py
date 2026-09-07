@@ -7,6 +7,7 @@ import pytest
 
 import tests.fixtures.test_case_catalog as cases
 from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV
+from tests.fixtures._compile_guard import arm_compile_guard
 
 _SYNTH_SENSITIVITY_REPORT_CONFIG = (
     Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
@@ -39,12 +40,27 @@ def _runs_root_override_env(path):
 # import tests.fixtures.test_case_catalog as cases
 
 
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers",
-        "requires_snakemake_subprocess: test launches Snakemake as a subprocess; "
-        "incompatible with pytest-xdist parallel workers (nested parallelism)",
-    )
+_COMPILE_GUARD_ENV = "HHEMT_FORBID_COMPILE"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):
+    """Derive `compile_tier` from the fixture closure, then arm the guard for Gate A.
+
+    `item.fixturenames` is the TRANSITIVE closure, so a test reaching the compile gate
+    through `synthetic_*_completed` or an `_isolated` clone is marked without being
+    named. `tryfirst=True` is what makes this run before pytest's own `-m` filter by
+    CONTRACT rather than by conftest registration order.
+    """
+    for item in items:
+        if "tritonswmm_cpu_compiled" in item.fixturenames:
+            item.add_marker(pytest.mark.compile_tier)
+    # ARMING now defaults ON and lives in the REPO-ROOT conftest (see there for why).
+    # HHEMT_FORBID_COMPILE is retained as an explicit force-arm so every existing
+    # invocation keeps its behaviour; it is now redundant with the default, not
+    # load-bearing. HHEMT_COMPILE_VENUE is what RELAXES.
+    if os.environ.get(_COMPILE_GUARD_ENV) == "1":
+        arm_compile_guard()
 
 
 def pytest_report_header(config):
@@ -1026,7 +1042,7 @@ def synthetic_two_sensitivity_bundle_fixture(rendered_synth_sensitivity, tmp_pat
     import shutil
     import zipfile
 
-    from hhemt.bundle._combine_merge import SENSITIVITY_TREE_NAME
+    from hhemt.bundle._combine_merge import _resolve_root_tree
 
     analysis = rendered_synth_sensitivity
     zip_a = tmp_path / "sens_bundle_a.zip"
@@ -1034,10 +1050,14 @@ def synthetic_two_sensitivity_bundle_fixture(rendered_synth_sensitivity, tmp_pat
     dir_a = tmp_path / "sens_bundle_a"
     with zipfile.ZipFile(zip_a) as zf:
         zf.extractall(dir_a)
-    assert (dir_a / SENSITIVITY_TREE_NAME).exists(), (
-        f"sensitivity-master bundle must ship {SENSITIVITY_TREE_NAME} at its root "
-        f"for combine merge; got: {sorted(p.name for p in dir_a.iterdir())}"
-    )
+    # Assert the property combine NEEDS -- a RESOLVABLE root consolidated tree -- via the
+    # same resolver production uses, never a name. A name assertion here is invisible to
+    # every literal search and breaks on a store rename it never mentions; this one breaks
+    # only when the bundle genuinely ships no resolvable tree, and it breaks LOUDLY:
+    # _resolve_root_tree raises FileNotFoundError naming every accepted name and the
+    # bundle root. No `.exists()` assert is added beside it -- the resolver returns only
+    # existing stores, so such an assert would be true by construction.
+    _resolve_root_tree(dir_a)
     dir_b = tmp_path / "sens_bundle_b"
     # symlinks=True: copy links AS links instead of following them. A scenario dir carries
     # `build_triton -> {software}/build_triton_cpu`, a link into a SHARED cache another

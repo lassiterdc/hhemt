@@ -93,7 +93,21 @@ def _describe_version() -> str:
 
 
 def _is_dirty() -> bool:
-    """True when the toolkit checkout has uncommitted changes at mint time.
+    """True when the toolkit checkout has uncommitted changes to TRACKED files.
+
+    False both when there are none and when the question cannot be answered: the
+    `except` arm below returns the same False a verified-clean tree returns, so a
+    non-git install reads clean. That is a KNOWN RESIDUAL, not a guarantee -- the
+    two-valued field has no cell for "undeterminable", and widening it is tracked
+    separately.
+
+    Scoped to tracked content deliberately. `git status --porcelain` also reports
+    untracked (`??`) paths, and an untracked path is not a change to the checkout:
+    it cannot alter what the toolkit computes unless it is importable package
+    source, which a path outside the tracked tree is not. Counting untracked paths
+    made this fire on any tree where a harness, an editor or an agent had written a
+    stray file, and the stamp then recorded a divergence from HEAD that
+    `git diff HEAD` did not show.
 
     This closes a hole the codebase currently states but does not enforce:
     `process_simulation._resolve_producing_stamp`'s docstring claims the sha is
@@ -111,7 +125,7 @@ def _is_dirty() -> bool:
     try:
         return bool(
             subprocess.run(
-                ["git", "status", "--porcelain"],
+                ["git", "status", "--porcelain", "--untracked-files=no"],
                 cwd=_toolkit_source_dir(),
                 capture_output=True,
                 text=True,

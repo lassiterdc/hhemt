@@ -29,7 +29,7 @@ Pass it as `--hpc-system-config`. See
 
 | Command | What it does |
 |---|---|
-| `eda` | Run the in-process EDA loop (calc → plots → doc), producing `eda_report/eda_report.html`. |
+| `eda` | Run the in-process EDA loop (calc → plots → notebook). Always writes the seeded notebook; the `eda_report/eda_report.html` export is best-effort and is skipped with a warning when the notebook cannot be executed (no `python3` kernel, a cell error, a timeout). The notebook is the source of truth. |
 | `bundle` | Emit a portable render bundle so you can iterate on report renderers locally instead of on the cluster. |
 | `report-from-bundle` | Render a report from an existing bundle. |
 | `combine` | Combine N completed render bundles into one cross-experiment report plus a standalone combined bundle. See [Combining experiments](../how-to/combining-experiments.md). |

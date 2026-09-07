@@ -851,8 +851,7 @@ def compose_reporting_sets(names: list[str] | tuple[str, ...]) -> ReportingSet:
     duplicated = sorted({n for n in names if names.count(n) > 1})
     if duplicated:
         raise ReportingSetCompositionError(
-            f"report.reporting_set names the same set more than once: {duplicated}. "
-            "Each set may appear at most once."
+            f"report.reporting_set names the same set more than once: {duplicated}. Each set may appear at most once."
         )
     members = [REPORTING_SETS[n] for n in names]
     if len(members) == 1:

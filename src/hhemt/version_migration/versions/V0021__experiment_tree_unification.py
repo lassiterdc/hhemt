@@ -39,7 +39,6 @@ import json
 import logging
 from pathlib import Path
 
-from hhemt.version_migration.constants import LAYOUT_VERSION
 from hhemt.version_migration.context import MigrationContext
 
 logger = logging.getLogger(__name__)
@@ -107,10 +106,17 @@ def _resolve_member_group(store: Path) -> str:
     be mistaken for new drift.
 
     LANDING CONSTRAINT: this module matches the layout-relevant glob
-    `src/hhemt/version_migration/versions/*.py` and carries no `non_breaking_allowlist`
-    entry, and `.pre-commit-config.yaml` invokes `check-b HEAD~1`, whose skip window is
-    the bump commit and the one after it. This edit must therefore land in the SAME
-    commit as the LAYOUT_VERSION 20->21 bump, or at latest the commit immediately after.
+    `src/hhemt/version_migration/versions/*.py`, so every edit to it is graded by
+    check-b. THERE IS NO SKIP WINDOW. `.pre-commit-config.yaml` invokes `check-b HEAD`,
+    which grades exactly the change being committed, so an edit to this file lands only
+    in the SAME commit as a LAYOUT_VERSION bump, or under a `non_breaking_allowlist`
+    entry naming this path -- which this file now carries, stamped with a
+    `layout_signature` that must be re-stamped on any further non-breaking edit.
+    A prior version of this paragraph asserted a skip window of "the bump commit and the
+    one after it" and instructed authors to land "at latest the commit immediately
+    after". That window belonged to a disarm deleted in b19fcb41 as a measured
+    fail-open; following the instruction named a state that is deterministically
+    refused, and the only way past it is `--no-verify`, which disarms all twelve hooks.
     """
     return "member_0"
 
@@ -132,8 +138,14 @@ def _repoint(doc: dict, old_relpath: str) -> bool:
         if _same_store(entity.get("@id"), old_relpath):
             entity["@id"] = new_dir_id
             changed = True
-        if entity.get("@id") == "./" and entity.get("schemaVersion") != str(LAYOUT_VERSION):
-            entity["schemaVersion"] = str(LAYOUT_VERSION)
+        # The LITERAL via `version_to`, never `LAYOUT_VERSION`. This migration's terminus
+        # is layout 21 at every future value of the module constant, and a crate is a
+        # PUBLISHED artifact: stamping the current constant makes a tree migrated to
+        # target=21 declare schemaVersion 22. Measured at the 21->22 bump, that turned
+        # tests/test_version_migration_V0021.py::test_provenance_is_repointed_in_BOTH_
+        # the_sidecar_and_the_embedded_core red. Same defect class as the state.py rung.
+        if entity.get("@id") == "./" and entity.get("schemaVersion") != str(version_to):
+            entity["schemaVersion"] = str(version_to)
             changed = True
         parts = entity.get("hasPart")
         if isinstance(parts, list):

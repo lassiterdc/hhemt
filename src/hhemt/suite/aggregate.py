@@ -438,17 +438,30 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # comment records for 2026-08-25 -- both `structural` and the declared complement are
     # empty, and an emptiness-only predicate would ADMIT the union claim on no evidence.
     # So a POSITIVE conjunct is required: some chunk must have declared `covers=complement`.
+    # HOISTED out of the union arm below, which was the only site that consulted these. Both
+    # are wanted at EVERY scope. `declared_complement` is the plan-time set of tests carrying
+    # a structural gate; `declared_not_attempted` intersects it with the tests THE SITE DID
+    # NOT ATTEMPT. That intersection is the one honest coverage statement available here:
+    # `declared_complement` alone OVER-approximates, because a gate that did not fire leaves
+    # a PASSING test in the declared set, and `structural` alone UNDER-approximates, because
+    # pytest's first truthy skipif can hide a structural gate behind an operator one.
+    # NAMED FOR `_EVALUATED_OUTCOMES`'s OWN DEFINITION at its declaration: "the three
+    # outcomes meaning THE SITE ATTEMPTED THE TEST, as opposed to declining it". The former
+    # name `unevaluated_complement` claimed EVALUATION while computing ATTEMPT, and the
+    # outcome literal `UNEVALUATED` sits INSIDE that set -- a test whose setup raised was
+    # attempted and is deliberately excluded here, because it is already a `problems` entry
+    # rather than a structural exclusion to re-run elsewhere.
+    declared_complement = set(manifest.get("declared_complement") or [])
+    declared_not_attempted = sorted(n for n in declared_complement if outcomes.get(n) not in _EVALUATED_OUTCOMES)
     if scope == "union":
-        declared_complement = set(manifest.get("declared_complement") or [])
-        unevaluated_complement = sorted(n for n in declared_complement if outcomes.get(n) not in _EVALUATED_OUTCOMES)
         complement_reported = any((c.get("covers") or "array") == "complement" for c in manifest["chunks"])
-        if not complement_reported or unevaluated_complement:
+        if not complement_reported or declared_not_attempted:
             scope_problems.append(
                 "scope=union requires complement evidence: "
                 f"complement_chunk_reported={complement_reported}, "
                 f"declared_complement={len(declared_complement)}, "
-                f"still_unevaluated={len(unevaluated_complement)}"
-                + (f" (first: {unevaluated_complement[:3]})" if unevaluated_complement else "")
+                f"still_not_attempted={len(declared_not_attempted)}"
+                + (f" (first: {declared_not_attempted[:3]})" if declared_not_attempted else "")
                 + ". Scope forced to array."
             )
             scope = "array"
@@ -814,6 +827,40 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             f"e.g. collected-only {absent[0]!r} vs junit-only {unmatched_junit[0]!r}"
         )
 
+    # TWO PROVENANCES, and the subset relation between them is TOTAL: a junit skip message
+    # matches STRUCTURAL_SKIP_REASONS only if that reason was DECLARED, so every observed
+    # structural test is a declared one. The difference is reported for what it IS --
+    # declared but not observed-structural -- and never as "shadowed", which is an
+    # interpretation valid only where the gate actually fired.
+    # ADVISORY, NEVER BLOCKING. The buckets still partition the universe and the verdict is
+    # still computed from a coherent classification, so this does not meet the standard the
+    # partition check below sets for a NOT-GREEN. Routing it to `problems` would redden every
+    # default-configuration run for a condition that does not make the verdict untrustworthy.
+    _declared_not_observed = sorted(set(declared_complement) - set(structural))
+    if _declared_not_observed:
+        advisories.append(
+            f"[complement-derivation] {len(_declared_not_observed)} test(s) declared a structural "
+            f"gate that this run did not observe as a structural skip -- {_declared_not_observed}. "
+            "The manifest records EVERY declared skipif reason; junit carries only the reason "
+            "that won at runtime. A test whose operator gate precedes its structural gate "
+            "reports the operator reason, and a gate that did not fire leaves a test in the "
+            "declared set that ran normally. ADVISORY: the partition is intact either way."
+        )
+    # THE OTHER DIRECTION, which is the SUBSET ASSERTION rather than its witness. The
+    # relation structural <= declared_complement holds by construction, so a non-empty
+    # difference here is not a shadowing report -- it means the two provenances disagree
+    # about what was DECLARED, most likely a manifest that predates the junit it is read
+    # against. Advisory for the same reason: the partition is unaffected.
+    _observed_not_declared = sorted(set(structural) - set(declared_complement))
+    if _observed_not_declared:
+        advisories.append(
+            f"[complement-derivation] {len(_observed_not_declared)} test(s) were OBSERVED as a "
+            f"structural skip but are ABSENT from the manifest's declared set -- "
+            f"{_observed_not_declared}. structural <= declared_complement should hold by "
+            "construction, so this means the manifest and the junit disagree about what was "
+            "declared. Suspect a manifest that predates the run it is being read against."
+        )
+
     # Every collected node id lands in exactly one bucket. A violation means the
     # buckets no longer describe the universe, so no verdict computed from them is
     # trustworthy -- it is itself a NOT-GREEN reason rather than an assertion error.
@@ -885,6 +932,15 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         "entry_disagreements": disagreements,
         "derivation_under_connected": derivation_under_connected,
         "structurally_excluded": structural,
+        # BOTH derivations reach the result dict, each named for what it IS.
+        # `structurally_excluded` above is the junit-OBSERVED partition cell and keeps its
+        # meaning exactly -- it is summed in the partition identity below and a change to it
+        # would invalidate that check. These two are the plan-time DECLARATION and its
+        # intersection with what THE SITE DID NOT ATTEMPT -- named for `_EVALUATED_OUTCOMES`'s
+        # own definition rather than for the outcome literal `UNEVALUATED`, which sits inside
+        # that set and means the opposite of what the word suggests here.
+        "declared_complement": sorted(declared_complement),
+        "declared_not_attempted": declared_not_attempted,
         "incidental_skips": incidental,
         "failed": failed,
         "unevaluated_now_passing": sorted(set(manifest.get("from_unevaluated") or []) & set(passed)),
@@ -1153,17 +1209,34 @@ def render_summary_md(result: dict) -> str:
     # The complement, BY NODE ID. When scope != union this list is the only record of
     # what the gate did not cover, so it is written in full and never summarized to a
     # count: a count cannot be re-run, and a marker expression is not the same set.
-    lines += ["", f"## Complement — {len(result['structurally_excluded'])} test(s) this scope cannot evaluate", ""]
-    if result["structurally_excluded"]:
+    # NAMED FOR WHAT IT IS. "test(s) this scope cannot evaluate" was FALSE on the hand
+    # re-invocation of run_chunk that _runner.py calls a legitimate operator action: off a
+    # scheduler node the gate does not fire, the test RUNS AND PASSES, and the declared set
+    # still contains it. "carrying a structural gate" is true on every input, because
+    # carrying a gate is declared at plan time and does not depend on where the run happened.
+    _declared = sorted(result.get("declared_complement") or [])
+    _not_attempted = sorted(result.get("declared_not_attempted") or [])
+    lines += ["", f"## Complement — {len(_declared)} test(s) carrying a structural gate", ""]
+    if _declared:
+        lines += [
+            f"NOT ATTEMPTED by this run: {len(_not_attempted)} of {len(_declared)}. That "
+            "intersection is the coverage statement this section supports and the only one it "
+            "can make: carrying a gate is DECLARED at plan time, and whether the site "
+            "ATTEMPTED the test is OBSERVED, so the pair holds whether or not the gate fired. "
+            "A declared test the site DID attempt and which then errored is deliberately not "
+            "here -- it is already a Problems entry, not a structural exclusion to re-run.",
+            "",
+        ]
+    if _not_attempted:
         lines += [
             "Run these where the structural exclusion does not apply. Copy the block verbatim:",
             "",
             "```text",
-            *result["structurally_excluded"],
+            *_not_attempted,
             "```",
         ]
     else:
-        lines.append("None — every collected test was evaluable at this scope.")
+        lines.append("Every test carrying a structural gate was attempted by this run.")
 
     # PER-MEMBER EVIDENCE, NEVER A VERDICT. SPECIFIED BUT NOT YET EMITTED: the per-member
     # table this rule governs is not rendered here today, and the paragraphs below state

@@ -97,6 +97,77 @@ def _enabled_modes(analysis: TRITONSWMM_analysis) -> list[str]:
     return modes
 
 
+#: Glob for the per-scenario FLAT summary tier under a sub-analysis directory. Summaries
+#: live at ``{analysis_dir}/sims/{sim}/processed/{STEM}_summary.{out_type}``
+#: (analysis.py:356 for the sims root, scenario.py:372 for the processed folder).
+#:
+#: The STEM population is OPEN, not a closed set. Most stems come from scenario.py's
+#: ``{out_type}`` template, but ``hydrology_inflow_summary.zarr`` is authored at
+#: swmm_runoff_modeling.py:256 and hardcodes ``.zarr``, so no enumeration taken from
+#: scenario.py can be complete. This pattern is therefore anchored on the ``processed/``
+#: path segment and the ``_summary.`` infix -- properties of WHERE a summary lands rather
+#: than of who writes it -- precisely so a stem authored in another module still lands.
+#: Do NOT narrow this to a stem list: the one stem authored outside scenario.py is exactly
+#: the one such a list would miss.
+#:
+#: LAYOUT COUPLING, named because no gate watches it. This pattern encodes the on-disk
+#: layout that scenario.py OWNS. scenario.py is layout-relevant and carries a
+#: layout_signature, so a change to that literal re-fires Check B there -- and this module
+#: is in neither layout_relevant.paths nor its globs, so the same change is invisible here.
+#: Re-check this pattern whenever the processed-output folder or the ``*_summary.`` infix
+#: moves.
+_SUMMARY_GLOB = "**/processed/*_summary.*"
+
+
+def _summary_paths(analysis: TRITONSWMM_analysis) -> list[Path]:
+    """Every per-scenario FLAT summary file resident under this sub's analysis dir.
+
+    Declared as the provenance source by the identity and compute-sensitivity calc
+    members, which read the flat tier via ``_retrieve_combined_output`` and never open
+    the consolidated ``analysis_datatree.zarr`` (the flat-summary stipulation forbids it).
+
+    Discovered by GLOB over the sub's own directory rather than derived through
+    ``TRITONSWMM_scenario``. Three reasons, and the third is why the glob and not the
+    derivation: the derivation subscripts ``_MODE_CONFIG``'s VALUES and reads
+    ``analysis.df_sims``, both outside the stub contract both EDA test files document;
+    constructing a scenario has a mkdir side effect this module has no business incurring
+    (raw_resume_identity.py takes plain directory Paths for the same reason); and a real
+    scenario cannot be built from a stub sub at all, so the derivation is untestable in
+    the fast tier.
+
+    A summary is a FILE when ``target_processed_output_type`` is ``"nc"`` and a zarr STORE
+    -- a DIRECTORY -- when it is ``"zarr"``, which is the DEFAULT. The predicate therefore
+    admits both. It is exactly ``_validate_source_path``'s own rule restricted to the names
+    this glob can produce: that gate admits a directory under four clauses (a ``.zarr``
+    suffix, or a ``.zattrs`` / ``.zgroup`` / ``.zarray`` marker), and a summary directory is
+    always named ``*.zarr``, so the marker clauses are unreachable here. That understates
+    it: on a real master ``.zgroup`` is ABSENT from the summary stores, so the SUFFIX clause
+    is the only one of the gate's four this data satisfies -- a predicate mirroring the gate
+    more "faithfully" by testing markers instead of the suffix would declare NOTHING.
+    Anything wider (``exists()``) would hand the gate a plain directory it refuses; anything
+    narrower (``is_file()``) declares NOTHING on the default configuration and makes the
+    emit raise on empty sources.
+
+    Returns the sub's WHOLE summary tier, which is a superset of the modes any single
+    member reads -- measured on a real master at 2.50x (20 declared, 8 read, 4 subs),
+    scoped to ``members/`` only. A sibling ``subanalyses/sa_*`` tree exists on that
+    master and is RETIRED VOCABULARY (workflow.py:597 matches ``/subanalyses/`` as
+    retired; version_migration/context.py:90 calls it a legacy tree against the
+    current ``members/member_*``); it MIRRORS the live tree, so counting both doubles
+    every figure while leaving the ratio at 2.50x -- which is why a reviewer checking
+    the ratio alone finds nothing. Constancy in event count is NOT established: that
+    master carries a single ``event_index.0``. That over-declaration is
+    deliberate and is the safe direction for CORRECTNESS: the bundle harvest skips a
+    declared-but-absent source with a warning (ADR-6 D3), while an UNDER-declaration is the
+    defect this helper exists to remove. It is not free, and the cost is not in the record:
+    a declared source that is PRESENT gets copied into the bundle, so the superset is
+    materialized at bundle-emit time. A per-mode filter would have to subscript
+    ``_MODE_CONFIG``'s values, which is the surface that made the derivation untestable.
+    """
+    root = Path(analysis.analysis_paths.analysis_dir)
+    return sorted(dict.fromkeys(p for p in root.glob(_SUMMARY_GLOB) if p.is_file() or p.suffix == ".zarr"))
+
+
 def config_identity_from_node_attrs(attrs: dict) -> str:
     """Serializable compute-config identity read from a consolidated-tree ``/member_{id}`` node's
     attrs. Mirrors ``eda.compute_sensitivity._config_identity`` fields (run_mode, n_mpi, n_omp,
@@ -626,11 +697,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     # non-zarr directory with ValueError. Declare each contributing sub's
     # consolidated zarr store (a real .zarr dir that passes the gate) as the
     # provenance source — one per present sub.
-    source_paths = [
-        Path(sub.analysis_paths.analysis_dir) / "analysis_datatree.zarr"
-        for member_id, sub in subs.items()
-        if _enabled_modes(sub)
-    ]
+    source_paths = [p for _member_id, sub in subs.items() if _enabled_modes(sub) for p in _summary_paths(sub)]
     emit_data_artifact_with_sources(
         artifact_path=artifact_path,
         source_paths=source_paths,

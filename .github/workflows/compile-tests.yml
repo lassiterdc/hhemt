@@ -112,6 +112,9 @@ jobs:
 
       - name: Compile-bearing synth render-gate tests (serial, toolchain-required)
         env:
+          # The runner IS the toolchain venue; this RELAXES the fail-closed compile
+          # guard armed by default in the repo-root conftest.
+          HHEMT_COMPILE_VENUE: "toolchain"
           HHEMT_REQUIRE_COMPILE_TIER: "1"
           TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE: "1"
           # NOTE (ADR-18): HHEMT_ENABLE_PROVENANCE_AUDIT is deliberately NOT set here.

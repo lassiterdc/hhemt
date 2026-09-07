@@ -39,11 +39,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hhemt.exceptions import ConfigurationError
+from hhemt.utils import ROOT_TREE_NAMES
 
 __all__ = ["WipeCost", "summarize_wipe_cost", "assert_wipe_is_deliberate"]
 
-#: Root-level consolidated trees. Presence of either means consolidation ran.
-_CONSOLIDATED_TREES = ("analysis_datatree.zarr", "sensitivity_datatree.zarr")
+#: Root-level consolidated trees. Presence of ANY means consolidation ran. Bound to the
+#: shared tuple so the accepted-name set has ONE definition; V0021 unified both prior
+#: names into `experiment_datatree.zarr` and the two retired names stay accepted for a
+#: tree that predates the migration.
+_CONSOLIDATED_TREES = ROOT_TREE_NAMES
 
 
 @dataclass(frozen=True)
@@ -114,7 +118,7 @@ def assert_wipe_is_deliberate(analysis_dir: str | Path, *, override_wipe_nonempt
         return cost
     if override_wipe_nonempty:
         print(
-            f"[wipe-guard] override_wipe_nonempty set — DESTROYING {cost.describe()} " f"under {analysis_dir}",
+            f"[wipe-guard] override_wipe_nonempty set — DESTROYING {cost.describe()} under {analysis_dir}",
             flush=True,
         )
         return cost

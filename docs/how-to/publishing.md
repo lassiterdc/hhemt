@@ -96,7 +96,7 @@ then re-run `publish` with the minted `software_doi` if you want the reciprocal 
 A sensitivity analysis deposits its **master** tree the same way:
 
 ```python
-sensitivity.publish(target="zenodo")   # deposits sensitivity_datatree.zarr + master sidecar
+sensitivity.publish(target="zenodo")   # deposits experiment_datatree.zarr + master sidecar
 ```
 
 ## Fetch a case study's inputs by DOI/PID

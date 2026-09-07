@@ -47,7 +47,7 @@ class CRSConfig(cfgBaseModel):
         horiz = pyproj.CRS.from_epsg(self.horizontal_epsg)
         if not (horiz.is_projected or horiz.is_geographic):
             raise ValueError(
-                f"horizontal_epsg {self.horizontal_epsg} is neither projected " f"nor geographic; check the EPSG code."
+                f"horizontal_epsg {self.horizontal_epsg} is neither projected nor geographic; check the EPSG code."
             )
         vert = pyproj.CRS.from_epsg(self.vertical_epsg)
         if not vert.is_vertical:

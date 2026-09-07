@@ -16,6 +16,7 @@ import pandas as pd
 from pyswmm import Output, Simulation
 from swmm.toolkit.shared_enum import NodeAttribute
 
+from hhemt._compile_venue import COMPILE_VENUE_ENV, swmm_execution_refused
 from hhemt.exceptions import ProcessingError
 
 if TYPE_CHECKING:
@@ -60,10 +61,40 @@ def _assert_validated_swmm_stack() -> None:
         raise RuntimeError(
             "Refusing to execute SWMM on an unvalidated Python stack ("
             + "; ".join(problems)
-            + "). The validated engine ships only via conda-forge; install per "
-            "docs/how-to/installation.md Option A (`conda env create -f "
-            "environment.yaml` plus the two --no-deps post-create steps). Set "
+            + "). Install a validated stack per docs/how-to/installation.md -- "
+            "Option A (`conda env create -f environment.yaml` plus the two "
+            "--no-deps post-create steps) is the recommended path, and this "
+            "project's own dependency pins also resolve an accepted stack. Set "
             "HHEMT_ALLOW_UNVALIDATED_SWMM_STACK=1 to bypass at your own risk."
+        )
+
+
+def _refuse_swmm_in_undeclared_test_venue() -> None:
+    """Refuse to execute SWMM from a test session that declared no permitted venue.
+
+    WHY A TEST-FRAMEWORK NAME APPEARS IN SHIPPED CODE, pre-empted here because it
+    reads like a layering violation on first sight and is not one. The predicate is
+    a CONJUNCTION whose first term is an ambient environment fact -- the same kind of
+    fact the guard directly above reads from HHEMT_ALLOW_UNVALIDATED_SWMM_STACK. It
+    is false for every process that is not inside a pytest test phase, so no user of
+    this package can reach the refusal at all.
+
+    WHY NOT AN EXPLICITLY EXPORTED MARKER INSTEAD. That alternative was considered
+    and rejected: a marker the test harness must SET is an arming flag, and an
+    arming flag that goes missing DISARMS its guard silently. The venue token here
+    only ever RELAXES, so every way it can fail -- absent, misspelt, renamed, deleted
+    by an unrelated subsystem -- lands on refusal.
+
+    The predicate itself lives in hhemt._compile_venue and is read there and nowhere
+    else, so the venue token has ONE meaning across the compile guard and this one.
+    """
+    if swmm_execution_refused():
+        raise RuntimeError(
+            "Refusing to run SWMM from a test session on an undeclared machine. This "
+            "test would execute the SWMM engine, which is only intended to run where "
+            f"the machine has been declared as a permitted venue. Set {COMPILE_VENUE_ENV} "
+            "to the venue you are on (see docs/how-to/installation.md) to allow it, or "
+            "run the fast test tier, which does not execute the engine."
         )
 
 
@@ -223,6 +254,7 @@ class SWMMRunoffModeler:
         if (not sim_complete) or rerun_if_exists:
             self.scenario.log.hydro_swmm_sim_completed.set(False)
             _assert_validated_swmm_stack()
+            _refuse_swmm_in_undeclared_test_venue()
             with Simulation(str(self.scenario.scen_paths.swmm_hydro_inp)) as sim:
                 sim.execute()
             self.scenario.log.hydro_swmm_sim_completed.set(True)

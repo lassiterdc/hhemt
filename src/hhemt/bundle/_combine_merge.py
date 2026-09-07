@@ -26,7 +26,8 @@ from xarray import DataTree
 # members/member_N/analysis_datatree.zarr and are NOT the combine unit).
 CONSOLIDATED_TREE_NAME = "analysis_datatree.zarr"
 SENSITIVITY_TREE_NAME = "sensitivity_datatree.zarr"
-_ROOT_TREE_NAMES = (CONSOLIDATED_TREE_NAME, SENSITIVITY_TREE_NAME)
+EXPERIMENT_TREE_NAME = "experiment_datatree.zarr"
+_ROOT_TREE_NAMES = (EXPERIMENT_TREE_NAME, CONSOLIDATED_TREE_NAME, SENSITIVITY_TREE_NAME)
 
 
 def _experiment_id(bundle_root: Path) -> str:
@@ -58,8 +59,9 @@ def _resolve_root_tree(bundle_root: Path) -> Path:
             return store
     raise FileNotFoundError(
         f"Bundle {bundle_root} ships none of {_ROOT_TREE_NAMES}; combine requires "
-        f"each bundle to ship its root consolidated tree (analysis_datatree.zarr "
-        f"for a single analysis, sensitivity_datatree.zarr for a sensitivity master)."
+        f"each bundle to ship its root consolidated tree (experiment_datatree.zarr "
+        f"since V0021; analysis_datatree.zarr or sensitivity_datatree.zarr for a "
+        f"bundle produced before it)."
     )
 
 
@@ -78,7 +80,7 @@ def _open_experiment_tree(bundle_root: Path) -> DataTree:
     immaterial to output — it only governs how the (unread) tree is opened lazily.
     """
     store = _resolve_root_tree(bundle_root)
-    chunks: str | dict = {} if store.name == SENSITIVITY_TREE_NAME else "auto"
+    chunks: str | dict = "auto" if store.name == CONSOLIDATED_TREE_NAME else {}
     return xr.open_datatree(store, engine="zarr", chunks=chunks, consolidated=False)
 
 

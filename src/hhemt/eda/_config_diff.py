@@ -383,6 +383,17 @@ def _n_resumes_by_member_id(root: Path) -> dict[str, int]:
     return out
 
 
+def _resolve_experiment_tree(root: Path) -> Path:
+    """Module-local alias for the shared resolver (see `hhemt.utils`).
+
+    Kept as a one-line indirection so this module's three call sites read locally
+    while the accepted-name set has exactly ONE definition in the codebase.
+    """
+    from hhemt.utils import resolve_experiment_tree
+
+    return resolve_experiment_tree(root)
+
+
 def _load_subs(root: Path, *, event_iloc: int = 0) -> dict[str, dict]:
     """Load per-sub compute-config + spatial arrays from sensitivity_datatree.zarr.
 
@@ -393,7 +404,7 @@ def _load_subs(root: Path, *, event_iloc: int = 0) -> dict[str, dict]:
     ``event_iloc``, and reusing this loader without threading it would narrow every panel to
     event 0 while looking like a pure refactor.
     """
-    dt = xr.open_datatree(str(root / "sensitivity_datatree.zarr"), engine="zarr", consolidated=False)
+    dt = xr.open_datatree(str(_resolve_experiment_tree(root)), engine="zarr", consolidated=False)
     n_res = _n_resumes_by_member_id(root)  # b5: member_id -> max n_resumes from scenario_status.csv
     subs: dict[str, dict] = {}
     for g in dt.groups:
@@ -821,15 +832,15 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     (cross-arm fungibility, iter-2 report QA), identical in both model arms by construction,
     so micrometer-scale diffs read as uniform "no meaningful difference" rather than saturating.
     """
-    # Consolidated-tree guard. _load_subs opens root/sensitivity_datatree.zarr unconditionally,
+    # Consolidated-tree guard. _load_subs opens the resolved experiment tree unconditionally,
     # so an absent tree raises rather than degrading. On the rule path the tree is present by
     # the rule's consolidate-complete input flag; this guard covers the bundle-carriage gap and
     # is what lets the enumerate-implies-emit contract be tested from a bare tmp_path.
-    if not (root / "sensitivity_datatree.zarr").exists():
+    if not _resolve_experiment_tree(root).exists():
         return _config_diff_absent_panel(
             headline="Config-diff maps unavailable (consolidated outputs absent)",
             observed=(
-                "The consolidated <code>sensitivity_datatree.zarr</code> this figure reads is "
+                "The consolidated <code>experiment_datatree.zarr</code> this figure reads is "
                 "not present under the analysis root, so no compute configuration could be "
                 "loaded."
             ),
@@ -1618,7 +1629,7 @@ def config_diff_source_paths(root: Path) -> list[Path]:
     plan closes. The bundle file set is EXACTLY the union of manifest-declared source_paths
     (the `bundle file set is computed from manifest harvest` stipulation)."""
     srcs: list[Path] = [
-        root / "sensitivity_datatree.zarr",
+        _resolve_experiment_tree(root),
         root / "eda" / "eda_cross_sim_identity.zarr",
         root / "eda" / "eda_cross_sim_identity.manifest.json",
         root / "scenario_status.csv",  # b5: n_resumes column in the per-panel config table

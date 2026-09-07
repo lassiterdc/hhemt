@@ -30,13 +30,12 @@ import sys
 from pathlib import Path
 
 from hhemt.status_flags import write_status_flag
-from hhemt.utils import fast_rmtree
+from hhemt.utils import ROOT_TREE_NAMES, fast_rmtree
 
 logger = logging.getLogger(__name__)
 
 _ANALYSIS_LEVEL_ARTIFACTS = [
-    "analysis_datatree.zarr",
-    "sensitivity_datatree.zarr",
+    *ROOT_TREE_NAMES,
     "system_datatree.zarr",
     "analysis_report.html",
     "analysis_report.zip",
@@ -58,9 +57,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _write_submission_sentinel(
-    sentinel_path: Path, *, rule_token: str, slurm_job_id: str
-) -> None:
+def _write_submission_sentinel(sentinel_path: Path, *, rule_token: str, slurm_job_id: str) -> None:
     sentinel_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = sentinel_path.with_suffix(".json.tmp")
     tmp.write_text(
@@ -84,9 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     _slurm_jobid = os.environ.get("SLURM_JOB_ID")
     if _slurm_jobid:
         _rule_token = "delete_analysis_consolidation"
-        _sentinel = (
-            analysis_dir / "_status" / "_submitted" / f"{_rule_token}.json"
-        )
+        _sentinel = analysis_dir / "_status" / "_submitted" / f"{_rule_token}.json"
         _write_submission_sentinel(
             _sentinel,
             rule_token=_rule_token,

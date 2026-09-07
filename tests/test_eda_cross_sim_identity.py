@@ -241,9 +241,9 @@ def test_identity_group_partition_persisted(synthetic_sensitivity_completed):
     if result.verdict.passed:
         labels = set(int(v) for v in ds["identity_group"].values)
         labels.add(int(ds.attrs["reference_group"]))
-        assert labels == {
-            int(ds.attrs["reference_group"])
-        }, f"bit-identical master must be one identity group, got labels {labels}"
+        assert labels == {int(ds.attrs["reference_group"])}, (
+            f"bit-identical master must be one identity group, got labels {labels}"
+        )
 
 
 def test_tracked_vars_are_actually_emitted_names() -> None:
@@ -326,7 +326,7 @@ def test_reference_rank_selects_serial_over_lexicographically_earlier_gpu():
     ]
     ordered = sorted(items, key=_ref_rank)
     assert ordered[0][0] == "z_serial_0_r1", (
-        "reference must be the serial-CPU sub even when its member_id sorts last; " f"got {ordered[0][0]}"
+        f"reference must be the serial-CPU sub even when its member_id sorts last; got {ordered[0][0]}"
     )
     # Pre-fix control: member_id-only ordering picks the GPU sub, so the two rules disagree on
     # this fixture. Without this the test could not distinguish "serial won" from "serial
@@ -459,6 +459,24 @@ def _master(tmp_path, spec):
     for member_id, (cfg, bump) in spec.items():
         d = tmp_path / member_id
         d.mkdir(parents=True, exist_ok=True)
+        # Materialize the flat summary tier at its real relative layout
+        # ({sim}/processed/{STEM}_summary.{ext}, scenario.py:372,444) so the
+        # declaration _summary_paths globs is non-empty. Contents are irrelevant:
+        # _validate_source_path gates on path SHAPE, and nothing in this file's
+        # fast tier opens a summary file -- _StubProcess returns datasets directly.
+        # BOTH KINDS are materialized: a .nc FILE and a .zarr STORE, so each clause
+        # of _summary_paths' predicate has a witness here.
+        _proc = d / "sims" / "s0" / "processed"
+        _proc.mkdir(parents=True, exist_ok=True)
+        (_proc / "TRITONSWMM_TRITON_summary.nc").touch()
+        # One summary as a zarr STORE -- a DIRECTORY -- because
+        # target_processed_output_type defaults to "zarr" (config/analysis.py:692).
+        # Without this every test exercises only the is_file() clause of
+        # _summary_paths' predicate, and narrowing it back to is_file() alone --
+        # which declares NOTHING on the default config -- stays green.
+        _zarr = _proc / "TRITONSWMM_SWMM_link_summary.zarr"
+        _zarr.mkdir(exist_ok=True)
+        (_zarr / ".zgroup").write_text("{}")
         subs[member_id] = _Sub(cfg, _summaries(bump), d)
     root = tmp_path / "master"
     root.mkdir(parents=True, exist_ok=True)
@@ -632,3 +650,39 @@ def test_across_family_path_keeps_one_global_reference(tmp_path):
     assert json.loads(ds.attrs["reference_member_id_by_family"]) == {"all": "serial_0_r1"}
     bounds = [d for d in result.verdict.details if d.get("variable") == "max_wlevel_m"]
     assert bounds and bounds[0]["max_abs_diff"] > 0.0
+
+
+def test_declared_sources_are_the_summary_tier_not_the_consolidated_store(tmp_path):
+    """The SHIPPED provenance record names files this member opens, not one it never opens.
+
+    Pre-fix RED on the middle assertion: the declaration is exactly
+    `{member_dir}/analysis_datatree.zarr`, which `check_cross_sim_identity` never opens
+    (the flat-summary stipulation forbids it). Anchored on the ABSENCE of that store -- a
+    property that exists in both the pre-fix and post-fix worlds -- rather than on the
+    summary filenames, which cannot exist pre-fix and would make this green by construction
+    whatever the code did.
+
+    Asserts `opened is a subset of declared`, never the converse: `_summary_paths` globs the
+    sub's whole summary tier and therefore over-declares by design (~4x), so a
+    declared-subset-of-opened assertion would be red on correct code.
+
+    Reads the manifest sidecar rather than the returned EdaResult, for two reasons: the
+    dataclass carries no source_paths field, and the sidecar is the artifact the bundle
+    harvest actually consumes. Asserts over the raw relative STRINGS rather than Path
+    objects because this module imports json but not pathlib.Path, and an [ADD] spec
+    carries one anchor and so cannot also reach the import block.
+    """
+    master = _master(tmp_path, {"serial_0_r1": (_StubCfg("serial", n_mpi_procs=1, n_omp_threads=1), 0.0)})
+    result = check_cross_sim_identity(master)
+
+    sidecar = result.artifact_path.with_suffix(".manifest.json")
+    assert sidecar.exists(), f"no manifest sidecar beside {result.artifact_path}"
+    declared = json.loads(sidecar.read_text())["source_paths_relative"]
+
+    assert declared, "the member declared no sources at all"
+    assert not any(p.endswith("analysis_datatree.zarr") for p in declared), (
+        f"declares the consolidated store this member never opens: {declared}"
+    )
+    assert all("processed" in p and "_summary" in p for p in declared), (
+        f"declared a path outside the flat summary tier: {declared}"
+    )

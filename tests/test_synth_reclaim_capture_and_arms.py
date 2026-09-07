@@ -118,9 +118,9 @@ def test_per_node_capture_is_bit_identical_to_the_written_hydrograph(synth_prepa
     inflow = cap["inflow_cms"].values.astype("float64")
     rebuilt = np.column_stack([inflow[g["i"].to_numpy()].sum(axis=0) for _, g in df.groupby(["x", "y"], sort=True)])
 
-    assert (
-        rebuilt.shape == written_cells.shape
-    ), f"gridcell reconstruction shape {rebuilt.shape} != written {written_cells.shape}"
+    assert rebuilt.shape == written_cells.shape, (
+        f"gridcell reconstruction shape {rebuilt.shape} != written {written_cells.shape}"
+    )
     np.testing.assert_allclose(rebuilt, written_cells, rtol=0, atol=1e-6)
 
 

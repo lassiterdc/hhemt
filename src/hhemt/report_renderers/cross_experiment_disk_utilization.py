@@ -29,7 +29,9 @@ def _fmt_bytes(size_bytes: int) -> str:
 
 def _child_model(child: Path) -> str:
     """'TRITON-SWMM' when a coupled tier exists on any /member_* node, else 'TRITON'."""
-    store = child / "sensitivity_datatree.zarr"
+    from hhemt.utils import resolve_experiment_tree
+
+    store = resolve_experiment_tree(child)
     if not store.exists():
         return "TRITON"
     try:

@@ -18,8 +18,10 @@ hhemt writes results at three levels, and they differ in both shape and format.
 | Per-analysis | `analysis_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 | Per-system | `system_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 
-A sensitivity analysis additionally writes `sensitivity_datatree.zarr` at the
-master level, with one node per completed member.
+A sensitivity analysis additionally writes `experiment_datatree.zarr` at the
+master level, with one node per completed member. Trees written before the store
+unification carry `sensitivity_datatree.zarr` (or, for a regular analysis,
+`analysis_datatree.zarr`) and are migrated in place on the next run.
 
 **The per-scenario tier is flat and the consolidated tiers are hierarchical.**
 That distinction matters when you open them: the flat tier is a plain `Dataset`,

@@ -184,6 +184,4 @@ def test_variable_measured_advertises_only_emitted_variables():
     absent = sorted(set(_CF_VARIABLE_MAP) - real)
     assert absent, "fixture precondition: the map must carry a variable outside `real`"
     for var in absent:
-        assert var not in gated, (
-            f"{var!r} is absent from the deposited store but is advertised as present"
-        )
+        assert var not in gated, f"{var!r} is absent from the deposited store but is advertised as present"

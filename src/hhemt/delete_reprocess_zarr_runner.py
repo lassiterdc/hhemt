@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 from hhemt.status_flags import write_status_flag
-from hhemt.utils import fast_rmtree
+from hhemt.utils import ROOT_TREE_NAMES, fast_rmtree
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +27,11 @@ logger = logging.getLogger(__name__)
 # never deleted here. These two filenames are the canonical defaults
 # (analysis.py:160 computes analysis_paths.analysis_datatree_zarr from the same
 # "analysis_datatree.zarr" literal; the sensitivity master sets
-# "sensitivity_datatree.zarr"). Hardcoded because the runner only receives
-# --analysis-dir; KEEP IN SYNC if either consolidated-zarr filename ever becomes
-# config-driven.
-_REPROCESS_ZARR_ARTIFACTS = ["analysis_datatree.zarr", "sensitivity_datatree.zarr"]
+# the shared ROOT_TREE_NAMES tuple). Sourced from that tuple rather than hardcoded:
+# the previous `KEEP IN SYNC` comment here did NOT prevent this list going stale
+# against V0021, so the invariant is now carried by a single definition instead of
+# by an instruction to remember.
+_REPROCESS_ZARR_ARTIFACTS = list(ROOT_TREE_NAMES)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

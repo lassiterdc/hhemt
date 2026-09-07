@@ -19,7 +19,6 @@ from pathlib import Path
 
 from hhemt._filelock_compat import resolve_filelock
 from hhemt.version_migration.constants import (
-    LAYOUT_VERSION,
     LOCK_TIMEOUT_SECONDS,
     VERSION_FILE_NAME,
 )
@@ -184,7 +183,16 @@ def infer_layout_version(target_dir: Path) -> int | None:
         # this guard a renamed, _version.json-less tree infers 1 and replays V0003,
         # which rebuilds analysis_datatree.zarr from the flat summaries and resurrects
         # the retired store beside the new one.
-        return LAYOUT_VERSION
+        #
+        # The literal is deliberate and is NOT a stale constant. This rung establishes
+        # a LOWER BOUND -- "post-V0021" -- and 21 is that bound at every future value
+        # of LAYOUT_VERSION. Returning the module constant asserts an UPPER bound the
+        # evidence does not support: measured at the 21->22 bump, a _version.json-less
+        # tree carrying the unified store inferred 22, run_migration(target=22)
+        # reported `applied=True, migrations_applied=[]`, and no _version.json was
+        # written -- a total, silent skip on exactly the population V0022 repairs.
+        # Do not replace this with LAYOUT_VERSION.
+        return 21
     if not (target_dir / "analysis_datatree.zarr").exists() and _has_flat_mode_zarrs(target_dir):
         return 1
     if (target_dir / "analysis_datatree.zarr").exists():

@@ -132,6 +132,8 @@ Two properties matter before you pick one.
 `compute-sensitivity`, `dem-resolution` and `b4b` each assume the analysis was
 shaped for their question. Selecting one on an analysis that was not shaped that
 way produces a report with missing figures rather than a useful one.
+Those artifacts are produced by the exploratory analysis step; see
+[Run the exploratory analysis](../how-to/running-eda.md) for how to produce them.
 
 **`combined` is the only set with its own sidebar order.** Every other set uses
 the standard order. `combined` carries fixed cross-experiment categories, and
@@ -186,3 +188,4 @@ emitted and where they are enumerated, so the two can never disagree.
 - [The interactive analysis report](example-report.md): what a rendered report contains and how to open one.
 - [Configuration schema](config-schema.md): the rest of the `report` block.
 - [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md): a worked run that selects `compute-sensitivity` and `dem-resolution`.
+- [Exploratory analysis](../explanation/exploratory-analysis.md): what the exploratory figures are, and why the step that produces them sits outside the workflow graph.

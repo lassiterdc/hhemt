@@ -44,22 +44,49 @@ open an issue to discuss before submitting.
    only with the conda environment (`environment.yaml`); it is declared in no
    `pyproject.toml` extra, so if you installed via Option B of
    `docs/how-to/installation.md` you must `pip install pre-commit` first.
+   **If you already had hooks installed, re-run `pre-commit install` after pulling.**
+   This repo declares `default_install_hook_types: [pre-commit, pre-push, commit-msg]`,
+   and that key is read only at install time — a clone that installed before it was
+   added keeps `.git/hooks/pre-commit` alone, so the pre-push and commit-msg guards
+   never fire. Re-running is idempotent: it leaves existing hook files byte-identical
+   and adds only the missing ones.
 
 ## Workflow
 
 - Create a feature branch from `develop`
 - Make changes with tests
 - Run `just qa` before opening a pull request. It formats, lints, type-checks, runs
-  the two guard scripts listed in that recipe, and runs the test suite. **Whether it
-  runs the compile-dependent tests depends on your PATH, not on the recipe**: they skip
-  when `cmake` or `mpic++` is absent, which is the usual case under the uv path `just qa`
-  uses, and they run when both are present. So a green `just qa` does not by itself mean
-  the compile tier passed. To gate it either way, run `just test-gated`, which invokes
-  pytest under the conda env with `HHEMT_REQUIRE_COMPILE_TIER=1` so a compile-tier skip
-  becomes a hard failure. `just` is
+  the two guard scripts listed in that recipe, and runs the fast test tier. To gate the
+  compile tier explicitly, run `just test-gated`, which invokes pytest under the conda env
+  with `HHEMT_REQUIRE_COMPILE_TIER=1` so a compile-tier skip becomes a hard failure. `just` is
   installed by neither `environment.yaml` nor any `pyproject.toml` extra — install it
   separately (https://github.com/casey/just), or run the commands under the `qa:`
   recipe in `justfile` yourself, in the order they appear there.
+- The suite has two tiers, and `just qa` runs the first one:
+    - **Gate A — `just test-fast`.** Everything the toolkit decides before a simulation
+      starts, plus the on-disk layout contract. Run it before opening a pull request —
+      it is NOT what CI runs: `.github/workflows/test.yml` runs bare `pytest` with no
+      marker filter, and `compile-tests.yml` is the job that must be a required status
+      check before a release PR. `just qa` does NOT invoke this recipe either — it
+      inlines its own `pytest` carrying the same `-m` expression, so the two apply the
+      same marker FILTERING. That does not make the collected populations equal: the
+      two resolve different dependency sets — `qa` runs `uv run --python=3.12 --extra
+      test`, while `test-fast` uses the conda `hhemt` environment, which
+      `environment.yaml` pins to Python 3.11 — and a module-level import present in one
+      resolution and absent from the other changes what is collected before any marker
+      is evaluated.
+    - **Gate B — `just test-gated`.** The whole suite with no marker filter, including
+      every test that compiles TRITON-SWMM or asserts on a tree a simulation produced.
+      It requires the `hhemt` conda environment for `cmake` and `mpic++`, it takes
+      substantially longer than Gate A, and it is the invocation a release is gated on.
+      Run it detached rather than waiting on it interactively — `nohup … &`, `tmux`, or
+      your cluster's batch scheduler are all fine.
+  Which tier `just qa` gives you does NOT depend on your machine: `compile_tier` is
+  derived from each test's fixtures at collection time, so the split is the same
+  everywhere. Before this was declared it depended on whether `cmake` was on your PATH.
+  Your FIRST run of either gate downloads about 360 MB of example data from HydroShare
+  if `test_data/norfolk_coastal_flooding` is not already present. That is a one-time
+  cost per machine, not per run, and it can dominate the wall clock on a slow link.
 - Submit a pull request
 
 ## Documentation

@@ -36,6 +36,12 @@ class _FakeAnalysis:
     def __init__(self, analysis_dir):
         self.analysis_paths = SimpleNamespace(analysis_dir=analysis_dir)
         self.cfg_analysis = _Model({"analysis_id": "a1"})
+        # publish_analysis reads this unconditionally. A real analysis_config always
+        # carries it (optional field, default "CC0-1.0"); _Model exposes no __getattr__,
+        # so it is set as an instance attribute rather than through the payload dict --
+        # model_dump() reads _payload and is deliberately left unchanged, which keeps
+        # test_deposit_set_contains_configs_sidecar_and_zarr asserting what it did before.
+        self.cfg_analysis.dataset_license = "CC0-1.0"
         self._system = SimpleNamespace(cfg_system=_Model({"system_id": "s1"}))
 
 
@@ -165,9 +171,7 @@ def test_inveniordm_rights_is_lowercased_spdx_vocab_id():
 
 def test_inveniordm_related_uses_lowercase_relation_vocab():
     edges = publishing.build_inveniordm_related(software_doi="10.x/soft")
-    assert edges == [
-        {"identifier": "10.x/soft", "scheme": "doi", "relation_type": {"id": "iscompiledby"}}
-    ]
+    assert edges == [{"identifier": "10.x/soft", "scheme": "doi", "relation_type": {"id": "iscompiledby"}}]
     assert publishing.build_inveniordm_related(software_doi=None) == []
 
 
@@ -228,6 +232,26 @@ def test_override_license_match_is_accepted(tmp_path, monkeypatch):
     assert result["data_doi"] == _RecordingSession.MINTED_DOI
 
 
+def test_config_license_mismatch_raises(tmp_path):
+    """A crate whose license disagrees with the config REFUSES the deposit.
+
+    The reachable state: dataset_license is absent from the consolidation fingerprint
+    (processing_analysis._consolidation_inputs_fingerprint hashes consolidation_version,
+    toggle_consolidate_timeseries and enabled_model_types only, and its maintenance
+    contract excludes provenance fields by name), so editing it triggers no rebuild, the
+    consolidate early-return fires, and the sidecar keeps the previous license.
+
+    Asserted on WHETHER PublishError is raised, not on the message wording, so the test
+    discriminates on behaviour rather than on a string that cannot exist pre-fix.
+    """
+    _write_sidecar(tmp_path, "CC0-1.0")
+    analysis = _FakeAnalysis(tmp_path)
+    analysis.cfg_analysis.dataset_license = "CC-BY-NC-4.0"
+    with pytest.raises(PublishError) as ei:
+        publishing.publish_analysis(analysis, target="zenodo")
+    assert "regenerate_existing=True" in ei.value.status
+
+
 def test_publish_analysis_reprex_bundle_threads_container_defs(tmp_path, monkeypatch):
     """The deposit path threads ``container_defs`` into ``emit_bundle`` (ADR-19 multi-SIF).
 
@@ -250,9 +274,7 @@ def test_publish_analysis_reprex_bundle_threads_container_defs(tmp_path, monkeyp
     _patch_zenodo_session(monkeypatch)
 
     defs = [tmp_path / "uva-cuda.def", tmp_path / "uva-cuda-a6000.def", tmp_path / "uva-cpu.def"]
-    result = publishing.publish_analysis(
-        analysis, target="zenodo", deposit_source="reprex_bundle", container_defs=defs
-    )
+    result = publishing.publish_analysis(analysis, target="zenodo", deposit_source="reprex_bundle", container_defs=defs)
     assert captured["container_defs"] == defs
     assert result["data_doi"] == _RecordingSession.MINTED_DOI
 
@@ -339,9 +361,7 @@ def test_zenodo_lets_zenodo_mint_and_embeds_native_metadata(tmp_path, monkeypatc
 def test_zenodo_missing_token_raises(tmp_path, monkeypatch):
     monkeypatch.delenv("HHEMT_ZENODO_TOKEN", raising=False)
     with pytest.raises(PublishError) as ei:
-        publishing._ZenodoTarget().publish(
-            deposit=[], license_spdx="CC0-1.0", software_doi=None, analysis_dir=tmp_path
-        )
+        publishing._ZenodoTarget().publish(deposit=[], license_spdx="CC0-1.0", software_doi=None, analysis_dir=tmp_path)
     assert "HHEMT_ZENODO_TOKEN" in ei.value.status
 
 
@@ -353,9 +373,7 @@ def test_zenodo_http_error_raises_publisherror(tmp_path, monkeypatch):
     monkeypatch.setattr(publishing.requests, "Session", lambda: _FailSession())
     monkeypatch.setenv("HHEMT_ZENODO_TOKEN", "tok")
     with pytest.raises(PublishError) as ei:
-        publishing._ZenodoTarget().publish(
-            deposit=[], license_spdx="CC0-1.0", software_doi=None, analysis_dir=tmp_path
-        )
+        publishing._ZenodoTarget().publish(deposit=[], license_spdx="CC0-1.0", software_doi=None, analysis_dir=tmp_path)
     assert "create draft failed" in ei.value.status
 
 
@@ -494,9 +512,7 @@ def test_classify_storage_error_reframes_quota_signal_and_passes_others_through(
     mislabelled auth error would send the operator hunting a disk-space problem."""
     from hhemt.publishing import _classify_storage_error
 
-    quota = _classify_storage_error(
-        "Request Entity Too Large: user quota exceeded", 30 * 1000**3, 20 * 1000**3
-    )
+    quota = _classify_storage_error("Request Entity Too Large: user quota exceeded", 30 * 1000**3, 20 * 1000**3)
     assert quota is not None
     assert "STORAGE/QUOTA" in quota
     assert "over by 10.00 GB" in quota

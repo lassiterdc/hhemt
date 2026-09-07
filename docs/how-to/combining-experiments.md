@@ -26,7 +26,9 @@ report that presents them side by side.
 
 - Combine operates on **single-analysis** bundles (each ships its consolidated
   `analysis_datatree.zarr` at the bundle root) **and on sensitivity-master
-  bundles** (each ships `sensitivity_datatree.zarr` at the bundle root). The
+  bundles** (each ships `experiment_datatree.zarr` at the bundle root; a bundle
+  produced before the store unification ships `analysis_datatree.zarr` or
+  `sensitivity_datatree.zarr` and is still accepted). The
   combine step resolves whichever consolidated tree a bundle ships. The
   cross-experiment report presents the compatibility table across the combined
   set plus, for a clean-vs-resume sensitivity-master pair, a

@@ -228,6 +228,63 @@ def _assert_report_not_older_than_read_model(analysis_dir: Path) -> None:
         )
 
 
+def _crate_license_finding(analysis, staging: Path) -> str | None:
+    """Return a human-readable crate-currency finding for the staged crate, or None.
+
+    DETECTS at every bundle; REFUSES at none. The refusal lives at the publish boundary
+    only, because that is the one door where the artifact becomes immutable. The
+    asymmetry is not about how much a stale crate matters -- it is about what a wrong
+    repair costs. The sibling gate above refuses on staleness against
+    validation_report.json, which is MACHINE-GENERATED: no wrong-direction repair exists,
+    so refusing there leaves only the correct path out. This check compares against
+    dataset_license, which is HAND-AUTHORED config, where the wrong-direction repair is a
+    one-line edit that is sometimes legitimately correct, corrupts the system of record
+    rather than a derived copy, and is undetectable afterwards because both sides then
+    agree. A refusal on this predicate would train that edit; a finding does not.
+
+    Root resolution follows the spec's algorithm -- the metadata descriptor's `about`
+    names the Root Data Entity -- rather than matching the literal "./". That is
+    DEFENSIVE, not a fix for an observed skip: every crate this system emits today is
+    "./"-rooted, because ro-crate-py hard-codes the descriptor's `about` to "./", and
+    upgrade_doc_to_workflow_run_crate's own bare next() would raise on any other root
+    before this function is reached. The literal match would therefore work today. It
+    would work by depending on an upstream implementation detail that is not a guarantee,
+    and resolving `about` costs nothing to be independent of it.
+    """
+    from hhemt.metadata import _SPDX_LICENSE_TABLE
+
+    crate = Path(staging) / "ro-crate-metadata.json"
+    if not crate.exists():
+        return None
+    graph = json.loads(crate.read_text()).get("@graph", [])
+    descriptor = next(
+        (e for e in graph if isinstance(e, dict) and str(e.get("@id", "")).endswith("ro-crate-metadata.json")),
+        None,
+    )
+    if descriptor is None:
+        return "ro-crate-metadata.json carries no metadata descriptor entity; root not resolvable"
+    about = descriptor.get("about")
+    root_id = about.get("@id") if isinstance(about, dict) else about
+    root = next((e for e in graph if isinstance(e, dict) and e.get("@id") == root_id), None)
+    if root is None:
+        return f"metadata descriptor points at root {root_id!r}, which is absent from the @graph"
+    lic = root.get("license")
+    uri = lic.get("@id") if isinstance(lic, dict) else lic
+    if uri is None:
+        return "the crate root declares no license; RO-Crate expects one on the Root Data Entity"
+    cfg_license = str(analysis.cfg_analysis.dataset_license)
+    expected_uri = _SPDX_LICENSE_TABLE[cfg_license]["uri"]
+    if uri != expected_uri:
+        return (
+            f"crate root license {uri!r} disagrees with analysis_config.dataset_license "
+            f"{cfg_license!r} ({expected_uri!r}); the crate predates the config. Re-emit it with "
+            f"reprocess(start_with='consolidate', regenerate_existing=True) before depositing. "
+            f"A plain reprocess does NOT re-emit it -- regenerate_existing defaults to False, "
+            f"which deletes no consolidated zarr, so consolidation early-returns."
+        )
+    return None
+
+
 def emit_bundle(
     analysis: TRITONSWMM_analysis,
     output_path: Path | None = None,
@@ -272,6 +329,24 @@ def emit_bundle(
     # values are the renderers' INPUT paths keyed by figure stem, disjoint from the outputs.
     pruned_orphan_figures = _prune_undeclared_figures(analysis_dir, plots_dir)
     sources_by_renderer = harvest_source_paths(plots_dir, analysis_dir)
+    # SECOND HARVEST ROOT (bundle completeness). The EDA calc members write their own
+    # manifest sidecars under {analysis_dir}/eda/ via emit_data_artifact_with_sources, and
+    # those sidecars declare the RAW inputs each calc actually read. Nothing walked eda/
+    # before this, so those inputs were never carried and eda/{plot_id}.zarr shipped as a
+    # "derived" dataset nothing in the bundle could derive.
+    #
+    # harvest_source_paths is root-agnostic: its only position-specific branch re-roots
+    # against members/member_{N} when the manifest sits under plots/sensitivity/per_sim/
+    # member-{N}/, and it keys on the path's FIRST part being "sensitivity", which an
+    # eda/ root never is. If a future derived/ reshape nests per-member artifacts under
+    # this root, that branch becomes reachable here and would re-root paths that were
+    # relativized against the master -- re-check it then.
+    #
+    # Keys are NAMESPACED because an eda/ sidecar's stem equals its plots/eda/ figure
+    # stem, so a plain dict merge would clobber one with the other. The map is written to
+    # the bundle manifest and read by nothing, so the key form is free.
+    for _stem, _paths in harvest_source_paths(analysis_dir / "eda", analysis_dir).items():
+        sources_by_renderer[f"eda::{_stem}"] = _paths
     git_sha = _get_toolkit_git_sha()
     analysis_id = analysis.cfg_analysis.analysis_id
 
@@ -352,6 +427,7 @@ def emit_bundle(
             container_build=container_build,
             declared_sources_absent=declared_sources_absent,
             pruned_orphan_figures=pruned_orphan_figures,
+            crate_license_finding=_crate_license_finding(analysis, staging),
         )
         _emit_bundle_zip(staging, output_path)
 
@@ -708,13 +784,23 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
     # It governs which keys are ignored when deciding to SKIP a rewrite, never what is
     # written -- so populating it would leave this leak untouched AND make a sidecar that
     # differs only in agent/startTime compare equal, retaining a previous run's file.
+    #
+    # WHY THIS TIER HAS ITS OWN SET. _BUNDLE_TRANSFER_STRIP_KEYS is byte-equal to
+    # metadata._VOLATILE_PROV_KEYS and to _COMBINED_EMIT_STRIP_KEYS today; that is timing,
+    # not a shared rule, and the sets are not interchangeable. This tier TRANSPORTS an
+    # existing crate rather than emitting one: the staging document below is a wholesale
+    # copy of the analysis sidecar, and no root entity is constructed anywhere in this
+    # module. An operation whose purpose is to move a description intact must not remove a
+    # property the RO-Crate spec makes a MUST on the Root Data Entity, so this set is the
+    # one that has to shrink, and it must shrink WITHOUT moving the combined tier, which
+    # emits a first publication of its own and owes an authored value instead.
     crate_src = analysis_dir / "ro-crate-metadata.json"
     if crate_src.exists():
-        from hhemt.metadata import _VOLATILE_PROV_KEYS, canonical_jsonld_from_doc
+        from hhemt.metadata import _BUNDLE_TRANSFER_STRIP_KEYS, canonical_jsonld_from_doc
 
         crate_doc = json.loads(crate_src.read_text())
         for entity in crate_doc.get("@graph", []):
-            for volatile_key in _VOLATILE_PROV_KEYS:
+            for volatile_key in _BUNDLE_TRANSFER_STRIP_KEYS:
                 entity.pop(volatile_key, None)
         (staging / "ro-crate-metadata.json").write_text(canonical_jsonld_from_doc(crate_doc))
     # case.yaml — the case manifest carries case_name (BLOCKING experiment-identity
@@ -1395,6 +1481,7 @@ def _write_bundle_manifest(
     container_build: dict | None = None,
     declared_sources_absent: list[str] | None = None,
     pruned_orphan_figures: list[str] | None = None,
+    crate_license_finding: str | None = None,
 ) -> None:
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
@@ -1420,6 +1507,13 @@ def _write_bundle_manifest(
         # empty) when every declared source resolved, so a clean bundle's manifest is
         # byte-identical to what it was before this key existed.
         manifest["declared_sources_absent"] = declared_sources_absent
+    if crate_license_finding:
+        # The staged crate's license disagrees with the carried cfg_analysis.yaml, or the
+        # crate's root could not be resolved to check. Non-fatal HERE and refused only at
+        # the publish boundary: the bundle is inspectable and re-derivable, a DOI deposit
+        # is neither. Same absent-when-clean property as the key above, for the same
+        # byte-identity reason.
+        manifest["crate_license_finding"] = crate_license_finding
     if pruned_orphan_figures:
         # The prune's audit trail, carried IN the bundle for the same reason
         # declared_sources_absent is: a warnings.warn inside a Snakemake rule log is lost by

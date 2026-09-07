@@ -55,6 +55,7 @@ theme:
 
 hooks:
   - hooks/config_reference.py
+  - hooks/eda_kind_table.py
 
 markdown_extensions:
   - abbr
@@ -115,6 +116,7 @@ nav:
       - Forcing re-runs: how-to/forcing-reruns.md
       - Combining experiments: how-to/combining-experiments.md
       - Synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md
+      - Running the exploratory analysis: how-to/running-eda.md
       - Publishing and fetching: how-to/publishing.md
       - Reprex round-trip: how-to/reprex-roundtrip.md
       - DOI round-trip (operator): how-to/doi-roundtrip-e2e.md
@@ -134,4 +136,5 @@ nav:
       - Software availability: explanation/software-availability.md
       - Rerun FAQ: explanation/rerun-faq.md
       - Branching and release model: explanation/branching-and-release-model.md
+      - Exploratory analysis: explanation/exploratory-analysis.md
   - Contributing: contributing.md

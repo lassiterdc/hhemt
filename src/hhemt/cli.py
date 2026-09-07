@@ -606,7 +606,7 @@ def cleanup_orphans_command(
             master_flag_removed = result.get("master_flag_removed", False)
             extras = []
             if zarr_removed:
-                extras.append("sensitivity_datatree.zarr")
+                extras.append("the consolidated experiment tree")
             if master_flag_removed:
                 extras.append("f_consolidate_experiment_complete.flag")
             extras_msg = f" plus {' and '.join(extras)}" if extras else ""

@@ -693,7 +693,9 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
     # on toggle_sensitivity_analysis -- a sensitivity master ships the sensitivity tree
     # and no regular one, and keying on the config would misreport a partially-built
     # tree as uncaptured.
-    for name in ("analysis_datatree.zarr", "sensitivity_datatree.zarr"):
+    from hhemt.utils import ROOT_TREE_NAMES
+
+    for name in ROOT_TREE_NAMES:
         got = _from_tree_attrs(adir / name)
         if got:
             out["consolidate"] = got
@@ -746,6 +748,14 @@ def check_provenance_completeness(analysis) -> CheckResult:
     captured = sorted(s for s, v in stages.items() if v)
     missing = sorted(s for s, v in stages.items() if not v)
     dirty = sorted(s for s, v in stages.items() if v and v.get("hhemt_dirty") == "true")
+    # `hhemt_dirty` is not two-valued at this boundary even though the minter emits only
+    # "true"/"false": `_from_tree_attrs` above coalesces a MISSING attr to "unknown", and
+    # cf_conventions.apply_producing_stamp (tree, sha_values, semver_values) takes no dirty
+    # argument, so every consolidate/processing stamp harvested from tree attrs arrives
+    # "unknown". A legacy `_from_json` stamp predating the field yields None here for the
+    # same reason. An == "true" test silently files both with the clean stages, so the
+    # partition is stated explicitly here and disclosed in every arm that makes a claim.
+    undetermined = sorted(s for s, v in stages.items() if v and v.get("hhemt_dirty") not in ("true", "false"))
     builds = {v.get("hhemt_version") for v in stages.values() if v and v.get("hhemt_version")}
 
     # `details`, not `detail`, and an explicit `level`. Both were wrong on all four
@@ -782,10 +792,15 @@ def check_provenance_completeness(analysis) -> CheckResult:
             level="aggregate",
             passed=False,
             summary=(
-                f"{len(captured)}/{len(stages)} stages stamped, but {len(dirty)} were produced "
-                f"from a DIRTY toolkit checkout ({', '.join(dirty)}). The recorded sha names a "
-                "commit whose content is not what ran, so a re-run at that sha would NOT "
-                "reproduce this product."
+                f"{len(dirty)} of the {len(captured)} stamped stages were produced from a "
+                f"toolkit checkout carrying uncommitted tracked changes "
+                f"({', '.join(dirty)}). Dirty-state undetermined: {len(undetermined)} "
+                f"({', '.join(undetermined) or 'none'}); not captured: {len(missing)} "
+                f"({', '.join(missing) or 'none'}); no value is inferred for either group. "
+                f"The recorded sha does not identify the code that ran for the dirty stages. "
+                f"Whether this product would be reproduced is NOT ESTABLISHED here: this "
+                f"check reads toolkit source only, and does not observe the environment, "
+                f"inputs, or nondeterminism that also determine the product."
             ),
             details=details,
         )
@@ -795,9 +810,13 @@ def check_provenance_completeness(analysis) -> CheckResult:
             level="aggregate",
             passed=False,
             summary=(
-                f"{len(captured)}/{len(stages)} stages stamped, but they disagree on the hhemt "
-                f"build ({', '.join(sorted(builds))}). Some stage was produced by different code "
-                "than the others; a single re-run cannot reproduce this mixture."
+                f"{len(captured)}/{len(stages)} stages stamped, and they disagree on the hhemt "
+                f"build ({', '.join(sorted(builds))}). Not captured: {len(missing)} "
+                f"({', '.join(missing) or 'none'}); dirty-state undetermined: "
+                f"{len(undetermined)} ({', '.join(undetermined) or 'none'}); no value is "
+                f"inferred for either group. At least one stage was produced by different "
+                f"toolkit code than the others, so no single sha identifies the code that "
+                f"produced this analysis."
             ),
             details=details,
         )
@@ -817,7 +836,14 @@ def check_provenance_completeness(analysis) -> CheckResult:
         name="provenance_completeness",
         level="aggregate",
         passed=True,
-        summary=f"all {len(stages)} stages stamped at one clean hhemt build.",
+        summary=(
+            f"all {len(stages)} stages stamped at one hhemt build, with no uncommitted "
+            f"tracked changes recorded; dirty-state undetermined for {len(undetermined)} "
+            f"({', '.join(undetermined) or 'none'}), and no value is inferred for those. "
+            f"This reports what the toolkit-source stamps show. It does not establish that "
+            f"a re-run reproduces this product, which also depends on the environment, "
+            f"inputs, and nondeterminism this check does not observe."
+        ),
         details=details,
     )
 
@@ -907,7 +933,7 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis) -> CheckResult:
         name=_name,
         level="aggregate",
         passed=True,
-        summary=(f"{n_resumed} resumed sim(s) at a build carrying no known resume defect " f"(pin {sha[:12]})."),
+        summary=(f"{n_resumed} resumed sim(s) at a build carrying no known resume defect (pin {sha[:12]})."),
         details=[],
     )
 
@@ -1058,7 +1084,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             level="aggregate",
             passed=True,
             applicable=False,
-            summary=(f"Producing-TRITON resume status unknown ({replay.detail}); " "resume validity NOT verified."),
+            summary=(f"Producing-TRITON resume status unknown ({replay.detail}); resume validity NOT verified."),
             details=[],
         )
 

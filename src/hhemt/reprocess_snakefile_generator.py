@@ -394,7 +394,7 @@ onerror:
         # PLAIN string, not an f-string: {event_id} must reach the emitted Snakefile as a
         # wildcard rather than being interpolated here.
         consolidate_input_str = (
-            'expand("_status/f_consolidate_scenario_evt-{event_id}_complete.flag", ' "event_id=SIM_IDS)"
+            'expand("_status/f_consolidate_scenario_evt-{event_id}_complete.flag", event_id=SIM_IDS)'
         )
         snakefile_content += builder._build_consolidate_rule_block(
             consolidate_input_str=consolidate_input_str,

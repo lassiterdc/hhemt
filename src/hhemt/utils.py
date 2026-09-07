@@ -15,6 +15,44 @@ import xarray as xr
 import yaml
 from platformdirs import user_data_dir
 
+#: Root consolidated-store names, in RESOLUTION PRIORITY order. V0021 unified BOTH prior
+#: root stores -- a regular analysis's ``analysis_datatree.zarr`` and a sensitivity
+#: master's ``sensitivity_datatree.zarr`` -- into one ``experiment_datatree.zarr`` per
+#: experiment. The two retired names are RETAINED because a render bundle is a tarball no
+#: migration reaches, and an analysis dir that predates the migration still carries one.
+#:
+#: ORDER IS LOAD-BEARING and is not alphabetical, historical, or arbitrary. Every consumer
+#: routed through ``resolve_experiment_tree`` wants the EXPERIMENT-LEVEL AGGREGATE. On a
+#: root carrying BOTH retired names the aggregate is the sensitivity master's store, so
+#: ``sensitivity_datatree.zarr`` MUST precede ``analysis_datatree.zarr``: the latter at an
+#: experiment root is that experiment's own single-analysis tree, which is the aggregate
+#: only when it is the sole retired name present.
+#:
+#: Per-MEMBER stores under ``members/member_N/analysis_datatree.zarr`` are NOT renamed by
+#: V0021 and must not be resolved through here.
+ROOT_TREE_NAMES = (
+    "experiment_datatree.zarr",
+    "sensitivity_datatree.zarr",
+    "analysis_datatree.zarr",
+)
+EXPERIMENT_TREE_NAME = ROOT_TREE_NAMES[0]
+
+
+def resolve_experiment_tree(root: str | Path) -> Path:
+    """Resolve an experiment's ROOT consolidated store by EXISTENCE.
+
+    Returns the first existing candidate in ``ROOT_TREE_NAMES`` priority order -- see
+    that tuple's note on why the order is not interchangeable. When NONE exists the
+    unified name is returned rather than None, so a caller's own absent-tree branch keeps
+    its `.exists()` shape and reports against the canonical name instead of a retired one.
+    """
+    root = Path(root)
+    for name in ROOT_TREE_NAMES:
+        cand = root / name
+        if cand.exists():
+            return cand
+    return root / EXPERIMENT_TREE_NAME
+
 
 class BatchJobSubmissionError(Exception):
     """

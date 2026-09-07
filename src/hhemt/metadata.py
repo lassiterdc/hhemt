@@ -107,6 +107,51 @@ _VOLATILE_PROV_KEYS: frozenset[str] = frozenset(
         "identifier",
     }
 )
+# PER-TIER STRIP SETS. The two sets below are byte-equal to each other and to
+# _VOLATILE_PROV_KEYS above TODAY. That equality is a coincidence of timing, not a shared
+# rule. Do NOT re-merge them and do NOT alias either one to the set above.
+#
+# The reason is a STANDARDS reason, and it outlives the change that introduced the split.
+# `datePublished` is a MUST on the RO-Crate Root Data Entity. The two tiers owe that
+# property under DIFFERENT rules: the bundle tier TRANSPORTS an existing crate and must
+# preserve the description it carries, while the combined tier emits a FIRST publication
+# of the combination and must author its own value. One denylist cannot carry two rules.
+#
+# The bundle tier in particular should never have applied a MUST-stripping denylist at
+# all. The staging directory carries a ro-crate-metadata.json, which makes it an ATTACHED
+# PACKAGE, and an Attached Package's Root Data Entity MUST carry datePublished. Stripping
+# it produces a non-conformant crate on its own terms, independently of any sequencing and
+# independently of what the source crate was doing.
+#
+# Scheduling note, which EXPIRES once both tiers emit correctly and is therefore not the
+# justification above: while the bundle tier still strips the key and the combined tier
+# does not yet author one, no single edit to one shared constant satisfies both tiers,
+# because each tier's correct behaviour depends on the other's already being in place.
+# The split is what makes the two changes independently landable.
+_BUNDLE_TRANSFER_STRIP_KEYS: frozenset[str] = frozenset(
+    {
+        "startTime",
+        "endTime",
+        "duration",
+        "agent",
+        "datePublished",
+        "dateModified",
+        "actionStatus",
+        "identifier",
+    }
+)
+_COMBINED_EMIT_STRIP_KEYS: frozenset[str] = frozenset(
+    {
+        "startTime",
+        "endTime",
+        "duration",
+        "agent",
+        "datePublished",
+        "dateModified",
+        "actionStatus",
+        "identifier",
+    }
+)
 # Volatile keys excluded from the sidecar compare-and-write.
 #
 # CORRECTED: this previously read "the co-located sidecar carries the deterministic core

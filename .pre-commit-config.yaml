@@ -2,6 +2,16 @@
 # Install: pip install pre-commit && pre-commit install
 # Run manually: pre-commit run --all-files
 
+# `pre-commit install` installs ONLY `.git/hooks/pre-commit` unless this key is present
+# (`default_install_hook_types` defaults to `['pre-commit']`; see pre_commit/clientlib.py
+# and commands/install_uninstall.py::_hook_types). Every `stages:` key below therefore
+# named a venue that a correctly-onboarded clone never ran -- docs/contributing.md
+# prescribes bare `pre-commit install`. That silently disabled the pre-push half of
+# `anonymization-guard` and ALL of `anonymization-guard-commit-msg`, both of which carry
+# comments citing real leaks as the reason those venues exist, and it would have shipped
+# the layout-version pre-push hooks below inert on arrival.
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
+
 repos:
   # Ruff linting and formatting
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -58,16 +68,48 @@ repos:
     hooks:
       - id: check-layout-version-a
         name: check LAYOUT_VERSION bump implies migration + fixtures
-        entry: uv run --locked python scripts/check_layout_version.py check-a HEAD~1
+        entry: uv run --locked python scripts/check_layout_version.py check-a HEAD
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-commit]
+      - id: check-layout-version-a-range
+        name: check pushed LAYOUT_VERSION bump implies migration + fixtures
+        entry: uv run --locked python scripts/check_layout_version.py check-a --range HEAD~1
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
       - id: check-layout-version-b
         name: check layout-relevant files trigger LAYOUT_VERSION bump
-        entry: uv run --locked python scripts/check_layout_version.py check-b HEAD~1
+        entry: uv run --locked python scripts/check_layout_version.py check-b HEAD
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-commit]
+      # THE VENUE SPLIT, and it is not cosmetic. check-b's disarm is a PENDING-CHANGE
+      # predicate: `_layout_version_at_head()` reads the WORKTREE and
+      # `_layout_version_at("HEAD")` reads the COMMIT, so on a clean tree they are equal
+      # by construction and the disarm is structurally unreachable. Before this split neither
+      # check-layout-version hook carried a `stages:` key, so both ran at every stage by
+      # pre-commit's all-stages default -- check-b reached pre-push with a permanently-inert
+      # disarm and refused exactly the push it exists to permit (a bump pushed as the most
+      # recent commit). `--range` supplies the range-based bump predicate the checker's
+      # own SCOPE comment says a range venue must bring: it grades the COMMIT RANGE
+      # base..HEAD on every arm, so the worktree is not read at all.
+      #
+      # That matters because pre-push is NOT a clean-tree venue. `pre_commit/commands/run.py`
+      # computes `stash = not all_files and not files`, which is not keyed on stage, so a
+      # branch update reverts UNSTAGED edits for the hook's duration while STAGED-uncommitted
+      # ones survive, and a push whose first unpushed ancestor is a root commit stashes
+      # nothing. Reading the worktree here is unsound in both directions, not merely dirty.
+      - id: check-layout-version-b-range
+        name: check pushed layout-relevant files trigger LAYOUT_VERSION bump
+        entry: uv run --locked python scripts/check_layout_version.py check-b --range HEAD~1
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
 
       - id: check-caption-pairing
         name: check captioned renderer changes are paired with caption edits
