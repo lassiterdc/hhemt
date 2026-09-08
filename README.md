@@ -88,13 +88,15 @@ Where to go next, depending on what you are doing:
 
 If you use this software, please cite it via its Zenodo DOI. Citation metadata is
 maintained in [`CITATION.cff`](CITATION.cff), which GitHub's "Cite this
-repository" resolves.
+repository" button reads.
 
-**Cite the version you actually ran, not the badge.** The DOI badge above is the
-*concept* DOI — it always resolves to the newest release, so a reader following
-it later may land on a version that behaves differently from the one that
-produced your results. Zenodo also mints a *version* DOI for each release; that
-is the one to put in a paper. Find it on the Zenodo record for your release, or
-read it back from your analysis's own provenance: a consolidated output records
-the toolkit version that produced it, so the run itself can tell you what to
-cite.
+**Cite the version you actually ran.** Two DOIs exist. The *concept* DOI always
+resolves to the newest release, so a reader following it later may land on a
+version that behaves differently from the one that produced your results. Every
+general-purpose affordance here hands you that one, including the DOI badge above
+and the "Cite this repository" button. Zenodo also mints a *version* DOI for each
+release, and that is the one to put in a paper. Find it in the citation block under
+[How to cite](https://hhemt.readthedocs.io/en/latest/#how-to-cite) in the
+documentation, or on the Zenodo record for your release. Your analysis can tell you
+which version you ran: a consolidated output records the toolkit version that
+produced it.
