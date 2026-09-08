@@ -54,14 +54,15 @@ class ConfigurationError(TRITONSWMMError):
     - Mutually exclusive options are both enabled
     - Configuration values fail validation rules
 
-    Attributes:
-        field: The configuration field that failed validation
-        config_path: Optional path to the configuration file
+    Attributes
+    ----------
+    field : str
+        The configuration field that failed validation.
+    config_path : Path or None
+        Path to the configuration file, when one was given.
     """
 
-    def __init__(
-        self, field: str, message: str, config_path: Path | None = None, fix_hint: str = ""
-    ):
+    def __init__(self, field: str, message: str, config_path: Path | None = None, fix_hint: str = ""):
         self.field = field
         self.config_path = config_path
         self.fix_hint = fix_hint
@@ -295,7 +296,7 @@ class WorkflowPlanningError(TRITONSWMMError):
     def __init__(self, phase: str, reason: str):
         self.phase = phase
 
-        super().__init__(f"Workflow planning failed during {phase}\n" f"  Reason: {reason}")
+        super().__init__(f"Workflow planning failed during {phase}\n  Reason: {reason}")
 
 
 class PublishError(TRITONSWMMError):

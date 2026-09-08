@@ -103,30 +103,42 @@ class Toolkit:
         - Instantiating system and analysis objects
         - Running preflight validation checks (if validate=True)
 
-        Args:
-            system_config: Path to system configuration YAML file
-            analysis_config: Path to analysis configuration YAML file
-            hpc_system_config: Optional path to the per-HPC-system configuration
-                YAML file (``hpc_system_config.yaml``). When None (default),
-                behavior is byte-identical to today — the HPC config consumers
-                wire in later phases.
-            case_manifest_yaml: Optional path to the case study's ``case.yaml``
-                (ADR-12 CaseManifest). Forwarded to the analysis constructor so
-                ``case_name`` is bundled (a BLOCKING combine-compatibility field)
-                and the RO-Crate root name resolves from the real manifest. When
-                None (default), behavior is byte-identical to today.
-            validate: Whether to run preflight validation (default: True).
-                Raises ConfigurationError if validation fails.
+        Parameters
+        ----------
+        system_config : str or Path
+            Path to the system configuration YAML file.
+        analysis_config : str or Path
+            Path to the analysis configuration YAML file.
+        hpc_system_config : str or Path, optional
+            Path to the per-HPC-system configuration YAML file
+            (``hpc_system_config.yaml``). When None, the default, behavior is
+            byte-identical to today and the HPC config consumers wire in later
+            phases.
+        case_manifest_yaml : str or Path, optional
+            Path to the case study's ``case.yaml`` manifest. Forwarded to the
+            analysis constructor so ``case_name`` is bundled, which is a blocking
+            combine-compatibility field, and the RO-Crate root name resolves from
+            the real manifest. When None, the default, behavior is byte-identical
+            to today.
+        validate : bool, default True
+            Whether to run preflight validation. Raises ConfigurationError if
+            validation fails.
 
-        Returns:
-            Initialized Toolkit instance ready for workflow execution
+        Returns
+        -------
+        Toolkit
+            Initialized Toolkit instance ready for workflow execution.
 
-        Raises:
-            ConfigurationError: If configuration files are invalid or validation fails
-            FileNotFoundError: If configuration files don't exist
+        Raises
+        ------
+        ConfigurationError
+            If configuration files are invalid or validation fails.
+        FileNotFoundError
+            If configuration files do not exist.
 
-        Example:
-            >>> from hhemt import Toolkit
+        Examples
+        --------
+        >>> from hhemt import Toolkit
             >>>
             >>> tk = Toolkit.from_configs(
             ...     system_config="configs/system.yaml",
