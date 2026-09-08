@@ -1185,3 +1185,19 @@ non_breaking_allowlist:
       that content was examined. No claim of non-breaking is made here. Any later
       drift re-fires Check B and must be adjudicated on its own merits then.
     layout_signature: "aed5f1fec08e1f52d58ca04eadc5c35caa1ed4f98eeebde2c10699f95b24eb89"
+
+  - path: src/hhemt/sensitivity_analysis.py
+    justification: >-
+      ADJUDICATED, not baselined. The prior row for this path pinned the content at
+      09999048 and said any later drift "must be adjudicated on its own merits then";
+      this row is that adjudication. The drift came in with the docs-and-experiment-system
+      merge (sister commit 3bd728e0, "finish the numpy conversion"), 39 insertions /
+      26 deletions. NON-BREAKING, and proven rather than asserted: parsing both revisions
+      and comparing ast.dump AFTER stripping every module/class/function docstring returns
+      IDENTICAL, so the change cannot reach any code path and therefore cannot alter an
+      on-disk analysis tree. The comparison was run with a control -- the same instrument
+      against a deliberately mutated copy returns DIFFERENT -- so the identity is a real
+      reading rather than an artifact of an instrument that discriminates nothing.
+      Signature re-stamped to the post-merge content, which is what keeps this exemption
+      CHANGE-SCOPED rather than converting it back to path-permanent.
+    layout_signature: "f8d8d864008d791f343c3508b25d476fd8dab0d5888d2d0ce953e0d7aa60d069"
