@@ -239,13 +239,13 @@ def test_pre_delete_guards_defaults_preserve_analysis_delete_namespace():
 # ---------------------------------------------------------------------------
 
 
-def test_build_reprocess_delete_snakefile_non_sensitivity(norfolk_multi_sim_analysis):
+def test_build_reprocess_delete_snakefile_non_sensitivity(synth_multi_sim_analysis):
     """Non-sensitivity start_with='process' emits per-event delete_processed_*
     rules + a delete_reprocess_zarr_consolidation rule, all in the
     _deleting_reprocess/ namespace."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_multi_sim_analysis
+    analysis = synth_multi_sim_analysis
     builder = SnakemakeWorkflowBuilder(analysis)
     content = builder._build_reprocess_delete_snakefile_content(start_with="process")
 
@@ -260,7 +260,7 @@ def test_build_reprocess_delete_snakefile_non_sensitivity(norfolk_multi_sim_anal
     assert "delete_member_reprocess_" not in content
 
 
-def test_delete_rules_declare_a_log_and_redirect_into_it(norfolk_multi_sim_analysis):
+def test_delete_rules_declare_a_log_and_redirect_into_it(synth_multi_sim_analysis):
     """Every scoped-delete rule carries BOTH halves of log capture.
 
     `log:` alone does not capture stdout/stderr — Snakemake only declares the path
@@ -281,7 +281,7 @@ def test_delete_rules_declare_a_log_and_redirect_into_it(norfolk_multi_sim_analy
     """
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    builder = SnakemakeWorkflowBuilder(norfolk_multi_sim_analysis)
+    builder = SnakemakeWorkflowBuilder(synth_multi_sim_analysis)
     content = builder._build_reprocess_delete_snakefile_content(start_with="process")
 
     # Both emitters reachable on the non-sensitivity path declare a log...
@@ -299,12 +299,12 @@ def test_delete_rules_declare_a_log_and_redirect_into_it(norfolk_multi_sim_analy
     )
 
 
-def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivity_analysis):
+def test_build_reprocess_delete_snakefile_sensitivity_option_c(synth_sensitivity_analysis):
     """D-scope Option C: sensitivity emits ONE delete_member_reprocess_{member}
     rule per sub (NOT per-(member,event)) + a master consolidation rule."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_sensitivity_analysis
+    analysis = synth_sensitivity_analysis
     sub_ids = [str(k) for k in analysis.sensitivity.members.keys()]
     assert len(sub_ids) >= 1, "fixture must construct >=1 member"
 
@@ -324,12 +324,12 @@ def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivi
     assert "_deleting_reprocess/" in content
 
 
-def test_build_reprocess_delete_snakefile_consolidate_skips_processed(norfolk_multi_sim_analysis):
+def test_build_reprocess_delete_snakefile_consolidate_skips_processed(synth_multi_sim_analysis):
     """start_with='consolidate' emits NO per-event processed rules (processed/
     deletion is a process-stage-only concern) but still deletes the zarr."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    builder = SnakemakeWorkflowBuilder(norfolk_multi_sim_analysis)
+    builder = SnakemakeWorkflowBuilder(synth_multi_sim_analysis)
     content = builder._build_reprocess_delete_snakefile_content(start_with="consolidate")
 
     assert "rule delete_processed_" not in content
@@ -366,7 +366,7 @@ def test_reprocess_phase3_self_methods_are_defined_on_class():
         assert not missing, f"{cls.__name__}.{meth} references undefined methods: {missing}"
 
 
-def test_delete_rules_declare_the_processing_partition_on_hpc(norfolk_multi_sim_analysis):
+def test_delete_rules_declare_the_processing_partition_on_hpc(synth_multi_sim_analysis):
     """Every scoped-delete rule must name the CPU processing partition on HPC.
 
     Without an explicit slurm_partition these rules inherit `default-resources`'
@@ -381,7 +381,7 @@ def test_delete_rules_declare_the_processing_partition_on_hpc(norfolk_multi_sim_
     """
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_multi_sim_analysis
+    analysis = synth_multi_sim_analysis
     builder = SnakemakeWorkflowBuilder(analysis)
     cfg = builder.cfg_analysis
 
@@ -440,13 +440,13 @@ def _stub_reprocess_submissions(analysis, calls, *, success):
     analysis._workflow_builder.submit_reprocess_workflow = lambda *a, **k: {"success": True}
 
 
-def test_nonsensitivity_explicit_local_execution_mode_is_not_overridden(norfolk_multi_sim_analysis):
+def test_nonsensitivity_explicit_local_execution_mode_is_not_overridden(synth_multi_sim_analysis):
     """execution_mode='local' must keep the scoped delete off the SLURM route.
 
     The config says batch_job; the caller says local. The caller wins. Mirrors
     test_synth_08's sensitivity twin. Before the fix the config won silently.
     """
-    analysis = norfolk_multi_sim_analysis
+    analysis = synth_multi_sim_analysis
     analysis.cfg_analysis.multi_sim_run_method = "batch_job"
     calls: list = []
     # success=False so that IF the SLURM route were taken, the raise would fire
@@ -467,7 +467,7 @@ def test_nonsensitivity_explicit_local_execution_mode_is_not_overridden(norfolk_
 
 
 def test_nonsensitivity_failed_scoped_delete_raises_instead_of_consolidating_stale(
-    norfolk_multi_sim_analysis,
+    synth_multi_sim_analysis,
 ):
     """A scoped reprocess-delete that reports failure must RAISE, not fall through.
 
@@ -476,7 +476,7 @@ def test_nonsensitivity_failed_scoped_delete_raises_instead_of_consolidating_sta
     on a surviving zarr whose datatree_consolidation_complete log flag the delete
     runner never clears (processing_analysis.py:183), silently re-publishing stale.
     """
-    analysis = norfolk_multi_sim_analysis
+    analysis = synth_multi_sim_analysis
     analysis.cfg_analysis.multi_sim_run_method = "batch_job"
     calls: list = []
     _stub_reprocess_submissions(analysis, calls, success=False)

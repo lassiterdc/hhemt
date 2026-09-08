@@ -39,7 +39,7 @@ def _extract_first_rule_block(snakefile_text: str, rule_header: str) -> str:
     return rule_header + (rest[: nxt.start()] if nxt else rest)
 
 
-def test_multisim_process_rule_walltime_is_no_longer_120(norfolk_multi_sim_analysis):
+def test_multisim_process_rule_walltime_is_no_longer_120(synth_multi_sim_analysis):
     """PRE-FIX FAILURE, ASSERTION-LEVEL: the multisim site hardcoded
     `runtime_min=120`, so the emitted block reads `runtime=120` and this
     assertion fails on the value. Post-fix it reads the field's default, 240.
@@ -48,7 +48,7 @@ def test_multisim_process_rule_walltime_is_no_longer_120(norfolk_multi_sim_analy
     the sensitivity paths -- and it is the only one of the three sites a
     default-value test can discriminate.
     """
-    analysis = norfolk_multi_sim_analysis
+    analysis = synth_multi_sim_analysis
     sf = analysis._workflow_builder.generate_snakefile_content(**_GEN_KWARGS)
     matches = re.findall(r"rule process_\w+:", sf)
     assert matches, "Snakefile should contain at least one process rule"
@@ -58,7 +58,7 @@ def test_multisim_process_rule_walltime_is_no_longer_120(norfolk_multi_sim_analy
 
 
 @pytest.mark.parametrize("site", ["multisim", "sensitivity_canonical", "sensitivity_reprocess"])
-def test_process_rule_walltime_is_config_sourced(site, norfolk_multi_sim_analysis, norfolk_sensitivity_analysis):
+def test_process_rule_walltime_is_config_sourced(site, synth_multi_sim_analysis, synth_sensitivity_analysis):
     """PRE-FIX FAILURE, ValueError: `hpc_runtime_min_for_sim_output_processing`
     does not exist on the pre-fix model, and analysis_config forbids extras, so
     the assignment raises before any assertion runs. Stated plainly because a
@@ -71,12 +71,12 @@ def test_process_rule_walltime_is_config_sourced(site, norfolk_multi_sim_analysi
     """
     sentinel = 777
     if site == "multisim":
-        analysis = norfolk_multi_sim_analysis
+        analysis = synth_multi_sim_analysis
         analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing = sentinel
         sf = analysis._workflow_builder.generate_snakefile_content(**_GEN_KWARGS)
         pattern = r"rule process_\w+:"
     else:
-        analysis = norfolk_sensitivity_analysis
+        analysis = synth_sensitivity_analysis
         # The per-sub read is the point: the sites take sub_analysis.cfg_analysis,
         # so setting the master alone would NOT reach them if the overlay is honored.
         analysis.cfg_analysis.hpc_runtime_min_for_sim_output_processing = sentinel

@@ -74,9 +74,9 @@ def test_validation_issue_str():
     assert "Set constant_mannings value" in s
 
 
-def test_validate_system_config_paths(norfolk_multi_sim_analysis):
+def test_validate_system_config_paths(synth_multi_sim_analysis):
     """Test system config path validation on real config."""
-    cfg_sys = norfolk_multi_sim_analysis._system.cfg_system
+    cfg_sys = synth_multi_sim_analysis._system.cfg_system
     result = validate_system_config(cfg_sys)
 
     # Real config should be valid
@@ -85,9 +85,9 @@ def test_validate_system_config_paths(norfolk_multi_sim_analysis):
     assert result.is_valid or result.has_warnings  # May have warnings
 
 
-def test_validate_analysis_config_basic(norfolk_multi_sim_analysis):
+def test_validate_analysis_config_basic(synth_multi_sim_analysis):
     """Test analysis config validation on real config."""
-    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    cfg_analysis = synth_multi_sim_analysis.cfg_analysis
     result = validate_analysis_config(cfg_analysis)
 
     # Real config should be valid
@@ -96,10 +96,10 @@ def test_validate_analysis_config_basic(norfolk_multi_sim_analysis):
     assert result.is_valid or result.has_warnings  # May have warnings
 
 
-def test_preflight_validate_integration(norfolk_multi_sim_analysis):
+def test_preflight_validate_integration(synth_multi_sim_analysis):
     """Test full preflight validation."""
-    cfg_sys = norfolk_multi_sim_analysis._system.cfg_system
-    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    cfg_sys = synth_multi_sim_analysis._system.cfg_system
+    cfg_analysis = synth_multi_sim_analysis.cfg_analysis
 
     result = preflight_validate(cfg_sys, cfg_analysis)
 
@@ -124,12 +124,12 @@ def test_validation_model_selection_fails_when_all_disabled():
     pass
 
 
-def test_validate_data_consistency(norfolk_multi_sim_analysis):
+def test_validate_data_consistency(synth_multi_sim_analysis):
     """Test data cross-consistency validation."""
     from hhemt.validation import validate_data_consistency
 
-    cfg_sys = norfolk_multi_sim_analysis._system.cfg_system
-    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    cfg_sys = synth_multi_sim_analysis._system.cfg_system
+    cfg_analysis = synth_multi_sim_analysis.cfg_analysis
 
     result = validate_data_consistency(cfg_sys, cfg_analysis)
 
@@ -139,11 +139,11 @@ def test_validate_data_consistency(norfolk_multi_sim_analysis):
     assert result.is_valid or result.has_warnings
 
 
-def test_validate_storm_tide_when_disabled(norfolk_multi_sim_analysis):
+def test_validate_storm_tide_when_disabled(synth_multi_sim_analysis):
     """Test storm tide validation when toggle disabled."""
     from hhemt.validation import ValidationResult, _validate_storm_tide_data
 
-    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    cfg_analysis = synth_multi_sim_analysis.cfg_analysis
     result = ValidationResult()
 
     # Norfolk test case has toggle_storm_tide_boundary=False
@@ -153,11 +153,11 @@ def test_validate_storm_tide_when_disabled(norfolk_multi_sim_analysis):
     assert result.is_valid
 
 
-def test_validate_units_requires_rainfall_units(norfolk_multi_sim_analysis):
+def test_validate_units_requires_rainfall_units(synth_multi_sim_analysis):
     """Test units validation requires explicit rainfall_units."""
     from hhemt.validation import ValidationResult, _validate_units
 
-    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    cfg_analysis = synth_multi_sim_analysis.cfg_analysis
     result = ValidationResult()
 
     _validate_units(cfg_analysis, result)
@@ -166,10 +166,10 @@ def test_validate_units_requires_rainfall_units(norfolk_multi_sim_analysis):
     assert result.is_valid or result.has_warnings
 
 
-def test_analysis_validate_method(norfolk_multi_sim_analysis):
+def test_analysis_validate_method(synth_multi_sim_analysis):
     """Test Analysis.validate() method integration."""
     # Call validate() on the analysis instance
-    result = norfolk_multi_sim_analysis.validate()
+    result = synth_multi_sim_analysis.validate()
 
     # Verify we get a ValidationResult
     assert hasattr(result, "is_valid")
@@ -185,10 +185,10 @@ def test_analysis_validate_method(norfolk_multi_sim_analysis):
     assert result.is_valid, f"Validation failed with {len(result.errors)} errors"
 
 
-def test_analysis_validate_raise_if_invalid(norfolk_multi_sim_analysis):
+def test_analysis_validate_raise_if_invalid(synth_multi_sim_analysis):
     """Test Analysis.validate().raise_if_invalid() pattern."""
     # This should not raise on valid config
-    norfolk_multi_sim_analysis.validate().raise_if_invalid()
+    synth_multi_sim_analysis.validate().raise_if_invalid()
 
     # If we get here, validation passed (no ConfigurationError raised)
     assert True

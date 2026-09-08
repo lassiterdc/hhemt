@@ -25,9 +25,9 @@ def _regenerate_master(sensitivity) -> str:
     return sensitivity._workflow_builder.generate_master_snakefile_content(which="both", compression_level=5)
 
 
-def test_remove_middle_member_id_does_not_shift_other_rules(norfolk_sensitivity_analysis):
+def test_remove_middle_member_id_does_not_shift_other_rules(synth_sensitivity_analysis):
     """Removing a middle member_id retires only that row's rules; others stay byte-identical."""
-    analysis = norfolk_sensitivity_analysis
+    analysis = synth_sensitivity_analysis
     sensitivity = analysis.sensitivity
 
     member_ids = list(sensitivity.members.keys())
@@ -57,9 +57,9 @@ def test_remove_middle_member_id_does_not_shift_other_rules(norfolk_sensitivity_
     assert added == set(), f"no new rules should appear for untouched member_ids; got added={added}"
 
 
-def test_add_new_member_id_adds_only_its_rules(norfolk_sensitivity_analysis):
+def test_add_new_member_id_adds_only_its_rules(synth_sensitivity_analysis):
     """Adding a member_id introduces only its own per-event rules."""
-    analysis = norfolk_sensitivity_analysis
+    analysis = synth_sensitivity_analysis
     sensitivity = analysis.sensitivity
 
     member_ids = list(sensitivity.members.keys())
@@ -90,7 +90,7 @@ def test_add_new_member_id_adds_only_its_rules(norfolk_sensitivity_analysis):
 
     new_id_seg = new_id.replace(".", "_").replace("-", "_")
     assert added, f"adding member_id={new_id} should introduce per-event rules"
-    assert all(
-        f"member_{new_id_seg}_" in n for n in added
-    ), f"added rules must all reference the new member_id; got {added}"
+    assert all(f"member_{new_id_seg}_" in n for n in added), (
+        f"added rules must all reference the new member_id; got {added}"
+    )
     assert removed == set(), f"no rules should disappear for existing member_ids; got removed={removed}"

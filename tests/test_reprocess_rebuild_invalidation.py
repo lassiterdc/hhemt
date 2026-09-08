@@ -71,11 +71,11 @@ def _seed_scenario_processing_log(scen: TRITONSWMM_scenario) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitivity_analysis, monkeypatch):
+def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(synth_sensitivity_analysis, monkeypatch):
     """Sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route deletes every sub's ``d_process_*`` flags AND
     clears every scenario's per-model ``processing_log.outputs`` (FIX 1, hunk 2a)."""
-    experiment = norfolk_sensitivity_analysis
+    experiment = synth_sensitivity_analysis
     sensitivity = experiment.sensitivity
 
     # Force the SLURM-offload route: batch_job → _hpc=True → route_delete_via_slurm.
@@ -175,13 +175,13 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitiv
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivity_analysis):
+def test_reprocess_generator_emits_rebuild_after_invalidation(synth_sensitivity_analysis):
     """Pure generator test (no reprocess() call). With ``c_run`` flags present
     and ``d_process`` flags absent, the reprocess master generator emits a
     ``process_*`` rebuild rule per (member, event) and routes each per-member
     consolidate's input through the ``d_process`` flag. The generated Snakefile
     PARSES (Snakemake dry-run, no compiler needed)."""
-    experiment = norfolk_sensitivity_analysis
+    experiment = synth_sensitivity_analysis
     builder = experiment.sensitivity._workflow_builder
 
     analysis_dir = builder.experiment.analysis_paths.analysis_dir
@@ -273,11 +273,11 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivit
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(norfolk_multi_sim_analysis, monkeypatch):
+def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(synth_multi_sim_analysis, monkeypatch):
     """Non-sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route clears each scenario's per-model
     ``processing_log.outputs`` (FIX 1, CHANGE A1)."""
-    analysis = norfolk_multi_sim_analysis
+    analysis = synth_multi_sim_analysis
 
     # Force the SLURM-offload route.
     analysis.cfg_analysis.multi_sim_run_method = "batch_job"
@@ -333,7 +333,7 @@ def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(norfolk_mult
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_consolidate_inprocess_preserves_processed(norfolk_sensitivity_analysis, monkeypatch):
+def test_reprocess_consolidate_inprocess_preserves_processed(synth_sensitivity_analysis, monkeypatch):
     """A CONSOLIDATE-stage in-process ``reprocess(regenerate_existing=True)`` must
     PRESERVE each sub's per-scenario ``processed/`` — that directory is the
     rebuild source the consolidate stage reads from; only a PROCESS-stage
@@ -348,7 +348,7 @@ def test_reprocess_consolidate_inprocess_preserves_processed(norfolk_sensitivity
     coverage gap that previously let the defect reach only the ~4-min
     compile-gated Tier-2 gate.
     """
-    experiment = norfolk_sensitivity_analysis
+    experiment = synth_sensitivity_analysis
     sensitivity = experiment.sensitivity
 
     # In-process (local) route: pass delete_via_slurm=False so

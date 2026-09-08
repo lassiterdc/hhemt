@@ -8,11 +8,11 @@ import tests.utils_for_testing as tst_ut  # noqa: F401 — reused fixtures
 
 
 @pytest.fixture
-def member_with_scratch_analyses(norfolk_sensitivity_analysis_cached, tmp_path, monkeypatch):
+def member_with_scratch_analyses(synth_sensitivity_analysis_cached, tmp_path, monkeypatch):
     """Rebind ``sensitivity.members_dir`` to a tmp_path-rooted copy of the
     cached fixture's ``members/`` so orphan-cleanup tests never mutate the
     shared cached fixture directory."""
-    member = norfolk_sensitivity_analysis_cached.sensitivity
+    member = synth_sensitivity_analysis_cached.sensitivity
     scratch = tmp_path / "members"
     scratch.mkdir()
     for member_id in member.df_setup.index.astype(str):
@@ -88,8 +88,8 @@ def test_member_prefix_with_invalid_charset_not_orphaned(member_with_scratch_ana
     assert hostile not in orphans
 
 
-def test_missing_members_dir_is_noop(norfolk_sensitivity_analysis_cached, monkeypatch, tmp_path):
-    member = norfolk_sensitivity_analysis_cached.sensitivity
+def test_missing_members_dir_is_noop(synth_sensitivity_analysis_cached, monkeypatch, tmp_path):
+    member = synth_sensitivity_analysis_cached.sensitivity
     monkeypatch.setattr(member, "members_dir", tmp_path / "nonexistent")
     orphans = member.find_orphan_member_dirs()
     assert orphans == []

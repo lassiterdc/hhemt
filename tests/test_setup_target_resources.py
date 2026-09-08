@@ -160,8 +160,8 @@ def test_swmm_compile_script_unchanged_without_modules(tmp_path, monkeypatch):
 # ----------------------------------------------------------------------------
 
 
-def test_non_sensitivity_setup_rule_uses_dedicated_mem_field(norfolk_multi_sim_analysis):
-    analysis = norfolk_multi_sim_analysis
+def test_non_sensitivity_setup_rule_uses_dedicated_mem_field(synth_multi_sim_analysis):
+    analysis = synth_multi_sim_analysis
     analysis.cfg_analysis.hpc_mem_allocation_for_setup_mb = 12000
     analysis.cfg_analysis.hpc_runtime_min_for_setup = 60
     sf = analysis._workflow_builder.generate_snakefile_content(
@@ -180,8 +180,8 @@ def test_non_sensitivity_setup_rule_uses_dedicated_mem_field(norfolk_multi_sim_a
 # ----------------------------------------------------------------------------
 
 
-def test_setup_target_rule_uses_dedicated_mem_field(norfolk_sensitivity_analysis):
-    analysis = norfolk_sensitivity_analysis
+def test_setup_target_rule_uses_dedicated_mem_field(synth_sensitivity_analysis):
+    analysis = synth_sensitivity_analysis
     analysis.cfg_analysis.hpc_mem_allocation_for_setup_mb = 12000
     analysis.cfg_analysis.hpc_runtime_min_for_setup = 60
     sf = analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
@@ -202,13 +202,13 @@ def test_setup_target_rule_uses_dedicated_mem_field(norfolk_sensitivity_analysis
 # ----------------------------------------------------------------------------
 
 
-def test_setup_mem_undersize_warning(norfolk_sensitivity_analysis):
+def test_setup_mem_undersize_warning(synth_sensitivity_analysis):
     from hhemt.validation import (
         ValidationResult,
         _validate_setup_mem_sizing,
     )
 
-    analysis = norfolk_sensitivity_analysis
+    analysis = synth_sensitivity_analysis
     cfg_system = analysis._system.cfg_system
     cfg_analysis = analysis.cfg_analysis
 
@@ -224,13 +224,13 @@ def test_setup_mem_undersize_warning(norfolk_sensitivity_analysis):
     assert "0.35" in flat
 
 
-def test_setup_mem_undersize_no_warning_when_safe(norfolk_sensitivity_analysis):
+def test_setup_mem_undersize_no_warning_when_safe(synth_sensitivity_analysis):
     from hhemt.validation import (
         ValidationResult,
         _validate_setup_mem_sizing,
     )
 
-    analysis = norfolk_sensitivity_analysis
+    analysis = synth_sensitivity_analysis
     cfg_system = analysis._system.cfg_system
     cfg_analysis = analysis.cfg_analysis
 
