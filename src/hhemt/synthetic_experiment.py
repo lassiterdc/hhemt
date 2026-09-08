@@ -224,7 +224,8 @@ def assert_coupling_nodes_distinct(
     native resolution. The OTHER SWMM nodes ``_nodes`` returns are DELIBERATELY
     excluded because none of them can drop an in-line node's coupling inflow:
       * ``dummy_outfall`` is a DISCONNECTED outfall (no downstream conduit), so the
-        most-downstream-per-cell reduction (scenario_inputs.py:157-205) never selects
+        most-downstream-per-cell reduction in ``scenario_inputs.
+        update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell`` never selects
         it over a connected junction. Iterating it would false-positively reject the
         canonical ladder -- it bins into ``J1``'s cell at the DoD-valid 14 m rung on
         the default 64x120 grid.
@@ -240,7 +241,8 @@ def assert_coupling_nodes_distinct(
     groups SWMM nodes by their containing cell in the PROCESSED (coarsened) DEM and
     retains the inflow assignment of only the most downstream node per cell. Fewer
     retained in-line nodes than MPI ranks => a node-free top rank => coupling-collective
-    deadlock (swmm_template.py:122-131, triton.h:2363-2404). A deadlock is a HANG, not
+    deadlock (see the ``_N_COUPLING_NODES`` definition in ``swmm_template``, whose
+    comment block cites triton.h:2363-2404). A deadlock is a HANG, not
     an error -- the worst failure shape on HPC -- so this converts it into a plan-time
     constraint on the coarsest rung.
 

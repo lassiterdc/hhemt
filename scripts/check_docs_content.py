@@ -54,6 +54,17 @@ PLACEHOLDER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("coming-soon", re.compile(r"\bcoming soon\b", re.I)),
     ("bare-todo-marker", re.compile(r"(?:^|\s)(?:TODO|TBD|FIXME):", re.I)),
     ("stub-self-declaration", re.compile(r"\bis a stub\b", re.I)),
+    # An unfilled DATE, which is the placeholder form a release file takes.
+    # `2026-XX-XX` declares the entry unfinished exactly as `**Placeholder.**`
+    # does, and no pattern above matches it: measured 2026-09-07, all six
+    # returned zero on `## v0.1.0 (2026-XX-XX)`. Anchored on a 4-digit year so
+    # an `XX-XX` elsewhere in prose is not matched. The trailing guard is a
+    # NEGATIVE LOOKAHEAD rather than `\b`: `?` is a non-word character, so a
+    # trailing `\b` can never match after `??` and silenced that whole
+    # alternative in final position (`2026-??-XX` fired, `2026-XX-??` did not).
+    # The `-` inside the class is load-bearing too -- it stops `2026-XX-XX-1`,
+    # which a bare `(?!\w)` would still match.
+    ("unfilled-date-placeholder", re.compile(r"\b\d{4}-(?:XX|\?\?)-(?:XX|\?\?)(?![\w-])", re.I)),
 )
 
 # A source-file reference carrying a line number. Anchored on a real source
@@ -253,14 +264,15 @@ def _unfenced_lines(text: str):
             yield i, line
 
 
-def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
-    """The four FAILING tiers, for one file.
+def _binary_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
+    """The two FILE-TYPE-INDEPENDENT tiers: placeholder leakage and line citations.
 
-    Factored out so `scan()` and `scan_advisory()` apply the SAME patterns to
-    the same bytes. Routing a generated page to the advisory tier only means
-    anything if the tier reports the findings the gate would have reported;
-    running a different pattern set there would silently drop them while
-    looking like routing.
+    Split out of `_gate_findings` so a second population -- shipped package
+    metadata, which is not product prose -- can run THESE classes without also
+    inheriting the vocabulary and punctuation contracts, which are contracts
+    about prose written for a reader of the software and do not bind a TOML
+    comment. Extraction rather than duplication is the point: a pattern added
+    to `PLACEHOLDER_PATTERNS` reaches both populations with no second edit.
     """
     findings: list[tuple[str, Path, int, str]] = []
     for lineno, line in _unfenced_lines(text):
@@ -279,6 +291,19 @@ def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
         m = LINE_CITATION.search(line)
         if m:
             findings.append(("bare-line-citation", md, lineno, m.group(0)))
+    return findings
+
+
+def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
+    """The four FAILING tiers, for one file.
+
+    Factored out so `scan()` and `scan_advisory()` apply the SAME patterns to
+    the same bytes. Routing a generated page to the advisory tier only means
+    anything if the tier reports the findings the gate would have reported;
+    running a different pattern set there would silently drop them while
+    looking like routing.
+    """
+    findings: list[tuple[str, Path, int, str]] = _binary_findings(md, text)
     for lineno, line in _prose_lines(text):
         for code, pat in PUNCTUATION_PATTERNS:
             if pat.search(line):
@@ -324,6 +349,209 @@ def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
         if _is_generated(text) or _is_personal_voice(text):
             # The findings `scan()` skipped, reported here instead of nowhere.
             findings.extend(_gate_findings(md, text))
+    # The rendered-docstring population's PROSE classes. `### D22b` rules `src/`
+    # prose out of GATE scope and does not rule it out of VISIBILITY, and this is
+    # the visibility half -- the anchors are live `src/...py:line` positions a
+    # fixer can open, not offsets into a built page nobody edits.
+    for _qualname, home, doc_line, doc in rendered_docstrings(SRC_ROOT, API_PAGE):
+        for lineno, line in _prose_lines(doc):
+            for code, pat in PUNCTUATION_PATTERNS:
+                if pat.search(line):
+                    findings.append((code, home, doc_line + lineno - 1, line.strip()))
+        for lineno, line in _all_lines(doc):
+            for code, pat in WORD_BAN_PATTERNS:
+                if pat.search(line):
+                    findings.append((code, home, doc_line + lineno - 1, line.strip()))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
+
+
+#: Files that ship to PyPI or are rendered on the project page, and are therefore
+#: PUBLIC artifacts, but are not `docs/` prose. `README.md` and `CONTRIBUTING.md`
+#: are rendered by PyPI and GitHub; `HISTORY.md` is what `[project.urls]
+#: changelog` resolves to; `pyproject.toml` and `CITATION.cff` ARE the published
+#: metadata. Only the two file-type-independent classes run here -- see
+#: `_binary_findings` for why the prose contracts do not.
+#:
+#: A LIST rather than a glob, deliberately. A repo-root `rglob("*.md")` would
+#: sweep `site/`, `.venv/`, `.claude/` and every planning artifact, and the
+#: resulting false-positive volume is how a gate gets routed around. The cost of
+#: the list is that a NEW shipped file is not covered until someone adds it, and
+#: `main()` prints the population in both branches so that omission is visible
+#: rather than silent -- the same design `generated_files` already uses.
+SHIPPED_METADATA: tuple[str, ...] = (
+    "README.md",
+    "CONTRIBUTING.md",
+    "HISTORY.md",
+    "pyproject.toml",
+    "CITATION.cff",
+)
+
+
+def scan_shipped_metadata(repo_root: Path) -> list[tuple[str, Path, int, str]]:
+    """Binary-class findings over `SHIPPED_METADATA`, sorted.
+
+    A named entry that does not exist is SKIPPED rather than raising: this list
+    is a superset claim about what a project of this shape ships, and a repo
+    without a `CITATION.cff` is not a failing repo.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    for name in SHIPPED_METADATA:
+        path = repo_root / name
+        if not path.is_file():
+            continue
+        findings.extend(_binary_findings(path, path.read_text(encoding="utf-8", errors="ignore")))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
+
+
+import ast  # noqa: E402
+
+# ---- The RENDERED-DOCSTRING population ------------------------------------
+#
+# Every member `mkdocstrings` renders on `docs/reference/api.md`. THE SOURCE OF
+# TRUTH IS `filters: ["!^_"]` IN mkdocs.yml, NOT `__all__`.
+#
+# Three derivations are WRONG and each was measured against the eight known bare
+# citations. They are recorded here rather than in a review, because each is the
+# obvious thing to reach for and two of them exit GREEN while under-reaching:
+#
+#   * `getattr(mod, "__all__", ())`, as `check_autodoc_coverage.expected_qualnames`
+#     does, reaches 6 of 8. Two manifested modules declare no `__all__` at all, so
+#     the default returns an empty tuple and those modules contribute ZERO symbols.
+#     An absent `__all__` means "every non-underscore member", never "no members".
+#   * Walking only the manifested module's own file reaches 8 of 8 citations but
+#     only 86 of 97 em dashes: `::: hhemt` renders re-exports whose docstrings
+#     live in the DEFINING module's file, which that walk never opens.
+#   * Treating `__all__` as the renderer's rule answers a different question than
+#     the page does. It is honoured where a module declares one; it is not the key.
+#
+# Only `public_modules()` is reused from the sibling gate, and only at the MODULE
+# level, where it is correct. Its symbol-level derivation is not reused: that
+# script reports 47/47 green while 24 rendered-eligible symbols sit outside
+# `__all__`, which is the same divergence it already repaired one level up.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_autodoc_coverage import public_modules  # noqa: E402
+
+_SCRIPT_ROOT = Path(__file__).resolve().parent.parent
+API_PAGE = _SCRIPT_ROOT / "docs" / "reference" / "api.md"
+SRC_ROOT = _SCRIPT_ROOT / "src"
+
+
+def _module_file(module: str, src: Path) -> Path | None:
+    direct = src / (module.replace(".", "/") + ".py")
+    if direct.is_file():
+        return direct
+    pkg = src / module.replace(".", "/") / "__init__.py"
+    return pkg if pkg.is_file() else None
+
+
+def _declared_all(tree: ast.Module) -> list[str] | None:
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "__all__" for t in node.targets):
+            try:
+                return list(ast.literal_eval(node.value))
+            except (ValueError, SyntaxError):
+                return None
+    return None
+
+
+def _import_origins(module: str, tree: ast.Module) -> dict[str, tuple[str, str]]:
+    """{local name: (defining module, original name)} — re-exports, prohibition 2."""
+    out: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.level:
+            parts = module.split(".")
+            base = ".".join(parts[: len(parts) - node.level + 1] + ([node.module] if node.module else []))
+        else:
+            base = node.module or ""
+        for alias in node.names:
+            out[alias.asname or alias.name] = (base, alias.name)
+    return out
+
+
+def rendered_docstrings(src: Path, api_page: Path) -> list[tuple[str, Path, int, str]]:
+    """(qualname, defining file, docstring start line, docstring) for the rendered surface.
+
+    Raises ValueError if no manifested module resolves, or if a manifested module
+    contributes zero members -- an empty contribution is the STRICT signature and
+    an empty population would make this gate pass vacuously.
+    """
+    out: list[tuple[str, Path, int, str]] = []
+    seen: set[str] = set()
+    per_module: dict[str, int] = {}
+    resolved = 0
+    for module in public_modules(api_page):
+        path = _module_file(module, src)
+        if path is None:
+            continue
+        resolved += 1
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        defined = {n.name: n for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
+        imported = _import_origins(module, tree)
+        declared = _declared_all(tree)
+        # `filters: ["!^_"]` is the rule. `__all__` narrows it where declared.
+        names = [n for n in list(defined) + list(imported) if not n.startswith("_")]
+        if declared is not None:
+            names = [n for n in declared if not n.startswith("_")]
+        count = 0
+        for name in dict.fromkeys(names):
+            node, owner, home = defined.get(name), module, path
+            if node is None and name in imported:
+                origin_mod, origin_name = imported[name]
+                origin_path = _module_file(origin_mod, src)
+                if origin_path is None:
+                    continue
+                origin_tree = ast.parse(origin_path.read_text(encoding="utf-8"))
+                node = {
+                    n.name: n
+                    for n in origin_tree.body
+                    if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                }.get(origin_name)
+                owner, home, name = origin_mod, origin_path, origin_name
+            if node is None:
+                continue
+            members = [(f"{owner}.{name}", node)]
+            if isinstance(node, ast.ClassDef):
+                members += [
+                    (f"{owner}.{name}.{c.name}", c)
+                    for c in node.body
+                    if isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef)) and not c.name.startswith("_")
+                ]
+            for qualname, member in members:
+                if qualname in seen:
+                    continue
+                seen.add(qualname)
+                doc = ast.get_docstring(member)
+                if doc is None:
+                    continue
+                count += 1
+                out.append((qualname, home, member.body[0].lineno, doc))
+        per_module[module] = count
+    if not resolved:
+        raise ValueError(f"no module named on {api_page} resolved under {src} -- nothing to check.")
+    empty = [m for m, c in per_module.items() if c == 0]
+    if empty:
+        raise ValueError(
+            f"manifested module(s) contributed zero documented members: {', '.join(empty)}. "
+            f"That is the STRICT signature -- check the population derivation, not the modules."
+        )
+    return out
+
+
+def scan_rendered_docstrings(src: Path = SRC_ROOT, api_page: Path = API_PAGE) -> list[tuple[str, Path, int, str]]:
+    """Binary-class findings over the rendered-docstring population, sorted.
+
+    Only `_binary_findings`. The vocabulary and punctuation contracts are `### D22b`
+    out-of-scope for `src/` prose and are routed to `scan_advisory()` instead, so
+    this population is gated on exactly the two file-type-independent classes that
+    `hooks/config_reference.py` already fails the build on for the sibling
+    `src/`-derived page.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    for _qualname, home, doc_line, doc in rendered_docstrings(src, api_page):
+        for code, _p, lineno, excerpt in _binary_findings(home, doc):
+            findings.append((code, home, doc_line + lineno - 1, excerpt))
     return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
 
 
@@ -363,12 +591,20 @@ def main(argv: list[str] | None = None) -> int:
         rels = ", ".join(str(m.relative_to(args.docs_dir.parent)) for m in paths)
         return f"skipped {len(paths)} {label} file(s), routed to --advisory: {rels}"
 
+    repo_root = args.docs_dir.parent
+    shipped = [name for name in SHIPPED_METADATA if (repo_root / name).is_file()]
+    rendered = rendered_docstrings(SRC_ROOT, API_PAGE)
     skip_lines = [
         _skip_line("generated", generated_files(args.docs_dir)),
         _skip_line("personal-voice", personal_voice_files(args.docs_dir)),
+        f"scanned {len(shipped)} shipped-metadata file(s) for placeholders and line "
+        f"citations only: {', '.join(shipped) if shipped else '(none found)'}",
+        f"scanned {len(rendered)} rendered docstring(s) from {API_PAGE.name} for placeholders "
+        f"and line citations only; their vocabulary and punctuation are D22b out-of-scope "
+        f"and are reported under --advisory, never gated",
     ]
 
-    findings = scan(args.docs_dir)
+    findings = scan(args.docs_dir) + scan_shipped_metadata(repo_root) + scan_rendered_docstrings()
     if findings:
         print("docs content check FAILED:", file=sys.stderr)
         for code, path, lineno, excerpt in findings:
@@ -385,8 +621,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(
-        f"docs content OK under {args.docs_dir} — no placeholder leakage, bare line "
-        f"citation, banned vocabulary, development provenance, or em dash."
+        f"docs content OK under {args.docs_dir}, and shipped metadata clean — no "
+        f"placeholder leakage, bare line citation, banned vocabulary, development "
+        f"provenance, or em dash."
     )
     for line in skip_lines:
         print(line)

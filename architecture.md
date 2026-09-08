@@ -140,6 +140,30 @@ Note: `environment.yaml` at the repo root and the `conda:` directives in generat
 
 ---
 
+## DOI kind convention
+
+Two published surfaces carry a Zenodo DOI and they carry DIFFERENT ones on purpose.
+
+- `CITATION.cff` carries the CONCEPT DOI (`...151`), which always resolves to the latest release.
+- `docs/index.md`'s printed citation carries the VERSION DOI (`...152`), which pins v0.1.0 permanently.
+
+The rule that makes both correct: a surface carries the most precise identifier that
+
+1. EXISTS at the moment the surface is written, and
+2. remains true of that surface's referent for as long as the surface is readable.
+
+`CITATION.cff` fails (1). Zenodo mints a version DOI in response to a published release, so at the moment the file is written and the tag is cut, that release's version DOI does not yet exist. Measured: `git show v0.1.0:CITATION.cff` carries no DOI at all, and the commit that added one is not an ancestor of the tag — its own subject calls it a backfill.
+
+Note which way the two conditions point, because it is not obvious. Condition (2) taken alone argues FOR the version DOI here: the file ships inside one specific release tarball, so a version DOI would stay true of it forever. Condition (1) wins because it is a hard constraint and (2) is a preference. **That is why this is stated as impossibility rather than as advice.** There is no counter-argument to a value that does not exist, whereas advice gets argued back by anyone weighting precision — and this project's own citation guidance weights precision, so advice would lose.
+
+`docs/index.md` passes (1): it is rebuilt from the current branch after each release, so the version DOI exists by the time that page is written.
+
+**This is NOT an equality invariant and nothing checks it.** The two values are expected to differ. A future editor who "aligns" them has removed the distinction rather than fixed an inconsistency.
+
+Falsifier worth knowing: Zenodo supports reserving a DOI before publication. A reserve-then-tag release workflow would make the version DOI exist at write time, (1) would pass, and this convention would need revisiting. That is a change to how releases are made, not a Zenodo setting.
+
+---
+
 ## Gotchas
 
 1. **`hpc_max_simultaneous_sims` has no default** — required for `batch_job` mode

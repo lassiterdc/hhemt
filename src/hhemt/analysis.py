@@ -809,15 +809,21 @@ class TRITONSWMM_analysis:
     def globus_to_local(self, transfer_yaml: "Path") -> str:
         """Transfer HPC results to local machine via Globus.
 
-        Args:
-            transfer_yaml: Path to a transfer spec YAML in configs/transfers/.
-                           See configs/transfers/template_transfer.yaml.
+        Parameters
+        ----------
+        transfer_yaml : Path
+            Path to a transfer spec YAML in ``configs/transfers/``. See
+            ``configs/transfers/template_transfer.yaml``.
 
-        Returns:
-            Globus task ID. Pass to ``GlobusTransferManager().wait(task_id)``
-            to block until complete, or monitor at app.globus.org.
+        Returns
+        -------
+        str
+            Globus task ID. Pass it to ``GlobusTransferManager().wait(task_id)`` to
+            block until the transfer completes, or monitor it at app.globus.org.
 
-        Example::
+        Examples
+        --------
+        .. code-block:: python
 
             task_id = analysis.globus_to_local(
                 Path("configs/transfers/my_frontier_run.yaml")
@@ -835,10 +841,14 @@ class TRITONSWMM_analysis:
     def globus_to_hpc(self, transfer_yaml: "Path") -> str:
         """Transfer local inputs to HPC via Globus.
 
-        Args:
-            transfer_yaml: Path to a transfer spec YAML in configs/transfers/.
+        Parameters
+        ----------
+        transfer_yaml : Path
+            Path to a transfer spec YAML in ``configs/transfers/``.
 
-        Returns:
+        Returns
+        -------
+        str
             Globus task ID.
         """
         from pathlib import Path as _Path
@@ -856,22 +866,30 @@ class TRITONSWMM_analysis:
     ) -> str:
         """Transfer analysis results to local machine via Globus.
 
-        This is a standalone method — it does not require ``run()`` to have
-        been called first.  Use it for the "submit on HPC, poll squeue,
-        transfer when done" workflow.
+        This is a standalone method. It does not require ``run()`` to have been called
+        first. Use it for the "submit on HPC, poll squeue, transfer when done"
+        workflow.
 
-        Args:
-            config: User-facing transfer configuration.  See
-                :class:`~hhemt.config.globus.PostRunTransferConfig`.
+        Parameters
+        ----------
+        config : PostRunTransferConfig
+            User-facing transfer configuration. See
+            :class:`~hhemt.config.globus.PostRunTransferConfig`.
 
-        Returns:
+        Returns
+        -------
+        str
             Globus task ID.
 
-        Raises:
-            GlobusTransferError: If the transfer fails or is cancelled
-                (only when ``config.wait_for_transfer`` is True).
+        Raises
+        ------
+        GlobusTransferError
+            If the transfer fails or is cancelled, and only when
+            ``config.wait_for_transfer`` is True.
 
-        Example::
+        Examples
+        --------
+        .. code-block:: python
 
             from hhemt.config.globus import PostRunTransferConfig
 
@@ -930,22 +948,26 @@ class TRITONSWMM_analysis:
         with relative paths, the Snakefile, and the HPC-baseline
         analysis_report.{html,zip} under bundle_baseline/.
 
-        Args:
-            output_path: Optional target path for the bundle tar.
-                Defaults to
-                {analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip.
+        Parameters
+        ----------
+        output_path : Path or None
+            Target path for the bundle zip. Defaults to
+            ``{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip``.
+        container_defs : list of Path, or None
+            One Apptainer ``.def`` per distinct architecture to carry. Required, and
+            repeatable, for a container-mode analysis, because nothing in the config
+            names one. Ignored for a native analysis.
 
-        Returns:
+        Returns
+        -------
+        Path
             Path to the emitted bundle zip.
 
-        Args:
-            container_defs: ADR-19 (multi-SIF) — one Apptainer .def per distinct arch to
-                carry. Required (repeatable) for a container-mode analysis (nothing in the
-                config names one); ignored for native.
-
-        Raises:
-            FileNotFoundError: If render_report() has not been invoked
-                on this analysis (no *.manifest.json sidecars exist).
+        Raises
+        ------
+        FileNotFoundError
+            If ``render_report()`` has not been invoked on this analysis, so no
+            ``*.manifest.json`` sidecars exist.
         """
         from hhemt.bundle import emit_bundle
 
@@ -957,7 +979,7 @@ class TRITONSWMM_analysis:
         container_defs: "list[Path] | None" = None,
     ) -> "Path":
         """Emit a reprex-ready Workflow-Run-Crate bundle and return its extracted
-        directory root (ADR-10, D3).
+        directory root.
 
         Peer of ``bundle_report_data()``; opt-in only (never invoked from
         ``run()``/``submit_workflow()``). ``emit_bundle`` already carries the reprex
@@ -967,12 +989,16 @@ class TRITONSWMM_analysis:
         zero-user-info gate is deferred to the emit-hardening follow-up (its
         prerequisite); ``Bundle.reprex()`` runs a consume-side informational scan.
 
-        Args:
-            container_defs: ADR-19 (multi-SIF) — one Apptainer .def per distinct arch to
-                carry. Required (repeatable) for a container-mode analysis (nothing in the
-                config names one); ignored for native.
+        Parameters
+        ----------
+        container_defs : list of Path, or None
+            One Apptainer ``.def`` per distinct architecture to carry. Required, and
+            repeatable, for a container-mode analysis, because nothing in the config
+            names one. Ignored for a native analysis.
 
-        Returns:
+        Returns
+        -------
+        Path
             Path to the extracted reprex-bundle directory.
         """
         from hhemt.bundle import emit_bundle
@@ -1016,33 +1042,36 @@ class TRITONSWMM_analysis:
         software_doi: "str | None" = None,
         container_defs: "list[Path] | None" = None,
     ) -> dict:
-        """Deposit the RUNNABLE reprex bundle to a DOI-minting repository (D6, R5).
+        """Deposit the runnable reprex bundle to a DOI-minting repository.
 
-        The publish<->ingest symmetry: this is the emit half of the DOI round-trip whose
-        consume half is ``TRITON_SWMM_experiment.from_doi``. Where ``publish()`` deposits the
-        ADR-11 analysis_dir DATA set (a citation/reuse DOI with no reconstitution path), this
-        deposits the reprex bundle — the only artifact whose crate carries a ``mainEntity``
-        ComputationalWorkflow and for which ``reconstitute_runnable_config`` exists.
+        This is the emit half of the DOI round-trip whose consume half is
+        ``TRITON_SWMM_experiment.from_doi``. Where ``publish()`` deposits the
+        ``analysis_dir`` data set, a citation and reuse DOI with no reconstitution path,
+        this deposits the reprex bundle, which is the only artifact whose crate carries a
+        ``mainEntity`` ComputationalWorkflow and for which ``reconstitute_runnable_config``
+        exists.
 
-        Opt-in only — NEVER invoked from ``run()``/``submit_workflow()`` (per the
-        ``publish is a standalone opt-in facade`` stipulation).
+        Opt-in only. It is never invoked from ``run()`` or ``submit_workflow()``.
 
-        The bundle is deposited as the ZIP ``emit_bundle`` wrote — NOT via
-        ``reprex_bundle()``, which returns the EXTRACTED DIRECTORY (a re-zip would produce a
-        nested root that the ingest side's ``Bundle.from_directory`` rejects).
+        The bundle is deposited as the zip ``emit_bundle`` wrote, not via
+        ``reprex_bundle()``, which returns the extracted directory. Re-zipping that would
+        produce a nested root that the ingest side's ``Bundle.from_directory`` rejects.
 
-        Args:
-            exclude_config: The ADR-20 governed opt-out — a path to an operator-authored
-                exclude-config YAML. Omit it and the deposited bundle is SELF-CONTAINED:
-                every cfg-declared input is carried, so a consumer can run it from scratch.
-                Supply it and the named inputs are carried BY REFERENCE instead (an
-                ``input_deposit`` block + a URL-bearing crate ``File`` part). See
-                ``hhemt bundle --list-excludable`` for the menu, and note the ordering
-                constraint: the excluded input must ALREADY have a durable record.
-            container_defs: ADR-19 (multi-SIF) — one Apptainer ``.def`` per distinct arch
-                in the experiment matrix; threaded to ``emit_bundle`` so a CONTAINER-mode
-                analysis can be deposited (its container branch fail-closes without them).
-                Omit for a native-mode bundle.
+        Parameters
+        ----------
+        exclude_config : Path or None
+            Path to an operator-authored exclude-config YAML. Omit it and the deposited
+            bundle is self-contained: every config-declared input is carried, so a
+            consumer can run it from scratch. Supply it and the named inputs are carried
+            by reference instead, as an ``input_deposit`` block plus a URL-bearing crate
+            ``File`` part. See ``hhemt bundle --list-excludable`` for the menu, and note
+            the ordering constraint: the excluded input must already have a durable
+            record.
+        container_defs : list of Path, or None
+            One Apptainer ``.def`` per distinct architecture in the experiment matrix,
+            threaded to ``emit_bundle`` so a container-mode analysis can be deposited.
+            Its container branch fails closed without them. Omit for a native-mode
+            bundle.
         """
         from hhemt.bundle import emit_bundle
         from hhemt.publishing import publish_analysis
@@ -2881,14 +2910,14 @@ class TRITONSWMM_analysis:
         report path. A strict subset of the user's defined analysis -- no sweeps,
         no synthetic substitution (PIP O-f requirements 1-7).
 
-        Note:
-            This is a user-facing smoke-test ENTRY POINT (ADR-8), not a
-            pytest-collected test function. pytest's default collection
-            (``python_functions = test*``) collects only module-level
-            functions and ``Test``-prefixed-class methods, so this instance
-            method on ``TRITONSWMM_analysis`` is never collected as a test.
-            Invoke it directly (``analysis.test()`` or via the
-            ``test_synth_analysis_test_end_to_end.py`` synthetic smoke).
+        Notes
+        -----
+        This is a user-facing smoke-test entry point rather than a pytest-collected
+        test function. pytest's default collection (``python_functions = test*``)
+        collects only module-level functions and ``Test``-prefixed class methods, so
+        this instance method on ``TRITONSWMM_analysis`` is never collected as a test.
+        Invoke it directly, as ``analysis.test()``, or through the synthetic smoke in
+        ``test_synth_analysis_test_end_to_end.py``.
         """
         reps = self._select_test_representatives()
         # Truncation happens INSIDE _build_test_analyses: the sliced-weather path

@@ -7,14 +7,13 @@ authors:
     given-names: "Daniel"
     email: "daniel.lassiter@outlook.com"
 version: "0.1.0"
+date-released: "2026-07-14"
 license: PolyForm-Noncommercial-1.0.0
 repository-code: "https://github.com/lassiterdc/hhemt"
 url: "https://hhemt.readthedocs.io"
+# The CONCEPT DOI, deliberately, and not the version DOI for this release. A
+# version DOI does not exist when this file is written: Zenodo mints it in
+# response to the published release, so at tag time there is no value to put
+# here. This is not an equality rule with docs/index.md, which prints the
+# version DOI on purpose. Reasoning: "DOI kind convention" in architecture.md.
 doi: "10.5281/zenodo.21359151"
-identifiers:
-  - type: doi
-    value: "10.5281/zenodo.21359151"
-    description: "The concept DOI — always resolves to the latest version."
-  - type: doi
-    value: "10.5281/zenodo.21359152"
-    description: "The version DOI for v0.1.0."

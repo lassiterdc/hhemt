@@ -19,6 +19,25 @@ AMD GPUs).
 * Documentation: https://hhemt.readthedocs.io
 * License: [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
+<!-- hhemt:maturity-disclosure -->
+> **On this release.** hhemt is released in the mechanical sense. It is tagged,
+> packaged, archived with a DOI, and documented. I do not yet consider it ready for
+> general outside use. Version 0.1.0 exists to build and prove the machinery a real
+> release requires, which is the packaging, the archiving, the documentation and the
+> continuous integration, rather than to invite adoption.
+>
+> Today the toolkit is for three readers. The first wants to run the shipped Norfolk
+> case study end to end, which the tutorial does on one machine, with no HPC and no
+> account. The second is evaluating whether this approach fits their own problem. The
+> third wants a reproducible, citable pipeline for their own work. If you are one of
+> those three, what is here works and is documented.
+>
+> The release intended for general use is planned alongside the paper introducing the
+> software. What changes then is that the work this toolkit was built to produce will
+> be published, so a reader will have something to reproduce rather than only
+> something to run.
+<!-- /hhemt:maturity-disclosure -->
+
 ## Installation
 
 The full toolkit — including SWMM hydrology execution — is validated only against
@@ -69,13 +88,15 @@ Where to go next, depending on what you are doing:
 
 If you use this software, please cite it via its Zenodo DOI. Citation metadata is
 maintained in [`CITATION.cff`](CITATION.cff), which GitHub's "Cite this
-repository" resolves.
+repository" button reads.
 
-**Cite the version you actually ran, not the badge.** The DOI badge above is the
-*concept* DOI — it always resolves to the newest release, so a reader following
-it later may land on a version that behaves differently from the one that
-produced your results. Zenodo also mints a *version* DOI for each release; that
-is the one to put in a paper. Find it on the Zenodo record for your release, or
-read it back from your analysis's own provenance: a consolidated output records
-the toolkit version that produced it, so the run itself can tell you what to
-cite.
+**Cite the version you actually ran.** Two DOIs exist. The *concept* DOI always
+resolves to the newest release, so a reader following it later may land on a
+version that behaves differently from the one that produced your results. Every
+general-purpose affordance here hands you that one, including the DOI badge above
+and the "Cite this repository" button. Zenodo also mints a *version* DOI for each
+release, and that is the one to put in a paper. Find it in the citation block under
+[How to cite](https://hhemt.readthedocs.io/en/latest/#how-to-cite) in the
+documentation, or on the Zenodo record for your release. Your analysis can tell you
+which version you ran: a consolidated output records the toolkit version that
+produced it.

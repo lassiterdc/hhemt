@@ -114,7 +114,7 @@ test = [
 viz-export = []
 # HPC orchestration extras required by SnakemakeWorkflowBuilder when
 # multi_sim_run_method='batch_job' or '1_job_many_srun_tasks'. The
-# _validate_batch_job_dry_run path in workflow.py:2274 unconditionally invokes
+# SnakemakeWorkflowBuilder._validate_batch_job_dry_run unconditionally invokes
 # `snakemake --executor slurm`, which requires the slurm executor plugin even
 # for dry runs. `snakemake` itself is now a CORE dependency (see above); these
 # are the SLURM-only executor/storage plugins. The jobstep plugin is required

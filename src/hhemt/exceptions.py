@@ -54,14 +54,15 @@ class ConfigurationError(TRITONSWMMError):
     - Mutually exclusive options are both enabled
     - Configuration values fail validation rules
 
-    Attributes:
-        field: The configuration field that failed validation
-        config_path: Optional path to the configuration file
+    Attributes
+    ----------
+    field : str
+        The configuration field that failed validation.
+    config_path : Path or None
+        Path to the configuration file, when one was given.
     """
 
-    def __init__(
-        self, field: str, message: str, config_path: Path | None = None, fix_hint: str = ""
-    ):
+    def __init__(self, field: str, message: str, config_path: Path | None = None, fix_hint: str = ""):
         self.field = field
         self.config_path = config_path
         self.fix_hint = fix_hint
@@ -81,11 +82,16 @@ class CompilationError(TRITONSWMMError):
 
     Raised when CMake build or make compilation fails for any model type.
 
-    Attributes:
-        model_type: Which model failed ('triton', 'tritonswmm', 'swmm')
-        backend: Compilation backend ('cpu', 'gpu', 'openmp', etc.)
-        logfile: Path to compilation log file with detailed error output
-        return_code: Process return code from compilation command
+    Attributes
+    ----------
+    model_type : str
+        Which model failed: ``triton``, ``tritonswmm`` or ``swmm``.
+    backend : str
+        Compilation backend, such as ``cpu``, ``gpu`` or ``openmp``.
+    logfile : Path
+        Path to the compilation log file carrying the detailed error output.
+    return_code : int
+        Process return code from the compilation command.
     """
 
     def __init__(self, model_type: str, backend: str, logfile: Path, return_code: int):
@@ -107,10 +113,14 @@ class SimulationError(TRITONSWMMError):
 
     Raised when a TRITON/SWMM simulation process fails during execution.
 
-    Attributes:
-        event_iloc: Index of the weather event that failed
-        model_type: Which model failed ('triton', 'tritonswmm', 'swmm')
-        logfile: Optional path to simulation log file
+    Attributes
+    ----------
+    event_iloc : int
+        Index of the weather event that failed.
+    model_type : str
+        Which model failed: ``triton``, ``tritonswmm`` or ``swmm``.
+    logfile : Path or None
+        Path to the simulation log file, when one was given.
     """
 
     def __init__(self, event_iloc: int, model_type: str, logfile: Path | None = None):
@@ -131,10 +141,14 @@ class ProcessingError(TRITONSWMMError):
     Raised when post-simulation processing operations fail (parsing
     outputs, compressing files, generating summaries).
 
-    Attributes:
-        operation: Description of the operation that failed
-        filepath: Optional path to the file being processed
-        reason: Optional detailed error reason
+    Attributes
+    ----------
+    operation : str
+        Description of the operation that failed.
+    filepath : Path or None
+        Path to the file being processed, when one was given.
+    reason : str
+        Detailed error reason. Empty when none was given.
     """
 
     def __init__(self, operation: str, filepath: Path | None = None, reason: str = ""):
@@ -157,10 +171,14 @@ class WorkflowError(TRITONSWMMError):
     Raised when Snakemake workflow execution fails during any phase
     (setup, preparation, execution, processing, consolidation).
 
-    Attributes:
-        phase: Which workflow phase failed
-        return_code: Process return code from Snakemake
-        stderr: Optional stderr output from Snakemake
+    Attributes
+    ----------
+    phase : str
+        Which workflow phase failed.
+    return_code : int
+        Process return code from Snakemake.
+    stderr : str
+        Standard-error output from Snakemake. Empty when none was captured.
     """
 
     def __init__(self, phase: str, return_code: int, stderr: str = ""):
@@ -186,10 +204,14 @@ class SLURMError(TRITONSWMMError):
     Raised when SLURM operations fail (job submission, resource
     allocation, job monitoring).
 
-    Attributes:
-        operation: Which SLURM operation failed ('submit', 'monitor', 'allocate')
-        job_id: Optional SLURM job ID
-        reason: Optional detailed error reason
+    Attributes
+    ----------
+    operation : str
+        Which SLURM operation failed: ``submit``, ``monitor`` or ``allocate``.
+    job_id : str or None
+        SLURM job ID, when one was assigned.
+    reason : str
+        Detailed error reason. Empty when none was given.
     """
 
     def __init__(self, operation: str, job_id: str | None = None, reason: str = ""):
@@ -212,10 +234,14 @@ class ResourceAllocationError(TRITONSWMMError):
     Raised when CPU/GPU/memory resource allocation fails or is
     inconsistent with configuration.
 
-    Attributes:
-        resource_type: Which resource failed ('cpu', 'gpu', 'memory')
-        requested: Requested resource amount
-        available: Available resource amount (if known)
+    Attributes
+    ----------
+    resource_type : str
+        Which resource failed: ``cpu``, ``gpu`` or ``memory``.
+    requested : str
+        Requested resource amount.
+    available : str or None
+        Available resource amount, when it is known.
     """
 
     def __init__(self, resource_type: str, requested: str, available: str | None = None):
@@ -237,9 +263,12 @@ class CLIValidationError(TRITONSWMMError):
     such as mutually exclusive flags, conditional requirements, or
     invalid argument combinations.
 
-    Attributes:
-        argument: The argument(s) that failed validation
-        fix_hint: Optional hint for how to fix the issue
+    Attributes
+    ----------
+    argument : str
+        The argument or arguments that failed validation.
+    fix_hint : str
+        Hint for how to fix the issue. Empty when none was given.
     """
 
     def __init__(self, argument: str, message: str, fix_hint: str = ""):
@@ -258,10 +287,14 @@ class GlobusTransferError(TRITONSWMMError):
 
     Raised when a Globus transfer task fails, is cancelled, or times out.
 
-    Attributes:
-        task_id: Globus task ID
-        status: Terminal task status ('FAILED', 'CANCELLED', etc.)
-        detail_url: URL to view task details on app.globus.org
+    Attributes
+    ----------
+    task_id : str
+        Globus task ID.
+    status : str
+        Terminal task status, such as ``FAILED`` or ``CANCELLED``.
+    detail_url : str
+        URL to view the task details on app.globus.org, derived from ``task_id``.
     """
 
     def __init__(
@@ -288,14 +321,16 @@ class WorkflowPlanningError(TRITONSWMMError):
     Raised when Snakemake workflow generation or DAG planning fails,
     typically due to invalid target specifications or missing dependencies.
 
-    Attributes:
-        phase: The planning phase that failed
+    Attributes
+    ----------
+    phase : str
+        The planning phase that failed.
     """
 
     def __init__(self, phase: str, reason: str):
         self.phase = phase
 
-        super().__init__(f"Workflow planning failed during {phase}\n" f"  Reason: {reason}")
+        super().__init__(f"Workflow planning failed during {phase}\n  Reason: {reason}")
 
 
 class PublishError(TRITONSWMMError):

@@ -29,10 +29,11 @@ open an issue to discuss before submitting.
    `README.md` for the four commands and for why both `--no-deps` flags are
    required. A plain `pip install -e .` inside a conda environment displaces
    conda-resolved packages such as `numpy` and `pandas`.
-3. To build the documentation, install its tooling by name. `environment.yaml`
-   does not ship it, and adding `--no-deps` to the `[docs]` extra would install
-   none of it:
-   `pip install mkdocs mkdocs-material "mkdocstrings[python]" mkdocs-htmlproofer-plugin`
+3. To build the documentation, install the `[docs]` extra: `pip install -e ".[docs]"`.
+   `environment.yaml` does not ship the docs tooling, so this step is separate from
+   step 2. Do NOT add `--no-deps` here — unlike the two `--no-deps` installs above,
+   which exist to stop pip displacing conda-resolved `numpy`/`pandas`, the docs
+   tooling has no conda-resolved counterpart and `--no-deps` would install none of it.
 4. Install `uv` (https://docs.astral.sh/uv/). It is a hard prerequisite, not a
    convenience: every pre-commit hook in this repo runs through `uv run --locked`,
    so `git commit` fails without it. `uv` builds and manages its own project
@@ -81,6 +82,16 @@ open an issue to discuss before submitting.
       substantially longer than Gate A, and it is the invocation a release is gated on.
       Run it detached rather than waiting on it interactively — `nohup … &`, `tmux`, or
       your cluster's batch scheduler are all fine.
+    - **The compile venue, and why you rarely set it by hand.** Both gates run under a
+      guard that is ARMED BY DEFAULT: a pytest session refuses to build the solver and
+      refuses to execute SWMM unless the session declares a permitted *venue*.
+      `just test-gated` sets `HHEMT_COMPILE_VENUE=toolchain` for you, so following the
+      recipe above needs no environment work. You set it by hand only when you invoke
+      `pytest` directly and want the compile tier. The token RELAXES and never ARMS —
+      absent, misspelt, or unrecognised, it lands on the safe side at both read sites,
+      so a typo tightens the guard rather than disarming it. `PERMITTED_VENUES` in
+      `src/hhemt/_compile_venue.py` names a CAPABILITY rather than a machine and today
+      has exactly one member, `toolchain`.
   Which tier `just qa` gives you does NOT depend on your machine: `compile_tier` is
   derived from each test's fixtures at collection time, so the split is the same
   everywhere. Before this was declared it depended on whether `cmake` was on your PATH.

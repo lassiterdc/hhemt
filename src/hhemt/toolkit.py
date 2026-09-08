@@ -37,14 +37,18 @@ class Toolkit:
     This class provides a simplified interface to the toolkit, wrapping the
     underlying Analysis class with notebook-friendly methods and sensible defaults.
 
-    Attributes:
-        system: The TRITONSWMM_system instance containing system configuration
-        analysis: The TRITONSWMM_analysis instance for workflow orchestration
+    Attributes
+    ----------
+    system : TRITONSWMM_system
+        The system instance carrying the system configuration.
+    analysis : TRITONSWMM_analysis
+        The analysis instance used for workflow orchestration.
 
-    Example:
-        Basic workflow execution:
+    Examples
+    --------
+    Basic workflow execution:
 
-        >>> from hhemt import Toolkit
+    >>> from hhemt import Toolkit
         >>>
         >>> # Load configurations
         >>> tk = Toolkit.from_configs(
@@ -103,30 +107,42 @@ class Toolkit:
         - Instantiating system and analysis objects
         - Running preflight validation checks (if validate=True)
 
-        Args:
-            system_config: Path to system configuration YAML file
-            analysis_config: Path to analysis configuration YAML file
-            hpc_system_config: Optional path to the per-HPC-system configuration
-                YAML file (``hpc_system_config.yaml``). When None (default),
-                behavior is byte-identical to today — the HPC config consumers
-                wire in later phases.
-            case_manifest_yaml: Optional path to the case study's ``case.yaml``
-                (ADR-12 CaseManifest). Forwarded to the analysis constructor so
-                ``case_name`` is bundled (a BLOCKING combine-compatibility field)
-                and the RO-Crate root name resolves from the real manifest. When
-                None (default), behavior is byte-identical to today.
-            validate: Whether to run preflight validation (default: True).
-                Raises ConfigurationError if validation fails.
+        Parameters
+        ----------
+        system_config : str or Path
+            Path to the system configuration YAML file.
+        analysis_config : str or Path
+            Path to the analysis configuration YAML file.
+        hpc_system_config : str or Path, optional
+            Path to the per-HPC-system configuration YAML file
+            (``hpc_system_config.yaml``). When None, the default, behavior is
+            byte-identical to today and the HPC config consumers wire in later
+            phases.
+        case_manifest_yaml : str or Path, optional
+            Path to the case study's ``case.yaml`` manifest. Forwarded to the
+            analysis constructor so ``case_name`` is bundled, which is a blocking
+            combine-compatibility field, and the RO-Crate root name resolves from
+            the real manifest. When None, the default, behavior is byte-identical
+            to today.
+        validate : bool, default True
+            Whether to run preflight validation. Raises ConfigurationError if
+            validation fails.
 
-        Returns:
-            Initialized Toolkit instance ready for workflow execution
+        Returns
+        -------
+        Toolkit
+            Initialized Toolkit instance ready for workflow execution.
 
-        Raises:
-            ConfigurationError: If configuration files are invalid or validation fails
-            FileNotFoundError: If configuration files don't exist
+        Raises
+        ------
+        ConfigurationError
+            If configuration files are invalid or validation fails.
+        FileNotFoundError
+            If configuration files do not exist.
 
-        Example:
-            >>> from hhemt import Toolkit
+        Examples
+        --------
+        >>> from hhemt import Toolkit
             >>>
             >>> tk = Toolkit.from_configs(
             ...     system_config="configs/system.yaml",
@@ -171,33 +187,39 @@ class Toolkit:
         dest_dir: str | Path | None = None,
         dry_run: bool = False,
     ) -> dict:
-        """Load-smoke facade for the synthetic compute-config experiment (PIP-2 Phase 1).
+        """Load-smoke facade for the synthetic compute-config experiment.
 
-        Loads and validates the ``synthetic_experiment_config`` (firing the
-        coupling-invariant AND partition-cap validators — the latter loads the
-        per-cluster ``hpc_system_config``), builds the partition-as-axis experiment
-        matrix, and — unless ``dry_run`` — writes the matrix CSV and generates the
-        synthetic model under ``dest_dir``.
+        Loads and validates the ``synthetic_experiment_config``, firing the
+        coupling-invariant and partition-cap validators, the second of which loads
+        the per-cluster ``hpc_system_config``. Builds the partition-as-axis
+        experiment matrix. Unless ``dry_run`` is set, writes the matrix CSV and
+        generates the synthetic model under ``dest_dir``.
 
-        Args:
-            config: Path to a ``synthetic_experiment_config`` YAML.
-            hpc_system_config: Optional path to the per-cluster ``hpc_system_config``
-                YAML; when given it overrides the config's ``hpc_system_config_yaml``.
-            dest_dir: Output dir for the matrix CSV + generated model (non-dry-run).
-                Defaults to ``{config parent}/synth_experiment_out``.
-            dry_run: When True, validate the config + build the matrix in memory and
-                return WITHOUT writing files or generating the model (the DoD
-                "load-smoke").
+        Parameters
+        ----------
+        config : str or Path
+            Path to a ``synthetic_experiment_config`` YAML.
+        hpc_system_config : str or Path, optional
+            Path to the per-cluster ``hpc_system_config`` YAML. When given it
+            overrides the config's own ``hpc_system_config_yaml``.
+        dest_dir : str or Path, optional
+            Output directory for the matrix CSV and generated model on a non-dry
+            run. Defaults to ``{config parent}/synth_experiment_out``.
+        dry_run : bool, default False
+            Validate the config and build the matrix in memory, then return
+            without writing files or generating the model.
 
-        Returns:
+        Returns
+        -------
+        dict
             ``{"config": synthetic_experiment_config, "n_matrix_rows": int,
-               "matrix_csv": Path | None, "model_dir": Path | None}``.
+            "matrix_csv": Path | None, "model_dir": Path | None}``.
 
-        Note:
-            This Phase-1 implementation does NOT compose and run a full analysis ensemble;
-            that composition currently lives in
-            ``scripts/experiments/synth_compute_config.py`` and is promoted into the
-            framework in a later phase (see the deferred follow-up).
+        Notes
+        -----
+        This implementation does not compose and run a full analysis ensemble. That
+        composition currently lives in ``scripts/experiments/synth_compute_config.py``
+        and is promoted into the framework later.
         """
         import yaml
 
@@ -249,33 +271,38 @@ class Toolkit:
         - Output processing (timeseries extraction, compression)
         - Consolidation (analysis-level aggregation)
 
-        Args:
-            mode: Execution mode controlling checkpoint behavior:
-                - "fresh": Start from scratch, overwrite all outputs
-                - "resume": Resume from last checkpoint (default)
-                - "overwrite": Rerun existing scenarios without full reset
-            events: Optional list of event indices to process. If None,
-                processes all events in the analysis.
-            dry_run: If True, print workflow plan without executing
-            verbose: If True, print progress messages during execution
+        Parameters
+        ----------
+        mode : {'fresh', 'resume', 'overwrite'}, default 'resume'
+            Execution mode controlling checkpoint behavior. ``fresh`` starts from
+            scratch and overwrites all outputs; ``resume`` continues from the last
+            checkpoint; ``overwrite`` reruns existing scenarios without a full reset.
+        events : list of int, or None
+            Event indices to process. When None, every event in the analysis is
+            processed.
+        dry_run : bool, default False
+            Print the workflow plan without executing it.
+        verbose : bool, default True
+            Print progress messages during execution.
 
-        Returns:
-            WorkflowResult with execution details:
-                - success (bool): Whether workflow completed successfully
-                - mode (str): Mode used for execution
-                - execution_time (float): Total runtime in seconds
-                - phases_completed (List[str]): Phases that finished
-                - events_processed (List[int]): Event indices processed
-                - snakefile_path (Path): Path to generated Snakefile
-                - job_id (str): SLURM job ID (if HPC execution)
-                - message (str): Status message or error description
+        Returns
+        -------
+        WorkflowResult
+            Execution details: ``success`` whether the workflow completed, ``mode``
+            used, ``execution_time`` in seconds, ``phases_completed``,
+            ``events_processed``, ``snakefile_path`` to the generated Snakefile,
+            ``job_id`` for an HPC execution, and a ``message``.
 
-        Raises:
-            ConfigurationError: If configuration is invalid
-            WorkflowError: If workflow execution fails
+        Raises
+        ------
+        ConfigurationError
+            If the configuration is invalid.
+        WorkflowError
+            If workflow execution fails.
 
-        Example:
-            Fresh run (overwrite everything):
+        Examples
+        --------
+        Fresh run, overwriting everything:
 
             >>> result = tk.run(mode="fresh")
             >>> print(f"Success: {result.success}")
@@ -301,10 +328,11 @@ class Toolkit:
             >>> result = tk.run(mode="fresh", dry_run=True)
             >>> print(result.message)  # Shows what would be executed
 
-        Notes:
-            - Execution mode (local vs SLURM) is auto-detected from configuration
-            - Use get_status() to check current progress before resuming
-            - For fine-grained control, use analysis.run() directly
+        Notes
+        -----
+        - Execution mode, local or SLURM, is auto-detected from the configuration.
+        - Use ``get_status()`` to check current progress before resuming.
+        - For fine-grained control, use ``analysis.run()`` directly.
         """
         # Auto-detect execution mode
         execution_mode = self._detect_execution_mode()
@@ -341,11 +369,14 @@ class Toolkit:
         - Recommended mode for next run()
         - Actionable recommendation message
 
-        Returns:
-            WorkflowStatus with detailed phase information and recommendations
+        Returns
+        -------
+        WorkflowStatus
+            Detailed phase information and recommendations.
 
-        Example:
-            Check status and decide next action:
+        Examples
+        --------
+        Check status and decide next action:
 
             >>> status = tk.get_status()
             >>> print(status)
@@ -392,10 +423,11 @@ class Toolkit:
             ... ]):
             ...     print("✓ Workflow fully complete!")
 
-        Notes:
-            - Status is determined by inspecting actual outputs, not cached state
-            - Use recommended_mode for next run() to follow best practices
-            - Check simulations_failed to detect partial failures
+        Notes
+        -----
+        - Status is determined by inspecting actual outputs rather than cached state.
+        - Use ``recommended_mode`` for the next ``run()`` to follow best practices.
+        - Check ``simulations_failed`` to detect partial failures.
         """
         return self.analysis.get_workflow_status()
 
@@ -428,13 +460,16 @@ class Toolkit:
     def analysis_dir(self) -> Path:
         """Get analysis directory path.
 
-        Returns:
-            Path to analysis output directory
+        Returns
+        -------
+        Path
+            Path to analysis output directory.
 
-        Example:
-            >>> tk = Toolkit.from_configs(system_cfg, analysis_cfg)
-            >>> print(f"Outputs at: {tk.analysis_dir}")
-            Outputs at: /path/to/norfolk_coastal_flooding_2024-01-15_143022
+        Examples
+        --------
+        >>> tk = Toolkit.from_configs(system_cfg, analysis_cfg)
+        >>> print(f"Outputs at: {tk.analysis_dir}")
+        Outputs at: /path/to/norfolk_coastal_flooding_2024-01-15_143022
         """
         return self.analysis.analysis_paths.analysis_dir
 
@@ -442,11 +477,14 @@ class Toolkit:
     def n_simulations(self) -> int:
         """Get total number of simulations in analysis.
 
-        Returns:
-            Number of scenarios/events to be processed
+        Returns
+        -------
+        int
+            Number of scenarios or events to be processed.
 
-        Example:
-            >>> tk = Toolkit.from_configs(system_cfg, analysis_cfg)
+        Examples
+        --------
+        >>> tk = Toolkit.from_configs(system_cfg, analysis_cfg)
             >>> print(f"Total simulations: {tk.n_simulations}")
             Total simulations: 24
         """
