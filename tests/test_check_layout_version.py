@@ -132,7 +132,7 @@ def test_check_b_fails_when_layout_relevant_changed_without_bump(tmp_path: Path)
     assert "src/foo.py" in out.stderr
 
 
-def test_check_b_passes_when_path_in_non_breaking_allowlist(tmp_path: Path) -> None:
+def test_check_b_passes_when_allowlist_signature_matches_current_content(tmp_path: Path) -> None:
     repo = _make_repo(
         tmp_path,
         layout_version_at_head=4,
@@ -140,7 +140,9 @@ def test_check_b_passes_when_path_in_non_breaking_allowlist(tmp_path: Path) -> N
         extra_files_at_main={"src/foo.py": "# initial\n"},
         extra_files_at_head={"src/foo.py": "# changed\n"},
         sentinel_yaml=(
-            "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n  - src/foo.py\n"
+            "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n"
+            "  - path: src/foo.py\n    justification: baseline\n"
+            '    layout_signature: "8ff88919a6004572b4249e0f72b28ed9945e61bdd0e2e7d79ddb9c5b1248674f"\n'
         ),
     )
     out = _run(repo, "check-b", "main")
@@ -514,7 +516,11 @@ def test_check_b_pending_mode_still_honours_an_uncommitted_allowlist_entry(tmp_p
     repo = _make_linear_repo(tmp_path, [18, 18], worktree_version=18)
     sentinel = repo / "_layout_relevant_files.yaml"
     sentinel.write_text(
-        sentinel.read_text().replace("non_breaking_allowlist: []", "non_breaking_allowlist:\n  - src/foo.py")
+        sentinel.read_text().replace(
+            "non_breaking_allowlist: []",
+            "non_breaking_allowlist:\n  - path: src/foo.py\n    justification: baseline\n"
+            '    layout_signature: "8ff88919a6004572b4249e0f72b28ed9945e61bdd0e2e7d79ddb9c5b1248674f"\n',
+        )
     )
     out = _run(repo, "check-b", "HEAD~1")
     assert out.returncode == 0, out.stdout + out.stderr
@@ -823,3 +829,121 @@ def test_layout_version_registrations_supply_the_range_predicate() -> None:
         f"stages {sorted(missing)} are declared but `pre-commit install` does not install them; "
         "add them to default_install_hook_types or the guard is silently inert"
     )
+
+
+def test_check_b_refuses_a_path_that_resolves_to_no_layout_signature(tmp_path: Path) -> None:
+    """The fail-open this grammar closed. A row without a layout_signature exempted its path
+    from Check B forever, content-independently, and nothing in the yaml said so. The loader
+    now refuses at load and names every offending path."""
+    repo = _make_repo(
+        tmp_path,
+        layout_version_at_head=4,
+        layout_version_at_main=4,
+        extra_files_at_main={"src/foo.py": "# initial\n"},
+        extra_files_at_head={"src/foo.py": "# changed\n"},
+        sentinel_yaml=(
+            "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n"
+            "  - path: src/foo.py\n    justification: baseline\n"
+        ),
+    )
+    out = _run(repo, "check-b", "main")
+    assert out.returncode != 0, out.stdout + out.stderr
+    assert "src/foo.py" in out.stderr
+    assert "exempt from Check B forever" in out.stderr, out.stdout + out.stderr
+
+
+def test_check_b_refires_when_the_allowlist_signature_no_longer_matches(tmp_path: Path) -> None:
+    """The drift arm: a stamped exemption covers the content it was stamped over and nothing
+    else, so a later change to the same file re-fires Check B."""
+    repo = _make_repo(
+        tmp_path,
+        layout_version_at_head=4,
+        layout_version_at_main=4,
+        extra_files_at_main={"src/foo.py": "# initial\n"},
+        extra_files_at_head={"src/foo.py": "# changed\n"},
+        sentinel_yaml=(
+            "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n"
+            "  - path: src/foo.py\n    justification: baseline\n"
+            '    layout_signature: "' + "deadbeef" * 8 + '"\n'
+        ),
+    )
+    out = _run(repo, "check-b", "main")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "src/foo.py" in out.stderr
+
+
+def test_check_b_refuses_a_bare_string_allowlist_row(tmp_path: Path) -> None:
+    """The bare-string form cannot carry a signature at all, so it IS a permanence-expressing
+    form and the gate must refuse it AT LOAD. This is the arm that dies first if the gate's
+    predicate is ever narrowed to the mapping form -- measured: adding `and e.justification is
+    not None` makes the loader ACCEPT this row. It asserts on the loader's own refusal marker
+    rather than on the exit code, because spec 9's fail-closed fallback ALSO produces a
+    non-zero exit for this input -- so an exit-code assertion cannot tell a refused load from
+    a flagged file, and measured, it cannot even tell the gate's TOTAL ABSENCE (gate deleted:
+    the whole module still passed). The marker is emitted only by the loader raise."""
+    repo = _make_repo(
+        tmp_path,
+        layout_version_at_head=4,
+        layout_version_at_main=4,
+        extra_files_at_main={"src/foo.py": "# initial\n"},
+        extra_files_at_head={"src/foo.py": "# changed\n"},
+        sentinel_yaml=(
+            "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n  - src/foo.py\n"
+        ),
+    )
+    out = _run(repo, "check-b", "main")
+    assert out.returncode != 0, out.stdout + out.stderr
+    assert "src/foo.py" in out.stderr
+    assert "exempt from Check B forever" in out.stderr, out.stdout + out.stderr
+
+
+def test_check_b_honours_an_appended_row_that_inherits_the_prior_signature(tmp_path: Path) -> None:
+    """The append-log property the baseline depends on, in the direction phase B actually uses:
+    TWO rows for one path, the first OMITTING the signature and the second SUPPLYING it, must
+    RESOLVE to the SECOND row's signature and stay exempt. The fixture uses phase B's
+    ACTUAL row order -- the historical signature-less row
+    first, the appended baseline row second -- because that order is what makes the gate's
+    placement observable. Measured: moving the gate into the per-row loop AFTER the
+    carry-forward makes this legal pair raise and refuses the real 68-row baselined sentinel
+    outright, and tests 3 and 4 are the only tests that notice. The PRE-merge placement is
+    caught more widely -- tests 3, 4 and 5 all fail on it -- so this fixture is not the sole
+    witness there."""
+    repo = _make_repo(
+        tmp_path,
+        layout_version_at_head=4,
+        layout_version_at_main=4,
+        extra_files_at_main={"src/foo.py": "# initial\n"},
+        extra_files_at_head={"src/foo.py": "# changed\n"},
+        sentinel_yaml=(
+            "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n"
+            "  - path: src/foo.py\n    justification: historical row, no signature\n"
+            "  - path: src/foo.py\n    justification: baseline appended by phase B\n"
+            '    layout_signature: "8ff88919a6004572b4249e0f72b28ed9945e61bdd0e2e7d79ddb9c5b1248674f"\n'
+        ),
+    )
+    out = _run(repo, "check-b", "main")
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_check_b_honours_an_omitting_append_after_a_signature_row(tmp_path: Path) -> None:
+    """The OTHER carry-forward direction, and it is a live operator move rather than a
+    symmetry exercise: spec 5's printed remedy tells an operator that omitting the field on an
+    appended row inherits the path's previous signature, so `sig`-then-`omit` must resolve to
+    that signature. Measured: deleting the three-line carry-forward merge leaves the
+    `omit`-then-`sig` fixture above passing (plain last-wins still supplies the digest) and
+    breaks ONLY this direction, so one two-row fixture cannot cover both and both are live."""
+    repo = _make_repo(
+        tmp_path,
+        layout_version_at_head=4,
+        layout_version_at_main=4,
+        extra_files_at_main={"src/foo.py": "# initial\n"},
+        extra_files_at_head={"src/foo.py": "# changed\n"},
+        sentinel_yaml=(
+            "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n"
+            "  - path: src/foo.py\n    justification: signature row\n"
+            '    layout_signature: "8ff88919a6004572b4249e0f72b28ed9945e61bdd0e2e7d79ddb9c5b1248674f"\n'
+            "  - path: src/foo.py\n    justification: later append, omits and inherits\n"
+        ),
+    )
+    out = _run(repo, "check-b", "main")
+    assert out.returncode == 0, out.stdout + out.stderr

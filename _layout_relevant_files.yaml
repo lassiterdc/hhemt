@@ -1005,3 +1005,183 @@ non_breaking_allowlist:
       from permanently exempt to change-scoped, a governance change affecting every future
       edit to it -- the identical judgement recorded at the 02053c7c row and again in this
       workstream's unit-1 rows, and surfaced for the commit holder rather than taken here.
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "ca84a5987f43dd641df9c9f2e17eaad8d9466d7bbbfc421515acf25421bccaa9"
+  - path: src/hhemt/config/base.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "f4046d2c5b761fb4e63be182a13628e357a3d6b96d3774e15445a48b885854cf"
+  - path: src/hhemt/config/brand_theme.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "9d8ed0f7daf43ed9786a67edaa26f86d24c4c2fdf378397ab715828f915869eb"
+  - path: src/hhemt/config/case_manifest.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "d4310455f658c127c8716e86b518b789365d27760dc807df9eb56bb4beebbcc3"
+  - path: src/hhemt/config/eda.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "ecdf650c5560f0f42226447b9db04a82dfc8cdc71cff71ea9e36e70b65373aaa"
+  - path: src/hhemt/config/experiment_bundle.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "3c146fe002256fea7a59b451891122fbc67f90a2bc4732f39bb2405d948bdd3b"
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "6e7b75dc24830ac547ea8eb0aa51b6ddc2d0931b1f73246a44936c745b57b34e"
+  - path: src/hhemt/config/invalidating_fixes.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "bcfd7147f079f6fb3875230ead6e776a8e681006da559f1268f97bbd58ca5ee2"
+  - path: src/hhemt/config/loaders.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "eaa46f9f028e520e099397170f2be681ab95a44ce49b2dffd3c31fde45620fd3"
+  - path: src/hhemt/config/report.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "7309f71489bf0ed2bee11552457d63f382343ef6f896d94500ac54cf414f2436"
+  - path: src/hhemt/config/reprex_config.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "cc3fffc43ba77c87cc31125ea9ed03d43cc5460e96b770207121e18d959e4e6b"
+  - path: src/hhemt/config/reprex_taxonomy.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "dd1c19bcfa51f684ad58fc8d8795a0a7710ce6bcb41c7847106c0f77e756fe8c"
+  - path: src/hhemt/config/static_plots.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "44ca6c5cd97d56d184d7c7bcbfae2431e3afc384e2d8ebc0c64e72a2e647be36"
+  - path: src/hhemt/config/synthetic_experiment.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "64e1d4ba80ff522cd62926df75a725f2a5e00dbc6a107816256a95cf195efb5d"
+  - path: src/hhemt/config/system.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "2df3da901d25713a39a5842b62f86035c324d2b350a5291c77ac089ff78b7a60"
+  - path: src/hhemt/config/viz_vocabulary.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "b3591b12204b06dc3d9339b23cce80a2d559d7d64854e08ae21157bc18276b78"
+  - path: src/hhemt/log.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "b27cd547d41de32c31ab040031d79281929f5a5e5b1266d186f891e25147aed4"
+  - path: src/hhemt/paths.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "105383b224d79265049c24ca839156f0864b40f9bb3db32109d9b3a6d0e12f2a"
+  - path: src/hhemt/scenario_inputs.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "38d4595072bb972dfc3080f4ddcb8fa69e7c1c7babf2354354d0d3a3c3de56ec"
+  - path: src/hhemt/sensitivity_analysis.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "aed5f1fec08e1f52d58ca04eadc5c35caa1ed4f98eeebde2c10699f95b24eb89"

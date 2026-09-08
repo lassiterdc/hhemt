@@ -362,7 +362,10 @@ def _layout_glob_match(rel: str, glob: str) -> bool:
 @dataclass(frozen=True)
 class AllowlistEntry:
     justification: str | None  # None for legacy bare-string entries
-    layout_signature: str | None = None  # change-scoped hash; None => path-permanent
+    # The Optional is the PARSE type only: _load_allowlist refuses any path whose RESOLVED
+    # entry is None, so no caller can observe None here. `None => path-permanent` was the
+    # content-independent fail-open that gate closed.
+    layout_signature: str | None = None  # change-scoped hash
 
 
 def _load_allowlist(sentinel: dict) -> dict[str, AllowlistEntry]:
@@ -372,7 +375,16 @@ def _load_allowlist(sentinel: dict) -> dict[str, AllowlistEntry]:
       - bare string `path`                    -> AllowlistEntry(None, None)
       - mapping {path, justification[, layout_signature]}
         (justification REQUIRED and non-empty for the mapping form)
-    Exits non-zero (SystemExit) on any malformed entry.
+
+    Both forms remain legal PER ROW so the append-log stays intact, but every path must
+    RESOLVE to a layout_signature: a path whose RESOLVED entry is None raises. A MAPPING
+    row that omits the field does NOT raise when an earlier row for the same path supplied
+    one -- the merge below carries it forward, which is what keeps this an append-log. A
+    BARE-STRING row is different: it clears rather than inherits, because the string branch
+    `continue`s before reaching the merge, so it raises even after a signature row.
+
+    Exits non-zero (SystemExit) on any malformed entry, AND on a well-formed row set in
+    which some path resolves unscoped.
     """
     out: dict[str, AllowlistEntry] = {}
     for raw in sentinel.get("non_breaking_allowlist", []) or []:
@@ -407,10 +419,13 @@ def _load_allowlist(sentinel: dict) -> dict[str, AllowlistEntry]:
         # signature was UNREACHABLE rather than stale.
         #
         # Keeping the signature is therefore the merge that matches what the rows mean. A
-        # DELIBERATE downgrade to permanently-exempt is still expressible, but it must be an
-        # EDIT -- delete the signature from the row that carries it -- not an append. That is
-        # the intended asymmetry: retiring a file's change-scoped governance should read as a
-        # deletion in review, never as an addition nobody notices.
+        # DELIBERATE downgrade to permanently-exempt is NO LONGER EXPRESSIBLE AT ALL: the
+        # resolved-entry gate at the end of this function refuses any path that ends up with
+        # no signature, whether by an omitting row, an explicit null, or a bare string.
+        # Retiring a file's governance is now TWO acts, not one: DELETE its allowlist
+        # row(s) -- the resolved-entry gate reads only non_breaking_allowlist -- and THEN
+        # narrow layout_relevant so the file stops being captured. Narrowing on its own
+        # changes nothing the gate sees.
         #
         # SCOPE: a path whose rows carry TWO OR MORE signatures is UNTOUCHED by this edit.
         # Those remain last-wins, exactly as before.
@@ -418,6 +433,28 @@ def _load_allowlist(sentinel: dict) -> dict[str, AllowlistEntry]:
         if sig is None and prior is not None and prior.layout_signature is not None:
             sig = prior.layout_signature
         out[raw["path"]] = AllowlistEntry(justification=just, layout_signature=sig)
+    # PATH-PERMANENCE IS INEXPRESSIBLE. Checked over the RESOLVED entries, not per row,
+    # so the append-log stays intact: a historical signature-less row is fine as long as
+    # the path ends up scoped by some later row. This single gate covers ALL THREE
+    # permanence-expressing forms -- a mapping that omits layout_signature, a mapping that
+    # sets it to null, and a bare-string entry (which cannot carry one at all) -- because
+    # every one of them resolves to None here. There is deliberately NO opt-in permanence
+    # key. Retiring a file is TWO acts and this gate only sees the first: delete its
+    # allowlist row(s), then narrow layout_relevant so it stops being captured.
+    unscoped = sorted(p for p, e in out.items() if e.layout_signature is None)
+    if unscoped:
+        raise SystemExit(
+            "check_layout_version: non_breaking_allowlist path(s) resolve to NO "
+            f"layout_signature and would be exempt from Check B forever: {unscoped}. "
+            "Add a layout_signature (the file's current sha256) to a row for each path. "
+            "If a path should NOT be governed at all, a signature is the wrong remedy -- but "
+            "so is narrowing layout_relevant on its own: this function reads "
+            "non_breaking_allowlist and NOTHING else, so an un-governed path that still has "
+            "a signature-less row still refuses here. DELETE that path's allowlist row(s) "
+            "first. Then, to stop governing it, narrow layout_relevant -- which for a "
+            "glob-captured path means replacing the glob with an explicit paths enumeration, "
+            "since _glob_to_regex has no negation form."
+        )
     return out
 
 
@@ -606,7 +643,29 @@ def check_b(base_ref: str, *, range_mode: bool = False) -> int:
         if rel in allow:
             expected_sig = allow[rel].layout_signature
             if expected_sig is None:
-                continue  # legacy path-permanent exemption (no layout_signature)
+                # FAIL-CLOSED TRIPWIRE, not a reachable branch once _load_allowlist's
+                # resolved-entry gate stands: that gate's predicate is `is None`, and it refuses
+                # every path whose RESOLVED layout_signature is None, so this cannot fire while
+                # it holds. (An EMPTY-STRING signature is deliberately NOT refused there -- it
+                # is not None, so it flows to the comparison below and is FLAGGED on every
+                # change, which is fail-closed already.) This branch is an EXECUTABLE
+                # restatement of that invariant rather than a comment about it, because falling
+                # through to the comparison below is NOT fail-closed in every case --
+                # _file_content_hash returns None for an ABSENT file, so `None == None` would
+                # silently exempt a DELETED allowlisted path, which is the fail-open this
+                # repair was convened to close.
+                # BLAST RADIUS, stated because a reader infers otherwise from a branch sitting
+                # inside a layout-relevance scan: `if rel in allow:` is tested BEFORE
+                # layout-relevance, so with the gate weakened this fires for ANY changed file
+                # carrying a signature-less allowlist row, governed or not. That is intended --
+                # the tripwire's subject is "the loader gate is broken", which is true
+                # regardless of whether the file that surfaced it is governed.
+                raise SystemExit(
+                    f"check_layout_version: {rel} resolves to NO layout_signature at the "
+                    "Check B comparison. _load_allowlist should have refused this at load; "
+                    "its resolved-entry gate has been weakened. Restore it -- do not exempt "
+                    "the path here."
+                )
             if _file_content_hash(REPO_ROOT / rel) == expected_sig:
                 continue  # change-scoped exemption still valid for this content
             # signature drifted: exemption no longer covers this change -> re-fire Check-B
@@ -625,9 +684,10 @@ def check_b(base_ref: str, *, range_mode: bool = False) -> int:
             f"  1. If breaking: bump LAYOUT_VERSION to {head_v + 1}, write "
             f"versions/V{head_v + 1:04d}__*.py, add fixtures v{head_v}/ and v{head_v + 1}/.\n"
             "  2. If non-breaking: add or update the file's non_breaking_allowlist entry in "
-            "_layout_relevant_files.yaml (prefer the dict form {path, justification}). If the entry "
-            "carries a layout_signature and this change is still non-breaking, re-stamp layout_signature "
-            "with the file's current sha256.",
+            "_layout_relevant_files.yaml. The row must leave the path RESOLVING to a layout_signature -- "
+            "set it to the file's current sha256. Omitting the field on an appended row INHERITS the "
+            "path's previous signature, which no longer matches the content you just changed, so this "
+            "check keeps failing; a bare-string row clears the signature and the loader refuses at load.",
             file=sys.stderr,
         )
         failed = True
