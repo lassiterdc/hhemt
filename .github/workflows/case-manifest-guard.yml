@@ -1,0 +1,44 @@
+# Case-manifest pin guard: fails if any tracked test_data/{case_name}/case.yaml carries
+# an absent, empty, or malformed sha256 `manifest:` block (ADR-12 / T-INTEGRITY-GUARD).
+#
+# WHY IT MATTERS. experiments.py::_verify_manifest opens with
+# `if not expected_manifest: return`, so an unpinned manifest makes the download-time
+# integrity check a silent no-op -- the fetch runs, the verifier is called, it returns,
+# and every surface reads green having verified nothing. This guard turns that silence
+# into a red build.
+#
+# TRIGGER SCOPE, and it is load-bearing rather than copied. This fires on main/develop
+# push+PR only, matching every other guard workflow in this directory. A feature branch
+# is therefore NOT blocked; the block arrives at the merge PR, where a human is present
+# to act on it. That is what makes a blocking-and-loud guard landable against a
+# known-failing state without stalling in-flight branch work.
+#
+# This workflow DELIVERS the check. Designating it a required status check on `main`
+# branch protection is a repo-settings act (ADR-7 release-gate plan), not this file.
+name: Case-manifest pin guard
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+permissions:
+  contents: read
+
+jobs:
+  case-manifest-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        # The sibling anonymization guard is pure-stdlib and needs no install step. This
+        # one parses YAML structurally, which stdlib cannot do. `yaml.safe_load` is the
+        # same call hhemt.utils.read_yaml wraps, so no novel parse semantic enters here.
+        run: python -m pip install --disable-pip-version-check pyyaml
+      - name: Run case-manifest pin guard
+        run: python scripts/check_case_manifest_pinned.py
