@@ -12,9 +12,9 @@ import tests.fixtures.test_case_catalog as cases
 
 
 @pytest.fixture
-def norfolk_1job_cpu_only():
-    """Norfolk test case configured for 1-job mode (CPU-only)."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
+def synth_1job_cpu_only():
+    """Synthetic test case configured for 1-job mode (CPU-only)."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode with CPU-only
@@ -29,9 +29,9 @@ def norfolk_1job_cpu_only():
 
 
 @pytest.fixture
-def norfolk_1job_with_gpus():
-    """Norfolk test case configured for 1-job mode with GPUs."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
+def synth_1job_with_gpus():
+    """Synthetic test case configured for 1-job mode with GPUs."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode with GPUs
@@ -48,11 +48,11 @@ def norfolk_1job_with_gpus():
     return analysis
 
 
-def test_1job_profile_no_cores_cpu_only(norfolk_1job_cpu_only):
+def test_1job_profile_no_cores_cpu_only(synth_1job_cpu_only):
     """Verify 1-job profile doesn't hardcode cores (CPU-only)."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
 
     # Generate profile
@@ -77,11 +77,11 @@ def test_1job_profile_no_cores_cpu_only(norfolk_1job_cpu_only):
     assert "resources" not in config, "Should not have GPU resources for CPU-only mode"
 
 
-def test_1job_profile_with_gpu_resources(norfolk_1job_with_gpus):
+def test_1job_profile_with_gpu_resources(synth_1job_with_gpus):
     """Verify 1-job profile does NOT include GPU resources (passed via CLI instead)."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_with_gpus
+    analysis = synth_1job_with_gpus
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
 
     # Generate profile

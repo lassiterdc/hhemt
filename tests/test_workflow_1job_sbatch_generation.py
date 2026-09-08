@@ -13,9 +13,9 @@ pytestmark = pytest.mark.requires_snakemake_subprocess
 
 
 @pytest.fixture
-def norfolk_1job_cpu_only():
-    """Norfolk test case configured for 1-job mode (CPU-only)."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
+def synth_1job_cpu_only():
+    """Synthetic test case configured for 1-job mode (CPU-only)."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode with CPU-only
@@ -42,9 +42,9 @@ def norfolk_1job_cpu_only():
 
 
 @pytest.fixture
-def norfolk_1job_with_gpus():
-    """Norfolk test case configured for 1-job mode with GPUs."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
+def synth_1job_with_gpus():
+    """Synthetic test case configured for 1-job mode with GPUs."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode with GPUs
@@ -73,11 +73,11 @@ def norfolk_1job_with_gpus():
     return analysis
 
 
-def test_1job_sbatch_script_cpu_only(norfolk_1job_cpu_only):
+def test_1job_sbatch_script_cpu_only(synth_1job_cpu_only):
     """Verify SBATCH script for 1-job mode (CPU-only)."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
 
     # Generate and write the snakemake config
@@ -123,11 +123,11 @@ def test_1job_sbatch_script_cpu_only(norfolk_1job_cpu_only):
     assert "#SBATCH --time=01:00:00" in script_content  # 60 minutes -> 01:00:00
 
 
-def test_1job_sbatch_script_with_gpus(norfolk_1job_with_gpus):
+def test_1job_sbatch_script_with_gpus(synth_1job_with_gpus):
     """Verify SBATCH script for 1-job mode with GPUs."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_with_gpus
+    analysis = synth_1job_with_gpus
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
 
     # Generate the snakemake config
@@ -161,11 +161,11 @@ def test_1job_sbatch_script_with_gpus(norfolk_1job_with_gpus):
     assert "--cpus-per-task" not in script_content
 
 
-def test_1job_sbatch_script_error_if_cpus_not_set(norfolk_1job_cpu_only):
+def test_1job_sbatch_script_error_if_cpus_not_set(synth_1job_cpu_only):
     """Verify SBATCH script includes error handling for missing SLURM_CPUS_ON_NODE."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
 
     config = workflow_builder.generate_snakemake_config(mode="single_job")
@@ -183,11 +183,11 @@ def test_1job_sbatch_script_error_if_cpus_not_set(norfolk_1job_cpu_only):
     assert "exit 1" in script_content
 
 
-def test_1job_sbatch_requires_hpc_total_nodes(norfolk_1job_cpu_only):
+def test_1job_sbatch_requires_hpc_total_nodes(synth_1job_cpu_only):
     """Verify that SBATCH script generation fails without hpc_total_nodes."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     analysis.cfg_analysis.hpc_total_nodes = None  # Remove required field
 
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
@@ -200,11 +200,11 @@ def test_1job_sbatch_requires_hpc_total_nodes(norfolk_1job_cpu_only):
         workflow_builder._generate_single_job_submission_script(snakefile_path, config_dir)
 
 
-def test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus(norfolk_1job_with_gpus):
+def test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus(synth_1job_with_gpus):
     """Verify that GPU mode requires hpc_gpus_per_node."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_with_gpus
+    analysis = synth_1job_with_gpus
     # Phase-4 (4d): per-node GPU count is the partition's PartitionSpec.gpus_per_node
     # (hpc_gpus_per_node retired, no cfg_analysis fallback). Override to a partition
     # WITHOUT gpus_per_node so _resolve_gpus_per_node resolves 0 and the GPU-header
@@ -227,11 +227,11 @@ def test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus(norfolk_1job_wit
         workflow_builder._generate_single_job_submission_script(snakefile_path, config_dir)
 
 
-def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
+def test_1job_sbatch_conda_initialization_present(synth_1job_cpu_only):
     """Verify that SBATCH script includes conda initialization for non-interactive shells."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
 
     config = workflow_builder.generate_snakemake_config(mode="single_job")
@@ -263,11 +263,11 @@ def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
     assert init_pos < activate_pos, "Conda initialization must come before conda activate"
 
 
-def test_override_hpc_total_nodes(norfolk_1job_cpu_only):
+def test_override_hpc_total_nodes(synth_1job_cpu_only):
     """override_hpc_total_nodes replaces hpc_total_nodes in the generated SBATCH script."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     # Config says 2 nodes; we override to 3
     assert analysis.cfg_analysis.hpc_total_nodes == 2
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
@@ -285,13 +285,13 @@ def test_override_hpc_total_nodes(norfolk_1job_cpu_only):
     assert "--nodes=2" not in script_content, "Config value should not appear when overridden"
 
 
-def test_override_hpc_total_nodes_wrong_mode(norfolk_1job_cpu_only):
+def test_override_hpc_total_nodes_wrong_mode(synth_1job_cpu_only):
     """override_hpc_total_nodes raises ConfigurationError when multi_sim_run_method != 1_job_many_srun_tasks."""
     from hhemt.exceptions import ConfigurationError
     from hhemt.orchestration import RunOverrides
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     analysis.cfg_analysis.multi_sim_run_method = "local"
 
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
@@ -300,11 +300,11 @@ def test_override_hpc_total_nodes_wrong_mode(norfolk_1job_cpu_only):
         workflow_builder.submit_workflow(overrides=RunOverrides(hpc_total_nodes=3))
 
 
-def test_extra_sbatch_args_runtime_only(norfolk_1job_cpu_only):
+def test_extra_sbatch_args_runtime_only(synth_1job_cpu_only):
     """Runtime extra_sbatch_args appears as #SBATCH lines in the generated script."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
     config = workflow_builder.generate_snakemake_config(mode="single_job")
     config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
@@ -320,11 +320,11 @@ def test_extra_sbatch_args_runtime_only(norfolk_1job_cpu_only):
     assert "#SBATCH --qos=debug" in script_content
 
 
-def test_extra_sbatch_args_appends_after_config(norfolk_1job_cpu_only):
+def test_extra_sbatch_args_appends_after_config(synth_1job_cpu_only):
     """Runtime extra_sbatch_args lines appear AFTER cfg_analysis.additional_SBATCH_params lines."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     analysis.cfg_analysis.additional_SBATCH_params = ["--qos=normal", "--mail-type=END"]
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
     config = workflow_builder.generate_snakemake_config(mode="single_job")
@@ -346,12 +346,12 @@ def test_extra_sbatch_args_appends_after_config(norfolk_1job_cpu_only):
     )
 
 
-def test_extra_sbatch_args_prints_override_info(norfolk_1job_cpu_only, capsys):
+def test_extra_sbatch_args_prints_override_info(synth_1job_cpu_only, capsys):
     """When extra_sbatch_args overrides a config-derived directive, an INFO message is printed naming
     the flag, the origin of the original value, and the new runtime value."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     original_partition = str(analysis.cfg_analysis.hpc_ensemble_partition)
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
     config = workflow_builder.generate_snakemake_config(mode="single_job")
@@ -372,12 +372,12 @@ def test_extra_sbatch_args_prints_override_info(norfolk_1job_cpu_only, capsys):
     assert "cfg_analysis.hpc_ensemble_partition" in captured.out
 
 
-def test_extra_sbatch_args_wrong_mode(norfolk_1job_cpu_only):
+def test_extra_sbatch_args_wrong_mode(synth_1job_cpu_only):
     """extra_sbatch_args raises ConfigurationError when multi_sim_run_method != '1_job_many_srun_tasks'."""
     from hhemt.exceptions import ConfigurationError
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     analysis.cfg_analysis.multi_sim_run_method = "local"
 
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
@@ -386,14 +386,14 @@ def test_extra_sbatch_args_wrong_mode(norfolk_1job_cpu_only):
         workflow_builder.submit_workflow(extra_sbatch_args=["--qos=debug"])
 
 
-def test_1job_sbatch_account_from_cfg_hpc_system(norfolk_1job_cpu_only):
+def test_1job_sbatch_account_from_cfg_hpc_system(synth_1job_cpu_only):
     """Phase 3 (R4): when cfg_hpc_system is present, the sbatch --account is
     sourced from cfg_hpc_system.default_account (via _resolve_account), not the
     legacy cfg_analysis.hpc_account."""
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     # A distinct account on the new config proves which source the header used
     # (Phase-4 4d: account is sourced solely from hpc_system_config.default_account).
     analysis.cfg_hpc_system = hpc_system_config(
@@ -413,7 +413,7 @@ def test_1job_sbatch_account_from_cfg_hpc_system(norfolk_1job_cpu_only):
     assert "--account=test_account" not in script_content
 
 
-def test_1job_sbatch_gpus_per_node_from_partition_spec(norfolk_1job_with_gpus):
+def test_1job_sbatch_gpus_per_node_from_partition_spec(synth_1job_with_gpus):
     """Phase 4 (4d): the --gres per-node GPU count + gpu_hardware are both sourced
     from the ensemble partition's PartitionSpec (gpus_per_node + gpu_hardware), via
     _resolve_gpus_per_node / _resolve_gpu_hardware — the legacy cfg_analysis.hpc_gpus_per_node
@@ -421,7 +421,7 @@ def test_1job_sbatch_gpus_per_node_from_partition_spec(norfolk_1job_with_gpus):
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_with_gpus
+    analysis = synth_1job_with_gpus
     # The fixture partition declares 8/node; this override declares 4/node — the
     # resolved per-node count must be the partition's (4).
     analysis.cfg_hpc_system = hpc_system_config(

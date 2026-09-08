@@ -13,9 +13,9 @@ pytestmark = pytest.mark.requires_snakemake_subprocess
 
 
 @pytest.fixture
-def norfolk_1job_analysis():
-    """Norfolk test case configured for 1-job mode."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
+def synth_1job_analysis():
+    """Synthetic test case configured for 1-job mode."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode
@@ -45,7 +45,7 @@ def norfolk_1job_analysis():
     return analysis
 
 
-def test_1job_dry_run_does_not_submit(norfolk_1job_analysis):
+def test_1job_dry_run_does_not_submit(synth_1job_analysis):
     """
     Test that dry-run with 1_job_many_srun_tasks does NOT submit SBATCH.
 
@@ -56,7 +56,7 @@ def test_1job_dry_run_does_not_submit(norfolk_1job_analysis):
     4. Result indicates success
     5. Result mode is 'single_job'
     """
-    analysis = norfolk_1job_analysis
+    analysis = synth_1job_analysis
 
     result = analysis.submit_workflow(
         mode="slurm",
@@ -87,14 +87,14 @@ def test_1job_dry_run_does_not_submit(norfolk_1job_analysis):
     assert snakefile_path.exists(), "Snakefile should be generated even in dry-run"
 
 
-def test_1job_normal_run_workflow_builder(norfolk_1job_analysis):
+def test_1job_normal_run_workflow_builder(synth_1job_analysis):
     """
     Test that workflow builder can generate Snakefile and config.
 
     This test verifies that the fix doesn't break the workflow generation
     pipeline. We don't actually submit, but verify generation succeeds.
     """
-    analysis = norfolk_1job_analysis
+    analysis = synth_1job_analysis
 
     # Generate Snakefile content
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(

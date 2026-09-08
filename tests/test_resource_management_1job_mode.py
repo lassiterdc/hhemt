@@ -12,9 +12,9 @@ from hhemt.resource_management import _parse_slurm_allocated_gpus
 
 
 @pytest.fixture
-def norfolk_analysis_cpu_only():
-    """Norfolk test case configured with CPU-only simulation."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
+def synth_analysis_cpu_only():
+    """Synthetic test case configured with CPU-only simulation."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure basic CPU-only simulation
@@ -28,9 +28,9 @@ def norfolk_analysis_cpu_only():
 
 
 @pytest.fixture
-def norfolk_analysis_with_gpus():
-    """Norfolk test case configured with GPU simulation."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
+def synth_analysis_with_gpus():
+    """Synthetic test case configured with GPU simulation."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure GPU simulation
@@ -43,9 +43,9 @@ def norfolk_analysis_with_gpus():
     return analysis
 
 
-def test_sim_requirements_returns_per_sim_only(norfolk_analysis_cpu_only):
+def test_sim_requirements_returns_per_sim_only(synth_analysis_cpu_only):
     """Verify method returns only per-simulation requirements (no totals)."""
-    analysis = norfolk_analysis_cpu_only
+    analysis = synth_analysis_cpu_only
 
     resource_manager = analysis._resource_manager
     sim_reqs = resource_manager._get_simulation_resource_requirements()
@@ -71,9 +71,9 @@ def test_sim_requirements_returns_per_sim_only(norfolk_analysis_cpu_only):
     assert sim_reqs["mem_mb_per_sim"] == 16000
 
 
-def test_sim_requirements_gpu_calculations(norfolk_analysis_with_gpus):
+def test_sim_requirements_gpu_calculations(synth_analysis_with_gpus):
     """Verify GPU resource calculations."""
-    analysis = norfolk_analysis_with_gpus
+    analysis = synth_analysis_with_gpus
 
     resource_manager = analysis._resource_manager
     sim_reqs = resource_manager._get_simulation_resource_requirements()
@@ -91,7 +91,7 @@ def test_sim_requirements_gpu_calculations(norfolk_analysis_with_gpus):
 
 def test_sim_requirements_multi_node_config():
     """Verify per-simulation requirements with multi-node configuration."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=True)
     analysis = case.analysis
 
     # Configure multi-node simulation
