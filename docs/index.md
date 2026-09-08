@@ -11,6 +11,25 @@ AMD hardware. It manages the full lifecycle, from preprocessing and compilation
 through execution and post-processing, and produces consolidated datasets and an
 interactive report.
 
+<!-- hhemt:maturity-disclosure -->
+> **On this release.** hhemt is released in the mechanical sense. It is tagged,
+> packaged, archived with a DOI, and documented. I do not yet consider it ready for
+> general outside use. Version 0.1.0 exists to build and prove the machinery a real
+> release requires, which is the packaging, the archiving, the documentation and the
+> continuous integration, rather than to invite adoption.
+>
+> Today the toolkit is for three readers. The first wants to run the shipped Norfolk
+> case study end to end, which the tutorial does on one machine, with no HPC and no
+> account. The second is evaluating whether this approach fits their own problem. The
+> third wants a reproducible, citable pipeline for their own work. If you are one of
+> those three, what is here works and is documented.
+>
+> The release intended for general use is planned alongside the paper introducing the
+> software. What changes then is that the work this toolkit was built to produce will
+> be published, so a reader will have something to reproduce rather than only
+> something to run.
+<!-- /hhemt:maturity-disclosure -->
+
 --8<-- "platform-support.md"
 
 ## What a run looks like
