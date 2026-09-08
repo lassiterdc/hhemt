@@ -657,7 +657,7 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     # ``f_consolidate_experiment_complete.flag`` is absent, run the master
     # sensitivity workflow once locally to materialize per-member flags + the
     # master flag + the sensitivity_datatree.zarr.
-    payload = ("sensitivity_datatree.zarr", "_status/f_consolidate_experiment_complete.flag")
+    payload = ("experiment_datatree.zarr", "_status/f_consolidate_experiment_complete.flag")
     state = _marker_state(analysis_dir, payload)
     if state == "unsatisfied":
         _warn_unsatisfied(analysis_dir, payload, "synthetic_sensitivity_completed")

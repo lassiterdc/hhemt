@@ -53,7 +53,39 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: be596c795b970ee6035fae610a6cf50eca3e2b37b007b1fc1e529e7461e25642
+    renderer_sha256: 6589647cdb53cfe49f36ed5a40a4ea9152990cf1a2866322eb88364714a476c8
+    justification_2026_09_08: >-
+      Defect 1 of the twelve-red set (the experiment-tree reader conversion). THIS IS THE
+      SECOND FIRING THE 2026-09-01 HEADER NOTE PREDICTED, discharged the way that note
+      prescribes: the caption was re-read IN FULL and the digest re-recorded, not written
+      off as leftover staleness.
+      THE CHANGE IS PATH-RESOLUTION ONLY, ON TWO READ SITES. S1 and S2 replace
+      `analysis_paths.sensitivity_datatree_zarr` with
+      `hhemt.utils.resolve_experiment_tree(analysis_dir)` at the `if not rows:` diagnostic
+      and inside `_collect_rows`. No branch is added, no series is added or removed, and
+      nothing about WHAT is plotted or HOW it is aggregated moves.
+      THE RE-READ WAS PERFORMED. The caption makes six claims: the independent variable it
+      is keyed on; the dependent variable's default and its slowest-rank wallclock
+      semantics under the `wallclock reduction uses max over rank` stipulation;
+      restart-safety; the per-member `aggregation` mode from report_config.yaml; the
+      SWMM-only routing to `swmm_full_rpt_file` Total elapsed via
+      `swmm_output_parser.parse_total_elapsed`; and the per-report axis auto-scaling caveat
+      with its cross-arm comparison warning. Every one describes the quantity plotted or
+      the axis it is plotted on. None names a store filename, so none can have gone stale
+      under a change that only decides WHICH store path is opened.
+      ONE CONSEQUENCE IS REAL AND IT IMPROVES THE CAPTION RATHER THAN STALING IT, and it
+      was traced rather than assumed. `_collect_rows` appends the resolved path to
+      `source_paths` (line 1872), and `source_paths` reaches the rendered
+      `{{ snakemake.params.source_paths_rst }}` Sources block. So the Sources block will
+      now name the tree that ACTUALLY EXISTS -- `experiment_datatree.zarr` on a current
+      tree, `sensitivity_datatree.zarr` on a stranded one -- where before it always printed
+      the retired field's path whether or not anything was there. The caption interpolates
+      that block rather than hardcoding either filename, so the prose needs no edit and
+      the rendered output gets strictly more accurate.
+      WHY NOT EDIT THE CAPTION. There is nothing to say. A reader of the figure cannot act
+      on which of two filenames the store carries, and the Sources block already tells them
+      the answer for their own report. Adding a sentence about the rename would document a
+      transition rather than the figure.
     justification_2026_09_04: >-
       FR-7 of the post-merge-suite-reds friction set. THIS IS THE FIRING THE 2026-09-01
       HEADER NOTE PREDICTED, discharged the way that note prescribed: the caption was

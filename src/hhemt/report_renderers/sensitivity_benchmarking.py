@@ -648,7 +648,9 @@ def render(
 
     rows, source_paths = _collect_rows(analysis, dependent_var)
     if not rows:
-        _dt_path = analysis.analysis_paths.sensitivity_datatree_zarr
+        from hhemt.utils import resolve_experiment_tree
+
+        _dt_path = resolve_experiment_tree(analysis.analysis_paths.analysis_dir)
         _members = list(sensitivity.members.keys())
         _swmm_only = [_m for _m, _a in sensitivity.members.items() if _a._get_enabled_model_types() == ["swmm"]]
         _nodes: list[str] = []
@@ -1861,7 +1863,9 @@ def _collect_rows(experiment: TRITONSWMM_analysis, dependent_var: str) -> tuple[
     # first-class quantity, add it as its OWN series -- do not substitute it into a
     # decomposition.
 
-    datatree_path = experiment.analysis_paths.sensitivity_datatree_zarr
+    from hhemt.utils import resolve_experiment_tree
+
+    datatree_path = resolve_experiment_tree(experiment.analysis_paths.analysis_dir)
     tree: xr.DataTree | None = None
     if datatree_path is not None and datatree_path.exists():
         tree = xr.open_datatree(str(datatree_path), engine="zarr", consolidated=False)
