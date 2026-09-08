@@ -115,7 +115,7 @@ def test_multiprocess_stamping_yields_single_write(tmp_path: Path) -> None:
 
 
 @pytest.mark.slow
-def test_analysis_run_stamps_version_file(norfolk_single_sim_analysis_cached) -> None:
+def test_analysis_run_stamps_version_file(synth_all_models_analysis_cached) -> None:
     """TRITONSWMM_analysis.run() writes _version.json at analysis_dir on first call.
 
     Lazy-stamping wire verification: proves the wire in analysis.py fires
@@ -126,9 +126,9 @@ def test_analysis_run_stamps_version_file(norfolk_single_sim_analysis_cached) ->
     run() and above the parameter-translation block that precedes submission,
     so the wire is fully exercised without launching a simulation. Measured
     2026-08-25: the unmocked form cost ~6 min and 2.8 GB against a cold tree
-    and was the suite's only real-Norfolk-run site.
+    and was, at that time, the suite's only unmocked real-case-study run.
     """
-    analysis = norfolk_single_sim_analysis_cached
+    analysis = synth_all_models_analysis_cached
     with patch.object(
         analysis,
         "submit_workflow",
@@ -144,10 +144,10 @@ def test_analysis_run_stamps_version_file(norfolk_single_sim_analysis_cached) ->
 
 @pytest.mark.slow
 def test_submit_workflow_stamps_version_file(
-    norfolk_single_sim_analysis_cached,
+    synth_all_models_analysis_cached,
 ) -> None:
     """TRITONSWMM_analysis.submit_workflow() writes _version.json on first call."""
-    analysis = norfolk_single_sim_analysis_cached
+    analysis = synth_all_models_analysis_cached
     analysis.submit_workflow(dry_run=True)
     version_path = analysis.analysis_paths.analysis_dir / "_version.json"
     assert version_path.exists()
@@ -157,10 +157,10 @@ def test_submit_workflow_stamps_version_file(
 
 
 def test_system_init_stamps_version_file(
-    norfolk_single_sim_analysis_cached,
+    synth_all_models_analysis_cached,
 ) -> None:
     """TRITONSWMM_system.__init__ writes _version.json at system_directory eagerly."""
-    analysis = norfolk_single_sim_analysis_cached
+    analysis = synth_all_models_analysis_cached
     sys_dir = analysis._system.cfg_system.system_directory
     assert (sys_dir / "_version.json").exists()
     st = state.read_version_file(sys_dir)
