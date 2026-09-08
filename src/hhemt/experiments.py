@@ -107,8 +107,10 @@ class TRITON_SWMM_experiment:
     Provides both low-level initialization from YAML paths and high-level
     class methods for loading case studies from configuration templates.
 
-    Attributes:
-        system: Configured TRITONSWMM_system instance with analysis loaded
+    Attributes
+    ----------
+    system : TRITONSWMM_system
+        Configured system instance with the analysis loaded.
     """
 
     def __init__(
@@ -145,9 +147,10 @@ class TRITON_SWMM_experiment:
             system=self.system,
             hpc_system_config_yaml=hpc_system_config_yaml,
         )
-        # Link back, mirroring toolkit.py:152 and tests/fixtures/test_case_builder.py:189.
+        # Link back, mirroring the link-back in `Toolkit.from_configs` and in the
+        # test-case-builder fixture.
         # Without it `system.analysis` raises RuntimeError (system.py:218-221) and
-        # `Toolkit(exp.system)` is impossible (toolkit.py:96 reads system.analysis).
+        # `Toolkit(exp.system)` is impossible (Toolkit.__init__ reads system.analysis).
         # This constructor was the sole system+analysis pair-builder omitting it.
         self.system._analysis = self.analysis
         self.test_case_directory = self.retrieve_test_data_directory(case_name) if case_name is not None else None
@@ -193,25 +196,35 @@ class TRITON_SWMM_experiment:
         - HydroShare data download
         - System and analysis configuration generation
 
-        Args:
-            case_name: Case study name (e.g., "norfolk_coastal_flooding")
-            system_config_template: System config filename (e.g., "template_system_config.yaml")
-            analysis_config_template: Analysis config filename (e.g., "template_analysis_config.yaml")
-            case_config_filename: Case metadata filename (e.g., "case.yaml")
-            download_if_exists: If True, re-download HydroShare data even if it exists
-            example_data_dir: Optional override for data storage location
+        Parameters
+        ----------
+        case_name : str
+            Case study name, for example ``norfolk_coastal_flooding``.
+        system_config_template : str
+            System config filename, for example ``template_system_config.yaml``.
+        analysis_config_template : str
+            Analysis config filename, for example ``template_analysis_config.yaml``.
+        case_config_filename : str
+            Case metadata filename, for example ``case.yaml``.
+        download_if_exists : bool, default False
+            Re-download the HydroShare data even when it is already present.
+        example_data_dir : Path or None
+            Override for the data storage location, when one is given.
 
-        Returns:
-            TRITON_SWMM_experiment instance with loaded system and analysis
+        Returns
+        -------
+        TRITON_SWMM_experiment
+            Instance with the system and analysis loaded.
 
-        Example:
-            from hhemt.constants import *
-            example = TRITON_SWMM_experiment.from_case_study(
-                case_name=NORFOLK_EX,
-                system_config_template=NORFOLK_SYSTEM_CONFIG,
-                analysis_config_template=NORFOLK_ANALYSIS_CONFIG,
-                case_config_filename=NORFOLK_CASE_CONFIG,
-            )
+        Examples
+        --------
+        >>> from hhemt.constants import *
+        >>> example = TRITON_SWMM_experiment.from_case_study(
+        ...     case_name=NORFOLK_EX,
+        ...     system_config_template=NORFOLK_SYSTEM_CONFIG,
+        ...     analysis_config_template=NORFOLK_ANALYSIS_CONFIG,
+        ...     case_config_filename=NORFOLK_CASE_CONFIG,
+        ... )
         """
         cfg_system_yaml = cls._load_case_system_config(
             case_name=case_name,
@@ -245,67 +258,80 @@ class TRITON_SWMM_experiment:
         validate: bool = True,
         allow_cross_family_sif: bool = False,
     ) -> "TRITON_SWMM_experiment":
-        """Fetch a published reprex bundle by DOI/PID, reconstitute it, and return a
-        runnable experiment (ADR-13 C9; R1-R4).
+        """Fetch a published reprex bundle by DOI or PID, reconstitute it, and return
+        a runnable experiment.
 
-        Under the ADR-9 self-contained-by-default contract the emitted bundle carries
-        every cfg-declared simulation input at its bundle-relative location, so a
-        self-contained bundle reconstitutes to inputs that all exist on disk — a
-        from-scratch runnable experiment, dependent externally only on the reproducer's
-        USER-specific + HPC-specific configs and the container SIF (built on ingest from
-        the carried ``.def`` recipe, or transferred per ADR-2 — a separate phase). A
-        bundle emitted with a ``bundle_exclude_config`` opt-out carries the excluded
-        inputs by-reference via an ``input_deposit`` block fetched on ingest.
+        Under the self-contained-by-default contract the emitted bundle carries every
+        config-declared simulation input at its bundle-relative location, so a
+        self-contained bundle reconstitutes to inputs that all exist on disk. That is
+        a from-scratch runnable experiment, dependent externally only on the
+        reproducer's user-specific and HPC-specific configs and on the container SIF,
+        which is built on ingest from the carried ``.def`` recipe or transferred in a
+        separate phase. A bundle emitted with a ``bundle_exclude_config`` opt-out
+        carries the excluded inputs by reference, via an ``input_deposit`` block
+        fetched on ingest.
 
         Trust boundary: ingesting a DOI and running it executes shell derived from the
-        fetched config — ingest only deposits you trust. ``expected_sha256`` pins the
-        fetched bundle-zip integrity.
+        fetched config, so ingest only deposits you trust. ``expected_sha256`` pins the
+        integrity of the fetched bundle zip.
 
-        Args:
-            doi: The bundle's DOI (e.g. ``'10.5281/zenodo.123456'``). Either ``doi`` or ``pid``.
-            pid: The host-native id (Zenodo record id / HydroShare resource id).
-            host: ``'zenodo'`` or ``'hydroshare'`` — REQUIRED, no default (the sibling
-                case-study fetch defaults to hydroshare; two DOI entry points with
-                opposite host defaults is a trap).
-            expected_sha256: Optional sha256 pin on the fetched bundle zip.
-            target_dir: Optional directory to fetch into (default: a fresh temp dir).
-            software_dir: Target-side directory for the toolkit-owned SWMM/TRITON build
-                dirs (default: ``{bundle_root}/software``). These are build OUTPUTS the
-                toolkit creates at setup, not bundled inputs; they must be non-null for
-                ``TRITONSWMM_system`` to construct.
-            hpc_system_config_yaml: Path to YOUR cluster's ``hpc_system_config.yaml``
-                (ADR-6). Resolution precedence: this argument > ``$HHEMT_HPC_SYSTEM_CONFIG``
-                > None. The bundle never carries it (ADR-9: a DOI-downloaded bundle runs
-                "with no external dependency aside from the reproducer's USER-specific and
-                HPC-specific configs"), and it is REQUIRED for a container-mode bundle —
-                the ContainerSpec that renders ``apptainer exec {sif}`` lives on it.
-                Start from a worked in-tree example
-                (``test_data/norfolk_coastal_flooding/hpc_system_config_{uva,frontier}.yaml``)
-                or from the shape sketched in the bundle's
-                ``hpc_system_config.template.yaml``.
-                ADR-19 repoint: on the container path ``from_doi`` writes a DERIVED copy at
-                ``{software_dir}/hpc_system_config.resolved.yaml`` whose
-                ``container.sif_path`` names the built (or transferred) SIF, and hands the
-                analysis THAT path. A derived FILE — not an in-memory edit — is required:
-                every downstream consumer re-loads the YAML from the path
-                (``analysis.test()`` at analysis.py:2728; the sim runner at
-                run_simulation_runner.py:219), so an in-memory repoint would never reach
-                ``run_simulation.py:421``'s ``apptainer exec {cspec.sif_path}``. Your
-                original config is never modified.
-            validate: Run preflight validation on the reconstituted experiment before
-                returning (default True), mirroring ``Toolkit.from_configs``
-                (toolkit.py:154-157). This is what makes a container-mode bundle FAIL
-                CLOSED rather than silently degrade to a native run: ``preflight_validate``
-                → ``_validate_container_config`` (validation.py:1552) errors when
-                ``execution_environment == "container"`` and no ContainerSpec resolves.
-                Without it, ``workflow.py:807`` sets an empty container prefix and the
-                experiment runs NATIVELY while reporting success. Pass False only to
-                inspect a bundle you do not intend to run.
-            allow_cross_family_sif: Override the ADR-19(vii) cross-family SIF guard
-                (default False = fail closed). When True, a bundle whose baked GPU arch
-                (``container_build.target_arch``) does not match your target partition's
-                ``gpu_hardware`` is built + run anyway with only a warning. Set True ONLY
-                when you have confirmed the baked arch is run-compatible with your GPU.
+        Parameters
+        ----------
+        doi : str or None
+            The bundle's DOI, for example ``'10.5281/zenodo.123456'``. Give either
+            ``doi`` or ``pid``.
+        pid : str or None
+            The host-native id: a Zenodo record id or a HydroShare resource id.
+        host : {'zenodo', 'hydroshare'}
+            Required, with no default. The sibling case-study fetch defaults to
+            hydroshare, and two DOI entry points with opposite host defaults would be
+            a trap.
+        expected_sha256 : str or None
+            Sha256 pin on the fetched bundle zip.
+        target_dir : Path or None
+            Directory to fetch into. Defaults to a fresh temporary directory.
+        software_dir : Path or None
+            Target-side directory for the toolkit-owned SWMM and TRITON build
+            directories. Defaults to ``{bundle_root}/software``. These are build
+            outputs the toolkit creates at setup rather than bundled inputs, and they
+            must be non-null for ``TRITONSWMM_system`` to construct.
+        hpc_system_config_yaml : Path or None
+            Path to your cluster's ``hpc_system_config.yaml``. Resolution precedence
+            is this argument, then ``$HHEMT_HPC_SYSTEM_CONFIG``, then None. The bundle
+            never carries it, because a DOI-downloaded bundle is contracted to run
+            with no external dependency beyond the reproducer's user-specific and
+            HPC-specific configs. It is required for a container-mode bundle, because
+            the ContainerSpec that renders ``apptainer exec {sif}`` lives on it. Start
+            from a worked in-tree example under
+            ``test_data/norfolk_coastal_flooding/`` or from the shape sketched in the
+            bundle's ``hpc_system_config.template.yaml``.
+
+            On the container path ``from_doi`` writes a derived copy at
+            ``{software_dir}/hpc_system_config.resolved.yaml`` whose
+            ``container.sif_path`` names the built or transferred SIF, and hands the
+            analysis that path. A derived file rather than an in-memory edit is
+            required: every downstream consumer re-loads the YAML from the path,
+            including ``run_simulation_runner.main``, so an in-memory repoint would
+            never reach the ``apptainer exec`` invocation in
+            ``run_simulation.prepare_simulation_command``. Your original config is
+            never modified.
+        validate : bool, default True
+            Run preflight validation on the reconstituted experiment before returning,
+            mirroring ``Toolkit.from_configs``. This is what makes a container-mode
+            bundle fail closed rather than silently degrade to a native run:
+            ``preflight_validate`` calls ``_validate_container_config``, which errors
+            when ``execution_environment == "container"`` and no ContainerSpec
+            resolves. Without it the workflow builder sets an empty container prefix
+            (``SnakemakeWorkflowBuilder.__init__``) and the experiment runs natively
+            while reporting success. Pass False only to inspect a bundle you do not
+            intend to run.
+        allow_cross_family_sif : bool, default False
+            Override the cross-family SIF guard, which fails closed by default. When
+            True, a bundle whose baked GPU architecture
+            (``container_build.target_arch``) does not match your target partition's
+            ``gpu_hardware`` is built and run anyway with only a warning. Set True only
+            when you have confirmed the baked architecture is run-compatible with your
+            GPU.
         """
         from hhemt.bundle import Bundle
         from hhemt.bundle._emit import (
@@ -486,8 +512,10 @@ class TRITON_SWMM_experiment:
         exp.bundle_root = bundle_root
         # Fail closed on an unrunnable reconstitution — notably a container-mode bundle
         # whose ContainerSpec does not resolve, which would otherwise run NATIVELY and
-        # report success (workflow.py:795-807). Mirrors toolkit.py:154-157; sanctioned by
-        # analysis.py:622-624 ("CLI/API entry points can call it automatically").
+        # report success, because `SnakemakeWorkflowBuilder.__init__` leaves the
+        # container prefix empty in that case. Mirrors the preflight-validation block
+        # in `Toolkit.from_configs`; sanctioned by `analysis.validate`, whose docstring
+        # states that "CLI/API entry points can call it automatically".
         if validate:
             exp.analysis.validate().raise_if_invalid()
         return exp
@@ -1491,14 +1519,11 @@ class NorfolkIreneExperiment:
     Norfolk-specific defaults. Makes it easy to load the Norfolk example
     without remembering all the constant names.
 
-    Example:
-        from hhemt.experiments import NorfolkIreneExperiment
-
-        # Load Norfolk example with Hurricane Irene data
-        norfolk = NorfolkIreneExperiment.load()
-        system = norfolk.system
-
-        # Or just load the analysis template
+    Examples
+    --------
+    >>> from hhemt.experiments import NorfolkIreneExperiment
+    >>> norfolk = NorfolkIreneExperiment.load()
+    >>> system = norfolk.system
     """
 
     @classmethod
@@ -1510,12 +1535,17 @@ class NorfolkIreneExperiment:
         """
         Load Norfolk coastal flooding example.
 
-        Args:
-            download_if_exists: If True, re-download HydroShare data
-            example_data_dir: Optional override for data directory
+        Parameters
+        ----------
+        download_if_exists : bool, default False
+            Re-download the HydroShare data even when it is already present.
+        example_data_dir : Path or None
+            Override for the data directory, when one is given.
 
-        Returns:
-            TRITON_SWMM_experiment instance with Norfolk system loaded
+        Returns
+        -------
+        TRITON_SWMM_experiment
+            Instance with the Norfolk system loaded.
         """
 
         weather_events_to_simulate = "hurricane_irene_event_index.csv"
@@ -1541,14 +1571,11 @@ class NorfolkObservedExperiment:
     Norfolk-specific defaults. Makes it easy to load the Norfolk example
     without remembering all the constant names.
 
-    Example:
-        from hhemt.experiments import NorfolkObservedExperiment
-
-        # Load Norfolk example with Hurricane Irene data
-        norfolk = NorfolkObservedExperiment.load()
-        system = norfolk.system
-
-        # Or just load the analysis template
+    Examples
+    --------
+    >>> from hhemt.experiments import NorfolkObservedExperiment
+    >>> norfolk = NorfolkObservedExperiment.load()
+    >>> system = norfolk.system
     """
 
     @classmethod
@@ -1560,12 +1587,17 @@ class NorfolkObservedExperiment:
         """
         Load Norfolk coastal flooding example.
 
-        Args:
-            download_if_exists: If True, re-download HydroShare data
-            example_data_dir: Optional override for data directory
+        Parameters
+        ----------
+        download_if_exists : bool, default False
+            Re-download the HydroShare data even when it is already present.
+        example_data_dir : Path or None
+            Override for the data directory, when one is given.
 
-        Returns:
-            TRITON_SWMM_experiment instance with Norfolk system loaded
+        Returns
+        -------
+        TRITON_SWMM_experiment
+            Instance with the Norfolk system loaded.
         """
 
         # this method just changes the weather_events_to_simulate
