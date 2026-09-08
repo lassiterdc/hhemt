@@ -76,6 +76,16 @@ Lassiter, D. (2026). H&H Ensemble Modeling Toolkit (hhemt) (Version 0.1.0)
 [Computer software]. https://doi.org/10.5281/zenodo.21359152
 ```
 
+<!-- hhemt:doi-kind-convention
+     This table prints the VERSION DOI while CITATION.cff carries the CONCEPT
+     DOI. That difference is deliberate rather than a drift to be reconciled.
+     A surface carries the most precise identifier that (i) exists when the
+     surface is written and (ii) stays true of its referent while the surface
+     is readable. CITATION.cff fails (i): Zenodo mints the version DOI in
+     response to the published release, so it does not exist at tag time.
+     This page is rebuilt after each release and can carry the precise one.
+     Reasoning and worked cases: "DOI kind convention" in architecture.md. -->
+
 Two DOIs exist, and which one you want depends on what you are claiming:
 
 | DOI | Resolves to | Use it when |
