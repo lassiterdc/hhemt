@@ -1212,14 +1212,19 @@ class TRITONSWMM_sensitivity_analysis:
         every renderer in the master's render_report(), including per-sim
         renderers wildcarded over (member_id, event_id).
 
-        Args:
-            output_path: Optional target path for the bundle tar.
-            container_defs: ADR-19 (multi-SIF) — one Apptainer .def per distinct arch to
-                carry. Required (repeatable) for a container-mode analysis (nothing in the
-                config names one); ignored for native.
+        Parameters
+        ----------
+        output_path : Path or None
+            Target path for the bundle.
+        container_defs : list of Path, or None
+            One Apptainer ``.def`` per distinct architecture to carry. Required, and
+            repeatable, for a container-mode analysis, because nothing in the config
+            names one. Ignored for a native analysis.
 
-        Returns:
-            Path to the emitted bundle tar.
+        Returns
+        -------
+        Path
+            Path to the emitted bundle.
         """
         from hhemt.bundle import emit_bundle
 
@@ -1231,21 +1236,25 @@ class TRITONSWMM_sensitivity_analysis:
         container_defs: "list[Path] | None" = None,
     ) -> "Path":
         """Emit a reprex-ready Workflow-Run-Crate bundle for the sensitivity master and
-        return its extracted directory root (ADR-10, D3).
+        return its extracted directory root.
 
-        Parity peer of ``bundle_report_data()`` — the sensitivity master is the PRIMARY
-        reprex surface (the ``(member_id, column)`` problem-pair emission is intrinsically a
-        sensitivity concept). ``emit_bundle`` already carries the reprex runnable-template
-        set + WRC crate (Phase 2); this facade extracts the emitted zip to a sibling
-        directory so the round-trip consumes a directory root directly
-        (``Bundle.from_directory(...).reprex(...)``). Opt-in only.
+        Parity peer of ``bundle_report_data()``. The sensitivity master is the primary
+        reprex surface, because the ``(member_id, column)`` problem-pair emission is
+        intrinsically a sensitivity concept. ``emit_bundle`` already carries the reprex
+        runnable-template set and the Workflow-Run-Crate; this facade extracts the
+        emitted zip to a sibling directory so the round-trip consumes a directory root
+        directly, as ``Bundle.from_directory(...).reprex(...)``. Opt-in only.
 
-        Args:
-            container_defs: ADR-19 (multi-SIF) — one Apptainer .def per distinct arch to
-                carry. Required (repeatable) for a container-mode analysis (nothing in the
-                config names one); ignored for native.
+        Parameters
+        ----------
+        container_defs : list of Path, or None
+            One Apptainer ``.def`` per distinct architecture to carry. Required, and
+            repeatable, for a container-mode analysis, because nothing in the config
+            names one. Ignored for a native analysis.
 
-        Returns:
+        Returns
+        -------
+        Path
             Path to the extracted reprex-bundle directory.
         """
         from hhemt.bundle import emit_bundle
@@ -1286,14 +1295,16 @@ class TRITONSWMM_sensitivity_analysis:
         software_doi: "str | None" = None,
         container_defs: "list[Path] | None" = None,
     ) -> dict:
-        """Deposit the RUNNABLE reprex bundle for the sensitivity master (D6, R5).
+        """Deposit the runnable reprex bundle for the sensitivity master.
 
-        Sensitivity parallel of ``TRITONSWMM_analysis.publish_reprex_bundle`` — the emit
-        half of the DOI round-trip. Opt-in only; NEVER invoked from ``run()``.
+        Sensitivity parallel of ``TRITONSWMM_analysis.publish_reprex_bundle``, and the
+        emit half of the DOI round-trip. Opt-in only; never invoked from ``run()``.
 
-        Args:
-            exclude_config: The ADR-20 governed opt-out (see the analysis-tier facade).
-                Omit it and the deposited bundle is SELF-CONTAINED.
+        Parameters
+        ----------
+        exclude_config : Path or None
+            Path to an operator-authored exclude-config YAML; see the analysis-tier
+            facade. Omit it and the deposited bundle is self-contained.
         """
         return self.experiment.publish_reprex_bundle(
             target,
@@ -2053,7 +2064,9 @@ class TRITONSWMM_sensitivity_analysis:
         to a standardized 'sensitivity_analysis_definition.csv' file in the analysis directory.
         This allows easier inspection of the sensitivity analysis configuration during debugging.
 
-        Returns:
+        Returns
+        -------
+        Path
             Path to the exported CSV file.
         """
         output_path = self.analysis_paths.analysis_dir / "sensitivity_analysis_definition.csv"

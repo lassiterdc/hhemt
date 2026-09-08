@@ -301,13 +301,14 @@ def emit_bundle(
     The HPC-baseline analysis_report.{html,zip} are preserved under
     bundle_baseline/.
 
-    Args:
-        exclude_config: The ADR-20 governed opt-out — a path to an operator-authored
-            exclude-config YAML (or an already-validated ``BundleExcludeConfig``). When
-            given, the named inputs are NOT carried; each emits an ``input_deposit``
-            by-reference block into ``bundle_manifest.json`` and a URL-bearing ``File``
-            part into the crate instead. Omit it (the default) and the bundle is
-            SELF-CONTAINED: every cfg-declared input is carried (ADR-9).
+    Parameters
+    ----------
+    exclude_config : Path or BundleExcludeConfig, or None
+        Path to an operator-authored exclude-config YAML, or an already-validated
+        ``BundleExcludeConfig``. When given, the named inputs are not carried; each
+        emits an ``input_deposit`` by-reference block into ``bundle_manifest.json`` and
+        a URL-bearing ``File`` part into the crate instead. Omit it, the default, and
+        the bundle is self-contained: every config-declared input is carried.
     """
     analysis_dir = analysis.analysis_paths.analysis_dir
     plots_dir = analysis_dir / BUNDLE_PLOTS_SUBDIR
