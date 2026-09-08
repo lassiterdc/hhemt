@@ -350,19 +350,29 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
         proc = analysis._retrieve_sim_run_processing_object(event_iloc)
         paths = proc.scen_paths
 
-        if paths.swmm_hydro_inp.exists():
-            with open(paths.swmm_hydro_inp) as fp:
-                content = fp.read()
-                assert f"THREADS              {expected_threads}" in content, (
-                    f"hydro.inp for event {event_iloc} should have THREADS={expected_threads}"
-                )
+        assert paths.swmm_hydro_inp.exists(), (
+            f"hydro.inp missing for event {event_iloc} at {paths.swmm_hydro_inp}; "
+            "toggle_use_swmm_for_hydrology is True on this fixture and "
+            "assert_analysis_workflow_completed_successfully passed above, so scenario "
+            "preparation must have written it"
+        )
+        with open(paths.swmm_hydro_inp) as fp:
+            content = fp.read()
+            assert f"THREADS              {expected_threads}" in content, (
+                f"hydro.inp for event {event_iloc} should have THREADS={expected_threads}"
+            )
 
-        if paths.swmm_full_inp.exists():
-            with open(paths.swmm_full_inp) as fp:
-                content = fp.read()
-                assert f"THREADS              {expected_threads}" in content, (
-                    f"full.inp for event {event_iloc} should have THREADS={expected_threads}"
-                )
+        assert paths.swmm_full_inp.exists(), (
+            f"full.inp missing for event {event_iloc} at {paths.swmm_full_inp}; "
+            "toggle_swmm_model is True on this fixture and "
+            "assert_analysis_workflow_completed_successfully passed above, so scenario "
+            "preparation must have written it"
+        )
+        with open(paths.swmm_full_inp) as fp:
+            content = fp.read()
+            assert f"THREADS              {expected_threads}" in content, (
+                f"full.inp for event {event_iloc} should have THREADS={expected_threads}"
+            )
 
     if "swmm" in enabled_models and "tritonswmm" in enabled_models:
         for event_iloc in analysis.df_sims.index:
