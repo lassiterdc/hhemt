@@ -315,9 +315,11 @@ class Local_TestCases:
     def retrieve_synth_multi_sim_test_case(
         start_from_scratch: bool = False,
         skip_run: bool = False,
+        hpc_system_config_yaml: Path | None = None,
     ):
         return retrieve_synth_TRITON_SWMM_test_case(
             analysis_name="synth_multi_sim",
+            hpc_system_config_yaml=hpc_system_config_yaml,
             # Iter-2 of `per_sim_peak_flood_depth` (2026-04-28): bumped from 2
             # to 3 so the per-event peak-flood-depth maps cover the three
             # forcing-mechanism scenarios encoded in weather.py
@@ -374,6 +376,7 @@ class Local_TestCases:
     def retrieve_synth_cpu_config_sensitivity_case(
         start_from_scratch: bool = False,
         skip_run: bool = False,
+        hpc_system_config_yaml: Path | None = None,
     ):
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
@@ -382,6 +385,7 @@ class Local_TestCases:
         )
         return retrieve_synth_TRITON_SWMM_test_case(
             analysis_name="synth_sensitivity",
+            hpc_system_config_yaml=hpc_system_config_yaml,
             toggle_tritonswmm_model=True,
             toggle_triton_model=False,
             toggle_swmm_model=False,
@@ -799,8 +803,8 @@ class Local_TestCases:
                 df[col_name] = col_values
         if drop_columns:
             df = df.drop(columns=[c for c in drop_columns if c in df.columns])
-        assert all(
-            re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["member_id"]
-        ), "member_id values must match ^[A-Za-z0-9_.]+$"
+        assert all(re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["member_id"]), (
+            "member_id values must match ^[A-Za-z0-9_.]+$"
+        )
         df.to_csv(csv_path, index=False)
         return csv_path

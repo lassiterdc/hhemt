@@ -34,6 +34,7 @@ import re
 import sys
 from pathlib import Path
 
+import platformdirs
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -76,18 +77,61 @@ _CAPTURE = os.environ.get("CAPTURE_SNAKEFILE_GOLDENS") == "1"
 
 
 def _normalize_volatile(text: str) -> str:
-    """Replace checkout-location- and interpreter-specific tokens with stable
-    placeholders so the byte-identity assertion is robust to where the repo is
-    checked out (primary tree, worktree, CI) and which interpreter runs it
-    (conda, uv). Narrowly scoped: only the interpreter path, the absolute repo
-    root, and the variable-depth ``../`` relative path to the user's
-    ``.local/share`` data dir are masked — all genuine generation-logic tokens
-    (rule names, resources, command shape, source-path attributions) are left
-    intact so real drift still fails the assertion.
+    """Replace tokens that vary along FOUR axes with stable placeholders, so the
+    byte-identity assertion compares generation logic and nothing else. The axes
+    are: WHERE the repo is checked out (primary tree, worktree, CI), WHICH
+    interpreter runs it (conda, uv), WHICH HOST supplies the user cache root, and
+    WHICH SYNTHETIC-MODEL INPUT BUILD is cached — a digest over params, toolkit
+    version AND generator source, so ANY of the three rotates the key and a
+    version bump is only one of them. They are four rather than two because the
+    cache tier lives OUTSIDE the repo, so neither the checkout axis nor the
+    interpreter axis reaches it.
+
+    Narrowly scoped: only the interpreter path, the absolute repo root, the
+    variable-depth ``../`` relative path to the user's ``.local/share`` data dir,
+    the hhemt cache root, and ONE varying segment beneath each of
+    ``synthetic_test_runs`` (a worktree slug — the checkout axis) and
+    ``synthetic_test_models`` (``_cache_key``: a SHA-1 over params + toolkit
+    version + generator source — the INPUT-BUILD axis, NOT the checkout axis:
+    two worktrees of one commit produce the same key, because all three
+    constituents are checkout-location-independent) are masked.
+
+    Everything else is left intact so real drift still fails the assertion —
+    including rule names, resources, source-path attributions, and every FIXED
+    segment under the cache root. The last is load-bearing and is the reason the
+    cache masks are root-scoped rather than generic: a default SIF path is
+    ``{cache}/sif_cache/{name}.sif`` (container_build.py:43,:92), so a rule shell's
+    ``apptainer exec`` argument sits exactly where a generic root-plus-two-segments
+    rule would eat it. Command shape is preserved, but only because the cache masks
+    decline to consume a second segment they do not know to be volatile.
     """
     # Order matters: replace the (longer, more specific) interpreter path before
     # the repo root, since under uv the interpreter lives at ``<repo>/.venv/...``.
     text = text.replace(sys.executable, "{PYTHON}")
+    # Collapse the hhemt cache tier, which lives OUTSIDE the repo and therefore
+    # survives the {REPO_ROOT} mask. TWO SEPARATE CONCERNS, masked separately —
+    # collapsing them into one rule is a defect in either direction:
+    #   (1) HOST-specificity: the cache root itself. Safe to mask everywhere, so it
+    #       is a plain literal replace consuming no following segment.
+    #   (2) CHECKOUT-specificity: a varying segment under SOME roots and not others.
+    #       synthetic_test_runs/{slug} (tests/fixtures/__init__.py::worktree_slug) and
+    #       synthetic_test_models/{key} (a SHA-1 over params + toolkit_version +
+    #       generator_source_hash, so it churns on every version bump) each carry one.
+    #       _triton_canonical and sif_cache do NOT — their next segment is a real,
+    #       fixed token (triton/CMakeLists.txt, hhemt-0.1.0-cuda.sif).
+    # An unconditional root-plus-two-segments rule EATS those fixed tokens, and a SIF
+    # filename is emitted into a rule shell by run_simulation.py — exactly the
+    # generation-logic token a byte-identity golden exists to protect. A root-only
+    # rule leaves the varying segments behind. Hence: mask the root universally, then
+    # mask the varying segment ONLY under the roots that have one. This enumeration
+    # decays LOUDLY: a fifth varying root still gets its host prefix masked, so the
+    # golden stays host-portable and fails only on a second WORKTREE, which is
+    # diagnosable — where the rejected alternative fails by silently deleting a token
+    # nobody notices is gone.
+    _hhemt_cache = platformdirs.user_cache_dir("hhemt")
+    text = text.replace(_hhemt_cache, "{HHEMT_CACHE}")
+    text = re.sub(r"(\{HHEMT_CACHE\}/synthetic_test_runs)/[^/'\"\s]+", r"\1/{SLUG}", text)
+    text = re.sub(r"(\{HHEMT_CACHE\}/synthetic_test_models)/[^/'\"\s]+", r"\1/{MODEL_KEY}", text)
     text = text.replace(str(Path(__file__).resolve().parents[1]), "{REPO_ROOT}")
     # Collapse the variable-depth relative path to the home data dir: a worktree
     # nests deeper than the primary tree, so the ``../`` count itself varies.
@@ -528,6 +572,63 @@ def test_home_data_dir_mask_survives_a_symlinked_home() -> None:
         )
         assert "gpfs" not in got and "/home/u/" not in got, (
             f"{arm} arm: a machine-specific segment leaked past the mask. got={got!r}"
+        )
+
+
+def test_synth_root_mask_collapses_cache_root_and_worktree_slug() -> None:
+    """The synth tier lives outside the repo, so {REPO_ROOT} cannot mask it.
+
+    The cache root is host-specific and each sibling root beneath it carries ONE
+    varying segment: a worktree slug under ``synthetic_test_runs``
+    (``worktree_slug()`` returns ``"main"`` off-worktree and the branch slug inside
+    one) and a SHA-1 cache key under ``synthetic_test_models``, the latter churning
+    on every toolkit version bump. The arms are per-VARYING-SEGMENT-SHAPE rather
+    than per-environment. The third arm exists because the first two cannot see a
+    sibling-root gap, and the FOURTH is a negative control: it has no varying segment,
+    so it must survive UNCHANGED apart from the host prefix. Under-reach and over-reach
+    are different defects and a suite whose arms all have exactly one varying segment
+    can only detect the first.
+    """
+    cache = platformdirs.user_cache_dir("hhemt")
+    for arm, text, must_go, must_stay in (
+        (
+            "runs/off-worktree",
+            f"'{cache}/synthetic_test_runs/main/synth_multi_sim/cfg.yaml'",
+            "main",
+            "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/cfg.yaml",
+        ),
+        (
+            "runs/in-worktree",
+            f"'{cache}/synthetic_test_runs/sidequest-clearing-08-30/synth_multi_sim/cfg.yaml'",
+            "sidequest-clearing-08-30",
+            "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/cfg.yaml",
+        ),
+        (
+            "models/cache-key",
+            f"'{cache}/synthetic_test_models/b495da2fed88fb9a/dem.tif'",
+            "b495da2fed88fb9a",
+            "{HHEMT_CACHE}/synthetic_test_models/{MODEL_KEY}/dem.tif",
+        ),
+        # NEGATIVE CONTROL. Nothing under this root varies by host or checkout, so the
+        # SIF FILENAME must survive: run_simulation.py emits it into a rule shell, and
+        # a mask that eats it deletes a generation-logic token from the golden. Without
+        # this arm the test cannot fail on an over-broad pattern, because every other
+        # arm has exactly one varying segment and any greedy rule satisfies them all.
+        (
+            "sif_cache/fixed-filename",
+            f"'{cache}/sif_cache/hhemt-0.1.0-cuda.sif'",
+            cache,
+            "{HHEMT_CACHE}/sif_cache/hhemt-0.1.0-cuda.sif",
+        ),
+    ):
+        got = _normalize_volatile(text)
+        assert must_stay in got, (
+            f"{arm} arm: normalization did not produce the expected stable form — either "
+            f"the mask did not fire, or it consumed a token it must preserve. got={got!r}"
+        )
+        assert must_go not in got, (
+            f"{arm} arm: a host- or checkout-specific token leaked past the mask, so the "
+            f"golden would only reproduce where it was captured. got={got!r}"
         )
 
 
