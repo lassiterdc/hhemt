@@ -468,6 +468,7 @@ def test_nonsensitivity_explicit_local_execution_mode_is_not_overridden(synth_mu
 
 def test_nonsensitivity_failed_scoped_delete_raises_instead_of_consolidating_stale(
     synth_multi_sim_analysis,
+    ack_node_local_configs,
 ):
     """A scoped reprocess-delete that reports failure must RAISE, not fall through.
 

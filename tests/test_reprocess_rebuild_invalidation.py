@@ -273,7 +273,9 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(synth_sensitivity_
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(synth_multi_sim_analysis, monkeypatch):
+def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(
+    synth_multi_sim_analysis, monkeypatch, ack_node_local_configs
+):
     """Non-sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route clears each scenario's per-model
     ``processing_log.outputs`` (FIX 1, CHANGE A1)."""

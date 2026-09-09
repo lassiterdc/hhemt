@@ -225,6 +225,44 @@ def synth_all_models_analysis_cached():
 
 
 @pytest.fixture
+def ack_node_local_configs(monkeypatch):
+    """Acknowledge the node-local config preflight, for a test whose submission is STUBBED.
+
+    ADOPT ONLY WHERE SUBMISSION IS STUBBED, and drop this rather than keep it green if
+    that stops being true. The acknowledgement is a TOTAL bypass of
+    ``validation.assert_configs_visible_cross_node``, whose first executable line is an
+    early return on this env var. A test that replaces every ``submit_*`` method never
+    reaches the hazard the guard pre-empts -- an allocation consumed on inputs a compute
+    node cannot see -- so the bypass costs nothing there. A test that submits for real is
+    exactly the case the guard exists for, and this fixture would make it silently wrong.
+
+    THE CLASS, named so a future red is recognised instead of re-diagnosed.
+    ``synth_multi_sim_analysis`` and ``synth_sensitivity_analysis`` set
+    HHEMT_TEST_RUNS_ROOT_OVERRIDE to ``tmp_path``, and pytest's default basetemp IS
+    ``tempfile.gettempdir()`` -- the same function the guard's ``sys_tmp`` reads. So any
+    consumer of those two fixtures that resolves a SLURM locus trips the guard in EVERY
+    venue: on main, in a worktree, and on the cluster. The symptom is ConfigurationError in
+    field 'analysis_dir' from validation.py, naming the config YAMLs, system_directory and
+    weather_events_to_simulate under /tmp/pytest-of-*/.
+
+    DO NOT CHASE THE VENUE; there is no venue fix. ``--basetemp`` is passed on the pytest
+    COMMAND LINE by the suite runner, which overrides any ``addopts`` entry, and it does not
+    reach the builder's ``tempfile.mkdtemp`` default at all. ``TMPDIR`` moves the guard's
+    forbidden root along with the tree, so the predicate keeps matching. Re-rooting the tree
+    is either node-local (``/var/tmp``, ``/dev/shm`` -- passes the predicate and DEFEATS the
+    guard, turning a false positive into a false negative on the real hazard) or shared
+    (honours the guard, pays the wall-clock cost that refutes moving the basetemp).
+
+    NEVER set this inside ``synth_sensitivity_analysis`` or ``synth_multi_sim_analysis``
+    themselves. All nine arms of ``tests/test_node_local_config_guard.py`` consume the
+    first of those, so a fixture-level acknowledgement disarms the guard's own regression
+    suite -- including its two discriminating ``pytest.raises(ConfigurationError)`` arms.
+    Adopting it at an unrelated test subtracts nothing from that suite.
+    """
+    monkeypatch.setenv("HHEMT_ALLOW_NODE_LOCAL_CONFIGS", "1")
+
+
+@pytest.fixture
 def synth_multi_sim_analysis(tmp_path, monkeypatch):
     # census-green-up Phase 1: isolate this start_from_scratch=True wipe under
     # tmp_path so it cannot fast_rmtree the shared synth_multi_sim session cache.
