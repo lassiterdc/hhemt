@@ -359,11 +359,31 @@ class TRITONSWMM_analysis_post_processing:
         # Write the analysis-level DU sentinel. Compare-and-write semantics in
         # du_sentinels.write_du_sentinel preserve mtime on idempotent re-runs,
         # so consumer rules that declare _du.json as input: are not cascade-rerun.
-        from hhemt.du_sentinels import sum_child_sentinels
+        from hhemt.du_sentinels import _infer_scope, sum_child_sentinels
 
+        # DERIVED, never hardcoded. `scope` here is a BEHAVIOURAL SWITCH, not a label:
+        # sum_child_sentinels tests `scope == "analysis"` (du_sentinels.py:304-305) to add
+        # _EPHEMERAL_TOP_LEVEL_DIRS = {"_test"} to its skip set, so the value changes the
+        # computed total and not merely the recorded string.
+        #
+        # There are three production call sites -- consolidate_workflow.py:648 (the runner,
+        # both the master/multisim path and the per-member `--member-id` path),
+        # sensitivity_analysis.py:1731 (the per-member loop inside
+        # consolidate_sensitivity_datatree, UNGATED behind `if True:` at :1729), and
+        # analysis.py:2140. A member's own `analysis_paths.analysis_dir` IS its member root,
+        # so a literal "analysis" mislabels every member root any of them touches; the site
+        # where this derivation does the real work is sensitivity_analysis.py:1731, which
+        # runs for every member each time the master consolidate runs.
+        #
+        # The D6 fold in consolidate_workflow.py:664-672 corrected the label on the
+        # per-member RULE path -- it is not the only corrector (restamp_parent_sentinels
+        # already derives via _infer_scope at du_sentinels.py:385), but it is the only one
+        # on the consolidation path, and it fires as a rule SIDE-EFFECT. Deriving here
+        # removes the dependency on any rule firing again.
+        _du_scope_dir = self._analysis.analysis_paths.analysis_dir
         sum_child_sentinels(
-            self._analysis.analysis_paths.analysis_dir,
-            scope="analysis",
+            _du_scope_dir,
+            scope=_infer_scope(_du_scope_dir, _du_scope_dir),
             child_scope_dirs=["members", "sims"],
         )
 

@@ -1271,3 +1271,32 @@ non_breaking_allowlist:
       CHANGE-SCOPED via layout_signature. This path carries no prior row, so nothing is
       inherited and the signature below is its first.
     layout_signature: "a9b4afc68774a88122e54b7bb05c76d7eb9042609840821e99105ddf1c56cef1"
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      M19 du-member-scope-derivation S1 -- consolidate_to_datatree's tail rollup DERIVES its
+      scope argument via du_sentinels._infer_scope(analysis_dir, analysis_dir) instead of
+      passing the literal "analysis". This SUPERSEDES the 05a68430 row above on this same
+      path.
+      FOR (non-breaking), established by command rather than asserted. (1) NO SCHEMA CHANGE:
+      the _du.json payload keeps the same keys and types at the same path; only the value of
+      the `scope` string changes, and only on a MEMBER root, whose parent dir is `members`.
+      (2) NO TRANSFORM IS REQUIRED FOR AN EXISTING TREE: an old member sentinel labelled
+      "analysis" is read by the new code without error, and write_du_sentinel's
+      compare-and-write handles a changed scope by rewriting rather than by failing -- so
+      there is no state a migration would have to convert, which is the question the layout
+      machinery asks. (3) NO FUNCTIONAL CONSUMER: the only readers of the `scope` field are
+      du_sentinels.py:203's compare-and-write guard, V0019__member_vocabulary.py:176-177, and
+      tests/test_synth_du_sentinel_integrity.py; sum_child_sentinels reads only
+      disk_utilization_bytes and walk_errors from a child, never its scope.
+      THE ONE BEHAVIOURAL EDGE, stated rather than omitted. sum_child_sentinels adds
+      _EPHEMERAL_TOP_LEVEL_DIRS = {"_test"} to its skip set only when scope == "analysis"
+      (du_sentinels.py:304-305), so a member root flipped to "member" would count its own
+      _test/ bytes. Measured: ZERO _test directories exist anywhere under the synth cache,
+      and _test is created only as `analysis_paths.analysis_dir / "_test"` by analysis.test()
+      (analysis.py:2478, :2958, :3057), which builds representatives UNDER _test/ and never
+      gives a member its own. The edge is unreachable on every tree that exists; that it is
+      also arguably undesirable if it became reachable is filed as a separate follow-up
+      against du_sentinels.py:304-305 and is NOT addressed here.
+      CHANGE-SCOPED via layout_signature, set to the post-apply sha256 so the next change to
+      this file re-fires the check.
+    layout_signature: "3ec33b3393b39f6fa2298a9761b4ac30f31fbc16de69106fe161ed7e5b04378f"

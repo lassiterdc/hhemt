@@ -398,7 +398,40 @@ def _infer_scope(scope_dir: Path, analysis_dir: Path) -> Scope:
     # when it equals analysis_dir — the per-sub consolidate/processing runners
     # pass the SUB dir as analysis_dir, so the `== analysis_dir` short-circuit
     # below would otherwise mislabel the sub root scope="analysis" and clobber
-    # the D6 fold's scope="member" write (consolidate_workflow.py:457).
+    # the D6 fold's scope="member" write (consolidate_workflow.py:664-672).
+    #
+    # RESIDUAL, and it is on-disk state rather than a code path. Until this
+    # derivation was adopted at the processing_analysis.py rollup, a member root's
+    # scope was corrected ONLY by the D6 fold, which fires as a side-effect of the
+    # per-member consolidate RULE. That rule is skipped on any tree whose
+    # `e_consolidate_member-*` flags already exist, so member roots on trees
+    # materialized before the derivation landed still carry scope="analysis" and
+    # nothing re-derives them on read. Measured 2026-09-09: the Rivanna suite tree
+    # and one local cache slug both carry the mislabel while two other slugs carry
+    # "member". This is currently INERT — no production code reads the `scope`
+    # field (the only readers are this module's compare-and-write guard,
+    # V0019__member_vocabulary, and the DU-integrity test) — but a future consumer
+    # that groups by scope would inherit the wrong grouping on those trees. The fix
+    # for an affected tree is re-materialization or a relabelling migration; both
+    # were judged disproportionate while no consumer exists.
+    #
+    # "No consumer" is about the ON-DISK FIELD and does NOT mean this function's
+    # return value is inert. Twelve lines below, `_infer_scope`'s answer feeds
+    # `sum_child_sentinels(scope=...)`, whose `scope == "analysis"` test at :304-305
+    # decides whether `_EPHEMERAL_TOP_LEVEL_DIRS` is skipped -- so the derived value
+    # CHANGES a computed total. A reader who takes "inert" as covering the return
+    # value will mis-price any change routed through here.
+    #
+    # A THIRD on-disk state exists and is neither "member" nor "analysis": orphan
+    # `subanalyses/sa_*/_status/_du.json` sentinels carrying the pre-rename
+    # `sub_analysis` token, co-resident with a renamed `members/` tree. Measured
+    # 2026-09-09 on the payload-satisfying cache slug: scopes_seen was
+    # {'analysis': 5, 'sub_analysis': 4}. These are orphan DIRECTORY residue from an
+    # earlier materialization in the same path, not a failed migration -- the tree
+    # was created at layout_version 22 with an empty migration_history, so V0019
+    # correctly never ran. `find_orphan_member_dirs` (sensitivity_analysis.py:2077)
+    # iterates `members_dir` ONLY, so this `subanalyses/` residue currently has NO
+    # owner in the toolkit.
     if scope_dir.parent.name == "members":
         return "member"
     if scope_dir == analysis_dir:
