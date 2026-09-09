@@ -178,7 +178,6 @@ def test_multi_sim_snakefile_byte_identity() -> None:
     """Source-side multi-sim Snakefile byte-identical to golden."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -190,7 +189,6 @@ def test_master_snakefile_byte_identity() -> None:
     """Source-side sensitivity-master Snakefile byte-identical to golden."""
     tc = Local_TestCases.retrieve_norfolk_cpu_config_sensitivity_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     sens = TRITONSWMM_sensitivity_analysis(tc.analysis)
@@ -238,7 +236,6 @@ def test_slurm_profile_byte_identity_unset() -> None:
 
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=SLURM_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -260,7 +257,6 @@ def test_slurm_profile_declares_the_bag_when_set() -> None:
     """
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=CAPPED_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -277,7 +273,6 @@ def test_slurm_profile_omits_the_bag_when_unset() -> None:
     """
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=SLURM_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -292,7 +287,6 @@ def test_per_rule_weight_is_metered_not_requested_when_set() -> None:
     """
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=CAPPED_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -317,7 +311,6 @@ def test_full_node_gpu_weight_is_the_whole_node_not_the_request() -> None:
     """
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=CAPPED_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -346,7 +339,6 @@ def test_raise_when_full_node_gpu_partition_declares_no_cpus_per_node() -> None:
 
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=CAPPED_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -395,7 +387,6 @@ def test_process_rules_emit_group_directive() -> None:
     deduplicating subprocess-startup overhead (Phase 3b, R8)."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -416,7 +407,6 @@ def test_process_rule_group_resources_do_not_overallocate() -> None:
     Phase 3b, R8). This is a static check on the emitted Snakefile."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -477,7 +467,6 @@ def test_report_tail_partition_local_dispatch_slurm_locus_emits_cpu_partition(
     runs under `--executor slurm` (execution_mode='slurm')."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -501,7 +490,6 @@ def test_report_tail_partition_genuine_local_cores_emits_empty(
     fresh builder, so _resolved_execution_locus stays None."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -528,7 +516,6 @@ def test_report_tail_partition_native_dispatch_invariant_to_locus(
     whose partition is driven entirely by the pre-fix `!= "local"` clause."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
@@ -689,7 +676,6 @@ def test_no_shell_prefix_or_executable_disables_pipefail() -> None:
     # already holds this string in hand, so this costs one generation and no fixture.
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     generated = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()

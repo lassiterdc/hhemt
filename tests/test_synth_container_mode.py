@@ -69,7 +69,6 @@ def test_native_snakefile_no_container_artifacts() -> None:
     is empty and no ``apptainer`` token leaks into the generated Snakefile."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     assert tc.analysis.cfg_analysis.execution_environment == "native"
@@ -89,7 +88,6 @@ def test_container_mode_process_prefix_in_snakefile() -> None:
     runtime, the rest stay native (R2)."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     # Flip to container mode BEFORE constructing the builder — the process-prefix is
@@ -173,7 +171,6 @@ def test_container_mode_process_prefix_binds_system_directory() -> None:
     outside the mount (Evidence 9)."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
@@ -407,7 +404,6 @@ def test_cpu_only_swmm_rule_routes_to_cpu_partition() -> None:
     Container-INDEPENDENT: this asserts on the native generator too."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.hpc_ensemble_partition = "gpu"
@@ -497,7 +493,6 @@ def test_container_prefixed_shells_never_invoke_a_host_interpreter() -> None:
     cluster, no image, and no apptainer binary."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
@@ -562,7 +557,6 @@ def test_container_process_prefix_loads_the_apptainer_module_when_declared() -> 
     container-prefixed process command loads it before invoking `apptainer`."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
@@ -585,7 +579,6 @@ def test_container_process_prefix_omits_module_load_when_undeclared() -> None:
     module must emit exactly as it did before the fix."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
@@ -625,7 +618,6 @@ def test_only_allowlisted_rules_declare_a_snakemake_group() -> None:
     """
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     content = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
@@ -670,7 +662,6 @@ def test_native_absent_cpu_build_log_raises_configuration_not_compilation(
     """
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     scen = TRITONSWMM_scenario(event_iloc=0, analysis=tc.analysis)
