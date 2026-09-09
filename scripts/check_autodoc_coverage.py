@@ -28,6 +28,7 @@ declaring no directives). Pure stdlib.
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib
 import inspect
 import sys
@@ -65,12 +66,52 @@ def public_modules(api_page: Path = API_REFERENCE_PAGE) -> tuple[str, ...]:
     return mods
 
 
+def _declared_public(mod) -> list[str]:
+    """``__all__`` where the module declares one, else its own top-level defs.
+
+    The fallback reads SOURCE, not ``dir(mod)``. A runtime sweep of a module that
+    declares no ``__all__`` returns everything it IMPORTED as well, and the
+    class/routine filter below cannot strain those out because ``Path`` IS a class
+    and ``dataclass`` IS a routine -- measured at 72 symbols with 5 unrendered, two
+    of them stdlib names, against 67 with 0 unrendered here. Only the two modules
+    declaring no ``__all__`` reach the fallback at all; the other seven are read
+    exactly as before, from the object.
+
+    A module with neither ``__all__`` nor a readable ``__file__`` yields nothing.
+    That is the old behaviour, it can only UNDER-report, and it is what keeps a
+    synthetic module built by a test from crashing the gate.
+
+    THIS IS THE SAME RULE `check_docstring_dialect.py` APPLIES, AND THE TWO ARE NOT
+    COPIES. That gate has no class/routine filter and needs none -- a constant has
+    no docstring to check -- so this rule yields 67 where the bare shared rule
+    yields 71, the four extra being ``__all__``-listed constants that render no
+    anchor. It also reads ``__all__`` from the AST while this reads it from the
+    imported object, which differs for a dynamically built ``__all__``. So the two
+    files hold two rules that AGREE on this corpus and differ in what they tolerate,
+    and no diff can detect them drifting apart. The price is accepted deliberately:
+    importing the sibling's helper inverts the import stack and breaks this gate,
+    measured in both placements.
+    """
+    declared = getattr(mod, "__all__", None)
+    if declared is not None:
+        return [n for n in declared if not n.startswith("_")]
+    source = getattr(mod, "__file__", None)
+    if source is None:
+        return []
+    tree = ast.parse(Path(source).read_text(encoding="utf-8"))
+    return [
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_")
+    ]
+
+
 def expected_qualnames() -> set[str]:
-    """{module}.{symbol} for every non-underscore class/function in each __all__."""
+    """{module}.{symbol} for every public class/function, by the ``__all__``-or-defs rule."""
     out: set[str] = set()
     for modname in public_modules():
         mod = importlib.import_module(modname)
-        for sym in getattr(mod, "__all__", ()):
+        for sym in _declared_public(mod):
             if sym.startswith("_"):
                 continue  # mirrors mkdocs.yml filters: ["!^_"]
             obj = getattr(mod, sym, None)
@@ -189,8 +230,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(
-        f"autodoc coverage OK — all {len(expected)} public class/function symbols "
-        f"rendered, and every public symbol carries a docstring."
+        f"autodoc coverage OK — all {len(expected)} class/function symbols named by "
+        f"`__all__`, or defined at module level where a module declares none, render "
+        f"a doc anchor; each of those {len(expected)} carries a docstring. Neither "
+        f"clause reaches a symbol outside that rule, and neither detects a module "
+        f"dropped from docs/reference/api.md — see `public_modules`."
     )
     return 0
 

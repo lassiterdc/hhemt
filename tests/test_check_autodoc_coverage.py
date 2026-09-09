@@ -1,6 +1,7 @@
 """Regression tests for scripts/check_autodoc_coverage.py — the ADR-7 docs-accuracy
 gate. Locks the classification + exit-code contract so a silent regression in the
 release-floor gate is caught. Mirrors tests/test_check_anonymization.py."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -78,6 +79,7 @@ def _use_fake(monkeypatch, *, documented: bool = True) -> None:
 
 # --- the derived module list ------------------------------------------------
 
+
 def test_public_modules_derives_from_api_reference_directives(tmp_path):
     page = tmp_path / "api.md"
     page.write_text(
@@ -111,6 +113,7 @@ def test_public_modules_raises_when_page_declares_no_directives(tmp_path):
 
 
 # --- assertion 1: anchors ---------------------------------------------------
+
 
 def test_expected_qualnames_classifies_by_kind(monkeypatch):
     _use_fake(monkeypatch)
@@ -149,6 +152,7 @@ def test_main_exit_0_when_all_rendered_and_documented(tmp_path, monkeypatch):
 
 
 # --- assertion 2: docstring presence ----------------------------------------
+
 
 def test_undocumented_symbols_empty_when_all_documented(monkeypatch):
     _use_fake(monkeypatch)
@@ -191,3 +195,68 @@ def test_undocumented_symbols_sees_classmethods_and_properties(monkeypatch):
     found = set(cac.undocumented_symbols())
     assert "fakepkg2.SomeClass.some_classmethod" in found
     assert "fakepkg2.SomeClass.some_prop" in found
+
+
+#: The twenty qualnames the ``__all__``-or-defs rule reaches and the old
+#: ``getattr(mod, "__all__", ())`` rule did not. Pinned BY NAME, not by a count:
+#: the count moved 47 -> 67 and a count assertion cannot say WHICH symbols it
+#: gained, so it would pass on any repair that reached sixty-seven of anything.
+#: These are the entire public surface of the two modules that declare no
+#: ``__all__`` and were therefore read as declaring nothing.
+RULE_GAINED_QUALNAMES = frozenset(
+    {
+        "hhemt.experiment_bundle.OverrideReport",
+        "hhemt.experiment_bundle.build_case_from_bundle",
+        "hhemt.experiment_bundle.expand_config_vars",
+        "hhemt.experiment_bundle.format_override_gate",
+        "hhemt.experiment_bundle.load_bundle",
+        "hhemt.experiment_bundle.resolve_container_defs",
+        "hhemt.experiment_bundle.resolve_def_recipe",
+        "hhemt.experiment_bundle.resolve_hpc_system_config",
+        "hhemt.experiment_bundle.resolve_overrides",
+        "hhemt.experiment_bundle.run_experiment",
+        "hhemt.synthetic_experiment.assert_coupling_nodes_distinct",
+        "hhemt.synthetic_experiment.build_experiment_matrix",
+        "hhemt.synthetic_experiment.dem_resolution_matrix_rows",
+        "hhemt.synthetic_experiment.experiment_matrix_rows",
+        "hhemt.synthetic_experiment.generate_synthetic_experiment",
+        "hhemt.synthetic_experiment.model_arm_toggles",
+        "hhemt.synthetic_experiment.size_resume_walltimes",
+        "hhemt.synthetic_experiment.write_clean_matrix_csv",
+        "hhemt.synthetic_experiment.write_resume_matrix_csv",
+        "hhemt.synthetic_experiment.write_smoke_matrix_csv",
+    }
+)
+
+
+def test_the_rule_reaches_modules_that_declare_no_dunder_all():
+    """THE NON-VACUITY ARM. Red before the derivation repair, green after.
+
+    ``expected - anchors`` is 0 in BOTH states -- 47 and 67 are each a subset of
+    what renders -- so the gate's own assertion cannot tell the repair happened.
+    This one can: every name below is absent from the old rule's output and
+    present in the new one.
+    """
+    expected = cac.expected_qualnames()
+    missing = sorted(RULE_GAINED_QUALNAMES - expected)
+    assert not missing, (
+        f"{len(missing)} symbol(s) the __all__-or-defs rule must reach are absent "
+        f"from expected_qualnames(): {missing[:5]}"
+    )
+
+
+def test_the_rule_does_not_admit_imported_names():
+    """The runtime-sweep failure this rule exists to avoid.
+
+    ``dir(mod)`` on a module with no ``__all__`` returns imported names too, and
+    the class/routine filter cannot strain them out. These four are stdlib or
+    cross-module imports that render no anchor of their own.
+    """
+    expected = cac.expected_qualnames()
+    for leaked in (
+        "hhemt.experiment_bundle.Path",
+        "hhemt.experiment_bundle.dataclass",
+        "hhemt.synthetic_experiment.Path",
+        "hhemt.experiment_bundle.ConfigurationError",
+    ):
+        assert leaked not in expected, f"{leaked} is an imported name and must not be expected"
