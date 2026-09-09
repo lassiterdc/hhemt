@@ -128,6 +128,14 @@ docs = [
     "mkdocs",
     "mkdocs-material",
     "mkdocstrings[python]",
+    # DIRECT, not transitive: `scripts/check_docs_content.py` imports `griffe`
+    # to derive the rendered-docstring population the way the renderer does.
+    # `mkdocstrings-python` already requires it, but a gate that imports a
+    # package must declare it. Pin the DISTRIBUTION name: measured in this
+    # environment, `importlib.metadata.version("griffelib")` is 2.1.0 while
+    # `version("griffe")` raises PackageNotFoundError, so `griffe` is the
+    # import name and is not what provides this package here.
+    "griffelib>=2,<3",
     "mkdocs-htmlproofer-plugin",
 ]
 

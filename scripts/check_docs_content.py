@@ -403,37 +403,88 @@ def scan_shipped_metadata(repo_root: Path) -> list[tuple[str, Path, int, str]]:
     return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
 
 
-import ast  # noqa: E402
+import dataclasses  # noqa: E402
+import warnings  # noqa: E402
+
+import griffe  # noqa: E402
+import yaml  # noqa: E402
 
 # ---- The RENDERED-DOCSTRING population ------------------------------------
 #
-# Every member `mkdocstrings` renders on `docs/reference/api.md`. THE SOURCE OF
-# TRUTH IS `filters: ["!^_"]` IN mkdocs.yml, NOT `__all__`.
+# Every member `mkdocstrings` renders on `docs/reference/api.md`, DERIVED FROM
+# `griffe` -- the library `mkdocstrings` itself uses -- under the options this
+# repository's own `mkdocs.yml` declares. Nothing here models the renderer.
 #
-# Three derivations are WRONG and each was measured against the eight known bare
-# citations. They are recorded here rather than in a review, because each is the
-# obvious thing to reach for and two of them exit GREEN while under-reaching:
+# WHY THERE IS NO `ast` TRAVERSAL HERE ANY MORE. There was one, and it was wrong
+# in three ways at once, each measured against a site built from a tree in which
+# every docstring carried a unique sentinel token:
 #
-#   * `getattr(mod, "__all__", ())`, as `check_autodoc_coverage.expected_qualnames`
-#     does, reaches 6 of 8. Two manifested modules declare no `__all__` at all, so
-#     the default returns an empty tuple and those modules contribute ZERO symbols.
-#     An absent `__all__` means "every non-underscore member", never "no members".
-#   * Walking only the manifested module's own file reaches 8 of 8 citations but
-#     only 86 of 97 em dashes: `::: hhemt` renders re-exports whose docstrings
-#     live in the DEFINING module's file, which that walk never opens.
-#   * Treating `__all__` as the renderer's rule answers a different question than
-#     the page does. It is honoured where a module declares one; it is not the key.
+#   * It never read a MODULE's own docstring. `mkdocstrings` renders one at the
+#     head of every `:::` block; seven of the nine manifested modules carry one,
+#     and all seven were published and unscanned.
+#   * It applied `__all__` to a module's OWN members. `mkdocstrings` applies
+#     `filters` to those and consults `__all__` only for IMPORTED names, so four
+#     `analysis.py` classes rendered unscanned while `experiment_bundle.py`'s
+#     imported `ExperimentConfig` was scanned and rendered nowhere.
+#   * It keyed members by their ORIGIN module. The page keys them by the module
+#     `api.md` declares them through, so 52 of 173 names -- every re-exported
+#     symbol, which is to say every name a public API page exists to present --
+#     were names no reader or link ever sees.
 #
-# Only `public_modules()` is reused from the sibling gate, and only at the MODULE
-# level, where it is correct. Its symbol-level derivation is not reused: that
-# script reports 47/47 green while 24 rendered-eligible symbols sit outside
-# `__all__`, which is the same divergence it already repaired one level up.
+# Patching those three would leave the class that produced them: a derivation at
+# the SOURCE-SYNTAX altitude has to answer which module a name resolves to, how
+# an alias is followed, and what qualname the page will emit, and those three
+# answers are the three defects. `griffe` answers them because it is what the
+# renderer asks. Measured at HEAD `9ab08064`: this derivation returns 183 of the
+# 183 docstrings the built page renders, with no miss and no over-reach, and all
+# 183 of its names are anchors the page emits.
+#
+# THE MEMBER RULE IS A CONJUNCTION, NOT A CHOICE OF PREDICATE, and dropping
+# either half is measurable against the built page:
+#
+#   * `filters` (from `mkdocs.yml`) governs EVERY name, own-definition or alias.
+#     `griffe`'s `is_public` must not stand in for it over a module's OWN
+#     members, because `is_public` honours `__all__` there -- defect 2 re-entering
+#     through a convenience predicate. It drops `TestRepresentative`,
+#     `TestRepresentative.axes`, `TestSubResult` and `TestResult`, one of which
+#     carries a rendered em dash, and misses 4 sites the page renders.
+#   * An ALIAS must ALSO be exported by the module importing it -- named in that
+#     module's `__all__`, which is what `is_public` means FOR AN ALIAS; the two
+#     are measured identical on this corpus. Dropping this half is the larger
+#     error, because `filters` is a NAME test and says nothing about whether an
+#     imported name is re-exported: `filters` alone yields 438 names, of which
+#     only 183 are page anchors and 255 are names the page never emits, and it
+#     raises TWO `bare-line-citation` findings that would redden this gate on
+#     landing.
+#
+# Both halves, and only both, reach 183 names / 183 page anchors / 0 over-reach.
+#
+# Report over-reach on the NAME key, not the docstring-site key. The same 438
+# names collapse to 271 distinct sites, because a re-exported symbol is reached
+# under every module that imports it -- `ConfigurationError` under four. A
+# site-keyed count therefore under-reports this failure by 40% and is the reason
+# an earlier measurement of it read as smaller than it is.
+#
+# `filters` is READ from `mkdocs.yml` rather than written here, because the
+# population is a property of that file plus `api.md`, and a second copy of a
+# setting is a second thing to drift. An option this cannot model raises rather
+# than being ignored: a silent no-op on a setting somebody wrote deliberately is
+# the same failure that produced the three defects above, wearing a config file.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_autodoc_coverage import public_modules  # noqa: E402
 
 _SCRIPT_ROOT = Path(__file__).resolve().parent.parent
 API_PAGE = _SCRIPT_ROOT / "docs" / "reference" / "api.md"
 SRC_ROOT = _SCRIPT_ROOT / "src"
+MKDOCS_YML = _SCRIPT_ROOT / "mkdocs.yml"
+
+
+class _TolerantLoader(yaml.SafeLoader):
+    """`mkdocs.yml` carries `!!python/name:` tags that `SafeLoader` refuses."""
+
+
+_TolerantLoader.add_multi_constructor("", lambda loader, suffix, node: None)
+_TolerantLoader.add_multi_constructor("tag:yaml.org,2002:python/name:", lambda loader, suffix, node: None)
 
 
 def _module_file(module: str, src: Path) -> Path | None:
@@ -444,92 +495,295 @@ def _module_file(module: str, src: Path) -> Path | None:
     return pkg if pkg.is_file() else None
 
 
-def _declared_all(tree: ast.Module) -> list[str] | None:
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "__all__" for t in node.targets):
-            try:
-                return list(ast.literal_eval(node.value))
-            except (ValueError, SyntaxError):
-                return None
+# Every python-handler option is CLASSIFIED, and an UNCLASSIFIED one written to a
+# NON-DEFAULT value is a loud ValueError.
+#
+# WHAT "FAILS CLOSED" MEANS HERE, because the phrase invites the wrong reading.
+# The check iterates the options actually WRITTEN INTO `mkdocs.yml`, never the
+# handler's available fields, so a `mkdocstrings` release adding twenty options
+# changes nothing until somebody writes one into the config. **It fires on a
+# configuration edit, never on an upgrade.** A denylist was tried first and is
+# not durable in the other direction: it fails OPEN on any option a release adds,
+# which is the silent-no-op failure this derivation exists to remove -- and that
+# failure was demonstrated here, by an earlier draft of this file that read
+# `show_submodules`, threaded it through, and discarded it two lines later
+# without a sound.
+#
+# An option written at its OWN DEFAULT is a no-op and passes whatever its class,
+# because this derivation already behaves as that default prescribes.
+#
+# MODELLED: read and acted on.
+_MODELLED_OPTIONS = ("filters",)
+
+# NEUTRAL: classified as unable to move WHICH DOCSTRINGS EXIST, so ignored.
+# `show_if_no_docstring` is the interesting member -- it changes which members
+# get a heading, but this population is docstring-bearing by construction, so it
+# cannot move it. The other three are presentation and docstring parsing.
+_MEMBERSHIP_NEUTRAL_OPTIONS = ("docstring_style", "members_order", "summary", "show_if_no_docstring")
+
+# MEMBERSHIP-MOVING: not required for the refusal, since anything unclassified is
+# refused anyway, but naming them buys a better message and stops a later author
+# tidying the list from reclassifying one by inspection.
+#
+# `merge_init_into_class` is the one that most needs to be written down, because
+# it READS presentational and is not. It folds `__init__`'s docstring into the
+# class rendering, and `__init__` is excluded by `filters: ["!^_"]` -- so with it
+# on, that prose is published and unscanned, which is defect 1's exact shape in a
+# second place.
+#
+# The last three are the sharpest for a different reason: they are not merely
+# `PythonOptions` fields, they are `GriffeLoader.__init__` parameters UNDER THE
+# SAME NAMES, so `mkdocs.yml` setting one makes the renderer collect with it while
+# the loader below collects without it. Measured here: `force_inspection` does not
+# shift this population, it makes `hhemt` fail to load at all, which the `except`
+# in the load loop would swallow into a silently narrowed scan.
+_MEMBERSHIP_OPTIONS = (
+    "members",
+    "inherited_members",
+    "show_submodules",
+    "preload_modules",
+    "merge_init_into_class",
+    "extensions",
+    "allow_inspection",
+    "force_inspection",
+)
+
+_UNSET = object()
+
+
+_PYTHON_OPTION_FIELDS: tuple | None = None
+
+
+def _python_option_fields() -> tuple:
+    """`PythonOptions`' dataclass fields -- imported LATE, QUIETLY, and once.
+
+    Importing `mkdocstrings_handlers.python` at module scope emits 350 pydantic
+    deprecation warnings from the handler's own option models. Measured: `griffe`
+    itself imports clean at 0, the handler at 350, and that is enough to make this
+    gate exit 1 under `-W error::DeprecationWarning`, which it did not before.
+    They are upstream's warnings to fix and not this gate's to broadcast, so the
+    import is deferred to the one function that needs it and silenced for the
+    duration of the import alone.
+    """
+    global _PYTHON_OPTION_FIELDS
+    if _PYTHON_OPTION_FIELDS is None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            from mkdocstrings_handlers.python import PythonOptions
+        _PYTHON_OPTION_FIELDS = dataclasses.fields(PythonOptions)
+    return _PYTHON_OPTION_FIELDS
+
+
+def _option_default(name: str) -> object:
+    """The option's own default, READ from `PythonOptions`, never transcribed.
+
+    A transcribed default is a second copy of a value the library owns, and a
+    second copy is the divergence class this whole derivation exists to remove --
+    it has no business reappearing in its own constant table. Two of these are
+    why: `extensions` and `preload_modules` carry `default_factory=list`, so
+    their `.default` is `MISSING` and the real default is `[]`. Transcribed as
+    `None`, a `mkdocs.yml` writing the documented default explicitly would RAISE
+    -- the harmless value treated as dangerous, which is the truthiness bug's own
+    shape surviving inside the fix for it.
+    """
+    for field in _python_option_fields():
+        if field.name != name:
+            continue
+        if field.default is not dataclasses.MISSING:
+            return field.default
+        if field.default_factory is not dataclasses.MISSING:
+            return field.default_factory()
+    return _UNSET
+
+
+def _handler_options(mkdocs_yml: Path = MKDOCS_YML) -> dict:
+    """`filters` as mkdocs.yml declares it, refusing any option not classified.
+
+    Raises ValueError naming every declared python-handler option that is neither
+    modelled nor classified membership-neutral. An option set to its own default
+    is a no-op and is allowed through whatever its class.
+    """
+    opts: dict = {"filters": []}
+    if not mkdocs_yml.is_file():
+        return opts
+    cfg = yaml.load(mkdocs_yml.read_text(encoding="utf-8"), Loader=_TolerantLoader) or {}
+    for plugin in cfg.get("plugins") or []:
+        if not isinstance(plugin, dict) or "mkdocstrings" not in plugin:
+            continue
+        python = ((plugin["mkdocstrings"] or {}).get("handlers") or {}).get("python") or {}
+        declared = python.get("options") or {}
+        unclassified = [
+            k
+            for k, v in declared.items()
+            if k not in _MODELLED_OPTIONS and k not in _MEMBERSHIP_NEUTRAL_OPTIONS and v != _option_default(k)
+        ]
+        if unclassified:
+            known = [k for k in unclassified if k in _MEMBERSHIP_OPTIONS]
+            raise ValueError(
+                f"{mkdocs_yml} declares python-handler option(s) this population derivation does "
+                f"not model: {', '.join(sorted(unclassified))}."
+                + (f" {', '.join(sorted(known))} change which members render." if known else "")
+                + " Classify each as modelled or membership-neutral rather than letting the gate "
+                "scan a population the page no longer has."
+            )
+        if "filters" in declared:
+            opts["filters"] = list(declared["filters"] or [])
+    return opts
+
+
+def _handler_paths(mkdocs_yml: Path = MKDOCS_YML) -> list[Path]:
+    """`handlers.python.paths`, resolved against `mkdocs.yml`'s own directory.
+
+    Returns every declared root, in declaration order; `search_paths` order is
+    what breaks a tie when two roots hold the same module name, so the order is
+    load-bearing and is preserved rather than sorted.
+
+    This is NOT an `options` key -- it sits BESIDE `options` on the handler -- so
+    it belongs here, read, rather than in the classification above, where a check
+    keyed on it could never fire. It is what tells `mkdocstrings` where the
+    package is; a derivation that hardcodes `src` while the page reads this key is
+    the same silent divergence in a second place.
+
+    WHEN `paths` IS ABSENT the fallback is the config directory, NOT `src`.
+    `PythonConfig.paths` carries `default_factory` returning `['.']`, resolved
+    against `mkdocs.yml`, so a `src` fallback would search somewhere the renderer
+    does not -- reintroducing, on the one branch that fires when configuration is
+    absent, exactly the hardcode this function exists to remove.
+
+    This function only READS. It refuses nothing, and it says so because a
+    docstring describing behaviour its function does not contain is the defect
+    class this round exists to close.
+    """
+    if not mkdocs_yml.is_file():
+        return []
+    cfg = yaml.load(mkdocs_yml.read_text(encoding="utf-8"), Loader=_TolerantLoader) or {}
+    for plugin in cfg.get("plugins") or []:
+        if not isinstance(plugin, dict) or "mkdocstrings" not in plugin:
+            continue
+        python = ((plugin["mkdocstrings"] or {}).get("handlers") or {}).get("python") or {}
+        declared = python.get("paths") or ["."]
+        return [(mkdocs_yml.parent / entry).resolve() for entry in declared]
+    return []
+
+
+def _resolve_module_file(module: str, roots: list[Path]) -> Path | None:
+    """First root holding the module, mirroring `search_paths` precedence.
+
+    Multi-root is legal `mkdocstrings` configuration and is SUPPORTED rather than
+    refused. Refusing it would turn a valid config into a hard failure to save
+    two small changes -- this loop, and passing the whole list to
+    `GriffeLoader(search_paths=...)`, which already takes a sequence. The cost of
+    supporting it is that a module name present under two roots resolves to the
+    first, which is what `griffe` does with the same list in the same order.
+    """
+    for root in roots:
+        found = _module_file(module, root)
+        if found is not None:
+            return found
     return None
 
 
-def _import_origins(module: str, tree: ast.Module) -> dict[str, tuple[str, str]]:
-    """{local name: (defining module, original name)} — re-exports, prohibition 2."""
-    out: dict[str, tuple[str, str]] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        if node.level:
-            parts = module.split(".")
-            base = ".".join(parts[: len(parts) - node.level + 1] + ([node.module] if node.module else []))
-        else:
-            base = node.module or ""
-        for alias in node.names:
-            out[alias.asname or alias.name] = (base, alias.name)
-    return out
+def _passes_filters(name: str, filters: list[str]) -> bool:
+    """`mkdocstrings` filter semantics: last matching rule wins; `!` negates."""
+    keep = True
+    matched = False
+    for rule in filters:
+        negate = rule.startswith("!")
+        pattern = rule[1:] if negate else rule
+        if re.search(pattern, name):
+            keep = not negate
+            matched = True
+    if not matched and any(not f.startswith("!") for f in filters):
+        return False
+    return keep
 
 
-def rendered_docstrings(src: Path, api_page: Path) -> list[tuple[str, Path, int, str]]:
-    """(qualname, defining file, docstring start line, docstring) for the rendered surface.
+def _exported(owner) -> set[str]:
+    """Names the module lists in `__all__` -- the alias-rendering rule."""
+    out: set[str] = set()
+    for entry in getattr(owner, "exports", None) or []:
+        out.add(entry if isinstance(entry, str) else getattr(entry, "name", ""))
+    return {n for n in out if n}
+
+
+def rendered_docstrings(src: Path = None, api_page: Path = None) -> list[tuple[str, Path, int, str]]:
+    """(page qualname, defining file, docstring start line, docstring).
+
+    The qualname is the anchor the PAGE emits -- `hhemt.Toolkit`, not
+    `hhemt.toolkit.Toolkit` -- because every downstream assertion over this
+    population is a claim about the page and must be keyed the way the page is.
 
     Raises ValueError if no manifested module resolves, or if a manifested module
     contributes zero members -- an empty contribution is the STRICT signature and
     an empty population would make this gate pass vacuously.
     """
+    # No explicit root: take the ones `mkdocs.yml` gives the renderer, so the gate
+    # and the page look in the same places by construction rather than by two
+    # copies of `src` agreeing. An explicit `src` still wins, which is what lets a
+    # test point this at a fixture tree.
+    roots = [src] if src is not None else (_handler_paths() or [SRC_ROOT])
+    api_page = API_PAGE if api_page is None else api_page
+    filters = _handler_options()["filters"]
+
+    modules = public_modules(api_page)
+    loader = griffe.GriffeLoader(search_paths=[str(root) for root in roots])
+    resolved: list[str] = []
+    for module in modules:
+        if _resolve_module_file(module, roots) is None:
+            continue
+        try:
+            loader.load(module)
+        except Exception:
+            continue
+        resolved.append(module)
+    if not resolved:
+        roots_text = ", ".join(str(root) for root in roots)
+        raise ValueError(f"no module named on {api_page} resolved under {roots_text} -- nothing to check.")
+    loader.resolve_aliases(external=False)
+
     out: list[tuple[str, Path, int, str]] = []
     seen: set[str] = set()
     per_module: dict[str, int] = {}
-    resolved = 0
-    for module in public_modules(api_page):
-        path = _module_file(module, src)
-        if path is None:
-            continue
-        resolved += 1
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        defined = {n.name: n for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
-        imported = _import_origins(module, tree)
-        declared = _declared_all(tree)
-        # `filters: ["!^_"]` is the rule. `__all__` narrows it where declared.
-        names = [n for n in list(defined) + list(imported) if not n.startswith("_")]
-        if declared is not None:
-            names = [n for n in declared if not n.startswith("_")]
+
+    def emit(qualname: str, obj) -> bool:
+        doc = getattr(obj, "docstring", None)
+        if doc is None or not doc.value or qualname in seen:
+            return False
+        seen.add(qualname)
+        out.append((qualname, Path(obj.filepath), doc.lineno, doc.value))
+        return True
+
+    def visit(owner, page_path: str, depth: int) -> int:
         count = 0
-        for name in dict.fromkeys(names):
-            node, owner, home = defined.get(name), module, path
-            if node is None and name in imported:
-                origin_mod, origin_name = imported[name]
-                origin_path = _module_file(origin_mod, src)
-                if origin_path is None:
-                    continue
-                origin_tree = ast.parse(origin_path.read_text(encoding="utf-8"))
-                node = {
-                    n.name: n
-                    for n in origin_tree.body
-                    if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-                }.get(origin_name)
-                owner, home, name = origin_mod, origin_path, origin_name
-            if node is None:
+        if depth > 2:
+            return count
+        exported = _exported(owner)
+        for name, member in list(owner.members.items()):
+            if not _passes_filters(name, filters):
                 continue
-            members = [(f"{owner}.{name}", node)]
-            if isinstance(node, ast.ClassDef):
-                members += [
-                    (f"{owner}.{name}.{c.name}", c)
-                    for c in node.body
-                    if isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef)) and not c.name.startswith("_")
-                ]
-            for qualname, member in members:
-                if qualname in seen:
+            target = member
+            if member.is_alias:
+                if name not in exported:
                     continue
-                seen.add(qualname)
-                doc = ast.get_docstring(member)
-                if doc is None:
+                try:
+                    target = member.final_target
+                except Exception:
                     continue
-                count += 1
-                out.append((qualname, home, member.body[0].lineno, doc))
+            kind = target.kind.value
+            if kind not in ("class", "function", "attribute"):
+                continue  # `show_submodules` is False and is refused if set
+            qualname = f"{page_path}.{name}"
+            count += emit(qualname, target)
+            if kind == "class":
+                count += visit(target, qualname, depth + 1)
+        return count
+
+    for module in resolved:
+        mod = loader.modules_collection[module]
+        count = int(emit(module, mod))
+        count += visit(mod, module, 0)
         per_module[module] = count
-    if not resolved:
-        raise ValueError(f"no module named on {api_page} resolved under {src} -- nothing to check.")
+
     empty = [m for m, c in per_module.items() if c == 0]
     if empty:
         raise ValueError(

@@ -1008,6 +1008,7 @@ dependencies = [
 
 [package.optional-dependencies]
 docs = [
+    { name = "griffelib" },
     { name = "mkdocs" },
     { name = "mkdocs-htmlproofer-plugin" },
     { name = "mkdocs-material" },
@@ -1035,6 +1036,7 @@ requires-dist = [
     { name = "filelock" },
     { name = "geopandas" },
     { name = "globus-sdk", specifier = ">=3.0" },
+    { name = "griffelib", marker = "extra == 'docs'", specifier = ">=2,<3" },
     { name = "h5netcdf" },
     { name = "h5py" },
     { name = "hsclient" },
