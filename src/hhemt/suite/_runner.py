@@ -1365,7 +1365,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="export a per-chunk HHEMT_TEST_RUNS_ROOT_OVERRIDE so a split component's parts "
         "do not share an analysis tree; _software stays on the slug root either way "
-        "(test_case_builder.py:354). NOTE: the FIRST run using this is not red-set-comparable "
+        "(pinned by test_case_builder.retrieve_synth_TRITON_SWMM_test_case._software_root). "
+        "NOTE: the FIRST run using this is not red-set-comparable "
         "to an earlier one -- isolation flips the *_completed session fixtures from adopt to "
         "REBUILD, so a new red needs a second isolated run before it is a regression.",
     )
