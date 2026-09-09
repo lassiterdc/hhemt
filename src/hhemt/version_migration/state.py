@@ -22,6 +22,7 @@ from hhemt.version_migration.constants import (
     LOCK_TIMEOUT_SECONDS,
     VERSION_FILE_NAME,
 )
+from hhemt.version_migration.exceptions import VersionFileUnreadableError
 
 
 @dataclass
@@ -85,11 +86,28 @@ def _lock_file(target_dir: Path) -> Path:
 
 
 def read_version_file(target_dir: Path) -> VersionState | None:
-    """Read _version.json from ``target_dir``; return None if missing."""
+    """Read _version.json from ``target_dir``; return None if MISSING, raise if UNREADABLE.
+
+    ABSENT AND MALFORMED ARE DIFFERENT ANSWERS AND THIS FUNCTION NO LONGER CONFLATES THEM.
+    A missing file is a legitimate state -- an unstamped tree -- and returns None so the
+    caller can decide. A file that EXISTS and does not parse is not a state, it is a broken
+    record, and it previously surfaced as a bare JSONDecodeError or KeyError raised from
+    whichever construction path happened to touch the tree first, naming neither the file
+    nor the tree. Every one of the six stamp call sites and the detection ladder's first rung
+    read through here without a guard, so the opaque raise could arrive from any of them.
+    """
     vf = _version_file(target_dir)
     if not vf.exists():
         return None
-    return VersionState.from_dict(json.loads(vf.read_text()))
+    try:
+        return VersionState.from_dict(json.loads(vf.read_text()))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise VersionFileUnreadableError(
+            f"{vf} exists but does not parse as a layout-version record ({type(exc).__name__}: "
+            f"{exc}). The tree's layout version is therefore unknown and no operation may "
+            f"assume it. Inspect the file; if it is unrecoverable, restate the tree's version "
+            f"explicitly with `python -m hhemt.version_migration baseline {target_dir} {{N}}`."
+        ) from exc
 
 
 def _unlocked_write_version_file(target_dir: Path, state: VersionState) -> None:

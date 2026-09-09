@@ -76,3 +76,18 @@ class MigrationBlockedError(MigrationError):
     remediation. The message names the analysis path and the minimum edit
     the operator must apply before re-running. Mapped to validation exit
     code (2) by the CLI."""
+
+
+class VersionFileUnreadableError(MigrationError):
+    """Raised when `_version.json` EXISTS but does not parse as a layout-version record.
+
+    Distinct from `BaselineRequiredError`, which means the version could not be INFERRED
+    from a tree carrying no record. Here a record is present and is broken, so the remedy
+    is to inspect or replace that file rather than to infer around it.
+
+    SUBCLASSES `MigrationError` DELIBERATELY, AND NOT `ValueError`. The runner catches
+    `(OSError, ValueError, KeyError, TypeError)` around `upgrade()` and re-wraps them as
+    `MigrationConflictError`; a `ValueError` subclass would therefore be relabelled and the
+    operator would be told a migration conflicted when in fact the tree's own record is
+    unreadable. Verified: `issubclass(VersionFileUnreadableError, (OSError, ValueError,
+    KeyError, TypeError))` is False, so it reaches the operator unwrapped."""
