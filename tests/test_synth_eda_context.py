@@ -73,15 +73,21 @@ def _write_minimal_valid_root(root: Path) -> None:
     ):
         sys_raw.pop(_retired, None)
 
-    cfg_system = system_config.model_validate(sys_raw)
-    cfg_analysis = analysis_config.model_validate(ana_raw)
+    # `metadata`: this read wants one scalar out of each record and asserts nothing about
+    # their declared inputs. It does NOT claim those paths are final -- they are not. The
+    # fixture re-roots system_directory and TRITONSWMM_software_directory and leaves the
+    # bundle-relative values as they came, so they name nothing under this root:
+    #     DEM_fullres         = "external/dem.tif"
+    #     weather_timeseries  = "external/weather.nc"
+    # The clause that holds, and the only one this needs, is "THIS read does not require
+    # them"; eda/_context.py:89-90 declares metadata over the same records for the same
+    # reason. BOTH loads need it -- the cfg_analysis one carries three further
+    # non-existent relative values and only escaped notice because cfg_system raises first.
+    cfg_system = system_config.model_validate(sys_raw, context={"existence": "metadata"})
+    cfg_analysis = analysis_config.model_validate(ana_raw, context={"existence": "metadata"})
 
-    (root / "cfg_system.yaml").write_text(
-        yaml.safe_dump(cfg_system.model_dump(mode="json"), sort_keys=False)
-    )
-    (root / "cfg_analysis.yaml").write_text(
-        yaml.safe_dump(cfg_analysis.model_dump(mode="json"), sort_keys=False)
-    )
+    (root / "cfg_system.yaml").write_text(yaml.safe_dump(cfg_system.model_dump(mode="json"), sort_keys=False))
+    (root / "cfg_analysis.yaml").write_text(yaml.safe_dump(cfg_analysis.model_dump(mode="json"), sort_keys=False))
 
 
 def test_load_eda_context_positive_path(tmp_path):
