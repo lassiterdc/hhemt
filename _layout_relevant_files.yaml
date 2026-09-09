@@ -1221,3 +1221,53 @@ non_breaking_allowlist:
       Signature re-stamped to the post-merge content, which is what keeps this exemption
       CHANGE-SCOPED rather than converting it back to path-permanent.
     layout_signature: "f8d8d864008d791f343c3508b25d476fd8dab0d5888d2d0ce953e0d7aa60d069"
+  - path: src/hhemt/version_migration/versions/V0022__promote_producer_written_experiment_tree.py
+    justification: >-
+      M19 item 4b -- V0022's DIRECTION decision moves from positional to decidable. The
+      module previously promoted whatever sat at the retired store name, argued from the fact
+      that V0021.upgrade CONSUMES that path, so anything found there must post-date it. That
+      theorem is sound for a tree that ran V0021 and then re-consolidated and UNSOUND for a
+      tree that reached both names by producer evolution -- and such a tree was measured, its
+      retired-name store carrying sa_*-keyed groups produced eight days BEFORE the
+      member_*-keyed store at the unified name. The positional rule would have moved the newer
+      member_* store aside and promoted the older sa_* one, a silent V0019 vocabulary
+      regression that the retention design makes reversible but does not prevent.
+      FOR (non-breaking), answering the question check-b asks. NOTHING a reader of an existing
+      on-disk tree observes differs. No path, directory, filename, zarr group, dtype, chunk,
+      encoding or root-attr KEY is added, renamed or removed; no _version.json field changes;
+      no _status flag token changes; both ctx.move_dir calls are byte-identical and in the same
+      order. The change is one refusal arm ahead of them, one advisory logger.warning, and
+      three module-level readers. A LAYOUT_VERSION bump to 23 would be actively wrong: a V0023
+      would have nothing to transform -- no old-shaped artifact to rename, no field to
+      backfill -- which is the position this repo took at
+      2026-06-27_v0016 migration body is a no-op not a backfill.
+      AGAINST, stated rather than elided because it is the real objection and it is a
+      DISCIPLINE objection rather than a layout one. A migration module is normally immutable
+      once shipped: two trees both stamped 22 could otherwise have had different
+      transformations applied, which is the invariant Alembic and Django both protect by
+      requiring a NEW revision instead of an edit. Two things answer it here. (1) MEASURED:
+      V0022 has never run. Across all 44 stamped trees in the local synthetic cache,
+      migration_history is empty in 44 of 44 -- every tree reached layout 22 through the
+      stamp_new_target forward-relabel defect (M19 item 1), never through the runner. So there
+      is no tree whose applied-V0022 differs from this one. I cannot speak for a production
+      tree outside that cache, and that residual is real. (2) The direction of the change is
+      toward refusing: post-edit V0022 refuses in a case where it previously acted, and it
+      never acts where it previously refused. A tree that already ran the old V0022 correctly
+      would run the new one to the same outcome; only the demoting case diverges, and that
+      case is the defect.
+      WHAT THE NEW ARM KEYS ON, because it is not the obvious thing. It does NOT order the two
+      stores by their producing commit count. A git describe count is a distance from the
+      NEAREST REACHABLE TAG, so it is incommensurable across tag bases and non-monotone across
+      divergent branches on one base -- measured on this repository at 8f47c8fb, 82 of 542
+      v0.1.0-based commits sit in a chronological adjacency where the later commit carries the
+      lower count, and two first-parent mainline commits 34 minutes apart carry
+      pre-public-cut+92 then 0.1.0+89. Ordering on that would have introduced a FALSE REFUSAL
+      whose message instructed an operator to delete a store by hand, outside the retention
+      guarantee this module's design rests on. The arm instead keys on the member-group
+      vocabulary (sa_ at the retired name against member_ at the unified name), which is a
+      total function of the two stores, needs no git and no ancestry, and is decidable on a
+      bundle or an archived tree. The commit count is retained as an advisory logger.warning
+      and is never a refusal trigger.
+      CHANGE-SCOPED via layout_signature. This path carries no prior row, so nothing is
+      inherited and the signature below is its first.
+    layout_signature: "a9b4afc68774a88122e54b7bb05c76d7eb9042609840821e99105ddf1c56cef1"

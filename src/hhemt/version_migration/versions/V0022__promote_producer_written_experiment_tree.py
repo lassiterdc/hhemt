@@ -77,6 +77,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from hhemt.version_migration.context import MigrationContext
@@ -170,6 +171,100 @@ def _plan_embedded_core(ctx: MigrationContext, store: Path) -> None:
         )
 
 
+#: Root-attribute key carrying the producing build's `git describe` string, stamped by
+#: `cf_conventions.apply_producing_stamp` at consolidation (ADR-15).
+_PRODUCER_VERSION_ATTR = "hhemt_producing_version"
+
+#: `{tag}+{N}.g{sha}`. The TAG is captured and is load-bearing: `_describe_version` resolves
+#: against the NEAREST REACHABLE TAG, and this repo carries three, so N is a distance from a
+#: moving origin rather than a global ordinal. Measured on this repository: two first-parent
+#: mainline commits 34 minutes apart carry `pre-public-cut+92` then `0.1.0+89`. `fullmatch`
+#: is deliberate -- `_describe_version`'s fallbacks ("0.1.0", "0+unknown") carry no count and
+#: must read as NO EVIDENCE rather than as zero.
+_DESCRIBE_RE = re.compile(r"(?P<tag>[^+]*)\+(?P<n>\d+)\.g(?P<sha>[0-9a-f]+)")
+
+#: The V0019 vocabulary rename. A group named `sa_*` is the RETIRED form; `member_*` is
+#: current. This pair is the only DECIDABLE discriminator available here.
+_RETIRED_MEMBER_PREFIX = "sa_"
+_CURRENT_MEMBER_PREFIX = "member_"
+
+
+def _producer_generation(store: Path) -> tuple[str, int] | None:
+    """Return `(tag, commit_count)` for `store`'s producing build, or None when unavailable.
+
+    THE COUNT IS NOT AN ORDERING AND THIS FUNCTION DOES NOT PRETEND IT IS. A `git describe`
+    count measures distance from the nearest reachable tag along an ancestry walk, so it is
+    incommensurable across tag bases and non-monotone across divergent branches on one base.
+    Measured on this repository at `8f47c8fb`: 82 of 542 `v0.1.0`-based commits sit in a
+    chronological adjacency where the LATER commit carries the LOWER count. The tag is
+    therefore returned alongside the count so the caller can refuse to compare across bases,
+    and even within one base the caller treats the result as CORROBORATION, never as grounds
+    to refuse -- see `_vocabulary_inverted`, which is the decidable test.
+
+    ABSENCE IS NOT ZERO. Every unavailable case returns None -- no attribute, an unparseable
+    value, an unreadable or absent metadata file. `apply_producing_stamp` additionally leaves
+    this key ABSENT and writes `hhemt_producing_version_divergent` when a store's events came
+    from different builds, so a divergent store degrades through the same path with no
+    special-casing.
+
+    EQUAL COUNTS ARE TIED, NOT ABSENT, AND THE CALLER TREATS THEM THE SAME DELIBERATELY.
+    On one tag base a linear history gives equal counts only for the same commit, so the
+    vocabulary-generation gap this gate exists to catch cannot be present. Where the shas
+    differ at equal count the two commits are on divergent lines at equal distance and the
+    count carries no ordering information at all. Both land on positional, which retention
+    makes reversible.
+
+    Both zarr layouts are read because a store predating the unification may be v2.
+    """
+    for name in ("zarr.json", ".zattrs"):
+        meta_path = store / name
+        if not meta_path.is_file():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        attrs = (meta.get("attributes") or {}) if name == "zarr.json" else meta
+        match = _DESCRIBE_RE.fullmatch(str(attrs.get(_PRODUCER_VERSION_ATTR) or "").strip())
+        if match:
+            return match.group("tag"), int(match.group("n"))
+    return None
+
+
+def _member_group_prefixes(store: Path) -> set[str]:
+    """Which member-naming vocabularies appear as top-level groups in `store`."""
+    found: set[str] = set()
+    if not store.is_dir():
+        return found
+    for child in store.iterdir():
+        if not child.is_dir():
+            continue
+        for prefix in (_RETIRED_MEMBER_PREFIX, _CURRENT_MEMBER_PREFIX):
+            if child.name.startswith(prefix):
+                found.add(prefix)
+    return found
+
+
+def _vocabulary_inverted(producer_written: Path, migrated: Path) -> bool:
+    """True when promoting `producer_written` would REGRESS the member vocabulary.
+
+    THIS IS THE DECIDABLE TEST AND IT IS WHY THE COUNT IS NOT THE GATE. The harm this
+    migration must not cause is content-shaped and nameable: an `sa_*`-keyed store replacing
+    a `member_*`-keyed one, which is a V0019 vocabulary regression. That property is a TOTAL
+    FUNCTION OF THE TWO STORES -- it needs no git, no tag, no describe string and no ancestry,
+    and it is decidable on a bundle or an archived tree where none of those is available.
+
+    It is strictly NARROWER than a recency test: it detects the vocabulary inversion and
+    nothing else, and it will not catch a future content regression that keeps the naming.
+    That is the trade, taken deliberately -- a narrow test that is sound today beats a general
+    one that is measurably wrong 15% of the time and whose failure mode instructs an operator
+    to delete the newer store by hand.
+    """
+    return _RETIRED_MEMBER_PREFIX in _member_group_prefixes(
+        producer_written
+    ) and _CURRENT_MEMBER_PREFIX in _member_group_prefixes(migrated)
+
+
 def upgrade(ctx: MigrationContext) -> None:
     target_dir = Path(ctx.target_dir)
     producer_written = target_dir / _RETIRED_SENSITIVITY
@@ -199,6 +294,47 @@ def upgrade(ctx: MigrationContext) -> None:
             f"and this tree carries THREE candidate copies. Refusing to overwrite the retained "
             f"one. Inspect all three, keep the store you trust at {migrated}, and remove the "
             f"other two by hand before re-running."
+        )
+
+    # 0. DIRECTION. Ahead of step 1 because that is where the direction is decided, not
+    #    because a later position would be unsafe: MigrationContext only appends to ctx.plan,
+    #    and runner.py skips both the plan print and ctx.execute() when upgrade() raises, so
+    #    nothing reaches disk from any position in this body.
+    if _vocabulary_inverted(producer_written, migrated):
+        raise MigrationBlockedError(
+            f"V0022: at {target_dir} the store at the RETIRED name carries "
+            f"'{_RETIRED_MEMBER_PREFIX}'-prefixed member groups while the store at the UNIFIED "
+            f"name carries '{_CURRENT_MEMBER_PREFIX}'-prefixed ones, so promoting the retired "
+            f"store would REGRESS the member vocabulary that V0019 renamed. This is not the "
+            f"third state this migration promotes. NOTHING HAS BEEN MOVED and nothing has been "
+            f"deleted. Inspect both stores; if the unified-name store is the one you want, "
+            f"remove the retired-name store or re-run from the tree's real layout version "
+            f"(`python -m hhemt.version_migration baseline {target_dir} 20`)."
+        )
+
+    # Corroboration only, and deliberately NOT a refusal trigger. The commit count is not an
+    # ordering (see _producer_generation), so a disagreement here is logged for a human and
+    # never halts: a false refusal would send an operator to delete a store BY HAND, outside
+    # the retention guarantee this module's design rests on.
+    _retired_gen = _producer_generation(producer_written)
+    _unified_gen = _producer_generation(migrated)
+    if (
+        _retired_gen is not None
+        and _unified_gen is not None
+        and _retired_gen[0] == _unified_gen[0]
+        and _retired_gen[1] < _unified_gen[1]
+    ):
+        logger.warning(
+            "[V0022] at %s the retired-name store reports producing generation %s+%d and the "
+            "unified-name store %s+%d, so the retired store MAY be the older of the two. The "
+            "commit count is not a reliable ordering and is not being acted on; the promotion "
+            "proceeds. Verify %s after this migration.",
+            target_dir,
+            _retired_gen[0],
+            _retired_gen[1],
+            _unified_gen[0],
+            _unified_gen[1],
+            migrated,
         )
 
     # 1. PROVENANCE FIRST, planned while the pre-move paths still exist.
