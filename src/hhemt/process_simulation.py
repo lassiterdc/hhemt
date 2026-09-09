@@ -60,6 +60,27 @@ from hhemt.utils import (
 # adding `swmm` here would INVERT the intent and delete the side-file. The side-file
 # is reclaimed (bounded-retention) at a sanctioned point AFTER the final allocation —
 # see `_reclaim_exchange_replay_sidefiles` below.
+#
+# THIRD load-bearing reason, and it names a FILE rather than a directory:
+# `out_triton/performance.txt` (and its `out_tritonswmm/` sibling) is a LIVE COMPLETION
+# PREDICATE, not an output. `run_simulation._coupled_swmm_report_finalized`'s `triton` arm
+# returns False when it is absent, and `model_run_completed` calls that gate on BOTH the
+# log-True branch and the raw-marker fallback -- so deleting it converts every COMPLETED
+# triton sim into a permanently-incomplete one and burns the `retries:` budget re-running
+# work that already succeeded. It MUST NEVER be added to this allowlist nor to any
+# file-level reclaim allowlist under `out_*/`.
+#
+# CANONICAL STATEMENT of why it survives, and the ONLY one -- every other site points here
+# rather than restating it. The delete this allowlist feeds is guarded on
+# `child.is_dir() and child.name in _CLEAR_RAW_DELETE_SUBDIRS`
+# (`_clear_raw_outputs`, THIS file), so a top-level FILE is unreachable by it: the guard
+# makes the survival STRUCTURAL rather than documentary. TRITON puts the two on purpose --
+# `output<T>::write_times` writes `{output_folder}/performance/performance{N}.txt` for an
+# intermediate checkpoint and `{output_folder}/performance.txt` for the final state, on
+# separate branches -- so `performance.txt` sits BESIDE the reclaimable `performance/`
+# directory, not inside it. A future FILE-level reclaim under `out_triton/` would need an
+# explicit carve-out that this one does not. Cite this block by name, not by line number:
+# the prior citation of it in run_simulation.py went stale by 168 lines.
 _CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset({"H", "QX", "QY", "MH", "bin", "cfg", "performance"})
 
 # FILE-suffix allowlist for the post-processing reclaim INSIDE `out_tritonswmm/swmm/`.

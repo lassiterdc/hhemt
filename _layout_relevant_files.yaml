@@ -184,7 +184,27 @@ non_breaking_allowlist:
       refuted by the same instrument: `git merge-base --is-ancestor 2c176dc9 53d3e052` exits 1, and
       `git merge-base --is-ancestor 2c176dc9 9bde88dc` exits 1 as well -- 9bde88dc is dated 2026-09-01
       while 2c176dc9 is dated 2026-09-03, so the earlier merge could not have carried the later commit.
-    layout_signature: "4b3d1469f53d08d1aacfc2a367d21d88aa6d56ad99dc79d06d48b7b06007acb0"
+      RE-STAMPED 2026-09-09 for the defect-2 completion-predicate fence (M8 rows 553-563). The change is
+      PROVABLY comment-only and I measured it rather than arguing it: `git diff` on the file gives 21 added
+      lines, 0 of them non-comment, and 0 removed. It adds the CANONICAL STATEMENT that
+      out_triton/performance.txt is a LIVE COMPLETION PREDICATE and must never join this allowlist nor any
+      file-level reclaim allowlist under out_*/ -- with the reason the survival is STRUCTURAL rather than
+      documentary: the delete this allowlist feeds is guarded on `child.is_dir() and child.name in
+      _CLEAR_RAW_DELETE_SUBDIRS`, so a top-level FILE is unreachable by it, and TRITON writes
+      {output_folder}/performance/performance{N}.txt for an intermediate checkpoint but
+      {output_folder}/performance.txt for the final state on a SEPARATE branch, so performance.txt sits
+      BESIDE the reclaimable performance/ directory rather than inside it. No executable statement, no
+      on-disk artifact and no schema is touched, so this is resolution path 2 (non-breaking by inspection)
+      rather than a LAYOUT_VERSION bump. Check B fired CLOSED here, which is the designed workflow for a
+      signature-scoped row and the OPPOSITE act from the fail-open this session closed at ee2cfb66; the
+      loader now reports 31 resolved / 0 path-permanent, which independently confirms that fix landed. The
+      applying specialist pre-computed the new digest and REFUSED to make this ninth edit itself, correctly,
+      because a post-apply spec added without a refute is the failure the session register carries by name;
+      I re-derived the digest myself with the same whole-file sha256 `_file_content_hash` uses and the two
+      agree. Its own disclosure is worth keeping: at round 3 it checked run_simulation.py against this list
+      and correctly found it absent, then did not run the sibling check on process_simulation.py, which IS
+      on it -- one grep, and it ran the neighbour instead of the target.
+    layout_signature: "9b104b8f5a7b600b80cf84cbd970fec1c0acbfbd2a6780a40dc94658d62f184c"
   - path: src/hhemt/version_migration/versions/V0021__experiment_tree_unification.py
     justification: >-
       Layout-guard documentation repair — the module's LANDING CONSTRAINT docstring
