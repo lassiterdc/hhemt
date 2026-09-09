@@ -323,3 +323,51 @@ def test_prose_classes_do_not_reach_the_gated_population():
     """Layer 2's boundary: `### D22b` prose classes stay out of the exit code."""
     codes = {c for c, _p, _l, _e in cdc.scan_rendered_docstrings()}
     assert "em-dash" not in codes and "banned-word-estate" not in codes
+
+
+#: What each marker-carrying page DECLARES exempt, pinned BY NAME rather than
+#: counted. `main()`'s skip line reports HOW MANY marker files exist and never
+#: WHAT they declare, so a page adding `exempt=binary` would exempt itself from
+#: the two classes this project gates on shipped metadata and on rendered
+#: docstrings, and no existing mechanism would say so. A count cannot see it; a
+#: named fixture goes red on the edit that does it.
+DECLARED_EXEMPTIONS = {
+    "docs/reference/config-schema.md": {"prose"},
+    "docs/contributing.md": {"prose"},
+}
+
+
+def _marker_pages():
+    docs = _REPO / "docs"
+    return {
+        md.relative_to(_REPO).as_posix(): set(cdc._exempt_groups(md.read_text(encoding="utf-8")))
+        for md in cdc.generated_files(docs) + cdc.personal_voice_files(docs)
+    }
+
+
+def test_marker_pages_declare_exactly_the_pinned_exemptions():
+    """A new marker page, or a changed declaration, goes red here.
+
+    The generated page is gitignored build output: ABSENT on a fresh clone and
+    present after `mkdocs build`. Its absence is not a failure; a mismatch is, and
+    so is a marker page this fixture has never heard of.
+    """
+    seen = _marker_pages()
+    assert "docs/contributing.md" in seen, "the tracked personal-voice page is not being detected"
+    assert seen == {k: v for k, v in DECLARED_EXEMPTIONS.items() if k in seen}
+
+
+def test_no_marker_page_exempts_the_binary_classes():
+    """The omission the repair CONSISTS of, asserted rather than trusted.
+
+    `binary` stays spellable so the class split lives in the pages rather than in
+    the module -- which means nothing but this test stops a page declaring it.
+    """
+    seen = _marker_pages()
+    assert seen, "no marker pages found: this assertion would pass vacuously"
+    offenders = sorted(page for page, groups in seen.items() if "binary" in groups)
+    assert offenders == [], (
+        f"{offenders} declare `exempt=binary`. Placeholder leakage and bare line "
+        f"citations are gated on shipped metadata and on rendered docstrings; a page "
+        f"exempting them needs its own ruling, not a marker edit."
+    )

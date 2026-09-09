@@ -859,7 +859,7 @@ class analysis_config(cfgBaseModel):
             "This inline field IS ADR-7 reporting-config layer 3 "
             "(report-composition): the frozen-default-field whose optional "
             "runtime override is the `report_config=` Path kwarg on run() "
-            "(resolved at analysis.py:1746-1757). Layer-3 precedence: explicit "
+            "(resolved in TRITONSWMM_analysis.run). Layer-3 precedence: explicit "
             "`report_config=` Path > inline cfg_analysis.report. It is "
             "deliberately INLINE (not a path field) per the post-F2 decision "
             "recorded above; ADR-7's 'path field' wording describes the default "

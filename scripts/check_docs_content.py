@@ -159,12 +159,80 @@ COMMENT_LINE = re.compile(r"^\s*(?:#|//|--|;)\s")
 # ("this is excused"), which is why it lives in the page rather than in a
 # skip-list here. A path-keyed skip would not generalize, and a second
 # generated page would silently re-open the gap.
-GENERATED_MARKER = "hhemt:generated-file"
+#: The class GROUPS a marker may declare exempt. `prose` is the punctuation and
+#: vocabulary pair `### D22b` rules out of gate scope; `binary` is the
+#: file-type-independent pair (placeholder leakage, bare line citations).
+#: BOTH are spellable on purpose. Hard-coding which group a marker may name
+#: would move the class split into this module, which is the position `### A16`
+#: rejected when it chose a marker-declared exemption over a central one. What
+#: keeps the binary classes enforced is that no live marker declares them, and
+#: `tests/test_check_docs_content.py` pins that BY NAME rather than by a count.
+EXEMPTABLE_CLASS_GROUPS: frozenset[str] = frozenset({"prose", "binary"})
+
+#: The NAME half of each marker, used for detection. The full declared string a
+#: page carries is `GENERATED_MARKER` / `PERSONAL_VOICE_MARKER` below. Detection
+#: must key on the NAME rather than on the full string: a page carrying the name
+#: with a malformed declaration has to RAISE, and a full-string match would
+#: silently fail to detect it and scan the page as if unmarked.
+GENERATED_MARKER_NAME = "hhemt:generated-file"
+
+_MARKER_DECL = re.compile(r"(hhemt:[a-z-]+)\s+exempt=([a-z,]*)")
+
+
+class MarkerDeclarationError(RuntimeError):
+    """A marker is present but its exemption declaration is absent or invalid."""
+
+
+def _declared_exemptions(text: str, marker_name: str) -> frozenset[str] | None:
+    """The class groups `marker_name` declares exempt, or None when it is absent.
+
+    FAILS LOUDLY rather than degrading. A marker whose declaration is missing,
+    empty, or names an unknown group raises. A silent fall back to "exempt
+    everything" would rebuild, inside this fix, the whole-file skip the fix
+    exists to remove -- which is the failure shape this gate has produced
+    repeatedly and is the one thing this parser must not do.
+    """
+    if marker_name not in text:
+        return None
+    for name, raw in _MARKER_DECL.findall(text):
+        if name != marker_name:
+            continue
+        groups = frozenset(part for part in raw.split(",") if part)
+        if not groups:
+            raise MarkerDeclarationError(f"{marker_name}: `exempt=` declares no class group.")
+        unknown = sorted(groups - EXEMPTABLE_CLASS_GROUPS)
+        if unknown:
+            raise MarkerDeclarationError(
+                f"{marker_name}: unknown class group(s) {unknown}; known groups are {sorted(EXEMPTABLE_CLASS_GROUPS)}."
+            )
+        return groups
+    raise MarkerDeclarationError(
+        f"{marker_name} is present but declares no `exempt=` class list. "
+        f"A marker states what it exempts; known groups are "
+        f"{sorted(EXEMPTABLE_CLASS_GROUPS)}."
+    )
+
+
+def _exempt_groups(text: str) -> frozenset[str]:
+    """Every class group any marker on this page declares exempt."""
+    groups: set[str] = set()
+    for name in (GENERATED_MARKER_NAME, PERSONAL_VOICE_MARKER_NAME):
+        declared = _declared_exemptions(text, name)
+        if declared:
+            groups |= declared
+    return frozenset(groups)
+
+
+#: What a generated page CARRIES. `hooks/config_reference.py` interpolates this
+#: constant and never authors the string, so widening it here reaches that page
+#: with no hook edit. A second generated page inherits this declaration until
+#: someone needs otherwise, at which point the hook passes its own list.
+GENERATED_MARKER = "hhemt:generated-file exempt=prose"
 
 
 def _is_generated(text: str) -> bool:
     """True when a page carries the generated-file marker."""
-    return GENERATED_MARKER in text
+    return _declared_exemptions(text, GENERATED_MARKER_NAME) is not None
 
 
 def generated_files(docs_dir: Path) -> list[Path]:
@@ -198,12 +266,13 @@ def generated_files(docs_dir: Path) -> list[Path]:
 # Routing is identical to the generated case: skipped by `scan()`, INCLUDED by
 # `scan_advisory()`, and named with a count in BOTH of `main()`'s branches.
 # Nothing is dropped; the findings move to the tier that prints and never gates.
-PERSONAL_VOICE_MARKER = "hhemt:personal-voice"
+PERSONAL_VOICE_MARKER_NAME = "hhemt:personal-voice"
+PERSONAL_VOICE_MARKER = "hhemt:personal-voice exempt=prose"
 
 
 def _is_personal_voice(text: str) -> bool:
     """True when a page carries the personal-voice marker."""
-    return PERSONAL_VOICE_MARKER in text
+    return _declared_exemptions(text, PERSONAL_VOICE_MARKER_NAME) is not None
 
 
 def personal_voice_files(docs_dir: Path) -> list[Path]:
@@ -303,7 +372,17 @@ def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
     running a different pattern set there would silently drop them while
     looking like routing.
     """
-    findings: list[tuple[str, Path, int, str]] = _binary_findings(md, text)
+    return _binary_findings(md, text) + _prose_findings(md, text)
+
+
+def _prose_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
+    """The two PROSE tiers: punctuation and vocabulary.
+
+    The complement of `_binary_findings` within `_gate_findings`, extracted so a
+    marker can exempt one group without the other. `### D22b` names exactly this
+    pair, which is why the split is here and not somewhere finer.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
     for lineno, line in _prose_lines(text):
         for code, pat in PUNCTUATION_PATTERNS:
             if pat.search(line):
@@ -319,14 +398,16 @@ def scan(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
     findings: list[tuple[str, Path, int, str]] = []
     for md in sorted(docs_dir.rglob("*.md")):
         text = md.read_text(encoding="utf-8", errors="ignore")
-        if _is_generated(text) or _is_personal_voice(text):
-            # Skipped here and INCLUDED by `scan_advisory()`. The inversion is
-            # deliberate: the file leaves the gate and enters the advisory tier,
-            # it does not vanish. `main()` prints what was skipped either way,
-            # and the two populations are counted separately so a reader can
-            # tell a generated page from a personal-voice one.
-            continue
-        findings.extend(_gate_findings(md, text))
+        # A marker exempts the class groups it DECLARES and nothing else. What
+        # it declares is skipped here and INCLUDED by `scan_advisory()`, so the
+        # two tiers partition the finding set by construction rather than by a
+        # second edit keeping them disjoint. `main()` prints what was skipped
+        # either way, and the two populations are counted separately.
+        exempt = _exempt_groups(text)
+        if "binary" not in exempt:
+            findings.extend(_binary_findings(md, text))
+        if "prose" not in exempt:
+            findings.extend(_prose_findings(md, text))
     return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
 
 
@@ -346,9 +427,14 @@ def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
             for code, pat in ADVISORY_PATTERNS:
                 if pat.search(line):
                     findings.append((code, md, lineno, line.strip()))
-        if _is_generated(text) or _is_personal_voice(text):
-            # The findings `scan()` skipped, reported here instead of nowhere.
-            findings.extend(_gate_findings(md, text))
+        # Exactly the groups `scan()` skipped, reported here instead of
+        # nowhere. A declaration of what is exempt is, in the same breath, a
+        # declaration of what this tier reports.
+        exempt = _exempt_groups(text)
+        if "binary" in exempt:
+            findings.extend(_binary_findings(md, text))
+        if "prose" in exempt:
+            findings.extend(_prose_findings(md, text))
     # The rendered-docstring population's PROSE classes. `### D22b` rules `src/`
     # prose out of GATE scope and does not rule it out of VISIBILITY, and this is
     # the visibility half -- the anchors are live `src/...py:line` positions a
@@ -826,7 +912,29 @@ def main(argv: list[str] | None = None) -> int:
     if not args.docs_dir.is_dir():
         print(f"ERROR: docs dir not found: {args.docs_dir}", file=sys.stderr)
         return 2
+    try:
+        return _run(args)
+    except MarkerDeclarationError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        print(
+            "A generated page is rewritten only when `mkdocs build` runs and is "
+            "gitignored, so a stale or absent one is the normal state of a fresh "
+            "clone. Run `mkdocs build` first.",
+            file=sys.stderr,
+        )
+        return 2
 
+
+def _run(args: argparse.Namespace) -> int:
+    """The body of `main()`, separated so a `MarkerDeclarationError` raised anywhere
+    inside it returns the documented exit 2 rather than a traceback.
+
+    Four call sites below read markers -- `scan`, `scan_advisory`, `generated_files`
+    and `personal_voice_files` -- so a guard around any ONE of them would leave the
+    other three uncovered. This module's docstring contracts three outcomes (0, 1, 2)
+    and a traceback is none of them; `check_autodoc_coverage.py` handles the same
+    build-artifact case the same way.
+    """
     if args.advisory:
         advisory = scan_advisory(args.docs_dir)
         print(f"advisory: {len(advisory)} candidate(s) — judgment required, not a gate.")

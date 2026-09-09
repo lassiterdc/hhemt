@@ -124,7 +124,14 @@ def _load_lint():
     return module
 
 
-def _assert_lint_clean(markdown: str) -> None:
+def _assert_lint_clean(markdown: str, *, binary_only: bool = False) -> None:
+    """Fail the build on lint violations in `markdown`.
+
+    `binary_only` runs just the two file-type-independent classes. It exists so
+    `on_config` can hold the rendered TABLES to the classes `### D22b` never
+    excluded, without holding `src/`-derived prose to the vocabulary and
+    punctuation contracts `### D22b` does exclude.
+    """
     lint = _load_lint()
     findings: list[str] = []
     for lineno, line in lint._unfenced_lines(markdown):
@@ -134,6 +141,10 @@ def _assert_lint_clean(markdown: str) -> None:
         hit = lint.LINE_CITATION.search(line)
         if hit:
             findings.append(f"bare-line-citation at generated line {lineno}: {hit.group(0)}")
+    if binary_only:
+        if findings:
+            raise RuntimeError("generated config reference violates docs-content rules:\n  " + "\n  ".join(findings))
+        return
     for lineno, line in lint._prose_lines(markdown):
         for code, pat in lint.PUNCTUATION_PATTERNS:
             if pat.search(line):
@@ -346,7 +357,12 @@ def on_config(config):
     """
     _bind_local_src()
     markdown = _render()
+    # Two passes over two different populations. The generator's OWN prose --
+    # headings, intro, section labels -- answers to all four classes. The
+    # rendered table cells are `src/`-side `Field(description=...)` strings and
+    # answer to the binary classes only. `_authored_prose()` is unchanged.
     _assert_lint_clean("\n".join(_authored_prose()))
+    _assert_lint_clean(markdown, binary_only=True)
     target = Path(config.docs_dir) / GENERATED_URI
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(markdown, encoding="utf-8")

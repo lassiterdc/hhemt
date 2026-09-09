@@ -1,4 +1,4 @@
-<!-- hhemt:personal-voice -->
+<!-- hhemt:personal-voice exempt=prose -->
 # Contributing
 
 ## Licensing of contributions
