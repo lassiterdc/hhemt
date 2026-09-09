@@ -1,3 +1,5 @@
+<!-- hhemt:repo-internal exempt=prose -->
+
 # Example fixtures
 
 Static example files referenced by documentation and external users. Not consumed

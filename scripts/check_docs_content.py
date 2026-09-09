@@ -216,7 +216,7 @@ def _declared_exemptions(text: str, marker_name: str) -> frozenset[str] | None:
 def _exempt_groups(text: str) -> frozenset[str]:
     """Every class group any marker on this page declares exempt."""
     groups: set[str] = set()
-    for name in (GENERATED_MARKER_NAME, PERSONAL_VOICE_MARKER_NAME):
+    for name in (GENERATED_MARKER_NAME, PERSONAL_VOICE_MARKER_NAME, REPO_INTERNAL_MARKER_NAME):
         declared = _declared_exemptions(text, name)
         if declared:
             groups |= declared
@@ -243,9 +243,7 @@ def generated_files(docs_dir: Path) -> list[Path]:
     with nobody having decided to grant an exemption. A source comment cannot
     do that -- it is read once, by whoever writes it.
     """
-    return [
-        md for md in sorted(docs_dir.rglob("*.md")) if _is_generated(md.read_text(encoding="utf-8", errors="ignore"))
-    ]
+    return [md for md in _scanned_markdown(docs_dir) if _is_generated(md.read_text(encoding="utf-8", errors="ignore"))]
 
 
 # A SECOND population that is authored prose but is not PRODUCT prose. The
@@ -283,9 +281,7 @@ def personal_voice_files(docs_dir: Path) -> list[Path]:
     gate's scope, which is the defect this script exists to catch.
     """
     return [
-        md
-        for md in sorted(docs_dir.rglob("*.md"))
-        if _is_personal_voice(md.read_text(encoding="utf-8", errors="ignore"))
+        md for md in _scanned_markdown(docs_dir) if _is_personal_voice(md.read_text(encoding="utf-8", errors="ignore"))
     ]
 
 
@@ -394,9 +390,125 @@ def _prose_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
     return findings
 
 
+class PopulationDerivationError(RuntimeError):
+    """A population cannot be derived because git could not answer.
+
+    A SIBLING of `MarkerDeclarationError` rather than a use of it: a repository
+    git cannot locate is not a marker-declaration problem, and reusing that type
+    to buy a catch would put a false statement in the code -- the ground `A16`
+    used to give the personal-voice marker its own name.
+    """
+
+
+def _repo_root(start: Path) -> Path:
+    """The repository root git reports for `start`.
+
+    ONE derivation, used by every caller that needs a root. `start.parent` was
+    the earlier form and it is an inference: it is right only when `start` is
+    exactly the repository's `docs` directory, and silently wrong for anything
+    deeper -- which made `SHIPPED_METADATA` resolve nothing and the gate exit 0
+    over an empty shipped population.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=start,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PopulationDerivationError(
+            f"cannot locate the repository root from {start}: `git rev-parse` failed. "
+            f"This gate's populations are derived from git and do not fall back to a "
+            f"path assumption, because a silent narrowing is what they exist to remove."
+        ) from exc
+    return Path(out)
+
+
+def _scanned_markdown(docs_dir: Path) -> list[Path]:
+    """Every markdown file this repository SHIPS or BUILDS, sorted and ABSOLUTE.
+
+    A UNION of two halves, and both are load-bearing:
+
+    * every `.md` git tracks in the repository. `rglob` over a directory
+      expressed "what is on disk under `docs/`", which was never this gate's
+      population: thirteen tracked `.md` files sit outside it, and published
+      pages name two of them.
+    * every `.md` on disk under `docs_dir`. The generated config-schema page is
+      BUILD OUTPUT and this project gitignores it, so a tracked-only population
+      drops it -- which would pin `main()`'s generated-file count at 0 forever
+      and delete the advisory worklist the marker design deliberately kept.
+
+    `.resolve()` on the second half is NOT cosmetic. `git rev-parse` answers in
+    absolute paths and `rglob` inherits the caller's spelling, so a relative
+    `--docs-dir` would put BOTH spellings of every docs page in the union -- they
+    do not compare equal, so the set does not merge them. Measured: 88 members
+    instead of 51, every docs page counted twice, and the first
+    `relative_to(repo_root)` in `main()` raising an uncaught ValueError on an
+    invocation this gate previously served at exit 0.
+
+    The rglob half is scoped to `docs_dir` and never to the repository root, so
+    it does not sweep `site/`, `.venv/`, `test_data/` or `.pytest_cache/`.
+
+    FAIL-CLOSED, deliberately, and the git half runs FIRST. A tree with no git
+    raises rather than degrading to the on-disk half. A fallback that silently
+    narrows the population is the defect this derivation exists to remove.
+    """
+    import subprocess
+
+    repo_root = _repo_root(docs_dir)
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "-z", "*.md"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PopulationDerivationError(
+            f"cannot derive the markdown population: `git ls-files` failed in {repo_root}. "
+            f"This gate scans what git tracks plus what the docs build writes, and does "
+            f"not fall back to a directory walk, because a silent narrowing is the defect "
+            f"the derivation exists to remove."
+        ) from exc
+    tracked = {repo_root / rel for rel in out.split("\0") if rel}
+    return sorted(tracked | set(docs_dir.resolve().rglob("*.md")))
+
+
+#: A THIRD marker kind, and it needs its own name for the reason the second one
+#: got its own. `generated-file` asserts a page is machine-written;
+#: `personal-voice` asserts it is the maintainer's own writing. Neither is true
+#: of a repo-internal note like `containers/README.md`, and reusing either would
+#: put a false statement in the page to buy a skip -- which is the thing a
+#: marker-in-the-page design exists to prevent.
+REPO_INTERNAL_MARKER_NAME = "hhemt:repo-internal"
+REPO_INTERNAL_MARKER = "hhemt:repo-internal exempt=prose"
+
+
+def _is_repo_internal(text: str) -> bool:
+    """True when a page carries the repo-internal marker."""
+    return _declared_exemptions(text, REPO_INTERNAL_MARKER_NAME) is not None
+
+
+def repo_internal_files(docs_dir: Path) -> list[Path]:
+    """Every repo-internal page, sorted.
+
+    Printed by `main()` in BOTH output branches, for the same reason
+    `generated_files` is: the count is what makes a future marked page visible,
+    and that virtue exists only inside the population the derivation walks.
+    """
+    return [
+        md for md in _scanned_markdown(docs_dir) if _is_repo_internal(md.read_text(encoding="utf-8", errors="ignore"))
+    ]
+
+
 def scan(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
     findings: list[tuple[str, Path, int, str]] = []
-    for md in sorted(docs_dir.rglob("*.md")):
+    for md in _scanned_markdown(docs_dir):
         text = md.read_text(encoding="utf-8", errors="ignore")
         # A marker exempts the class groups it DECLARES and nothing else. What
         # it declares is skipped here and INCLUDED by `scan_advisory()`, so the
@@ -421,7 +533,7 @@ def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
     later prose sweep would otherwise start from.
     """
     findings: list[tuple[str, Path, int, str]] = []
-    for md in sorted(docs_dir.rglob("*.md")):
+    for md in _scanned_markdown(docs_dir):
         text = md.read_text(encoding="utf-8", errors="ignore")
         for lineno, line in _unfenced_lines(text):
             for code, pat in ADVISORY_PATTERNS:
@@ -901,7 +1013,11 @@ def main(argv: list[str] | None = None) -> int:
         "--docs-dir",
         type=Path,
         default=Path(__file__).resolve().parent.parent / "docs",
-        help="documentation root to scan (default: ./docs)",
+        help=(
+            "the documentation root (default: ./docs) -- the docs root, NOT the "
+            "repository root. The scanned population is every markdown git tracks "
+            "in the repository, plus every markdown on disk under this directory"
+        ),
     )
     ap.add_argument(
         "--advisory",
@@ -914,14 +1030,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         return _run(args)
-    except MarkerDeclarationError as exc:
+    except (MarkerDeclarationError, PopulationDerivationError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        print(
-            "A generated page is rewritten only when `mkdocs build` runs and is "
-            "gitignored, so a stale or absent one is the normal state of a fresh "
-            "clone. Run `mkdocs build` first.",
-            file=sys.stderr,
-        )
+        if isinstance(exc, MarkerDeclarationError):
+            print(
+                "A generated page is rewritten only when `mkdocs build` runs and is "
+                "gitignored, so a stale or absent one is the normal state of a fresh "
+                "clone. Run `mkdocs build` first.",
+                file=sys.stderr,
+            )
         return 2
 
 
@@ -935,11 +1052,16 @@ def _run(args: argparse.Namespace) -> int:
     and a traceback is none of them; `check_autodoc_coverage.py` handles the same
     build-artifact case the same way.
     """
+    # The repository root, derived ONCE and bound before every consumer. Two of
+    # the three `relative_to` sites in this prologue run ABOVE the old binding
+    # site, so repairing them without moving the binding is an UnboundLocalError
+    # rather than a fix.
+    repo_root = _repo_root(args.docs_dir)
     if args.advisory:
         advisory = scan_advisory(args.docs_dir)
         print(f"advisory: {len(advisory)} candidate(s) — judgment required, not a gate.")
         for code, path, lineno, excerpt in advisory:
-            rel = path.relative_to(args.docs_dir.parent)
+            rel = path.relative_to(repo_root)
             print(f"  {rel}:{lineno} [{code}] {excerpt[:110]}")
 
     # Name every class checked, AND every file not checked. A success line that
@@ -950,15 +1072,15 @@ def _run(args: argparse.Namespace) -> int:
     def _skip_line(label: str, paths: list[Path]) -> str:
         if not paths:
             return f"skipped 0 {label} file(s)"
-        rels = ", ".join(str(m.relative_to(args.docs_dir.parent)) for m in paths)
+        rels = ", ".join(str(m.relative_to(repo_root)) for m in paths)
         return f"skipped {len(paths)} {label} file(s), routed to --advisory: {rels}"
 
-    repo_root = args.docs_dir.parent
     shipped = [name for name in SHIPPED_METADATA if (repo_root / name).is_file()]
     rendered = rendered_docstrings(SRC_ROOT, API_PAGE)
     skip_lines = [
         _skip_line("generated", generated_files(args.docs_dir)),
         _skip_line("personal-voice", personal_voice_files(args.docs_dir)),
+        _skip_line("repo-internal", repo_internal_files(args.docs_dir)),
         f"scanned {len(shipped)} shipped-metadata file(s) for placeholders and line "
         f"citations only: {', '.join(shipped) if shipped else '(none found)'}",
         f"scanned {len(rendered)} rendered docstring(s) from {API_PAGE.name} for placeholders "
@@ -966,11 +1088,24 @@ def _run(args: argparse.Namespace) -> int:
         f"and are reported under --advisory, never gated",
     ]
 
-    findings = scan(args.docs_dir) + scan_shipped_metadata(repo_root) + scan_rendered_docstrings()
+    # `scan()` walks every markdown this repository ships or builds, which
+    # INCLUDES the markdown members of SHIPPED_METADATA. Those are already
+    # scanned by `scan_shipped_metadata` for the two file-type-independent
+    # classes ONLY -- see the SHIPPED_METADATA comment for why the prose
+    # contracts do not run on them. Routed out here rather than out of the
+    # population, because narrowing the population would also drop them from
+    # `scan_advisory`, and full paths rather than names because a nested
+    # `README.md` is a different file with a different ruling.
+    shipped_paths = {repo_root / name for name in SHIPPED_METADATA}
+    findings = (
+        [f for f in scan(args.docs_dir) if f[1] not in shipped_paths]
+        + scan_shipped_metadata(repo_root)
+        + scan_rendered_docstrings()
+    )
     if findings:
         print("docs content check FAILED:", file=sys.stderr)
         for code, path, lineno, excerpt in findings:
-            rel = path.relative_to(args.docs_dir.parent)
+            rel = path.relative_to(repo_root)
             print(f"  {rel}:{lineno} [{code}] {excerpt[:110]}", file=sys.stderr)
         print(
             f"\n{len(findings)} finding(s). A placeholder tells a reader the page is "

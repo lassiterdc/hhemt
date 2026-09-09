@@ -1,3 +1,5 @@
+<!-- hhemt:repo-internal exempt=prose -->
+
 # Environment Snapshot Documentation
 
 This directory contains versioned snapshots of the TRITON-SWMM_toolkit environment to ensure reproducible installations across different machines and teams.

@@ -1,3 +1,5 @@
+<!-- hhemt:repo-internal exempt=prose -->
+
 # hhemt container SIFs — off-site build, sign, and transfer
 
 This directory holds the two cluster-specific Apptainer definition files for the

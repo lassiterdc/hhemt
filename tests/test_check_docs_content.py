@@ -334,6 +334,13 @@ def test_prose_classes_do_not_reach_the_gated_population():
 DECLARED_EXEMPTIONS = {
     "docs/reference/config-schema.md": {"prose"},
     "docs/contributing.md": {"prose"},
+    "ENVIRONMENT_SNAPSHOT.md": {"prose"},
+    "architecture.md": {"prose"},
+    "configs/reports/README.md": {"prose"},
+    "containers/README.md": {"prose"},
+    "scripts/experiments/_report_template.md": {"prose"},
+    "tests/fixtures/examples/README.md": {"prose"},
+    "tests/fixtures/perf_resume_ledger/README.md": {"prose"},
 }
 
 
@@ -341,8 +348,136 @@ def _marker_pages():
     docs = _REPO / "docs"
     return {
         md.relative_to(_REPO).as_posix(): set(cdc._exempt_groups(md.read_text(encoding="utf-8")))
-        for md in cdc.generated_files(docs) + cdc.personal_voice_files(docs)
+        for md in cdc.generated_files(docs) + cdc.personal_voice_files(docs) + cdc.repo_internal_files(docs)
     }
+
+
+def test_both_scanners_walk_the_derived_population(tmp_path, monkeypatch):
+    """`scan` and `scan_advisory` take `_scanned_markdown`, not a `docs_dir` rglob.
+
+    The injected population sits OUTSIDE the docs dir passed in, so a scanner
+    still rglobbing that directory returns nothing and this fails.
+    """
+    outside = tmp_path / "outside.md"
+    outside.write_text("TODO: fix this, not that.\n", encoding="utf-8")
+    monkeypatch.setattr(cdc, "_scanned_markdown", lambda docs_dir: [outside])
+
+    gated = cdc.scan(tmp_path / "docs")
+    assert {p for _c, p, _l, _e in gated} == {outside}
+    assert "bare-todo-marker" in {c for c, _p, _l, _e in gated}
+
+    advisory = cdc.scan_advisory(tmp_path / "docs")
+    assert outside in {p for _c, p, _l, _e in advisory}
+
+
+def test_missing_git_raises_rather_than_yielding_an_empty_corpus(tmp_path):
+    """Fail-closed. An empty population makes every gate green, so it must raise.
+
+    `tmp_path` is not a git repository, so `git rev-parse` exits non-zero and
+    `check=True` raises rather than letting the on-disk half of the union stand
+    in for a population git could not answer for.
+    """
+    (tmp_path / "docs").mkdir()
+    with pytest.raises(RuntimeError, match="git"):
+        cdc._scanned_markdown(tmp_path / "docs")
+
+
+def test_main_returns_2_without_git_rather_than_a_traceback(tmp_path, capsys):
+    """The failure path the project's only caller can never reach.
+
+    `docs-build.yml` runs `main()` on every CI run, but always inside a git
+    checkout, where `_repo_root` succeeds and the raise never fires. The path is
+    UNEXERCISED rather than undriven, which is why a handler too narrow to catch
+    it stayed invisible.
+
+    Asserting the exit code alone would NOT discriminate: `main()` already
+    returns 2 for a missing docs dir, so a handler that never fires would pass by
+    borrowing that path's code. The message is what separates them.
+    """
+    (tmp_path / "docs").mkdir()
+
+    rc = cdc.main(["--docs-dir", str(tmp_path / "docs")])
+
+    assert rc == 2, "a derivation failure must reach the documented exit 2"
+    err = capsys.readouterr().err
+    assert "git" in err, f"exit 2 came from a different path: {err!r}"
+    assert "docs dir not found" not in err, "this is the docs-dir path, not the derivation path"
+
+
+def test_gitignored_build_output_stays_in_the_population():
+    """The generated page is BUILD OUTPUT and this project gitignores it.
+
+    A tracked-only population drops it, which pins `main()`'s generated-file
+    count at 0 forever and deletes the advisory worklist the marker design keeps.
+    That is why the population is a UNION and not `git ls-files` alone.
+    """
+    docs = _REPO / "docs"
+    gen = docs / "reference" / "config-schema.md"
+    if not gen.is_file():
+        pytest.skip("generated page absent: run `mkdocs build` first")
+    assert gen in set(cdc._scanned_markdown(docs)), "the gitignored generated page fell out of the derived population"
+    assert gen in cdc.generated_files(docs), (
+        "`main()` would print `skipped 0 generated file(s)` and the count that "
+        "makes a future generated page visible would be pinned at zero"
+    )
+
+
+def test_shipped_markdown_is_routed_out_of_the_prose_gate():
+    """`scan()` walks the shipped-metadata markdown; `_run` must route it out.
+
+    `scan_shipped_metadata` gates those files on the two file-type-independent
+    classes ONLY. Without the routing they are gated twice, and the second gate
+    applies the prose contracts the design rules out for them.
+
+    The population must CONTAIN them: narrowing it instead would also remove
+    them from the advisory tier, which is the drop the marker design forbids.
+    """
+    docs = _REPO / "docs"
+    shipped_md = {_REPO / n for n in cdc.SHIPPED_METADATA if n.endswith(".md")}
+    assert shipped_md, "no markdown in SHIPPED_METADATA: this would pass vacuously"
+    assert shipped_md <= set(cdc._scanned_markdown(docs)), (
+        "the derived population must contain the shipped markdown; routing is `_run`'s job, not the population's"
+    )
+    offenders = sorted({p.name for _c, p, _l, _e in cdc.scan(docs) if p in shipped_md})
+    assert offenders, (
+        "no shipped markdown carries a gated finding today, so this test cannot "
+        "discriminate; re-ground it on a file that does, or retire it"
+    )
+    assert cdc.main(["--docs-dir", str(docs)]) == 0, (
+        f"{offenders} reached the gate: `_run` is not routing SHIPPED_METADATA out of `scan()`'s contribution"
+    )
+
+
+def test_a_relative_docs_dir_yields_the_same_population(monkeypatch):
+    """The spelling the help text invites, and the one the union broke.
+
+    `git ls-files` answers in absolute paths and `rglob` inherits the caller's
+    spelling, so without `.resolve()` a relative `--docs-dir` puts BOTH spellings
+    of every docs page in the union -- they do not compare equal, so the set does
+    not merge them. Measured at 88 members instead of 51, every docs page counted
+    twice, and the first `relative_to(repo_root)` raising an uncaught ValueError
+    on an invocation the pre-A19 gate served at exit 0.
+
+    Every OTHER test in this file passes an absolute docs dir, and every one of
+    them is green under that defect. That is why this arm exists rather than a
+    seventh absolute one.
+    """
+    monkeypatch.chdir(_REPO)
+
+    absolute = set(cdc._scanned_markdown(_REPO / "docs"))
+    relative = set(cdc._scanned_markdown(Path("docs")))
+
+    assert all(p.is_absolute() for p in relative), (
+        "the population must be absolute however the caller spells --docs-dir; "
+        "the relative members are the rglob half carrying that spelling"
+    )
+    assert relative == absolute, (
+        f"a relative --docs-dir changed the population: {len(relative)} members against {len(absolute)}"
+    )
+    assert cdc.main(["--docs-dir", "docs"]) == 0, (
+        "a relative --docs-dir must reach the same exit as an absolute one; the "
+        "pre-A19 gate served this invocation at exit 0"
+    )
 
 
 def test_marker_pages_declare_exactly_the_pinned_exemptions():

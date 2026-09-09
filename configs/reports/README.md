@@ -1,3 +1,5 @@
+<!-- hhemt:repo-internal exempt=prose -->
+
 # Report configurations
 
 Each `*.yaml` here defines a `report_config` consumed by `analysis.run(report_config=...)`.

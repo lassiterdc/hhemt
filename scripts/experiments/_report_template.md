@@ -1,3 +1,5 @@
+<!-- hhemt:repo-internal exempt=prose -->
+
 # Synthetic compute-config sensitivity — engineering report
 
 ## Executive summary
