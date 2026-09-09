@@ -22,6 +22,19 @@ merged and then tagged `vX.Y.Z`. **The tag, not `develop`'s tip, is what fires
 the PyPI publish and the Zenodo DOI mint**, which is why `develop` is never
 tagged directly: doing so would publish a commit the release gate never saw.
 
+Because the tag fires the mint, two fields in `CITATION.cff` have to be correct
+*before* it is cut, not after: `version` must match the version in
+`pyproject.toml` that the tag is named from, and `date-released` must be the day
+the tag is created. `just tag` checks both and refuses to tag if either is wrong,
+so this is a step you are stopped at rather than one you have to remember.
+
+The reason it cannot be fixed afterwards is that the tag freezes an archive. The
+`v0.1.0` archive carries no `date-released` at all, because that field was added
+in a commit that is not an ancestor of the tag; a later correction reaches the
+repository but never the tarball. What is checked here is agreement and dating
+only. Which DOI each surface carries is a recorded convention rather than a
+checked one, and is described under "DOI kind convention" in `architecture.md`.
+
 This is the reason the two documentation versions differ. `latest` tracks
 `develop` and shows unreleased content; `stable` tracks the newest tag and is
 what a visitor arriving without a version in the URL should see.

@@ -86,6 +86,8 @@ version:
 
 # Tag the current version in git and put to github
 tag:
+    git diff --quiet HEAD -- CITATION.cff pyproject.toml
+    python scripts/check_release_metadata.py
     echo "Tagging version v{{VERSION}}"
     git tag -a v{{VERSION}} -m "Creating version v{{VERSION}}"
     git push origin v{{VERSION}}
