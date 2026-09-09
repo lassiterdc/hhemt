@@ -1966,7 +1966,7 @@ class TRITONSWMM_system:
         A system may declare a truthy `gpu_compilation_backend` and still resolve
         `TRITON_build_dir_gpu is None`, because `sys_paths` is frozen at __init__
         from the CONSTRUCTOR-INJECTED backend while the attribute may be mutated
-        afterwards (sensitivity_analysis.py:2272-2275 does exactly this on the
+        afterwards (``sensitivity_analysis.cleanup_all_orphans`` does exactly this on the
         sensitivity-master template, and its own comment records that sys_paths is
         NOT rebuilt). ANDing against that unresolvable term reported a false
         "TRITON-only compilation failed" on a campaign whose 112 sims all completed.

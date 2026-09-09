@@ -567,7 +567,7 @@ class TRITON_SWMM_experiment:
 
         A derived FILE is required, not an in-memory edit: every downstream consumer
         re-loads the YAML from the path it was handed — ``analysis.test()`` passes
-        ``self.hpc_system_config_yaml`` to each ``_test/`` sub (analysis.py:2728), and the
+        ``self.hpc_system_config_yaml`` to each ``_test/`` sub (in ``analysis.run``), and the
         sim runner rebuilds the analysis from ``--hpc-system-config`` in a fresh subprocess
         (run_simulation_runner.py:214-219) before ``run_simulation.py:421`` renders
         ``apptainer exec {sif}``. An in-memory mutation is invisible to all of it.
