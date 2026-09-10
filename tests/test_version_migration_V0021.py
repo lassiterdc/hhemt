@@ -125,9 +125,9 @@ def test_provenance_is_repointed_in_BOTH_the_sidecar_and_the_embedded_core(tmp_p
     crate = json.loads(metadata.canonical_jsonld(_crate))
     _core = metadata.partition_core_vs_sidecar(crate)
     crate_core = _core[0] if isinstance(_core, tuple) else _core
-    assert any(
-        e.get("@id") == "analysis_datatree.zarr/" for e in crate["@graph"]
-    ), "emitter no longer slash-normalizes the store @id; this test's premise has moved"
+    assert any(e.get("@id") == "analysis_datatree.zarr/" for e in crate["@graph"]), (
+        "emitter no longer slash-normalizes the store @id; this test's premise has moved"
+    )
     (work / "ro-crate-metadata.json").write_text(json.dumps(crate, indent=2))
     meta = json.loads((store / "zarr.json").read_text())
     meta.setdefault("attributes", {})["ro_crate_metadata"] = json.dumps(

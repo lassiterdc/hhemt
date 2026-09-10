@@ -242,7 +242,7 @@ def _assert_multisim_symmetry(target: str, builder, monkeypatch) -> None:
     for _backend, text in snakefiles.items():
         _assert_symmetry(text, consumer_rule=target)
     assert _rule_structure(snakefiles["matplotlib"]) == _rule_structure(snakefiles["plotly"]), (
-        "multisim Snakefile rule_structure (extension-stripped) differs across " "static backends"
+        "multisim Snakefile rule_structure (extension-stripped) differs across static backends"
     )
     non_ext_swap = [
         d for d in _structural_diff(snakefiles["matplotlib"], snakefiles["plotly"]) if d.kind != "extension_swap"
@@ -258,7 +258,7 @@ def _assert_sensitivity_master_symmetry(target: str, builder, monkeypatch) -> No
     for _backend, text in snakefiles.items():
         _assert_symmetry(text, consumer_rule=target)
     assert _rule_structure(snakefiles["matplotlib"]) == _rule_structure(snakefiles["plotly"]), (
-        "sensitivity-master Snakefile rule_structure (extension-stripped) differs " "across static backends"
+        "sensitivity-master Snakefile rule_structure (extension-stripped) differs across static backends"
     )
     non_ext_swap = [
         d for d in _structural_diff(snakefiles["matplotlib"], snakefiles["plotly"]) if d.kind != "extension_swap"

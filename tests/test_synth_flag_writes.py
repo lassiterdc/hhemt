@@ -180,8 +180,7 @@ def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivit
     scen2 = TRITONSWMM_scenario(0, sub)
     log_after = scen2.get_log(model_type)
     assert log_after.processing_log.outputs == {}, (
-        f"expected empty processing_log.outputs after force-rerun; got "
-        f"{list(log_after.processing_log.outputs.keys())}"
+        f"expected empty processing_log.outputs after force-rerun; got {list(log_after.processing_log.outputs.keys())}"
     )
 
 
@@ -239,6 +238,6 @@ def test_override_force_rerun_event_iloc_invalidates_only_named_events(synthetic
     target_log_after = target_scen2.get_log(model_type).processing_log.outputs
     other_log_after = dict(other_scen2.get_log(model_type).processing_log.outputs)
     assert target_log_after == {}, (
-        f"target event_iloc={target_iloc} log must be invalidated; got " f"{list(target_log_after.keys())}"
+        f"target event_iloc={target_iloc} log must be invalidated; got {list(target_log_after.keys())}"
     )
     assert other_log_before == other_log_after, f"non-target event_iloc={other_iloc} log must be unchanged"

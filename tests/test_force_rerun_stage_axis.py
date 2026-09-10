@@ -64,8 +64,7 @@ def test_render_floor_preserves_flags_and_deletes_snakemake_figures(synth_sensit
 
     for name in flags:
         assert (status_dir / name).exists(), (
-            f"{name} was deleted under a render floor -- the stage was dropped and the "
-            f"floor fell back to 'simulate'"
+            f"{name} was deleted under a render floor -- the stage was dropped and the floor fell back to 'simulate'"
         )
     assert not snakemake_fig.exists()
     assert not snakemake_fig.with_suffix(snakemake_fig.suffix + ".manifest.json").exists()
@@ -136,9 +135,9 @@ def test_simulate_floor_deletes_flags_as_before(synth_sensitivity_analysis):
     analysis._apply_force_rerun(ForceRerunSpec(subject="all", stage="simulate"))
 
     for name in flags:
-        assert not (
-            status_dir / name
-        ).exists(), f"{name} survived a simulate floor -- the historical default path changed"
+        assert not (status_dir / name).exists(), (
+            f"{name} survived a simulate floor -- the historical default path changed"
+        )
 
 
 def test_raw_two_axis_dict_from_the_cli_is_coerced(synth_sensitivity_analysis):
@@ -156,9 +155,9 @@ def test_raw_two_axis_dict_from_the_cli_is_coerced(synth_sensitivity_analysis):
     analysis._apply_force_rerun({"subject": "all", "stage": "render"})
 
     for name in flags:
-        assert (
-            status_dir / name
-        ).exists(), f"{name} was deleted — the raw dict was not coerced before the floor resolved"
+        assert (status_dir / name).exists(), (
+            f"{name} was deleted — the raw dict was not coerced before the floor resolved"
+        )
     assert not snakemake_fig.exists()
 
 
@@ -243,8 +242,7 @@ def test_render_floor_dry_run_preserves_figures(synth_sensitivity_analysis, monk
         )
 
     assert snakemake_fig.exists(), (
-        "a dry run deleted a Snakemake-rendered figure -- the force-rerun pre-delete "
-        "ran unguarded on the submit path"
+        "a dry run deleted a Snakemake-rendered figure -- the force-rerun pre-delete ran unguarded on the submit path"
     )
     assert snakemake_fig.with_suffix(snakemake_fig.suffix + ".manifest.json").exists()
     assert eda_fig.exists()

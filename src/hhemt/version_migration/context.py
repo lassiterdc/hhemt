@@ -201,7 +201,7 @@ class MigrationContext:
                 raise MigrationConflictError(
                     version=0,
                     op_index=len(self.plan),
-                    reason=(f"post-rename verification failed for " f"{entry} -> {dest_path}"),
+                    reason=(f"post-rename verification failed for {entry} -> {dest_path}"),
                 )
 
     def move_dir(self, src: Path, dest: Path, merge_policy: str = "error") -> None:
@@ -936,11 +936,11 @@ class MigrationContext:
         if not force:
             return
         if not replacement.exists():
-            raise FileNotFoundError(f"guarded_remove refused: replacement {replacement} " "does not exist")
+            raise FileNotFoundError(f"guarded_remove refused: replacement {replacement} does not exist")
         if replacement.is_dir() and not any(replacement.iterdir()):
-            raise ValueError(f"guarded_remove refused: replacement {replacement} " "is empty dir")
+            raise ValueError(f"guarded_remove refused: replacement {replacement} is empty dir")
         if replacement.is_file() and replacement.stat().st_size == 0:
-            raise ValueError(f"guarded_remove refused: replacement {replacement} " "is empty file")
+            raise ValueError(f"guarded_remove refused: replacement {replacement} is empty file")
         if not src_path.exists():
             return
         if src_path.is_dir():
@@ -950,7 +950,7 @@ class MigrationContext:
             src_path.unlink()
         if not replacement.exists():
             raise RuntimeError(
-                f"guarded_remove post-verify failed: replacement " f"{replacement} disappeared during removal"
+                f"guarded_remove post-verify failed: replacement {replacement} disappeared during removal"
             )
 
     # ---- Cross-cutting ----

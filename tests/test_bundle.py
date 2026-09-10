@@ -125,7 +125,7 @@ def _assert_field_conforms(
         # OR_NONE policy permits None; bare BUNDLE_RELATIVE on a None
         # value would be a misconfiguration on a required Path field.
         assert is_optional or policy is PathPolicy.BUNDLE_RELATIVE_OR_NONE, (
-            f"{field_name}: value is None but field is required " f"(annotation={annotation}, policy={policy})"
+            f"{field_name}: value is None but field is required (annotation={annotation}, policy={policy})"
         )
         return
     # Remaining cases: BUNDLE_RELATIVE / BUNDLE_RELATIVE_OR_NONE with a
@@ -165,9 +165,9 @@ def test_sensitivity_master_delegates_bundleable_identity_attrs(
     sens = synth_sensitivity_analysis.sensitivity  # the TRITONSWMM_sensitivity_analysis wrapper
     for attr in ("cfg_hpc_system", "case_manifest_yaml", "_case_manifest"):
         assert hasattr(sens, attr), f"sensitivity wrapper missing BundleableAnalysis attr {attr!r}"
-        assert getattr(sens, attr) is getattr(
-            sens.experiment, attr
-        ), f"{attr!r} must delegate to the wrapped master analysis"
+        assert getattr(sens, attr) is getattr(sens.experiment, attr), (
+            f"{attr!r} must delegate to the wrapped master analysis"
+        )
     assert isinstance(sens, BundleableAnalysis)  # runtime_checkable — full attribute surface
 
 
@@ -214,7 +214,7 @@ def test_all_path_fields_have_policy() -> None:
     missing = sorted(declared - set(_PATH_FIELD_POLICY))
     extra = sorted(set(_PATH_FIELD_POLICY) - declared)
     assert not missing, f"Path fields without a _PATH_FIELD_POLICY entry: {missing}"
-    assert not extra, f"_PATH_FIELD_POLICY entries with no matching Pydantic Path " f"field: {extra}"
+    assert not extra, f"_PATH_FIELD_POLICY entries with no matching Pydantic Path field: {extra}"
 
 
 def test_null_software_dir_synthesized_config_loads(synth_multi_sim_analysis, tmp_path: Path) -> None:
@@ -316,22 +316,22 @@ def test_reprex_bundle_carries_runnable_set(rendered_synth_multi_sim, tmp_path: 
         ("login_node", cfg_hpc.login_node),
     ):
         assert _placeholder.match(str(_value or "")), (
-            f"{_field} carries {_value!r}, not a {{your-...}} placeholder -- a producer " "value survived the scrub"
+            f"{_field} carries {_value!r}, not a {{your-...}} placeholder -- a producer value survived the scrub"
         )
     for _partition_name in cfg_hpc.partitions:
-        assert _placeholder.match(
-            _partition_name
-        ), f"partition key {_partition_name!r} is a real partition name, not a placeholder"
+        assert _placeholder.match(_partition_name), (
+            f"partition key {_partition_name!r} is a real partition name, not a placeholder"
+        )
     # sif_path EMBEDS a placeholder inside a path rather than being one outright.
-    assert "{your-allocation}" in str(
-        cfg_hpc.container.sif_path
-    ), f"container.sif_path {cfg_hpc.container.sif_path!r} carries no placeholder"
+    assert "{your-allocation}" in str(cfg_hpc.container.sif_path), (
+        f"container.sif_path {cfg_hpc.container.sif_path!r} carries no placeholder"
+    )
     # And no brace-token anywhere in the emitted template escapes the grammar, so a new
     # scrubbed field cannot quietly adopt a different (or absent) placeholder convention.
     for _brace_token in sorted(set(re.findall(r"\{[^{}\n]+\}", tpl_text))):
-        assert _brace_token.startswith(
-            "{your-"
-        ), f"template carries brace-token {_brace_token!r} outside the {{your-...}} grammar"
+        assert _brace_token.startswith("{your-"), (
+            f"template carries brace-token {_brace_token!r} outside the {{your-...}} grammar"
+        )
 
     doc = json.loads((bundle_dir / "ro-crate-metadata.json").read_text())
     root = next(e for e in doc["@graph"] if e.get("@id") == "./")
@@ -363,7 +363,7 @@ def test_zero_user_info_gate(tmp_path: Path, monkeypatch) -> None:
     # ABSENT from an emitted artifact and is therefore vacuous against synthetic tokens.
     synthetic_carrier = tmp_path / "synthetic_blocklist.txt"
     synthetic_carrier.write_text(
-        "# min-tokens: 4\n" "ZZTESTTOKENALPHA\nZZTESTTOKENBETA\nZZTESTTOKENGAMMA\nZZTESTTOKENDELTA\n",
+        "# min-tokens: 4\nZZTESTTOKENALPHA\nZZTESTTOKENBETA\nZZTESTTOKENGAMMA\nZZTESTTOKENDELTA\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("HHEMT_REPREX_BLOCKLIST", str(synthetic_carrier))
@@ -634,9 +634,9 @@ def test_legacy_manifest_no_invariants_key(tmp_path):
     (bundle_dir / "bundle_manifest.json").write_text(json.dumps(legacy_manifest))
     _write_minimal_cfg_analysis(bundle_dir / "cfg_analysis.yaml")
     bundle = Bundle.from_directory(bundle_dir)
-    assert (
-        bundle.manifest.get("bundle_root_invariants", "MISSING") == "MISSING"
-    ), "Legacy bundle should load without the key"
+    assert bundle.manifest.get("bundle_root_invariants", "MISSING") == "MISSING", (
+        "Legacy bundle should load without the key"
+    )
 
 
 def test_static_backend_field_default_is_plotly():

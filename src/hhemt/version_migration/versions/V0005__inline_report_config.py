@@ -51,7 +51,7 @@ def _recover_source_report_cfg_path(
         return None, "Snakefile present but contains no `--report-config <path>` substring"
     candidate = Path(match.group(1))
     if not candidate.exists():
-        return None, (f"Snakefile references `--report-config {match.group(1)}` " f"but that path is missing")
+        return None, (f"Snakefile references `--report-config {match.group(1)}` but that path is missing")
     return candidate, None
 
 
@@ -94,7 +94,7 @@ def upgrade(ctx: MigrationContext) -> None:
     except Exception as exc:
         raise _blocked_error(
             ctx.target_dir,
-            f"source-side report_config at {source_cfg_path} failed to " f"load/validate ({exc})",
+            f"source-side report_config at {source_cfg_path} failed to load/validate ({exc})",
         ) from exc
     payload = cfg.model_dump(mode="json")
 

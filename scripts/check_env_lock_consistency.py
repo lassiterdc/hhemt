@@ -328,8 +328,7 @@ def main() -> int:
         major = (version or "").split(".")[0]
         if major != "2":
             errors.append(
-                f"{LOCK_FILE.name}: conda `{spec}` pins pyswmm {version}, but the "
-                f"clean pairing requires pyswmm 2.x."
+                f"{LOCK_FILE.name}: conda `{spec}` pins pyswmm {version}, but the clean pairing requires pyswmm 2.x."
             )
 
     # (e) environment.yaml MUST be a superset of pyproject's CORE dependencies.

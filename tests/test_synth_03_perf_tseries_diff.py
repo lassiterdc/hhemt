@@ -152,12 +152,12 @@ def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
         "Rank-1 cumulative Total at checkpoint 10 is 160s; max(Rank).sum(timestep_min) "
         "of correctly-diffed deltas must equal this."
     )
-    assert summary["Compute"].item() == pytest.approx(
-        120.0, rel=1e-6
-    ), "Rank-1 Compute at checkpoint 10 is 120s; max(Rank) selects rank-1."
-    assert summary["SWMM"].item() == pytest.approx(
-        50.0, rel=1e-6
-    ), "Rank-0 SWMM = 50s; max(Rank) selects rank-0 because rank-0 > rank-1 SWMM."
+    assert summary["Compute"].item() == pytest.approx(120.0, rel=1e-6), (
+        "Rank-1 Compute at checkpoint 10 is 120s; max(Rank) selects rank-1."
+    )
+    assert summary["SWMM"].item() == pytest.approx(50.0, rel=1e-6), (
+        "Rank-0 SWMM = 50s; max(Rank) selects rank-0 because rank-0 > rank-1 SWMM."
+    )
 
 
 def test_corrected_reconstruction_matches_final_performance_txt(synthetic_perf_dir):
@@ -167,12 +167,12 @@ def test_corrected_reconstruction_matches_final_performance_txt(synthetic_perf_d
     ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])
     rank0_total = ds["Total"].sel(Rank=0).sum(dim="timestep_min").item()
     rank1_total = ds["Total"].sel(Rank=1).sum(dim="timestep_min").item()
-    assert rank0_total == pytest.approx(
-        150.0, rel=1e-6
-    ), "rank-0 final Total at checkpoint 10 = 15s/checkpoint × 10 = 150s"
-    assert rank1_total == pytest.approx(
-        160.0, rel=1e-6
-    ), "rank-1 final Total at checkpoint 10 = 16s/checkpoint × 10 = 160s"
+    assert rank0_total == pytest.approx(150.0, rel=1e-6), (
+        "rank-0 final Total at checkpoint 10 = 15s/checkpoint × 10 = 150s"
+    )
+    assert rank1_total == pytest.approx(160.0, rel=1e-6), (
+        "rank-1 final Total at checkpoint 10 = 16s/checkpoint × 10 = 160s"
+    )
 
 
 def _write_resume_boundary(perf_dir):

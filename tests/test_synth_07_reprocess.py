@@ -71,7 +71,7 @@ def test_reprocess_consolidate_default_preserves_zarr(synthetic_multisim_complet
     # Default reprocess — must NOT delete/rebuild the zarr.
     result = a.reprocess(start_with="consolidate", execution_mode="local", verbose=False)
     assert result.get("success"), (
-        f"reprocess(consolidate) failed: {result.get('message','(no message)')}. "
+        f"reprocess(consolidate) failed: {result.get('message', '(no message)')}. "
         f"Snakemake log: {result.get('snakemake_logfile')}"
     )
 
@@ -115,7 +115,7 @@ def test_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_multi
     result = a.reprocess(start_with="consolidate", execution_mode="local", regenerate_existing=True, verbose=False)
     assert result.get("success"), (
         f"reprocess(consolidate, regenerate_existing=True) failed: "
-        f"{result.get('message','(no message)')}. Snakemake log: {result.get('snakemake_logfile')}"
+        f"{result.get('message', '(no message)')}. Snakemake log: {result.get('snakemake_logfile')}"
     )
 
     after_run_flags = sorted(status_dir.glob("c_run_*"))
@@ -154,9 +154,9 @@ def test_consolidate_to_datatree_rebuilds_when_log_incomplete(synthetic_multisim
     )
     # Rebuild re-stamps the completion signal.
     a._refresh_log()
-    assert (
-        a.log.datatree_consolidation_complete.get() is True
-    ), "rebuild must re-set datatree_consolidation_complete=True"
+    assert a.log.datatree_consolidation_complete.get() is True, (
+        "rebuild must re-set datatree_consolidation_complete=True"
+    )
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
@@ -168,7 +168,7 @@ def test_reprocess_render_only(synthetic_multisim_completed_isolated):
 
     result = a.reprocess(start_with="render", execution_mode="local", verbose=False)
     assert result.get("success"), (
-        f"reprocess(render) failed: {result.get('message','(no message)')}. "
+        f"reprocess(render) failed: {result.get('message', '(no message)')}. "
         f"Snakemake log: {result.get('snakemake_logfile')}"
     )
 
@@ -176,7 +176,7 @@ def test_reprocess_render_only(synthetic_multisim_completed_isolated):
     html = analysis_dir / "analysis_report.html"
     zipfile = analysis_dir / "analysis_report.zip"
     assert html.exists() or zipfile.exists(), (
-        "Expected reprocess(render) to materialize analysis_report.{html,zip}. " f"Neither found at {analysis_dir}."
+        f"Expected reprocess(render) to materialize analysis_report.{{html,zip}}. Neither found at {analysis_dir}."
     )
 
 

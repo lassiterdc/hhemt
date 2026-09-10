@@ -183,9 +183,9 @@ def test_n_resumes_round_trips_through_the_load_subs_join(tmp_path, member_id, w
     """
     _build_member_tree(tmp_path, member_id, with_attrs=with_attrs)
     subs = _load_subs(tmp_path)
-    assert set(subs) == {
-        member_id
-    }, f"fixture/consumer coupling broken: _load_subs keyed {sorted(subs)!r} for member {member_id!r}."
+    assert set(subs) == {member_id}, (
+        f"fixture/consumer coupling broken: _load_subs keyed {sorted(subs)!r} for member {member_id!r}."
+    )
     assert subs[member_id]["n_resumes"] == _N_RESUMES, (
         f"scenario_status.csv records n_resumes={_N_RESUMES} for member {member_id!r}, but "
         f"_load_subs attached {subs[member_id]['n_resumes']!r}."

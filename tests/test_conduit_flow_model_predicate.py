@@ -59,6 +59,6 @@ def test_conduit_flow_emission_and_enumeration_agree(
     # peak_flood_depth is model-agnostic and must survive BOTH arms. This is what
     # catches an over-firing gate that drops the whole per_member selection rather than
     # the one SWMM-derived template.
-    assert re.search(
-        r"^rule plot_per_sim_per_member_peak_flood_depth:", generated, re.M
-    ), "peak_flood_depth must be emitted regardless of model type"
+    assert re.search(r"^rule plot_per_sim_per_member_peak_flood_depth:", generated, re.M), (
+        "peak_flood_depth must be emitted regardless of model type"
+    )

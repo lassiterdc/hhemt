@@ -1376,3 +1376,102 @@ non_breaking_allowlist:
       than edited in place: a signature-less append would INHERIT 6e7b75dc under
       _load_allowlist's merge and check-b would still re-fire.
     layout_signature: "8f840b2ff497d2d9cdb14718422081f54ac44144f720c0a73a0e009191c3a698"
+  - path: src/hhemt/config/globus.py
+    justification: >-
+      FORMATTING-ONLY (ruff format). THE PIN THAT GOVERNS IS THE PRE-COMMIT HOOK REV:
+      .pre-commit-config.yaml pins astral-sh/ruff-pre-commit at `rev: v0.15.17`, and that is
+      the tool that actually formats at commit time, because pre-commit runs hook
+      environments rather than the project's dependency set. pyproject.toml's
+      `ruff==0.15.17` agrees, so the claim is true under either citation -- the hook rev is
+      named because it is the one that would still be right if the two ever diverge, which
+      is precisely when someone will read this row. AST-VERIFIED.
+      FIRST ROW FOR THIS PATH -- it carries no prior allowlist row, so nothing is inherited
+      and nothing is superseded; the signature below establishes the exemption rather than
+      re-scoping one.
+      DISCHARGE BY MEASUREMENT, and the measurement is stronger than a content argument.
+      `ast.dump(ast.parse(src), include_attributes=False)` is IDENTICAL between HEAD and the
+      formatted file, and the imported-name set delta is zero added / zero removed. AST
+      identity means no field name, annotation, default, validator, statement or expression
+      changed -- so no persisted value CAN differ, without needing to reason about any
+      individual field. Only whitespace and line breaks moved.
+      A SECOND, INDEPENDENT REASON this module has no persistence surface: every model here
+      is a plain `BaseModel`, not `cfgBaseModel` (GlobusEndpoints, GlobusTransferItem,
+      GlobusTransferSpec, PostRunTransferConfig), deliberately so because the module
+      describes REMOTE HPC paths that do not exist on the local machine. It is therefore
+      outside the `cfgBaseModel` family that `bundle/_path_policy.py::_PATH_FIELD_POLICY`
+      governs and outside the carried-config set a render or reprex bundle serializes.
+      A V0023 migration would have nothing to transform.
+      DISCLOSED, cause UNDETERMINED, because a reader is entitled to ask why a path captured
+      by `src/hhemt/config/**/*.py` since 1e2b6e32 is only now getting its first row. It was
+      MODIFIED (status M, not a rename) at ab8c6523 with LAYOUT_VERSION unchanged at 14 and
+      no exemption row, so check-b's disarm could not have fired and the file scan should
+      have named it. I cannot distinguish the cause from here between (a) that content
+      arriving through a merge commit, which fires no pre-commit hook at all, (b) a
+      multi-commit push, where the pre-push arm's `--range HEAD~1` grades only the last
+      commit, and (c) an explicit bypass. WHERE THE NEXT READER SHOULD LOOK, measured:
+      ab8c6523 is NOT a first-parent ancestor of HEAD (`git rev-list --first-parent HEAD`
+      does not contain it) though it IS an ancestor, so it was authored off-mainline and
+      reached the mainline through merges. That is consistent with (a) AND with (b) and
+      excludes neither, so the cause remains UNDETERMINED -- it narrows where to look, not
+      what happened. It is recorded as an open observation, not as an accusation, and it is NOT what this row discharges: this row covers exactly the
+      content the signature pins.
+      CHANGE-SCOPED via layout_signature, set to the post-sweep sha256 so the next change to
+      this file re-fires the check.
+    layout_signature: "7e2bcdc0ff5451969d2efddba0f462b2325cd87f374ca76736e974cb056148ca"
+  - path: src/hhemt/version_migration/versions/V0005__inline_report_config.py
+    justification: >-
+      FORMATTING-ONLY (ruff format, pinned at `rev: v0.15.17` in .pre-commit-config.yaml --
+      the hook environment that does the formatting; see the globus.py row above for why
+      that citation rather than pyproject.toml's agreeing `ruff==0.15.17`). AST-VERIFIED.
+      RE-STAMP of the already-signed row above (b6ba6fbe), applying that row's OWN discriminator: "a
+      migration module is layout-relevant because its APPLIED OPERATIONS decide on-disk
+      state". Re-measured here rather than inherited -- `version_from` (4), `version_to` (5),
+      `description`, and the `upgrade()` body are all IDENTICAL between HEAD and the
+      formatted file under `ast.unparse` comparison (`unparse(upgrade)` at 882 characters
+      on both sides, function signature included), and whole-module
+      `ast.dump(..., include_attributes=False)`
+      is identical with a zero imported-name delta. So the on-disk result of applying this
+      migration is byte-unchanged.
+      STRICTLY CLEANER THAN THE PRECEDENT IT RE-STAMPS: b6ba6fbe's row discharged an
+      import-SORT delta, and this sweep has no import delta at all.
+      WHY EXEMPTION IS THE RIGHT INSTRUMENT FOR A V-MODULE, stated because it is not obvious
+      and the alternative reading is defensible. A V-module is APPEND-ONLY history: with
+      MINIMUM_SUPPORTED_VERSION at 0 the runner re-applies V0005 to any legacy tree, so its
+      upgrade() body is the record of a transform that has already produced real on-disk
+      state. A SEMANTIC edit to it is therefore not a breaking change that a bump would
+      repair -- a bump cannot retroactively re-transform trees this module already produced;
+      the correct remedy for a wanted behaviour change is a NEW V-module, never an edit to a
+      shipped one. That is what makes formatting-only precisely the class an exemption on
+      this path is FOR, and it is why the discharge predicate here is narrower and more
+      checkable than a config module's: not "no persisted value can differ" but "the applied
+      operations are byte-unchanged".
+      NOT RELIED ON: the golden fixtures are NOT what pins this. check-a demands
+      `v{N-1}/`/`v{N}/` fixtures only when LAYOUT_VERSION bumps, and no bump is proposed, so
+      no fixture requirement is triggered by this change. TWO suites do exercise the applied
+      operations and NEITHER was run in the session that authored this row:
+      tests/test_version_migration_golden.py, and the DEDICATED
+      tests/test_version_migration_V0005.py, which covers this exact module. (V0009 has no
+      dedicated test; the golden suite is its only coverage.) The discharge above rests on
+      the AST measurement alone.
+      CHANGE-SCOPED via layout_signature, re-stamping b6ba6fbe -> 1f36e645. APPENDED rather
+      than edited in place: a signature-less append would INHERIT b6ba6fbe under
+      _load_allowlist's merge and check-b would still re-fire.
+    layout_signature: "1f36e645f892705e421b1e5e10b150e5d297413289d587a55ff247efe9a971f6"
+  - path: src/hhemt/version_migration/versions/V0009__crs_config_composite_submodel.py
+    justification: >-
+      FORMATTING-ONLY (ruff format, pinned at `rev: v0.15.17` in .pre-commit-config.yaml).
+      AST-VERIFIED. RE-STAMP of the already-signed row above (e9263673), on the same grounds and with the same
+      re-measurement as the sibling V0005 row appended immediately above; read that row for
+      the append-only-history argument that makes exemption the right instrument here.
+      Re-measured for this path: `version_from` (8), `version_to` (9), `description`, and the
+      `upgrade()` body are all IDENTICAL under `ast.unparse` comparison (`unparse(upgrade)` at
+      2327 characters on both sides, function signature included); whole-module AST
+      identical; imported-name
+      delta zero added / zero removed.
+      STRICTLY CLEANER THAN THE PRECEDENT IT RE-STAMPS: e9263673's row discharged an
+      IMPORT-ONLY change including an F401 removal of an unused `pathlib.Path`, and this
+      sweep removes no import and adds none.
+      CHANGE-SCOPED via layout_signature, re-stamping e9263673 -> 52d81257. APPENDED rather
+      than edited in place: a signature-less append would INHERIT e9263673 under
+      _load_allowlist's merge and check-b would still re-fire.
+    layout_signature: "52d812575f4ec8d580be100d9f38a1f9bd9c981ae3113e5abfe5be0afe4329f5"

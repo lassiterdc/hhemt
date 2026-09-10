@@ -154,7 +154,7 @@ def _verify_sif(sif_path: Path, expected_sha256: str) -> tuple[bool, bool | None
         raise ProcessingError(
             operation="reprex SIF verify",
             filepath=sif_path,
-            reason=(f"sha256 mismatch: this is NOT the reference SIF " f"(expected {expected_sha256}, got {digest})."),
+            reason=(f"sha256 mismatch: this is NOT the reference SIF (expected {expected_sha256}, got {digest})."),
         )
     # Best-effort PGP: warn (return None) when the apptainer binary is unavailable.
     try:

@@ -253,7 +253,7 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: errors_and_warnings
     caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
-    renderer_sha256: 1632cee63a3bce0f8406c1b97abf207ca642694b375c888e64c59196b9ad5491
+    renderer_sha256: 658acdcefd7ba3e3f9f0a27552306e9651051208b5f134e1d05da6c2fc171685
     justification: >-
       docs-and-experiment-system merge. Caption re-read against a MEASURED diff
       rather than a read-through. The merge-authored delta to this renderer --
@@ -272,6 +272,98 @@ unpaired_allowlist:
       Digest recorded AFTER the whole-file ruff-format pass that rides this same
       commit -- recording it before would have gone stale on arrival and the
       guard would have fired again with a stale-exemption message.
+    justification_2026_09_10: >-
+      RE-RECORDED for a ruff-format sweep, and THE ENTRY ABOVE PREDICTED THIS FIRING almost
+      exactly: it recorded its digest after the reformat riding that commit precisely so the
+      exemption would not "go stale on arrival". It did not. A LATER sweep moved the file
+      again, so 1632cee6 was the sha at HEAD and at BOTH merge parents, and the guard fired
+      with the stale-exemption message that entry named. The expiry mechanism worked as
+      designed; this is its second turn, not its failure.
+      THE SWEEP IS EXACTLY WHAT THE PUSH-RANGE GATE DEMANDED -- 44 files, no wider. An
+      earlier draft of this change cleared 115 files repo-wide; that was narrowed after
+      measurement showed a repo-wide pass carries costs a formatting pass has no business
+      carrying: it broke ELEVEN layout_signature attestations rather than three, and it
+      flipped _GENERATOR_SOURCE_HASH (e4985d0c -> 49e25896) by touching
+      synthetic_model/landuse.py, invalidating every cached synthetic model. Under the
+      44-file set the generator hash is UNCHANGED at e4985d0c0c7b275e and no
+      synthetic_model file is touched. Recorded here because the width of a formatting
+      sweep is the kind of decision a later reader will otherwise have to re-derive.
+      DISCHARGED BY MEASUREMENT, and this measurement is STRONGER than the AST-vs-HEAD form
+      the sibling entries in this file use. ast.dump(parse(...), include_attributes=False) of
+      the working-tree file is IDENTICAL to the same dump at HEAD AND at BOTH merge parents
+      (acdb25c3, 53825fea), so there is no semantic delta anywhere in the range from any
+      basis -- which forecloses the objection that the merge's second-parent delta might be
+      unexamined here. Measured across the whole 44-file sweep: 44 files whose BYTES all
+      changed, 44 of 44 AST-identical, 0 differing, 0 unparseable, and the comment multiset
+      byte-identical in 44 of 44 with all 24 load-bearing comments (type: ignore, noqa,
+      EXEMPT-DU, REVIEW, pragma) across 11 files preserved. This file's own diff is three
+      implicit string concatenations joined into single literals (two _CHECK_VOCABULARY
+      description values, one overall-banner f-string); each joined value is character-for-
+      character what the concatenation produced, which is why the ASTs match rather than
+      merely resemble each other.
+      THE RE-READ WAS PERFORMED, because this guard checks PAIRING and an AST argument is a
+      claim about the RENDERER rather than about the caption -- the standard this file's
+      system_overview entry set. AND THE RE-READ FOUND TWO REAL DEFECTS, neither introduced
+      by the reformat, so the caption is EDITED in this same commit rather than merely
+      certified:
+      (1) SECTION ORDER WAS INVERTED. The caption said "organized by (1) system-level
+      checks, (2) aggregate per-scenario checks, (3) granular per-scenario stage failures,
+      and (4) resource-utilization mismatches". The renderer's body_parts list emits
+      system-level, aggregate, RESOURCE-UTILIZATION, then GRANULAR -- items 3 and 4
+      transposed. The transposition is deliberate on the renderer's side and carries a
+      stated rationale immediately above the list ("I7-3: Granular Per-Scenario Failures
+      moves LAST ... Check-bearing sections are now contiguous"); the caption was never
+      updated to follow it.
+      WHY THE 2026-09-01 RE-READ ABOVE MISSED IT, recorded so the next reader can avoid the
+      same substitution: that re-read verified the section-label SET was byte-identical
+      across HEAD, MERGE_HEAD and the merged index, and concluded "the caption's claim of
+      four sections ... is exactly as true after the merge as before it". That is TRUE of
+      the set and beside the point, because the caption asserts an ORDER. Set-identity is
+      the wrong invariant for an ordered claim. This is the guard's own conceded residual --
+      it forces a human to look, it cannot make them look at the right thing.
+      (2) MECHANISM WAS MISDESCRIBED, AND TWO SUCCESSIVE CORRECTIONS OF IT WERE ALSO WRONG.
+      The caption said the page "runs the same checks as the pytest aggregate
+      assert_analysis_workflow_completed_successfully". It runs nothing at render time: per
+      Gotcha 53 Class-Y / Option D the sole data read is the PERSISTED
+      validation_report.json, via one load_validation_report(analysis) call at line 520, and
+      the renderer's own docstring says "never validate_analysis() at render time". That
+      read is graceful-absent -- but NOT in the direction the first correction asserted. It
+      does NOT render an empty page. ValidationReport.overall_passed is
+      all(c.passed for c in self.checks), vacuously True over an empty list, so
+      _render_overall_banner takes its PASS branch while _omitted_note(0) and all four table
+      renderers return "". Executed against ValidationReport(checks=[]) at this commit:
+      exactly ONE non-empty body part, verbatim
+      <div class="banner pass">✓ 0 of 0 applicable checks passed.</div> -- an
+      affirmative green tick, strictly worse than an empty page, because an empty page
+      announces itself.
+      THE SECOND CORRECTION THEN OVERSHOT, and this is the one a future reader is most
+      likely to repeat: it said a zero denominator MEANS the read-model was missing. It does
+      not. _render_overall_banner computes applicable = [c for c in report.checks if
+      getattr(c, "applicable", True)], so len(applicable) is 0 under TWO distinct states --
+      an empty or absent read-model, AND a present read-model whose every check carries
+      applicable=False, which analysis_validation.py sets at four sites and documents as a
+      deliberate third state. Both executed at this commit and both emit a byte-identical
+      banner. What separates them is the OMISSION LINE: checks=[] yields omitted count 0 and
+      no note, whereas an all-non-applicable report yields a note reading "1 check not
+      applicable to this analysis was omitted." So the discriminator is the presence of that
+      note, not the denominator, and the caption now says exactly that. Naming one cause as
+      THE cause is the same over-precision the original defect committed, one correction
+      later.
+      THE DIGEST IS RE-RECORDED EVEN THOUGH THE CAPTION EDIT ALONE WOULD SATISFY THE GUARD,
+      and that is the point of recording it. main() skips a pair before consulting the
+      allowlist at all -- `if renderer_rel not in changed or caption_rel in changed:
+      continue` -- so with the caption in the changed set this pair never reaches the
+      digest branch and 1632cee6 would have survived, unreported, to fire on some later
+      commit citing a pre-sweep digest. Measured by driving the guard's own predicate over
+      four apply-arms at this commit: nothing-applied FAILS with one stale exemption;
+      caption-only PASSES with 1632cee6 still on disk; digest-only PASSES via the digest
+      branch; all-three PASSES via the skip branch with the correct digest on disk. Only
+      the last arm is both green and stale-free. That caption-only arm is verbatim the
+      KNOWN-STALE EXEMPTION state this file's header spends forty lines warning about, and
+      under this narrowed sweep this pair is the ONLY finding the guard reports -- so
+      caption-edit-alone would clear the gate while leaving the one true defect in place.
+      Recorded post-sweep, so the exemption expires on the next real change to this
+      renderer rather than on arrival.
   - renderer: cross_experiment_disk_utilization
     caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst
     renderer_sha256: b698ad22092661e1f49fa70f4e0df587f056383716bcad95ddd2f9c71e509d2d
