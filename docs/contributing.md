@@ -119,6 +119,26 @@ pip install -e ".[docs]"
 mkdocs serve
 ```
 
+## Documentation gate exemptions
+
+A page may declare itself exempt from part of the documentation content gate.
+The declaration is an HTML comment on the page's first line naming a marker and
+the class groups it exempts, and the table below is generated from the gate's own
+constants at documentation build time, so it cannot fall behind them.
+
+<!-- hhemt:marker-governance -->
+
+An exemption names a GROUND, and the ground is what decides whether it may be
+withdrawn. A ground is either a recorded ruling, or the word `incidental`. An
+incidental exemption exists because the page needed relief from one class and
+took the whole group with it; anyone who removes that need may delete the
+declaration. A ruling-backed exemption may not be withdrawn without reopening
+the ruling. Add a marker only when the page cannot meet the class it is
+escaping; a marker is a statement about the file rather than a way to quiet a finding.
+
+This page carries an exemption itself: it is written in the maintainer's own
+voice and is not held to the project's prose conventions.
+
 ## Branching and releases
 
 `develop` is the default branch; all work branches from and merges back into `develop`. `main` is release-only and advances only via a validated `develop` → `main` release pull request (all tests green, docs complete), tagged `vX.Y.Z`. See [Branching and release model](explanation/branching-and-release-model.md) for the two branches, how to branch as a contributor, what counts as a release, and the two independent version axes.

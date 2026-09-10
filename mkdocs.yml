@@ -56,6 +56,7 @@ theme:
 hooks:
   - hooks/config_reference.py
   - hooks/eda_kind_table.py
+  - hooks/marker_governance_table.py
 
 markdown_extensions:
   - abbr
