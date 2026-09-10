@@ -33,8 +33,11 @@ patterns match SELF-DECLARATIONS about the page's own completeness, never
 mentions of placeholder syntax. Content inside fenced code blocks is skipped for
 the same reason: a fence is where a legitimate ``TODO`` example lives.
 
-Exit 0 = clean. 1 = findings (enumerated with path:line). 2 = usage error.
-Advisory findings NEVER affect the exit code; pass ``--advisory`` to print them.
+Exit 0 = clean. 1 = findings (enumerated with path:line). 2 = usage error, which
+now INCLUDES every population this gate cannot derive. 3 = an unanticipated
+internal error, printed with its traceback -- a distinct code because exit 1 is
+the FINDINGS code, and a crash reported as findings is a false statement about
+the docs. Advisory findings NEVER affect the exit code; pass ``--advisory``.
 
 NOT pure stdlib, and any job that imports this module must install the ``docs``
 extra. ``griffe`` and ``yaml`` are imported at module scope, and
@@ -49,6 +52,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import traceback
 from pathlib import Path
 
 # Self-declarations that a page's own content is unfinished. Deliberately not a
@@ -397,7 +401,14 @@ def _prose_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
 
 
 class PopulationDerivationError(RuntimeError):
-    """A population cannot be derived because git could not answer.
+    """A population this gate scans cannot be derived faithfully.
+
+    THREE causes, and naming only the first is what made three sibling failures
+    raise a bare `ValueError` instead: git could not answer for the tracked-file
+    population, OR `mkdocs.yml` declares a renderer option this derivation does
+    not model, OR the manifested modules yield nothing to check. All three are
+    the same statement -- the population is not the page's -- so all three raise
+    this type and exit 2 with a clean message and no traceback.
 
     A SIBLING of `MarkerDeclarationError` rather than a use of it: a repository
     git cannot locate is not a marker-declaration problem, and reusing that type
@@ -725,9 +736,18 @@ _MODELLED_OPTIONS = ("filters",)
 # cannot move it. The other three are presentation and docstring parsing.
 _MEMBERSHIP_NEUTRAL_OPTIONS = ("docstring_style", "members_order", "summary", "show_if_no_docstring")
 
-# MEMBERSHIP-MOVING: not required for the refusal, since anything unclassified is
-# refused anyway, but naming them buys a better message and stops a later author
-# tidying the list from reclassifying one by inspection.
+# MEMBERSHIP-MOVING, RECORDED AS PROSE RATHER THAN AS A TUPLE:
+#
+#   members, inherited_members, show_submodules, preload_modules, extensions,
+#   allow_inspection, force_inspection, merge_init_into_class
+#
+# These eight were adjudicated individually and the ADJUDICATION is what has to
+# survive. The tuple that used to hold them was an ORACLE and an incomplete one:
+# it enumerated 8 of the 62 options this derivation refuses, so its only runtime
+# effect was to decorate the refusal message for those 8 and stay silent for the
+# other 54. Deleting it changes no refusal -- anything unclassified is refused
+# anyway. Deleting the RECORD would let a later author reclassify one by
+# inspection, which is what these paragraphs prevent.
 #
 # `merge_init_into_class` is the one that most needs to be written down, because
 # it READS presentational and is not. It folds `__init__`'s docstring into the
@@ -741,17 +761,6 @@ _MEMBERSHIP_NEUTRAL_OPTIONS = ("docstring_style", "members_order", "summary", "s
 # the loader below collects without it. Measured here: `force_inspection` does not
 # shift this population, it makes `hhemt` fail to load at all, which the `except`
 # in the load loop would swallow into a silently narrowed scan.
-_MEMBERSHIP_OPTIONS = (
-    "members",
-    "inherited_members",
-    "show_submodules",
-    "preload_modules",
-    "merge_init_into_class",
-    "extensions",
-    "allow_inspection",
-    "force_inspection",
-)
-
 _UNSET = object()
 
 
@@ -822,12 +831,10 @@ def _handler_options(mkdocs_yml: Path = MKDOCS_YML) -> dict:
             if k not in _MODELLED_OPTIONS and k not in _MEMBERSHIP_NEUTRAL_OPTIONS and v != _option_default(k)
         ]
         if unclassified:
-            known = [k for k in unclassified if k in _MEMBERSHIP_OPTIONS]
-            raise ValueError(
+            raise PopulationDerivationError(
                 f"{mkdocs_yml} declares python-handler option(s) this population derivation does "
-                f"not model: {', '.join(sorted(unclassified))}."
-                + (f" {', '.join(sorted(known))} change which members render." if known else "")
-                + " Classify each as modelled or membership-neutral rather than letting the gate "
+                f"not model: {', '.join(sorted(unclassified))}. "
+                "Classify each as modelled or membership-neutral rather than letting the gate "
                 "scan a population the page no longer has."
             )
         if "filters" in declared:
@@ -942,7 +949,9 @@ def rendered_docstrings(src: Path = None, api_page: Path = None) -> list[tuple[s
         resolved.append(module)
     if not resolved:
         roots_text = ", ".join(str(root) for root in roots)
-        raise ValueError(f"no module named on {api_page} resolved under {roots_text} -- nothing to check.")
+        raise PopulationDerivationError(
+            f"no module named on {api_page} resolved under {roots_text} -- nothing to check."
+        )
     loader.resolve_aliases(external=False)
 
     out: list[tuple[str, Path, int, str]] = []
@@ -990,7 +999,7 @@ def rendered_docstrings(src: Path = None, api_page: Path = None) -> list[tuple[s
 
     empty = [m for m, c in per_module.items() if c == 0]
     if empty:
-        raise ValueError(
+        raise PopulationDerivationError(
             f"manifested module(s) contributed zero documented members: {', '.join(empty)}. "
             f"That is the STRICT signature -- check the population derivation, not the modules."
         )
@@ -1046,6 +1055,15 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         return 2
+    except Exception:
+        traceback.print_exc()
+        print(
+            "ERROR: unanticipated failure inside this gate. Exit 3, not 1: 1 is the "
+            "FINDINGS code, and a crash reported as findings is a false statement "
+            "about the docs.",
+            file=sys.stderr,
+        )
+        return 3
 
 
 def _run(args: argparse.Namespace) -> int:

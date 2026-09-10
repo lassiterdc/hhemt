@@ -41,3 +41,12 @@ jobs:
       # against a bare checkout.
       - name: Assert docs content hygiene
         run: python scripts/check_docs_content.py
+
+      # The two mirrors between gate A's DERIVED population and what the built
+      # site actually renders, plus the pinned public surface. Needs the SITE, so
+      # it is a third leaf rather than a clause inside the step above -- that
+      # step's "needs no built SITE" property is the whole reason it cannot live
+      # there. Imports both gates and is imported by neither, so it inverts no
+      # import direction.
+      - name: Assert published-surface fidelity and baseline
+        run: python scripts/check_published_surface.py --site-dir site

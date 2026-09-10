@@ -152,7 +152,7 @@ def test_unmodelled_handler_options_raise_rather_than_silently_narrowing(tmp_pat
         "            show_submodules: true\n",
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="show_submodules"):
+    with pytest.raises(cdc.PopulationDerivationError, match="show_submodules"):
         cdc._handler_options(yml)
 
 
@@ -292,7 +292,7 @@ def test_empty_population_raises_rather_than_passing_vacuously(tmp_path):
     """Non-vacuity: an unresolvable population is an error, never a clean scan."""
     api = tmp_path / "api.md"
     api.write_text("# API Reference\n\n::: nothing.here\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="nothing to check"):
+    with pytest.raises(cdc.PopulationDerivationError, match="nothing to check"):
         cdc.rendered_docstrings(tmp_path / "src", api)
 
 
@@ -402,6 +402,93 @@ def test_main_returns_2_without_git_rather_than_a_traceback(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "git" in err, f"exit 2 came from a different path: {err!r}"
     assert "docs dir not found" not in err, "this is the docs-dir path, not the derivation path"
+
+
+_MKDOCS_WITH = (
+    'plugins:\n  - mkdocstrings:\n      handlers:\n        python:\n          options:\n            filters: ["!^_"]\n'
+)
+
+
+def test_an_unmodelled_handler_option_reaches_exit_2_rather_than_escaping(tmp_path, capsys, monkeypatch):
+    """`mkdocs.yml` is read through a DEF-TIME-bound default, so this path is
+    unexercised by every real invocation: `docs-build.yml` runs against the
+    repository's own config, where every declared option is classified and the
+    refusal never fires. Unexercised is not undriven -- the refusal is one
+    configuration edit away, and until this test it escaped `main()` entirely.
+
+    `_handler_options` is re-bound rather than `MKDOCS_YML`, because
+    `_handler_options(mkdocs_yml: Path = MKDOCS_YML)` binds its default at DEF
+    time: re-pointing the module global changes nothing and the arm would pass
+    for free. The wrapper forwards to the REAL function, so the raise fires at
+    its real site and travels the real stack.
+
+    Exit code alone does not discriminate -- `main()` already returns 2 for a
+    missing docs dir and for a git failure -- so the option name is the
+    separator.
+    """
+    yml = tmp_path / "mkdocs.yml"
+    yml.write_text(_MKDOCS_WITH + "            merge_init_into_class: true\n", encoding="utf-8")
+    real = cdc._handler_options
+    monkeypatch.setattr(cdc, "_handler_options", lambda *_a, **_k: real(yml))
+
+    rc = cdc.main(["--docs-dir", str(_REPO / "docs")])
+
+    assert rc == 2, "an unmodelled handler option is a derivation failure and owes the documented exit 2"
+    err = capsys.readouterr().err
+    assert "merge_init_into_class" in err, f"exit 2 came from a different path: {err[:400]!r}"
+    assert "docs dir not found" not in err, "this is the docs-dir path, not the derivation path"
+
+
+def test_a_module_contributing_zero_members_reaches_exit_2_rather_than_escaping(capsys, monkeypatch):
+    """The STRICT signature, driven through the process boundary.
+
+    `test_every_manifested_module_contributes_at_least_one_member` asserts the
+    population is non-empty; nothing asserted what happens when it is not. The
+    guard exists and, before this round, raised a bare `ValueError` that
+    `main()`'s handler did not name -- so the gate reported a derivation failure
+    with the FINDINGS exit code.
+
+    Driven by neutering the filter predicate, which makes every module contribute
+    zero non-module members; the two manifested modules that carry no module
+    docstring then contribute nothing at all and the real guard fires at its real
+    site.
+    """
+    monkeypatch.setattr(cdc, "_passes_filters", lambda _name, _filters: False)
+
+    rc = cdc.main(["--docs-dir", str(_REPO / "docs")])
+
+    assert rc == 2, "the STRICT signature is a derivation failure and owes the documented exit 2"
+    err = capsys.readouterr().err
+    assert "contributed zero documented members" in err, f"exit 2 came from a different path: {err[:400]!r}"
+    assert "docs dir not found" not in err, "this is the docs-dir path, not the derivation path"
+
+
+def test_an_unanticipated_failure_returns_3_with_its_traceback(capsys, monkeypatch):
+    """The backstop, and the ONE test here that must not anchor on wording.
+
+    The message this branch prints cannot exist before the branch does, so an
+    assertion on it is green pre-fix and green post-fix for different reasons.
+    Both operands asserted below exist in both worlds: whether `main()` RETURNS
+    at all rather than letting the exception escape, and whether the traceback
+    survives. Pre-fix the exception escapes `main()` and this test errors; a
+    re-raise implementation would return the process to exit 1, which is the
+    FINDINGS code and the collision the round repairs.
+
+    Unexercised by construction: no real input produces a `KeyError` here, which
+    is exactly why a backstop is what covers it.
+    """
+
+    def _boom(*_a, **_k):
+        raise KeyError("an exception nobody anticipated")
+
+    monkeypatch.setattr(cdc, "_repo_root", _boom)
+
+    rc = cdc.main(["--docs-dir", str(_REPO / "docs")])
+
+    assert rc == 3, "an unanticipated failure must not borrow 1 (findings) or 2 (derivation)"
+    err = capsys.readouterr().err
+    assert "Traceback (most recent call last)" in err, "the backstop must PRESERVE the traceback, not swallow it"
+    assert "KeyError" in err, "the traceback must name the original exception"
 
 
 def test_gitignored_build_output_stays_in_the_population():
