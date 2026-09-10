@@ -38,7 +38,12 @@ jobs:
     - name: Install project with test extras
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[test]"
+        # `docs` is REQUIRED here, not optional: tests/test_check_docs_content.py
+        # imports scripts/check_docs_content.py, which imports `griffe` and `yaml`
+        # at module scope to derive the rendered-docstring population the way the
+        # renderer does. Both live in `docs`, so `.[test]` alone cannot COLLECT
+        # that file and the whole step errors before a single assertion runs.
+        pip install -e ".[test,docs]"
     - name: Lint with ruff
       run: |
         # stop the build if there are Python syntax errors or undefined names

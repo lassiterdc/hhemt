@@ -35,7 +35,13 @@ the same reason: a fence is where a legitimate ``TODO`` example lives.
 
 Exit 0 = clean. 1 = findings (enumerated with path:line). 2 = usage error.
 Advisory findings NEVER affect the exit code; pass ``--advisory`` to print them.
-Pure stdlib.
+
+NOT pure stdlib, and any job that imports this module must install the ``docs``
+extra. ``griffe`` and ``yaml`` are imported at module scope, and
+``mkdocstrings_handlers.python`` lazily, so a bare checkout cannot even import
+this file. This sentence previously read "Pure stdlib", which is what a reader
+consults to decide what a CI job must install -- and ``test.yml`` was written
+against it and could not collect the test module that imports this one.
 """
 
 from __future__ import annotations
