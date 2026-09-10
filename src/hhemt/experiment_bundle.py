@@ -43,9 +43,10 @@ def resolve_hpc_system_config(
 
     Precedence (highest first):
       1. explicit ``override`` (the ``--hpc-system-config`` CLI argument / argv[2]).
-      2. the bundle's declared ``hpc_system_config[cluster]`` — estate-relative,
+      2. the bundle's declared ``hpc_system_config[cluster]`` — deployment-config-relative,
          resolved against ``$HHEMT_DEPLOYMENT_CONFIG`` (or, absent that, the bundle's
-         grandparent, i.e. ``{estate}/experiments/{slug} -> {estate}``). Consulted ONLY
+         grandparent, i.e. ``{deployment_config}/experiments/{slug} ->
+         {deployment_config}``). Consulted ONLY
          when a ``bundle`` is supplied and declares this cluster.
       3. ``$HHEMT_HPC_SYSTEM_CONFIG``.
       4. ``$HHEMT_DEPLOYMENT_CONFIG/hpc/hpc_system_config_{cluster}.yaml``.
@@ -64,20 +65,20 @@ def resolve_hpc_system_config(
         if declared.is_absolute():
             path = declared
         else:
-            estate = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-            if estate:
-                estate_root = Path(estate).expanduser()
+            deployment_config = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
+            if deployment_config:
+                deployment_config_root = Path(deployment_config).expanduser()
             elif bundle_dir is not None:
-                # {estate}/experiments/{slug} -> {estate}
-                estate_root = Path(bundle_dir).expanduser().resolve().parent.parent
+                # {deployment_config}/experiments/{slug} -> {deployment_config}
+                deployment_config_root = Path(bundle_dir).expanduser().resolve().parent.parent
             else:
-                estate_root = Path.cwd()
-            path = estate_root / rel
+                deployment_config_root = Path.cwd()
+            path = deployment_config_root / rel
     elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
         path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
     else:
-        estate = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-        if not estate:
+        deployment_config = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
+        if not deployment_config:
             raise ConfigurationError(
                 field="hpc_system_config",
                 message=(
@@ -89,7 +90,7 @@ def resolve_hpc_system_config(
                 ),
                 config_path=None,
             )
-        path = Path(estate).expanduser() / "hpc" / f"hpc_system_config_{cluster}.yaml"
+        path = Path(deployment_config).expanduser() / "hpc" / f"hpc_system_config_{cluster}.yaml"
     if not path.is_file():
         raise ConfigurationError(
             field="hpc_system_config",
