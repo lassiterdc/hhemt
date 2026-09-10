@@ -57,7 +57,7 @@ def model_arm_toggles(arm: str) -> dict[str, bool]:
     """The system-config toggle overlay for one model arm.
 
     Raises KeyError on an unknown arm rather than defaulting, so a typo in the
-    estate config fails at case construction rather than producing a silently
+    deployment config fails at case construction rather than producing a silently
     coupled run mislabelled as uncoupled.
     """
     return dict(_MODEL_ARMS[arm])

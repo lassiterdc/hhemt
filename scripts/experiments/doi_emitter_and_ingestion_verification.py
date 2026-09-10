@@ -117,14 +117,14 @@ def _resolve_hpc_system_config(override: str | None = None) -> Path:
     elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
         path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
     else:
-        estate = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-        if not estate:
+        deployment_config = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
+        if not deployment_config:
             raise FileNotFoundError(
                 "No hpc_system_config source: set $HHEMT_DEPLOYMENT_CONFIG to your "
                 "compute-visible private deployment-config checkout (or set "
                 "$HHEMT_HPC_SYSTEM_CONFIG, or pass the path as argv[1])."
             )
-        path = Path(estate).expanduser() / "hpc" / "hpc_system_config_uva.yaml"
+        path = Path(deployment_config).expanduser() / "hpc" / "hpc_system_config_uva.yaml"
     if not path.is_file():
         raise FileNotFoundError(
             f"No UVA hpc_system_config at {path}.\n"
@@ -460,7 +460,7 @@ def verify(
     # FQ2 (R9): prove the build-on-ingest actually happened (3 fresh content-addressed SIFs).
     _post = sorted(_cache.glob("hhemt-*.sif"))
     print(
-        f"[verify] build-on-ingest: {len(_post)} SIF(s) freshly built in {_cache}: " f"{[p.name for p in _post]}",
+        f"[verify] build-on-ingest: {len(_post)} SIF(s) freshly built in {_cache}: {[p.name for p in _post]}",
         flush=True,
     )
     if len(_post) < 3:
