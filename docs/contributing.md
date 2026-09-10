@@ -92,6 +92,16 @@ open an issue to discuss before submitting.
       so a typo tightens the guard rather than disarming it. `PERMITTED_VENUES` in
       `src/hhemt/_compile_venue.py` names a CAPABILITY rather than a machine and today
       has exactly one member, `toolchain`.
+    - **Where those runs happen, which the code does not enforce.** Test runs that
+      compile the solver or execute a simulation are performed on Rivanna. That covers
+      Gate B and the scheduler-array suite alike, and it is a project rule rather than a
+      restriction the toolkit imposes: as the paragraph above says, `PERMITTED_VENUES`
+      names a capability, and nothing in the code knows what Rivanna is. Tests that
+      neither compile the solver nor execute a simulation are NOT restricted and may run
+      locally. A suite-level green claim additionally requires `scope=union` (see the
+      [CLI reference](reference/cli.md#hhemt-test-toolkit)), and it is produced there.
+      For why the guard is shaped this way, see
+      [the compile venue, and why the token relaxes rather than arms](explanation/testing-the-toolkit.md#the-compile-venue-and-why-the-token-relaxes-rather-than-arms).
   Which tier `just qa` gives you does NOT depend on your machine: `compile_tier` is
   derived from each test's fixtures at collection time, so the split is the same
   everywhere. Before this was declared it depended on whether `cmake` was on your PATH.

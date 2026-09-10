@@ -92,6 +92,24 @@ one of two independent arms guarding it; the other is the `.triage` run-director
 Only `scope=union`, the array plus its complement, supports a suite-level green claim.
 A `scope=array` result does not cover the complement's tests at all.
 
+**Splitting a heavy component.** A single heavy component can dominate the array's wall
+clock. `python -m hhemt.suite._runner --heavy-split-budget-min {minutes}` splits each heavy
+component into time-balanced parts of about that length. It requires `--durations-from
+{run-dir}`, which supplies the per-file duration table from an earlier run, and
+`--isolate-trees-per-chunk`, which gives each part its own analysis-tree root. Neither is
+exposed by this CLI; both are flags on the underlying module, reached the same way
+`--warm-performed-externally` is.
+
+**Isolation is a requirement rather than an option, and omitting it raises.** Parts of one
+component would otherwise share a single analysis tree and race it, which presents as an
+intermittent red in an unrelated test rather than as a partition error.
+
+**Two costs to price before asking for the split.** Isolation turns one shared fixture build
+into one build per part, paid in the same wall clock the split is buying. And a first run at
+any new provenance is not comparable to an earlier one, which is a standing property of the
+fixture cache rather than a property of these flags: see
+[the fixture cache, and why a rebuild is silent](../explanation/testing-the-toolkit.md#the-fixture-cache-and-why-a-rebuild-is-silent).
+
 ## Exit codes
 
 The CLI uses structured exit codes, so a script can branch on the failure class
