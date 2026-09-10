@@ -10,7 +10,7 @@ Exit 2 = usage/IO error.
 Checks:
   1. experiment.yaml exists and validates against ExperimentConfig (extra="forbid").
   2. Every bundle-relative path the descriptor names exists on disk.
-  3. README.md and rerun.sh exist (the shape both estate exemplars share).
+  3. README.md and rerun.sh exist (the shape both bundled exemplars share).
 """
 
 from __future__ import annotations

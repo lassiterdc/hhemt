@@ -753,13 +753,12 @@ def plan(args: argparse.Namespace) -> int:
         raise SystemExit(
             f"refusing to plan: drive resolved hhemt from {_rec['resolved_tree']!r} but this "
             f"run is declared against {_rec['expected_tree']!r}. The manifest would be derived "
-            "by one version and executed by another. IF YOU REACHED THIS FROM THE ESTATE "
-            "HARNESS this is expected and the fix is one line: rerun.sh invokes this driver "
-            "as `python -m hhemt.suite._runner` with NO PYTHONPATH, deliberately and by a "
-            "stated design predating this floor (its comment at rerun.sh:79 reads `-m` rather "
-            "than a path so the estate needs no PYTHONPATH), so it resolves hhemt from the "
-            "conda env rather than from --toolkit. Export PYTHONPATH={--toolkit}/src at that "
-            "call site, exactly as submit_suite_uva.sh:72 already does for the array elements."
+            "by one version and executed by another. Most often the driver was invoked as "
+            "`python -m hhemt.suite._runner` with no PYTHONPATH set, so hhemt resolved from "
+            "the installed environment; it also happens when PYTHONPATH or an editable "
+            "install points at a tree other than --toolkit. Export PYTHONPATH={--toolkit}/src "
+            "at the call site that launches this driver, and at every array element that "
+            "runs a chunk."
         )
 
     node_ids, closures, marks, declared_complement = collect(repo, args.python)

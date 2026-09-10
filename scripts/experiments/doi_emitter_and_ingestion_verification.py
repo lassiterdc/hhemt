@@ -309,7 +309,8 @@ def provision_producer_sifs(
         f"[provision] built {len(_CONTAINER_DEFS)} producer SIFs in {_PRODUCER_SIF_DIR}\n"
         f"[provision]   sif_paths_by_arch -> {sorted(sif_paths_by_arch)}; "
         f"sif_path -> {cpu_sif.name}\n"
-        f"[provision]   derived config: {derived} (estate config unmodified)",
+        f"[provision]   derived config: {derived} "
+        f"(your source config {cfg_path} is unmodified)",
         flush=True,
     )
     return derived
