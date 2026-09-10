@@ -112,9 +112,20 @@ def test_v16_to_v17_round_trip(tmp_path: Path) -> None:
     result = runner.run_migration(work, target=17, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
     assert result.applied
     # The committed fixtures carry structural baseline signals only through v4
-    # (V0005+ are content/no-op migrations with no structural signal), so the v16
-    # fixture INFERS as 4 and run_migration(target=17) re-runs V0005..V0017 (all
-    # idempotent). V0017 is the terminal migration reaching layout 17.
+    # (V0005+ are content/no-op migrations with no structural signal), and the v4
+    # signal establishes only a LOWER BOUND rather than an exact version -- so no
+    # rung can date a v4..v20 tree from its contents. Those SEVENTEEN fixtures
+    # therefore STATE their layout version in a committed _version.json and resolve
+    # through the record rung, not through inference; v16 resolves to 16 and
+    # run_migration(target=17) plans V0017 alone. V0017 is the terminal migration
+    # reaching layout 17.
+    #
+    # WHY THE STAMPS EXIST. These fixtures were inference-dated until the zarr-attrs
+    # rung was taught to report indeterminacy instead of returning an exact 4 from
+    # evidence establishing only "post-V0004". v3 is deliberately NOT stamped and is
+    # now the LAST inference-dated fixture: absence of a Conventions attr means
+    # pre-V0004, so its bound is exact. Measured on the applied set: v3 is the only
+    # entry in this corpus that reaches that rung at all -- one call, on its exact arm.
     assert result.migrations_applied[-1] == "V0017__version_provenance_stamp"
     assert "V0017__version_provenance_stamp" in result.migrations_applied
     expected_files = _walk_relative(expected) - {"_version.json"}

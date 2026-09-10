@@ -195,6 +195,24 @@ def infer_layout_version(target_dir: Path) -> int | None:
         return st.layout_version if st else None
     if _has_legacy_iloc_prefix(target_dir):
         return 0
+    # A nested per-member tier's version is not unknown: its master's record states it,
+    # and the two are written by the same run. PRECEDENCE IS THREE-TIER and this rung is
+    # the third tier, which is why it sits HERE and not higher: (1) the target's own
+    # record wins outright -- rung 1 above; (2) positive legacy-content evidence found in
+    # the target itself beats a stamp inherited from elsewhere -- the rung directly above,
+    # which is why this block sits BELOW it; (3) an inherited stamp beats a
+    # version-discriminating content heuristic, which is what makes a CF-1.13 member
+    # resolve to its master's version instead of refusing. Measured when this block was
+    # placed above the legacy rung: a member carrying iloc-prefixed sims under a master
+    # stamped 22 inferred 22 and planned ZERO of the 22 migrations its own contents prove
+    # are needed -- a total silent skip, the same failure the rung below records.
+    # The container names are inlined to match `_has_legacy_iloc_prefix` above, which
+    # already hardcodes the same pair.
+    tier = target_dir.parent
+    if tier.name in ("members", "subanalyses"):
+        master = read_version_file(tier.parent)
+        if master is not None:
+            return master.layout_version
     if (target_dir / "experiment_datatree.zarr").exists():
         # A store under the unified name is post-V0021 by construction, so the
         # flat-summary branch below must NOT claim it as layout 1. Measured: without
@@ -245,11 +263,20 @@ def _has_flat_mode_zarrs(target_dir: Path) -> bool:
     return any(target_dir.glob("*_summary.zarr")) or any(target_dir.glob("*_timeseries.zarr"))
 
 
-def _detect_zarr_layout_version(target_dir: Path) -> int:
+def _detect_zarr_layout_version(target_dir: Path) -> int | None:
     """Inspect analysis_datatree.zarr root attrs for layout_version hints.
 
     V0003 introduced the datatree (no Conventions attr); V0004 added
-    Conventions.
+    Conventions. That discriminator DECAYED at V0005: `apply_cf_attributes`
+    stamps CF-1.13 on every consolidated tree at every later layout, so the
+    attribute's presence establishes only a LOWER BOUND of "post-V0004" and
+    fixes no exact version. Reporting `4` from it schedules every migration
+    in (4, LAYOUT_VERSION] against a tree that may already be current.
+    Returning None mirrors the repair the unified-store rung above already
+    received, whose comment states the same lower-bound principle; the sole
+    consumer (`runner._resolve_current`) already raises BaselineRequiredError
+    on None, so the operator gets an actionable `baseline {N}` remedy.
+
 
     Refuses to silently default on a hard ambiguity: if the zarr store is
     unreadable (corruption, zarr library version mismatch, partial write),
@@ -278,5 +305,5 @@ def _detect_zarr_layout_version(target_dir: Path) -> int:
 
         raise BaselineRequiredError(target_dir) from exc
     if str(attrs.get("Conventions", "")).startswith("CF-1.13"):
-        return 4
+        return None
     return 3
