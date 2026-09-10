@@ -132,6 +132,23 @@ def _normalize_volatile(text: str) -> str:
     text = text.replace(_hhemt_cache, "{HHEMT_CACHE}")
     text = re.sub(r"(\{HHEMT_CACHE\}/synthetic_test_runs)/[^/'\"\s]+", r"\1/{SLUG}", text)
     text = re.sub(r"(\{HHEMT_CACHE\}/synthetic_test_models)/[^/'\"\s]+", r"\1/{MODEL_KEY}", text)
+    # SAME tier, RELATIVE rendering. `watershed_rel_path` and the boundary source are
+    # computed with os.path.relpath, so they reach this tier as `../../../../synthetic_
+    # test_models/{key}/...` with no `{HHEMT_CACHE}` prefix for the rule above to anchor
+    # on. Anchoring on the `../` RUN rather than on the tier name is deliberate: a bare
+    # `synthetic_test_models/` anchor would also match the already-masked absolute form
+    # and any future absolute occurrence, widening a rule whose narrowness is the reason
+    # the sibling roots (`_triton_canonical`, `sif_cache`) keep their fixed next segment.
+    #
+    # The `../` RUN IS PRESERVED, via the capture group, and that asymmetry with the
+    # `.local/share` rule below is INTENTIONAL -- do not harmonize them. That rule masks
+    # its depth because a worktree nests deeper than the primary tree and the count
+    # genuinely varies. Here both endpoints sit under the cache root, so the count is
+    # invariant at four (analysis_dir is `{cache}/synthetic_test_runs/{slug}/{case}/
+    # {case}`), and preserving it keeps a TRIPWIRE: if the layout ever changes the depth,
+    # the golden REDDENS, which is diagnosable. Masking the depth would make it keep
+    # matching a path the generator no longer emits -- silent, and strictly worse.
+    text = re.sub(r"((?:\.\./)+synthetic_test_models)/[^/'\"\s]+", r"\1/{MODEL_KEY}", text)
     text = text.replace(str(Path(__file__).resolve().parents[1]), "{REPO_ROOT}")
     # Collapse the variable-depth relative path to the home data dir: a worktree
     # nests deeper than the primary tree, so the ``../`` count itself varies.
@@ -606,6 +623,28 @@ def test_synth_root_mask_collapses_cache_root_and_worktree_slug() -> None:
             f"'{cache}/sif_cache/hhemt-0.1.0-cuda.sif'",
             cache,
             "{HHEMT_CACHE}/sif_cache/hhemt-0.1.0-cuda.sif",
+        ),
+        # RELATIVE rendering of the models root. `os.path.relpath` strips the cache
+        # prefix, so the absolute-anchored rule cannot fire and the digest survived into
+        # the comparison. `must_stay` carries the `../` run, so this arm ALSO fails if a
+        # later edit masks the depth -- the tripwire and the mask are asserted together.
+        (
+            "models/relative-rendering",
+            "'../../../../synthetic_test_models/b495da2fed88fb9a/watershed.geojson'",
+            "b495da2fed88fb9a",
+            "../../../../synthetic_test_models/{MODEL_KEY}/watershed.geojson",
+        ),
+        # NEGATIVE CONTROL for the relative rule. A relative path into a FIXED-segment
+        # sibling root must pass through untouched: `must_go` is the placeholder itself,
+        # so the arm fails precisely when the new rule over-reaches from "one segment
+        # under the models root" to "one segment under any relative root" and eats a SIF
+        # filename that run_simulation.py emits into a rule shell. Without this arm the
+        # fifth arm is satisfied by any greedy relative pattern.
+        (
+            "sif_cache/relative-fixed-filename",
+            "'../../../../sif_cache/hhemt-0.1.0-cuda.sif'",
+            "{MODEL_KEY}",
+            "../../../../sif_cache/hhemt-0.1.0-cuda.sif",
         ),
     ):
         got = _normalize_volatile(text)

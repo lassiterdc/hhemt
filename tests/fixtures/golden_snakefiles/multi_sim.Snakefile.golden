@@ -13,16 +13,16 @@ except Exception:
     _toolkit_version = "unknown"
 
 # Config dict consumed by report_templates/workflow_description.rst.j2
-config["analysis_id"] = 'multi_sim'
+config["analysis_id"] = 'synth_multi_sim'
 config["toolkit_version"] = _toolkit_version
-config["n_sims"] = 2
+config["n_sims"] = 3
 config["is_sensitivity"] = False
 config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}
 
 report: "report/workflow_description.rst"
 
-SIM_IDS = ['event_id.0', 'event_id.1']
-ILOC_BY_EVENT_ID = {'event_id.0': 0, 'event_id.1': 1}
+SIM_IDS = ['event_index.0', 'event_index.1', 'event_index.2']
+ILOC_BY_EVENT_ID = {'event_index.0': 0, 'event_index.1': 1, 'event_index.2': 2}
 
 from hhemt.report_plot_ids import (
     event_labels_from_status as _event_labels_from_status,
@@ -61,15 +61,15 @@ onerror:
     # codes as informational — the workflow has already failed.
     shell("""
         {PYTHON} -m hhemt.export_scenario_status \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
-            > {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/export_scenario_status.log 2>&1
+            > {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/export_scenario_status.log 2>&1
     """)
 
 rule setup:
     output: "_status/a_setup_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/setup.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/setup.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -81,8 +81,8 @@ rule setup:
     shell:
         """
         {PYTHON} -m hhemt.setup_workflow \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
@@ -95,7 +95,7 @@ rule setup:
 rule prepare_scenario:
     input: "_status/a_setup_complete.flag"
     output: "_status/b_prepare_evt-{event_id}_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/prepare_evt-{event_id}.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/sims/prepare_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -110,8 +110,8 @@ rule prepare_scenario:
         """
         {PYTHON} -m hhemt.prepare_scenario_runner \
             --event-iloc {params.event_iloc} \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
@@ -125,7 +125,7 @@ rule run_triton:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_triton_evt-{event_id}_complete.flag"
     retries: 2
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/triton_evt-{event_id}.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/sims/triton_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
     params:
@@ -141,8 +141,8 @@ rule run_triton:
         """
         {PYTHON} -m hhemt.run_simulation_runner \
             --event-iloc {params.event_iloc} \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type triton \
             \
@@ -156,7 +156,7 @@ rule run_tritonswmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_tritonswmm_evt-{event_id}_complete.flag"
     retries: 2
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/tritonswmm_evt-{event_id}.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/sims/tritonswmm_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
     params:
@@ -172,8 +172,8 @@ rule run_tritonswmm:
         """
         {PYTHON} -m hhemt.run_simulation_runner \
             --event-iloc {params.event_iloc} \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             \
@@ -187,7 +187,7 @@ rule run_swmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_swmm_evt-{event_id}_complete.flag"
     retries: 2
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/swmm_evt-{event_id}.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/sims/swmm_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
     params:
@@ -203,8 +203,8 @@ rule run_swmm:
         """
         {PYTHON} -m hhemt.run_simulation_runner \
             --event-iloc {params.event_iloc} \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type swmm \
             \
@@ -217,7 +217,7 @@ rule run_swmm:
 rule process_triton:
     input: "_status/c_run_triton_evt-{event_id}_complete.flag"
     output: "_status/d_process_triton_evt-{event_id}_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_triton_evt-{event_id}.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/sims/process_triton_evt-{event_id}.log"
     group: "process_evt_{event_id}"
     # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
     # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
@@ -251,8 +251,8 @@ rule process_triton:
         """
         {PYTHON} -m hhemt.process_timeseries_runner \
             --event-iloc {params.event_iloc} \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type triton \
             --which TRITON \
@@ -267,7 +267,7 @@ rule process_triton:
 rule process_tritonswmm:
     input: "_status/c_run_tritonswmm_evt-{event_id}_complete.flag"
     output: "_status/d_process_tritonswmm_evt-{event_id}_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
     # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
     # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
@@ -301,8 +301,8 @@ rule process_tritonswmm:
         """
         {PYTHON} -m hhemt.process_timeseries_runner \
             --event-iloc {params.event_iloc} \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --which both \
@@ -317,7 +317,7 @@ rule process_tritonswmm:
 rule process_swmm:
     input: "_status/c_run_swmm_evt-{event_id}_complete.flag"
     output: "_status/d_process_swmm_evt-{event_id}_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
     # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
     # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
@@ -351,8 +351,8 @@ rule process_swmm:
         """
         {PYTHON} -m hhemt.process_timeseries_runner \
             --event-iloc {params.event_iloc} \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type swmm \
             --which SWMM \
@@ -370,7 +370,7 @@ rule consolidate_scenario:
         flag="_status/f_consolidate_scenario_evt-{event_id}_complete.flag",
         du_sentinel="sims/{event_id}/_status/_du.json",
     priority: 100
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -384,8 +384,8 @@ rule consolidate_scenario:
     shell:
         """
         {PYTHON} -m hhemt.consolidate_workflow \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --compression-level 5 \
             --flag-output {output.flag} \
@@ -398,7 +398,7 @@ rule consolidate_scenario:
 rule consolidate:
     input: expand("_status/f_consolidate_scenario_evt-{event_id}_complete.flag", event_id=SIM_IDS)
     output: "_status/e_consolidate_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/consolidate.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/consolidate.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -410,8 +410,8 @@ rule consolidate:
     shell:
         """
         {PYTHON} -m hhemt.consolidate_workflow \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --compression-level 5 \
             \
@@ -432,16 +432,16 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_3.50m.dem', 'variables': []}, {'path': 'sims/event_id.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_id.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '{HOME_REL}/.local/share/hhemt/examples/norfolk_coastal_flooding/data/contents/shp_boundary_condition/variable_bc.shp', 'variables': []}],
-        source_paths_rst = '- ``../elevation_3.50m.dem``\n\n- ``sims/event_id.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_id.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``{HOME_REL}/.local/share/hhemt/examples/norfolk_coastal_flooding/data/contents/shp_boundary_condition/variable_bc.shp``\n',
+        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../synthetic_test_models/{MODEL_KEY}/boundary.geojson', 'variables': []}],
+        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../synthetic_test_models/{MODEL_KEY}/boundary.geojson``\n',
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli system_overview \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -456,10 +456,10 @@ def _per_sim_event_page_sources(wildcards):
         for _src in collect_per_sim_source_paths(
             _kind,
             wildcards.event_id,
-            rainfall_datavar='mm_per_hr',
-            storm_tide_datavar='waterlevel_m',
-            dem_rel_path='../elevation_3.50m.dem',
-            watershed_rel_path='{HOME_REL}/.local/share/hhemt/examples/norfolk_coastal_flooding/data/contents/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp',
+            rainfall_datavar='RG_synth',
+            storm_tide_datavar='water_level',
+            dem_rel_path='../elevation_10.00m.dem',
+            watershed_rel_path='../../../../synthetic_test_models/{MODEL_KEY}/watershed.geojson',
         ):
             if _src not in out:
                 out.append(_src)
@@ -487,8 +487,8 @@ rule plot_per_sim_event_page:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli per_sim_event_page \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --event-iloc {params.event_iloc} \
             --output {output} \
@@ -508,16 +508,16 @@ rule plot_per_analysis_summary_table:
             labels={"figure": "Summary table"},
         )
     params:
-        source_paths = [{'path': 'sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_id.0/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_id.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_id.0/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_id.1/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_id.1/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_id.1/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_id.1/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}],
-        source_paths_rst = '- ``sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_id.0/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_id.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_id.0/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_id.1/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_id.1/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_id.1/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_id.1/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n',
+        source_paths = [{'path': 'sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.0/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.0/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.1/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.2/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}],
+        source_paths_rst = '- ``sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.0/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.0/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.1/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.2/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n',
     log: "logs/plots/per_analysis_summary_table.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=5
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli per_analysis_summary \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -544,8 +544,8 @@ rule plot_scenario_status_appendix:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli scenario_status_appendix \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -573,8 +573,8 @@ rule plot_errors_and_warnings:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli errors_and_warnings \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -599,8 +599,8 @@ rule plot_disk_utilization:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli disk_utilization \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -625,8 +625,8 @@ rule plot_metadata:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli metadata \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -651,8 +651,8 @@ rule plot_workflow_performance:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli workflow_performance \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -684,7 +684,7 @@ rule export_scenario_status:
         # run 3's job stats ("all 1, render_report 1, total 2") show this rule never ran,
         # so something else wrote the read-model at 01:44:50 and is still unidentified.
         read_model = "validation_report.json",
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/export_scenario_status.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/export_scenario_status.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -696,8 +696,8 @@ rule export_scenario_status:
     shell:
         """
         {PYTHON} -m hhemt.export_scenario_status \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             2>&1 | tee {log}
         """
@@ -717,7 +717,7 @@ rule render_report:
         "analysis_report.{format}"
     wildcard_constraints:
         format="zip|html"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/render_report_{format}.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/synth_multi_sim/logs/render_report_{format}.log"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -728,8 +728,8 @@ rule render_report:
     shell:
         """
         {PYTHON} -m hhemt.render_report_runner \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_multi_sim/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --format {wildcards.format} \
             2>&1 | tee {log}

@@ -12,7 +12,7 @@ except Exception:
     _toolkit_version = "unknown"
 
 # Config dict consumed by report_templates/workflow_description.rst.j2
-config["analysis_id"] = 'cpu_config_sensitivity'
+config["analysis_id"] = 'synth_sensitivity'
 config["toolkit_version"] = _toolkit_version
 config["n_sims"] = 4
 config["is_sensitivity"] = True
@@ -25,12 +25,12 @@ config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}
 # Used by `expand(..., zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT)`
 # in the master `rule all` and in the per-member per-event plot rule definitions.
 MEMBER_EVENT_PAIRS_MEMBER = ['0', '1', '2', '3']
-MEMBER_EVENT_PAIRS_EVT = ['event_id.0', 'event_id.0', 'event_id.0', 'event_id.0']
+MEMBER_EVENT_PAIRS_EVT = ['event_index.0', 'event_index.0', 'event_index.0', 'event_index.0']
 
 report: "report/workflow_description.rst"
 
 onstart:
-    shell("mkdir -p _status {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs")
+    shell("mkdir -p _status {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs")
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
 # scenario_status.csv and workflow_summary.md on the success path via the
@@ -39,10 +39,10 @@ onstart:
 onerror:
     shell("""
         python -m hhemt.export_scenario_status \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
-            > {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/export_scenario_status.log 2>&1
+            > {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/export_scenario_status.log 2>&1
     """)
 
 
@@ -52,7 +52,7 @@ rule all:
 
 rule setup_target_0:
     output: "_status/a_setup_target_0_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/setup_target_0.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/setup_target_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -63,10 +63,10 @@ rule setup_target_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.setup_workflow \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
@@ -77,12 +77,12 @@ rule setup_target_0:
             2>&1 | tee {log}
         """
 
-rule prepare_member_0_evt_event_id_0:
+rule prepare_member_0_evt_event_index_0:
     input:
         "_status/a_setup_target_0_complete.flag",
         "_status/member-0_inputs.json"
-    output: "_status/b_prepare_member-0_evt-event_id.0_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/prepare_member_0_evt_event_id_0.log"
+    output: "_status/b_prepare_member-0_evt-event_index.0_complete.flag"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_0_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -93,28 +93,28 @@ rule prepare_member_0_evt_event_id_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.prepare_scenario_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_0/member_0.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_0/member_0.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
             --flag-output {output} \
-            --rule-name prepare_member_0_evt_event_id_0 \
+            --rule-name prepare_member_0_evt_event_index_0 \
             --member-id 0 \
-            --event-id event_id.0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
-rule simulation_member_0_evt_event_id_0:
+rule simulation_member_0_evt_event_index_0:
     input:
-        "_status/b_prepare_member-0_evt-event_id.0_complete.flag",
+        "_status/b_prepare_member-0_evt-event_index.0_complete.flag",
         "_status/member-0_inputs.json"
-    output: "_status/c_run_tritonswmm_member-0_evt-event_id.0_complete.flag"
+    output: "_status/c_run_tritonswmm_member-0_evt-event_index.0_complete.flag"
     retries: 2
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/simulation_member_0_evt_event_id_0.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_0_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 2
     resources:
@@ -127,27 +127,27 @@ rule simulation_member_0_evt_event_id_0:
         mpi=True
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.run_simulation_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_0/member_0.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_0/member_0.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --member-id 0 \
             --pickup-where-leftoff \
             --flag-output {output} \
-            --rule-name simulation_member_0_evt_event_id_0 \
-            --event-id event_id.0 \
+            --rule-name simulation_member_0_evt_event_index_0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
-rule process_member_0_evt_event_id_0:
+rule process_member_0_evt_event_index_0:
     input:
-        "_status/c_run_tritonswmm_member-0_evt-event_id.0_complete.flag",
+        "_status/c_run_tritonswmm_member-0_evt-event_index.0_complete.flag",
         "_status/member-0_inputs.json"
-    output: "_status/d_process_tritonswmm_member-0_evt-event_id.0_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/process_member_0_evt_event_id_0.log"
+    output: "_status/d_process_tritonswmm_member-0_evt-event_index.0_complete.flag"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/process_member_0_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -158,27 +158,27 @@ rule process_member_0_evt_event_id_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.process_timeseries_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_0/member_0.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_0/member_0.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --which both \
             \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name process_member_0_evt_event_id_0 \
+            --rule-name process_member_0_evt_event_index_0 \
             --member-id 0 \
-            --event-id event_id.0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
 rule consolidate_member_0:
-    input: "_status/d_process_tritonswmm_member-0_evt-event_id.0_complete.flag", "_status/member-0_inputs.json"
+    input: "_status/d_process_tritonswmm_member-0_evt-event_index.0_complete.flag", "_status/member-0_inputs.json"
     output: "_status/e_consolidate_member-0_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/consolidate_member_0.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_member_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -189,10 +189,10 @@ rule consolidate_member_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.consolidate_workflow \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_0/member_0.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_0/member_0.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --which both \
             --compression-level 5 \
@@ -202,12 +202,12 @@ rule consolidate_member_0:
             2>&1 | tee {log}
         """
 
-rule prepare_member_1_evt_event_id_0:
+rule prepare_member_1_evt_event_index_0:
     input:
         "_status/a_setup_target_0_complete.flag",
         "_status/member-1_inputs.json"
-    output: "_status/b_prepare_member-1_evt-event_id.0_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/prepare_member_1_evt_event_id_0.log"
+    output: "_status/b_prepare_member-1_evt-event_index.0_complete.flag"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_1_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -218,28 +218,28 @@ rule prepare_member_1_evt_event_id_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.prepare_scenario_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_1/member_1.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_1/member_1.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
             --flag-output {output} \
-            --rule-name prepare_member_1_evt_event_id_0 \
+            --rule-name prepare_member_1_evt_event_index_0 \
             --member-id 1 \
-            --event-id event_id.0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
-rule simulation_member_1_evt_event_id_0:
+rule simulation_member_1_evt_event_index_0:
     input:
-        "_status/b_prepare_member-1_evt-event_id.0_complete.flag",
+        "_status/b_prepare_member-1_evt-event_index.0_complete.flag",
         "_status/member-1_inputs.json"
-    output: "_status/c_run_tritonswmm_member-1_evt-event_id.0_complete.flag"
+    output: "_status/c_run_tritonswmm_member-1_evt-event_index.0_complete.flag"
     retries: 2
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/simulation_member_1_evt_event_id_0.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_1_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 2
     resources:
@@ -251,27 +251,27 @@ rule simulation_member_1_evt_event_id_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.run_simulation_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_1/member_1.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_1/member_1.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --member-id 1 \
             --pickup-where-leftoff \
             --flag-output {output} \
-            --rule-name simulation_member_1_evt_event_id_0 \
-            --event-id event_id.0 \
+            --rule-name simulation_member_1_evt_event_index_0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
-rule process_member_1_evt_event_id_0:
+rule process_member_1_evt_event_index_0:
     input:
-        "_status/c_run_tritonswmm_member-1_evt-event_id.0_complete.flag",
+        "_status/c_run_tritonswmm_member-1_evt-event_index.0_complete.flag",
         "_status/member-1_inputs.json"
-    output: "_status/d_process_tritonswmm_member-1_evt-event_id.0_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/process_member_1_evt_event_id_0.log"
+    output: "_status/d_process_tritonswmm_member-1_evt-event_index.0_complete.flag"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/process_member_1_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -282,27 +282,27 @@ rule process_member_1_evt_event_id_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.process_timeseries_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_1/member_1.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_1/member_1.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --which both \
             \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name process_member_1_evt_event_id_0 \
+            --rule-name process_member_1_evt_event_index_0 \
             --member-id 1 \
-            --event-id event_id.0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
 rule consolidate_member_1:
-    input: "_status/d_process_tritonswmm_member-1_evt-event_id.0_complete.flag", "_status/member-1_inputs.json"
+    input: "_status/d_process_tritonswmm_member-1_evt-event_index.0_complete.flag", "_status/member-1_inputs.json"
     output: "_status/e_consolidate_member-1_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/consolidate_member_1.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_member_1.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -313,10 +313,10 @@ rule consolidate_member_1:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.consolidate_workflow \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_1/member_1.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_1/member_1.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --which both \
             --compression-level 5 \
@@ -326,12 +326,12 @@ rule consolidate_member_1:
             2>&1 | tee {log}
         """
 
-rule prepare_member_2_evt_event_id_0:
+rule prepare_member_2_evt_event_index_0:
     input:
         "_status/a_setup_target_0_complete.flag",
         "_status/member-2_inputs.json"
-    output: "_status/b_prepare_member-2_evt-event_id.0_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/prepare_member_2_evt_event_id_0.log"
+    output: "_status/b_prepare_member-2_evt-event_index.0_complete.flag"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_2_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -342,28 +342,28 @@ rule prepare_member_2_evt_event_id_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.prepare_scenario_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_2/member_2.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_2/member_2.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
             --flag-output {output} \
-            --rule-name prepare_member_2_evt_event_id_0 \
+            --rule-name prepare_member_2_evt_event_index_0 \
             --member-id 2 \
-            --event-id event_id.0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
-rule simulation_member_2_evt_event_id_0:
+rule simulation_member_2_evt_event_index_0:
     input:
-        "_status/b_prepare_member-2_evt-event_id.0_complete.flag",
+        "_status/b_prepare_member-2_evt-event_index.0_complete.flag",
         "_status/member-2_inputs.json"
-    output: "_status/c_run_tritonswmm_member-2_evt-event_id.0_complete.flag"
+    output: "_status/c_run_tritonswmm_member-2_evt-event_index.0_complete.flag"
     retries: 2
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/simulation_member_2_evt_event_id_0.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_2_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 4
     resources:
@@ -376,27 +376,27 @@ rule simulation_member_2_evt_event_id_0:
         mpi=True
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.run_simulation_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_2/member_2.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_2/member_2.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --member-id 2 \
             --pickup-where-leftoff \
             --flag-output {output} \
-            --rule-name simulation_member_2_evt_event_id_0 \
-            --event-id event_id.0 \
+            --rule-name simulation_member_2_evt_event_index_0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
-rule process_member_2_evt_event_id_0:
+rule process_member_2_evt_event_index_0:
     input:
-        "_status/c_run_tritonswmm_member-2_evt-event_id.0_complete.flag",
+        "_status/c_run_tritonswmm_member-2_evt-event_index.0_complete.flag",
         "_status/member-2_inputs.json"
-    output: "_status/d_process_tritonswmm_member-2_evt-event_id.0_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/process_member_2_evt_event_id_0.log"
+    output: "_status/d_process_tritonswmm_member-2_evt-event_index.0_complete.flag"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/process_member_2_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -407,27 +407,27 @@ rule process_member_2_evt_event_id_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.process_timeseries_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_2/member_2.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_2/member_2.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --which both \
             \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name process_member_2_evt_event_id_0 \
+            --rule-name process_member_2_evt_event_index_0 \
             --member-id 2 \
-            --event-id event_id.0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
 rule consolidate_member_2:
-    input: "_status/d_process_tritonswmm_member-2_evt-event_id.0_complete.flag", "_status/member-2_inputs.json"
+    input: "_status/d_process_tritonswmm_member-2_evt-event_index.0_complete.flag", "_status/member-2_inputs.json"
     output: "_status/e_consolidate_member-2_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/consolidate_member_2.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_member_2.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -438,10 +438,10 @@ rule consolidate_member_2:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.consolidate_workflow \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_2/member_2.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_2/member_2.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --which both \
             --compression-level 5 \
@@ -451,12 +451,12 @@ rule consolidate_member_2:
             2>&1 | tee {log}
         """
 
-rule prepare_member_3_evt_event_id_0:
+rule prepare_member_3_evt_event_index_0:
     input:
         "_status/a_setup_target_0_complete.flag",
         "_status/member-3_inputs.json"
-    output: "_status/b_prepare_member-3_evt-event_id.0_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/prepare_member_3_evt_event_id_0.log"
+    output: "_status/b_prepare_member-3_evt-event_index.0_complete.flag"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_3_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -467,28 +467,28 @@ rule prepare_member_3_evt_event_id_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.prepare_scenario_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_3/member_3.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_3/member_3.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
             --flag-output {output} \
-            --rule-name prepare_member_3_evt_event_id_0 \
+            --rule-name prepare_member_3_evt_event_index_0 \
             --member-id 3 \
-            --event-id event_id.0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
-rule simulation_member_3_evt_event_id_0:
+rule simulation_member_3_evt_event_index_0:
     input:
-        "_status/b_prepare_member-3_evt-event_id.0_complete.flag",
+        "_status/b_prepare_member-3_evt-event_index.0_complete.flag",
         "_status/member-3_inputs.json"
-    output: "_status/c_run_tritonswmm_member-3_evt-event_id.0_complete.flag"
+    output: "_status/c_run_tritonswmm_member-3_evt-event_index.0_complete.flag"
     retries: 2
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/simulation_member_3_evt_event_id_0.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_3_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
     resources:
@@ -500,27 +500,27 @@ rule simulation_member_3_evt_event_id_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.run_simulation_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_3/member_3.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_3/member_3.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --member-id 3 \
             --pickup-where-leftoff \
             --flag-output {output} \
-            --rule-name simulation_member_3_evt_event_id_0 \
-            --event-id event_id.0 \
+            --rule-name simulation_member_3_evt_event_index_0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
-rule process_member_3_evt_event_id_0:
+rule process_member_3_evt_event_index_0:
     input:
-        "_status/c_run_tritonswmm_member-3_evt-event_id.0_complete.flag",
+        "_status/c_run_tritonswmm_member-3_evt-event_index.0_complete.flag",
         "_status/member-3_inputs.json"
-    output: "_status/d_process_tritonswmm_member-3_evt-event_id.0_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/process_member_3_evt_event_id_0.log"
+    output: "_status/d_process_tritonswmm_member-3_evt-event_index.0_complete.flag"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/process_member_3_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -531,27 +531,27 @@ rule process_member_3_evt_event_id_0:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.process_timeseries_runner \
             --event-iloc 0 \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_3/member_3.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_3/member_3.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --which both \
             \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name process_member_3_evt_event_id_0 \
+            --rule-name process_member_3_evt_event_index_0 \
             --member-id 3 \
-            --event-id event_id.0 \
+            --event-id event_index.0 \
             2>&1 | tee {log}
         """
 
 rule consolidate_member_3:
-    input: "_status/d_process_tritonswmm_member-3_evt-event_id.0_complete.flag", "_status/member-3_inputs.json"
+    input: "_status/d_process_tritonswmm_member-3_evt-event_index.0_complete.flag", "_status/member-3_inputs.json"
     output: "_status/e_consolidate_member-3_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/consolidate_member_3.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims/consolidate_member_3.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -562,10 +562,10 @@ rule consolidate_member_3:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.consolidate_workflow \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/members/member_3/member_3.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/members/member_3/member_3.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --which both \
             --compression-level 5 \
@@ -578,7 +578,7 @@ rule consolidate_member_3:
 rule experiment_consolidation:
     input: "_status/e_consolidate_member-0_complete.flag", "_status/e_consolidate_member-1_complete.flag", "_status/e_consolidate_member-2_complete.flag", "_status/e_consolidate_member-3_complete.flag"
     output: "_status/f_consolidate_experiment_complete.flag"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/experiment_consolidation.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/experiment_consolidation.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -589,10 +589,10 @@ rule experiment_consolidation:
         nodes=1
     shell:
         """
-        mkdir -p {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs _status
+        mkdir -p {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/sims {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs _status
         python -m hhemt.consolidate_workflow \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --consolidate-sensitivity-analysis-outputs \
             --which both \
@@ -613,16 +613,16 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_3.50m.dem', 'variables': []}, {'path': 'members/member_0/sims/event_id.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'members/member_0/sims/event_id.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '{HOME_REL}/.local/share/hhemt/examples/norfolk_coastal_flooding/data/contents/shp_boundary_condition/variable_bc.shp', 'variables': []}],
-        source_paths_rst = '- ``../elevation_3.50m.dem``\n\n- ``members/member_0/sims/event_id.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``members/member_0/sims/event_id.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``{HOME_REL}/.local/share/hhemt/examples/norfolk_coastal_flooding/data/contents/shp_boundary_condition/variable_bc.shp``\n',
+        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'members/member_0/sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'members/member_0/sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../synthetic_test_models/{MODEL_KEY}/boundary.geojson', 'variables': []}],
+        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``members/member_0/sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``members/member_0/sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../synthetic_test_models/{MODEL_KEY}/boundary.geojson``\n',
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli system_overview \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -641,16 +641,16 @@ rule plot_per_analysis_summary_table:
             labels={"figure": "Summary table"},
         )
     params:
-        source_paths = [{'path': 'members/member_0/sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_0/sims/event_id.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_1/sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_1/sims/event_id.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_2/sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_2/sims/event_id.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_3/sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_3/sims/event_id.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}],
-        source_paths_rst = '- ``members/member_0/sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_0/sims/event_id.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_1/sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_1/sims/event_id.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_2/sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_2/sims/event_id.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_3/sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_3/sims/event_id.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n',
+        source_paths = [{'path': 'members/member_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_0/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_1/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_2/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_3/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}],
+        source_paths_rst = '- ``members/member_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_0/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_1/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_2/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_3/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n',
     log: "logs/plots/per_analysis_summary_table.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=5
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli per_analysis_summary \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -677,8 +677,8 @@ rule plot_scenario_status_appendix:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli scenario_status_appendix \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -706,8 +706,8 @@ rule plot_errors_and_warnings:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli errors_and_warnings \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -732,8 +732,8 @@ rule plot_disk_utilization:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli disk_utilization \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -758,8 +758,8 @@ rule plot_metadata:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli metadata \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -784,8 +784,8 @@ rule plot_workflow_performance:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli workflow_performance \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             2>&1 | tee {log}
@@ -817,7 +817,7 @@ rule export_scenario_status:
         # run 3's job stats ("all 1, render_report 1, total 2") show this rule never ran,
         # so something else wrote the read-model at 01:44:50 and is still unidentified.
         read_model = "validation_report.json",
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/export_scenario_status.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/export_scenario_status.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -829,13 +829,13 @@ rule export_scenario_status:
     shell:
         """
         {PYTHON} -m hhemt.export_scenario_status \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             2>&1 | tee {log}
         """
 
-ILOC_BY_EVENT_ID_BY_MEMBER = {'0': {'event_id.0': 0}, '1': {'event_id.0': 0}, '2': {'event_id.0': 0}, '3': {'event_id.0': 0}}
+ILOC_BY_EVENT_ID_BY_MEMBER = {'0': {'event_index.0': 0}, '1': {'event_index.0': 0}, '2': {'event_index.0': 0}, '3': {'event_index.0': 0}}
 
 from hhemt.report_plot_ids import (
     event_labels_from_status as _event_labels_from_status,
@@ -854,8 +854,8 @@ def _per_sim_per_member_flood_depth_sources(wildcards):
     return collect_per_sim_source_paths(
         "peak_flood_depth",
         wildcards.event_id,
-        rainfall_datavar='mm_per_hr',
-        storm_tide_datavar='waterlevel_m',
+        rainfall_datavar='RG_synth',
+        storm_tide_datavar='water_level',
         member_id=wildcards.member_id,
     )
 
@@ -866,8 +866,8 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
     return collect_per_sim_source_paths(
         "conduit_flow",
         wildcards.event_id,
-        rainfall_datavar='mm_per_hr',
-        storm_tide_datavar='waterlevel_m',
+        rainfall_datavar='RG_synth',
+        storm_tide_datavar='water_level',
         member_id=wildcards.member_id,
     )
 
@@ -894,8 +894,8 @@ rule plot_per_sim_per_member_peak_flood_depth:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli per_sim_peak_flood_depth \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --member-id {wildcards.member_id} \
             --event-iloc {params.event_iloc} \
@@ -926,8 +926,8 @@ rule plot_per_sim_per_member_conduit_flow:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli per_sim_conduit_flow \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --member-id {wildcards.member_id} \
             --event-iloc {params.event_iloc} \
@@ -969,8 +969,8 @@ rule plot_sensitivity_benchmarking:
     shell:
         """
         {PYTHON} -m hhemt.report_renderers._cli sensitivity_benchmarking \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --independent-var {wildcards.independent_var} \
             --output {output} \
@@ -995,7 +995,7 @@ rule render_report:
         "analysis_report.{format}"
     wildcard_constraints:
         format="zip|html"
-    log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/render_report_{format}.log"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/render_report_{format}.log"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -1006,8 +1006,8 @@ rule render_report:
     shell:
         """
         python -m hhemt.render_report_runner \
-            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
-            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
+            --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
             --format {wildcards.format} \
             2>&1 | tee {log}
