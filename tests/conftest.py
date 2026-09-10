@@ -162,53 +162,6 @@ def _pytest_uses_non_interactive_snakemake_lock_clear():
         os.environ[_NON_INTERACTIVE_LOCK_CLEAR_ENV] = prior
 
 
-@pytest.fixture
-def norfolk_single_sim_analysis_cached():
-    case = cases.Local_TestCases.retrieve_norfolk_all_models_test_case(start_from_scratch=False)
-    return case.analysis
-
-
-@pytest.fixture
-def norfolk_multi_sim_analysis():
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
-    return case.analysis
-
-
-@pytest.fixture
-def norfolk_multi_sim_analysis_cached():
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
-    return case.analysis
-
-
-@pytest.fixture
-def norfolk_sensitivity_analysis():
-    case = cases.Local_TestCases.retrieve_norfolk_cpu_config_sensitivity_case(start_from_scratch=True)
-    return case.analysis
-
-
-@pytest.fixture
-def norfolk_sensitivity_analysis_cached():
-    case = cases.Local_TestCases.retrieve_norfolk_cpu_config_sensitivity_case(start_from_scratch=False)
-    return case.analysis
-
-
-# ========== Multi-Model Test Fixtures ==========
-
-
-@pytest.fixture
-def norfolk_all_models_analysis():
-    """Analysis with all models enabled (TRITON, TRITON-SWMM, SWMM)."""
-    case = cases.Local_TestCases.retrieve_norfolk_all_models_test_case(start_from_scratch=True)
-    return case.analysis
-
-
-@pytest.fixture
-def norfolk_all_models_analysis_cached():
-    """Analysis with all models (cached - for faster iteration)."""
-    case = cases.Local_TestCases.retrieve_norfolk_all_models_test_case(start_from_scratch=False)
-    return case.analysis
-
-
 # ========== Synthetic Test Fixtures ==========
 
 

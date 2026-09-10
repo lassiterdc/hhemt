@@ -6,7 +6,7 @@ Provides a collection of pre-configured test cases for different scenarios:
 - Platform-specific HPC tests (UVA, Frontier)
 - Sensitivity analysis tests with various configurations
 
-Each method returns a retrieve_TRITON_SWMM_test_case instance with:
+Each method returns a retrieve_synth_TRITON_SWMM_test_case instance with:
 - Synthetic weather data
 - Platform-appropriate HPC configurations
 - Short simulation durations for fast testing
@@ -15,21 +15,17 @@ Each method returns a retrieve_TRITON_SWMM_test_case instance with:
 
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-import hhemt.constants as cnst
-from hhemt.experiments import NorfolkIreneExperiment
 from tests.fixtures import worktree_slug
 from tests.fixtures._triton_source_cache import slug_runs_root
 
 # Import from test fixtures
 from tests.fixtures.test_case_builder import (
     retrieve_synth_TRITON_SWMM_test_case,
-    retrieve_TRITON_SWMM_test_case,
 )
 
 
@@ -44,39 +40,6 @@ def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
     n = os.cpu_count() or 1
     if n < min_cores:
         pytest.skip(f"synth sensitivity suite requires >={min_cores} CPU cores; found {n}")
-
-
-def _load_norfolk_example_or_skip(**kwargs) -> "NorfolkIreneExperiment":
-    """Acquire the Norfolk Irene example, or skip when the data is unavailable.
-
-    Every Norfolk-example consumer in the suite (the conftest ``norfolk_*``
-    fixtures, the ``retrieve_norfolk_*`` case methods, and the ``ex_Nrflk``
-    sensitivity path) funnels through this helper, so gating here converts an
-    absent-data ERROR into a SKIP for all of them at a single point.
-
-    This is the canonical gate: under
-    ``HHEMT_REQUIRE_EXAMPLE_DATA=1`` (CI runners that cache the example data) a
-    load failure is re-raised as a hard error instead of a silent skip, so a
-    data-required run cannot pass vacuously. Bare ``pytest`` (test.yml) does not
-    set the flag, so a runner without the Norfolk data SKIPs rather than ERRORs.
-    """
-    try:
-        return NorfolkIreneExperiment.load(**kwargs)
-    except Exception as exc:
-        if os.environ.get("HHEMT_REQUIRE_EXAMPLE_DATA") == "1":
-            raise AssertionError(
-                f"Norfolk Irene example data required (HHEMT_REQUIRE_EXAMPLE_DATA=1) but load failed: {exc!r}"
-            ) from exc
-        pytest.skip(f"Norfolk Irene example data not available locally: {exc!r}")
-
-
-@dataclass
-class all_experiments:
-    from hhemt.experiments import TRITON_SWMM_experiment
-
-    @staticmethod
-    def ex_Nrflk(download_if_exists: bool = False) -> TRITON_SWMM_experiment:
-        return _load_norfolk_example_or_skip(download_if_exists=download_if_exists)
 
 
 class GetTS_TestCases:
@@ -103,201 +66,8 @@ class GetTS_TestCases:
     ) -> None:
         pass
 
-    @classmethod
-    def _retrieve_norfolk_case(
-        cls,
-        n_events: int,
-        analysis_name: str,
-        start_from_scratch: bool,
-        download_if_exists=False,
-        analysis_overlay: dict | None = None,
-        system_overlay: dict | None = None,
-        example_data_dir: Path | None = None,
-        analysis_overrides: dict | None = None,
-        system_overrides: dict | None = None,
-        n_reporting_tsteps_per_sim=cnst.TEST_N_REPORTING_TSTEPS_PER_SIM,
-        TRITON_reporting_timestep_s=cnst.TEST_TRITON_REPORTING_TIMESTEP_S,
-        test_system_dirname=cnst.TEST_SYSTEM_DIRNAME,
-        hpc_system_config_yaml: Path | None = None,
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """
-        Internal helper to create Norfolk test cases.
-
-        Applies a base analysis/system overlay (analysis_overlay / system_overlay),
-        then per-call overrides (analysis_overrides / system_overrides) take precedence.
-
-        Args:
-            analysis_name: Name for the test analysis
-            n_events: Number of weather events
-            n_reporting_tsteps_per_sim: Timesteps per simulation
-            TRITON_reporting_timestep_s: Reporting interval in seconds
-            start_from_scratch: Whether to reprocess inputs
-            download_if_exists: Whether to re-download HydroShare data
-            analysis_overlay: Base analysis-config overlay dict
-            system_overlay: Base system-config overlay dict
-            analysis_overrides: Per-call analysis-config overrides (win over the overlay)
-            system_overrides: Per-call system-config overrides (win over the overlay)
-            example_data_dir: Override for data directory location
-            hpc_system_config_yaml: Optional path to an hpc_system_config YAML
-
-        Returns:
-            retrieve_TRITON_SWMM_test_case instance with configured system
-        """
-
-        # Example-platform overlay is the base; per-call overrides win (same
-        # precedence as the retired PlatformConfig.to_*_dict() | overrides).
-        # example_data_dir is now an explicit param (was a UVA-preset field).
-        final_analysis_configs = (analysis_overlay or {}) | (analysis_overrides or {})
-        final_system_configs = (system_overlay or {}) | (system_overrides or {})
-
-        example = _load_norfolk_example_or_skip(
-            download_if_exists=download_if_exists, example_data_dir=example_data_dir
-        )
-
-        nrflk_test = retrieve_TRITON_SWMM_test_case(
-            example=example,
-            analysis_name=analysis_name,
-            n_events=n_events,
-            n_reporting_tsteps_per_sim=n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=TRITON_reporting_timestep_s,
-            test_system_dirname=test_system_dirname,
-            start_from_scratch=start_from_scratch,
-            additional_analysis_configs=final_analysis_configs,
-            additional_system_configs=final_system_configs,
-            hpc_system_config_yaml=hpc_system_config_yaml,
-        )
-        return nrflk_test
-
 
 class Local_TestCases:
-    cpu_sensitivity = "cpu_benchmarking_analysis.xlsx"
-
-    @classmethod
-    def retrieve_norfolk_cpu_config_sensitivity_case(
-        cls,
-        start_from_scratch: bool = False,
-        download_if_exists: bool = False,
-        hpc_system_config_yaml: Path | None = None,
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local CPU configuration sensitivity analysis test."""
-        analysis_name = "cpu_config_sensitivity"
-        sensitivity = all_experiments.ex_Nrflk().test_case_directory / cls.cpu_sensitivity
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            # Inject the benchmarking sensitivity report config (the same
-            # report.sensitivity shape the synth tier uses) so
-            # cfg_analysis.report.sensitivity is populated. Without it the
-            # report falls back to {} -> sensitivity None -> ConfigurationError
-            # when PC_05/PC_06 render the sensitivity benchmarking figure.
-            "report": cls._load_synth_sensitivity_report_dict(),
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            analysis_overrides=analysis_overrides,
-            hpc_system_config_yaml=hpc_system_config_yaml,
-        )
-
-    @classmethod
-    def retrieve_norfolk_single_sim_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local single simulation test - fastest test case."""
-        analysis_name = "single_sim"
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-        )
-
-    @classmethod
-    def retrieve_norfolk_multi_sim_test_case(
-        cls,
-        start_from_scratch: bool = False,
-        download_if_exists: bool = False,
-        hpc_system_config_yaml: Path | None = None,
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local multi-simulation test with 2 events."""
-        analysis_name = "multi_sim"
-        system_overrides = {
-            "toggle_triton_model": True,
-            "toggle_tritonswmm_model": True,
-            "toggle_swmm_model": True,
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=2,
-            system_overrides=system_overrides,
-            hpc_system_config_yaml=hpc_system_config_yaml,
-        )
-
-    # ========== Multi-Model Test Cases ==========
-
-    @classmethod
-    def retrieve_norfolk_triton_only_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local TRITON-only test (no SWMM coupling)."""
-        analysis_name = "triton_only"
-        system_overrides = {
-            "toggle_triton_model": True,
-            "toggle_tritonswmm_model": False,
-            "toggle_swmm_model": False,
-        }
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_swmm_only_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local SWMM-only test (EPA SWMM without TRITON coupling)."""
-        analysis_name = "swmm_only"
-        system_overrides = {
-            "toggle_triton_model": False,
-            "toggle_tritonswmm_model": False,
-            "toggle_swmm_model": True,
-        }
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_all_models_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local test with all models enabled (TRITON, TRITON-SWMM, SWMM)."""
-        analysis_name = "all_models"
-        system_overrides = {
-            "toggle_triton_model": True,
-            "toggle_tritonswmm_model": True,
-            "toggle_swmm_model": True,
-        }
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            system_overrides=system_overrides,
-        )
-
     # ========== Synthetic Test Cases ==========
 
     @staticmethod
