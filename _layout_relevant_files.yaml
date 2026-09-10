@@ -1300,3 +1300,19 @@ non_breaking_allowlist:
       CHANGE-SCOPED via layout_signature, set to the post-apply sha256 so the next change to
       this file re-fires the check.
     layout_signature: "3ec33b3393b39f6fa2298a9761b4ac30f31fbc16de69106fe161ed7e5b04378f"
+  - path: src/hhemt/process_simulation.py
+    justification: >-
+      hydrology-capture decline -- TWO edits ship together in this file because the second
+      calls the first. (1) A new _declared_nonzero_subcatchments staticmethod that READS the
+      hydrology .inp and counts [SUBCATCHMENTS] rows with nonzero Area; it writes nothing and
+      touches no on-disk artifact. (2) The standalone_rpt arm now writes
+      hydrology_rpt_summary.zarr only when its subcatchment row count equals that declared
+      count, and omits the capture otherwise so _capture_landed declines the delete through
+      its existing contract; the same edit routes a report that does not PARSE to that same
+      decline, instead of letting the pre-existing unguarded parse fail rule
+      consolidate_scenario -- a walltime-killed SWMM leaves a hydro.rpt with no "Analysis
+      ended on" line and produces exactly that. Every path changes WHEN an artifact is
+      written, never its shape: the zarr's schema, path and attrs are untouched, and an
+      omitted capture is the same on-disk state as a scenario whose reclaim never ran. No
+      LAYOUT_VERSION bump, no V-module, no golden fixtures.
+    layout_signature: "81e7ad3463b7b94ea388f678e11533928f8c141081d74cf7858fb76b4cede992"

@@ -35,6 +35,44 @@ def _truncate(rpt_path):
     return _P._truncate_coupled_rpt(rpt_path, rpt_path.parent, False)
 
 
+class _FakeScenario:
+    """The nine attributes `reclaim_scenario_scoped_classes` reads off `scen`.
+
+    Nine, measured by an AST census rather than counted by eye: `event_iloc` plus eight
+    `scen_paths` members. The count is stated because an earlier draft said "four", which
+    was the number this module's own tests happened to need rather than the number the
+    function reads -- and a stand-in that under-declares its contract fails inside the
+    function instead of at construction.
+
+    Deliberately NOT the `synth_prepared_scenario` fixture: that family compiles and runs
+    a solver, which this module's predicate tests have no need of. Deliberately NOT a bare
+    SimpleNamespace either -- the attribute set is the contract, so naming it here makes a
+    future signature change fail at construction instead of inside the function.
+
+    `extbc_tseries` is a real Path rather than None, and that is not cosmetic:
+    `reclaim_scenario_scoped_classes` builds its prep_inputs tuple containing
+    `scen.scen_paths.extbc_tseries.parent`, so `.parent` is dereferenced while the tuple is
+    CONSTRUCTED -- before the `if _p is not None` guard one line below ever runs. With None
+    there, `classes=("prep_inputs",)` raises AttributeError, which is a trap for the next
+    test that reuses this stand-in for a different reclaim class.
+    """
+
+    def __init__(self, root, hydro_inp):
+        from types import SimpleNamespace
+
+        self.event_iloc = 0
+        self.scen_paths = SimpleNamespace(
+            swmm_full_rpt_file=None,
+            swmm_hydro_inp=hydro_inp,
+            sim_folder=root,
+            hyg_timeseries=None,
+            hyg_locs=None,
+            dir_weather_datfiles=None,
+            extbc_tseries=Path(root) / "extbc" / "tseries.csv",
+            weather_timeseries=None,
+        )
+
+
 def _write_fixture_rpt(tmp_path: Path, *, finalized: bool = True) -> Path:
     rpt = tmp_path / "full.rpt"
     body = "  Node Time Series Results\n" + "   01/01/2000 00:00:10  0.0\n" * 50
@@ -65,16 +103,44 @@ def test_truncation_still_refuses_an_unfinalized_rpt(tmp_path):
 
 
 def test_hydrology_rpt_summary_captures_runoff_volume_and_continuity():
-    """S4: the capture must carry both the volume column and the continuity attrs."""
+    """S4: the capture must carry both the volume column and the continuity attrs.
+
+    The input is a TRACKED 85-line excerpt of a real Norfolk hydrology report, beside the
+    tracked real hydraulics.rpt that the sibling parser regression test already consumes.
+    It replaces an untracked path under test_data/*/tests/, which was the OUTPUT directory
+    of a retired test tier: nothing regenerated it, it was absent on every fresh clone, and
+    this test therefore skipped on both required CI checks while reading machine-local
+    residue by a cwd-relative path.
+
+    Two properties of the excerpt are load-bearing and must survive any re-trim. It keeps
+    BOTH continuity blocks with DISTINCT values (-1.234 runoff, 100.000 flow routing),
+    because the parser assigns a `Continuity Error (%)` line to runoff purely by whether a
+    `Flow Routing Continuity` header has been seen yet -- so an excerpt carrying one block,
+    or two with the same value, would pass while proving nothing about that split. And it
+    slices data rows from the line AFTER the second dashed rule; starting one line earlier
+    loses a row to the section walker's header terminator.
+    """
+    from importlib.resources import files
+
+    from hhemt.constants import APP_NAME
     from hhemt.swmm_output_parser import parse_hydrology_rpt_summary
 
-    src = Path("test_data/norfolk_coastal_flooding/tests/single_sim/sims/event_id.0/swmm/hydro.rpt")
-    if not src.exists():
-        pytest.skip("real-data hydro.rpt not present in this checkout")
-    ds = parse_hydrology_rpt_summary(src)
+    src = (
+        files(APP_NAME).parents[1]  # type: ignore[operator]
+        / "test_data"
+        / "swmm_refactoring_reference"
+        / "hydro_runoff_summary.rpt"
+    )
+    ds = parse_hydrology_rpt_summary(Path(str(src)))
     assert "total_runoff_10e6_ltr" in ds.data_vars
-    assert ds.sizes["subcatchment_id"] > 0
+    # Dim-NAME aware, and that is the point: parse_hydrology_rpt_summary's legal empty
+    # return skips df.set_index, so the dimension is named `index` and a bare
+    # ds.sizes["subcatchment_id"] raises KeyError instead of failing as an assertion.
+    assert ds.sizes.get("subcatchment_id", 0) == 20, (
+        f"expected the excerpt's 20 subcatchment rows, got dims {dict(ds.sizes)}"
+    )
     assert ds.attrs["runoff_continuity_error_perc"] == pytest.approx(-1.234)
+    assert ds.attrs["flow_continuity_error_perc"] == pytest.approx(100.0)
     assert ds.attrs["flow_units"] == "cms"
 
 
@@ -160,3 +226,125 @@ def test_conduit_flow_arm_groups_carry_both_arms_when_both_enabled():
         "/tritonswmm/swmm_link",
         "/swmm_only/swmm_link",
     ]
+
+
+def _write_hydro_pair(tmp_path, *, subcatchments, include_summary=True):
+    """Write a minimal (hydro.inp, hydro.rpt) pair exercising the capture predicate.
+
+    `subcatchments` is a list of (id, area) pairs written into [SUBCATCHMENTS]; the .rpt's
+    Subcatchment Runoff Summary carries one row per NONZERO-area entry, which is what SWMM
+    itself emits (its loop skips a row when Subcatch[j].area == 0.0, because that value is
+    the divisor of every depth column). `include_summary=False` drops the whole summary
+    section, standing in for a report whose section is unrecognizable or truncated.
+
+    The four .rpt metadata lines are mandatory, not decoration: _build_system_results
+    RAISES on a missing Flow Units, flow-routing Continuity Error, Flooding Loss or
+    Analysis-ended line. Both continuity blocks are present with DISTINCT values so the
+    parser's positional runoff-vs-flow split is exercised rather than assumed.
+    """
+    swmm = tmp_path / "swmm"
+    swmm.mkdir(parents=True, exist_ok=True)
+    inp = swmm / "hydro.inp"
+    rows = "\n".join(f"  {sid}  RG1  N1  {area}  50  100  0.5  0" for sid, area in subcatchments)
+    inp.write_text(f"[OPTIONS]\nFLOW_UNITS  CMS\n\n[SUBCATCHMENTS]\n;;Name  Rain Gage  Outlet  Area\n{rows}\n")
+
+    rpt = swmm / "hydro.rpt"
+    body = [
+        "  Flow Units ............... CMS",
+        "",
+        "  **************************        Volume         Depth",
+        "  Runoff Quantity Continuity     hectare-m            mm",
+        "  **************************     ---------       -------",
+        "  Continuity Error (%) .....        -1.234",
+        "",
+        "  **************************        Volume        Volume",
+        "  Flow Routing Continuity        hectare-m      10^6 ltr",
+        "  **************************     ---------     ---------",
+        "  Flooding Loss ............         0.000         0.000",
+        "  Continuity Error (%) .....       100.000",
+        "",
+    ]
+    if include_summary:
+        rule = "  " + "-" * 126
+        body += [
+            "  ***************************",
+            "  Subcatchment Runoff Summary",
+            "  ***************************",
+            "",
+            rule,
+            "                            Total      Total      Total      Total     Imperv"
+            "       Perv      Total       Total     Peak  Runoff",
+            "                           Precip      Runon       Evap      Infil     Runoff"
+            "     Runoff     Runoff      Runoff   Runoff   Coeff",
+            "  Subcatchment                 mm         mm         mm         mm         mm"
+            "         mm         mm    10^6 ltr      CMS",
+            rule,
+        ]
+        for sid, area in subcatchments:
+            if float(area) != 0.0:
+                body.append(
+                    f"  {sid:<20}      20.00       0.00       0.00       1.75      15.28"
+                    "       0.00      15.28        0.02     0.01   0.764"
+                )
+        body.append("  ")
+    body += [
+        "",
+        "  Analysis begun on:  Tue Jan 27 20:09:58 2026",
+        "  Analysis ended on:  Tue Jan 27 20:10:17 2026",
+        "  Total elapsed time: 00:00:19",
+    ]
+    rpt.write_text("\n".join(body))
+    return inp, rpt
+
+
+def test_declared_nonzero_counts_only_nonzero_area_rows(tmp_path):
+    """The operand is nonzero-area rows, never bare rows.
+
+    A bare row count over-predicts SWMM's summary on any model carrying a zero-area
+    subcatchment, and a legal model would then be declined forever. Measured on the real
+    Norfolk pair before this test existed: 869 declared rows / 0 zero-area / 869 summary
+    rows, so equality held there and the divergence could not have been observed from any
+    artifact in the tree -- which is why it is asserted here on a constructed pair.
+    """
+    from hhemt.process_simulation import TRITONSWMM_sim_post_processing as P
+
+    inp, _ = _write_hydro_pair(tmp_path, subcatchments=[("S1", "1.0"), ("S2", "0"), ("S3", "2.5")])
+    assert P._declared_nonzero_subcatchments(inp) == 2
+
+
+def test_declared_nonzero_is_none_when_the_discriminator_is_unavailable(tmp_path):
+    """UNAVAILABLE is None, never 0 -- absence of evidence must not read as zero declared."""
+    from hhemt.process_simulation import TRITONSWMM_sim_post_processing as P
+
+    assert P._declared_nonzero_subcatchments(tmp_path / "nope.inp") is None
+    no_section = tmp_path / "bare.inp"
+    no_section.write_text("[OPTIONS]\nFLOW_UNITS  CMS\n")
+    assert P._declared_nonzero_subcatchments(no_section) is None
+
+
+def test_capture_is_declined_when_the_summary_section_is_unrecognizable(tmp_path):
+    """PRE-FIX: FAILS -- the capture is written empty, accepted, and hydro.rpt deleted."""
+    from hhemt.process_simulation import reclaim_scenario_scoped_classes
+
+    inp, rpt = _write_hydro_pair(tmp_path, subcatchments=[("S1", "1.0"), ("S2", "2.0")], include_summary=False)
+    scen = _FakeScenario(tmp_path, inp)
+    out = reclaim_scenario_scoped_classes(scen, ("standalone_rpt",), tmp_path, verbose=False)
+    assert rpt.exists(), "hydro.rpt must be KEPT when its capture cannot be verified"
+    assert not (tmp_path / "processed" / "hydrology_rpt_summary.zarr").exists()
+    assert out["standalone_rpt"] is False
+
+
+def test_capture_and_delete_still_proceed_on_a_legal_zero_subcatchment_model(tmp_path):
+    """The arm a bare non-emptiness check would break.
+
+    A model declaring only zero-area subcatchments legitimately yields an empty summary,
+    so captured == declared_nonzero == 0 and the reclaim MUST still fire. A `captured > 0`
+    predicate passes both refusal arms above and fails only here.
+    """
+    from hhemt.process_simulation import reclaim_scenario_scoped_classes
+
+    inp, rpt = _write_hydro_pair(tmp_path, subcatchments=[("S1", "0"), ("S2", "0")])
+    scen = _FakeScenario(tmp_path, inp)
+    out = reclaim_scenario_scoped_classes(scen, ("standalone_rpt",), tmp_path, verbose=False)
+    assert not rpt.exists(), "a legal zero-subcatchment model must still reclaim its report"
+    assert out["standalone_rpt"] is True

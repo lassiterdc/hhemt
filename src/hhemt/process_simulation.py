@@ -1924,6 +1924,61 @@ class TRITONSWMM_sim_post_processing:
         return True
 
     @staticmethod
+    def _declared_nonzero_subcatchments(inp_path) -> int | None:
+        """Count `[SUBCATCHMENTS]` rows whose authored Area is nonzero, or None if unknown.
+
+        This is the DISCRIMINATOR the capture decision needs, and the nonzero-Area
+        restriction is the whole point rather than a refinement. SWMM's summary emitter
+        loops `j < Nobjects[SUBCATCH]` and does `a = Subcatch[j].area; if (a == 0.0)
+        continue;` -- `a` is the divisor of every depth column, so the skip is a
+        divide-by-zero guard that cannot be configured away. A bare row count therefore
+        over-predicts the summary on any model carrying a zero-area subcatchment, and a
+        legal model would be declined forever.
+
+        The authored token and the runtime member differ by a unit conversion:
+        `subcatch.c` assigns `Subcatch[j].area = x[3] / UCF(LANDAREA)`, where
+        `UCF(LANDAREA)` is a strictly positive finite `const` (`{2.2956e-5, 0.92903e-5}`)
+        with no configuration path to zero. Division by a positive constant preserves the
+        zero/nonzero partition exactly, and because both factors are ~1e-5 the division
+        scales UP, so a small nonzero area cannot underflow to zero. The count is exact.
+
+        `Nobjects[SUBCATCH]` is incremented at one site only, keyed on the
+        `[SUBCATCHMENT` section keyword, so rows and objects are the same population.
+
+        None means UNAVAILABLE, never zero: an unreadable file or a missing section is
+        absence of evidence, and the caller must not read it as "zero declared".
+        """
+        from pathlib import Path as _Path
+
+        try:
+            text = _Path(inp_path).read_text(encoding="latin-1")
+        except OSError:
+            return None
+        seen_section = False
+        n = 0
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("["):
+                if seen_section:
+                    break
+                seen_section = stripped.upper().startswith("[SUBCATCHMENT")
+                continue
+            if not seen_section or not stripped or stripped.startswith(";"):
+                continue
+            tok = stripped.split()
+            if len(tok) < 4:
+                return None
+            try:
+                area = float(tok[3])
+            except ValueError:
+                return None
+            if area != 0.0:
+                n += 1
+        if not seen_section:
+            return None
+        return n
+
+    @staticmethod
     def _truncate_coupled_rpt(rpt_path: Path, analysis_dir, verbose: bool) -> bool:
         """Truncate a finalized coupled rpt to header+summaries+trailer. Returns True iff written.
 
@@ -2197,10 +2252,68 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
             from hhemt.du_sentinels import restamp_parent_sentinels
             from hhemt.swmm_output_parser import parse_hydrology_rpt_summary
 
-            _ds = parse_hydrology_rpt_summary(_hydro_rpt)
-            _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
-            _ds.to_zarr(_hydro_cap, mode="w")
-            restamp_parent_sentinels(_hydro_cap, analysis_dir=analysis_dir)  # PATTERN B
+            # The capture is written ONLY when it carries what the model declares. An
+            # empty-but-openable store satisfies _capture_landed, so writing one here
+            # would delete the .rpt on the strength of a capture holding nothing --
+            # `parse_hydrology_rpt_summary` returns exactly that on a section it cannot
+            # recognize, and its empty return is DELIBERATELY legal (a zero-subcatchment
+            # hydrology model), so the parser cannot be the place this is caught.
+            # Omit-rather-than-write-empty is the convention the `hydrographs` capture
+            # already follows (swmm_runoff_modeling: `if not d_node_capture: return`),
+            # which is why _capture_landed needs no change: absence IS the signal.
+            #
+            # The parse is guarded because it RAISES on a report it cannot read, one line
+            # above the decision that would otherwise decline -- measured: a trailer-less
+            # report gives `ValueError: Analysis end line not found in RPT file.`, and a
+            # walltime-killed SWMM leaves precisely that file. Unguarded, a disk-hygiene
+            # step fails rule consolidate_scenario over data whose validity is gated
+            # elsewhere (the c_run flags and model_run_completed, not this parse). An
+            # unreadable report IS the unavailable case, so it routes to the same decline.
+            _ds = None
+            _parse_error = None
+            try:
+                _ds = parse_hydrology_rpt_summary(_hydro_rpt)
+            except Exception as _exc:  # noqa: BLE001 -- any unreadable report is UNAVAILABLE
+                _parse_error = f"{type(_exc).__name__}: {_exc}"
+            _declared = _P._declared_nonzero_subcatchments(scen.scen_paths.swmm_hydro_inp)
+            _captured = 0 if _ds is None else int(_ds.sizes.get("subcatchment_id", 0))
+            if _ds is not None and _declared is not None and _captured == _declared:
+                _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
+                _ds.to_zarr(_hydro_cap, mode="w")
+                restamp_parent_sentinels(_hydro_cap, analysis_dir=analysis_dir)  # PATTERN B
+            elif verbose:
+                # THREE reasons and THREE remedies, built together. Splitting the reason
+                # while appending one remedy to all three is the shape this replaced: on a
+                # count mismatch the report parsed fine, so "re-run processing once the
+                # report parses" is false and re-running reproduces the identical decline
+                # forever; on a missing [SUBCATCHMENTS] section the report is not
+                # implicated at all; and an unparseable report needs the SIM re-run, not
+                # processing. A remedy that is wrong for two of three cases is worse than
+                # none, because it is actionable and the action does not work.
+                if _parse_error is not None:
+                    _why = f"the report did not parse ({_parse_error})"
+                    _fix = (
+                        "the simulation most likely did not finish -- check its log for a "
+                        "walltime kill and re-run the SIMULATION; re-running processing "
+                        "alone cannot repair an incomplete report"
+                    )
+                elif _declared is None:
+                    _why = "the hydrology .inp declares no readable [SUBCATCHMENTS] section"
+                    _fix = (
+                        "the report is not implicated -- check scenario preparation, since "
+                        "the .inp is not the file this reclaim expects"
+                    )
+                else:
+                    _why = f"the capture holds {_captured} subcatchment(s) against {_declared} declared"
+                    _fix = (
+                        "the report parsed completely, so re-run PROCESSING for this "
+                        "scenario; the capture is short, not unreadable"
+                    )
+                print(
+                    f"[reclaim] scenario {scen.event_iloc}: 'standalone_rpt' elected but "
+                    f"{_why} -- declining to capture, so hydro.rpt is kept. {_fix}.",
+                    flush=True,
+                )
         if _hydro_rpt.exists() and _P._capture_landed(_hydro_cap):
             _P._remove_reclaimed(_hydro_rpt, analysis_dir, verbose)
             removed_standalone_rpt = True
