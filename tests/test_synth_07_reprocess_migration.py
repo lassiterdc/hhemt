@@ -23,22 +23,20 @@ def test_reprocess_runs_migration_when_layout_outdated(synthetic_multisim_comple
     """When ``_version.json`` is stamped older than the current LAYOUT_VERSION,
     reprocess() must re-stamp it to the current version (the lazy-stamp
     PI-1 contract carried over from run() / submit_workflow)."""
-    from hhemt.version_migration import LAYOUT_VERSION
-    from hhemt.version_migration.state import (
-        read_version_file,
-        stamp_new_target,
-    )
+    from hhemt.version_migration import LAYOUT_VERSION, runner
+    from hhemt.version_migration.state import read_version_file
 
     a = synthetic_multisim_completed_isolated
     analysis_dir = a.analysis_paths.analysis_dir
 
     # Force-stamp at LAYOUT_VERSION - 1 to simulate a pre-migration target.
-    # stamp_new_target overwrites when the existing version differs, so this
-    # call brings _version.json to LAYOUT_VERSION - 1 regardless of prior state.
+    # stamp_new_target no longer relabels an existing record, so the sanctioned
+    # way to bring a stamped tree DOWN one version is baseline's --force path,
+    # which resets migration_history deliberately (see runner.baseline).
     older = LAYOUT_VERSION - 1
     if older < 0:
         pytest.skip("LAYOUT_VERSION must be >= 1 for this test")
-    stamp_new_target(analysis_dir, older)
+    runner.baseline(analysis_dir, older, force=True)
 
     pre = read_version_file(analysis_dir)
     assert pre is not None and pre.layout_version == older, (

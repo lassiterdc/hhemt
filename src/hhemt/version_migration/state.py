@@ -22,7 +22,7 @@ from hhemt.version_migration.constants import (
     LOCK_TIMEOUT_SECONDS,
     VERSION_FILE_NAME,
 )
-from hhemt.version_migration.exceptions import VersionFileUnreadableError
+from hhemt.version_migration.exceptions import LayoutVersionError, VersionFileUnreadableError
 
 
 @dataclass
@@ -131,20 +131,88 @@ def write_version_file(target_dir: Path, state: VersionState) -> None:
         _unlocked_write_version_file(target_dir, state)
 
 
-def stamp_new_target(target_dir: Path, layout_version: int) -> VersionState:
-    """Stamp a fresh target at the given version. Idempotent.
+def stamp_new_target(target_dir: Path, layout_version: int, *, mode: str = "fresh") -> VersionState:
+    """Stamp a target that has no layout record. Idempotent on a matching record.
 
-    If _version.json exists with the same layout_version, no write occurs.
-    If it exists with a different layout_version, ``LayoutVersionError`` is
-    NOT raised here — that is the runner's job. This helper is purely for
-    new-target stamping wired into __init__.
+    THIS HELPER NO LONGER RELABELS AN EXISTING RECORD. Relabelling was DESTRUCTIVE
+    rather than merely silent: measured, a tree claiming 20 became 22 with zero
+    warnings, its `created_at` and `toolkit_version` overwritten and its
+    `migration_history` entry for V0020 deleted, so nothing survived from which the
+    prior claim could be recovered.
+
+    THREE CALLER INTENTS, which is why `mode` is not a boolean:
+
+    - "fresh" (default, the five execution sites): the caller expects a target with
+      no record. Refuse on a differing record, and refuse when the record is ABSENT
+      but the tree carries migratable content -- that second arm is the one a
+      two-valued `existing != layout_version` test cannot see, because an absent
+      record means either "being created now" (stamp) or "pre-existing, version
+      unknown" (refuse) and only CONTENT separates them.
+    - "construction": `TRITONSWMM_system.__init__` stamps eagerly and a constructor
+      may not raise on a pre-existing tree. Warn and LEAVE THE RECORD ALONE instead
+      of overwriting it, and stamp an absent record without consulting content.
+    - "established": `runner` has just derived the version from layout evidence, so
+      content is expected and must not refuse. Stamp it.
+
+    The content test is rung-PRESENCE, by path checks only: it opens no zarr store
+    and derives no version, ~0.02 ms against ~3.3 ms for the full ladder on a
+    datatree-bearing tree, and it reads only `target_dir` so no cross-tree read.
     """
+    if mode not in ("fresh", "construction", "established"):
+        raise ValueError(f"unknown stamp mode {mode!r}")
     existing = read_version_file(target_dir)
     if existing is not None and existing.layout_version == layout_version:
         return existing
+    if existing is not None:
+        if mode != "construction":
+            raise LayoutVersionError(
+                current=existing.layout_version,
+                target=layout_version,
+                reason=(
+                    f"refusing to relabel {_version_file(target_dir)} from "
+                    f"{existing.layout_version} to {layout_version}: the tree states its own "
+                    f"layout version and this helper only stamps targets that have none. "
+                    f"Migrate it, or restate it with `baseline {target_dir} "
+                    f"{layout_version} --force`"
+                ),
+            )
+        warnings.warn(
+            f"{_version_file(target_dir)} states layout_version {existing.layout_version} "
+            f"but this build is at {layout_version}; leaving the record as-is rather than "
+            f"relabelling it. Migrate the tree before relying on its layout.",
+            stacklevel=2,
+        )
+        return existing
+    if mode == "fresh" and _has_migratable_content(target_dir):
+        raise LayoutVersionError(
+            current=-1,
+            target=layout_version,
+            reason=(
+                f"refusing to stamp {_version_file(target_dir)} at {layout_version}: the tree "
+                f"carries migratable content but states no layout version, so its version is "
+                f"UNRECOGNIZED and assigning the current one would be a guess. Inspect it, "
+                f"then restate it with `baseline {target_dir} {{N}}`"
+            ),
+        )
     state = VersionState.fresh(layout_version, _toolkit_version())
     write_version_file(target_dir, state)
     return state
+
+
+def _has_migratable_content(target_dir: Path) -> bool:
+    """True when any detection-ladder rung's artifact is present at `target_dir`.
+
+    Rung PRESENCE, not rung VALUE: path checks only, no zarr open, no cross-tree
+    read. `any(target_dir.iterdir())` is NOT a substitute -- measured, it returns
+    True for every `system_directory`, which always carries DEM/Manning's/logs.
+    """
+    if _has_legacy_iloc_prefix(target_dir):
+        return True
+    if (target_dir / "experiment_datatree.zarr").exists():
+        return True
+    if (target_dir / "analysis_datatree.zarr").exists():
+        return True
+    return _has_flat_mode_zarrs(target_dir)
 
 
 def record_migration(

@@ -262,7 +262,7 @@ class TRITONSWMM_system:
         from hhemt.version_migration import LAYOUT_VERSION
         from hhemt.version_migration.state import stamp_new_target
 
-        stamp_new_target(self.cfg_system.system_directory, LAYOUT_VERSION)
+        stamp_new_target(self.cfg_system.system_directory, LAYOUT_VERSION, mode="construction")
 
     @property
     def analysis(self) -> "TRITONSWMM_analysis":
