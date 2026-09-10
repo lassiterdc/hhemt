@@ -7,8 +7,8 @@ Bootstrap follows the toolkit's canonical loader pattern:
   TRITONSWMM_analysis(cfg_analysis, system)
 
 Do not use TRITONSWMM_system.from_config() / TRITONSWMM_analysis.from_configs() —
-those classmethods do not exist on those classes (only Toolkit.from_configs() exists,
-at toolkit.py:97). The bootstrap below constructs instances directly.
+those classmethods do not exist on those classes (only Toolkit.from_configs() exists).
+The bootstrap below constructs instances directly.
 """
 
 from __future__ import annotations

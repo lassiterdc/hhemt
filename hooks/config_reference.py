@@ -124,7 +124,14 @@ def _load_lint():
     return module
 
 
-def _assert_lint_clean(markdown: str) -> None:
+def _assert_lint_clean(markdown: str, *, binary_only: bool = False) -> None:
+    """Fail the build on lint violations in `markdown`.
+
+    `binary_only` runs just the two file-type-independent classes. It exists so
+    `on_config` can hold the rendered TABLES to the classes `### D22b` never
+    excluded, without holding `src/`-derived prose to the vocabulary and
+    punctuation contracts `### D22b` does exclude.
+    """
     lint = _load_lint()
     findings: list[str] = []
     for lineno, line in lint._unfenced_lines(markdown):
@@ -134,6 +141,10 @@ def _assert_lint_clean(markdown: str) -> None:
         hit = lint.LINE_CITATION.search(line)
         if hit:
             findings.append(f"bare-line-citation at generated line {lineno}: {hit.group(0)}")
+    if binary_only:
+        if findings:
+            raise RuntimeError("generated config reference violates docs-content rules:\n  " + "\n  ".join(findings))
+        return
     for lineno, line in lint._prose_lines(markdown):
         for code, pat in lint.PUNCTUATION_PATTERNS:
             if pat.search(line):
@@ -225,6 +236,97 @@ def _authored_prose() -> list[str]:
     return [line for line in _render().split("\n") if not line.startswith("|")]
 
 
+#: The three configs a user writes. Every other model this page tables is reached
+#: FROM one of these by following an annotated field type -- `### D99`. The
+#: population is therefore DERIVED, not listed: a new nested config joins the page
+#: by being referenced, and nothing here has to be remembered.
+ENTRY_CONFIGS = (
+    "hhemt.config.system:system_config",
+    "hhemt.config.analysis:analysis_config",
+    "hhemt.config.hpc_system:hpc_system_config",
+)
+
+
+def _closure_models() -> list[type]:
+    """Every config model reachable from `ENTRY_CONFIGS` by annotated field type.
+
+    FORWARD REFERENCES ARE RESOLVED BEFORE THE WALK, and that is not a detail.
+    ``hpc_system_config.container`` is annotated ``ForwardRef('ContainerSpec |
+    None')``; ``typing.get_args`` returns ``()`` on an unresolved ForwardRef, so a
+    walk without ``model_rebuild()`` follows no edge and drops the model without
+    saying anything -- measured at 24 models unresolved against 25 resolved, the
+    difference being ``ContainerSpec``. A dropped edge UNDER-reports and is
+    invisible in the output, so the guard below refuses to render rather than
+    stepping over one.
+
+    WHAT THE GUARD ACTUALLY DEFENDS AGAINST, stated precisely because its first
+    wording was wrong. It does NOT catch an UNRESOLVABLE forward reference: on one
+    of those ``model_rebuild()`` itself raises ``PydanticUndefinedAnnotation`` and
+    control never reaches the guard -- verified by construction. What it catches is
+    a ForwardRef that survives a SUCCESSFUL rebuild, which is the state this walk
+    is in whenever the ``model_rebuild()`` call above is removed or reordered after
+    the field iteration. That is the regression it exists for, and it is reachable.
+    """
+    import importlib
+    import typing
+
+    import pydantic
+
+    seen: set[type] = set()
+    frontier: list[type] = []
+    for spec in ENTRY_CONFIGS:
+        modname, _, attr = spec.partition(":")
+        model = getattr(importlib.import_module(modname), attr)
+        if model not in seen:
+            seen.add(model)
+            frontier.append(model)
+    while frontier:
+        model = frontier.pop()
+        model.model_rebuild()
+        for fieldname, info in model.model_fields.items():
+            stack = [info.annotation]
+            while stack:
+                node = stack.pop()
+                if isinstance(node, typing.ForwardRef):
+                    raise RuntimeError(
+                        f"{model.__name__}.{fieldname} still carries an unresolved forward "
+                        f"reference {node!r} after model_rebuild(); the closure would omit "
+                        f"it silently, so this page refuses to render instead."
+                    )
+                if isinstance(node, type) and issubclass(node, pydantic.BaseModel) and node not in seen:
+                    seen.add(node)
+                    frontier.append(node)
+                stack.extend(typing.get_args(node) or ())
+    return sorted(seen, key=lambda m: (m.__module__, m.__name__))
+
+
+def _nested_section(already: tuple[type, ...]) -> str:
+    """Every closure member the hand-written sections above do not already table.
+
+    Most of these are report style sub-models -- panel styles, figure defaults,
+    interactive backends. They are on this page because `### D99` selects the
+    population by REACHABILITY rather than by a hand-list, and a reader who never
+    writes a ``report:`` block will not meet them in practice. They are grouped
+    under one heading and labelled as nested blocks rather than interleaved with
+    the three configs a user writes, so the page's shape still distinguishes what
+    you author from what you may never touch.
+    """
+    rest = [m for m in _closure_models() if m not in already]
+    out = [
+        "## Nested config blocks",
+        "",
+        "Reached from the three configs above by a field's type. You write these as",
+        "nested blocks inside the configs above, never as files of their own, and many",
+        "of them are report styling you can leave at its defaults. They are tabled here",
+        "because this page's population is every config the three entry configs can",
+        "reach -- so nothing a config references can go undocumented.",
+        "",
+    ]
+    for model in rest:
+        out += [f"### {model.__name__}", "", f"From `{model.__module__}`.", "", _table(model), ""]
+    return "\n".join(out)
+
+
 def _render() -> str:
     from hhemt.config.analysis import analysis_config
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
@@ -240,9 +342,12 @@ def _render() -> str:
         "",
         "# Configuration schema",
         "",
-        "Every field of every user-facing config, derived from the models themselves",
-        "at documentation build time. Nothing on this page is hand-maintained, so it",
-        "cannot fall behind the code.",
+        "Every field of every config reachable from the three you write -- the system,",
+        "analysis and HPC-system configs -- by following a field's type, derived from",
+        "the models at documentation build time. Nothing here is hand-maintained and",
+        "nothing is hand-selected: the population is that transitive closure, so a new",
+        "nested config appears by being referenced rather than by being remembered.",
+        "Config models no entry config reaches are not tabled here.",
         "",
         'All config models set `extra="forbid"`, so an unrecognised key is an error and',
         "a mistyped one is caught at load rather than at dispatch.",
@@ -278,6 +383,8 @@ def _render() -> str:
         "One entry per partition under the HPC-system config's `partitions` mapping.",
         "",
         _table(PartitionSpec),
+        "",
+        _nested_section((system_config, analysis_config, hpc_system_config, PartitionSpec)),
         "",
         _conditional_section(),
         "",
@@ -346,7 +453,12 @@ def on_config(config):
     """
     _bind_local_src()
     markdown = _render()
+    # Two passes over two different populations. The generator's OWN prose --
+    # headings, intro, section labels -- answers to all four classes. The
+    # rendered table cells are `src/`-side `Field(description=...)` strings and
+    # answer to the binary classes only. `_authored_prose()` is unchanged.
     _assert_lint_clean("\n".join(_authored_prose()))
+    _assert_lint_clean(markdown, binary_only=True)
     target = Path(config.docs_dir) / GENERATED_URI
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(markdown, encoding="utf-8")

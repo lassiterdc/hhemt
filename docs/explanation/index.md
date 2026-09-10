@@ -16,3 +16,5 @@ rationale behind the toolkit.
   `develop`/`main` gitflow-lite model.
 - [Exploratory analysis](exploratory-analysis.md): what the post-run
   exploratory step is for, and why it sits outside the workflow graph.
+- [Testing the toolkit](testing-the-toolkit.md): why the suite has two tiers, why a
+  fixture rebuild is silent, and what a green claim covers.

@@ -1316,3 +1316,63 @@ non_breaking_allowlist:
       omitted capture is the same on-disk state as a scenario whose reclaim never ran. No
       LAYOUT_VERSION bump, no V-module, no golden fixtures.
     layout_signature: "81e7ad3463b7b94ea388f678e11533928f8c141081d74cf7858fb76b4cede992"
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      REVIEWED, NOT BASELINE -- this row supersedes the BASELINE-ONLY row above (ca84a598)
+      on the terms that row set for itself: "Any later drift re-fires Check B and must be
+      adjudicated on its own merits then." The drift is the merge of
+      docs-and-experiment-system (tip 53825fea) into sidequest-clearing-08-30, and this row
+      IS that adjudication.
+      THE CHANGE, in full: TWO Field(description=...) prose edits and nothing else.
+      (1) "a documented estate reproduction script" -> "a documented deployment-config
+      reproduction script". (2) "(resolved at analysis.py:1746-1757)" -> "(resolved in
+      TRITONSWMM_analysis.run)", replacing a decayed line citation with the symbol name. No
+      field name, annotation, default, validator or executable statement changes:
+      `git diff HEAD...docs-and-experiment-system -- src/hhemt/config/analysis.py` is two
+      hunks and both sit inside a description string literal.
+      NON-BREAKING, MEASURED RATHER THAN JUDGED. `Field(description=...)` is FieldInfo
+      METADATA and is never serialized. `model_dump(mode="json")` -- the call the bundle emit
+      path makes at bundle/_emit.py:546 to write cfg_analysis.yaml -- emits field VALUES
+      only, verified by running a described field through it (the dump is `{'x': 1}`; the
+      description string is absent). So no on-disk artifact of a COMPLETED analysis, and no
+      persisted config a render or reprex bundle carries, can differ by one byte. A V0023
+      migration would have nothing to transform.
+      THE GENERATED-ARTIFACT SENSE, named because "no effect" is FALSE in it and a future
+      reader would otherwise inherit the ambiguity. These description strings ARE published:
+      hooks/config_reference.py renders each one into a table cell of
+      docs/reference/config-schema.md on every mkdocs build. That page is a DERIVED artifact
+      recomputed from the models at build time with no committed intermediate ("There is no
+      artifact between builds, so the page cannot drift from the models it describes"), so it
+      carries no old-shaped state and is not a migration surface. check_docs_content
+      additionally rules these cells OUT of gate scope (D22b, `src/`-side prose) and routes
+      them to the advisory tier, and scripts/published_surface_baseline.txt pins API SYMBOL
+      NAMES only. LAYOUT_VERSION governs on-disk breaking change to an analysis tree
+      (version_migration/constants.py module docstring), which is the sense check-b protects;
+      the generated-docs sense is governed by the sister's own docs gates, which pass on the
+      merged tree.
+      CHANGE-SCOPED via layout_signature, re-stamping ca84a598 -> ec7f5682. APPENDED rather
+      than edited in place, per the sanctioned shape the prior stamped rows on this path
+      record: a signature-less append would INHERIT ca84a598 under _load_allowlist's merge
+      and check-b would still re-fire.
+    layout_signature: "ec7f568290d6c14bbaa921bf0634caa1199d6f2ee50be090b448b68f5dbdb9e6"
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      REVIEWED, NOT BASELINE -- supersedes the BASELINE-ONLY row above (6e7b75dc) on that
+      row's own terms. Same merge (docs-and-experiment-system tip 53825fea), same
+      adjudication as the sibling src/hhemt/config/analysis.py row appended immediately
+      above; read that row for the full non-breaking argument.
+      THE CHANGE, in full: ONE Field(description=...) prose edit, on max_concurrent_cpus.
+      Two decayed line citations become symbol names -- "(job_scheduler.py:614-620)" and
+      "(:518-521)" become "in JobScheduler.update_available_resources" and "in
+      JobScheduler._free_resources" -- and "snakemake's scheduler" becomes "the scheduler in
+      snakemake (pinned ==9.15.0 in pyproject.toml)". Nothing outside the string literal
+      changes.
+      NON-BREAKING for the same measured reason: description is FieldInfo metadata,
+      `model_dump(mode="json")` emits values only. The bundle carries a VALUE PROJECTION of
+      this model -- bundle/_emit.py:864-866 dumps it and keeps the "partitions" and
+      "gpu_allocation_flavor" keys -- so metadata cannot reach the emitted identity file
+      either. A V0023 migration would have nothing to transform.
+      CHANGE-SCOPED via layout_signature, re-stamping 6e7b75dc -> 8f840b2f. APPENDED rather
+      than edited in place: a signature-less append would INHERIT 6e7b75dc under
+      _load_allowlist's merge and check-b would still re-fire.
+    layout_signature: "8f840b2ff497d2d9cdb14718422081f54ac44144f720c0a73a0e009191c3a698"

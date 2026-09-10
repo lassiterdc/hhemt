@@ -7758,7 +7758,8 @@ exit $snakemake_status
         single master ``analysis_dir``). The sensitivity path MUST pass the
         per-member dir (``master/members/{analysis_id}``) because
         ``run_simulation_runner`` writes sensitivity markers under the sub
-        analysis's own ``analysis_dir`` (sensitivity_analysis.py:1485), not the
+        analysis's own ``analysis_dir`` (written by
+        ``sensitivity_analysis.consolidate_outputs``), not the
         master dir — without the override the wait-runner would poll the wrong
         directory and always hit the walltime cap.
 

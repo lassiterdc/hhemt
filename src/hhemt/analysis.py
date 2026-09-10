@@ -3035,7 +3035,7 @@ class TRITONSWMM_analysis:
     ) -> "list[TRITONSWMM_analysis]":
         """Materialize one TRITONSWMM_analysis per representative under
         ``{analysis_dir}/_test/``, reusing the ``_create_members`` overlay
-        recipe (sensitivity_analysis.py:2021-2074): ``model_validate`` (never
+        recipe in ``sensitivity_analysis._retrieve_df_setup``: ``model_validate`` (never
         ``model_copy``+``setattr``), atomic YAML write, ``is_experiment_member=True``,
         ``toggle_sensitivity_analysis=False``.
 
@@ -4982,7 +4982,8 @@ class TRITONSWMM_analysis:
         sensitivity master passes the BARE ``member_id`` AND ``master_dir`` (the
         master analysis_dir, whose ``_status/`` holds the per-member flags); both
         are required because a member's own ``analysis_id`` is the prefixed
-        ``member_{bare}`` (sensitivity_analysis.py:1607) and its own ``analysis_dir``
+        ``member_{bare}`` (set in ``sensitivity_analysis.consolidate_sensitivity_datatree``)
+        and its own ``analysis_dir``
         is ``members/member_X/`` (sensitivity_analysis.py:50) — neither matches
         the gate's bare-``member_id`` flag under the master ``_status/``
         (workflow.py:6652/6678; sensitivity_analysis.py:480-498). Non-sensitivity

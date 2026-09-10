@@ -197,7 +197,8 @@ def _assert_report_not_older_than_read_model(analysis_dir: Path) -> None:
     asserting strict-later would encode one satisfying position rather than the invariant.
 
     Why this can happen at all: analysis.eda() re-persists validation_report.json as its
-    LAST act (analysis.py:1053), it is a non-Snakemake in-process facade by accepted
+    LAST act (in ``analysis.publish_reprex_bundle``), it is a non-Snakemake in-process
+    facade by accepted
     stipulation, and it therefore runs after the report DAG has already exited. Measured on
     generation e389264af7b9: figure 19:30, read-model 19:40 -- the figure shipped the
     previous generation's read-model, still carrying a check name this branch had retired.

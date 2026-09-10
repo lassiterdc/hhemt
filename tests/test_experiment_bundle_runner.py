@@ -187,16 +187,18 @@ def test_resolve_hpc_system_config_env_fallback_no_bundle(tmp_path, monkeypatch)
     assert eb.resolve_hpc_system_config("uva", override=None, bundle=None) == env_cfg.resolve()
 
 
-def test_resolve_hpc_system_config_bundle_declared_estate_relative(tmp_path, monkeypatch):
+def test_resolve_hpc_system_config_bundle_declared_deployment_config_relative(tmp_path, monkeypatch):
     # estate/experiments/exp_test is the bundle dir; hpc/uva.yaml is estate-relative.
-    estate = tmp_path / "estate"
-    (estate / "experiments" / "exp_test").mkdir(parents=True)
-    (estate / "hpc").mkdir()
-    cfg = estate / "hpc" / "uva.yaml"
+    deployment_config = tmp_path / "estate"
+    (deployment_config / "experiments" / "exp_test").mkdir(parents=True)
+    (deployment_config / "hpc").mkdir()
+    cfg = deployment_config / "hpc" / "uva.yaml"
     cfg.write_text("z", encoding="utf-8")
-    monkeypatch.setenv("HHEMT_DEPLOYMENT_CONFIG", str(estate))
+    monkeypatch.setenv("HHEMT_DEPLOYMENT_CONFIG", str(deployment_config))
     bundle = _make_bundle(hpc={"uva": "hpc/uva.yaml"})
-    resolved = eb.resolve_hpc_system_config("uva", bundle=bundle, bundle_dir=estate / "experiments" / "exp_test")
+    resolved = eb.resolve_hpc_system_config(
+        "uva", bundle=bundle, bundle_dir=deployment_config / "experiments" / "exp_test"
+    )
     assert resolved == cfg.resolve()
 
 

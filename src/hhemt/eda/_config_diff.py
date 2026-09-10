@@ -346,13 +346,15 @@ def _n_resumes_by_member_id(root: Path) -> dict[str, int]:
     `_load_subs` derives that key as
     `member_id_from_mapping(node.attrs, g[len("/member_"):])`: the attrs branch reads the
     value verbatim (sensitivity_analysis.py:1591 writes `attrs["member_id"] = str(member_id)`),
-    and the path branch is an EXACT inverse of the node-name writer at
-    sensitivity_analysis.py:1566 (`f"{member_prefix}{member_id}"`). Both branches therefore
+    and the path branch is an EXACT inverse of the node-name writer in
+    `sensitivity_analysis.build_sensitivity_datatree` (`f"{member_prefix}{member_id}"`).
+    Both branches therefore
     yield the member_id unchanged, and this side must too.
 
     This function previously stripped a leading 'member_' here. That was wrong, and it is
     worth naming so it is not re-added: the member_id charset is ^[A-Za-z0-9_.]+$
-    (sensitivity_analysis.py:2013), which PERMITS a leading 'member_', so the strip silently
+    (validated in `sensitivity_analysis._retrieve_df_setup`), which PERMITS a leading
+    'member_', so the strip silently
     truncated a legal id -- measured, a member named 'member_2' joined as '2' and picked up
     n_resumes=0 instead of its recorded value, on BOTH attrs branches.
 

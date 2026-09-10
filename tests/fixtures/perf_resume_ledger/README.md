@@ -1,3 +1,5 @@
+<!-- hhemt:repo-internal exempt=prose -->
+
 # Raw performance capture — clean and resumed, `member_serial_6_r1`
 
 Real solver output, captured from Rivanna, for testing that **every tracked

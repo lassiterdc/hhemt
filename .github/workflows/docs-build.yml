@@ -32,7 +32,21 @@ jobs:
       - name: Assert public-API autodoc coverage
         run: python scripts/check_autodoc_coverage.py --site-dir site
 
-      # Placeholder leakage and bare `path:line` citations. Needs no built site
-      # and no environment, so it is cheap and cannot false-red on a build issue.
+      # Placeholder leakage and bare `path:line` citations. Needs no built SITE,
+      # so it cannot false-red on a rendering issue -- but it does need the docs
+      # extra, because it derives its population from `griffe` rather than from a
+      # model of what the renderer does. That is a deliberate trade: the model it
+      # replaced was wrong in three ways at once and each was silent. This step
+      # must therefore stay AFTER the install step, and it is no longer runnable
+      # against a bare checkout.
       - name: Assert docs content hygiene
         run: python scripts/check_docs_content.py
+
+      # The two mirrors between gate A's DERIVED population and what the built
+      # site actually renders, plus the pinned public surface. Needs the SITE, so
+      # it is a third leaf rather than a clause inside the step above -- that
+      # step's "needs no built SITE" property is the whole reason it cannot live
+      # there. Imports both gates and is imported by neither, so it inverts no
+      # import direction.
+      - name: Assert published-surface fidelity and baseline
+        run: python scripts/check_published_surface.py --site-dir site

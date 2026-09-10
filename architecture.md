@@ -1,3 +1,5 @@
+<!-- hhemt:repo-internal exempt=prose -->
+
 # Architecture
 
 Reference document for the TRITON-SWMM toolkit codebase. Tool-agnostic — load this alongside `CONTRIBUTING.md` at the start of any AI-assisted session.

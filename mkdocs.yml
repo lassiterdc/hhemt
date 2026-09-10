@@ -137,4 +137,5 @@ nav:
       - Rerun FAQ: explanation/rerun-faq.md
       - Branching and release model: explanation/branching-and-release-model.md
       - Exploratory analysis: explanation/exploratory-analysis.md
+      - Testing the toolkit: explanation/testing-the-toolkit.md
   - Contributing: contributing.md

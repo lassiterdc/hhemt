@@ -33,9 +33,18 @@ patterns match SELF-DECLARATIONS about the page's own completeness, never
 mentions of placeholder syntax. Content inside fenced code blocks is skipped for
 the same reason: a fence is where a legitimate ``TODO`` example lives.
 
-Exit 0 = clean. 1 = findings (enumerated with path:line). 2 = usage error.
-Advisory findings NEVER affect the exit code; pass ``--advisory`` to print them.
-Pure stdlib.
+Exit 0 = clean. 1 = findings (enumerated with path:line). 2 = usage error, which
+now INCLUDES every population this gate cannot derive. 3 = an unanticipated
+internal error, printed with its traceback -- a distinct code because exit 1 is
+the FINDINGS code, and a crash reported as findings is a false statement about
+the docs. Advisory findings NEVER affect the exit code; pass ``--advisory``.
+
+NOT pure stdlib, and any job that imports this module must install the ``docs``
+extra. ``griffe`` and ``yaml`` are imported at module scope, and
+``mkdocstrings_handlers.python`` lazily, so a bare checkout cannot even import
+this file. This sentence previously read "Pure stdlib", which is what a reader
+consults to decide what a CI job must install -- and ``test.yml`` was written
+against it and could not collect the test module that imports this one.
 """
 
 from __future__ import annotations
@@ -43,6 +52,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import traceback
 from pathlib import Path
 
 # Self-declarations that a page's own content is unfinished. Deliberately not a
@@ -159,12 +169,80 @@ COMMENT_LINE = re.compile(r"^\s*(?:#|//|--|;)\s")
 # ("this is excused"), which is why it lives in the page rather than in a
 # skip-list here. A path-keyed skip would not generalize, and a second
 # generated page would silently re-open the gap.
-GENERATED_MARKER = "hhemt:generated-file"
+#: The class GROUPS a marker may declare exempt. `prose` is the punctuation and
+#: vocabulary pair `### D22b` rules out of gate scope; `binary` is the
+#: file-type-independent pair (placeholder leakage, bare line citations).
+#: BOTH are spellable on purpose. Hard-coding which group a marker may name
+#: would move the class split into this module, which is the position `### A16`
+#: rejected when it chose a marker-declared exemption over a central one. What
+#: keeps the binary classes enforced is that no live marker declares them, and
+#: `tests/test_check_docs_content.py` pins that BY NAME rather than by a count.
+EXEMPTABLE_CLASS_GROUPS: frozenset[str] = frozenset({"prose", "binary"})
+
+#: The NAME half of each marker, used for detection. The full declared string a
+#: page carries is `GENERATED_MARKER` / `PERSONAL_VOICE_MARKER` below. Detection
+#: must key on the NAME rather than on the full string: a page carrying the name
+#: with a malformed declaration has to RAISE, and a full-string match would
+#: silently fail to detect it and scan the page as if unmarked.
+GENERATED_MARKER_NAME = "hhemt:generated-file"
+
+_MARKER_DECL = re.compile(r"(hhemt:[a-z-]+)\s+exempt=([a-z,]*)")
+
+
+class MarkerDeclarationError(RuntimeError):
+    """A marker is present but its exemption declaration is absent or invalid."""
+
+
+def _declared_exemptions(text: str, marker_name: str) -> frozenset[str] | None:
+    """The class groups `marker_name` declares exempt, or None when it is absent.
+
+    FAILS LOUDLY rather than degrading. A marker whose declaration is missing,
+    empty, or names an unknown group raises. A silent fall back to "exempt
+    everything" would rebuild, inside this fix, the whole-file skip the fix
+    exists to remove -- which is the failure shape this gate has produced
+    repeatedly and is the one thing this parser must not do.
+    """
+    if marker_name not in text:
+        return None
+    for name, raw in _MARKER_DECL.findall(text):
+        if name != marker_name:
+            continue
+        groups = frozenset(part for part in raw.split(",") if part)
+        if not groups:
+            raise MarkerDeclarationError(f"{marker_name}: `exempt=` declares no class group.")
+        unknown = sorted(groups - EXEMPTABLE_CLASS_GROUPS)
+        if unknown:
+            raise MarkerDeclarationError(
+                f"{marker_name}: unknown class group(s) {unknown}; known groups are {sorted(EXEMPTABLE_CLASS_GROUPS)}."
+            )
+        return groups
+    raise MarkerDeclarationError(
+        f"{marker_name} is present but declares no `exempt=` class list. "
+        f"A marker states what it exempts; known groups are "
+        f"{sorted(EXEMPTABLE_CLASS_GROUPS)}."
+    )
+
+
+def _exempt_groups(text: str) -> frozenset[str]:
+    """Every class group any marker on this page declares exempt."""
+    groups: set[str] = set()
+    for name in (GENERATED_MARKER_NAME, PERSONAL_VOICE_MARKER_NAME, REPO_INTERNAL_MARKER_NAME):
+        declared = _declared_exemptions(text, name)
+        if declared:
+            groups |= declared
+    return frozenset(groups)
+
+
+#: What a generated page CARRIES. `hooks/config_reference.py` interpolates this
+#: constant and never authors the string, so widening it here reaches that page
+#: with no hook edit. A second generated page inherits this declaration until
+#: someone needs otherwise, at which point the hook passes its own list.
+GENERATED_MARKER = "hhemt:generated-file exempt=prose"
 
 
 def _is_generated(text: str) -> bool:
     """True when a page carries the generated-file marker."""
-    return GENERATED_MARKER in text
+    return _declared_exemptions(text, GENERATED_MARKER_NAME) is not None
 
 
 def generated_files(docs_dir: Path) -> list[Path]:
@@ -175,9 +253,7 @@ def generated_files(docs_dir: Path) -> list[Path]:
     with nobody having decided to grant an exemption. A source comment cannot
     do that -- it is read once, by whoever writes it.
     """
-    return [
-        md for md in sorted(docs_dir.rglob("*.md")) if _is_generated(md.read_text(encoding="utf-8", errors="ignore"))
-    ]
+    return [md for md in _scanned_markdown(docs_dir) if _is_generated(md.read_text(encoding="utf-8", errors="ignore"))]
 
 
 # A SECOND population that is authored prose but is not PRODUCT prose. The
@@ -198,12 +274,13 @@ def generated_files(docs_dir: Path) -> list[Path]:
 # Routing is identical to the generated case: skipped by `scan()`, INCLUDED by
 # `scan_advisory()`, and named with a count in BOTH of `main()`'s branches.
 # Nothing is dropped; the findings move to the tier that prints and never gates.
-PERSONAL_VOICE_MARKER = "hhemt:personal-voice"
+PERSONAL_VOICE_MARKER_NAME = "hhemt:personal-voice"
+PERSONAL_VOICE_MARKER = "hhemt:personal-voice exempt=prose"
 
 
 def _is_personal_voice(text: str) -> bool:
     """True when a page carries the personal-voice marker."""
-    return PERSONAL_VOICE_MARKER in text
+    return _declared_exemptions(text, PERSONAL_VOICE_MARKER_NAME) is not None
 
 
 def personal_voice_files(docs_dir: Path) -> list[Path]:
@@ -214,9 +291,7 @@ def personal_voice_files(docs_dir: Path) -> list[Path]:
     gate's scope, which is the defect this script exists to catch.
     """
     return [
-        md
-        for md in sorted(docs_dir.rglob("*.md"))
-        if _is_personal_voice(md.read_text(encoding="utf-8", errors="ignore"))
+        md for md in _scanned_markdown(docs_dir) if _is_personal_voice(md.read_text(encoding="utf-8", errors="ignore"))
     ]
 
 
@@ -303,7 +378,17 @@ def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
     running a different pattern set there would silently drop them while
     looking like routing.
     """
-    findings: list[tuple[str, Path, int, str]] = _binary_findings(md, text)
+    return _binary_findings(md, text) + _prose_findings(md, text)
+
+
+def _prose_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
+    """The two PROSE tiers: punctuation and vocabulary.
+
+    The complement of `_binary_findings` within `_gate_findings`, extracted so a
+    marker can exempt one group without the other. `### D22b` names exactly this
+    pair, which is why the split is here and not somewhere finer.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
     for lineno, line in _prose_lines(text):
         for code, pat in PUNCTUATION_PATTERNS:
             if pat.search(line):
@@ -315,18 +400,143 @@ def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
     return findings
 
 
+class PopulationDerivationError(RuntimeError):
+    """A population this gate scans cannot be derived faithfully.
+
+    THREE causes, and naming only the first is what made three sibling failures
+    raise a bare `ValueError` instead: git could not answer for the tracked-file
+    population, OR `mkdocs.yml` declares a renderer option this derivation does
+    not model, OR the manifested modules yield nothing to check. All three are
+    the same statement -- the population is not the page's -- so all three raise
+    this type and exit 2 with a clean message and no traceback.
+
+    A SIBLING of `MarkerDeclarationError` rather than a use of it: a repository
+    git cannot locate is not a marker-declaration problem, and reusing that type
+    to buy a catch would put a false statement in the code -- the ground `A16`
+    used to give the personal-voice marker its own name.
+    """
+
+
+def _repo_root(start: Path) -> Path:
+    """The repository root git reports for `start`.
+
+    ONE derivation, used by every caller that needs a root. `start.parent` was
+    the earlier form and it is an inference: it is right only when `start` is
+    exactly the repository's `docs` directory, and silently wrong for anything
+    deeper -- which made `SHIPPED_METADATA` resolve nothing and the gate exit 0
+    over an empty shipped population.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=start,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PopulationDerivationError(
+            f"cannot locate the repository root from {start}: `git rev-parse` failed. "
+            f"This gate's populations are derived from git and do not fall back to a "
+            f"path assumption, because a silent narrowing is what they exist to remove."
+        ) from exc
+    return Path(out)
+
+
+def _scanned_markdown(docs_dir: Path) -> list[Path]:
+    """Every markdown file this repository SHIPS or BUILDS, sorted and ABSOLUTE.
+
+    A UNION of two halves, and both are load-bearing:
+
+    * every `.md` git tracks in the repository. `rglob` over a directory
+      expressed "what is on disk under `docs/`", which was never this gate's
+      population: thirteen tracked `.md` files sit outside it, and published
+      pages name two of them.
+    * every `.md` on disk under `docs_dir`. The generated config-schema page is
+      BUILD OUTPUT and this project gitignores it, so a tracked-only population
+      drops it -- which would pin `main()`'s generated-file count at 0 forever
+      and delete the advisory worklist the marker design deliberately kept.
+
+    `.resolve()` on the second half is NOT cosmetic. `git rev-parse` answers in
+    absolute paths and `rglob` inherits the caller's spelling, so a relative
+    `--docs-dir` would put BOTH spellings of every docs page in the union -- they
+    do not compare equal, so the set does not merge them. Measured: 88 members
+    instead of 51, every docs page counted twice, and the first
+    `relative_to(repo_root)` in `main()` raising an uncaught ValueError on an
+    invocation this gate previously served at exit 0.
+
+    The rglob half is scoped to `docs_dir` and never to the repository root, so
+    it does not sweep `site/`, `.venv/`, `test_data/` or `.pytest_cache/`.
+
+    FAIL-CLOSED, deliberately, and the git half runs FIRST. A tree with no git
+    raises rather than degrading to the on-disk half. A fallback that silently
+    narrows the population is the defect this derivation exists to remove.
+    """
+    import subprocess
+
+    repo_root = _repo_root(docs_dir)
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "-z", "*.md"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PopulationDerivationError(
+            f"cannot derive the markdown population: `git ls-files` failed in {repo_root}. "
+            f"This gate scans what git tracks plus what the docs build writes, and does "
+            f"not fall back to a directory walk, because a silent narrowing is the defect "
+            f"the derivation exists to remove."
+        ) from exc
+    tracked = {repo_root / rel for rel in out.split("\0") if rel}
+    return sorted(tracked | set(docs_dir.resolve().rglob("*.md")))
+
+
+#: A THIRD marker kind, and it needs its own name for the reason the second one
+#: got its own. `generated-file` asserts a page is machine-written;
+#: `personal-voice` asserts it is the maintainer's own writing. Neither is true
+#: of a repo-internal note like `containers/README.md`, and reusing either would
+#: put a false statement in the page to buy a skip -- which is the thing a
+#: marker-in-the-page design exists to prevent.
+REPO_INTERNAL_MARKER_NAME = "hhemt:repo-internal"
+REPO_INTERNAL_MARKER = "hhemt:repo-internal exempt=prose"
+
+
+def _is_repo_internal(text: str) -> bool:
+    """True when a page carries the repo-internal marker."""
+    return _declared_exemptions(text, REPO_INTERNAL_MARKER_NAME) is not None
+
+
+def repo_internal_files(docs_dir: Path) -> list[Path]:
+    """Every repo-internal page, sorted.
+
+    Printed by `main()` in BOTH output branches, for the same reason
+    `generated_files` is: the count is what makes a future marked page visible,
+    and that virtue exists only inside the population the derivation walks.
+    """
+    return [
+        md for md in _scanned_markdown(docs_dir) if _is_repo_internal(md.read_text(encoding="utf-8", errors="ignore"))
+    ]
+
+
 def scan(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
     findings: list[tuple[str, Path, int, str]] = []
-    for md in sorted(docs_dir.rglob("*.md")):
+    for md in _scanned_markdown(docs_dir):
         text = md.read_text(encoding="utf-8", errors="ignore")
-        if _is_generated(text) or _is_personal_voice(text):
-            # Skipped here and INCLUDED by `scan_advisory()`. The inversion is
-            # deliberate: the file leaves the gate and enters the advisory tier,
-            # it does not vanish. `main()` prints what was skipped either way,
-            # and the two populations are counted separately so a reader can
-            # tell a generated page from a personal-voice one.
-            continue
-        findings.extend(_gate_findings(md, text))
+        # A marker exempts the class groups it DECLARES and nothing else. What
+        # it declares is skipped here and INCLUDED by `scan_advisory()`, so the
+        # two tiers partition the finding set by construction rather than by a
+        # second edit keeping them disjoint. `main()` prints what was skipped
+        # either way, and the two populations are counted separately.
+        exempt = _exempt_groups(text)
+        if "binary" not in exempt:
+            findings.extend(_binary_findings(md, text))
+        if "prose" not in exempt:
+            findings.extend(_prose_findings(md, text))
     return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
 
 
@@ -340,15 +550,20 @@ def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
     later prose sweep would otherwise start from.
     """
     findings: list[tuple[str, Path, int, str]] = []
-    for md in sorted(docs_dir.rglob("*.md")):
+    for md in _scanned_markdown(docs_dir):
         text = md.read_text(encoding="utf-8", errors="ignore")
         for lineno, line in _unfenced_lines(text):
             for code, pat in ADVISORY_PATTERNS:
                 if pat.search(line):
                     findings.append((code, md, lineno, line.strip()))
-        if _is_generated(text) or _is_personal_voice(text):
-            # The findings `scan()` skipped, reported here instead of nowhere.
-            findings.extend(_gate_findings(md, text))
+        # Exactly the groups `scan()` skipped, reported here instead of
+        # nowhere. A declaration of what is exempt is, in the same breath, a
+        # declaration of what this tier reports.
+        exempt = _exempt_groups(text)
+        if "binary" in exempt:
+            findings.extend(_binary_findings(md, text))
+        if "prose" in exempt:
+            findings.extend(_prose_findings(md, text))
     # The rendered-docstring population's PROSE classes. `### D22b` rules `src/`
     # prose out of GATE scope and does not rule it out of VISIBILITY, and this is
     # the visibility half -- the anchors are live `src/...py:line` positions a
@@ -403,37 +618,88 @@ def scan_shipped_metadata(repo_root: Path) -> list[tuple[str, Path, int, str]]:
     return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
 
 
-import ast  # noqa: E402
+import dataclasses  # noqa: E402
+import warnings  # noqa: E402
+
+import griffe  # noqa: E402
+import yaml  # noqa: E402
 
 # ---- The RENDERED-DOCSTRING population ------------------------------------
 #
-# Every member `mkdocstrings` renders on `docs/reference/api.md`. THE SOURCE OF
-# TRUTH IS `filters: ["!^_"]` IN mkdocs.yml, NOT `__all__`.
+# Every member `mkdocstrings` renders on `docs/reference/api.md`, DERIVED FROM
+# `griffe` -- the library `mkdocstrings` itself uses -- under the options this
+# repository's own `mkdocs.yml` declares. Nothing here models the renderer.
 #
-# Three derivations are WRONG and each was measured against the eight known bare
-# citations. They are recorded here rather than in a review, because each is the
-# obvious thing to reach for and two of them exit GREEN while under-reaching:
+# WHY THERE IS NO `ast` TRAVERSAL HERE ANY MORE. There was one, and it was wrong
+# in three ways at once, each measured against a site built from a tree in which
+# every docstring carried a unique sentinel token:
 #
-#   * `getattr(mod, "__all__", ())`, as `check_autodoc_coverage.expected_qualnames`
-#     does, reaches 6 of 8. Two manifested modules declare no `__all__` at all, so
-#     the default returns an empty tuple and those modules contribute ZERO symbols.
-#     An absent `__all__` means "every non-underscore member", never "no members".
-#   * Walking only the manifested module's own file reaches 8 of 8 citations but
-#     only 86 of 97 em dashes: `::: hhemt` renders re-exports whose docstrings
-#     live in the DEFINING module's file, which that walk never opens.
-#   * Treating `__all__` as the renderer's rule answers a different question than
-#     the page does. It is honoured where a module declares one; it is not the key.
+#   * It never read a MODULE's own docstring. `mkdocstrings` renders one at the
+#     head of every `:::` block; seven of the nine manifested modules carry one,
+#     and all seven were published and unscanned.
+#   * It applied `__all__` to a module's OWN members. `mkdocstrings` applies
+#     `filters` to those and consults `__all__` only for IMPORTED names, so four
+#     `analysis.py` classes rendered unscanned while `experiment_bundle.py`'s
+#     imported `ExperimentConfig` was scanned and rendered nowhere.
+#   * It keyed members by their ORIGIN module. The page keys them by the module
+#     `api.md` declares them through, so 52 of 173 names -- every re-exported
+#     symbol, which is to say every name a public API page exists to present --
+#     were names no reader or link ever sees.
 #
-# Only `public_modules()` is reused from the sibling gate, and only at the MODULE
-# level, where it is correct. Its symbol-level derivation is not reused: that
-# script reports 47/47 green while 24 rendered-eligible symbols sit outside
-# `__all__`, which is the same divergence it already repaired one level up.
+# Patching those three would leave the class that produced them: a derivation at
+# the SOURCE-SYNTAX altitude has to answer which module a name resolves to, how
+# an alias is followed, and what qualname the page will emit, and those three
+# answers are the three defects. `griffe` answers them because it is what the
+# renderer asks. Measured at HEAD `9ab08064`: this derivation returns 183 of the
+# 183 docstrings the built page renders, with no miss and no over-reach, and all
+# 183 of its names are anchors the page emits.
+#
+# THE MEMBER RULE IS A CONJUNCTION, NOT A CHOICE OF PREDICATE, and dropping
+# either half is measurable against the built page:
+#
+#   * `filters` (from `mkdocs.yml`) governs EVERY name, own-definition or alias.
+#     `griffe`'s `is_public` must not stand in for it over a module's OWN
+#     members, because `is_public` honours `__all__` there -- defect 2 re-entering
+#     through a convenience predicate. It drops `TestRepresentative`,
+#     `TestRepresentative.axes`, `TestSubResult` and `TestResult`, one of which
+#     carries a rendered em dash, and misses 4 sites the page renders.
+#   * An ALIAS must ALSO be exported by the module importing it -- named in that
+#     module's `__all__`, which is what `is_public` means FOR AN ALIAS; the two
+#     are measured identical on this corpus. Dropping this half is the larger
+#     error, because `filters` is a NAME test and says nothing about whether an
+#     imported name is re-exported: `filters` alone yields 438 names, of which
+#     only 183 are page anchors and 255 are names the page never emits, and it
+#     raises TWO `bare-line-citation` findings that would redden this gate on
+#     landing.
+#
+# Both halves, and only both, reach 183 names / 183 page anchors / 0 over-reach.
+#
+# Report over-reach on the NAME key, not the docstring-site key. The same 438
+# names collapse to 271 distinct sites, because a re-exported symbol is reached
+# under every module that imports it -- `ConfigurationError` under four. A
+# site-keyed count therefore under-reports this failure by 40% and is the reason
+# an earlier measurement of it read as smaller than it is.
+#
+# `filters` is READ from `mkdocs.yml` rather than written here, because the
+# population is a property of that file plus `api.md`, and a second copy of a
+# setting is a second thing to drift. An option this cannot model raises rather
+# than being ignored: a silent no-op on a setting somebody wrote deliberately is
+# the same failure that produced the three defects above, wearing a config file.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_autodoc_coverage import public_modules  # noqa: E402
 
 _SCRIPT_ROOT = Path(__file__).resolve().parent.parent
 API_PAGE = _SCRIPT_ROOT / "docs" / "reference" / "api.md"
 SRC_ROOT = _SCRIPT_ROOT / "src"
+MKDOCS_YML = _SCRIPT_ROOT / "mkdocs.yml"
+
+
+class _TolerantLoader(yaml.SafeLoader):
+    """`mkdocs.yml` carries `!!python/name:` tags that `SafeLoader` refuses."""
+
+
+_TolerantLoader.add_multi_constructor("", lambda loader, suffix, node: None)
+_TolerantLoader.add_multi_constructor("tag:yaml.org,2002:python/name:", lambda loader, suffix, node: None)
 
 
 def _module_file(module: str, src: Path) -> Path | None:
@@ -444,95 +710,296 @@ def _module_file(module: str, src: Path) -> Path | None:
     return pkg if pkg.is_file() else None
 
 
-def _declared_all(tree: ast.Module) -> list[str] | None:
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "__all__" for t in node.targets):
-            try:
-                return list(ast.literal_eval(node.value))
-            except (ValueError, SyntaxError):
-                return None
+# Every python-handler option is CLASSIFIED, and an UNCLASSIFIED one written to a
+# NON-DEFAULT value is a loud ValueError.
+#
+# WHAT "FAILS CLOSED" MEANS HERE, because the phrase invites the wrong reading.
+# The check iterates the options actually WRITTEN INTO `mkdocs.yml`, never the
+# handler's available fields, so a `mkdocstrings` release adding twenty options
+# changes nothing until somebody writes one into the config. **It fires on a
+# configuration edit, never on an upgrade.** A denylist was tried first and is
+# not durable in the other direction: it fails OPEN on any option a release adds,
+# which is the silent-no-op failure this derivation exists to remove -- and that
+# failure was demonstrated here, by an earlier draft of this file that read
+# `show_submodules`, threaded it through, and discarded it two lines later
+# without a sound.
+#
+# An option written at its OWN DEFAULT is a no-op and passes whatever its class,
+# because this derivation already behaves as that default prescribes.
+#
+# MODELLED: read and acted on.
+_MODELLED_OPTIONS = ("filters",)
+
+# NEUTRAL: classified as unable to move WHICH DOCSTRINGS EXIST, so ignored.
+# `show_if_no_docstring` is the interesting member -- it changes which members
+# get a heading, but this population is docstring-bearing by construction, so it
+# cannot move it. The other three are presentation and docstring parsing.
+_MEMBERSHIP_NEUTRAL_OPTIONS = ("docstring_style", "members_order", "summary", "show_if_no_docstring")
+
+# MEMBERSHIP-MOVING, RECORDED AS PROSE RATHER THAN AS A TUPLE:
+#
+#   members, inherited_members, show_submodules, preload_modules, extensions,
+#   allow_inspection, force_inspection, merge_init_into_class
+#
+# These eight were adjudicated individually and the ADJUDICATION is what has to
+# survive. The tuple that used to hold them was an ORACLE and an incomplete one:
+# it enumerated 8 of the 62 options this derivation refuses, so its only runtime
+# effect was to decorate the refusal message for those 8 and stay silent for the
+# other 54. Deleting it changes no refusal -- anything unclassified is refused
+# anyway. Deleting the RECORD would let a later author reclassify one by
+# inspection, which is what these paragraphs prevent.
+#
+# `merge_init_into_class` is the one that most needs to be written down, because
+# it READS presentational and is not. It folds `__init__`'s docstring into the
+# class rendering, and `__init__` is excluded by `filters: ["!^_"]` -- so with it
+# on, that prose is published and unscanned, which is defect 1's exact shape in a
+# second place.
+#
+# The last three are the sharpest for a different reason: they are not merely
+# `PythonOptions` fields, they are `GriffeLoader.__init__` parameters UNDER THE
+# SAME NAMES, so `mkdocs.yml` setting one makes the renderer collect with it while
+# the loader below collects without it. Measured here: `force_inspection` does not
+# shift this population, it makes `hhemt` fail to load at all, which the `except`
+# in the load loop would swallow into a silently narrowed scan.
+_UNSET = object()
+
+
+_PYTHON_OPTION_FIELDS: tuple | None = None
+
+
+def _python_option_fields() -> tuple:
+    """`PythonOptions`' dataclass fields -- imported LATE, QUIETLY, and once.
+
+    Importing `mkdocstrings_handlers.python` at module scope emits 350 pydantic
+    deprecation warnings from the handler's own option models. Measured: `griffe`
+    itself imports clean at 0, the handler at 350, and that is enough to make this
+    gate exit 1 under `-W error::DeprecationWarning`, which it did not before.
+    They are upstream's warnings to fix and not this gate's to broadcast, so the
+    import is deferred to the one function that needs it and silenced for the
+    duration of the import alone.
+    """
+    global _PYTHON_OPTION_FIELDS
+    if _PYTHON_OPTION_FIELDS is None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            from mkdocstrings_handlers.python import PythonOptions
+        _PYTHON_OPTION_FIELDS = dataclasses.fields(PythonOptions)
+    return _PYTHON_OPTION_FIELDS
+
+
+def _option_default(name: str) -> object:
+    """The option's own default, READ from `PythonOptions`, never transcribed.
+
+    A transcribed default is a second copy of a value the library owns, and a
+    second copy is the divergence class this whole derivation exists to remove --
+    it has no business reappearing in its own constant table. Two of these are
+    why: `extensions` and `preload_modules` carry `default_factory=list`, so
+    their `.default` is `MISSING` and the real default is `[]`. Transcribed as
+    `None`, a `mkdocs.yml` writing the documented default explicitly would RAISE
+    -- the harmless value treated as dangerous, which is the truthiness bug's own
+    shape surviving inside the fix for it.
+    """
+    for field in _python_option_fields():
+        if field.name != name:
+            continue
+        if field.default is not dataclasses.MISSING:
+            return field.default
+        if field.default_factory is not dataclasses.MISSING:
+            return field.default_factory()
+    return _UNSET
+
+
+def _handler_options(mkdocs_yml: Path = MKDOCS_YML) -> dict:
+    """`filters` as mkdocs.yml declares it, refusing any option not classified.
+
+    Raises ValueError naming every declared python-handler option that is neither
+    modelled nor classified membership-neutral. An option set to its own default
+    is a no-op and is allowed through whatever its class.
+    """
+    opts: dict = {"filters": []}
+    if not mkdocs_yml.is_file():
+        return opts
+    cfg = yaml.load(mkdocs_yml.read_text(encoding="utf-8"), Loader=_TolerantLoader) or {}
+    for plugin in cfg.get("plugins") or []:
+        if not isinstance(plugin, dict) or "mkdocstrings" not in plugin:
+            continue
+        python = ((plugin["mkdocstrings"] or {}).get("handlers") or {}).get("python") or {}
+        declared = python.get("options") or {}
+        unclassified = [
+            k
+            for k, v in declared.items()
+            if k not in _MODELLED_OPTIONS and k not in _MEMBERSHIP_NEUTRAL_OPTIONS and v != _option_default(k)
+        ]
+        if unclassified:
+            raise PopulationDerivationError(
+                f"{mkdocs_yml} declares python-handler option(s) this population derivation does "
+                f"not model: {', '.join(sorted(unclassified))}. "
+                "Classify each as modelled or membership-neutral rather than letting the gate "
+                "scan a population the page no longer has."
+            )
+        if "filters" in declared:
+            opts["filters"] = list(declared["filters"] or [])
+    return opts
+
+
+def _handler_paths(mkdocs_yml: Path = MKDOCS_YML) -> list[Path]:
+    """`handlers.python.paths`, resolved against `mkdocs.yml`'s own directory.
+
+    Returns every declared root, in declaration order; `search_paths` order is
+    what breaks a tie when two roots hold the same module name, so the order is
+    load-bearing and is preserved rather than sorted.
+
+    This is NOT an `options` key -- it sits BESIDE `options` on the handler -- so
+    it belongs here, read, rather than in the classification above, where a check
+    keyed on it could never fire. It is what tells `mkdocstrings` where the
+    package is; a derivation that hardcodes `src` while the page reads this key is
+    the same silent divergence in a second place.
+
+    WHEN `paths` IS ABSENT the fallback is the config directory, NOT `src`.
+    `PythonConfig.paths` carries `default_factory` returning `['.']`, resolved
+    against `mkdocs.yml`, so a `src` fallback would search somewhere the renderer
+    does not -- reintroducing, on the one branch that fires when configuration is
+    absent, exactly the hardcode this function exists to remove.
+
+    This function only READS. It refuses nothing, and it says so because a
+    docstring describing behaviour its function does not contain is the defect
+    class this round exists to close.
+    """
+    if not mkdocs_yml.is_file():
+        return []
+    cfg = yaml.load(mkdocs_yml.read_text(encoding="utf-8"), Loader=_TolerantLoader) or {}
+    for plugin in cfg.get("plugins") or []:
+        if not isinstance(plugin, dict) or "mkdocstrings" not in plugin:
+            continue
+        python = ((plugin["mkdocstrings"] or {}).get("handlers") or {}).get("python") or {}
+        declared = python.get("paths") or ["."]
+        return [(mkdocs_yml.parent / entry).resolve() for entry in declared]
+    return []
+
+
+def _resolve_module_file(module: str, roots: list[Path]) -> Path | None:
+    """First root holding the module, mirroring `search_paths` precedence.
+
+    Multi-root is legal `mkdocstrings` configuration and is SUPPORTED rather than
+    refused. Refusing it would turn a valid config into a hard failure to save
+    two small changes -- this loop, and passing the whole list to
+    `GriffeLoader(search_paths=...)`, which already takes a sequence. The cost of
+    supporting it is that a module name present under two roots resolves to the
+    first, which is what `griffe` does with the same list in the same order.
+    """
+    for root in roots:
+        found = _module_file(module, root)
+        if found is not None:
+            return found
     return None
 
 
-def _import_origins(module: str, tree: ast.Module) -> dict[str, tuple[str, str]]:
-    """{local name: (defining module, original name)} — re-exports, prohibition 2."""
-    out: dict[str, tuple[str, str]] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        if node.level:
-            parts = module.split(".")
-            base = ".".join(parts[: len(parts) - node.level + 1] + ([node.module] if node.module else []))
-        else:
-            base = node.module or ""
-        for alias in node.names:
-            out[alias.asname or alias.name] = (base, alias.name)
-    return out
+def _passes_filters(name: str, filters: list[str]) -> bool:
+    """`mkdocstrings` filter semantics: last matching rule wins; `!` negates."""
+    keep = True
+    matched = False
+    for rule in filters:
+        negate = rule.startswith("!")
+        pattern = rule[1:] if negate else rule
+        if re.search(pattern, name):
+            keep = not negate
+            matched = True
+    if not matched and any(not f.startswith("!") for f in filters):
+        return False
+    return keep
 
 
-def rendered_docstrings(src: Path, api_page: Path) -> list[tuple[str, Path, int, str]]:
-    """(qualname, defining file, docstring start line, docstring) for the rendered surface.
+def _exported(owner) -> set[str]:
+    """Names the module lists in `__all__` -- the alias-rendering rule."""
+    out: set[str] = set()
+    for entry in getattr(owner, "exports", None) or []:
+        out.add(entry if isinstance(entry, str) else getattr(entry, "name", ""))
+    return {n for n in out if n}
+
+
+def rendered_docstrings(src: Path = None, api_page: Path = None) -> list[tuple[str, Path, int, str]]:
+    """(page qualname, defining file, docstring start line, docstring).
+
+    The qualname is the anchor the PAGE emits -- `hhemt.Toolkit`, not
+    `hhemt.toolkit.Toolkit` -- because every downstream assertion over this
+    population is a claim about the page and must be keyed the way the page is.
 
     Raises ValueError if no manifested module resolves, or if a manifested module
     contributes zero members -- an empty contribution is the STRICT signature and
     an empty population would make this gate pass vacuously.
     """
+    # No explicit root: take the ones `mkdocs.yml` gives the renderer, so the gate
+    # and the page look in the same places by construction rather than by two
+    # copies of `src` agreeing. An explicit `src` still wins, which is what lets a
+    # test point this at a fixture tree.
+    roots = [src] if src is not None else (_handler_paths() or [SRC_ROOT])
+    api_page = API_PAGE if api_page is None else api_page
+    filters = _handler_options()["filters"]
+
+    modules = public_modules(api_page)
+    loader = griffe.GriffeLoader(search_paths=[str(root) for root in roots])
+    resolved: list[str] = []
+    for module in modules:
+        if _resolve_module_file(module, roots) is None:
+            continue
+        try:
+            loader.load(module)
+        except Exception:
+            continue
+        resolved.append(module)
+    if not resolved:
+        roots_text = ", ".join(str(root) for root in roots)
+        raise PopulationDerivationError(
+            f"no module named on {api_page} resolved under {roots_text} -- nothing to check."
+        )
+    loader.resolve_aliases(external=False)
+
     out: list[tuple[str, Path, int, str]] = []
     seen: set[str] = set()
     per_module: dict[str, int] = {}
-    resolved = 0
-    for module in public_modules(api_page):
-        path = _module_file(module, src)
-        if path is None:
-            continue
-        resolved += 1
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        defined = {n.name: n for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
-        imported = _import_origins(module, tree)
-        declared = _declared_all(tree)
-        # `filters: ["!^_"]` is the rule. `__all__` narrows it where declared.
-        names = [n for n in list(defined) + list(imported) if not n.startswith("_")]
-        if declared is not None:
-            names = [n for n in declared if not n.startswith("_")]
+
+    def emit(qualname: str, obj) -> bool:
+        doc = getattr(obj, "docstring", None)
+        if doc is None or not doc.value or qualname in seen:
+            return False
+        seen.add(qualname)
+        out.append((qualname, Path(obj.filepath), doc.lineno, doc.value))
+        return True
+
+    def visit(owner, page_path: str, depth: int) -> int:
         count = 0
-        for name in dict.fromkeys(names):
-            node, owner, home = defined.get(name), module, path
-            if node is None and name in imported:
-                origin_mod, origin_name = imported[name]
-                origin_path = _module_file(origin_mod, src)
-                if origin_path is None:
-                    continue
-                origin_tree = ast.parse(origin_path.read_text(encoding="utf-8"))
-                node = {
-                    n.name: n
-                    for n in origin_tree.body
-                    if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-                }.get(origin_name)
-                owner, home, name = origin_mod, origin_path, origin_name
-            if node is None:
+        if depth > 2:
+            return count
+        exported = _exported(owner)
+        for name, member in list(owner.members.items()):
+            if not _passes_filters(name, filters):
                 continue
-            members = [(f"{owner}.{name}", node)]
-            if isinstance(node, ast.ClassDef):
-                members += [
-                    (f"{owner}.{name}.{c.name}", c)
-                    for c in node.body
-                    if isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef)) and not c.name.startswith("_")
-                ]
-            for qualname, member in members:
-                if qualname in seen:
+            target = member
+            if member.is_alias:
+                if name not in exported:
                     continue
-                seen.add(qualname)
-                doc = ast.get_docstring(member)
-                if doc is None:
+                try:
+                    target = member.final_target
+                except Exception:
                     continue
-                count += 1
-                out.append((qualname, home, member.body[0].lineno, doc))
+            kind = target.kind.value
+            if kind not in ("class", "function", "attribute"):
+                continue  # `show_submodules` is False and is refused if set
+            qualname = f"{page_path}.{name}"
+            count += emit(qualname, target)
+            if kind == "class":
+                count += visit(target, qualname, depth + 1)
+        return count
+
+    for module in resolved:
+        mod = loader.modules_collection[module]
+        count = int(emit(module, mod))
+        count += visit(mod, module, 0)
         per_module[module] = count
-    if not resolved:
-        raise ValueError(f"no module named on {api_page} resolved under {src} -- nothing to check.")
+
     empty = [m for m, c in per_module.items() if c == 0]
     if empty:
-        raise ValueError(
+        raise PopulationDerivationError(
             f"manifested module(s) contributed zero documented members: {', '.join(empty)}. "
             f"That is the STRICT signature -- check the population derivation, not the modules."
         )
@@ -561,7 +1028,11 @@ def main(argv: list[str] | None = None) -> int:
         "--docs-dir",
         type=Path,
         default=Path(__file__).resolve().parent.parent / "docs",
-        help="documentation root to scan (default: ./docs)",
+        help=(
+            "the documentation root (default: ./docs) -- the docs root, NOT the "
+            "repository root. The scanned population is every markdown git tracks "
+            "in the repository, plus every markdown on disk under this directory"
+        ),
     )
     ap.add_argument(
         "--advisory",
@@ -572,12 +1043,49 @@ def main(argv: list[str] | None = None) -> int:
     if not args.docs_dir.is_dir():
         print(f"ERROR: docs dir not found: {args.docs_dir}", file=sys.stderr)
         return 2
+    try:
+        return _run(args)
+    except (MarkerDeclarationError, PopulationDerivationError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        if isinstance(exc, MarkerDeclarationError):
+            print(
+                "A generated page is rewritten only when `mkdocs build` runs and is "
+                "gitignored, so a stale or absent one is the normal state of a fresh "
+                "clone. Run `mkdocs build` first.",
+                file=sys.stderr,
+            )
+        return 2
+    except Exception:
+        traceback.print_exc()
+        print(
+            "ERROR: unanticipated failure inside this gate. Exit 3, not 1: 1 is the "
+            "FINDINGS code, and a crash reported as findings is a false statement "
+            "about the docs.",
+            file=sys.stderr,
+        )
+        return 3
 
+
+def _run(args: argparse.Namespace) -> int:
+    """The body of `main()`, separated so a `MarkerDeclarationError` raised anywhere
+    inside it returns the documented exit 2 rather than a traceback.
+
+    Four call sites below read markers -- `scan`, `scan_advisory`, `generated_files`
+    and `personal_voice_files` -- so a guard around any ONE of them would leave the
+    other three uncovered. This module's docstring contracts three outcomes (0, 1, 2)
+    and a traceback is none of them; `check_autodoc_coverage.py` handles the same
+    build-artifact case the same way.
+    """
+    # The repository root, derived ONCE and bound before every consumer. Two of
+    # the three `relative_to` sites in this prologue run ABOVE the old binding
+    # site, so repairing them without moving the binding is an UnboundLocalError
+    # rather than a fix.
+    repo_root = _repo_root(args.docs_dir)
     if args.advisory:
         advisory = scan_advisory(args.docs_dir)
         print(f"advisory: {len(advisory)} candidate(s) — judgment required, not a gate.")
         for code, path, lineno, excerpt in advisory:
-            rel = path.relative_to(args.docs_dir.parent)
+            rel = path.relative_to(repo_root)
             print(f"  {rel}:{lineno} [{code}] {excerpt[:110]}")
 
     # Name every class checked, AND every file not checked. A success line that
@@ -588,15 +1096,15 @@ def main(argv: list[str] | None = None) -> int:
     def _skip_line(label: str, paths: list[Path]) -> str:
         if not paths:
             return f"skipped 0 {label} file(s)"
-        rels = ", ".join(str(m.relative_to(args.docs_dir.parent)) for m in paths)
+        rels = ", ".join(str(m.relative_to(repo_root)) for m in paths)
         return f"skipped {len(paths)} {label} file(s), routed to --advisory: {rels}"
 
-    repo_root = args.docs_dir.parent
     shipped = [name for name in SHIPPED_METADATA if (repo_root / name).is_file()]
     rendered = rendered_docstrings(SRC_ROOT, API_PAGE)
     skip_lines = [
         _skip_line("generated", generated_files(args.docs_dir)),
         _skip_line("personal-voice", personal_voice_files(args.docs_dir)),
+        _skip_line("repo-internal", repo_internal_files(args.docs_dir)),
         f"scanned {len(shipped)} shipped-metadata file(s) for placeholders and line "
         f"citations only: {', '.join(shipped) if shipped else '(none found)'}",
         f"scanned {len(rendered)} rendered docstring(s) from {API_PAGE.name} for placeholders "
@@ -604,11 +1112,24 @@ def main(argv: list[str] | None = None) -> int:
         f"and are reported under --advisory, never gated",
     ]
 
-    findings = scan(args.docs_dir) + scan_shipped_metadata(repo_root) + scan_rendered_docstrings()
+    # `scan()` walks every markdown this repository ships or builds, which
+    # INCLUDES the markdown members of SHIPPED_METADATA. Those are already
+    # scanned by `scan_shipped_metadata` for the two file-type-independent
+    # classes ONLY -- see the SHIPPED_METADATA comment for why the prose
+    # contracts do not run on them. Routed out here rather than out of the
+    # population, because narrowing the population would also drop them from
+    # `scan_advisory`, and full paths rather than names because a nested
+    # `README.md` is a different file with a different ruling.
+    shipped_paths = {repo_root / name for name in SHIPPED_METADATA}
+    findings = (
+        [f for f in scan(args.docs_dir) if f[1] not in shipped_paths]
+        + scan_shipped_metadata(repo_root)
+        + scan_rendered_docstrings()
+    )
     if findings:
         print("docs content check FAILED:", file=sys.stderr)
         for code, path, lineno, excerpt in findings:
-            rel = path.relative_to(args.docs_dir.parent)
+            rel = path.relative_to(repo_root)
             print(f"  {rel}:{lineno} [{code}] {excerpt[:110]}", file=sys.stderr)
         print(
             f"\n{len(findings)} finding(s). A placeholder tells a reader the page is "

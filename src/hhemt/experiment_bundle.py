@@ -2,8 +2,8 @@
 
 Mirrors the ``synthetic_experiment.py`` + ``config/synthetic_experiment.py`` pair
 (Gotcha 67a): the FRAMEWORK lives in ``src/hhemt/`` so it ships in the wheel and is
-importable without ``tests/`` or ``scripts/``; the estate holds experiment IDENTITY
-(``experiment.yaml``) and a thin caller.
+importable without ``tests/`` or ``scripts/``; the operator's deployment-config
+repository holds experiment IDENTITY (``experiment.yaml``) and a thin caller.
 
 This module MUST NOT import from ``tests`` or ``scripts`` — a ``src -> tests`` or
 ``src -> scripts`` import breaks ``pip install -e .`` (the stipulation that forced the
@@ -39,13 +39,14 @@ def resolve_hpc_system_config(
 ) -> Path:
     """Resolve the operator's REAL ``hpc_system_config`` path for ``cluster``.
 
-    Non-mutating: reads the estate config, never edits a tracked file.
+    Non-mutating: reads the deployment config, never edits a tracked file.
 
     Precedence (highest first):
       1. explicit ``override`` (the ``--hpc-system-config`` CLI argument / argv[2]).
-      2. the bundle's declared ``hpc_system_config[cluster]`` — estate-relative,
+      2. the bundle's declared ``hpc_system_config[cluster]`` — deployment-config-relative,
          resolved against ``$HHEMT_DEPLOYMENT_CONFIG`` (or, absent that, the bundle's
-         grandparent, i.e. ``{estate}/experiments/{slug} -> {estate}``). Consulted ONLY
+         grandparent, i.e. ``{deployment_config}/experiments/{slug} ->
+         {deployment_config}``). Consulted ONLY
          when a ``bundle`` is supplied and declares this cluster.
       3. ``$HHEMT_HPC_SYSTEM_CONFIG``.
       4. ``$HHEMT_DEPLOYMENT_CONFIG/hpc/hpc_system_config_{cluster}.yaml``.
@@ -64,20 +65,20 @@ def resolve_hpc_system_config(
         if declared.is_absolute():
             path = declared
         else:
-            estate = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-            if estate:
-                estate_root = Path(estate).expanduser()
+            deployment_config = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
+            if deployment_config:
+                deployment_config_root = Path(deployment_config).expanduser()
             elif bundle_dir is not None:
-                # {estate}/experiments/{slug} -> {estate}
-                estate_root = Path(bundle_dir).expanduser().resolve().parent.parent
+                # {deployment_config}/experiments/{slug} -> {deployment_config}
+                deployment_config_root = Path(bundle_dir).expanduser().resolve().parent.parent
             else:
-                estate_root = Path.cwd()
-            path = estate_root / rel
+                deployment_config_root = Path.cwd()
+            path = deployment_config_root / rel
     elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
         path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
     else:
-        estate = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-        if not estate:
+        deployment_config = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
+        if not deployment_config:
             raise ConfigurationError(
                 field="hpc_system_config",
                 message=(
@@ -89,7 +90,7 @@ def resolve_hpc_system_config(
                 ),
                 config_path=None,
             )
-        path = Path(estate).expanduser() / "hpc" / f"hpc_system_config_{cluster}.yaml"
+        path = Path(deployment_config).expanduser() / "hpc" / f"hpc_system_config_{cluster}.yaml"
     if not path.is_file():
         raise ConfigurationError(
             field="hpc_system_config",
@@ -195,7 +196,7 @@ def resolve_container_defs(
 
     SINGLE-ARCH BY CONSTRUCTION, and deliberately so. ``ContainerRef.def_recipe`` is
     scalar, so a descriptor-driven bundle carries exactly one recipe. That matches the
-    estate's own design -- every live hpc_system_config records `sif_paths_by_arch
+    deployment config's own design -- every live hpc_system_config records `sif_paths_by_arch
     intentionally EMPTY: this bundle pins ONE partition and therefore one gpu_hardware`
     -- and all nine live descriptors declare exactly one def_recipe. ADR-19 multi-SIF
     (one .def per arch) remains available on the FLAG path: omit ``--experiment-config``
@@ -243,9 +244,9 @@ def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = No
     is an ephemeral INPUT, not an analysis OUTPUT, so it is compatible with a
     ``dry_run`` that writes nothing to the analysis output tree.
 
-    Lifts the estate driver's ``run_analysis_test.py::_resolve_config`` into the wheel
-    (the same drift-free move Phase 5 made for ``resolve_hpc_system_config``), but
-    raises ``ConfigurationError`` (CLI exit 2) instead of ``SystemExit``.
+    Lifts the deployment-config driver's ``run_analysis_test.py::_resolve_config`` into
+    the wheel (the same drift-free move Phase 5 made for ``resolve_hpc_system_config``),
+    but raises ``ConfigurationError`` (CLI exit 2) instead of ``SystemExit``.
     """
     cfg_path = Path(cfg_path)
     resolved_text = os.path.expandvars(cfg_path.read_text(encoding="utf-8"))
@@ -373,7 +374,7 @@ def build_case_from_bundle(
     Preserves the landed fail-fast guards verbatim: a ``default_account`` that is unset
     or still a ``{your-...}`` placeholder raises; a missing or placeholder
     ``container.sif_path`` raises when the bundle declares a container. Config
-    resolution is NON-MUTATING — it reads the estate config, never edits a tracked file.
+    resolution is NON-MUTATING — it reads the deployment config, never edits a tracked file.
     """
     from hhemt.config.loaders import load_hpc_system_config
     from hhemt.toolkit import Toolkit
