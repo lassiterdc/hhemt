@@ -45,8 +45,8 @@ from hhemt.exceptions import ConfigurationError  # noqa: E402
 from hhemt.scenario import TRITONSWMM_scenario  # noqa: E402
 from hhemt.workflow import SnakemakeWorkflowBuilder  # noqa: E402
 
-# The Norfolk LOCAL test cases are byte-identity-neutral with this config (all
-# hpc_* selectors null); reused here so cfg_hpc_system is non-None and a
+# The synth LOCAL test cases are byte-identity-neutral with this config (all
+# hpc_* PARTITION selectors null); reused here so cfg_hpc_system is non-None and a
 # ContainerSpec can be attached. See test_workflow_snakefile_byte_identity.py.
 EXAMPLE_HPC_CONFIG = Path(__file__).parent / "fixtures" / "hpc_system_config_test.yaml"
 
@@ -67,7 +67,7 @@ def test_native_snakefile_no_container_artifacts() -> None:
     The container seam is gated behind ``execution_environment == 'container'`` in
     the builder's ``__init__`` (workflow.py), so the default path's process-prefix
     is empty and no ``apptainer`` token leaks into the generated Snakefile."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -86,7 +86,7 @@ def test_container_mode_process_prefix_in_snakefile() -> None:
     process rungs are CPU post-processing). The sim (``run_{model}``), consolidate,
     plot, and render shells carry NO ``apptainer exec`` — the sim wrap is built at
     runtime, the rest stay native (R2)."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -169,7 +169,7 @@ def test_container_mode_process_prefix_binds_system_directory() -> None:
     the DEM by absolute path), not just ``analysis_dir``. This is the LOCAL proof
     that D11 lands before a Phase-7 cluster run would otherwise discover the DEM
     outside the mount (Evidence 9)."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -402,7 +402,7 @@ def test_cpu_only_swmm_rule_routes_to_cpu_partition() -> None:
     ``-p gpu`` -> ``sbatch: error: QOSMinGRES``, 0-byte log). Every other CPU-only
     rule already routes to the processing partition — run_swmm was the anomaly.
     Container-INDEPENDENT: this asserts on the native generator too."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -491,7 +491,7 @@ def test_container_prefixed_shells_never_invoke_a_host_interpreter() -> None:
     ContainerSpec explicitly declares as in-SIF. A host absolute path is never
     admissible. This is expressible against the GENERATED Snakefile with no
     cluster, no image, and no apptainer binary."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -555,7 +555,7 @@ def test_container_process_prefix_loads_the_apptainer_module_when_declared() -> 
 
     Invariant: whenever the ContainerSpec declares an apptainer_module, every
     container-prefixed process command loads it before invoking `apptainer`."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -577,7 +577,7 @@ def test_container_process_prefix_omits_module_load_when_undeclared() -> None:
 
     The module-load prepend is guarded on the field, so a spec that declares no
     module must emit exactly as it did before the fix."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -616,7 +616,7 @@ def test_only_allowlisted_rules_declare_a_snakemake_group() -> None:
     gates the localrules path behind ``rule.group is None``), so such a guard
     could never fire and would manufacture false assurance.
     """
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -648,10 +648,12 @@ def test_native_absent_cpu_build_log_raises_configuration_not_compilation(
     compile failure.
 
     Coverage rationale (main-agent apply-time addition, not in the VMS). Anchor F
-    branches the native CPU raise on log existence, but the shared Norfolk fixture
-    carries a real ``compilation.log``, so the sibling test above provably takes the
-    CompilationError arm -- measured, not assumed. Without this test Anchor F's new
-    ConfigurationError branch would ship with zero coverage.
+    branches the native CPU raise on log existence. This test forces the ABSENT-log
+    arm by pointing ``compilation_logfile_cpu`` at a path that does not exist, because
+    the fixture's own build tree carries a real ``compilation.log`` and would otherwise
+    take the CompilationError arm. No other test in this file reaches the CPU arm at
+    all, so without this test Anchor F's ConfigurationError branch ships with zero
+    coverage.
 
     Why the distinction is load-bearing rather than cosmetic: every prep-rung raise
     site passes the hardcoded literal ``return_code=1`` even though no process ran,
@@ -660,7 +662,7 @@ def test_native_absent_cpu_build_log_raises_configuration_not_compilation(
     when defect-10 first surfaced. The two arms also carry different CLI exit codes
     (config 2 vs compile 3), so this is an exit-contract assertion, not a wording one.
     """
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )

@@ -53,8 +53,8 @@ GOLDENS_DIR = Path(__file__).parent / "fixtures" / "golden_snakefiles"
 # Phase 4 (4a — byte-identity foundation): thread an hpc_system_config into the
 # byte-identity cases so cfg_hpc_system is non-None BEFORE the legacy
 # None-fallbacks in the resolution helpers are deleted in 4c/4d (those helpers
-# are called unconditionally during Snakefile generation). The Norfolk cases are
-# LOCAL mode with all hpc_* selectors null, so the config is byte-identity-neutral
+# are called unconditionally during Snakefile generation). The synth cases are
+# LOCAL mode with all hpc_* PARTITION selectors null, so the config is byte-identity-neutral
 # (its partition is never looked up; default_account appears only in the profile
 # config.yaml, not the Snakefile). See the example config's header for the rationale.
 EXAMPLE_HPC_CONFIG = Path(__file__).parent / "fixtures" / "hpc_system_config_test.yaml"
@@ -176,7 +176,7 @@ def _check(got: str, golden_name: str) -> None:
 
 def test_multi_sim_snakefile_byte_identity() -> None:
     """Source-side multi-sim Snakefile byte-identical to golden."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -187,7 +187,7 @@ def test_multi_sim_snakefile_byte_identity() -> None:
 
 def test_master_snakefile_byte_identity() -> None:
     """Source-side sensitivity-master Snakefile byte-identical to golden."""
-    tc = Local_TestCases.retrieve_norfolk_cpu_config_sensitivity_case(
+    tc = Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -234,7 +234,7 @@ def test_slurm_profile_byte_identity_unset() -> None:
     """
     import yaml  # not imported at module scope in this file
 
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=SLURM_HPC_CONFIG,
     )
@@ -255,7 +255,7 @@ def test_slurm_profile_declares_the_bag_when_set() -> None:
     generator it checks, so it would pass on any value the emitter produced; the
     assertion below fails if the number is wrong, which a golden cannot do.
     """
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=CAPPED_HPC_CONFIG,
     )
@@ -271,7 +271,7 @@ def test_slurm_profile_omits_the_bag_when_unset() -> None:
     ABSENT rather than present-and-null, which is the [Q246] property and is not
     something a byte comparison can distinguish from "we never looked".
     """
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=SLURM_HPC_CONFIG,
     )
@@ -285,7 +285,7 @@ def test_per_rule_weight_is_metered_not_requested_when_set() -> None:
     The unset arm gets a free green from the two Snakefile goldens; this is the
     arm that does the work and nothing else covers it.
     """
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=CAPPED_HPC_CONFIG,
     )
@@ -309,7 +309,7 @@ def test_full_node_gpu_weight_is_the_whole_node_not_the_request() -> None:
     the same class measured at 6x on job 14452815. An assertion on 4 would pass
     while permitting a tenfold ceiling breach.
     """
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=CAPPED_HPC_CONFIG,
     )
@@ -337,7 +337,7 @@ def test_raise_when_full_node_gpu_partition_declares_no_cpus_per_node() -> None:
     """
     from hhemt.exceptions import ConfigurationError
 
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=CAPPED_HPC_CONFIG,
     )
@@ -385,7 +385,7 @@ def test_process_rules_emit_group_directive() -> None:
     """All three process_* rules carry `group: "process_evt_{event_id}"` so
     Snakemake's DAG planner collapses them into a single per-event job-group,
     deduplicating subprocess-startup overhead (Phase 3b, R8)."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -405,7 +405,7 @@ def test_process_rule_group_resources_do_not_overallocate() -> None:
     the per-event aggregate `cpus_per_task` (sum across the three process_*
     rules) stays within a sane ceiling (architecture Gotcha 9 for Snakemake;
     Phase 3b, R8). This is a static check on the emitted Snakefile."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -465,7 +465,7 @@ def test_report_tail_partition_local_dispatch_slurm_locus_emits_cpu_partition(
 
     The [Q8] Defect-2 fix: multi_sim_run_method='local' but the emitted Snakefile
     runs under `--executor slurm` (execution_mode='slurm')."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -488,7 +488,7 @@ def test_report_tail_partition_genuine_local_cores_emits_empty(
     byte-identical to the pre-fix form. This is why the committed multi_sim /
     master goldens need no regeneration: those tests call generate_* directly on a
     fresh builder, so _resolved_execution_locus stays None."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -514,7 +514,7 @@ def test_report_tail_partition_native_dispatch_invariant_to_locus(
     partition regardless of the locus field — a byte-diff regression guard proving
     the new OR-clause does not perturb the ADR-19 native path (1_job / batch_job),
     whose partition is driven entirely by the pre-fix `!= "local"` clause."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
@@ -674,7 +674,7 @@ def test_no_shell_prefix_or_executable_disables_pipefail() -> None:
 
     # Second population: the GENERATED Snakefile text. The byte-identity suite
     # already holds this string in hand, so this costs one generation and no fixture.
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
