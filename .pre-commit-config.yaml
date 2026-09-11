@@ -173,6 +173,26 @@ repos:
         language: system
         stages: [commit-msg]
 
+  # D106 message-text guard (scripts/check_private_estate_in_messages.py)
+  # Complements, does not replace, the two anonymization guards above. Those key on
+  # genuinely-private IDENTIFIERS anywhere in a tracked file; the word this gate bans is
+  # an ordinary one, carried by 43 tracked lines inside this gate's own roots, of which
+  # only a handful are messages. This gate keys on emission POSITION instead: a string
+  # reachable from raise, an assert message, print, SystemExit, warn, sys.exit or another
+  # .exit(), click/typer echo, sys.std{out,err}.write, ArgumentParser or add_argument, or
+  # a logger method -- plus a module docstring that an emitting call renders via __doc__.
+  # It is a PROXY for D106, never a test of it: a message naming the private deployment
+  # without the token is invisible to it, as is a literal bound to a variable first.
+  - repo: local
+    hooks:
+      - id: check-private-estate-in-messages
+        name: D106 message-text guard (no private estate in user-facing messages)
+        entry: uv run --locked python scripts/check_private_estate_in_messages.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-push]
+
   # Vocabulary freeze (scripts/check_vocabulary_freeze.py)
   # INVERTED assertion: requires the OLD vocabulary to still be PRESENT in the
   # forward-only migration modules, their legacy fixtures, and their tests. A

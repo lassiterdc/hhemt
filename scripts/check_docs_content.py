@@ -194,28 +194,62 @@ class MarkerDeclarationError(RuntimeError):
 
 
 def _declared_exemptions(text: str, marker_name: str) -> frozenset[str] | None:
-    """The class groups `marker_name` declares exempt, or None when it is absent.
+    r"""The class groups `marker_name` declares exempt, or None when it is absent.
 
     FAILS LOUDLY rather than degrading. A marker whose declaration is missing,
     empty, or names an unknown group raises. A silent fall back to "exempt
     everything" would rebuild, inside this fix, the whole-file skip the fix
     exists to remove -- which is the failure shape this gate has produced
     repeatedly and is the one thing this parser must not do.
+
+    FENCE-MASKED, PER LINE, and the per-line part is not a stylistic choice. A
+    page DOCUMENTING this mechanism carries a fenced example of a correct
+    declaration; over raw text that page silently ACQUIRES the exemption it is
+    describing, and the same masking stops a fenced example whose declaration is
+    malformed from aborting the scan. But `_MARKER_DECL` spans `\s+`, which
+    matches a newline, so JOINING the surviving lines would make non-adjacent
+    lines ADJACENT and match a marker name before a fence against an `exempt=`
+    after it -- turning a loud raise into a silent grant on a page that declared
+    nothing. Iterating keeps the legitimate intra-line span and removes every
+    cross-line one, including a splice the raw-text form already carried.
+
+    THE NARROWING PER-LINE INTRODUCES, stated because it is a real behaviour
+    change and not only a repair. A declaration SPLIT ACROSS LINES -- a
+    multi-line HTML comment naming the marker on one line and spelling `exempt=`
+    on the next -- was HONOURED before, because `\s+` spans the newline, and now
+    RAISES. Measured: it returned `['prose']` and now refuses. That is the same
+    span this function removes to close the fence splice, so the two cannot be
+    separated: a form that accepts the multi-line declaration accepts the splice.
+    The direction is fail-closed, none of the nine live declarations is
+    multi-line, and a page wanting the exemption writes it on one line.
+
+    Two further reaches are deliberately NOT closed. A marker name in UNFENCED
+    prose still raises, which is why the contributor page states the names
+    through a build-time substitution rather than in its own bytes. And an
+    UNTERMINATED fence leaves the toggle open, so a declaration below it is not
+    seen and the page is scanned rather than skipped -- also fail-closed, and
+    stated because it couples this parser to `_unfenced_lines`' toggle semantics.
     """
-    if marker_name not in text:
-        return None
-    for name, raw in _MARKER_DECL.findall(text):
-        if name != marker_name:
+    seen = False
+    for _lineno, line in _unfenced_lines(text):
+        if marker_name not in line:
             continue
-        groups = frozenset(part for part in raw.split(",") if part)
-        if not groups:
-            raise MarkerDeclarationError(f"{marker_name}: `exempt=` declares no class group.")
-        unknown = sorted(groups - EXEMPTABLE_CLASS_GROUPS)
-        if unknown:
-            raise MarkerDeclarationError(
-                f"{marker_name}: unknown class group(s) {unknown}; known groups are {sorted(EXEMPTABLE_CLASS_GROUPS)}."
-            )
-        return groups
+        seen = True
+        for name, raw in _MARKER_DECL.findall(line):
+            if name != marker_name:
+                continue
+            groups = frozenset(part for part in raw.split(",") if part)
+            if not groups:
+                raise MarkerDeclarationError(f"{marker_name}: `exempt=` declares no class group.")
+            unknown = sorted(groups - EXEMPTABLE_CLASS_GROUPS)
+            if unknown:
+                raise MarkerDeclarationError(
+                    f"{marker_name}: unknown class group(s) {unknown}; "
+                    f"known groups are {sorted(EXEMPTABLE_CLASS_GROUPS)}."
+                )
+            return groups
+    if not seen:
+        return None
     raise MarkerDeclarationError(
         f"{marker_name} is present but declares no `exempt=` class list. "
         f"A marker states what it exempts; known groups are "
@@ -224,9 +258,30 @@ def _declared_exemptions(text: str, marker_name: str) -> frozenset[str] | None:
 
 
 def _exempt_groups(text: str) -> frozenset[str]:
-    """Every class group any marker on this page declares exempt."""
+    r"""Every class group any marker on this page declares exempt.
+
+    REFUSES an `exempt=` declaration on any `hhemt:` name that is not an
+    exemption marker. `_MARKER_DECL` matches the whole namespace while this
+    consultation is keyed on three names, so before this branch a declaration
+    written on a neighbouring marker PARSED, was never consulted, and returned
+    silently -- granting nothing while looking exactly like the working form.
+
+    PER LINE for the same reason `_declared_exemptions` is: joining the unfenced
+    lines would let `\s+` span the elided fence and refuse a page whose marker
+    name and `exempt=` merely sit on either side of one.
+    """
+    known = (GENERATED_MARKER_NAME, PERSONAL_VOICE_MARKER_NAME, REPO_INTERNAL_MARKER_NAME)
+    for _lineno, line in _unfenced_lines(text):
+        for name, _raw in _MARKER_DECL.findall(line):
+            if name not in known:
+                raise MarkerDeclarationError(
+                    f"{name} carries `exempt=` but is not an exemption marker. "
+                    f"The exemption markers are {sorted(known)}; known class groups "
+                    f"are {sorted(EXEMPTABLE_CLASS_GROUPS)}. Drop the `exempt=` "
+                    f"declaration, or move it to one of those markers."
+                )
     groups: set[str] = set()
-    for name in (GENERATED_MARKER_NAME, PERSONAL_VOICE_MARKER_NAME, REPO_INTERNAL_MARKER_NAME):
+    for name in known:
         declared = _declared_exemptions(text, name)
         if declared:
             groups |= declared
@@ -1096,7 +1151,11 @@ def _run(args: argparse.Namespace) -> int:
     def _skip_line(label: str, paths: list[Path]) -> str:
         if not paths:
             return f"skipped 0 {label} file(s)"
-        rels = ", ".join(str(m.relative_to(repo_root)) for m in paths)
+        rels = ", ".join(
+            f"{m.relative_to(repo_root)} (exempt="
+            f"{','.join(sorted(_exempt_groups(m.read_text(encoding='utf-8', errors='ignore'))))})"
+            for m in paths
+        )
         return f"skipped {len(paths)} {label} file(s), routed to --advisory: {rels}"
 
     shipped = [name for name in SHIPPED_METADATA if (repo_root / name).is_file()]

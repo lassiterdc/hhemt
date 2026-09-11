@@ -593,3 +593,80 @@ def test_no_marker_page_exempts_the_binary_classes():
         f"citations are gated on shipped metadata and on rendered docstrings; a page "
         f"exempting them needs its own ruling, not a marker edit."
     )
+
+
+def test_a_fenced_declaration_grants_nothing_and_aborts_nothing():
+    """The detector is fence-masked PER LINE, so a page may DOCUMENT the mechanism.
+
+    Four positions, and the fourth is the one a join would fail: a fenced correct
+    declaration must not grant, a fenced malformed one must not abort, a real
+    unfenced declaration must still be honoured, and a page naming a marker on one
+    side of a fence while spelling `exempt=` on the other must NOT be spliced into
+    a declaration it never made.
+    """
+    correct = "# Doc\n\n```markdown\n<!-- hhemt:repo-internal exempt=prose -->\n```\n\nprose\n"
+    malformed = "# Doc\n\n```markdown\n<!-- hhemt:repo-internal exempt= -->\n```\n\nprose\n"
+    assert cdc._exempt_groups(correct) == frozenset()
+    assert cdc._exempt_groups(malformed) == frozenset()
+    unfenced = "<!-- hhemt:repo-internal exempt=prose -->\n# Doc\n"
+    assert cdc._exempt_groups(unfenced) == frozenset({"prose"})
+    spliced = (
+        "# Page\nA sentence mentioning hhemt:repo-internal\n"
+        "```python\nx = 1\n```\nexempt=prose is the syntax you write.\n"
+    )
+    with pytest.raises(cdc.MarkerDeclarationError):
+        cdc._exempt_groups(spliced)
+
+
+def test_exempt_on_a_non_exemption_marker_is_refused():
+    """`_MARKER_DECL` spans the whole `hhemt:` namespace; consultation does not.
+
+    Before the refuse branch this returned an empty set with no error, so a
+    declaration copied onto a neighbouring marker granted nothing and said
+    nothing. The inert governance marker carries no `exempt=` and must stay inert,
+    and a fenced example on a neighbouring marker must not trip the branch either.
+    """
+    with pytest.raises(cdc.MarkerDeclarationError):
+        cdc._exempt_groups("<!-- hhemt:marker-governance exempt=prose -->\n# Doc\n")
+    assert cdc._exempt_groups("<!-- hhemt:marker-governance -->\n# Doc\n") == frozenset()
+    fenced = "# Doc\n\n```markdown\n<!-- hhemt:marker-governance exempt=prose -->\n```\n\nprose\n"
+    assert cdc._exempt_groups(fenced) == frozenset()
+
+
+def test_the_skip_line_names_what_each_page_declares(tmp_path):
+    """The invariant: EVERY skipped page's entry carries THAT page's own groups.
+
+    Asserted so a hard-coded literal fails and so a partly-annotated one fails too.
+    Three positions. The count of rendered declarations equals the number of marker
+    pages, which kills an implementation annotating only some entries. One marker
+    KIND carries TWO pages with DIFFERENT declarations, without which that count is
+    blind: `_skip_line` runs once per kind, so an "only the first entry" bug is
+    invisible while every kind has one page. And a page declaring `binary` must
+    render `(exempt=binary)`, which kills a hard-coded `prose`. None of the three is
+    satisfied by the state this repo happens to be in, where all nine live
+    declarations name `prose`.
+    """
+    import io
+    import re
+    import subprocess
+    from contextlib import redirect_stdout
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "gen.md").write_text(f"<!-- {cdc.GENERATED_MARKER_NAME} exempt=binary -->\n# G\n", encoding="utf-8")
+    (docs / "a.md").write_text(f"<!-- {cdc.REPO_INTERNAL_MARKER_NAME} exempt=prose -->\n# A\n", encoding="utf-8")
+    (docs / "b.md").write_text(f"<!-- {cdc.REPO_INTERNAL_MARKER_NAME} exempt=binary -->\n# B\n", encoding="utf-8")
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cdc.main(["--docs-dir", str(docs)])
+    out = buf.getvalue()
+
+    pages = cdc.generated_files(docs) + cdc.personal_voice_files(docs) + cdc.repo_internal_files(docs)
+    rendered = re.findall(r"\(exempt=([a-z,]+)\)", out)
+    assert len(pages) == 3, pages
+    assert len(rendered) == len(pages), out
+    assert "gen.md (exempt=binary)" in out, out
+    assert "a.md (exempt=prose)" in out, out
+    assert "b.md (exempt=binary)" in out, out

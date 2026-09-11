@@ -21,11 +21,14 @@ schema, and what the toolkit produces.
 The repository ships the anonymized UVA and Frontier benchmarking experiment
 definitions under `test_data/norfolk_coastal_flooding/`: the production suites
 `full_benchmarking_experiment_uva.xlsx` and
-`full_benchmarking_experiment_frontier.xlsx` (with their paired
-`report_config_*.yaml`), and a lighter `benchmarking_uva_minimal.xlsx` used by
-the [Norfolk tutorial](../tutorials/norfolk-end-to-end.md). Substitute
+`full_benchmarking_experiment_frontier.xlsx`, and a lighter
+`benchmarking_uva_minimal.xlsx` used by the
+[Norfolk tutorial](../tutorials/norfolk-end-to-end.md). Substitute
 `{your-allocation}` in the example HPC profiles
 (`hpc_system_config_{uva,frontier}.yaml`) to run them on your own allocation.
 Note that the definitions describe the suites; reproducing the published results
 also requires the input datasets, which are fetched separately by DOI (see
-[Publishing and fetching](../how-to/publishing.md)).
+[Publishing and fetching](../how-to/publishing.md)). Reporting is not configured
+per suite. The renderer settings live in the `report:` block inline in the
+analysis config. See [Configuration schema](config-schema.md) for the fields and
+[Reporting sets](reporting-sets.md) for how to choose what a report contains.
