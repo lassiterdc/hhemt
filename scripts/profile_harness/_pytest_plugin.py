@@ -1,4 +1,4 @@
-"""Pytest plugin loaded into the profile subprocess via -p scripts.profile._pytest_plugin.
+"""Pytest plugin loaded into the profile subprocess via -p scripts.profile_harness._pytest_plugin.
 
 Emits a JSON file at $PROFILE_PLUGIN_JSON with per-test, per-fixture, and
 collection timings. Hooks: pytest_collectstart / pytest_collectreport
@@ -56,12 +56,14 @@ def pytest_fixture_setup(fixturedef, request):
         result = yield
     finally:
         duration = time.perf_counter() - t0
-        _fixtures.append({
-            "name": fixturedef.argname,
-            "scope": fixturedef.scope,
-            "duration_s": duration,
-            "consumer_nodeid": getattr(request.node, "nodeid", ""),
-        })
+        _fixtures.append(
+            {
+                "name": fixturedef.argname,
+                "scope": fixturedef.scope,
+                "duration_s": duration,
+                "consumer_nodeid": getattr(request.node, "nodeid", ""),
+            }
+        )
     return result
 
 
@@ -106,9 +108,15 @@ def pytest_sessionfinish(session, exitstatus):
     out = os.environ.get(PLUGIN_ENV_VAR)
     if not out:
         return
-    Path(out).write_text(json.dumps({
-        "per_test": _per_test,
-        "fixtures": _fixtures,
-        "collection": _collection,
-        "tmp_paths": sorted(_tmp_paths),
-    }, indent=2, sort_keys=True))
+    Path(out).write_text(
+        json.dumps(
+            {
+                "per_test": _per_test,
+                "fixtures": _fixtures,
+                "collection": _collection,
+                "tmp_paths": sorted(_tmp_paths),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )

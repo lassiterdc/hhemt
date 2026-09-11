@@ -1,7 +1,7 @@
 """Durable, auto-discovering profiler for the hhemt routine test corpus.
 
 Usage:
-    python -m scripts.profile.profile_routine_tests
+    python -m scripts.profile_harness.profile_routine_tests
 
 Refreshes $AGENTIC_WORKSPACE/library/knowledge/triton-swmm-toolkit/routine test profile results.md
 from a clean checkout with zero required arguments. The output doc lives in the
@@ -279,7 +279,7 @@ def _run_pyspy_pass(env: dict[str, str], tmp_root: Path) -> tuple[Path, Path]:
             "-p",
             "no:cacheprovider",
             "-p",
-            "scripts.profile._pytest_plugin",
+            "scripts.profile_harness._pytest_plugin",
             "--continue-on-collection-errors",
             "--durations=0",
             "--durations-min=0",
@@ -310,7 +310,7 @@ def _run_cprofile_pass(env: dict[str, str], tmp_root: Path) -> tuple[Path, Path]
             "-p",
             "no:cacheprovider",
             "-p",
-            "scripts.profile._pytest_plugin",
+            "scripts.profile_harness._pytest_plugin",
             "--continue-on-collection-errors",
         ],
         env=env,
@@ -543,8 +543,8 @@ def main() -> int:
     args = _parse_args()
     if args.output is None:
         args.output = _resolve_default_output()
-    from scripts.profile._emitter import emit
-    from scripts.profile._snakemake_harvest import harvest as snakemake_harvest
+    from scripts.profile_harness._emitter import emit
+    from scripts.profile_harness._snakemake_harvest import harvest as snakemake_harvest
 
     tmp_root = _make_tmp_root()
     print(

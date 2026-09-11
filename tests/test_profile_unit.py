@@ -1,4 +1,4 @@
-"""Unit tests for the pure-function surface of scripts/profile/.
+"""Unit tests for the pure-function surface of scripts/profile_harness/.
 
 These tests exercise the deterministic, side-effect-free helpers — they do NOT
 invoke the full profiler. End-to-end behavior is validated by the V-* commands
@@ -11,9 +11,9 @@ import subprocess
 
 import pytest
 
-from scripts.profile._emitter import _aggregate
-from scripts.profile._snakemake_harvest import discover_analysis_dirs, normalize_rule
-from scripts.profile.profile_routine_tests import _collect_corpus
+from scripts.profile_harness._emitter import _aggregate
+from scripts.profile_harness._snakemake_harvest import discover_analysis_dirs, normalize_rule
+from scripts.profile_harness.profile_routine_tests import _collect_corpus
 
 
 @pytest.mark.parametrize(
