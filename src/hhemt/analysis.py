@@ -3971,9 +3971,16 @@ class TRITONSWMM_analysis:
         # True iff the resolved value would trigger any cleanup for any model.
         would_clear = resolved_clear_raw != "none"
         # Lazy-stamp _version.json at LAYOUT_VERSION (PI-1 pattern, mirroring
-        # run() and submit_workflow). Idempotent under concurrent writers;
-        # if _version.json is missing or stamped at an older version, this
-        # writes a fresh stamp at the current LAYOUT_VERSION.
+        # run() and submit_workflow). Idempotent under concurrent writers and
+        # at a matching version. It does NOT relabel and it does NOT guess:
+        # mode="fresh" raises LayoutVersionError on BOTH of its refusal arms --
+        # a record stating a DIFFERENT version (current=that version), and an
+        # ABSENT record over a tree carrying migratable content (current=-1),
+        # which is the arm a legacy unstamped analysis hits. Only a tree with
+        # no record AND no migratable content is stamped here. Migrating is an
+        # explicit operator act and no execution facade may perform one as a
+        # side effect. Sited above every destructive step below so a refusal
+        # cannot land after an artifact has already been deleted.
         from hhemt.version_migration import LAYOUT_VERSION
         from hhemt.version_migration.state import stamp_new_target
 

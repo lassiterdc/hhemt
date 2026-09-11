@@ -172,8 +172,12 @@ def stamp_new_target(target_dir: Path, layout_version: int, *, mode: str = "fres
                     f"refusing to relabel {_version_file(target_dir)} from "
                     f"{existing.layout_version} to {layout_version}: the tree states its own "
                     f"layout version and this helper only stamps targets that have none. "
-                    f"Migrate it, or restate it with `baseline {target_dir} "
-                    f"{layout_version} --force`"
+                    f"Migration is forward-only. If this tree is OLDER than the build, "
+                    f"migrate it with `python -m hhemt.version_migration migrate "
+                    f"{target_dir} --apply` (it dry-runs without --apply); if it is NEWER, "
+                    f"there is no downgrade -- use a toolkit matching the tree. To restate "
+                    f"the tree's own claim instead, `python -m hhemt.version_migration "
+                    f"baseline {target_dir} {layout_version} --force`"
                 ),
             )
         warnings.warn(
