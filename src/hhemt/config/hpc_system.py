@@ -407,9 +407,19 @@ class ContainerSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sif_path: str  # absolute on-cluster path to the TRANSFERRED, signed SIF.
-    #   ARCH-AGNOSTIC process/default SIF: the PROCESS rung (workflow.py:805) runs
+    #   ARCH-AGNOSTIC process/default SIF: the PROCESS rung (workflow.py:1140) runs
     #   pure-Python xarray/zarr work with no GPU device code, so ANY carried SIF
     #   serves it. Kept as a scalar so workflow.py stays byte-identical (ADR-19).
+    sif_sha256: str | None = None  # EXPECTED sha256 of the file at sif_path, or None.
+    #   THE ONLY NON-ASSERTED OPERAND. Every org.hhemt.* label is sed-stamped host-side
+    #   from a variable BEFORE the build, so a label records what the builder MEANT; this
+    #   field is compared against a digest MEASURED from the artifact at preflight
+    #   (validation.py). Set it from the `{sif_path}.sha256` sidecar that
+    #   hpc/build_sifs_uva.sh writes from the same variable that named the build target --
+    #   never by hand-copying a digest, which reintroduces the two-wrong-operands failure.
+    #   None is NOT a pass: preflight reports the content check UNPERFORMED, mirroring the
+    #   hhemt_sha None arm. A sandbox DIRECTORY target has no single-file digest and is
+    #   likewise reported UNPERFORMED rather than failed.
     sif_paths_by_arch: dict[str, str] = Field(default_factory=dict)  # per-arch SIM
     #   SIF map, keyed by gpu_hardware ("a6000"/"a100"/...). Consumed ONLY at the SIM
     #   rung (run_simulation.py:421): each per-rule sim resolves ITS row's arch via

@@ -91,6 +91,9 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     # .def) BEFORE the build -- so no in-image consumer needs `.git`. Removed AFTER
     # `uv sync` so the install path is unaffected regardless.
     rm -rf /opt/hhemt-src/.git
+    # THIRD PRUNE -- see containers/uva-cpu.def for the measured rationale and the 16 G / 1.74 GB
+    # packed-vs-unpacked reconciliation. Kept identical across all four recipes deliberately.
+    rm -rf /opt/hhemt-src/test_data
     export PATH=/opt/hhemt-src/.venv/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
 
     # --- (3) TRITON-SWMM at a PINNED COMMIT (not the moving TRITONSWMM_branch_key

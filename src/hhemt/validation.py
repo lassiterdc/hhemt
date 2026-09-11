@@ -1959,6 +1959,72 @@ def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "Validation
     for _field, _p in _declared:
         if not _p:
             continue
+        # CONTENT, before any label. Every label below is an ASSERTION the builder stamped
+        # host-side from a variable before the build; this is the one comparison whose operand
+        # is MEASURED from the bytes that will execute. It runs here because `_declared` is a
+        # superset of both opening rungs -- run_simulation.py resolves
+        # `sif_paths_by_arch.get(arch) or sif_path` and workflow.py:1140 uses `sif_path` -- so
+        # one check covers both. Measured on Rivanna 2026-09-11: sha256 runs at 0.37 GB/s,
+        # 3.3 s for a 1.22 GB image, and this loop runs ONCE per driver invocation on a login
+        # node. It does NOT re-run per simulation: thousands of sims x GB is TB-scale read
+        # traffic on a shared filesystem, so an image replaced between preflight and a later
+        # SLURM allocation is not re-checked, and that residual is accepted deliberately.
+        _want = getattr(cspec, "sif_sha256", None)
+        _pp_digest = _Path(_p)
+        if not _want:
+            result.add_warning(
+                field=_field,
+                message=(
+                    f"container at '{_p}' declares no sif_sha256, so its CONTENT was not "
+                    "verified -- only its labels, which the builder stamped from intent before "
+                    "the build. This check went UNPERFORMED rather than passing."
+                ),
+                fix_hint="Set sif_sha256 from the {sif_path}.sha256 sidecar build_sifs_uva.sh writes.",
+            )
+        elif _pp_digest.is_dir():
+            result.add_warning(
+                field=_field,
+                message=(
+                    f"container at '{_p}' is a sandbox DIRECTORY, which has no single-file "
+                    "digest, so the declared sif_sha256 could not be checked. UNPERFORMED, not "
+                    "passing -- a sandbox is a first-class form on this cluster, not a defect."
+                ),
+                fix_hint="Point at a packed .sif to enable the content check, or accept label-only verification.",
+            )
+        else:
+            try:
+                import hashlib as _hashlib
+
+                _h = _hashlib.sha256()
+                with _pp_digest.open("rb") as _fh:
+                    for _chunk in iter(lambda: _fh.read(1024 * 1024), b""):
+                        _h.update(_chunk)
+                _got = _h.hexdigest()
+            except OSError as _e:
+                _got = None
+                result.add_error(
+                    field=_field,
+                    message=(
+                        f"container at '{_p}' declares sif_sha256 but could not be read to "
+                        f"verify it ({_e}). An unverifiable image is refused rather than trusted."
+                    ),
+                    fix_hint="Check permissions and that the path is a readable file, then re-run preflight.",
+                )
+            if _got is not None and _got != str(_want).strip().lower():
+                result.add_error(
+                    field=_field,
+                    message=(
+                        f"container at '{_p}' has sha256 {_got[:16]} but the config declares "
+                        f"{str(_want)[:16]}. The file at that path is NOT the image this "
+                        "experiment was configured against -- a wrong-but-present path is the "
+                        "state no label check can see, because every label records what the "
+                        "builder meant rather than what the file contains."
+                    ),
+                    fix_hint=(
+                        "Re-point sif_path at the intended image, or re-set sif_sha256 from that "
+                        "image's {sif_path}.sha256 sidecar. Do NOT hand-copy a digest."
+                    ),
+                )
         _res = read_container_labels(_p, apptainer_module=_mod)
         if not _res.read:
             result.add_error(

@@ -1475,3 +1475,18 @@ non_breaking_allowlist:
       than edited in place: a signature-less append would INHERIT e9263673 under
       _load_allowlist's merge and check-b would still re-fire.
     layout_signature: "52d812575f4ec8d580be100d9f38a1f9bd9c981ae3113e5abfe5be0afe4329f5"
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      REVIEWED, NOT BASELINE. M19 shape (C) -- ADDITIVE ContainerSpec.sif_sha256 (str | None,
+      default None): the EXPECTED sha256 of the file at sif_path, compared at preflight against a
+      digest measured from the artifact. Pure config schema via the config/**/*.py glob; no
+      on-disk analysis-tree, _version.json or datatree change, so NON-BREAKING and no
+      LAYOUT_VERSION bump -- the same ground as the config/report.py, config/reprex_config.py and
+      config/synthetic_experiment.py rows. A None default means every existing config loads
+      unchanged and preflight reports the content check UNPERFORMED rather than failing. Also
+      carries a one-word comment fix: the PROCESS-rung citation read workflow.py:805, which is
+      `def _resolve_snakefile_path(...)`; the live site is workflow.py:1140. CHANGE-SCOPED via
+      layout_signature, re-stamping 8f840b2f -> f4af12d0. APPENDED rather than edited in place: a
+      signature-less append would INHERIT 8f840b2f under _load_allowlist's merge and check-b would
+      still re-fire.
+    layout_signature: "f4af12d01f9ba1d59d9d4ca177f6aaa873b3f2395adad8cc25414eb988d76f29"

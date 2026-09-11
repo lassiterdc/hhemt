@@ -75,6 +75,20 @@ From: ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc709
     # .def) BEFORE the build -- so no in-image consumer needs `.git`. Removed AFTER
     # `uv sync` so the install path is unaffected regardless.
     rm -rf /opt/hhemt-src/.git
+    # THIRD PRUNE, same reason as the two above: `%files ../` has no ignore mechanism, so image
+    # content is a function of the BUILD TREE rather than of this recipe. Measured 2026-09-11: a
+    # clean checkout carries 13 MB of test_data and this recipe's sibling records 12 MB in
+    # 2026-07-19 -- while a DEPLOYED image built 2026-08-31 measures 16 G of it INSIDE the
+    # container, because the Norfolk inputs were sitting in that build tree.
+    # THE TWO FIGURES ONLY RECONCILE THROUGH COMPRESSION, and stating that is the point: the SIF
+    # itself is 1.74 GB on disk, so 16 G measured inside it is ~9.2x the whole image. A SIF is a
+    # squashfs archive and NetCDF/zarr compresses hard, so both numbers are true -- one is the
+    # unpacked size, the other the packed file. Do not "correct" either against the other.
+    # COST, stated rather than discovered later: an in-container `from_case_study` resolves
+    # experiments.py's retrieve_test_data_directory(case_name) at run time and would break. No
+    # ensemble uses that path -- their system configs read ${DATA_DIR} under $PACKAGE_DIR, an
+    # absolute HOST path reached through the $HOME mount, never anything under /opt/hhemt-src.
+    rm -rf /opt/hhemt-src/test_data
     export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:${PATH}
 
     # --- (3) TRITON-SWMM at the SAME pinned commit as uva-cuda.def (15eb18a5), but

@@ -166,6 +166,9 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     # .def) BEFORE the build -- so no in-image consumer needs `.git`. Removed AFTER
     # `uv sync` so the install path is unaffected regardless.
     rm -rf /opt/hhemt-src/.git
+    # THIRD PRUNE -- see containers/uva-cpu.def for the measured rationale and the 16 G / 1.74 GB
+    # packed-vs-unpacked reconciliation. Kept identical across all four recipes deliberately.
+    rm -rf /opt/hhemt-src/test_data
     export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
 
     # --- (3) TRITON-SWMM at a PINNED COMMIT (OE-3), Kokkos-CUDA, the PROVEN flags.

@@ -132,14 +132,22 @@ def _sandbox(tmp_path, name, sha, *, swmm=SWMM_TAG, hhemt=TOOLKIT_SHA):
     return d
 
 
-def _run(sif_path, pin, *, execution_environment="container", by_arch=None, swmm_tag_key=SWMM_TAG):
+def _run(
+    sif_path,
+    pin,
+    *,
+    execution_environment="container",
+    by_arch=None,
+    swmm_tag_key=SWMM_TAG,
+    sif_sha256=None,
+):
     """Invoke the REAL preflight validator, not a re-implementation of its rule.
 
     Do NOT substitute a local copy of the comparison here: a test that restates the rule it
     is checking passes whether or not the shipped code agrees with it.
     """
     result = ValidationResult()
-    cspec = ContainerSpec(sif_path=str(sif_path), sif_paths_by_arch=by_arch or {})
+    cspec = ContainerSpec(sif_path=str(sif_path), sif_paths_by_arch=by_arch or {}, sif_sha256=sif_sha256)
     _validate_container_config(_Analysis(execution_environment), _HpcSystem(cspec), result, _System(pin, swmm_tag_key))
     return result
 
@@ -349,8 +357,16 @@ def test_unknown_running_toolkit_warns_rather_than_erroring(tmp_path, monkeypatc
     monkeypatch.setattr("hhemt.validation._running_toolkit_sha", lambda: None)
     result = _run(_sandbox(tmp_path, "img", PIN, hhemt=OTHER_SHA), PIN)
     assert result.errors == []
-    assert len(result.warnings) == 1
-    assert "UNPERFORMED rather than passing" in result.warnings[0].message
+    # TWO warnings, not one, and the second is not noise: this fixture is a SANDBOX
+    # DIRECTORY and declares no sif_sha256, so the content check reports UNPERFORMED too.
+    # Asserted by IDENTITY rather than by position. Both arms use the phrase "UNPERFORMED
+    # rather than passing", so the old `warnings[0]` form kept matching the substring after
+    # the content arm displaced the toolkit arm -- the count assertion went red honestly and
+    # this one went green dishonestly. A field-scoped search cannot be displaced.
+    assert len(result.warnings) == 2
+    _toolkit_warn = [w for w in result.warnings if "RUNNING" in w.message and "could not be determined" in w.message]
+    assert len(_toolkit_warn) == 1
+    assert "UNPERFORMED rather than passing" in _toolkit_warn[0].message
 
 
 # --------------------------------------------------------------------------- #
@@ -373,3 +389,61 @@ def test_unreadable_image_is_refused(tmp_path):
     assert "could not read provenance labels" in msg
     # Distinct remedy from the unlabelled case: the IMAGE is the problem, not the build.
     assert "the IMAGE is the problem" in result.errors[0].fix_hint
+
+
+# --------------------------------------------------------------------------- #
+# N -- the DECLARED CONTENT DIGEST, the only operand measured from the artifact
+# --------------------------------------------------------------------------- #
+def _packed(tmp_path, name, body=b"not-a-real-sif-but-real-bytes"):
+    """A real FILE with known bytes, NOT a sandbox.
+
+    A sandbox has no single-file digest and the guard reports UNPERFORMED for one, so a
+    sandbox fixture structurally cannot reach the comparison. Using one here would look
+    like coverage while the comparison never ran.
+    """
+    p = tmp_path / name
+    p.write_bytes(body)
+    return p
+
+
+def test_declared_digest_mismatch_is_refused(tmp_path):
+    """THE PRE-FIX-FAILS ARM. Pre-fix there is no comparison, so no such error can exist.
+
+    A wrong-but-present path is the one state no label check can see: every org.hhemt.*
+    label is sed-stamped host-side from a variable BEFORE the build, so it records what
+    the builder MEANT rather than what the file contains.
+    """
+    img = _packed(tmp_path, "img.sif")
+    result = _run(img, PIN, sif_sha256="0" * 64)
+    msgs = _messages(result)
+    assert any("is NOT the image this" in m for m in msgs), msgs
+    hits = [i for i in result.errors if "is NOT the image this" in i.message]
+    assert len(hits) == 1
+    # The remedy must not read as "re-run the build": the file may be fine and the POINTER wrong.
+    assert "Do NOT hand-copy a digest" in hits[0].fix_hint
+
+
+def test_declared_digest_match_raises_no_content_error(tmp_path):
+    """The negative control. Without it the arm above also passes on an always-refuse guard."""
+    import hashlib
+
+    img = _packed(tmp_path, "img.sif")
+    good = hashlib.sha256(img.read_bytes()).hexdigest()
+    result = _run(img, PIN, sif_sha256=good.upper())  # case- and whitespace-insensitive
+    assert not any("is NOT the image this" in m for m in _messages(result))
+
+
+def test_absent_digest_declaration_is_unperformed_not_a_pass(tmp_path):
+    """None is not agreement. Mirrors the hhemt_sha None arm rather than inventing a rule."""
+    result = _run(_packed(tmp_path, "img.sif"), PIN)
+    warns = [w for w in result.warnings if "declares no sif_sha256" in w.message]
+    assert len(warns) == 1
+    assert "UNPERFORMED rather than passing" in warns[0].message
+
+
+def test_sandbox_target_reports_content_check_unperformed(tmp_path):
+    """A sandbox is a first-class form on this cluster, not a defect -- UNPERFORMED, never FAIL."""
+    result = _run(_sandbox(tmp_path, "img", PIN), PIN, sif_sha256="0" * 64)
+    assert not any("is NOT the image this" in m for m in _messages(result))
+    warns = [w for w in result.warnings if "sandbox DIRECTORY" in w.message]
+    assert len(warns) == 1
