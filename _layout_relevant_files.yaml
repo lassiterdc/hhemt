@@ -1526,3 +1526,10 @@ non_breaking_allowlist:
       (`max-jobs-per-second` -> `max-jobs-per-timespan`, the live 9.15.0 key). Prose only; no
       field, default, validator or on-disk change.
     layout_signature: e1bff8e9ae076f0fc7dfb4c22f8c5e71e964fb794ffb785a3c8855c5906780ef
+  - path: src/hhemt/config/reprex_taxonomy.py
+    justification: >-
+      suite-reds-13-14 (2026-09-12): one _FIELD_BUCKET entry — process_in_sim_rule -> "hpc"
+      (the field ae91b79e added to analysis_config; the totality test and the four
+      metadata-renderer guide tests were red without it). Static table only; no on-disk
+      layout / figure stem / zarr / log / path change.
+    layout_signature: a861c58434412e96b7a7e3c6777544c44af1c4e039e9f33eea17bd03c81a57c6
