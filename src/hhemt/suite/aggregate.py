@@ -19,8 +19,21 @@ TEST outcome
                          evaluate it -- a scheduler-gated test inside a SLURM allocation
                          is the standing case. NOT benign: it is the complement the run
                          did not cover, and it is reported by node id.
-    SKIPPED_INCIDENTAL   skipped for a local, non-structural reason (an optional
-                         dependency absent). Benign.
+    SKIPPED_INCIDENTAL   not on STRUCTURAL_SKIP_REASONS -- an ABSENCE of evidence, not
+                         evidence of benignity. The class holds TWO populations. A skip
+                         whose guard reads the HOST or VENUE (an optional dependency,
+                         a credential, a core count, symlink support) is a capability
+                         gate and benign. A skip whose guard reads a property of the
+                         FIXTURE the test itself selected ("not present in fixture",
+                         "not enabled for this fixture", "requires ... not set on synth
+                         fixture") forfeits coverage that WAS available and is NOT
+                         benign. The junit skip message is carried per node id so a
+                         reader can tell the two apart; this module does NOT classify
+                         them, and a header that said "benign" for the whole class was
+                         asserting a property the classifier cannot establish. A fixture
+                         property that is itself downstream of a host capability (a
+                         compile that did not succeed) is the one measured residual:
+                         legitimate, and its reason should name the host fact.
     ABSENT               the manifest collected it and no junit entry mentions it
 
 A run reports a SCOPE and never a bare verdict. `scope=array` means the run covered only
@@ -141,6 +154,38 @@ def unevaluated_reasons(path: Path) -> dict[str, list[str]]:
         msg = (err.get("message") or (err.text or "")).strip().splitlines()
         groups[msg[0] if msg else "unknown"].append(node_id)
     return {k: sorted(v) for k, v in groups.items()}
+
+
+def skip_reasons(path: Path) -> dict[str, str]:
+    """Map skipped node id -> its junit `<skipped message=...>`, verbatim.
+
+    The SIBLING of `unevaluated_reasons`: a second parser over the same junit that
+    carries the reason in its OWN mapping. It never touches `outcomes`, and that is the
+    design rather than a convenience. `outcomes` is `dict[str, str]` and FOUR consumers
+    key on its VALUE by exact match -- `_of`'s `o == kind`, the `_EVALUATED_OUTCOMES`
+    membership tests in `merge_outcomes` and in the declared-complement check, and
+    `merge_outcomes`' terminal structural-wins branch. Widening that value to carry the
+    reason (a `(class, reason)` tuple) defeats all four without raising: `_of("FAILED")` returns
+    `[]` and the run reports zero failures; the one raising site, `_OUTCOME_SEVERITY[old]`,
+    is reachable only when both values pass the membership test the tuple already broke.
+    Measured, not reasoned. The run is still NOT-GREEN — every bucket empties, so the
+    partition identity trips — but the count lies while the verdict does not, and the
+    failing test is unnamed. A separate mapping leaves every one of those comparisons
+    byte-identical.
+
+    Every `<skipped>` element is recorded, whatever else the testcase carries; the payload
+    filters to the INCIDENTAL set, so a node `parse_junit` classifies as UNEVALUATED or
+    FAILED never reaches the rendered block even if its junit also carries a `<skipped>`.
+    """
+    reasons: dict[str, str] = {}
+    root = ET.parse(path).getroot()
+    for tc in root.iter("testcase"):
+        sk = tc.find("skipped")
+        if sk is None:
+            continue
+        node_id, _ = _node_id(tc)
+        reasons[node_id] = (sk.get("message") or "").strip()
+    return reasons
 
 
 #: What a slug-root entry IS, decided from raw evidence rather than from a name list.
@@ -364,6 +409,12 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     statuses: dict[int, dict] = {}
     outcomes: dict[str, str] = {}
     reasons_by_fixture: dict[str, list[str]] = {}
+    # Node id -> junit skip message, accumulated beside `outcomes` and NEVER folded into
+    # it (see `skip_reasons`). Informational, never verdict-bearing: no partition cell,
+    # count, or scope decision reads it, so first-seen-wins across chunks is acceptable
+    # here and does not reintroduce the arrival-order dependence `merge_outcomes` exists
+    # to remove -- that rule governs VERDICT values, and this mapping carries none.
+    skip_reasons_by_node: dict[str, str] = {}
     merge_problems: list[str] = []
 
     for c in manifest["chunks"]:
@@ -377,6 +428,8 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             merge_outcomes(outcomes, parse_junit(jp), problems=merge_problems)
             for k, v in unevaluated_reasons(jp).items():
                 reasons_by_fixture.setdefault(k, []).extend(v)
+            for k, v in skip_reasons(jp).items():
+                skip_reasons_by_node.setdefault(k, v)
         # `diagnostics` is threaded so render_summary_md can NAME the directory. The
         # harvest has always written it and the summary has never mentioned it, which is
         # the whole defect: an unnamed directory gets read past, and that is what an
@@ -942,6 +995,9 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         "declared_complement": sorted(declared_complement),
         "declared_not_attempted": declared_not_attempted,
         "incidental_skips": incidental,
+        # The reason beside each incidental node id. Keyed to the SAME list `_of` produced,
+        # so the count on the verdict line and the rows in summary.md are one population.
+        "incidental_skip_reasons": {n: skip_reasons_by_node.get(n, "") for n in incidental},
         "failed": failed,
         "unevaluated_now_passing": sorted(set(manifest.get("from_unevaluated") or []) & set(passed)),
         "unevaluated": uneval,
@@ -1258,12 +1314,32 @@ def render_summary_md(result: dict) -> str:
     # whenever and wherever it is run -- must be fixed.
 
     if result["incidental_skips"]:
+        # `.get` is DEFENSIVE: no production path renders a read-back summary.json today
+        # (main() aggregates and renders in one process; the only read-back, _runner.py's
+        # triage source selection, never renders). It guards the case anyway so a record
+        # written without the reasons key renders `node — ` rather than raising -- the
+        # honest rendering of a record that never captured one.
+        reasons = result.get("incidental_skip_reasons") or {}
         lines += [
             "",
-            f"## Incidental skips — {len(result['incidental_skips'])} test(s), benign",
+            f"## Incidental skips — {len(result['incidental_skips'])} test(s)",
+            "",
+            # READING RULE beside the rows it qualifies, never a claim in the header --
+            # the SHARED_BY_DESIGN precedent, for the same reason: SKIPPED_INCIDENTAL is
+            # "not on the structural allowlist", an ABSENCE of evidence.
+            "> **READING RULE.** `SKIPPED_INCIDENTAL` means only *not on the structural "
+            "allowlist* — an absence of evidence, not evidence of benignity. Read the reason "
+            "beside each node id. A reason naming a HOST or VENUE fact (a missing binary or "
+            "credential, a core count, symlink support) is a capability gate and benign. A "
+            "reason naming a property of the FIXTURE the test itself selected (`not present in "
+            "fixture`, `not enabled for this fixture`, `requires ... not set on synth fixture`) "
+            "forfeits coverage that WAS available and is NOT benign; those are findings. A reason "
+            "that names neither, or a fixture property that is itself downstream of a host "
+            "capability (a compile that did not succeed), is UNCLASSIFIED — neither a finding nor "
+            "benign by default; read the guard.",
             "",
             "```text",
-            *result["incidental_skips"],
+            *(f"{n} — {reasons.get(n, '')}" for n in result["incidental_skips"]),
             "```",
         ]
     return "\n".join(lines) + "\n"

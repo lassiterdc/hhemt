@@ -373,3 +373,69 @@ def test_complement_reports_declared_and_not_attempted(tmp_path):
     assert "[complement-derivation]" not in block, "the advisory must not bleed into the block"
     assert observed in block and shadowed in block, block
     assert "this scope cannot evaluate" not in md, "regression pin on one known-false phrase"
+
+
+def _one_chunk_junit(tmp_path, cases: str) -> None:
+    (tmp_path / "chunk-00.junit.xml").write_text(
+        f'<testsuites><testsuite name="pytest" tests="2">{cases}</testsuite></testsuites>',
+        encoding="utf-8",
+    )
+
+
+def test_failed_survives_a_skip_in_the_same_junit(tmp_path):
+    """A junit carrying BOTH a failure and a skip must still report the failure.
+
+    GUARD, NOT DIFFERENTIAL -- and that is the point. The skip-reason carrier was chosen
+    as a SEPARATE mapping precisely because widening `outcomes`' value type to carry the
+    reason defeats four exact-match consumers without raising: `_of("FAILED")` compares
+    `o == kind`, a tuple equals no literal, and the run reports zero failures. This test
+    is green before the carrier lands and green after it; it REDDENS under the rejected
+    shape (measured: a `(class, reason)` value makes `counts['failed']` read 0 here when
+    every `parse_junit` assignment carries the tuple).
+    It pins that the reason-carrying change did not touch the list the verdict is FOR.
+    """
+    nodes = _build(tmp_path, chunk_entries=[{SOFTWARE: _entry("_software")}])
+    failed_node, skipped_node = nodes[0], nodes[1]
+    _one_chunk_junit(
+        tmp_path,
+        f'<testcase classname="tests.test_x" file="tests/test_x.py" name="{failed_node.split("::")[1]}">'
+        f"<failure message='boom'/></testcase>"
+        f'<testcase classname="tests.test_x" file="tests/test_x.py" name="{skipped_node.split("::")[1]}">'
+        f'<skipped message="node is required to parse JS"/></testcase>',
+    )
+    r = A.aggregate(tmp_path, scope="array")
+    assert r["counts"]["failed"] == 1
+    assert r["failed"] == [failed_node]
+    assert r["incidental_skips"] == [skipped_node]
+    assert r["verdict"] == "NOT-GREEN"
+
+
+def test_incidental_skip_reason_reaches_the_summary(tmp_path):
+    """The junit skip message is carried per node id and rendered beside it.
+
+    Pre-change the message survives `parse_junit`'s parse and is discarded one line
+    later, so the summary lists a bare node id under a header asserting `benign`. The
+    fixture-shape reason used here is one a reader can classify ON SIGHT, which is the
+    whole reason to surface it. Assertions are on the VALUE and the rendered ROW, never
+    on the schema: `.get()` on the new key makes a pre-change run fail on the property
+    (None != msg) rather than on a KeyError.
+    """
+    nodes = _build(tmp_path, chunk_entries=[{SOFTWARE: _entry("_software")}])
+    node = nodes[1]
+    msg = "sensitivity_datatree.zarr not present in fixture"
+    _one_chunk_junit(
+        tmp_path,
+        f'<testcase classname="tests.test_x" file="tests/test_x.py" name="{nodes[0].split("::")[1]}"></testcase>'
+        f'<testcase classname="tests.test_x" file="tests/test_x.py" name="{node.split("::")[1]}">'
+        f'<skipped message="{msg}"/></testcase>',
+    )
+    r = A.aggregate(tmp_path, scope="array")
+    assert r["incidental_skips"] == [node], "the incidental list itself is unchanged"
+    assert (r.get("incidental_skip_reasons") or {}).get(node) == msg
+
+    md = A.render_summary_md(r)
+    header = next(line for line in md.splitlines() if line.startswith("## Incidental skips"))
+    assert "benign" not in header, header
+    assert "READING RULE" in md
+    block = md.split("## Incidental skips")[1].split("```text")[1].split("```")[0]
+    assert f"{node} — {msg}" in block, block
