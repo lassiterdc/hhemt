@@ -15,6 +15,8 @@ Generic API (for any case study):
         system_config_template="template_system_config.yaml",
         analysis_config_template="template_analysis_config.yaml",
         case_config_filename="case.yaml",
+        weather_events_to_simulate="hurricane_irene_event_index.csv",
+        analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
     )
     system = example.system
 
@@ -36,6 +38,8 @@ Adding New Case Studies:
                 system_config_template="template_system_config.yaml",
                 analysis_config_template="template_analysis_config.yaml",
                 case_config_filename="case.yaml",
+                weather_events_to_simulate="miami_event_index.csv",
+                analysis_description="Miami flooding example",
                 download_if_exists=download_if_exists,
                 example_data_dir=example_data_dir,
             )
@@ -206,6 +210,11 @@ class TRITON_SWMM_experiment:
             Analysis config filename, for example ``template_analysis_config.yaml``.
         case_config_filename : str
             Case metadata filename, for example ``case.yaml``.
+        weather_events_to_simulate : str
+            Filename of the weather-event index CSV, resolved beside the template's
+            placeholder weather path, for example ``hurricane_irene_event_index.csv``.
+        analysis_description : str
+            Free-text description written verbatim into the generated analysis config.
         download_if_exists : bool, default False
             Re-download the HydroShare data even when it is already present.
         example_data_dir : Path or None
@@ -218,13 +227,26 @@ class TRITON_SWMM_experiment:
 
         Examples
         --------
-        >>> from hhemt.constants import *
+        The first six parameters are required. On first use the call fetches the
+        case study's data from its host into the example data directory; a later call
+        finds the data present and skips the fetch unless ``download_if_exists=True``.
+
+        >>> from hhemt.constants import (
+        ...     NORFOLK_ANALYSIS_CONFIG,
+        ...     NORFOLK_CASE_CONFIG,
+        ...     NORFOLK_EX,
+        ...     NORFOLK_SYSTEM_CONFIG,
+        ... )
         >>> example = TRITON_SWMM_experiment.from_case_study(
         ...     case_name=NORFOLK_EX,
         ...     system_config_template=NORFOLK_SYSTEM_CONFIG,
         ...     analysis_config_template=NORFOLK_ANALYSIS_CONFIG,
         ...     case_config_filename=NORFOLK_CASE_CONFIG,
+        ...     weather_events_to_simulate="hurricane_irene_event_index.csv",
+        ...     analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
         ... )
+
+        For the shipped Norfolk case, ``NorfolkIreneExperiment.load()`` wraps this call.
         """
         cfg_system_yaml = cls._load_case_system_config(
             case_name=case_name,

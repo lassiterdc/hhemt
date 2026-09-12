@@ -1018,11 +1018,15 @@ class TRITONSWMM_analysis:
         Opt-in only — NEVER invoked from analysis.run() or submit_workflow(), mirroring
         bundle_report_data()/transfer_results(). Requires the analysis to have consolidated
         (ro-crate-metadata.json + analysis_datatree.zarr present); the license is read from
-        the emitted crate sidecar. override_dataset_license does NOT re-stamp the archived
-        license (baked at consolidation into the immutable crate) — it ASSERTS your expected
-        value against the sidecar and raises PublishError on mismatch, directing you to set
-        analysis_config.dataset_license and reprocess(start_with='consolidate'). Returns
-        {"target","data_doi","software_doi","record_url"}.
+        the emitted crate sidecar. Publishing never re-stamps that archived license. Before
+        anything is deposited, publish compares analysis_config.dataset_license against the
+        crate license and raises PublishError when they differ; that check runs before any
+        override is read. Re-emit the crate with
+        reprocess(start_with='consolidate', regenerate_existing=True), then publish again.
+        override_dataset_license, when given, is a second assertion of the license you
+        expect, compared against the crate only after the config check has passed; a
+        mismatch raises PublishError. Returns {"target","data_doi","software_doi","record_url"};
+        for target='hydroshare' data_doi is None and the dict also carries "manual_step".
         """
         from hhemt.publishing import publish_analysis
 
@@ -3894,9 +3898,15 @@ class TRITONSWMM_analysis:
         Parameters
         ----------
         start_with
-            Stage to re-fire from. ``"consolidate"`` is the common case —
-            re-aggregates the analysis datatree zarr and re-renders the
-            report against existing sim outputs.
+            Stage to re-fire from. ``"consolidate"`` is the common case. With
+            ``regenerate_existing=False`` (the default) the consolidated zarr
+            is left in place and consolidation stays inert; the report is
+            re-rendered against the existing zarr. Pass
+            ``regenerate_existing=True`` to delete the consolidate flag and
+            the zarr and rebuild them; that rebuild is also what re-emits
+            ``ro-crate-metadata.json``. A sensitivity-toggled analysis
+            dispatches to ``TRITONSWMM_sensitivity_analysis.reprocess``,
+            whose ``start_with`` entry describes its own flag handling.
         execution_mode
             ``"auto"`` (default) detects SLURM context; ``"local"`` /
             ``"slurm"`` force the mode.
