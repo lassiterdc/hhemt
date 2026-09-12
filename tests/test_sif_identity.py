@@ -185,3 +185,38 @@ def test_build_sifs_experiment_id_is_the_bundle_directory_name(tmp_path, monkeyp
     src = inspect.getsource(cli.build_sifs_command)
     assert "ExperimentInputs(bundle_experiment_id(exp_dir)" in src
     assert "bundle.experiment_id" not in src
+
+
+_HPC_BASE = "hpc_name: t\ndefault_account: a\npartitions:\n  p:\n    max_runtime: 60\n    cpus_per_node: 4\n"
+
+
+def _hpc_yaml(tmp_path, name: str, container_block: str):
+    p = tmp_path / f"{name}.yaml"
+    p.write_text(_HPC_BASE + container_block)
+    return p
+
+
+def test_build_sifs_guard_reads_container_builds_containers(tmp_path):
+    from hhemt.cli import _require_build_host
+    from hhemt.config.hpc_system import hpc_system_config
+    from hhemt.config.loaders import yaml_to_model
+    from hhemt.exceptions import CLIValidationError
+
+    # PASS arm: the capability is declared where Spec 15 put it — on the ContainerSpec — with
+    # the keys in a different order than the estate file, so a top-level read cannot pass this.
+    yes = _hpc_yaml(tmp_path, "yes", "container:\n  sif_root: /s\n  builds_containers: true\n")
+    cfg_yes = yaml_to_model(yes, hpc_system_config)
+    assert getattr(cfg_yes, "builds_containers", None) is None  # the premise: nothing at the top level
+    assert cfg_yes.container.builds_containers is True
+    _require_build_host(cfg_yes, yes)  # must not raise
+
+    # REFUSAL arm 1: declared false.
+    no = _hpc_yaml(tmp_path, "no", "container:\n  sif_root: /s\n  builds_containers: false\n")
+    with pytest.raises(CLIValidationError, match="container.builds_containers"):
+        _require_build_host(yaml_to_model(no, hpc_system_config), no)
+
+    # REFUSAL arm 2: a native-only cluster (no container block at all).
+    none = _hpc_yaml(tmp_path, "none", "")
+    assert yaml_to_model(none, hpc_system_config).container is None
+    with pytest.raises(CLIValidationError, match="container.builds_containers"):
+        _require_build_host(yaml_to_model(none, hpc_system_config), none)

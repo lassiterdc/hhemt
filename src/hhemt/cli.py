@@ -2223,6 +2223,18 @@ def bundle_command(
         console.print(f"[green]Bundle emitted (with by-reference inputs):[/green] {bundle_path}")
 
 
+def _require_build_host(build_host, build_hpc_config: Path) -> None:
+    """Refuse a --build-hpc-config that is not a build host. The capability lives on the
+    ContainerSpec (`container.builds_containers`), never at the top level of hpc_system_config;
+    a config with no `container:` block is a native-only cluster and cannot build either."""
+    cspec = getattr(build_host, "container", None)
+    if cspec is None or not getattr(cspec, "builds_containers", False):
+        raise CLIValidationError(
+            "--build-hpc-config",
+            f"{build_hpc_config} does not declare container.builds_containers: true — not a build host.",
+        )
+
+
 @app.command(name="build-sifs")
 def build_sifs_command(
     build_hpc_config: Path = typer.Option(
@@ -2269,10 +2281,7 @@ def build_sifs_command(
 
     try:
         build_host = yaml_to_model(build_hpc_config, _hpc_model)
-        if not getattr(build_host, "builds_containers", False):
-            raise CLIValidationError(
-                "--build-hpc-config", f"{build_hpc_config} does not declare builds_containers: true — not a build host."
-            )
+        _require_build_host(build_host, build_hpc_config)
         sb = yaml_to_model(sif_build_config, _sb_model)
         experiments: list[ExperimentInputs] = []
         if experiment:
