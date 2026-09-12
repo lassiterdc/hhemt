@@ -13,7 +13,7 @@ you want the DOI to *do*:
 | Deposit unit | Command | The DOI mints a… | Use when |
 |---|---|---|---|
 | **analysis-directory set** (consolidated zarr + `ro-crate-metadata.json` + the two configs) | `analysis.publish(target=…)` | **data-DOI**: the archived, citable analysis outputs + provenance (reproducible from the configs and crate) | you're archiving results for citation / a data-availability statement |
-| **reprex bundle** (the round-trippable bundle that runs an experiment from scratch) | `analysis.publish_reprex_bundle(target=…)` | **runnable-DOI**: `hhemt ingest --doi {DOI}` fetches, reconstitutes, and runs it | you want a one-command reproducible experiment (see [the DOI round-trip runbook](doi-roundtrip-e2e.md)) |
+| **reprex bundle** (the round-trippable bundle that runs an experiment from scratch) | `analysis.publish_reprex_bundle(target=…)` | **runnable-DOI**: `hhemt ingest --doi {DOI}` fetches and reconstitutes it, then prints the `hhemt run` command that runs it | you want a reproducible experiment that anyone can fetch by DOI (see [the DOI round-trip runbook](doi-roundtrip-e2e.md)) |
 
 Both go through the same `target` seam and the same credentials below; they differ only in
 what bytes are deposited. The rest of this guide uses `analysis.publish()` (the data-DOI); the
@@ -65,16 +65,30 @@ print(result["data_doi"], result["record_url"])
 ```
 
 `software_doi` is optional; when given, the deposit records a DataCite `IsCompiledBy`
-`relatedIdentifier` (data → the software that produced it) and backfills the reciprocal
-edge onto the software record.
+`relatedIdentifier` (data → the software that produced it). When that software DOI is itself
+a Zenodo record, `publish` also tries to backfill the reciprocal edge onto the software
+record; a backfill failure is never raised, because the data record is already published.
 
-To assert (not re-stamp) the license you expect, pass `override_dataset_license`. If it
-disagrees with the license baked into the crate, publish raises `PublishError` and directs
-you to set `analysis_config.dataset_license` and re-consolidate. It will not silently
-publish a mismatched license:
+Publishing does not re-stamp the archived license, so `publish` refuses to deposit a crate
+whose license disagrees with your config. This check runs before any override is read: if
+`analysis_config.dataset_license` differs from the license in `ro-crate-metadata.json`,
+`publish` raises `PublishError` and tells you to re-emit the crate. Re-emitting requires
+`regenerate_existing=True`. A plain `reprocess(start_with="consolidate")` leaves an intact
+consolidated zarr in place and never rewrites the crate. Set `dataset_license` in the analysis
+config file and rebuild the analysis from that file (a value set on the in-memory config never
+reaches the consolidation subprocess), then:
 
 ```python
-analysis.publish(target="zenodo", override_dataset_license="CC0-1.0")
+analysis.reprocess(start_with="consolidate", regenerate_existing=True)
+analysis.publish(target="zenodo")
+```
+
+To additionally assert the license you expect at publish time, pass
+`override_dataset_license`. It is compared against the crate only after the config check has
+passed, and a disagreement raises `PublishError` rather than publishing a mismatched license:
+
+```python
+analysis.publish(target="zenodo", override_dataset_license="CC-BY-NC-4.0")
 ```
 
 ## Publish to HydroShare
@@ -88,8 +102,14 @@ result = analysis.publish(target="hydroshare")
 print(result["manual_step"])   # open result["record_url"] and use 'Publish' in the web UI
 ```
 
-Open `result["record_url"]`, click **Publish** in the HydroShare web UI to mint the DOI,
-then re-run `publish` with the minted `software_doi` if you want the reciprocal edge.
+Open `result["record_url"]` and click **Publish** in the HydroShare web UI to mint the DOI. If
+you want the data-to-software relation recorded on the resource, pass `software_doi` on that
+first `publish(target="hydroshare")` call, as in the Zenodo example above: the toolkit writes
+it into the resource's relations before the resource goes public. Do not re-run `publish` to
+add it afterwards. Every HydroShare `publish` call creates a new resource, so a second call
+deposits a second copy and leaves the first untouched. For HydroShare deposits, the toolkit
+writes no reciprocal edge (software to data, which needs the minted DOI) on the software
+record.
 
 ## Publish a sensitivity analysis
 
@@ -120,9 +140,18 @@ from hhemt.experiments import TRITON_SWMM_experiment
 
 experiment = TRITON_SWMM_experiment.from_case_study(
     case_name="norfolk_coastal_flooding",
+    system_config_template="template_system_config.yaml",
+    analysis_config_template="template_analysis_config.yaml",
+    case_config_filename="case.yaml",
+    weather_events_to_simulate="hurricane_irene_event_index.csv",
+    analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
     download_if_exists=False,   # set True to re-download even if the data is already local
 )
 ```
+
+The first six arguments are required and `download_if_exists` is optional. The two template
+names and `case.yaml` live under `test_data/{case_name}/`. For the shipped Norfolk case,
+`NorfolkIreneExperiment.load()` wraps this call.
 
 The fetch is host-agnostic on verification: the streaming 1 MiB-chunk sha256 check is
 byte-identical regardless of `host`, and Globus (when used) stays transport-only.
