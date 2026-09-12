@@ -119,10 +119,10 @@ def build_case(
             f"{cfg_path}: default_account is unset or still a placeholder ({account!r}). "
             f"Set default_account to your real OLCF project / UVA allocation."
         )
-    if cfg_hpc.container is None or "{your-" in (cfg_hpc.container.sif_path or ""):
+    if cfg_hpc.container is None or "{your-" in str(cfg_hpc.container.sif_root or ""):
         raise ValueError(
-            f"{cfg_path}: container.sif_path is missing or still a placeholder. "
-            f"Set it to the absolute on-cluster path of your transferred, signed SIF."
+            f"{cfg_path}: container.sif_root is missing or still a placeholder. "
+            f"Set it to the absolute on-cluster root `hhemt build-sifs` writes images under."
         )
     return retrieve_synth_TRITON_SWMM_test_case(
         analysis_name=f"container_validation_{cluster}",

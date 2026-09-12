@@ -32,7 +32,7 @@ def synth_1job_analysis():
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
-        system_name="test-cluster",
+        hpc_name="test-cluster",
         default_account="test_account",
         max_concurrent_jobs=10,
         partitions={"test_partition": PartitionSpec(max_runtime=120, cpus_per_node=32)},

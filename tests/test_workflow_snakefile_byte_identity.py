@@ -100,7 +100,7 @@ def _normalize_volatile(text: str) -> str:
     including rule names, resources, source-path attributions, and every FIXED
     segment under the cache root. The last is load-bearing and is the reason the
     cache masks are root-scoped rather than generic: a default SIF path is
-    ``{cache}/sif_cache/{name}.sif`` (container_build.py:43,:92), so a rule shell's
+    ``{sif_root}/{family}/{stem}.sif`` (hhemt.sif.identity.resolve_sif), so a rule shell's
     ``apptainer exec`` argument sits exactly where a generic root-plus-two-segments
     rule would eat it. Command shape is preserved, but only because the cache masks
     decline to consume a second segment they do not know to be volatile.

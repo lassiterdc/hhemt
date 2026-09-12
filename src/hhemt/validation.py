@@ -1825,7 +1825,28 @@ def _running_toolkit_sha() -> str | None:
     return None if (not sha or sha == "unknown") else sha
 
 
-def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "ValidationResult", cfg_system=None) -> None:
+def _running_toolkit_sha_full() -> str | None:
+    """The 40-hex commit the RUNNING toolkit is at, or None (a wheel install). Sibling of
+    ``_running_toolkit_sha`` (12-hex, kept for its label-compare consumers): the SIF identity
+    needs the FULL sha because the image's %post compares it to git's own ``%H`` (40 chars)."""
+    import subprocess
+
+    try:
+        from hhemt.bundle._emit import _toolkit_source_dir
+
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=_toolkit_source_dir(), capture_output=True, text=True, check=True
+        ).stdout.strip()
+    except Exception:  # pragma: no cover - never block preflight on provenance
+        return None
+    from hhemt.sif.pins import is_full_sha
+
+    return out if is_full_sha(out) else None
+
+
+def _validate_container_config(
+    cfg_analysis, cfg_hpc_system, result: "ValidationResult", cfg_system=None, *, build_sifs: bool = False
+) -> None:
     """ADR-1 preflight (R10): container mode requires a resolvable ContainerSpec.
 
     Accumulates into the shared ValidationResult (the established preflight
@@ -1842,339 +1863,17 @@ def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "Validation
             field="execution_environment",
             message=(
                 "execution_environment='container' but no hpc_system_config.container "
-                "block is declared. Add a `container:` block (sif_path, gpu_flag, ...) to "
+                "block is declared. Add a `container:` block (sif_root, gpu_flag, ...) to "
                 "the hpc_system_config, or set execution_environment='native'."
             ),
             fix_hint="Declare hpc_system_config.container or set execution_environment='native'.",
         )
         return
-    if not cspec.sif_path and not cspec.sif_paths_by_arch:
-        result.add_error(
-            field="container.sif_path",
-            message=(
-                "container mode requires either hpc_system_config.container.sif_path "
-                "(single/default SIF) or container.sif_paths_by_arch (per-arch map for "
-                "a cross-hardware experiment). On ingest, from_doi repoints both."
-            ),
-            fix_hint="Set container.sif_path and/or container.sif_paths_by_arch.",
-        )
-        return
+    # SIF quest (ADR-21): every image check lives in hhemt.sif.preflight — ONE check per required
+    # partition, keyed on the identity recomputed from config (never a pointer field).
+    from hhemt.sif.preflight import validate_container_images
 
-    # defect-10 companion: a DECLARED-but-absent SIF must fail at login-node
-    # preflight, not inside a SLURM allocation as an opaque `apptainer exec` error.
-    # The from_doi path already proves existence upstream (container_build.py raises
-    # ProcessingError when the build job returns 0 but produces no SIF), so this is
-    # inert there; it closes the HAND-AUTHORED-config gap, where sif_path was
-    # previously only checked for being SET. Scenario-level re-validation is
-    # deliberately NOT added: the invariant is analysis-constant, and a second copy
-    # of the per-arch resolution rule is a silent-wrong-SIF drift surface.
-    from pathlib import Path as _Path
-
-    _declared = [("container.sif_path", cspec.sif_path)] + [
-        (f"container.sif_paths_by_arch[{_a}]", _p) for _a, _p in (cspec.sif_paths_by_arch or {}).items()
-    ]
-    for _field, _p in _declared:
-        if not _p:
-            continue
-        _pp = _Path(_p)
-        # A container target is EITHER a SIF file OR an apptainer SANDBOX DIRECTORY. `apptainer
-        # exec` accepts both, so a file-only test rejects a working container. This is not a
-        # hypothetical: on a cluster with no /etc/subuid mapping and ptrace restricted
-        # (yama.ptrace_scope=3), apptainer falls back to proot for root emulation and CANNOT
-        # produce a SIF at all -- both %post execution and squashfs packing fail -- while
-        # `apptainer build --sandbox` from a docker-archive succeeds. There, the sandbox is the
-        # only buildable form.
-        #
-        # The sandbox arm is discriminated by the `.singularity.d/` marker directory apptainer
-        # writes at every sandbox root, NOT by mere directory existence. That keeps this a real
-        # existence proof: an arbitrary directory (a typo'd path that happens to exist, a
-        # half-extracted tree) still fails, which is the defect-10 intent this check was added for.
-        if _pp.is_file():
-            continue
-        if _pp.is_dir() and (_pp / ".singularity.d").is_dir():
-            continue
-        _kind = (
-            "a directory exists there but carries no .singularity.d/ marker, so it is not an apptainer sandbox"
-            if _pp.is_dir()
-            else "no SIF file or sandbox directory exists there"
-        )
-        result.add_error(
-            field=_field,
-            message=(
-                f"container mode declares a container at '{_p}' but {_kind}. The "
-                "simulation would fail inside a SLURM allocation with an opaque "
-                "`apptainer exec` error."
-            ),
-            fix_hint=(
-                "Build the SIF (`hhemt build-sif --def <your.def> --sif-out <path>`), or "
-                "point at an `apptainer build --sandbox` directory, or correct the path. "
-                "On the from_doi path this is repointed automatically at ingest."
-            ),
-        )
-
-    # ---- Version-match guard -------------------------------------------------
-    # A container SKIPS the compile, and the compile is where _verify_tritonswmm_pin
-    # fires -- so without this, a containerized run has NO pin verification of any
-    # kind and a SIF built at the wrong TRITON runs silently. Measured on Rivanna:
-    # hpc_system_config_uva.yaml names an image whose org.hhemt.triton_sha is
-    # 15eb18a5, at which model_defects records all three registry defects PRESENT.
-    #
-    # FAIL-CLOSED on a missing label: "cannot prove a match" must not read as
-    # "passes" in the guard whose purpose is to stop an unverified image. Safe
-    # because every container the estate references IS labelled; the only unlabelled
-    # artifact on scratch is a build probe no config names.
-    _pin = getattr(cfg_system, "TRITONSWMM_branch_key", None) if cfg_system is not None else None
-    if not _pin:
-        return
-    from hhemt.container_labels import (
-        HHEMT_SHA_PLACEHOLDER as _CONTAINER_HHEMT_PLACEHOLDER,
-    )
-    from hhemt.container_labels import (
-        looks_like_sha,
-        read_container_labels,
-        sha_in_filename,
-        shas_match,
-    )
-
-    if not looks_like_sha(_pin):
-        # Native mode tolerates a branch name because _verify_tritonswmm_pin rev-parses
-        # it against the CLONE. Container mode has no clone, so a branch name cannot be
-        # resolved locally, and resolving it remotely would verify against a MOVING
-        # target. build_sifs_uva.sh already requires a ref TIP (`ls-remote | grep -q
-        # "^$TRITON_SHA"`); refusing a non-sha here keeps preflight and the build script
-        # agreeing about what a legal pin is.
-        result.add_error(
-            field="TRITONSWMM_branch_key",
-            message=(
-                f"container mode requires TRITONSWMM_branch_key to be a git SHA, but it is "
-                f"{_pin!r}. A container skips the compile, so there is no clone to resolve a "
-                "branch name against, and the image's org.hhemt.triton_sha label is a SHA. "
-                "This is stricter than native mode deliberately."
-            ),
-            fix_hint="Set TRITONSWMM_branch_key to the full commit SHA the SIF was built at.",
-        )
-        return
-
-    _mod = getattr(cspec, "apptainer_module", None)
-    for _field, _p in _declared:
-        if not _p:
-            continue
-        # CONTENT, before any label. Every label below is an ASSERTION the builder stamped
-        # host-side from a variable before the build; this is the one comparison whose operand
-        # is MEASURED from the bytes that will execute. It runs here because `_declared` is a
-        # superset of both opening rungs -- run_simulation.py resolves
-        # `sif_paths_by_arch.get(arch) or sif_path` and workflow.py:1140 uses `sif_path` -- so
-        # one check covers both. Measured on Rivanna 2026-09-11: sha256 runs at 0.37 GB/s,
-        # 3.3 s for a 1.22 GB image, and this loop runs ONCE per driver invocation on a login
-        # node. It does NOT re-run per simulation: thousands of sims x GB is TB-scale read
-        # traffic on a shared filesystem, so an image replaced between preflight and a later
-        # SLURM allocation is not re-checked, and that residual is accepted deliberately.
-        _want = getattr(cspec, "sif_sha256", None)
-        _pp_digest = _Path(_p)
-        if not _want:
-            result.add_warning(
-                field=_field,
-                message=(
-                    f"container at '{_p}' declares no sif_sha256, so its CONTENT was not "
-                    "verified -- only its labels, which the builder stamped from intent before "
-                    "the build. This check went UNPERFORMED rather than passing."
-                ),
-                fix_hint="Set sif_sha256 from the {sif_path}.sha256 sidecar build_sifs_uva.sh writes.",
-            )
-        elif _pp_digest.is_dir():
-            result.add_warning(
-                field=_field,
-                message=(
-                    f"container at '{_p}' is a sandbox DIRECTORY, which has no single-file "
-                    "digest, so the declared sif_sha256 could not be checked. UNPERFORMED, not "
-                    "passing -- a sandbox is a first-class form on this cluster, not a defect."
-                ),
-                fix_hint="Point at a packed .sif to enable the content check, or accept label-only verification.",
-            )
-        else:
-            try:
-                import hashlib as _hashlib
-
-                _h = _hashlib.sha256()
-                with _pp_digest.open("rb") as _fh:
-                    for _chunk in iter(lambda: _fh.read(1024 * 1024), b""):
-                        _h.update(_chunk)
-                _got = _h.hexdigest()
-            except OSError as _e:
-                _got = None
-                result.add_error(
-                    field=_field,
-                    message=(
-                        f"container at '{_p}' declares sif_sha256 but could not be read to "
-                        f"verify it ({_e}). An unverifiable image is refused rather than trusted."
-                    ),
-                    fix_hint="Check permissions and that the path is a readable file, then re-run preflight.",
-                )
-            if _got is not None and _got != str(_want).strip().lower():
-                result.add_error(
-                    field=_field,
-                    message=(
-                        f"container at '{_p}' has sha256 {_got[:16]} but the config declares "
-                        f"{str(_want)[:16]}. The file at that path is NOT the image this "
-                        "experiment was configured against -- a wrong-but-present path is the "
-                        "state no label check can see, because every label records what the "
-                        "builder meant rather than what the file contains."
-                    ),
-                    fix_hint=(
-                        "Re-point sif_path at the intended image, or re-set sif_sha256 from that "
-                        "image's {sif_path}.sha256 sidecar. Do NOT hand-copy a digest."
-                    ),
-                )
-        _res = read_container_labels(_p, apptainer_module=_mod)
-        if not _res.read:
-            result.add_error(
-                field=_field,
-                message=(
-                    f"container mode could not read provenance labels from '{_p}': "
-                    f"{_res.error}. The TRITON version inside the image cannot be verified "
-                    f"against TRITONSWMM_branch_key ({_pin[:12]})."
-                ),
-                fix_hint=(
-                    "If apptainer reported a FATAL open/format error the IMAGE is the problem "
-                    "(re-transfer or rebuild it); container.apptainer_module is NOT at fault, "
-                    "because the module form is tried before the bare form."
-                ),
-            )
-            continue
-        # SWMM and TOOLKIT are checked BEFORE the TRITON chain below, and the order is
-        # deliberate: that chain's `continue`s exist because each of its steps presupposes
-        # the previous one, so running these after it would let a TRITON mismatch HIDE a
-        # second divergence in the same image -- one with a different remedy. The three
-        # labels answer three independent questions and each is reported on its own.
-        _swmm_pin = getattr(cfg_system, "SWMM_tag_key", None) if cfg_system is not None else None
-        if _swmm_pin:
-            _img_swmm = _res.swmm_version
-            if not _img_swmm:
-                result.add_error(
-                    field=_field,
-                    message=(
-                        f"container at '{_p}' carries no org.hhemt.swmm_version label, so the "
-                        f"standalone SWMM inside it cannot be verified against SWMM_tag_key "
-                        f"({_swmm_pin}). Refused rather than trusted, for the same reason the "
-                        "TRITON label is: absence must not read as agreement."
-                    ),
-                    fix_hint=(
-                        "Rebuild via hpc/build_sifs_uva.sh against a recipe carrying the label. "
-                        "An image built before the label was added will not have it."
-                    ),
-                )
-            elif _img_swmm.strip() != str(_swmm_pin).strip():
-                result.add_error(
-                    field=_field,
-                    message=(
-                        f"container at '{_p}' was built with standalone SWMM {_img_swmm} but the "
-                        f"analysis pins SWMM_tag_key {_swmm_pin}. Note this governs the STANDALONE "
-                        "SWMM only -- the COUPLED model's SWMM is vendored inside TRITON and "
-                        "travels with the TRITON pin, so it is covered by the TRITON check."
-                    ),
-                    fix_hint=(
-                        "Point at the SIF built at the pinned SWMM tag, or re-pin SWMM_tag_key to "
-                        "the tag this image was built at."
-                    ),
-                )
-
-        # The toolkit check is what would have caught the mixed-version split: the three
-        # process_* rules run `python -m hhemt.…` INSIDE the image, so a driver at one
-        # commit and an image at another silently split one campaign across two toolkits.
-        _img_hhemt = _res.hhemt_sha
-        if not _img_hhemt:
-            result.add_error(
-                field=_field,
-                message=(
-                    f"container at '{_p}' carries no usable org.hhemt.hhemt_sha label, so the "
-                    "toolkit baked into it cannot be verified against the running one. The "
-                    "in-container processing rules would run an unknown hhemt."
-                ),
-                fix_hint=(
-                    "Rebuild via hpc/build_sifs_uva.sh, which derives the sha from $TOOLKIT and "
-                    f"fails the build if the {_CONTAINER_HHEMT_PLACEHOLDER} placeholder survives."
-                ),
-            )
-        else:
-            _local = _running_toolkit_sha()
-            if _local is None:
-                # A wheel install legitimately has no sha to compare against, so this is
-                # NOT an error -- but it is also not a pass, and saying so is the point.
-                result.add_warning(
-                    field=_field,
-                    message=(
-                        f"container at '{_p}' declares hhemt {_img_hhemt[:12]}, but the RUNNING "
-                        "toolkit's commit could not be determined (not a git checkout), so the "
-                        "two were not compared. This check went UNPERFORMED rather than passing."
-                    ),
-                    fix_hint=(
-                        "Run the driver from a git checkout to enable the comparison, or accept "
-                        "that a driver/container version split cannot be detected here."
-                    ),
-                )
-            elif not shas_match(_img_hhemt, _local):
-                result.add_error(
-                    field=_field,
-                    message=(
-                        f"container at '{_p}' bakes hhemt {_img_hhemt[:12]} but the RUNNING "
-                        f"toolkit is {_local[:12]}. The rules that execute inside the image "
-                        "would run a DIFFERENT toolkit than the one driving the workflow -- the "
-                        "mixed-version split, which no other check can see because a container "
-                        "skips the compile that _verify_tritonswmm_pin fires from."
-                    ),
-                    fix_hint=(
-                        "Rebuild the image from the running checkout, or run the driver from the "
-                        "commit the image was built at. hpc/build_sifs_uva.sh bakes $TOOLKIT."
-                    ),
-                )
-
-        _img = _res.triton_sha
-        if not _img:
-            result.add_error(
-                field=_field,
-                message=(
-                    f"container at '{_p}' carries no org.hhemt.triton_sha label, so the TRITON "
-                    f"version inside it cannot be verified against TRITONSWMM_branch_key "
-                    f"({_pin[:12]}). An unverifiable image is refused rather than trusted."
-                ),
-                fix_hint=(
-                    "Rebuild via hpc/build_sifs_uva.sh, which stamps the label from the pin and "
-                    "already fails the build if fewer than two pin occurrences land."
-                ),
-            )
-            continue
-        if not shas_match(_img, _pin):
-            result.add_error(
-                field=_field,
-                message=(
-                    f"container at '{_p}' was built at TRITON {_img[:12]} but the analysis pins "
-                    f"{_pin[:12]}. The simulation would run a DIFFERENT solver than the one the "
-                    "analysis declares, and nothing downstream would say so."
-                ),
-                fix_hint=(
-                    "Point at the SIF built at the pinned commit, or re-pin "
-                    "TRITONSWMM_branch_key to the commit this image was built at."
-                ),
-            )
-            continue
-        _fname_sha = sha_in_filename(_p)
-        if _fname_sha and not shas_match(_fname_sha, _img):
-            # Label and filename disagree -> the image was RENAMED or COPIED. Its own
-            # label is authoritative and matches the pin, so the run would be correct
-            # while every human reading the path is misled. Named separately from a
-            # version mismatch because the remedy is to rename the file, not to re-pin.
-            result.add_error(
-                field=_field,
-                message=(
-                    f"container at '{_p}' has a filename naming TRITON {_fname_sha} but an "
-                    f"org.hhemt.triton_sha label of {_img[:12]}. The label matches the pin, so "
-                    "the image is correct and its NAME is wrong -- it was renamed or copied."
-                ),
-                fix_hint=(
-                    "Rename the container so its basename carries the label's sha, or re-point "
-                    "the config at the correctly-named image."
-                ),
-            )
+    validate_container_images(cfg_analysis, cfg_hpc_system, cfg_system, result, build_sifs=build_sifs)
 
 
 # ============================================================================
@@ -2223,6 +1922,7 @@ def preflight_validate(
     cfg_analysis: analysis_config,
     report_cfg: Any | None = None,
     cfg_hpc_system: Any | None = None,
+    build_sifs: bool = False,
 ) -> ValidationResult:
     """Run full preflight validation on system and analysis configs.
 
@@ -2300,9 +2000,9 @@ def preflight_validate(
         _check_interactive_dependencies(report_cfg, result)
         _check_static_backend_kaleido_available(report_cfg, result)
 
-    # ADR-1 (R10): container-mode requires a resolvable ContainerSpec/sif_path.
+    # ADR-1 (R10) / ADR-21: container-mode requires a resolvable ContainerSpec and an image at the identity path.
     # No-op in native mode (byte-identical to today's preflight).
-    _validate_container_config(cfg_analysis, cfg_hpc_system, result, cfg_system)
+    _validate_container_config(cfg_analysis, cfg_hpc_system, result, cfg_system, build_sifs=build_sifs)
 
     # R6: a multi-resume interruption schedule is unsafe under
     # multi_sim_run_method='1_job_many_srun_tasks' (no job-end cgroup reap).

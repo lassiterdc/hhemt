@@ -502,7 +502,7 @@ def test_supply_block_names_the_fields_a_reproducer_actually_supplies():
     """
     rows_by_bucket, _ = metadata._config_field_rows()
     user_labels = _labels(rows_by_bucket["user"])
-    for field in ("default_account", "login_node", "sif_path", "scratch_dir"):
+    for field in ("default_account", "login_node", "sif_root", "scratch_dir"):
         assert f"reprex_config.{field}" in user_labels
     # The two config Path fields that bucket USER remain present.
     assert "system_config.TRITONSWMM_software_directory" in user_labels

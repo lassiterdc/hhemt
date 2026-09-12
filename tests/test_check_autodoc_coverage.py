@@ -210,8 +210,6 @@ RULE_GAINED_QUALNAMES = frozenset(
         "hhemt.experiment_bundle.expand_config_vars",
         "hhemt.experiment_bundle.format_override_gate",
         "hhemt.experiment_bundle.load_bundle",
-        "hhemt.experiment_bundle.resolve_container_defs",
-        "hhemt.experiment_bundle.resolve_def_recipe",
         "hhemt.experiment_bundle.resolve_hpc_system_config",
         "hhemt.experiment_bundle.resolve_overrides",
         "hhemt.experiment_bundle.run_experiment",

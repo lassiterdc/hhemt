@@ -109,7 +109,7 @@ class ToolkitPin(BaseModel):
 
 
 class ContainerRef(BaseModel):
-    """Reference to the SIF that executes this experiment.
+    """Marker that this experiment executes in a container; the image is resolved by identity (ADR-21).
 
     Deliberately a REFERENCE, not a copy. The SIF sha256's durable home is the
     RO-Crate's ``SoftwareApplication`` node, which the reprex two-part verify already
@@ -119,50 +119,25 @@ class ContainerRef(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    def_recipe: str = Field(
-        description=(
-            "BUNDLE-relative .def path (e.g. 'containers/uva-cuda.def'), or a "
-            "${VAR}-rooted path (e.g. '${HHEMT_TOOLKIT}/containers/uva-cuda.def') when "
-            "several "
-            "experiments share one recipe. The VALUE declares its own root, so there is "
-            "no resolution order and no cwd fallback. An operator-rooted value -- "
-            "absolute, ~-rooted, or unbraced $VAR -- declares neither and is rejected."
-        )
-    )
     sha256_source: Literal["ro-crate"] = Field(
         default="ro-crate",
         description="Where the authoritative SIF digest lives. Only 'ro-crate' is valid.",
     )
 
-    # THE WORKED EXAMPLES ABOVE NAME A PROVISIONED VARIABLE ON PURPOSE. They previously
-    # read `${HHEMT_CONTAINERS}`, which nothing exports: `grep -rn 'export HHEMT_CONTAINERS'`
-    # over BOTH repos returns 0, and its only other occurrences are two test values. A
-    # schema's worked example is the text the next author copies, so an unprovisioned
-    # variable there MINTS the unset-variable failure the value contract exists to make
-    # loud. `$HHEMT_TOOLKIT` is the estate's own root for the toolkit checkout (~150
-    # references across its scripts and READMEs) and is what eight of the nine live
-    # descriptors resolve through.
-    #
-    # The two roots a value may declare. `${` is checked FIRST and exempts the shared
-    # arm from the `$` rejection below -- that exemption is what makes the first clause
-    # of the guard load-bearing rather than dead.
-    _OPERATOR_ROOTED_SIGILS = ("/", "~", "$")
-
-    @model_validator(mode="after")
-    def _check_def_recipe_rooting(self) -> ContainerRef:
-        # STRICTER than DatasetRef._check_resolvable, which rejects only a "/home/"
-        # prefix: a "/scratch/..." value passes there and fails here. Same zero-user-info
-        # ground, wider net. SHAPE only -- existence needs a bundle_dir this model does
-        # not have, and is checked by resolve_def_recipe.
-        if not self.def_recipe.startswith("${") and self.def_recipe.startswith(self._OPERATOR_ROOTED_SIGILS):
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_def_recipe(cls, data):
+        # HARD REFUSAL (SIF quest, ADR-21): the image is a function of the experiment's configs
+        # (hhemt.sif.identity), never a recipe an operator names. A descriptor that still
+        # names one is refused with the migration, not silently ignored.
+        if isinstance(data, dict) and "def_recipe" in data:
             raise ValueError(
-                f"ContainerRef: def_recipe must declare its own root -- BUNDLE-relative "
-                f"(e.g. 'containers/uva-cuda.def') or ${{VAR}}-rooted (e.g. "
-                f"'${{HHEMT_TOOLKIT}}/containers/uva-cuda.def'). Got {self.def_recipe!r}, "
-                "which is "
-                "operator-rooted and therefore unreproducible for a third party."
+                "ContainerRef: container.def_recipe was RETIRED (hhemt SIF quest, 2026-09): recipes are "
+                "package data selected by the derived family, and images resolve by identity under "
+                "container.sif_root. Delete def_recipe; keep `container:` (with sha256_source) to mark "
+                "container execution."
             )
-        return self
+        return data
 
 
 class ExperimentConfig(BaseModel):

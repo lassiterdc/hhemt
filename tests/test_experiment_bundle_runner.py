@@ -54,7 +54,7 @@ def _write_bundle_dir(tmp_path: Path, *, hpc: dict | None = None, container: dic
 def _write_hpc_config(tmp_path: Path, *, default_account: str, container: bool = False) -> Path:
     body = textwrap.dedent(
         f"""\
-        system_name: test-cluster
+        hpc_name: test-cluster
         default_account: "{default_account}"
         partitions:
           gpu:
@@ -66,7 +66,7 @@ def _write_hpc_config(tmp_path: Path, *, default_account: str, container: bool =
             """\
             container:
               apptainer_module: apptainer
-              sif_path: "{your-sif-path}"
+              sif_root: "{your-sif-root}"
             """
         )
     p = tmp_path / "hpc_system_config_uva.yaml"
@@ -160,8 +160,8 @@ def test_build_case_from_bundle_rejects_placeholder_account(tmp_path):
 
 def test_build_case_from_bundle_rejects_placeholder_sif_when_container_declared(tmp_path):
     hpc_path = _write_hpc_config(tmp_path, default_account="real-account", container=True)
-    bundle = _make_bundle(hpc={"uva": str(hpc_path)}, container={"def_recipe": "containers/uva.def"})
-    with pytest.raises(ConfigurationError, match="container.sif_path"):
+    bundle = _make_bundle(hpc={"uva": str(hpc_path)}, container={})
+    with pytest.raises(ConfigurationError, match="container.sif_root"):
         eb.build_case_from_bundle(bundle, tmp_path, "uva", hpc_system_config_yaml=hpc_path)
 
 

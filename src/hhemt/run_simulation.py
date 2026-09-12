@@ -1020,8 +1020,11 @@ class TRITONSWMM_run:
                 self._analysis.cfg_hpc_system,
                 self._analysis.cfg_analysis.hpc_ensemble_partition,
             )
-            _sim_sif = cspec.sif_paths_by_arch.get(_row_hw) if _row_hw else None
-            _sif = _sim_sif or cspec.sif_path
+            from hhemt.sif.identity import resolve_sif
+
+            _sif = resolve_sif(
+                cspec.sif_root, self._analysis.sif_identity_for(self._analysis.cfg_analysis.hpc_ensemble_partition)
+            )
             _gpu = f"{cspec.gpu_flag} " if (run_mode == "gpu" and cspec.gpu_flag) else ""
             _extra = (" ".join(cspec.extra_exec_args) + " ") if cspec.extra_exec_args else ""
             # Container Change 2 (ROOT CAUSE of zero-output): TRITON derives its output

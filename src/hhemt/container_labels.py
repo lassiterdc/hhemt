@@ -14,7 +14,9 @@ import subprocess as _subprocess
 from pathlib import Path
 
 TRITON_SHA_LABEL = "org.hhemt.triton_sha"
-SWMM_VERSION_LABEL = "org.hhemt.swmm_version"
+SWMM_VERSION_LABEL = "org.hhemt.swmm_standalone_version"  # the STANDALONE build's tag (vs SWMM_tag_key)
+SWMM_COUPLED_VERSION_LABEL = "org.hhemt.swmm_coupled_version"  # vendored inside TRITON (measured in %post)
+IDENTITY_LABEL = "org.hhemt.identity"
 HHEMT_SHA_LABEL = "org.hhemt.hhemt_sha"
 
 #: The literal the container recipes carry until ``build_sifs_uva.sh`` substitutes the

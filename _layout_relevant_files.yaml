@@ -1490,3 +1490,26 @@ non_breaking_allowlist:
       signature-less append would INHERIT 8f840b2f under _load_allowlist's merge and check-b would
       still re-fire.
     layout_signature: "f4af12d01f9ba1d59d9d4ca177f6aaa873b3f2395adad8cc25414eb988d76f29"
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      SIF quest (2026-09, ADR-21): ContainerSpec retires sif_path/sif_paths_by_arch/sif_sha256 for
+      sif_root + identity resolution and renames system_name -> hpc_name. INPUT-config schema
+      only; no on-disk analysis-tree change (the resolver is a pure function of config).
+    layout_signature: 2e42e35e29ae622f88f6d81c0eb7c3a6daeab6c4291c2881f8bcdac8fadb7495
+  - path: src/hhemt/config/sif_build.py
+    justification: >-
+      SIF quest (2026-09, ADR-21): new sif_build_config (build venue + resources; never identity).
+      INPUT-config schema only.
+    layout_signature: 933e3c4fc12669957badce9037ba0bf8bedc74573f3567acabccb22a4d7363f5
+  - path: src/hhemt/config/experiment_bundle.py
+    justification: >-
+      SIF quest (2026-09, ADR-21): ContainerRef retires def_recipe (recipes are toolkit package
+      data selected by the derived family) and refuses a descriptor still carrying it. INPUT-config
+      schema only; no on-disk analysis-tree change.
+    layout_signature: 5a77ab51fc9a91026504f8a779705e8ead22d87682a4b9e3d449ea0f7bb5723a
+  - path: src/hhemt/config/reprex_config.py
+    justification: >-
+      SIF quest (2026-09, ADR-21): reprex_config.sif_path -> sif_root (the target-local root
+      under which fetched/rebuilt images live at their identity path). INPUT-config schema only;
+      no on-disk analysis-tree change.
+    layout_signature: c8c1e49bbd76b2320852e88c96ec434a9dcd527ba9f4f38441f026616841c4fb

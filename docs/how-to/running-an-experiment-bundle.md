@@ -39,7 +39,6 @@ inputs:
 toolkit_pin:
   version: "0.1.0"                      # PyPI version: the durable, installable identifier
 container:
-  def_recipe: containers/uva-cuda.def
   sha256_source: ro-crate              # the SIF digest's authoritative home is the RO-Crate
 ```
 
@@ -93,7 +92,7 @@ already say, no confirmation is needed: that is the common one-config path.
 | Code | Meaning |
 |------|---------|
 | 0 | success (or `--dry-run` planned cleanly) |
-| 2 | configuration error (bad `experiment.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_path`, declined override gate) |
+| 2 | configuration error (bad `experiment.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_root`, declined override gate) |
 | 5 | workflow / processing / simulation error |
 | 10 | unexpected error |
 

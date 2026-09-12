@@ -173,9 +173,12 @@ class hpc_system_config(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    system_name: str = Field(
+    hpc_name: str = Field(
         ...,
-        description="Names the cluster this profile describes; carried into an emitted bundle as its cluster identity.",
+        description=(
+            "Free-text name of the HPC system this profile describes (documentation; drives nothing; "
+            "carried into an emitted bundle's template)."
+        ),
     )
     default_account: str | None = Field(
         None,
@@ -406,27 +409,14 @@ class ContainerSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    sif_path: str  # absolute on-cluster path to the TRANSFERRED, signed SIF.
-    #   ARCH-AGNOSTIC process/default SIF: the PROCESS rung (workflow.py:1140) runs
-    #   pure-Python xarray/zarr work with no GPU device code, so ANY carried SIF
-    #   serves it. Kept as a scalar so workflow.py stays byte-identical (ADR-19).
-    sif_sha256: str | None = None  # EXPECTED sha256 of the file at sif_path, or None.
-    #   THE ONLY NON-ASSERTED OPERAND. Every org.hhemt.* label is sed-stamped host-side
-    #   from a variable BEFORE the build, so a label records what the builder MEANT; this
-    #   field is compared against a digest MEASURED from the artifact at preflight
-    #   (validation.py). Set it from the `{sif_path}.sha256` sidecar that
-    #   hpc/build_sifs_uva.sh writes from the same variable that named the build target --
-    #   never by hand-copying a digest, which reintroduces the two-wrong-operands failure.
-    #   None is NOT a pass: preflight reports the content check UNPERFORMED, mirroring the
-    #   hhemt_sha None arm. A sandbox DIRECTORY target has no single-file digest and is
-    #   likewise reported UNPERFORMED rather than failed.
-    sif_paths_by_arch: dict[str, str] = Field(default_factory=dict)  # per-arch SIM
-    #   SIF map, keyed by gpu_hardware ("a6000"/"a100"/...). Consumed ONLY at the SIM
-    #   rung (run_simulation.py:421): each per-rule sim resolves ITS row's arch via
-    #   resolve_gpu_target(cfg_hpc_system, hpc_ensemble_partition)[0] and looks the SIF
-    #   up here. Empty => single-SIF/CPU: the SIM rung falls back to sif_path (byte-
-    #   identical to the pre-multi-SIF behavior). A fat multi-arch SIF (Option B) maps
-    #   every arch to one path here (all values equal). from_doi's repoint writes this.
+    sif_root: str  # THE ONLY WAY AN IMAGE IS FOUND. `hhemt build-sifs` writes
+    #   {sif_root}/{family}/{stem}.sif + .manifest.json, and preflight / the SIM rung / the
+    #   PROCESS prefix resolve the SAME path from the identity they recompute from config
+    #   (hhemt.sif.identity.resolve_sif). There is deliberately no pointer field: a path an
+    #   operator can type is a path an operator can type wrong, and the 2026-09-11 incident
+    #   was a version wired by a default.
+    builds_containers: bool = False  # positive capability: this host may RUN `hhemt build-sifs`
+    #   (a fakeroot-capable build partition exists here). A target-only config leaves it False.
     gpu_flag: Literal["--rocm", "--nv"] | None = None  # None => CPU-only cluster
     binds: list[str] = Field(default_factory=list)  # APPTAINER_BIND entries
     #   (e.g. "/opt/cray", "/var/spool/slurmd"); analysis_dir same:same is
@@ -470,6 +460,23 @@ class ContainerSpec(BaseModel):
     #   (apptainer not on PATH). None on clusters where apptainer is on the default
     #   PATH (Frontier). The seam emits `module load {apptainer_module}` in container
     #   mode ONLY (native rows never load it -> native byte-identical).
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_pointer_fields(cls, data):
+        # HARD REFUSAL, not a shim: a shim that ignored `sif_path` would let a config load with a
+        # pointer the resolver never reads -- the wrong-wiring class this field retirement closes.
+        if isinstance(data, dict):
+            retired = [k for k in ("sif_path", "sif_paths_by_arch", "sif_sha256") if k in data]
+            if retired:
+                raise ValueError(
+                    f"container.{retired[0]} was RETIRED (hhemt SIF quest, 2026-09): images are resolved by "
+                    "identity under container.sif_root. Delete "
+                    + ", ".join(retired)
+                    + "; set sif_root to the directory `hhemt build-sifs` writes into; run "
+                    "`hhemt build-sifs --dry-run` to see the identities this config resolves."
+                )
+        return data
 
     @model_validator(mode="after")
     def _check_mpi_flavor_exclusive(self):

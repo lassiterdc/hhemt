@@ -1,6 +1,6 @@
 # Anonymized UVA Rivanna HPC system profile (example).
 # Authored from UVA's PUBLIC cluster documentation; substitute {your-allocation} with your account.
-system_name: uva_rivanna
+hpc_name: uva_rivanna
 default_account: "{your-allocation}"          # NATIVE -> slurm_account (UVA: your allocation)
 login_node: login1.hpc.virginia.edu           # EXTENSION (tmux orchestration; batch_job mode) — public
 default_execution_mode: batch_job             # EXTENSION (multi_sim_run_method default)
@@ -32,7 +32,8 @@ partitions:
     cpus_per_node: 64                         # EXTENSION
     gpu_compilation_backend: CUDA             # EXTENSION (D1: per-partition backend)
 container:                                    # ADR-1/2/3: per-cluster Apptainer exec params; consumed only when analysis_config.execution_environment == "container" (native default ignores it)
-  sif_path: "/scratch/{your-allocation}/hhemt_uva_cuda.sif"   # transferred, signed SIF (see containers/README.md)
+  sif_root: "/scratch/{your-allocation}/sifs"   # every identity resolves under it; `hhemt build-sifs` writes here (see containers/README.md)
+  builds_containers: true                       # Rivanna login nodes can --fakeroot build (root-mapped namespace)
   gpu_flag: "--nv"                            # NVIDIA GPU passthrough (binds host driver only; container CUDA toolkit executes -- NVIDIA-contractual)
   srun_mpi: "pmix"                            # seam emits `srun --mpi=pmix` for the container-own OpenMPI (UVA-only; mutually exclusive with cray_mpich_abi_module)
   binds: ["/scratch", "/sfs"]                 # APPTAINER_BIND: Rivanna scratch + SFS storage trees

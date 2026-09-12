@@ -1,14 +1,13 @@
 # =============================================================================
-# hhemt DEV CPU SIF (Phase-5 friction fix: local container-seam stress test).
+# hhemt UVA CPU HPC SIF (ADR-19 multi-SIF: the CPU/no-arch bundle carrier).
 #
-# PURPOSE: a hardware-AGNOSTIC, dev-box-buildable container for stress-testing the
-# container EXECUTION seams that Phase 4's tests only mock (apptainer exec wrap,
-# APPTAINER_BIND, the process-prefix, `local` ThreadPoolExecutor vs `srun`
-# dispatch). Runs the synth model in serial/openmp/mpi/hybrid and lets us assert
-# native == container CPU bit-identity on ANY dev machine -- no GPU or cluster.
-# This is NOT a cluster/reproducibility SIF: it is Kokkos-CPU (OPENMP+SERIAL), no
-# CUDA/ROCm, ubuntu base by tag (the signed digest-pinned carriers are the
-# frontier-rocm / uva-cuda SIFs). Closes sidecar F-FU Flag 7.
+# PURPOSE: the CPU-backend carrier for a cross-hardware container bundle (ADR-19,
+# Option A). Kokkos-CPU (OPENMP+SERIAL, no CUDA/ROCm), built WITH host slurm
+# (--with-slurm) so CPU sim rows dispatch via `srun --mpi=pmix` on compute nodes,
+# exactly like the GPU SIFs. Forked from dev-cpu.def (which omits host slurm because
+# it is a dev/local seam-test SIF). Carries NO org.hhemt.gpu_arch / gpu_hardware
+# label => its container_build block gets no target_arch => the ingest guard treats
+# it as the CPU/no-arch slot and the SIM rung resolves CPU rows to it via sif_path.
 #
 # Backend flags transcribed from the PROVEN native CPU build
 # (_software/triton/build_tritonswmm_cpu/CMakeCache.txt): Kokkos_ENABLE_OPENMP=ON,
@@ -16,23 +15,24 @@
 # =============================================================================
 
 Bootstrap: docker
-From: ubuntu:24.04
+# ubuntu:24.04 pinned by digest. Digest-ONLY form (repo@sha256) -- apptainer's docker
+# conveyor REJECTS a combined tag@digest ref ("references with both a tag and digest
+# are currently not supported"). The tag ubuntu:24.04 is retained here in prose.
+From: ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
 
 %files
     # hhemt source tree -> uv sync --frozen for the in-container process runner.
-    # Build CWD must be containers/ so `../` resolves to the hhemt repo root.
-    ../  /opt/hhemt-src
+    # `hhemt_src` is the `git archive` of the identity's hhemt_sha, staged beside this
+    # recipe by hhemt.sif.transaction (the build CWD is that staging dir); it carries the
+    # git-export-substituted HHEMT_SHA file that %post asserts against {{ HHEMT_SHA }}.
+    hhemt_src  /opt/hhemt-src
 
 %post
     set -eu
     export DEBIAN_FRONTEND=noninteractive
-    # Rootless `--fakeroot` on a host with NO /etc/subuid range for the building user runs in a
-    # SINGLE-UID root-mapped namespace; apt's Acquire sandbox then drops privilege to `_apt`
-    # (uid 42), which is not in that map -> `E: Failed to setgroups (Operation not permitted)`
-    # and apt exits 100. Running apt as the mapped root avoids the drop, and is HARMLESS when
-    # subuid IS provisioned (the common case for this dev image on a workstation).
-    # Empirically confirmed on Rivanna; see
-    # knowledge/container/apptainer_rivanna_rootless_build_blocked_by_missing_subuid.md.
+    # See uva-cuda.def: rootless --fakeroot with no /etc/subuid runs a single-UID root-mapped
+    # namespace; apt's Acquire sandbox drops to uid 42 (_apt), unmapped -> setgroups EPERM, exit
+    # 100. Disable the sandbox so apt runs as the mapped root. Harmless when subuid IS present.
     printf 'APT::Sandbox::User "root";\n' > /etc/apt/apt.conf.d/00rootless-nosandbox
     apt-get update
     apt-get install -y --no-install-recommends \
@@ -41,9 +41,11 @@ From: ubuntu:24.04
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
     update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
 
-    # --- (1) OpenMPI 5.0.7 (CPU): same as uva-cuda.def MINUS --with-cuda and
-    #     --with-slurm (a dev/local SIF: no GPU, no host slurm). Bundled PMIx 5.0.x,
-    #     no UCX/OFI (single-node sm/self -- the mpi/hybrid dev-test topology).
+    # --- (1) OpenMPI 5.0.7 (CPU HPC): same as uva-cuda.def MINUS --with-cuda, but WITH
+    #     --with-slurm so CPU rows dispatch via `srun --mpi=pmix` on compute nodes (the
+    #     HPC variant of dev-cpu.def, which omits host slurm because it is a dev/local
+    #     seam-test SIF). Bundled PMIx 5.0.x; no UCX/OFI (single-node sm/self topology --
+    #     add --with-ucx for a multi-node fabric).
     cd /tmp
     OMPI_VER=5.0.7
     wget -q https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-${OMPI_VER}.tar.gz
@@ -51,7 +53,7 @@ From: ubuntu:24.04
     tar xf openmpi-${OMPI_VER}.tar.gz && cd openmpi-${OMPI_VER}
     ./configure --prefix=/opt/openmpi \
         --without-ucx --without-ofi --without-hcoll \
-        --enable-shared --with-prrte=internal
+        --enable-shared --with-prrte=internal --with-slurm
     make -j"$(nproc)" && make install
     cd /tmp && rm -rf openmpi-* *.tar.gz
     export PATH=/opt/openmpi/bin:${PATH}
@@ -60,7 +62,9 @@ From: ubuntu:24.04
     wget -qO /tmp/uv-installer.sh https://astral.sh/uv/0.11.7/install.sh
     sh /tmp/uv-installer.sh && rm /tmp/uv-installer.sh
     export PATH=/root/.local/bin:${PATH}
-    cd /opt/hhemt-src && uv sync --frozen --no-dev
+    # Prune any host .venv copied in (parity with uva-cuda.def) so uv builds a clean
+    # container-native venv. Belt-and-suspenders: a git-archive build context carries none.
+    cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
     # Strip the copied `.git` BEFORE it lands in the image. `%files` has NO ignore
     # mechanism -- there is no `.apptainerignore`, and `.dockerignore` is a Docker-only
     # build-context filter -- so `../` copies the repo's full history: author names,
@@ -73,14 +77,28 @@ From: ubuntu:24.04
     # .def) BEFORE the build -- so no in-image consumer needs `.git`. Removed AFTER
     # `uv sync` so the install path is unaffected regardless.
     rm -rf /opt/hhemt-src/.git
+    # THIRD PRUNE, same reason as the two above: `%files ../` has no ignore mechanism, so image
+    # content is a function of the BUILD TREE rather than of this recipe. Measured 2026-09-11: a
+    # clean checkout carries 13 MB of test_data and this recipe's sibling records 12 MB in
+    # 2026-07-19 -- while a DEPLOYED image built 2026-08-31 measures 16 G of it INSIDE the
+    # container, because the Norfolk inputs were sitting in that build tree.
+    # THE TWO FIGURES ONLY RECONCILE THROUGH COMPRESSION, and stating that is the point: the SIF
+    # itself is 1.74 GB on disk, so 16 G measured inside it is ~9.2x the whole image. A SIF is a
+    # squashfs archive and NetCDF/zarr compresses hard, so both numbers are true -- one is the
+    # unpacked size, the other the packed file. Do not "correct" either against the other.
+    # COST, stated rather than discovered later: an in-container `from_case_study` resolves
+    # experiments.py's retrieve_test_data_directory(case_name) at run time and would break. No
+    # ensemble uses that path -- their system configs read ${DATA_DIR} under $PACKAGE_DIR, an
+    # absolute HOST path reached through the $HOME mount, never anything under /opt/hhemt-src.
+    rm -rf /opt/hhemt-src/test_data
     export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:${PATH}
 
     # --- (3) TRITON-SWMM at the SAME pinned commit as uva-cuda.def (15eb18a5), but
     #     Kokkos-CPU: ENABLE_OPENMP + ENABLE_SERIAL, NO CUDA backend / arch. The
     #     dev-test exercises run_mode serial (SERIAL), openmp/hybrid (OPENMP), and
     #     mpi (OpenMPI x SERIAL/OPENMP). Absolute mpic++/mpicc per the uva fix.
-    git clone https://code.ornl.gov/hydro/triton.git /opt/triton
-    cd /opt/triton && git checkout 15eb18a5d25afe5da295cb4b559a62669dbe5bc3 \
+    git clone {{ TRITON_URL }} /opt/triton
+    cd /opt/triton && git checkout {{ TRITON_SHA }} \
         && git submodule update --init --recursive
     mkdir -p build && cd build
     test -x /opt/openmpi/bin/mpic++ && test -x /opt/openmpi/bin/mpicc || { \
@@ -96,7 +114,7 @@ From: ubuntu:24.04
     make -j"$(nproc)"
     test -x /opt/triton/build/triton.exe   # fail the build if the coupled exe is absent
 
-    # --- SECOND build: TRITON-ONLY (SWMM coupling COMPILED OUT).
+    # --- (3b) SECOND build: TRITON-ONLY (SWMM coupling COMPILED OUT).
     # The `triton` model type is a DISTINCT BINARY, not a runtime mode: the SWMM
     # init sits behind a compile-time `#ifdef TRITON_SWMM` (triton/src/triton.h:426)
     # and calls read_inp_file(inp_filename) UNCONDITIONALLY, with no empty-string
@@ -118,7 +136,7 @@ From: ubuntu:24.04
     test -x /opt/triton/build_triton_only/triton.exe   # fail if the TRITON-only exe is absent
 
     # --- (4) Standalone SWMM v5.2.4 (runswmm).
-    git clone --branch v5.2.4 --depth 1 \
+    git clone --branch {{ SWMM_TAG }} --depth 1 \
         https://github.com/USEPA/Stormwater-Management-Model.git /opt/swmm-src
     mkdir -p /opt/swmm-src/build && cd /opt/swmm-src/build
     cmake .. -DCMAKE_BUILD_TYPE=Release && make -j"$(nproc)"
@@ -132,19 +150,44 @@ From: ubuntu:24.04
         /opt/hhemt/bin/runswmm
     chmod +x /opt/hhemt/bin/triton.exe /opt/hhemt/bin/runswmm
 
+    # ---- MEASURED LABELS: what LANDED, never what was intended ([Q315] 10(ii)) ----
+    _measured_triton="$(git -C /opt/triton rev-parse HEAD)"
+    [ "$_measured_triton" = "{{ TRITON_SHA }}" ] || { echo "FATAL: TRITON at $_measured_triton, requested {{ TRITON_SHA }}"; exit 1; }
+    _landed_hhemt="$(cat /opt/hhemt-src/HHEMT_SHA)"
+    case "$_landed_hhemt" in *Format*) echo "FATAL: HHEMT_SHA not substituted: the staged tree was not produced by git archive"; exit 1;; esac
+    [ "$_landed_hhemt" = "{{ HHEMT_SHA }}" ] || { echo "FATAL: staged hhemt is $_landed_hhemt, requested {{ HHEMT_SHA }}"; exit 1; }
+    _swmm_coupled="$(sed -n 's/.*VERSION \([0-9][0-9.]*\).*/\1/p' /opt/triton/external/swmm/CMakeLists.txt | head -1)"
+    _swmm_standalone="$(git -C /opt/swmm-src describe --tags --exact-match HEAD)"
+    _mpi="$(/opt/openmpi/bin/ompi_info --version | head -1)"
+    _hhemt_version="$(/opt/hhemt-src/.venv/bin/python -c 'from importlib.metadata import version; print(version("hhemt"))')"
+    {
+      echo "org.hhemt.triton_sha $_measured_triton"
+      echo "org.hhemt.hhemt_sha $_landed_hhemt"
+      echo "org.hhemt.version $_hhemt_version"
+      echo "org.hhemt.swmm_coupled_version $_swmm_coupled"
+      echo "org.hhemt.swmm_standalone_version $_swmm_standalone"
+      echo "org.hhemt.mpi $_mpi"
+    } >> "$APPTAINER_LABELS"
+
 %environment
     export PATH=/opt/hhemt-src/.venv/bin:/opt/hhemt/bin:/opt/openmpi/bin:${PATH}
     export LD_LIBRARY_PATH=/opt/openmpi/lib:${LD_LIBRARY_PATH:-}
 
 %labels
-    # Read by process_timeseries_runner's container-toolkit guard via
-    # /.singularity.d/labels.json: the rung refuses to process when the imported
-    # `hhemt` resolves outside this root. Must match the `%files ../ <dest>` target.
+    # STATIC half of the identity (hhemt.sif.identity.SifIdentity.labels(), compared by the
+    # read-back gate); the MEASURED half (triton_sha, hhemt_sha, version, swmm_*_version,
+    # mpi) is appended by %post above. toolkit_root is read by process_timeseries_runner's
+    # container-toolkit guard via /.singularity.d/labels.json and must match the %files dest.
+    org.hhemt.identity {{ LBL_IDENTITY }}
+    org.hhemt.family {{ LBL_FAMILY }}
+    org.hhemt.accel {{ LBL_ACCEL }}
+    org.hhemt.gpu_hardware {{ LBL_GPU_HARDWARE }}
+    org.hhemt.gpu_arch {{ LBL_GPU_ARCH }}
+    org.hhemt.gpu_compilation_backend {{ LBL_GPU_BACKEND }}
+    org.hhemt.triton_url {{ TRITON_URL }}
+    org.hhemt.base_digest {{ BASE_REF }}
+    org.hhemt.recipe_sha256 {{ LBL_RECIPE_SHA256 }}
     org.hhemt.toolkit_root /opt/hhemt-src
-    org.hhemt.role        dev-cpu-container-seam-test
-    org.hhemt.hhemt_sha   HHEMT_SHA_UNSET
-    org.hhemt.backend     kokkos-openmp-serial
-    org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
     org.hhemt.openmpi     5.0.7-pmix5
     org.hhemt.gcc         14.2.0
 

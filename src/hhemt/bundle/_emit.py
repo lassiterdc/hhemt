@@ -387,36 +387,25 @@ def emit_bundle(
         input_deposits = _copy_declared_inputs(analysis, staging, exclude_config)
         _emit_runnable_template_set(staging)
 
-        # ADR-19: carry the digest-pinned .def + the pinned toolkit source tree. Container
-        # mode only — a native bundle skips this entirely and its manifest stays
-        # byte-identical to before this feature (R9).
-        container_build = None
-        if analysis.cfg_analysis.execution_environment == "container":
-            if not container_defs:
-                from hhemt.exceptions import ConfigurationError
+        # SIF quest (ADR-21): a container-mode bundle carries the PRODUCER MANIFEST of every image the
+        # matrix resolves to — the CARRIED identity source from_doi/reprex consume. Recipes are package
+        # data, so no .def and no source tree are carried; the consumer's own checkout at the carried
+        # hhemt_sha rebuilds the identical image through the same transaction. Native bundles carry
+        # nothing here and their manifest is byte-identical to before.
+        if container_defs:
+            from hhemt.exceptions import ConfigurationError
 
-                raise ConfigurationError(
-                    field="container_defs",
-                    message=(
-                        "This analysis is container-mode (execution_environment='container') "
-                        "but no container_defs were supplied, so the bundle would carry no "
-                        ".def and `from_doi` could neither build nor transfer a SIF. Nothing "
-                        "in the config surface names a .def (ContainerSpec has no such field), "
-                        "so it is an emit-time operator input. Supply one .def per distinct "
-                        "arch in the matrix:\n"
-                        "  hhemt bundle ... --container-defs containers/uva-cuda-a100.def "
-                        "--container-defs containers/uva-cuda-a6000.def"
-                    ),
-                    config_path=None,
-                )
-            container_build = _emit_container_build(analysis, staging, container_defs)
-        elif container_defs:
-            warnings.warn(
-                "--container-defs was supplied for a NATIVE analysis "
-                f"(execution_environment={analysis.cfg_analysis.execution_environment!r}); "
-                "ignoring it. The bundle carries no container_build block.",
-                stacklevel=2,
+            raise ConfigurationError(
+                field="container_defs",
+                message=(
+                    "container_defs was RETIRED (SIF quest, 2026-09): recipes are package data under "
+                    "hhemt/sif/recipes and a bundle carries the resolved images' .manifest.json set instead."
+                ),
+                config_path=None,
             )
+        sif_manifests = None
+        if analysis.cfg_analysis.execution_environment == "container":
+            sif_manifests = _emit_sif_manifests(analysis)
 
         _upgrade_crate_to_workflow_run_crate(staging)
         _annotate_crate_excluded_inputs(staging, input_deposits)
@@ -427,7 +416,7 @@ def emit_bundle(
             git_sha=git_sha,
             bundle_root_invariants=aggregated_invariants,
             input_deposits=input_deposits,
-            container_build=container_build,
+            sif_manifests=sif_manifests,
             declared_sources_absent=declared_sources_absent,
             pruned_orphan_figures=pruned_orphan_figures,
             crate_license_finding=_crate_license_finding(analysis, staging),
@@ -1024,7 +1013,7 @@ def _emit_runnable_template_set(staging: Path) -> None:
     placeholders = {
         "default_account": "{your-allocation}",
         "login_node": "{your-login-node}",
-        "sif_path": "/scratch/{your-allocation}/tritonswmm.sif",
+        "sif_root": "/scratch/{your-allocation}/sifs",
         "scratch_dir": "/scratch/{your-allocation}",
         "target_ensemble_partition": "{your-gpu-partition}",
         "target_setup_and_analysis_processing_partition": "{your-cpu-partition}",
@@ -1036,12 +1025,12 @@ def _emit_runnable_template_set(staging: Path) -> None:
         + yaml.safe_dump(reprex_template, sort_keys=False)
     )
     # Shape MUST match the live hpc_system_config model (config/hpc_system.py): it is
-    # extra="forbid" with REQUIRED system_name + partitions, and sif_path is nested under
+    # extra="forbid" with REQUIRED hpc_name + partitions, and sif_path is nested under
     # `container:` (ContainerSpec). The prior flat {default_account, login_node, sif_path}
-    # form raised a 3-error ValidationError (system_name missing, partitions missing,
+    # form raised a 3-error ValidationError (hpc_name missing, partitions missing,
     # sif_path extra_forbidden) — it was not loadable as an hpc_system_config at all.
     hpc_template = {
-        "system_name": "{your-cluster-name}",
+        "hpc_name": "{your-cluster-name}",
         "default_account": "{your-allocation}",
         "login_node": "{your-login-node}",
         "gpu_allocation_flavor": "gres",
@@ -1054,7 +1043,7 @@ def _emit_runnable_template_set(staging: Path) -> None:
             },
         },
         "container": {
-            "sif_path": "/scratch/{your-allocation}/tritonswmm.sif",
+            "sif_root": "/scratch/{your-allocation}/sifs",
             "gpu_flag": "--nv",
         },
     }
@@ -1070,235 +1059,88 @@ def _emit_runnable_template_set(staging: Path) -> None:
         "# $HHEMT_HPC_SYSTEM_CONFIG.\n"
         "#\n"
         "# The `container:` block is consumed ONLY when the analysis config sets\n"
-        "# execution_environment: container. On ingest, hhemt REPOINTS container.sif_path\n"
-        "# at the SIF it builds from the bundled .def (ADR-19) by writing a derived copy --\n"
-        "# your file is never modified, so the sif_path you set here is a fallback.\n"
-        + yaml.safe_dump(hpc_template, sort_keys=False)
+        "# execution_environment: container. On ingest, hhemt writes container.sif_root into a\n"
+        "# DERIVED copy and places (or rebuilds) each carried image at its identity path under it\n"
+        "# (ADR-21) -- your file is never modified.\n" + yaml.safe_dump(hpc_template, sort_keys=False)
     )
 
 
-#: Bundle-root directory holding the pinned toolkit source tree (ADR-19 carry).
-SOURCE_TREE_RELPATH = "hhemt_src"
+def _emit_sif_manifests(analysis: TRITONSWMM_analysis) -> list[dict]:
+    """The CARRIED identity source (ADR-21): for every partition the matrix requires, recompute the
+    identity, resolve the image under ``container.sif_root``, and return its producer
+    ``.manifest.json`` (parsed). Emit runs on the producer's git checkout, so recompute is total.
+    Raises ConfigurationError when an image or its manifest is absent — a bundle must not name an
+    image the producer never built."""
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.sif.identity import manifest_path, resolve_sif
 
-
-def _rewrite_files_section(def_text: str, source_tree_relpath: str) -> str:
-    """Rewrite the .def's build-host-local ``%files ../`` to ``%files {relpath}``.
-
-    A PARSER, not a string replace: ``grep -n '\\.\\./' containers/*.def`` matches 9 lines
-    of which only 3 are payload, and a naive ``str.replace("../", ...)`` corrupts 4
-    non-payload lines in uva-cuda.def alone — including lines where an ordinary prose
-    ELLIPSIS (``.../``) is a substring match.
-
-    Rewrites ONLY the ``%files`` entry whose source token is exactly ``../`` or ``..``, so a
-    second ``%files`` entry survives untouched. Raises when the count is not exactly 1:
-    fail closed on a .def shape we have not seen rather than emit a bundle whose build
-    silently stages nothing.
-    """
-    from hhemt.exceptions import ProcessingError
-
-    out: list[str] = []
-    in_files = False
-    rewrote = 0
-    for line in def_text.splitlines():
-        if line.startswith("%"):
-            # `%files` may carry a stage arg (`%files from build`); key on the token.
-            in_files = line.strip().split()[0] == "%files"
-            out.append(line)
-            continue
-        if in_files:
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#"):
-                parts = stripped.split()
-                if parts[0] in ("../", ".."):
-                    indent = line[: len(line) - len(line.lstrip())]
-                    out.append(indent + " ".join([source_tree_relpath, *parts[1:]]))
-                    rewrote += 1
-                    continue
-        out.append(line)
-    if rewrote != 1:
-        raise ProcessingError(
-            operation="container_def_rewrite",
-            filepath=None,
-            reason=(
-                f"expected exactly one `%files ../` entry to rewrite, found {rewrote}. "
-                "The .def's %files section has a shape this emitter does not understand; "
-                "refusing to emit a bundle whose build would stage the wrong tree."
-            ),
-        )
-    return "\n".join(out) + ("\n" if def_text.endswith("\n") else "")
-
-
-def _carry_source_tree(staging: Path) -> None:
-    """Materialize the pinned toolkit source tree at ``{staging}/hhemt_src`` via
-    ``git archive HEAD``, anchored on the toolkit's OWN repo root.
-
-    ``git archive HEAD`` is exactly the tracked set at the commit ``_get_toolkit_git_sha``
-    records (measured: 34 MB / 2410 files == ``git ls-files | wc -l``), versus the 2.0 GB
-    repo root that the .def's build-host-local ``%files ../`` copies — whose untracked
-    remainder carries the producer's session scratch, ``.venv/``, and caches into what
-    becomes an immutable minted-DOI artifact (ADR-13/14).
-    """
-    import io
-    import tarfile
-
-    root = _toolkit_repo_root()
-    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True).stdout.strip()
-    if dirty:
-        warnings.warn(
-            f"Emitting from a DIRTY toolkit tree at {root}. The bundle carries HEAD "
-            f"and records HEAD's SHA, so the carried source does NOT match the code "
-            f"that produced this analysis:\n{dirty}\n"
-            "Commit before emitting a bundle intended for a DOI deposit.",
-            stacklevel=2,
-        )
-    result = subprocess.run(
-        ["git", "archive", "--format=tar", "HEAD"],
-        cwd=root,
-        capture_output=True,
-        check=True,
-    )
-    dest = staging / SOURCE_TREE_RELPATH
-    dest.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:") as tf:
-        tf.extractall(dest, filter="data")
-
-
-def _parse_base_image_digest(def_text: str) -> str:
-    """The ``From:`` line's ``@sha256:`` pin, or "" when the base is tag-pinned.
-
-    Deliberately does NOT read ``%labels org.hhemt.base_digest``: frontier-rocm.def:138
-    carries the literal placeholder 'sha256-recorded-in-SIF-lockfile-post-build', and a
-    false pin is worse than no pin. Only uva-cuda.def:44 is digest-pinned today.
-    """
-    for line in def_text.splitlines():
-        if line.strip().startswith("From:") and "@sha256:" in line:
-            return "sha256:" + line.split("@sha256:", 1)[1].strip()
-    return ""
-
-
-def _parse_def_labels(def_text: str) -> dict[str, str]:
-    """The ``%labels`` block as ``{label: value}``. Absent labels are simply absent — never
-    defaulted (``triton_url`` exists only in uva-cuda.def:199; ``org.hhemt.gpu_arch`` is
-    absent from dev-cpu.def)."""
-    labels: dict[str, str] = {}
-    in_labels = False
-    for line in def_text.splitlines():
-        if line.startswith("%"):
-            in_labels = line.strip().split()[0] == "%labels"
-            continue
-        if in_labels and line.strip() and not line.strip().startswith("#"):
-            parts = line.strip().split(None, 1)
-            if len(parts) == 2:
-                labels[parts[0]] = parts[1].strip()
-    return labels
-
-
-def _emit_container_build(analysis: TRITONSWMM_analysis, staging: Path, container_defs: list[Path]) -> list[dict]:
-    """Carry the pinned source tree ONCE + each rewritten .def; return a LIST of
-    ``container_build`` blocks (one per arch). Multi-SIF (Option A). The .defs land at
-    the BUNDLE ROOT so ``render_build_script``'s ``cd {def_path.parent}`` makes the
-    %files src, source_tree_relpath, and each block's value ONE identical string. The
-    source tree (``git archive HEAD``) is identical for every .def, so it is carried once."""
-    _carry_source_tree(staging)  # ONCE — identical git-archive tree for every .def
-    blocks: list[dict] = []
-    for container_def in container_defs:
-        def_text = Path(container_def).read_text()
-        def_relpath = Path(container_def).name
-        (staging / def_relpath).write_text(_rewrite_files_section(def_text, SOURCE_TREE_RELPATH))
-        labels = _parse_def_labels(def_text)
-        block: dict = {
-            "def_relpath": def_relpath,
-            "base_image_digest": _parse_base_image_digest(def_text),
-            "source_tree_relpath": SOURCE_TREE_RELPATH,
-            "source_tree_lock": "uv.lock",
-        }
-        if not block["base_image_digest"]:
-            warnings.warn(
-                f"{def_relpath}'s `From:` is tag-pinned, not digest-pinned — the bundle's "
-                "base image is not reproducible and the build cache key is weaker for it.",
-                stacklevel=2,
-            )
-        # ADR-19 lists fabric_class + recorded_sif_sha256; BOTH are deliberately omitted.
-        # fabric_class has no source in any .def, in the config surface, or on the analysis.
-        # recorded_sif_sha256 is unknowable at emit — no SIF is built here (ADR-19's premise).
-        for key, label in (
-            ("triton_url", "org.hhemt.triton_url"),
-            ("triton_sha", "org.hhemt.triton_sha"),
-            ("gpu_kokkos_arch", "org.hhemt.gpu_arch"),
-        ):
-            if label in labels:
-                block[key] = labels[label]
-        # DELTA-1: target_arch is the ROUTING/CACHE key and MUST stay in the gpu_hardware
-        # namespace ("a100"/"a6000") — the INCUMBENT: the prior resolve_gpu_target[0] value,
-        # the D-E guard (experiments.py, docstring "the PRODUCER's baked GPU hardware
-        # string"), the cache key container_build.py:378, and both tests all key on
-        # gpu_hardware. Source it from the .def's OWN org.hhemt.gpu_hardware label (per-def
-        # self-describing, so N blocks carry N distinct arches), NOT the org.hhemt.gpu_arch
-        # Kokkos label (AMPERE80/AMPERE86), which is NON-INVERTIBLE: system.py maps BOTH a6000
-        # and rtx3090 -> Kokkos_ARCH_AMPERE86. gpu_kokkos_arch stays a recorded provenance
-        # label; it is NOT the routing key. A CPU .def has no gpu_hardware label => no
-        # target_arch => the ingest guard treats it as the CPU/no-arch slot.
-        if "org.hhemt.gpu_hardware" in labels:
-            block["target_arch"] = labels["org.hhemt.gpu_hardware"]
-        blocks.append(block)
-
-    # VMS-8 (DELTA-3): emit-time arch-coverage guard. If the analysis is a cross-hardware
-    # sensitivity, every distinct gpu_hardware its matrix requires must be covered by a
-    # carried .def's target_arch (gpu_hardware namespace, DELTA-1 — the SAME namespace the
-    # required set is derived in, so the two sets are directly comparable). Fail closed at
-    # EMIT so a "forgot the a6000 .def" miss surfaces to the PRODUCER here, not deep in a
-    # reproducer's ~1.6 h ingest. Optional early-fail: the ingest containment guard
-    # (experiments.from_doi) is the backstop. Best-effort: a read failure yields an empty
-    # required set (never blocks emit spuriously) — the ingest guard still catches a real gap.
-    _carried = {b["target_arch"] for b in blocks if b.get("target_arch")}
-    _required = _matrix_required_arches(analysis)
-    _missing = _required - _carried
-    if _missing:
-        from hhemt.exceptions import ConfigurationError
-
+    cfg_hpc = analysis.cfg_hpc_system
+    cspec = getattr(cfg_hpc, "container", None)
+    if cspec is None:
         raise ConfigurationError(
-            field="container_defs",
-            message=(
-                "This container-mode cross-hardware analysis requires one .def per GPU "
-                f"arch {sorted(_required)}, but the supplied --container-defs cover only "
-                f"{sorted(_carried) or '(none)'} (missing: {sorted(_missing)}). Supply one "
-                ".def per required arch: hhemt bundle ... --container-defs <a.def> "
-                "--container-defs <b.def>."
-            ),
-            config_path=None,
+            field="container", message="container-mode bundle with no container: block", config_path=None
         )
-    return blocks
+    out: list[dict] = []
+    seen: set[str] = set()
+    for part in sorted(_matrix_required_partitions(analysis.cfg_analysis, cfg_hpc)):
+        ident = analysis.sif_identity_for(part)
+        if ident.key in seen:
+            continue
+        seen.add(ident.key)
+        sif = resolve_sif(cspec.sif_root, ident)
+        man = manifest_path(sif)
+        if not (sif.is_file() and man.is_file()):
+            raise ConfigurationError(
+                field="container.sif_root",
+                message=(
+                    f"cannot bundle: identity {ident.key} ({ident.stem}) has no image+manifest under "
+                    f"{cspec.sif_root}; run hhemt build-sifs first."
+                ),
+                config_path=None,
+            )
+        out.append(json.loads(man.read_text()))
+    return out
+
+
+def _matrix_required_partitions(cfg_analysis, cfg_hpc) -> set[str]:
+    """Distinct partition NAMES the analysis matrix requires: the master ensemble partition
+    plus, for a sensitivity analysis, every distinct per-row ``hpc.partition`` /
+    ``analysis.hpc_ensemble_partition`` value in the setup table (CSV or XLSX — Gotcha 15:
+    the XLSX is the source of truth). Takes CONFIGS, not an analysis, so ``hhemt.sif.plan``
+    and ``hhemt.sif.preflight`` can call it. RAISES on a read failure — the SIF planner must
+    not silently under-plan; ``_matrix_required_arches`` below keeps the never-block contract."""
+    if cfg_hpc is None:
+        return set()
+    partitions: set[str] = set()
+    _master = cfg_analysis.hpc_ensemble_partition
+    if _master:
+        partitions.add(str(_master))
+    if getattr(cfg_analysis, "toggle_sensitivity_analysis", False):
+        _ref = cfg_analysis.sensitivity_analysis
+        if _ref and Path(_ref).is_file():
+            import pandas as pd
+
+            _df = pd.read_excel(_ref) if str(_ref).lower().endswith((".xlsx", ".xls")) else pd.read_csv(_ref)
+            for _col in ("hpc.partition", "analysis.hpc_ensemble_partition"):
+                if _col in _df.columns:
+                    partitions |= {str(v) for v in _df[_col].dropna().tolist() if str(v).strip()}
+    return partitions
 
 
 def _matrix_required_arches(analysis: TRITONSWMM_analysis) -> set[str]:
     """Distinct ``gpu_hardware`` arches (a100/a6000/...) the analysis matrix requires,
-    best-effort. The master ensemble partition plus, for a sensitivity analysis, each
-    distinct per-row ``hpc.partition`` / ``analysis.hpc_ensemble_partition`` value in the
-    setup CSV, each mapped via ``resolve_gpu_target[0]``. Returns ``set()`` on any read
-    failure so the emit-time guard never blocks spuriously (the ingest guard is the
-    backstop). None/CPU arches (partitions with no GPU) are excluded — CPU rows run the
-    CPU/no-arch SIF via the SIM-rung ``sif_path`` fallback, not the per-arch map."""
+    best-effort: ``_matrix_required_partitions`` mapped via ``resolve_gpu_target[0]``.
+    Returns ``set()`` on any read failure so the emit-time guard never blocks spuriously.
+    None/CPU arches (partitions with no GPU) are excluded."""
     from hhemt.config.hpc_system import resolve_gpu_target
 
     cfg_hpc = analysis.cfg_hpc_system
     if cfg_hpc is None:
         return set()
-    partitions: set[str] = set()
-    _master = analysis.cfg_analysis.hpc_ensemble_partition
-    if _master:
-        partitions.add(str(_master))
-    if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        try:
-            _ref = analysis.cfg_analysis.sensitivity_analysis
-            if _ref and Path(_ref).is_file():
-                import pandas as pd
-
-                _df = pd.read_csv(_ref)
-                for _col in ("hpc.partition", "analysis.hpc_ensemble_partition"):
-                    if _col in _df.columns:
-                        partitions |= {str(v) for v in _df[_col].dropna().tolist() if str(v).strip()}
-        except Exception:
-            return set()  # cannot enumerate -> do not block emit; ingest guard backstops
+    try:
+        partitions = _matrix_required_partitions(analysis.cfg_analysis, cfg_hpc)
+    except Exception:
+        return set()  # cannot enumerate -> do not block emit; ingest guard backstops
     return {hw for hw in (resolve_gpu_target(cfg_hpc, p)[0] for p in partitions) if hw}
 
 
@@ -1464,7 +1306,7 @@ def _write_bundle_manifest(
     git_sha: str,
     bundle_root_invariants: dict | None = None,
     input_deposits: list[dict] | None = None,
-    container_build: dict | None = None,
+    sif_manifests: list[dict] | None = None,
     declared_sources_absent: list[str] | None = None,
     pruned_orphan_figures: list[str] | None = None,
     crate_license_finding: str | None = None,
@@ -1513,11 +1355,11 @@ def _write_bundle_manifest(
         # the bundle is self-contained, so a self-contained manifest is byte-identical to
         # what it was before this feature existed.
         manifest["input_deposit"] = input_deposits
-    if container_build:
-        # ADR-19: the digest-pinned build recipe. ABSENT (not empty) for a native bundle,
-        # so a native manifest is byte-identical to what it was before this feature —
-        # same rule as input_deposit, and why BUNDLE_SCHEMA_VERSION does not bump (R9).
-        manifest["container_build"] = container_build
+    if sif_manifests:
+        # SIF quest (ADR-21): the producer manifests of every image the matrix resolves to. ABSENT
+        # (not empty) for a native bundle, so a native manifest is byte-identical to before —
+        # same rule as input_deposit. BUNDLE_SCHEMA_VERSION bumped 5 -> 6 for the container shape.
+        manifest["sif_manifests"] = sif_manifests
     (staging / BUNDLE_MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2))
 
 

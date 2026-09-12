@@ -34,15 +34,15 @@ from hhemt.exceptions import ProcessingError
 def _target_profile(*, max_gpu: int = 1) -> hpc_system_config:
     """A minimal reproducer HPC profile: one declared 'gpu' partition with a low GPU cap."""
     return hpc_system_config(
-        system_name="target-cluster",
+        hpc_name="target-cluster",
         partitions={"gpu": PartitionSpec(max_gpu=max_gpu, max_runtime=60)},
     )
 
 
-def _reprex_cfg(sif_path: Path) -> reprex_config:
+def _reprex_cfg(sif_root: Path) -> reprex_config:
     return reprex_config(
         default_account="target-alloc",
-        sif_path=sif_path,
+        sif_root=sif_root,
         target_ensemble_partition="gpu",
     )
 
@@ -60,11 +60,15 @@ def _seed_resource_exceeding_row(bundle_dir: Path) -> None:
 
 
 def _inject_sif(bundle_dir: Path, *, sif_bytes: bytes = b"REFERENCE-SIF-BYTES") -> Path:
-    """Write a fake SIF into the bundle and register it in the crate as a by-reference
-    SoftwareApplication with its sha256 (the container-run crate shape). Returns the SIF path."""
-    sif_path = bundle_dir / "tritonswmm.sif"
+    """Write a fake SIF + manifest under a sif_root beside the bundle and register the image in
+    the crate as a by-reference SoftwareApplication with its sha256 (the container-run crate
+    shape). Returns the sif_root (reprex resolves the image by DIGEST under it)."""
+    sif_root = bundle_dir.parent / "sifs"
+    sif_path = sif_root / "openmpi-cpu" / "tritonswmm.sif"
+    sif_path.parent.mkdir(parents=True, exist_ok=True)
     sif_path.write_bytes(sif_bytes)
     digest = hashlib.sha256(sif_bytes).hexdigest()
+    sif_path.with_name("tritonswmm.manifest.json").write_text(json.dumps({"sha256": digest, "identity": {}}))
     crate_path = bundle_dir / "ro-crate-metadata.json"
     doc = json.loads(crate_path.read_text())
     doc["@graph"].append(
@@ -78,7 +82,7 @@ def _inject_sif(bundle_dir: Path, *, sif_bytes: bytes = b"REFERENCE-SIF-BYTES") 
         }
     )
     crate_path.write_text(json.dumps(doc, indent=2))
-    return sif_path
+    return sif_root
 
 
 def test_reprex_roundtrip_native_problem_pairs_and_amendments(rendered_synth_sensitivity, tmp_path: Path) -> None:

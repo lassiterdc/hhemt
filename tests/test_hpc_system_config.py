@@ -23,7 +23,7 @@ from hhemt.exceptions import ConfigurationError
 def _uva_shaped_dict() -> dict:
     """A representative UVA-shaped config dict."""
     return {
-        "system_name": "uva-rivanna",
+        "hpc_name": "uva-rivanna",
         "default_account": "{your-allocation}",
         "login_node": "login1.hpc.virginia.edu",
         "default_execution_mode": "batch_job",
@@ -53,7 +53,7 @@ def _uva_shaped_dict() -> dict:
 # (a) ----------------------------------------------------------------------
 def test_valid_uva_shaped_config_loads():
     cfg = hpc_system_config.model_validate(_uva_shaped_dict())
-    assert cfg.system_name == "uva-rivanna"
+    assert cfg.hpc_name == "uva-rivanna"
     assert cfg.gpu_allocation_flavor == "gres"
     assert set(cfg.partitions) == {"gpu", "standard"}
     gpu = cfg.partitions["gpu"]
@@ -71,7 +71,7 @@ def test_valid_config_loads_from_yaml(tmp_path):
     p = tmp_path / "hpc_system_config.yaml"
     p.write_text(yaml.safe_dump(_uva_shaped_dict()))
     cfg = load_hpc_system_config(p)
-    assert cfg.system_name == "uva-rivanna"
+    assert cfg.hpc_name == "uva-rivanna"
     assert cfg.partitions["gpu"].max_gpu == 4
 
 
@@ -265,7 +265,7 @@ def _preflight_result_for_processing_cap(max_runtime: int, tmp_path):
 
     cfg_hpc = hpc_system_config.model_validate(
         {
-            "system_name": "probe",
+            "hpc_name": "probe",
             "default_account": "acct",
             "login_node": "login",
             "partitions": {"standard": {"max_runtime": max_runtime}},

@@ -197,6 +197,7 @@ hhemt = [
     "examples/*.xlsx",
     "examples/*.csv",
     "report_templates/**/*",
+    "sif/recipes/*.def",
     "invalidating_fixes.yaml"
 ]
 

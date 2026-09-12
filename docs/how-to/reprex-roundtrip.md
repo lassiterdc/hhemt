@@ -76,7 +76,7 @@ The reproducer fills two things with *their own* system's values:
 
    my_reprex = reprex_config(
        default_account="my-alloc",              # your HPC allocation
-       sif_path="/scratch/my-alloc/tritonswmm.sif",  # where YOU fetched the SIF
+       sif_root="/scratch/my-alloc/sifs",  # the fetched SIF + its .manifest.json sit at an identity path under here
        target_ensemble_partition="gpu-a100",    # your partition for the ensemble sims
        # login_node / scratch_dir / target_setup_and_analysis_processing_partition optional
    )
@@ -99,11 +99,10 @@ result = Bundle.from_directory(bundle_dir).reprex(my_reprex, my_hpc_profile)
 `reprex()` does three things, in order:
 
 1. **Verify the SIF's identity.** If the crate references a SIF (a container run), the digest
-   is a **mandatory, fail-closed** `sha256` match against `reprex_config.sif_path`, establishing
+   is a **mandatory, fail-closed** `sha256` match against the image found by that digest under `reprex_config.sif_root`, establishing
    that your image file is byte-identical to the producer's. A mismatch
-   raises `ProcessingError` before any validation runs. A best-effort `apptainer verify`
-   PGP check runs too (`result.sif_signature_ok` is `None` when `apptainer` or the
-   producer key is unavailable, which is a warning rather than a failure). A **native run** records no
+   (or no manifest carrying that digest under `sif_root`) raises `ProcessingError` before any
+   validation runs. SIFs are not PGP-signed by the toolkit: the digest is the identity carrier. A **native run** records no
    SIF in its crate, so `result.sif_reference_present` is `False` and verification is a
    vacuous pass.
 

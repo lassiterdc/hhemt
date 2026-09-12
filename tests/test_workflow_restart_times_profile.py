@@ -36,7 +36,7 @@ def slurm_ready_builder():
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
-        system_name="test-cluster",
+        hpc_name="test-cluster",
         default_account="test_account",
         max_concurrent_jobs=8,
         partitions={"standard": PartitionSpec(max_runtime=120)},

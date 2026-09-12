@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -83,7 +82,7 @@ class ReprexResult:
     sif_signature_ok: bool | None  # None => apptainer/key unavailable, or native
     runnable: bool  # True => no sensitivity row exceeds a target partition cap
     # The discriminator that makes `sif_reference_present=False` legible. Sourced from the
-    # bundle's OWN manifest (`container_build` is emitted iff the analysis was container-mode,
+    # bundle's OWN manifest (`sif_manifests` is emitted iff the analysis was container-mode,
     # `_emit.py`), so it is a property of the bundle rather than an inference about it.
     #   True  + reference_present False -> container bundle, digest MISSING  (unverifiable)
     #   False + reference_present False -> genuinely native                  (nothing to verify)
@@ -96,9 +95,9 @@ class ReprexResult:
 def _bundle_is_container_mode(bundle_root: Path) -> bool:
     """Was the bundled analysis container-mode? Read from the bundle's own manifest.
 
-    `emit_bundle` writes a `container_build` block IFF
-    `execution_environment == "container"` and refuses to emit at all without a recipe, so
-    the block's presence is a fact ABOUT THE BUNDLE rather than an inference about it. That
+    `emit_bundle` writes a `sif_manifests` list IFF
+    `execution_environment == "container"` and refuses to emit at all without a built image, so
+    the list's presence is a fact ABOUT THE BUNDLE rather than an inference about it. That
     is what lets `sif_reference_present=False` be split into "native, nothing to verify" and
     "container, nothing to verify WITH" — two states the old boolean collapsed into a pass.
     Absent/unreadable manifest reads False, which degrades to the prior behaviour.
@@ -107,7 +106,7 @@ def _bundle_is_container_mode(bundle_root: Path) -> bool:
     if not manifest.is_file():
         return False
     try:
-        return bool(json.loads(manifest.read_text()).get("container_build"))
+        return bool(json.loads(manifest.read_text()).get("sif_manifests"))
     except (ValueError, OSError):
         return False
 
@@ -132,19 +131,24 @@ def _find_sif_entity(bundle_root: Path) -> dict | None:
     return None
 
 
-def _verify_sif(sif_path: Path, expected_sha256: str) -> tuple[bool, bool | None]:
-    """Return ``(digest_ok, signature_ok | None)``. A missing SIF or a digest mismatch
-    raises ``ProcessingError`` (fail-closed). ``signature_ok`` is ``None`` when the
-    ``apptainer`` binary is unavailable (best-effort PGP)."""
-    if not sif_path.is_file():
+def _verify_sif(sif_root: Path, expected_sha256: str) -> tuple[bool, bool | None]:
+    """Locate the fetched SIF under ``sif_root`` by the crate's DIGEST (the carried key) and
+    re-hash it. A missing image or a digest mismatch raises ``ProcessingError`` (fail-closed).
+    ``signature_ok`` is always ``None``: signing is not a toolkit mechanism (ADR-2 amended)."""
+    from hhemt.sif.identity import find_by_sha256
+
+    found = find_by_sha256(sif_root, expected_sha256)
+    if found is None:
         raise ProcessingError(
             operation="reprex SIF verify",
-            filepath=sif_path,
+            filepath=sif_root,
             reason=(
-                f"reprex_config.sif_path does not exist: {sif_path}. Fetch the reference "
-                f"SIF (the crate's by-reference SoftwareApplication) to this path first."
+                f"no image under reprex_config.sif_root={sif_root} has a manifest recording sha256 "
+                f"{expected_sha256}. Fetch the reference SIF + its .manifest.json (the crate's by-reference "
+                "SoftwareApplication) to their identity path under sif_root first, or rebuild via hhemt build-sifs."
             ),
         )
+    sif_path, _manifest = found
     h = hashlib.sha256()
     with sif_path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
@@ -156,12 +160,7 @@ def _verify_sif(sif_path: Path, expected_sha256: str) -> tuple[bool, bool | None
             filepath=sif_path,
             reason=(f"sha256 mismatch: this is NOT the reference SIF (expected {expected_sha256}, got {digest})."),
         )
-    # Best-effort PGP: warn (return None) when the apptainer binary is unavailable.
-    try:
-        rc = subprocess.run(["apptainer", "verify", str(sif_path)], capture_output=True)
-        return True, rc.returncode == 0
-    except (FileNotFoundError, OSError):
-        return True, None
+    return True, None
 
 
 def _scan_zero_user_info(bundle_root: Path) -> list[str]:
@@ -216,7 +215,7 @@ def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
     sif_container_mode = _bundle_is_container_mode(bundle_root)
     if sif_entity is not None:
         sif_reference_present = True
-        sif_verified, sif_signature_ok = _verify_sif(Path(reprex_cfg.sif_path), sif_entity["sha256"])
+        sif_verified, sif_signature_ok = _verify_sif(Path(reprex_cfg.sif_root), sif_entity["sha256"])
     else:
         sif_reference_present = False
         sif_signature_ok = None

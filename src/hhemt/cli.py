@@ -294,6 +294,25 @@ def run_command(
         "--log-level",
         help="Python logging level: DEBUG, INFO, WARNING, ERROR",
     ),
+    build_sifs: bool = typer.Option(
+        False,
+        "--build-sifs",
+        help="Build any missing SIF first, INSIDE this mode's detached driver, then submit ([Q315] 1/6).",
+    ),
+    build_sifs_no_wait: bool = typer.Option(
+        False, "--no-wait", help="With --build-sifs: build and verify only; do NOT submit the experiment."
+    ),
+    force_sif_rebuild: bool = typer.Option(
+        False,
+        "--force-sif-rebuild",
+        help=(
+            "With --build-sifs: unlink the planned identities' manifests so they rebuild "
+            "(images replaced only on success)."
+        ),
+    ),
+    override_sif_build_config: Path | None = typer.Option(
+        None, "--sif-build-config", help="With --build-sifs: the sif_build_config YAML (venue + resources)."
+    ),
 ):
     """Run TRITON-SWMM workflow from a system and analysis configuration.
 
@@ -377,7 +396,7 @@ def run_command(
         if not quiet:
             console.print("[cyan]Running preflight validation...[/cyan]")
 
-        validation_result = analysis.validate()
+        validation_result = analysis.validate(build_sifs=build_sifs)
 
         if validation_result.has_warnings:
             for warning in validation_result.warnings:
@@ -442,6 +461,10 @@ def run_command(
             override_clear_raw=override_clear_raw,
             override_force_rerun=override_force_rerun,
             override_live_driver=override_live_driver,
+            build_sifs=build_sifs,
+            build_sifs_no_wait=build_sifs_no_wait,
+            force_sif_rebuild=force_sif_rebuild,
+            override_sif_build_config=override_sif_build_config,
         )
 
         # Check workflow result
@@ -2146,20 +2169,6 @@ def bundle_command(
             "Run --list-excludable to see what may be opted out."
         ),
     ),
-    container_defs: list[Path] = typer.Option(
-        None,
-        "--container-defs",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
-        help=(
-            "ADR-19 (multi-SIF): one Apptainer .def per distinct arch in the matrix so "
-            "`hhemt ingest` builds one SIF per arch (e.g. --container-defs "
-            "containers/uva-cuda-a100.def --container-defs containers/uva-cuda-a6000.def). "
-            "REQUIRED for a container-mode analysis; repeatable; ignored for a native one."
-        ),
-    ),
     list_excludable: bool = typer.Option(
         False,
         "--list-excludable",
@@ -2175,10 +2184,8 @@ def bundle_command(
         dir_okay=True,
         readable=True,
         help=(
-            "Optional experiment bundle DIRECTORY (containing experiment.yaml). When "
-            "given, container.def_recipe supplies --container-defs; supplying both is "
-            "refused unless they agree. Single-arch: for ADR-19 multi-SIF, omit this "
-            "and pass --container-defs per arch."
+            "Optional experiment bundle DIRECTORY (containing experiment.yaml), recorded as the "
+            "bundle's experiment identity. Images are carried by manifest (ADR-21); no .def is needed."
         ),
     ),
 ) -> None:
@@ -2209,106 +2216,152 @@ def bundle_command(
         target = analysis.sensitivity.experiment
     else:
         target = analysis
-    from hhemt.experiment_bundle import resolve_container_defs
-
-    container_defs = resolve_container_defs(experiment_config, container_defs)
-    bundle_path = emit_bundle(target, output, exclude_config=exclude_config, container_defs=container_defs)
+    bundle_path = emit_bundle(target, output, exclude_config=exclude_config)
     if exclude_config is None:
         console.print(f"[green]Bundle emitted (self-contained):[/green] {bundle_path}")
     else:
         console.print(f"[green]Bundle emitted (with by-reference inputs):[/green] {bundle_path}")
 
 
-@app.command(name="build-sif")
-def build_sif_command(
-    def_path: Path = typer.Option(
+@app.command(name="build-sifs")
+def build_sifs_command(
+    build_hpc_config: Path = typer.Option(
         ...,
-        "--def",
-        help="Path to the Apptainer definition file (.def) to build.",
+        "--build-hpc-config",
+        help="The BUILD host's hpc_system_config (builds_containers: true). Never defaulted.",
     ),
-    sif_out: Path = typer.Option(
-        None,
-        "--sif-out",
-        help=(
-            "Output SIF path. Default: the content-addressed cache "
-            "($HHEMT_SIF_CACHE_DIR, else <user_cache_dir>/hhemt/sif_cache/). The default "
-            "is deliberately OUTSIDE any bundle: `from_doi` rmtree's bundle_root on every "
-            "ingest, so an under-bundle SIF could never be reused."
-        ),
+    sif_build_config: Path = typer.Option(
+        ...,
+        "--sif-build-config",
+        help="sif_build_config YAML: sif_root, build partition, cpus/mem/walltime, toolkit_root.",
     ),
-    sif_build_mode: str = typer.Option(
-        "auto",
-        "--sif-build-mode",
-        help=(
-            "auto: submit an sbatch build when SLURM is present, else refuse a compiling "
-            ".def; batch: force sbatch; local: force an in-process build (for a pull-only, "
-            "non-compiling .def). A compiling .def is refused on a login node — `make "
-            "-j$(nproc)` sees no cgroup cap there and forks 40-way on a shared frontend."
-        ),
+    experiment: list[Path] = typer.Option(
+        [],
+        "--experiment",
+        help="ExperimentBundle dir (repeatable); its system/analysis configs + hpc map derive the targets.",
     ),
-    account: str = typer.Option(
-        None,
-        "--account",
-        help=(
-            "SLURM account for the build job. Required in batch mode; normally read from "
-            "your hpc_system_config's `default_account`. Never defaulted — a default would "
-            "submit against someone else's allocation."
-        ),
+    system_config: list[Path] = typer.Option(
+        [], "--system-config", help="Raw triplet (repeatable, positional with --analysis-config/--target-hpc-config)."
     ),
-    force_rebuild: bool = typer.Option(
+    analysis_config: list[Path] = typer.Option([], "--analysis-config"),
+    target_hpc_config: list[Path] = typer.Option([], "--target-hpc-config"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan table ([Q312] counts) and write nothing."),
+    only: list[str] = typer.Option([], "--only", help="KEY or FAMILY[:HW] from the dry-run table."),
+    force: bool = typer.Option(
         False,
-        "--force-rebuild",
-        help="Rebuild even when a cached SIF for this recipe already exists.",
+        "--force",
+        help="Unlink existing manifests for the planned identities (images are replaced only on success).",
     ),
-    apptainer_module: str = typer.Option(
-        None,
-        "--apptainer-module",
-        help=(
-            "Lmod module to load for apptainer (e.g. 'apptainer/1.5.0'). Default: "
-            "$HHEMT_APPTAINER_MODULE, else none (apptainer assumed on PATH). The build "
-            "script exports APPTAINER_IGNORE_PROOT=1 regardless (version-agnostic build)."
-        ),
+    foreground: bool = typer.Option(
+        False,
+        "--foreground",
+        help="Drive the build DAG in THIS shell instead of a detached chain ([Q315] 6: detached is the default).",
     ),
 ) -> None:
-    """Build an Apptainer SIF from a definition file (ADR-19).
-
-    A standalone step, NOT a Snakemake rule: `apptainer build` is not byte-reproducible, so
-    a SIF wired into the DAG as a rule output would acquire mtime rerun-triggers and cascade
-    a full-ensemble re-run on any rebuild.
-
-    The build runs as a GPU-free CPU-batch job (`standard`, -c 16, --mem=64G, -t 04:00:00,
-    no --tmp) — a trim of the estate's own known-good build. `--wait` blocks until it
-    finishes, so the SIF path is available on return.
-    """
-    from hhemt.cli_utils import map_exception_to_exit_code
-    from hhemt.container_build import SifBuildUnavailable, build_sif, sif_cache_root
+    """Build every SIF the named experiments need, by identity, into sif_root. ONE verb."""
+    from hhemt.config.hpc_system import hpc_system_config as _hpc_model
+    from hhemt.config.loaders import yaml_to_model
+    from hhemt.config.sif_build import sif_build_config as _sb_model
+    from hhemt.sif.driver import detach, driver_command, run_build_dag
+    from hhemt.sif.plan import ExperimentInputs, plan_sif_set
+    from hhemt.sif.snakefile_generator import reconcile_sif_root, write_sif_snakefile
+    from hhemt.validation import _running_toolkit_sha_full
 
     try:
-        out = Path(sif_out) if sif_out else sif_cache_root() / f"{Path(def_path).stem}.sif"
-        built = build_sif(
-            def_path=Path(def_path),
-            sif_out=out,
-            account=account,
-            apptainer_module=apptainer_module,
-            mode=sif_build_mode,
-            force_rebuild=force_rebuild,
-        )
-    except SifBuildUnavailable as exc:
-        # Preflight FAIL is a structured, actionable outcome — not a crash. Surface the
-        # remediation verbatim rather than a traceback.
-        console.print(f"[yellow]SIF build unavailable on this host:[/yellow] {exc.reason}")
-        console.print(f"[cyan]Remediation:[/cyan] {exc.remediation}")
-        raise typer.Exit(map_exception_to_exit_code(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
-        code = map_exception_to_exit_code(exc)
-        console.print(f"[red]build-sif failed:[/red] {exc}")
-        raise typer.Exit(code) from exc
+        build_host = yaml_to_model(build_hpc_config, _hpc_model)
+        if not getattr(build_host, "builds_containers", False):
+            raise CLIValidationError(
+                "--build-hpc-config", f"{build_hpc_config} does not declare builds_containers: true — not a build host."
+            )
+        sb = yaml_to_model(sif_build_config, _sb_model)
+        experiments: list[ExperimentInputs] = []
+        if experiment:
+            from hhemt.config.analysis import analysis_config as _ana_model
+            from hhemt.config.system import system_config as _sys_model
+            from hhemt.experiment_bundle import (
+                bundle_experiment_id,
+                expand_config_vars,
+                load_bundle,
+                resolve_hpc_system_config,
+            )
 
-    console.print(f"[green]SIF ready:[/green] {built}")
-    console.print(
-        "Point your hpc_system_config's `container.sif_path` at it, or let "
-        "`hhemt ingest` repoint a derived copy for you."
-    )
+            for exp_dir in experiment:
+                bundle = load_bundle(exp_dir)
+                cfg_sys = yaml_to_model(expand_config_vars(Path(exp_dir) / bundle.system_config), _sys_model)
+                cfg_ana = yaml_to_model(expand_config_vars(Path(exp_dir) / bundle.analysis_config), _ana_model)
+                cluster = next(iter(bundle.hpc_system_config))
+                target = yaml_to_model(
+                    resolve_hpc_system_config(cluster, bundle=bundle, bundle_dir=exp_dir), _hpc_model
+                )
+                experiments.append(ExperimentInputs(bundle_experiment_id(exp_dir), cfg_sys, cfg_ana, target, None))
+        if not (len(system_config) == len(analysis_config) == len(target_hpc_config)):
+            raise CLIValidationError(
+                "--system-config",
+                "raw triplets must be given in equal numbers of --system-config/--analysis-config/--target-hpc-config.",
+            )
+        for s, a, h in zip(system_config, analysis_config, target_hpc_config, strict=True):
+            from hhemt.config.analysis import analysis_config as _ana_model
+            from hhemt.config.system import system_config as _sys_model
+
+            experiments.append(
+                ExperimentInputs(
+                    f"{s.stem}",
+                    yaml_to_model(s, _sys_model),
+                    yaml_to_model(a, _ana_model),
+                    yaml_to_model(h, _hpc_model),
+                    None,
+                )
+            )
+        if not experiments:
+            raise CLIValidationError("--experiment", "name at least one --experiment DIR or one raw config triplet.")
+        plan = plan_sif_set(
+            experiments,
+            sif_root=sb.sif_root,
+            running_sha=_running_toolkit_sha_full(),
+            recipes_dir=sb.recipes_dir,
+            toolkit_root=sb.toolkit_root,
+            force=force,
+        )
+        if only:
+            keep = {
+                k
+                for k, i in plan.entries.items()
+                if k in only or i.family in only or f"{i.family}:{i.gpu_hardware}" in only
+            }
+            plan.entries = {k: v for k, v in plan.entries.items() if k in keep}
+            plan.covers = {k: v for k, v in plan.covers.items() if k in keep}
+        console.print(plan.table())
+        if dry_run:
+            return
+        reconcile_sif_root(
+            sb.sif_root,
+            walltime_min=sb.walltime_min,
+            force_keys=set(plan.entries) if force else set(),
+            planned_keys=set(plan.entries),
+        )
+        snakefile = write_sif_snakefile(plan, sif_root=sb.sif_root, build_host=build_host, sif_build_cfg=sb)
+        keys = set(plan.entries) - plan.already_built
+        if not keys:
+            console.print("[green]every planned identity is already built[/green]")
+            return
+        if foreground:
+            rc = run_build_dag(snakefile, sif_root=sb.sif_root, keys=keys)
+            raise typer.Exit(0 if rc == 0 else 3)
+        log = Path(sb.sif_root) / "_build" / "driver.log"
+        pid = detach([driver_command(snakefile, sb.sif_root, keys)], log=log)
+        console.print(
+            f"build DAG detached (pid {pid}); {len(keys)} identit{'y' if len(keys) == 1 else 'ies'} to build; "
+            f"log: {log}"
+        )
+        console.print("This is a launch RECEIPT (Gotcha 69): read the log or re-run with --dry-run to see 'built'.")
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
+        from hhemt.cli_utils import map_exception_to_exit_code
+
+        code = map_exception_to_exit_code(exc)
+        console.print(f"[red]build-sifs failed:[/red] {exc}")
+        raise typer.Exit(code) from exc
 
 
 @app.command(name="ingest")
@@ -2359,14 +2412,13 @@ def ingest_command(
             "or from the shape sketched in the bundle's hpc_system_config.template.yaml."
         ),
     ),
-    allow_cross_family_sif: bool = typer.Option(
-        False,
-        "--allow-cross-family-sif",
+    sif_build_config: Path | None = typer.Option(
+        None,
+        "--sif-build-config",
         help=(
-            "Override the cross-family SIF guard (default: fail closed). When the "
-            "bundle's baked GPU arch does not match your target partition's hardware, "
-            "build + run anyway with only a warning. Use ONLY when you have confirmed "
-            "the baked arch is run-compatible with your GPU."
+            "Your sif_build_config YAML (build partition/account/resources). Required when a "
+            "carried image is absent under your container.sif_root and must be rebuilt on this "
+            "checkout (which must be at the bundle's hhemt_sha)."
         ),
     ),
 ) -> None:
@@ -2392,7 +2444,7 @@ def ingest_command(
             target_dir=target_dir,
             software_dir=software_dir,
             hpc_system_config_yaml=hpc_system_config,
-            allow_cross_family_sif=allow_cross_family_sif,
+            sif_build_config_yaml=sif_build_config,
         )
     except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
         code = map_exception_to_exit_code(exc)

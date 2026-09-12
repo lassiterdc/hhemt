@@ -44,7 +44,8 @@ suite:
 # The native row ignores the `container:` block; the container row consumes it.
 hpc_system_config_container_block:        # paste into your hpc_system_config.yaml
   container:
-    sif_path: "/scratch/{your-allocation}/hhemt_uva_cuda.sif"   # transferred, signed SIF
+    sif_root: "/scratch/{your-allocation}/sifs"   # `hhemt build-sifs` writes every identity under it
+    builds_containers: true
     gpu_flag: "--nv"                       # UVA NVIDIA passthrough
     srun_mpi: "pmix"                       # container-own OpenMPI (UVA-only)
     # exe_in_sif / binds: see the example UVA profile; analysis_dir bind is appended by the seam.

@@ -246,11 +246,11 @@ def test_reprex_config_loads_minimal() -> None:
 
     cfg = reprex_config(
         default_account="acct123",
-        sif_path="/scratch/user/tritonswmm.sif",
+        sif_root="/scratch/user/sifs",
         target_ensemble_partition="gpu",
     )
     assert cfg.default_account == "acct123"
-    assert cfg.sif_path == Path("/scratch/user/tritonswmm.sif")
+    assert cfg.sif_root == Path("/scratch/user/sifs")
     assert cfg.login_node is None
     assert cfg.scratch_dir is None
     assert cfg.target_setup_and_analysis_processing_partition is None
@@ -258,7 +258,7 @@ def test_reprex_config_loads_minimal() -> None:
     with pytest.raises(ValidationError):  # extra=forbid rejects unknown keys
         reprex_config(
             default_account="acct123",
-            sif_path="/x.sif",
+            sif_root="/x",
             target_ensemble_partition="gpu",
             unknown_field="nope",
         )
@@ -292,15 +292,15 @@ def test_reprex_bundle_carries_runnable_set(rendered_synth_multi_sim, tmp_path: 
     # present. ADR-10 requires bundled HPC-specific info to be "bundled+flagged+revisable",
     # and a file that cannot load is not revisable into a valid config. An existence-only
     # assertion is exactly how the prior flat {default_account, login_node, sif_path} form
-    # survived: it raised a 3-error ValidationError (system_name missing, partitions
+    # survived: it raised a 3-error ValidationError (hpc_name missing, partitions
     # missing, sif_path extra_forbidden at top level) and nothing ever loaded it.
     cfg_hpc = load_hpc_system_config(bundle_dir / HPC_TEMPLATE_FILENAME)
-    assert cfg_hpc.system_name, "template must carry the REQUIRED system_name"
+    assert cfg_hpc.hpc_name, "template must carry the REQUIRED hpc_name"
     assert cfg_hpc.partitions, "template must carry the REQUIRED partitions map"
-    # sif_path nests under container: (ContainerSpec) — a top-level sif_path is
+    # sif_root nests under container: (ContainerSpec) — a top-level key is
     # extra-forbidden and is what made the old template unloadable.
     assert cfg_hpc.container is not None
-    assert cfg_hpc.container.sif_path
+    assert cfg_hpc.container.sif_root
     # Zero-user-info (ADR-13/14), asserted POSITIVELY against the placeholder grammar the
     # scrub emits, rather than negatively against the producer's blocklist. Two reasons the
     # positive form is stronger, not merely carrier-free. (1) The negative form could only
@@ -311,7 +311,7 @@ def test_reprex_bundle_carries_runnable_set(rendered_synth_multi_sim, tmp_path: 
     tpl_text = (bundle_dir / HPC_TEMPLATE_FILENAME).read_text()
     _placeholder = re.compile(r"^\{your-[a-z0-9-]+\}$")
     for _field, _value in (
-        ("system_name", cfg_hpc.system_name),
+        ("hpc_name", cfg_hpc.hpc_name),
         ("default_account", cfg_hpc.default_account),
         ("login_node", cfg_hpc.login_node),
     ):
@@ -322,9 +322,9 @@ def test_reprex_bundle_carries_runnable_set(rendered_synth_multi_sim, tmp_path: 
         assert _placeholder.match(_partition_name), (
             f"partition key {_partition_name!r} is a real partition name, not a placeholder"
         )
-    # sif_path EMBEDS a placeholder inside a path rather than being one outright.
-    assert "{your-allocation}" in str(cfg_hpc.container.sif_path), (
-        f"container.sif_path {cfg_hpc.container.sif_path!r} carries no placeholder"
+    # sif_root EMBEDS a placeholder inside a path rather than being one outright.
+    assert "{your-allocation}" in str(cfg_hpc.container.sif_root), (
+        f"container.sif_root {cfg_hpc.container.sif_root!r} carries no placeholder"
     )
     # And no brace-token anywhere in the emitted template escapes the grammar, so a new
     # scrubbed field cannot quietly adopt a different (or absent) placeholder convention.

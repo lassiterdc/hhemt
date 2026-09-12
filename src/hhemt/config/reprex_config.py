@@ -27,7 +27,12 @@ class reprex_config(BaseModel):
     # ---- USER-bucket (host-local; never inherited from the bundle) ----
     default_account: str = Field(..., description="Target user's HPC allocation/account.")
     login_node: str | None = Field(None, description="Target cluster login node hostname.")
-    sif_path: Path = Field(..., description="Target-local absolute path to the fetched, signed SIF.")
+    sif_root: Path = Field(
+        ...,
+        description=(
+            "Target-local directory under which fetched or rebuilt SIFs live at their identity path (found by digest)."
+        ),
+    )
     scratch_dir: Path | None = Field(None, description="Target-local scratch base for run outputs.")
 
     # ---- HPC-revisable SELECTORS (target partition axis) ----

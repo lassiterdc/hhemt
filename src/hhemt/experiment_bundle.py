@@ -105,6 +105,14 @@ def resolve_hpc_system_config(
     return path.resolve()
 
 
+def bundle_experiment_id(bundle_dir: str | Path) -> str:
+    """The experiment's identity is the bundle directory's NAME (the estate's rule: an experiment
+    descriptor carries no id field — `ExperimentConfig` is `extra="forbid"` — and the directory
+    that holds `experiment.yaml` is what names it). Resolved first so a trailing slash or a
+    relative `.` still yields the real directory name."""
+    return Path(bundle_dir).resolve().name
+
+
 def load_bundle(bundle_dir: str | Path) -> ExperimentConfig:
     """Load and validate `{bundle_dir}/experiment.yaml`.
 
@@ -127,105 +135,6 @@ def load_bundle(bundle_dir: str | Path) -> ExperimentConfig:
         return ExperimentConfig.model_validate(raw)
     except Exception as e:
         raise ConfigurationError(field="experiment.yaml", message=f"schema violation: {e}", config_path=manifest) from e
-
-
-def resolve_def_recipe(bundle: ExperimentConfig, bundle_dir: str | Path) -> Path:
-    """Resolve ``bundle.container.def_recipe`` to a concrete path, or raise.
-
-    [Q161] ruled BUNDLE-relative the default and asked for a shared-container arm.
-    Both live in ONE field because the VALUE declares its own root: a ``${VAR}``
-    prefix means explicitly-rooted, anything else means bundle-relative. There is
-    therefore no resolution ORDER and no cwd fallback -- the two arms cannot
-    disagree about a value, because each value selects exactly one of them.
-
-    Raises ConfigurationError when the bundle declares no container, when a
-    ``${VAR}`` does not resolve, or when the resolved recipe is not on disk.
-    """
-    if bundle.container is None:
-        raise ConfigurationError(
-            field="container",
-            message="bundle declares no container; there is no def_recipe to resolve.",
-            config_path=Path(bundle_dir) / "experiment.yaml",
-        )
-    raw = bundle.container.def_recipe
-    if raw.startswith("${"):
-        expanded = os.path.expandvars(raw)
-        if "${" in expanded:
-            unresolved = sorted({"${" + tok.split("}")[0] + "}" for tok in expanded.split("${")[1:]})
-            raise ConfigurationError(
-                field="container.def_recipe",
-                message=(
-                    f"unresolved placeholder(s) {unresolved} in def_recipe {raw!r}. Export the "
-                    "referenced environment variable(s) before running."
-                ),
-                config_path=Path(bundle_dir) / "experiment.yaml",
-            )
-        resolved = Path(expanded)
-    else:
-        resolved = Path(bundle_dir) / raw
-    if not resolved.is_file():
-        raise ConfigurationError(
-            field="container.def_recipe",
-            message=(
-                f"def_recipe {raw!r} resolves to {resolved}, which does not exist. A bare "
-                "relative value is BUNDLE-relative; use a ${VAR}-rooted value for a recipe "
-                "shared across experiments."
-            ),
-            config_path=Path(bundle_dir) / "experiment.yaml",
-        )
-    return resolved
-
-
-def resolve_container_defs(
-    experiment_config: str | Path | None,
-    explicit_defs: list[Path] | None,
-) -> list[Path]:
-    """Reconcile the descriptor's container recipe against an explicit ``--container-defs``.
-
-    Sibling of ``resolve_overrides``/``_confirm_override_gate``, which already reconcile a
-    CLI argument against the descriptor in this module and REFUSE rather than silently
-    prefer either source. Same contract here, for the same reason: silently preferring one
-    side is how a bundle ends up carrying a recipe nobody chose, and a bundle is the
-    ten-year reproducibility artifact.
-
-    - No descriptor -> the explicit list passes through UNCHANGED, so ``emit_bundle``'s
-      hard refusal on a container-mode analysis with no recipe is preserved verbatim.
-    - Descriptor, no flag -> the descriptor supplies.
-    - Descriptor + agreeing flag -> accepted.
-    - Descriptor + disagreeing flag -> ``ConfigurationError`` naming BOTH values.
-
-    SINGLE-ARCH BY CONSTRUCTION, and deliberately so. ``ContainerRef.def_recipe`` is
-    scalar, so a descriptor-driven bundle carries exactly one recipe. That matches the
-    deployment config's own design -- every live hpc_system_config records `sif_paths_by_arch
-    intentionally EMPTY: this bundle pins ONE partition and therefore one gpu_hardware`
-    -- and all nine live descriptors declare exactly one def_recipe. ADR-19 multi-SIF
-    (one .def per arch) remains available on the FLAG path: omit ``--experiment-config``
-    and pass ``--container-defs`` per arch. The remedy below branches on that, because a
-    multi-def operator cannot `correct the descriptor` -- the schema cannot express them.
-    """
-    if experiment_config is None:
-        return list(explicit_defs or [])
-    resolved = resolve_def_recipe(load_bundle(experiment_config), experiment_config)
-    if explicit_defs and [Path(p).resolve() for p in explicit_defs] != [resolved.resolve()]:
-        if len(explicit_defs) > 1:
-            _remedy = (
-                "This looks like an ADR-19 multi-SIF (one .def per arch) emit, which a "
-                "descriptor cannot express: container.def_recipe is scalar. Omit "
-                "--experiment-config and pass --container-defs per arch."
-            )
-        else:
-            _remedy = "Drop the flag to use the descriptor, or correct the descriptor."
-        raise ConfigurationError(
-            field="container_defs",
-            message=(
-                f"--container-defs {[str(p) for p in explicit_defs]} disagrees with the "
-                f"experiment descriptor's container.def_recipe, which resolves to "
-                f"{resolved}. Refusing rather than silently preferring either source. "
-                f"{_remedy}"
-            ),
-            config_path=Path(experiment_config) / "experiment.yaml",
-        )
-    return [resolved]
 
 
 def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = None) -> Path:
@@ -394,13 +303,12 @@ def build_case_from_bundle(
             config_path=cfg_path,
         )
     if bundle.container is not None:
-        if cfg_hpc.container is None or "{your-" in (cfg_hpc.container.sif_path or ""):
+        if cfg_hpc.container is None or "{your-" in (cfg_hpc.container.sif_root or ""):
             raise ConfigurationError(
-                field="container.sif_path",
+                field="container.sif_root",
                 message=(
-                    f"{cfg_path}: container.sif_path is missing or still a placeholder, but the "
-                    f"bundle declares a container ({bundle.container.def_recipe}). Set it to the "
-                    "absolute on-cluster path of your transferred, signed SIF."
+                    f"{cfg_path}: container.sif_root is missing or still a placeholder, but the "
+                    "bundle declares a container. Set it to the directory `hhemt build-sifs` writes into."
                 ),
                 config_path=cfg_path,
             )

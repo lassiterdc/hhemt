@@ -49,6 +49,7 @@ from hhemt.report_plot_ids import (
     plot_output_template as _plot_output_template,
 )
 from hhemt.report_renderers._figure_emission import format_sources_rst
+from hhemt.sif.identity import resolve_sif
 
 # SLURM-liveness primitives live in the leaf module so wait_for_sentinel_runner
 # can import them without importing this Snakemake-builder surface. Re-exported
@@ -1136,9 +1137,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # declares no apptainer_module (Frontier's Cray path) emits byte-
             # identically to before; native mode is untouched (prefix stays "").
             _mod = f"module load {_cspec.apptainer_module}; " if _cspec.apptainer_module else ""
-            self._container_process_prefix = (
-                f'{_mod}export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
+            _sif = resolve_sif(
+                _cspec.sif_root, self.analysis.sif_identity_for(self.cfg_analysis.hpc_ensemble_partition)
             )
+            self._container_process_prefix = f'{_mod}export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_sif} '
             # The interpreter must resolve INSIDE the image. self.python_executable
             # is the DRIVER's host interpreter (sys.executable at :813) and dies
             # `FATAL: stat …: no such file or directory` under apptainer exec.
@@ -5373,6 +5375,30 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
             return submission_node
         return login_node or submission_node
 
+    # ---- SIF quest ([Q315] 6(b)): the build DAG hosted INSIDE this mode's detached driver ----
+    sif_prestep: "tuple[Path, set[str], list[str], bool] | None" = None
+    #   (Snakefile.sif, planned keys, [recheck argv-strings], no_wait) — set by
+    #   TRITONSWMM_analysis._build_sifs_prestep under batch_job; None => byte-identical script.
+
+    def _tmux_sif_prelude(self) -> str:
+        """Shell lines prepended to the tmux orchestrator script: run the SIF build DAG, then the
+        STRICT image re-check, and only then fall through to the experiment's snakemake. Empty
+        when no pre-step is staged, so the emitted script is byte-identical to today's."""
+        if self.sif_prestep is None:
+            return ""
+        from hhemt.sif.driver import driver_command
+
+        snakefile, keys, recheck, no_wait = self.sif_prestep
+        lines = [
+            "# ---- SIF quest: build the images this experiment needs, re-check them, THEN submit ----",
+            driver_command(snakefile, snakefile.parent, keys)
+            + ' || { echo "SIF build DAG failed; NOT submitting the experiment"; exit 1; }',
+        ]
+        lines += [c + ' || { echo "SIF preflight failed after the build; NOT submitting"; exit 1; }' for c in recheck]
+        if no_wait:
+            lines.append('echo "--no-wait: images built and verified; the experiment was NOT submitted"; exit 0')
+        return "\n".join(lines)
+
     def _submit_tmux_workflow(
         self,
         snakefile_path: Path,
@@ -5536,6 +5562,8 @@ mkdir -p {self.analysis_paths.analysis_log_directory}
         2>/dev/null | grep -E "^(Name|Version):"
     ${{CONDA_PREFIX}}/bin/python --version 2>&1 | sed 's/^/python: /'
 }} > {self.analysis_paths.analysis_log_directory}/snakemake_versions.txt
+
+{self._tmux_sif_prelude()}
 
 # Trim PATH and LD_LIBRARY_PATH before launching Snakemake.
 # After module load and conda activate, PATH can exceed Linux ARG_MAX limits.

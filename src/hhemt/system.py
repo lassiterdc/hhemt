@@ -143,6 +143,19 @@ def _assert_dem_integrity(fpath_raster):
             )
 
 
+# ONE table for CUDA gpu_hardware -> (TRITON_ARCH, Kokkos_ARCH_* token); read by
+# _resolve_cuda_arch_flags (compile) and hhemt.sif.identity.kokkos_arch_for (SIF identity).
+CUDA_ARCH_MAP: dict[str, tuple[str, str]] = {
+    "rtx3090": ("AMPERE80", "Kokkos_ARCH_AMPERE86"),
+    "a6000": ("AMPERE80", "Kokkos_ARCH_AMPERE86"),
+    "a100": ("AMPERE80", "Kokkos_ARCH_AMPERE80"),
+    "h100": ("HOPPER90", "Kokkos_ARCH_HOPPER90"),
+    "h200": ("HOPPER90", "Kokkos_ARCH_HOPPER90"),
+    "v100": ("VOLTA70", "Kokkos_ARCH_VOLTA70"),
+    "rtx2080": ("TURING75", "Kokkos_ARCH_TURING75"),
+}
+
+
 class TRITONSWMM_system:
     def __init__(
         self,
@@ -1533,15 +1546,7 @@ class TRITONSWMM_system:
                 config_path=self.system_config_yaml,
             )
 
-        mapping = {
-            "rtx3090": ("AMPERE80", "Kokkos_ARCH_AMPERE86"),
-            "a6000": ("AMPERE80", "Kokkos_ARCH_AMPERE86"),
-            "a100": ("AMPERE80", "Kokkos_ARCH_AMPERE80"),
-            "h100": ("HOPPER90", "Kokkos_ARCH_HOPPER90"),
-            "h200": ("HOPPER90", "Kokkos_ARCH_HOPPER90"),
-            "v100": ("VOLTA70", "Kokkos_ARCH_VOLTA70"),
-            "rtx2080": ("TURING75", "Kokkos_ARCH_TURING75"),
-        }
+        mapping = CUDA_ARCH_MAP
 
         if gpu_hardware not in mapping:
             raise ConfigurationError(

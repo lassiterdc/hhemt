@@ -3,7 +3,7 @@
 # to set (partition-as-axis migration, Gotcha 54). Both GPU partitions are NVIDIA
 # on Rivanna, so BOTH use gpu_compilation_backend: CUDA (do NOT copy the
 # multipartition fixture's HIP value for a6000 — research OE-4).
-system_name: uva_rivanna_synth
+hpc_name: uva_rivanna_synth
 default_account: "{your-allocation}"        # was analysis_cfg.hpc_account
 login_node: login1.hpc.virginia.edu         # was analysis_cfg.hpc_login_node
 gpu_allocation_flavor: gres                  # was system_cfg.preferred_slurm_option_for_allocating_gpus

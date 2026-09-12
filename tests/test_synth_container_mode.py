@@ -93,7 +93,7 @@ def test_container_mode_process_prefix_in_snakefile() -> None:
     # Flip to container mode BEFORE constructing the builder — the process-prefix is
     # computed in SnakemakeWorkflowBuilder.__init__ from cfg_analysis + cfg_hpc_system.
     tc.analysis.cfg_analysis.execution_environment = "container"
-    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif")
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_root="/opt/sifs")
     builder = SnakemakeWorkflowBuilder(tc.analysis)
     got = builder.generate_snakefile_content()
 
@@ -124,7 +124,7 @@ def test_container_mode_sim_runner_wraps_exe() -> None:
     run = _make_run("gpu", n_gpus=2, in_slurm=True)
     run._analysis.cfg_analysis.execution_environment = "container"
     run._analysis.cfg_hpc_system.container = ContainerSpec(
-        sif_path="/opt/test.sif",
+        sif_root="/opt/sifs",
         gpu_flag="--rocm",
         exe_in_sif={"tritonswmm": "/opt/hhemt/bin/triton.exe"},
     )
@@ -175,7 +175,7 @@ def test_container_mode_process_prefix_binds_system_directory() -> None:
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
     # binds=[] (default): nothing pre-covers system_directory, so the append fires.
-    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif")
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_root="/opt/sifs")
     builder = SnakemakeWorkflowBuilder(tc.analysis)
 
     sd = builder.system.cfg_system.system_directory
@@ -352,7 +352,7 @@ def _container_run_for(model_type: str):
     run = _make_run("gpu", n_gpus=1, in_slurm=True)
     run._analysis.cfg_analysis.execution_environment = "container"
     run._analysis.cfg_hpc_system.container = ContainerSpec(
-        sif_path="/opt/test.sif",
+        sif_root="/opt/sifs",
         gpu_flag="--rocm",
         exe_in_sif={
             "triton": "/opt/hhemt/bin/triton.exe",
@@ -496,13 +496,16 @@ def test_container_prefixed_shells_never_invoke_a_host_interpreter() -> None:
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
-    cspec = ContainerSpec(sif_path="/opt/test.sif")
+    cspec = ContainerSpec(sif_root="/opt/sifs")
     tc.analysis.cfg_hpc_system.container = cspec
     builder = SnakemakeWorkflowBuilder(tc.analysis)
     got = builder.generate_snakefile_content()
 
     declared_in_sif = {cspec.python_in_sif, *cspec.exe_in_sif.values()}
-    found = re.findall(r"apptainer exec\s+(?:-\S+\s+|\S+:\S+\s+)*" + re.escape(cspec.sif_path) + r"\s+(\S+)", got)
+    from hhemt.sif.identity import resolve_sif
+
+    _sif = resolve_sif(cspec.sif_root, tc.analysis.sif_identity_for(tc.analysis.cfg_analysis.hpc_ensemble_partition))
+    found = re.findall(r"apptainer exec\s+(?:-\S+\s+|\S+:\S+\s+)*" + re.escape(str(_sif)) + r"\s+(\S+)", got)
     assert found, "container mode emitted no `apptainer exec {sif} <exe>` command to check"
     for exe in found:
         assert exe in declared_in_sif or "/" not in exe, (
@@ -519,7 +522,7 @@ def test_container_python_default_is_a_name_not_a_path() -> None:
     Every in-repo recipe's %environment prepends /opt/hhemt-src/.venv/bin to
     PATH, so a bare name resolves to the in-SIF hhemt venv. Baking that absolute
     path into the model default would hardcode an image layout into src/."""
-    assert "/" not in ContainerSpec(sif_path="/opt/test.sif").python_in_sif
+    assert "/" not in ContainerSpec(sif_root="/opt/sifs").python_in_sif
 
 
 def test_every_container_def_fronts_an_hhemt_interpreter_on_path() -> None:
@@ -560,7 +563,7 @@ def test_container_process_prefix_loads_the_apptainer_module_when_declared() -> 
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
-    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif", apptainer_module="apptainer/1.5.0")
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_root="/opt/sifs", apptainer_module="apptainer/1.5.0")
     got = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
 
     for line in got.splitlines():
@@ -582,7 +585,7 @@ def test_container_process_prefix_omits_module_load_when_undeclared() -> None:
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
-    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif")
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_root="/opt/sifs")
     got = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
     assert "module load" not in got.split("process_timeseries_runner")[0].splitlines()[-1]
 

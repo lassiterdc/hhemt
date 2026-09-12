@@ -5,7 +5,7 @@
 # builds (a6000 + a100, NOT collapsed) and emits distinct per-target
 # --target-partition + per-sub GPU directives. Exercises the DQ7 per-row
 # partition generalization end-to-end at Snakefile-generation time (no compile).
-system_name: test_multipartition_cluster
+hpc_name: test_multipartition_cluster
 default_account: test_alloc
 partitions:
   gpu-a6000:

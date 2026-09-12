@@ -23,9 +23,9 @@ Bootstrap: docker
 # host-major HEURISTIC -- the validation probe rung is the falsifiability check).
 # Capture the digest off-site:  docker buildx imagetools inspect \
 #   rocm/dev-ubuntu-24.04:6.4.3-complete   (or read it from the apptainer build log).
-From: rocm/dev-ubuntu-24.04:6.4.3-complete
-# ADR-2 base-digest pin: captured from the apptainer build log (README §1a line 25 —
-# Rivanna has no skopeo) and recorded into %labels + the SIF lockfile post-build.
+# Digest-ONLY form (repo@sha256) of rocm/dev-ubuntu-24.04:6.4.3-complete, captured 2026-09-11
+# via the Docker Hub v2 manifest API; the tag is retained here in prose for legibility.
+From: rocm/dev-ubuntu-24.04@sha256:8dcd5c10e095ff8ef20c7eb0fcf8f5a4f0df905a67ee7aa1ea8cdeda91aa35ba
 
 %files
     # The hhemt source tree (uv sync --frozen for the in-container process runner,
@@ -33,7 +33,7 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     # Deps come from the COMMITTED uv.lock inside this tree (the project's real lockfile)
     # -- NOT a conda explicit lockfile, which is unsatisfiable (hhemt is uv/pyproject-
     # packaged, no environment.yml/conda-lock). Mirrors uva-cuda.def.
-    ../  /opt/hhemt-src
+    hhemt_src  /opt/hhemt-src
 
 %post
     set -eu
@@ -100,8 +100,8 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     #     -- OE-3, ADR-4 bit-identity carrier). `git submodule --recursive` pins
     #     Kokkos + the bundled SWMM transitively AND is the first correctness
     #     check (a non-recursive clone leaves external/kokkos absent).
-    git clone https://code.ornl.gov/hydro/triton.git /opt/triton
-    cd /opt/triton && git checkout 15eb18a5d25afe5da295cb4b559a62669dbe5bc3 \
+    git clone {{ TRITON_URL }} /opt/triton
+    cd /opt/triton && git checkout {{ TRITON_SHA }} \
         && git submodule update --init --recursive
     mkdir -p build && cd build
     # machine.cmake FORCE-sets CXX=mpic++ even under IGNORE_MACHINE_FILES; make
@@ -121,7 +121,7 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON \
           -DTRITON_IGNORE_MACHINE_FILES=ON \
           -DTRITON_BACKEND=HIP \
-          -DKokkos_ENABLE_HIP=ON -DKokkos_ARCH_AMD_GFX90A=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DKokkos_ENABLE_HIP=ON -D{{ KOKKOS_ARCH }}=ON -DKokkos_ENABLE_OPENMP=OFF \
           -DCMAKE_CXX_COMPILER=/opt/mpich/bin/mpicxx -DCMAKE_C_COMPILER=/opt/mpich/bin/mpicc \
           -DCMAKE_CXX_FLAGS='-O3 -DTRITON_HIP_LAUNCHER' \
           -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
@@ -142,7 +142,7 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     cmake -DTRITON_ENABLE_SWMM=OFF \
           -DTRITON_IGNORE_MACHINE_FILES=ON \
           -DTRITON_BACKEND=HIP \
-          -DKokkos_ENABLE_HIP=ON -DKokkos_ARCH_AMD_GFX90A=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DKokkos_ENABLE_HIP=ON -D{{ KOKKOS_ARCH }}=ON -DKokkos_ENABLE_OPENMP=OFF \
           -DCMAKE_CXX_COMPILER=/opt/mpich/bin/mpicxx -DCMAKE_C_COMPILER=/opt/mpich/bin/mpicc \
           -DCMAKE_CXX_FLAGS='-O3 -DTRITON_HIP_LAUNCHER' \
           -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
@@ -152,7 +152,7 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
 
     # --- (4) Standalone SWMM v5.2.4 (runswmm) for the `swmm` model type.
     #     Built like system.py: cmake the SWMM source, make -> runswmm.
-    git clone --branch v5.2.4 --depth 1 \
+    git clone --branch {{ SWMM_TAG }} --depth 1 \
         https://github.com/USEPA/Stormwater-Management-Model.git /opt/swmm-src
     mkdir -p /opt/swmm-src/build && cd /opt/swmm-src/build
     cmake .. -DCMAKE_BUILD_TYPE=Release && make -j"$(nproc)"
@@ -170,6 +170,29 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     # The hhemt toolkit is already installed editable into /opt/hhemt-src/.venv by
     # `uv sync --frozen` in (2) -- no separate pip install (conda env retired).
 
+    # ---- GPU-TARGET ASSERT ([Q315] 9(a)): a {{ GFX }} code object must be present ----
+    roc-obj-ls /opt/hhemt/bin/triton.exe | grep -q "{{ GFX }}" || { echo "FATAL: no {{ GFX }} code object in triton.exe"; roc-obj-ls /opt/hhemt/bin/triton.exe; exit 1; }
+    roc-obj-ls /opt/hhemt/bin/triton_only.exe | grep -q "{{ GFX }}" || { echo "FATAL: no {{ GFX }} code object in triton_only.exe"; exit 1; }
+
+    # ---- MEASURED LABELS: what LANDED, never what was intended ([Q315] 10(ii)) ----
+    _measured_triton="$(git -C /opt/triton rev-parse HEAD)"
+    [ "$_measured_triton" = "{{ TRITON_SHA }}" ] || { echo "FATAL: TRITON at $_measured_triton, requested {{ TRITON_SHA }}"; exit 1; }
+    _landed_hhemt="$(cat /opt/hhemt-src/HHEMT_SHA)"
+    case "$_landed_hhemt" in *Format*) echo "FATAL: HHEMT_SHA not substituted: the staged tree was not produced by git archive"; exit 1;; esac
+    [ "$_landed_hhemt" = "{{ HHEMT_SHA }}" ] || { echo "FATAL: staged hhemt is $_landed_hhemt, requested {{ HHEMT_SHA }}"; exit 1; }
+    _swmm_coupled="$(sed -n 's/.*VERSION \([0-9][0-9.]*\).*/\1/p' /opt/triton/external/swmm/CMakeLists.txt | head -1)"
+    _swmm_standalone="$(git -C /opt/swmm-src describe --tags --exact-match HEAD)"
+    _mpi="$(/opt/mpich/bin/mpichversion | head -1)"
+    _hhemt_version="$(/opt/hhemt-src/.venv/bin/python -c 'from importlib.metadata import version; print(version("hhemt"))')"
+    {
+      echo "org.hhemt.triton_sha $_measured_triton"
+      echo "org.hhemt.hhemt_sha $_landed_hhemt"
+      echo "org.hhemt.version $_hhemt_version"
+      echo "org.hhemt.swmm_coupled_version $_swmm_coupled"
+      echo "org.hhemt.swmm_standalone_version $_swmm_standalone"
+      echo "org.hhemt.mpi $_mpi"
+    } >> "$APPTAINER_LABELS"
+
 %environment
     export MPI_ROOT=/opt/mpich
     export PATH=/opt/hhemt-src/.venv/bin:/opt/hhemt/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
@@ -185,14 +208,18 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     # /.singularity.d/labels.json: the rung refuses to process when the imported
     # `hhemt` resolves outside this root. Must match the `%files ../ <dest>` target.
     org.hhemt.toolkit_root /opt/hhemt-src
-    org.hhemt.role        frontier-rocm-production
-    org.hhemt.hhemt_sha   HHEMT_SHA_UNSET
-    org.hhemt.base_digest sha256-recorded-in-SIF-lockfile-post-build
-    org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
+    org.hhemt.identity {{ LBL_IDENTITY }}
+    org.hhemt.family {{ LBL_FAMILY }}
+    org.hhemt.accel {{ LBL_ACCEL }}
+    org.hhemt.gpu_hardware {{ LBL_GPU_HARDWARE }}
+    org.hhemt.gpu_arch {{ LBL_GPU_ARCH }}
+    org.hhemt.gpu_compilation_backend {{ LBL_GPU_BACKEND }}
+    org.hhemt.triton_url {{ TRITON_URL }}
+    org.hhemt.base_digest {{ BASE_REF }}
+    org.hhemt.recipe_sha256 {{ LBL_RECIPE_SHA256 }}
     org.hhemt.rocm        6.4.3-complete
     org.hhemt.mpich       3.4.3-ch4ofi
     org.hhemt.gcc         13.x
-    org.hhemt.gpu_arch    gfx90a
 
 %runscript
     exec "$@"

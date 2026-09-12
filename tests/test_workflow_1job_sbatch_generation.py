@@ -30,7 +30,7 @@ def synth_1job_cpu_only():
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
-        system_name="test-cluster",
+        hpc_name="test-cluster",
         default_account="test_account",
         partitions={"test_partition": PartitionSpec(max_runtime=120)},
     )
@@ -57,7 +57,7 @@ def synth_1job_with_gpus():
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
-        system_name="test-cluster",
+        hpc_name="test-cluster",
         default_account="test_account",
         max_concurrent_jobs=10,
         partitions={"test_partition": PartitionSpec(max_runtime=120, gpu_hardware="a100", gpus_per_node=8)},
@@ -212,7 +212,7 @@ def test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus(synth_1job_with_
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
-        system_name="test-cluster",
+        hpc_name="test-cluster",
         default_account="test_account",
         partitions={"test_partition": PartitionSpec(max_runtime=120, gpu_hardware="a100")},
     )
@@ -397,7 +397,7 @@ def test_1job_sbatch_account_from_cfg_hpc_system(synth_1job_cpu_only):
     # A distinct account on the new config proves which source the header used
     # (Phase-4 4d: account is sourced solely from hpc_system_config.default_account).
     analysis.cfg_hpc_system = hpc_system_config(
-        system_name="test-cluster",
+        hpc_name="test-cluster",
         default_account="hpc_sys_account",
         partitions={"test_partition": PartitionSpec(max_runtime=120)},
     )
@@ -425,7 +425,7 @@ def test_1job_sbatch_gpus_per_node_from_partition_spec(synth_1job_with_gpus):
     # The fixture partition declares 8/node; this override declares 4/node — the
     # resolved per-node count must be the partition's (4).
     analysis.cfg_hpc_system = hpc_system_config(
-        system_name="test-cluster",
+        hpc_name="test-cluster",
         default_account="hpc_sys_account",
         partitions={"test_partition": PartitionSpec(max_runtime=120, gpus_per_node=4, gpu_hardware="a100")},
     )

@@ -42,7 +42,7 @@ def slurm_ready_builder():
     analysis.cfg_analysis.local_cpu_cores_for_workflow = 4
     analysis.cfg_analysis.hpc_ensemble_partition = "standard"
     analysis.cfg_hpc_system = hpc_system_config(
-        system_name="test-cluster",
+        hpc_name="test-cluster",
         default_account="test_account",
         max_concurrent_jobs=8,
         partitions={"standard": PartitionSpec(max_runtime=120)},

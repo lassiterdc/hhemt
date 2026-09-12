@@ -40,7 +40,7 @@ Pass it as `--hpc-system-config`. See
 | Command | What it does |
 |---|---|
 | `ingest` | Fetch a published reprex bundle by DOI or PID, reconstitute it, and print the runnable configs. The consume half of the DOI round-trip. |
-| `build-sif` | Build an Apptainer SIF from a definition file, for container-mode execution. |
+| `build-sifs` | Build every Apptainer SIF an experiment's matrix requires, addressed by identity (toolkit commit, TRITON pin, family recipe, base image); `--dry-run` prints the identity table without building. |
 
 ## Checking correctness
 

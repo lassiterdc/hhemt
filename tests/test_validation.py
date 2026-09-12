@@ -223,7 +223,7 @@ def test_preflight_runtime_exceeds_partition_cap_fails(synth_multi_sim_analysis,
     hpc_yaml.write_text(
         _yaml.safe_dump(
             {
-                "system_name": "tiny-cluster",
+                "hpc_name": "tiny-cluster",
                 "default_account": "acct",
                 "partitions": {"tiny": {"max_runtime": 5}},
             }
@@ -264,7 +264,7 @@ def test_preflight_1job_duration_exceeds_partition_cap_fails(synth_multi_sim_ana
     hpc_yaml.write_text(
         _yaml.safe_dump(
             {
-                "system_name": "tiny-cluster",
+                "hpc_name": "tiny-cluster",
                 "default_account": "acct",
                 "partitions": {"tiny": {"max_runtime": 5}},
             }

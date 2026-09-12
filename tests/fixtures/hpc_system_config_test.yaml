@@ -12,7 +12,7 @@
 # Net effect on the two Snakefile goldens: byte-identical (see the 4a Validation
 # Plan's human-verified-diff gate). default_account is a distinctive value so the
 # resolution-helper test can prove _resolve_account() reads from cfg_hpc_system.
-system_name: test_cluster
+hpc_name: test_cluster
 default_account: test_alloc
 partitions:
   test_partition:

@@ -311,8 +311,11 @@ def main() -> int:
                 _labels: dict = {}
                 _inspect_ran = False
                 _image_error: str | None = None
-                if _cspec is not None and _cspec.sif_path:
-                    _sif = Path(_cspec.sif_path)
+                if _cspec is not None and _cspec.sif_root:
+                    from hhemt.sif.identity import manifest_path, resolve_sif
+
+                    _sif = resolve_sif(_cspec.sif_root, analysis.sif_identity_for(args.target_partition))
+                    _man = manifest_path(_sif)
 
                     # ADR-19 (ii-a) — the SIF's own content digest, captured HERE.
                     #
@@ -336,9 +339,13 @@ def main() -> int:
                     # import, matching this block's own idiom.
                     if _sif.is_file():
                         try:
+                            import json as _json
+
                             from hhemt.bundle._emit import _sha256_file
 
-                            _sif_digest = _sha256_file(_sif)
+                            _sif_digest = (
+                                _json.loads(_man.read_text())["sha256"] if _man.is_file() else _sha256_file(_sif)
+                            )
                             system.log.sif_sha256.set(_sif_digest)
                             system.log.write()
                             logger.info(f"[Provenance] container SIF sha256 {_sif_digest[:12]}… ({_sif})")
@@ -409,7 +416,9 @@ def main() -> int:
                                 .get("labels", {})
                             ) or {}
                             break
-                _sha = _labels.get("org.hhemt.triton_sha")
+                from hhemt.container_labels import SWMM_VERSION_LABEL, TRITON_SHA_LABEL
+
+                _sha = _labels.get(TRITON_SHA_LABEL)
                 # Contract axis 4 in container mode. The labels dict is ALREADY parsed
                 # here, so reading the SWMM version off it costs one lookup and adds no
                 # failure mode. Normalized to the same KIND the native capture writes
@@ -424,7 +433,7 @@ def main() -> int:
                 # property. Recording it is strictly better than the prior silence, but the
                 # durable fix is a build-time-substituted label (the pattern
                 # org.hhemt.hhemt_sha already uses via HHEMT_SHA_UNSET).
-                _swmm_ver = _labels.get("org.hhemt.swmm_version")
+                _swmm_ver = _labels.get(SWMM_VERSION_LABEL)
                 if _swmm_ver:
                     system.log.standalone_swmm_producing_version.set(str(_swmm_ver).lstrip("vV"))
                 if _sha:

@@ -945,7 +945,7 @@ def test_slurm_config_reads_hpc_system_config(synth_multi_sim_analysis, tmp_path
     hpc_yaml.write_text(
         _yaml.safe_dump(
             {
-                "system_name": "synth-cluster",
+                "hpc_name": "synth-cluster",
                 "default_account": "synth_acct",
                 "gpu_allocation_flavor": "gres",
                 "max_concurrent_jobs": 4,

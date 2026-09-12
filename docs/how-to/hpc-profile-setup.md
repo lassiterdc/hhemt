@@ -17,7 +17,7 @@ this file and its Frontier counterpart also ship in the repository under
 `test_data/norfolk_coastal_flooding/`.
 
 ```yaml
-system_name: uva_rivanna
+hpc_name: uva_rivanna
 default_account: "{your-allocation}"   # CHANGE THIS: your SLURM account
 login_node: login1.hpc.virginia.edu
 default_execution_mode: batch_job      # one sbatch per simulation
@@ -51,7 +51,8 @@ partitions:
     gpu_compilation_backend: CUDA
 
 container:                             # only read when execution_environment is container
-  sif_path: "/scratch/{your-allocation}/hhemt_uva_cuda.sif"   # CHANGE THIS if you use containers
+  sif_root: "/scratch/{your-allocation}/sifs"   # where `hhemt build-sifs` writes; images resolve by identity
+  builds_containers: true              # this host may run `hhemt build-sifs` (fakeroot-capable)
   gpu_flag: "--nv"
   srun_mpi: "pmix"
   binds: ["/scratch", "/sfs"]
@@ -69,7 +70,7 @@ Two values, both marked `CHANGE THIS` above:
 
 - **`default_account`** is your SLURM account. Every job the toolkit submits is
   charged to it.
-- **`container.sif_path`** is where your Apptainer image lives, and it matters only
+- **`container.sif_root`** is the directory `hhemt build-sifs` writes into and the ONLY place the toolkit looks for an image (resolved by identity), and it matters only
   if you set `execution_environment: container` on the analysis config. A native
   run ignores the whole `container:` block, so you can leave it as it stands.
 
@@ -86,12 +87,13 @@ refuses after the toolkit accepted it.
 
 `executor_profile_extras` stays empty unless you are passing a Snakemake SLURM
 plugin setting the toolkit does not model. Inside `container:`, everything except
-`sif_path` describes how this cluster exposes its GPUs and fabric to a container,
+`sif_root` and `builds_containers` describes how this cluster exposes its GPUs and fabric to a container,
 and those values are correct for Rivanna as written.
 
 !!! tip "Start native, add containers later"
-    Container mode is opt-in and needs a transferred, signed Apptainer image. Get a
-    native run working first, then see `containers/README.md`.
+    Container mode is opt-in; `hhemt build-sifs` creates every image your experiment
+    needs under `sif_root`, addressed by identity. Get a native run working first, then
+    see `containers/README.md`.
 
 ## Choose a partition
 

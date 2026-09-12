@@ -711,7 +711,7 @@ class TRITONSWMM_analysis:
                 m.unlink(missing_ok=True)
         return settled
 
-    def validate(self) -> ValidationResult:
+    def validate(self, *, build_sifs: bool = False) -> ValidationResult:
         """Run preflight validation on system and analysis configurations.
 
         This method performs comprehensive validation of both system and analysis
@@ -749,6 +749,7 @@ class TRITONSWMM_analysis:
             cfg_system=self._system.cfg_system,
             cfg_analysis=self.cfg_analysis,
             cfg_hpc_system=self.cfg_hpc_system,
+            build_sifs=build_sifs,
         )
 
     @property
@@ -2298,6 +2299,83 @@ class TRITONSWMM_analysis:
                 )
         self._update_log()
 
+    # ---- SIF identity accessor: the ONE seam every image consumer calls (SIF quest, ADR-21) ----
+    def sif_identity_for(self, partition: str):
+        """The recomputed SifIdentity for ``partition``. A wheel driver (no 40-hex sha) raises
+        ConfigurationError here — container mode requires a git-checkout driver (item 11)."""
+        from hhemt.sif.identity import derive_identity
+        from hhemt.validation import _running_toolkit_sha_full
+
+        return derive_identity(self.cfg_hpc_system, self._system.cfg_system, partition, _running_toolkit_sha_full())
+
+    def _build_sifs_prestep(
+        self, *, no_wait: bool, force: bool, sif_build_config_path: "Path | None"
+    ) -> "WorkflowResult":
+        """[Q315] 6(b): plan + reconcile + write the build DAG, then host it in THIS mode's detached
+        driver — the tmux script under batch_job (Spec 21), a setsid chain otherwise — and return
+        a RECEIPT. Never blocks a login shell. Gotcha-69 caveat applies: success here means
+        'chain launched', never 'images built'; the chain's log is the verdict."""
+        from hhemt.config.loaders import yaml_to_model
+        from hhemt.config.sif_build import sif_build_config
+        from hhemt.exceptions import ConfigurationError
+        from hhemt.orchestration import WorkflowResult
+        from hhemt.sif.driver import detach, driver_command
+        from hhemt.sif.plan import ExperimentInputs, plan_sif_set
+        from hhemt.sif.snakefile_generator import reconcile_sif_root, write_sif_snakefile
+        from hhemt.validation import _running_toolkit_sha_full
+
+        if sif_build_config_path is None:
+            raise ConfigurationError(
+                field="override_sif_build_config",
+                message=(
+                    "run(build_sifs=True) requires override_sif_build_config=<sif_build_config yaml> "
+                    "(build venue + resources)."
+                ),
+            )
+        cfg = yaml_to_model(Path(sif_build_config_path), sif_build_config)
+        exp = ExperimentInputs(
+            self.cfg_analysis.analysis_id, self._system.cfg_system, self.cfg_analysis, self.cfg_hpc_system, None
+        )
+        plan = plan_sif_set(
+            [exp],
+            sif_root=cfg.sif_root,
+            running_sha=_running_toolkit_sha_full(),
+            recipes_dir=cfg.recipes_dir,
+            toolkit_root=cfg.toolkit_root,
+            force=force,
+        )
+        reconcile_sif_root(
+            cfg.sif_root,
+            walltime_min=cfg.walltime_min,
+            force_keys=set(plan.entries) if force else set(),
+            planned_keys=set(plan.entries),
+        )
+        snakefile = write_sif_snakefile(plan, sif_root=cfg.sif_root, build_host=self.cfg_hpc_system, sif_build_cfg=cfg)
+        keys = set(plan.entries) - plan.already_built
+        recheck = [
+            f"{sys.executable} -m hhemt.sif.preflight --system-config {self._system.system_config_yaml} "
+            f"--analysis-config {self.analysis_config_yaml} --hpc-system-config {self.hpc_system_config_yaml}"
+        ]
+        if self.cfg_analysis.multi_sim_run_method == "batch_job":
+            self._workflow_builder.sif_prestep = (snakefile, keys, recheck, no_wait)
+            return None  # the caller continues into submit_workflow; the tmux script carries the chain
+        chain = [driver_command(snakefile, cfg.sif_root, keys)] + recheck
+        if not no_wait:
+            chain.append(
+                f"hhemt run --system-config {self._system.system_config_yaml} "
+                f"--analysis-config {self.analysis_config_yaml} "
+                f"--hpc-system-config {self.hpc_system_config_yaml}"
+            )
+        pid = detach(chain, log=Path(cfg.sif_root) / "_build" / "chain.log")
+        return WorkflowResult(
+            success=True,
+            mode="detached-build-chain",
+            snakefile_path=snakefile,
+            job_id=str(pid),
+            message=f"SIF build chain detached (pid {pid}); log: {Path(cfg.sif_root) / '_build' / 'chain.log'}. "
+            "This is a launch RECEIPT, not an execution verdict (Gotcha 69): read the log.",
+        )
+
     def run(
         self,
         from_scratch: bool = False,
@@ -2324,6 +2402,10 @@ class TRITONSWMM_analysis:
         prune_settled_markers: bool = True,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
+        build_sifs: bool = False,
+        build_sifs_no_wait: bool = False,
+        force_sif_rebuild: bool = False,
+        override_sif_build_config: "Path | None" = None,
     ) -> "WorkflowResult":
         """
         High-level orchestration method for running TRITON-SWMM workflows.
@@ -2655,6 +2737,15 @@ class TRITONSWMM_analysis:
                 analysis_dir=self.analysis_paths.analysis_dir,
                 analysis_id=self.cfg_analysis.analysis_id,
             )
+
+        # SIF quest: --build-sifs hosts the build DAG in this mode's detached driver BEFORE anything
+        # else runs; a non-tmux mode RETURNS the chain receipt here (the chain re-invokes `hhemt run`).
+        if build_sifs and not dry_run:
+            _receipt = self._build_sifs_prestep(
+                no_wait=build_sifs_no_wait, force=force_sif_rebuild, sif_build_config_path=override_sif_build_config
+            )
+            if _receipt is not None:
+                return _receipt
 
         start_time = time.time()
 

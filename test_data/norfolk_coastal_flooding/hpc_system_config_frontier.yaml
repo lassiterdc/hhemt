@@ -1,6 +1,6 @@
 # Anonymized OLCF Frontier HPC system profile (example).
 # Authored from OLCF's PUBLIC cluster documentation; substitute {your-allocation} with your account.
-system_name: olcf_frontier
+hpc_name: olcf_frontier
 default_account: "{your-allocation}"          # NATIVE -> slurm_account (Frontier: your OLCF project)
 default_execution_mode: 1_job_many_srun_tasks # EXTENSION (Frontier default: one allocation, srun pool)
 gpu_allocation_flavor: gpus                   # EXTENSION (Frontier uses --gpus-per-node)
@@ -19,7 +19,8 @@ partitions:
     supports_mpi: true                        # NATIVE
     gpu_compilation_backend: HIP              # EXTENSION (D1: per-partition backend)
 container:                                    # ADR-1/2/3: per-cluster Apptainer exec params; consumed only when analysis_config.execution_environment == "container" (native default ignores it)
-  sif_path: "${MEMBERWORK}/{your-allocation}/hhemt_frontier_rocm.sif"   # transferred, signed SIF (see containers/README.md)
+  sif_root: "${MEMBERWORK}/{your-allocation}/sifs"   # every identity resolves under it; images are PLACED here with their .manifest.json (see containers/README.md)
+  builds_containers: false                     # Frontier login nodes grant no fakeroot; build elsewhere and place
   gpu_flag: "--rocm"                          # Frontier MI250X GPU passthrough (binds driver-adjacent libs; container ROCm runtime executes)
   # === PRODUCTION MULTI-RANK (host Cray-MPICH-ABI / Slingshot) — VALIDATED (probe job 4898044: size=16 / 2 nodes / 8 GCDs per node) ===
   # Mechanism (container-specialist 2026-06-29): the OLCF helper modules bind the OPEN-ENDED host MPI+ROCm+compiler-runtime
