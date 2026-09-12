@@ -855,6 +855,145 @@ def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int
     return base + slack_min
 
 
+# Tmux orchestrator-log parse (FQ5, 2026-09-12). Snakemake prints one `rule {name}:` block per
+# selected job (4-space `input:/output:/log:/jobid:/reason:/wildcards:/…` lines — `jobid:`
+# precedes `wildcards:`) and, once sbatch returns, `Job {n} has been submitted with SLURM jobid
+# {m} (log: …)`. The token is read from the block's FLAG PATH (`output:`, or the `reason:` line
+# that repeats it), which carries the REAL event id in both generators; the master's rule NAME is
+# sanitized (`.`/`-` -> `_`, workflow.py ~:8927) and the multisim `wildcards:` line arrives after
+# `jobid:`, so neither is used.
+_TMUX_SUBMIT_RE = re.compile(r"^Job (\d+) has been submitted with SLURM jobid (\d+)")
+_TMUX_RULE_RE = re.compile(r"^rule (\S+):\s*$")
+_TMUX_JOBID_RE = re.compile(r"^\s+jobid:\s*(\d+)\s*$")
+_TMUX_MULTISIM_FLAG_RE = re.compile(r"_status/c_run_(?P<m>[a-z]+)_evt-(?P<e>[^\s\"',]+?)_complete\.flag")
+_TMUX_MEMBER_FLAG_RE = re.compile(
+    r"_status/c_run_(?P<m>[a-z]+)_member-(?P<mid>[^\s\"',]+?)_evt-(?P<e>[^\s\"',]+?)_complete\.flag"
+)
+
+
+def parse_tmux_submissions(text: str) -> dict[str, str]:
+    """Recover ``{rule_token: slurm_jobid}`` for every SIM rule the executor SUBMITTED, from a
+    tmux orchestrator log. Pure: text in, dict out.
+
+    Tokens follow ``run_simulation_runner``'s ``_rule_token``: ``run_{model}_evt-{event_id}``
+    (multisim, rule ``run_{model}``) and ``simulation_member_{mid}_evt-{event_id}`` (sensitivity
+    master, rule ``simulation_member_{mid}_evt_{sanitized}``), both derived from the c_run FLAG
+    PATH inside the block. A retried job re-prints its block, so the NEWEST submission of a token
+    wins. Every column-0 line that is not ``rule X:`` closes the current block, so a ``jobid:``
+    under ``Error in rule …:`` or ``Group job …`` is never attributed to a stale rule. Non-sim
+    rules (prepare/process/consolidate/wait_for_*/plots) are ignored by rule-name prefix.
+    """
+    by_snakemake_id: dict[str, dict] = {}
+    block: dict | None = None
+    tokens: dict[str, str] = {}
+    for line in text.splitlines():
+        if line and not line[0].isspace():
+            m = _TMUX_RULE_RE.match(line)
+            block = {"rule": m.group(1), "token": None} if m else None
+            m = _TMUX_SUBMIT_RE.match(line)
+            if m:
+                blk = by_snakemake_id.get(m.group(1))
+                if blk and blk["token"]:
+                    tokens[blk["token"]] = m.group(2)
+            continue
+        if block is None:
+            continue
+        r = block["rule"]
+        if block["token"] is None and (r.startswith("run_") or r.startswith("simulation_member_")):
+            mm = _TMUX_MEMBER_FLAG_RE.search(line)
+            if mm and r.startswith("simulation_member_"):
+                block["token"] = f"simulation_member_{mm.group('mid')}_evt-{mm.group('e')}"
+            elif not mm:
+                ms = _TMUX_MULTISIM_FLAG_RE.search(line)
+                if ms and r.startswith("run_"):
+                    block["token"] = f"run_{ms.group('m')}_evt-{ms.group('e')}"
+        m = _TMUX_JOBID_RE.match(line)
+        if m:
+            by_snakemake_id[m.group(1)] = block
+    return tokens
+
+
+def _squeue_live_jobids(run_uuids: tuple[str, ...], *, timeout_s: float = 20.0) -> set[str] | None:
+    """PENDING/RUNNING/COMPLETING SLURM job ids whose sbatch ``--job-name`` is one of ``run_uuids``
+    (the executor names every job after its run UUID). ``None`` when squeue is absent, fails or
+    times out — the caller treats None as NOT-KNOWN (mtime tier governs), never as "nothing live".
+    ``CG`` is included deliberately: a completing job held by the reconcile yields a wait rule that
+    resolves within seconds, and ``scancel`` on a completing job is a no-op — harmless in both
+    consumers."""
+    if not run_uuids:
+        return None
+    live: set[str] = set()
+    for uuid in run_uuids:
+        try:
+            out = subprocess.run(
+                ["squeue", "--name", uuid, "-h", "-t", "PD,R,CG", "-o", "%i"],
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+        except (subprocess.SubprocessError, OSError):  # FileNotFoundError (no squeue) is an OSError
+            return None
+        if out.returncode != 0:
+            return None
+        live.update(tok.strip() for tok in out.stdout.split() if tok.strip())
+    return live
+
+
+def _rekey_queued_from_tmux_logs(queued_dir: Path, pending_tokens: list[str], log_dir: Path | None) -> list[str]:
+    """FQ5 re-keying (2026-09-12): rewrite ``_queued/{token}.json`` with the jobid the executor
+    was OBSERVED to submit, and unlink tokens that were planned but never submitted.
+
+    ``_write_queued_sentinels`` writes the FULL planned token set at launch, so under a
+    ``--jobs`` cap smaller than the plan most sentinels name a sim SLURM never saw (measured
+    2026-09-12: 10,884 sentinels, ~10,374 never submitted). Reads every ``tmux_session_*.log``
+    under ``log_dir`` oldest->newest (a resumed driver's sims were submitted under an earlier
+    log; the newest submission of a token wins). Returns the tokens that SURVIVE. NO-OP —
+    returns ``pending_tokens`` unchanged and unlinks nothing — when ``log_dir`` is None/absent
+    or holds no tmux log: absence of evidence is not evidence of non-submission. KNOWN
+    LIMITATION (C7, 2026-09-12): that guard is directory-level — if an OLDER tmux log of a
+    resumable campaign is pruned while a newer one exists, or the driver is killed inside the
+    sbatch-return->print window, a live token's sentinel is dropped and the sim re-runs
+    (double submission). Operators must not prune older tmux logs of a resumable campaign;
+    a per-log guard is a tracked follow-up, not this round's change.
+    """
+    if not pending_tokens or log_dir is None or not Path(log_dir).is_dir():
+        return list(pending_tokens)
+    logs = sorted(Path(log_dir).glob("tmux_session_*.log"), key=lambda p: p.stat().st_mtime)
+    if not logs:
+        return list(pending_tokens)
+    observed: dict[str, str] = {}
+    for path in logs:
+        try:
+            observed.update(parse_tmux_submissions(path.read_text(errors="replace")))
+        except OSError:
+            continue
+    survivors: list[str] = []
+    n_rekeyed = n_dropped = 0
+    for tok in pending_tokens:
+        qpath = queued_dir / f"{tok}.json"
+        jid = observed.get(tok)
+        if jid is None:
+            # EXEMPT-DU: status-dir-cleanup
+            qpath.unlink(missing_ok=True)  # planned, never submitted -> re-run
+            n_dropped += 1
+            continue
+        payload = json.dumps({"rule_token": tok, "slurm_jobid": jid}, sort_keys=True)
+        try:
+            if qpath.read_text() != payload:
+                qpath.write_text(payload)  # mtime bump is correct: the sentinel now names a real job
+                n_rekeyed += 1
+        except OSError:
+            pass
+        survivors.append(tok)
+    if n_rekeyed or n_dropped:
+        print(
+            f"[reconcile] _queued/ re-key from {len(logs)} tmux log(s): {n_rekeyed} sentinel(s) now carry an "
+            f"observed jobid, {n_dropped} planned-never-submitted sentinel(s) unlinked (they re-run).",
+            flush=True,
+        )
+    return survivors
+
+
 class _ClearedToken(NamedTuple):
     """Self-describing record for an R-STALE-reclaimed stale token (replaces the
     positional 4-tuple so the reconcile surface and tests read field names)."""
@@ -1571,6 +1710,21 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         cap_min = self.cfg_analysis.hpc_max_wait_for_inflight_min
         max_plausible_s = cap_min * 60
 
+        # FQ5 (2026-09-12): rewrite planned-only sentinels with the jobid the executor was
+        # OBSERVED to submit (tmux log), and drop the planned-never-submitted ones. No-op when
+        # no tmux log exists (local mode / pruned logs) — see _rekey_queued_from_tmux_logs.
+        # SCOPE NOTE (sensitivity path): the master builder calls this reconcile once per sub
+        # with base_dir=_sub_dir, so queued_dir is the SUB's while the log dir and run uuids
+        # below are the MASTER's — one driver, one tmux log, which is where every sub's
+        # submissions were printed.
+        _log_dir = self.analysis_paths.analysis_log_directory
+        pending_tokens = _rekey_queued_from_tmux_logs(queued_dir, list(pending_tokens), _log_dir)
+        if not pending_tokens:
+            return []
+        # Run-UUID backstop: the live PD/R/CG set under every run uuid this analysis has used.
+        # None = squeue unavailable -> not consulted (mtime tier governs), never "nothing live".
+        _squeue_live = _squeue_live_jobids(self._tmux_slurm_run_uuids())
+
         # Read each payload's allocation jobid (None = executor-owns / unreadable).
         jobid_by_token: dict[str, str | None] = {}
         for tok in pending_tokens:
@@ -1603,7 +1757,14 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                         continue
                     recovered.append((tok, jid))  # alive (toolkit-owns)
                     continue
-                # jid present but sacct-UNKNOWN -> fall through to mtime fail-safe.
+                # jid present but sacct-UNKNOWN -> run-UUID squeue tier (FQ5), then mtime.
+                if _squeue_live is not None:
+                    if jid in _squeue_live:
+                        recovered.append((tok, jid))  # PENDING/RUNNING under this run's uuid
+                        continue
+                    # EXEMPT-DU: status-dir-cleanup
+                    qpath.unlink(missing_ok=True)  # known-absent from SLURM -> re-run
+                    continue
             # executor-owns (jid None) OR aliased OR sacct-UNKNOWN: presence + mtime.
             try:
                 age_s = time.time() - qpath.stat().st_mtime
@@ -7944,27 +8105,29 @@ exit $snakemake_status
         # in-flight and must block a delete exactly like a running sim. Presence-only
         # (no reclaim — consistent with the no-reclaim stance of (2); a stale orphan
         # _queued/ is aged out by the run-path reconcile's mtime fail-safe, or the
-        # operator passes override_in_flight — never destructive cleanup here).
+        # operator passes override_in_flight — no RESULT-file cleanup here; sentinels of
+        # provably-dead or never-submitted jobs ARE unlinked by the shared classifier).
         queued_dir = analysis_dir / "_status" / "_queued"
         if queued_dir.is_dir():
-            for qpath in sorted(queued_dir.glob("*.json")):
-                tok = qpath.stem
-                if any(
-                    (analysis_dir / "_status" / d / f"{tok}.json").exists()
+            # FQ5 (2026-09-12): the SAME classifier as the run-path reconcile — re-keys from
+            # the tmux log, drops planned-never-submitted tokens, sacct/squeue-classifies the
+            # rest, ages out the remainder. A guard that refused a tree nobody could resume
+            # (10,884 planned-only sentinels, 2026-09-12) is a guard that is always overridden.
+            _pending = [
+                p.stem
+                for p in sorted(queued_dir.glob("*.json"))
+                if not any(
+                    (analysis_dir / "_status" / d / f"{p.stem}.json").exists()
                     for d in ("_submitted", "_completed", "_failed")
-                ):
-                    continue  # superseded — already covered by the _submitted/ sweep
-                try:
-                    jid = str(json.loads(qpath.read_text()).get("slurm_jobid") or "")
-                except (json.JSONDecodeError, OSError):
-                    jid = ""
-                alive.append((tok, jid))
+                )
+            ]
+            alive += self._recover_pending_from_queued(_pending, analysis_dir)
 
         # (3) Comment-recovery for the lost-sentinel window (C.4).
         alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
 
         if alive and not override_in_flight:
-            live_jids = sorted({j for _, j in alive})
+            live_jids = sorted({j for _, j in alive if j})  # held-on-presence tokens carry "" — not a jobid
             raise ConfigurationError(
                 field="analysis.delete()",
                 message=(
@@ -7977,7 +8140,7 @@ exit $snakemake_status
                 config_path=str(submitted_dir),
             )
         if alive and override_in_flight:
-            live_jids = sorted({j for _, j in alive})
+            live_jids = sorted({j for _, j in alive if j})  # held-on-presence tokens carry "" — not a jobid
             print(
                 f"[delete] override_in_flight=True — proceeding despite {len(live_jids)} live SLURM jobs: {live_jids}",
                 flush=True,

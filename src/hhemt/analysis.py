@@ -5896,6 +5896,88 @@ class TRITONSWMM_analysis:
     def _swmm_only_link_summary(self):
         return self.process.swmm_only_link_summary
 
+    def _selective_cancel(self, *, rule_classes: tuple[str, ...], session_name: str, verbose: bool) -> dict:
+        """Step 1b of cancel(): scancel the SIM class — running AND pending — then kill the driver.
+
+        FQ6 (2026-09-12). _status/_submitted/ is worker-written at process START, so it cannot
+        see a PENDING sim: on 2026-09-12, 678 of them started AFTER the driver was killed and
+        wrote 15-31 GB each with no processing behind them. The set is therefore the union of
+        (i) _submitted/ ids and (ii) every sim token the executor was OBSERVED to submit (tmux
+        orchestrator log, parse_tmux_submissions) that is still PD/R/CG under this run's
+        uuid(s). A multisim token whose c_run flag already exists is SKIPPED: its sim is done
+        and, under analysis_config.process_in_sim_rule, the same job is now RECLAIMING —
+        cancelling it would cost the reclaim. scancel runs BEFORE tmux kill-session on purpose:
+        once the driver is dead nothing else will cancel a pending sim. SIGHUP (kill-session) is
+        kept: SIGTERM would route through Snakemake's cancel_jobs() and take processing with it.
+        Returns the same dict shape the inline arm returned before extraction.
+        """
+        import json as _json
+        import subprocess  # analysis.py binds subprocess function-locally (module style); keep it so here
+
+        from hhemt.workflow import _squeue_live_jobids, parse_tmux_submissions
+
+        _status = self.analysis_paths.analysis_dir / "_status"
+        _sub = _status / "_submitted"
+        _matched: list[tuple[str, str]] = []
+        for _p in sorted(_sub.glob("*.json")) if _sub.is_dir() else []:
+            _tok = _p.stem
+            if not any(_tok.startswith(pfx) for pfx in rule_classes):
+                continue
+            try:
+                _jid = _json.loads(_p.read_text()).get("slurm_jobid")
+            except Exception:
+                _jid = None
+            if _jid:
+                _matched.append((_tok, str(_jid)))
+        _observed: dict[str, str] = {}
+        try:
+            _logs = sorted(
+                self.analysis_paths.analysis_log_directory.glob("tmux_session_*.log"),
+                key=lambda p: p.stat().st_mtime,
+            )
+        except OSError:
+            _logs = []
+        for _lp in _logs:
+            try:
+                _observed.update(parse_tmux_submissions(_lp.read_text(errors="replace")))
+            except OSError:
+                continue
+        _live = _squeue_live_jobids(self._workflow_builder._tmux_slurm_run_uuids()) or set()
+        _seen = {j for _, j in _matched}
+        _skipped_reclaiming = 0
+        for _tok, _jid in _observed.items():
+            if not any(_tok.startswith(pfx) for pfx in rule_classes) or _jid in _seen or _jid not in _live:
+                continue
+            if _tok.startswith("run_") and (_status / f"c_{_tok}_complete.flag").exists():
+                _skipped_reclaiming += 1  # sim done; processing (reclaim) in flight
+                continue
+            _matched.append((_tok, _jid))
+            _seen.add(_jid)
+        if _matched:
+            subprocess.run(["scancel", *[j for _, j in _matched]], capture_output=True)
+        subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+        if verbose:
+            print(
+                f"[Cancel] Selective cancel: {len(_matched)} job(s) matching {list(rule_classes)} "
+                f"({len(_seen)} distinct jobids: _submitted/ + tmux-log∩squeue live; "
+                f"{_skipped_reclaiming} skipped as sim-done/reclaiming); driver session killed "
+                f"AFTER scancel; other jobs left running.",
+                flush=True,
+            )
+        return {
+            "success": True,
+            "session_canceled": True,
+            "workers_canceled": bool(_matched),
+            "jobs_were_running": bool(_matched),
+            "message": (
+                f"Cancelled {len(_matched)} job(s) matching {list(rule_classes)}; "
+                f"processing jobs left running; driver session killed."
+            ),
+            "session_name": session_name,
+            "errors": [],
+            "cancelled": _matched,
+        }
+
     def cancel(
         self,
         verbose: bool = True,
@@ -6063,42 +6145,10 @@ class TRITONSWMM_analysis:
         # tmux calls have no ssh and no-op against a compute-node driver (T11). The DU
         # guard's caller runs WHERE the driver runs, guarding that driver's own disk.
         if rule_classes is not None:
-            import json as _json
-
-            _sub = self.analysis_paths.analysis_dir / "_status" / "_submitted"
-            _matched: list[tuple[str, str]] = []
-            for _p in sorted(_sub.glob("*.json")) if _sub.is_dir() else []:
-                _tok = _p.stem
-                if not any(_tok.startswith(pfx) for pfx in rule_classes):
-                    continue
-                try:
-                    _jid = _json.loads(_p.read_text()).get("slurm_jobid")
-                except Exception:
-                    _jid = None
-                if _jid:
-                    _matched.append((_tok, str(_jid)))
-            if _matched:
-                subprocess.run(["scancel", *[j for _, j in _matched]], capture_output=True)
-            subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
-            if verbose:
-                print(
-                    f"[Cancel] Selective cancel: {len(_matched)} job(s) matching "
-                    f"{list(rule_classes)}; driver session killed, other jobs left running.",
-                    flush=True,
-                )
-            return {
-                "success": True,
-                "session_canceled": True,
-                "workers_canceled": bool(_matched),
-                "jobs_were_running": bool(_matched),
-                "message": (
-                    f"Cancelled {len(_matched)} job(s) matching {list(rule_classes)}; "
-                    f"processing jobs left running; driver session killed."
-                ),
-                "session_name": session_name,
-                "errors": [],
-                "cancelled": _matched,
-            }
+            # Step 1b body lives in _selective_cancel (FQ6, 2026-09-12): one methodology, two
+            # arms — the SIGINT arm below cancels everything; this arm cancels the sim class
+            # (pending + running) and leaves post-sim processing alone.
+            return self._selective_cancel(rule_classes=rule_classes, session_name=session_name, verbose=verbose)
 
         # Step 2: Send SIGINT to Snakemake process
         if verbose:
