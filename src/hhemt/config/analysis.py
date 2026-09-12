@@ -939,6 +939,29 @@ class analysis_config(cfgBaseModel):
             }
         ),
     )
+    process_in_sim_rule: bool = Field(
+        False,
+        description=(
+            "Run each simulation's per-scenario output processing INSIDE the simulation "
+            "rule (one Snakemake rule, one SLURM job: the sim runner, then the process "
+            "runner, in one shell) instead of as the separate `process_{model}` rule. "
+            "Default False reproduces today's Snakefile byte-for-byte. True removes the "
+            "processing job from the SLURM queue entirely, so reclaim of raw output can "
+            "never wait behind a backlog of older simulation jobs (the 2026-09-12 "
+            "stochastic-ensemble stall). The combined rule declares BOTH the c_run and "
+            "d_process flags as outputs, requests mem_mb = max(sim, processing) and "
+            "runtime = sim + processing, and is safe under retries because the sim runner "
+            "short-circuits an already-completed simulation (run_simulation."
+            "prepare_simulation_command returns None on model_run_completed), so a "
+            "processing failure re-runs only the processing pass. Applies to "
+            "multi_sim_run_method='batch_job' and '1_job_many_srun_tasks'; REFUSED on a "
+            "sensitivity analysis (the sensitivity-master generator raises "
+            "ConfigurationError) until its member rules carry the same branch."
+        ),
+        json_schema_extra=field_meta(
+            applies_when=[when("multi_sim_run_method", "batch_job", "1_job_many_srun_tasks")],
+        ),
+    )
 
     # CLEANUP / FORCE-RERUN POLICY (cleanup-rerun-delete-redesign Phase 1)
     #

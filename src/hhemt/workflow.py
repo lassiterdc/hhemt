@@ -2651,6 +2651,16 @@ rule process_{model_type}:
     # for exactly this: a deterministic process failure would re-run a ~100-minute
     # simulation up to the SIM's retry count, across a 3,798-event ensemble.
     # DO NOT add a rule with its own `retries:` directive to this group.
+    #
+    # THIS REJECTION IS ABOUT SNAKEMAKE `group:` (GroupJob retry/output semantics) AND
+    # NOTHING ELSE. A SINGLE COMBINED RULE that runs the sim runner and then the process
+    # runner in one shell (analysis_config.process_in_sim_rule=True, 2026-09-12) is a
+    # different mechanism: no member outputs are removed at group start and no attempt
+    # counter propagates, and its safety under `retries:` rests on the SIM RUNNER's
+    # own idempotence -- run_simulation.prepare_simulation_command returns None when
+    # model_run_completed (the per-model log field), so a processing failure re-runs
+    # only the processing pass, never the solver. Executed 2026-09-12 on a completed
+    # synth scenario. Do not read the paragraph above as forbidding that rule.
     priority: 100
     conda: "{conda_env_path}"
     params:
@@ -2973,11 +2983,19 @@ rule consolidate_scenario:
             cpus_per_task=1,
         )
 
+        # Option A (in-rule processing, 2026-09-12): when the toggle is on AND processing is
+        # requested, the sim rule absorbs the process step, so its allocation must cover
+        # both: mem = max(sim, process), runtime = sim + process. OFF => +0 / max(x, 0),
+        # byte-identical to a tree that has never heard of the field.
+        _in_rule = bool(getattr(self.cfg_analysis, "process_in_sim_rule", False)) and process_timeseries
+        _in_rule_extra_runtime_min = self.cfg_analysis.hpc_runtime_min_for_sim_output_processing if _in_rule else 0
+        _in_rule_mem_floor_mb = self.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb if _in_rule else 0
+
         # Simulation: resource-intensive (multi-CPU, GPUs, high memory)
         sim_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_ensemble_partition,
-            runtime_min=hpc_time_min,
-            mem_mb=mem_mb_per_sim,
+            runtime_min=hpc_time_min + _in_rule_extra_runtime_min,
+            mem_mb=max(mem_mb_per_sim, _in_rule_mem_floor_mb),
             nodes=n_nodes,
             tasks=mpi_ranks,
             cpus_per_task=omp_threads,
@@ -3139,6 +3157,7 @@ rule setup:
 rule prepare_scenario:
     input: "_status/a_setup_complete.flag"
     output: "_status/b_prepare_evt-{{event_id}}_complete.flag"
+    priority: 10
     log: "{log_dir_str}/sims/prepare_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
     params:
@@ -3190,8 +3209,8 @@ rule prepare_scenario:
                 swmm_cpus = self.cfg_analysis.n_omp_threads or 1
                 swmm_resources = self._build_resource_block(
                     partition=self._cpu_sim_partition(),
-                    runtime_min=hpc_time_min,
-                    mem_mb=self.cfg_analysis.mem_gb_per_cpu * swmm_cpus * 1000,
+                    runtime_min=hpc_time_min + _in_rule_extra_runtime_min,
+                    mem_mb=max(self.cfg_analysis.mem_gb_per_cpu * swmm_cpus * 1000, _in_rule_mem_floor_mb),
                     nodes=1,
                     tasks=1,
                     cpus_per_task=swmm_cpus,
@@ -3206,11 +3225,51 @@ rule prepare_scenario:
                 model_threads = snakemake_threads
 
             _loc = self._resolved_execution_locus
+            # Option A / D2 (2026-09-12). OFF => every operand collapses to today's literal.
+            _sim_priority = (
+                20 if model_type == "swmm" else 0
+            )  # D2 ladder: consolidate 100 > swmm 20 > prepare 10 > TRITON 0
+            if _in_rule:
+                _which_arg_by_model = {"triton": "TRITON", "tritonswmm": "both", "swmm": "SWMM"}
+                _in_rule_clear_raw_arg = (
+                    f"--override-clear-raw '{json.dumps(override_clear_raw)}' "
+                    if override_clear_raw is not None
+                    else ""
+                )
+                _run_output_line = (
+                    "    output:\n"
+                    f'        c_run="_status/c_run_{model_type}_evt-{{event_id}}_complete.flag",\n'
+                    f'        d_process="_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"'
+                )
+                _run_flag_ref = "{output.c_run}"
+                _run_defer_arg = "--defer-terminal-markers "
+                _run_shell_tail = (
+                    "            2>&1 | tee {log} && \\\n"
+                    f"        {self._container_process_prefix}{self._process_python_executable} "
+                    "-m hhemt.process_timeseries_runner \\\n"
+                    "            --event-iloc {params.event_iloc} \\\n"
+                    f"            {config_args} \\\n"
+                    f"            --model-type {model_type} \\\n"
+                    f"            --which {_which_arg_by_model[model_type]} \\\n"
+                    f"            {_in_rule_clear_raw_arg}\\\n"
+                    f"            --compression-level {compression_level} \\\n"
+                    "            --flag-output {output.d_process} \\\n"
+                    f"            --rule-name run_{model_type} \\\n"
+                    "            --write-terminal-markers \\\n"
+                    "            --event-id {wildcards.event_id} \\\n"
+                    "            2>&1 | tee -a {log}"
+                )
+            else:
+                _run_output_line = f'    output: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"'
+                _run_flag_ref = "{output}"
+                _run_defer_arg = ""
+                _run_shell_tail = "            2>&1 | tee {log}"
             snakefile_content += f'''
 rule run_{model_type}:
     input: "{sim_input}"
-    output: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
+{_run_output_line}
     retries: {self._resolved_simulate_retries()}
+    priority: {_sim_priority}
     log: "{log_dir_str}/sims/{model_type}_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
     threads: {model_threads}
@@ -3224,11 +3283,11 @@ rule run_{model_type}:
             --event-iloc {{params.event_iloc}} \\
             {gpu_compile_config_args} \\
             --model-type {model_type} \\
-            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
-            --flag-output {{output}} \\
+            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}{_run_defer_arg}\\
+            --flag-output {_run_flag_ref} \\
             --rule-name run_{model_type} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {{wildcards.event_id}} \\
-            2>&1 | tee {{log}}
+{_run_shell_tail}
         """
 '''
 
@@ -3263,13 +3322,18 @@ rule run_{model_type}:
                 snakefile_content += self._emit_wait_for_sim_rule_block(
                     rule_token=rule_token,
                     flag_output_path=flag_output_path,
+                    extra_output_paths=(
+                        [f"_status/d_process_{model_type}_evt-{event_id}_complete.flag"] if _in_rule else None
+                    ),
                     run_rule_inputs=run_rule_inputs,
                     wait_walltime_cap_min=wait_walltime_cap_min,
                 )
 
         # Add output processing rules (one per model type) if requested
         if process_timeseries:
-            for model_type in enabled_models:
+            # Option A: with in-rule processing the run rules already produce d_process;
+            # a separate process rule would be a second producer of the same output.
+            for model_type in [] if _in_rule else enabled_models:
                 # Determine --which flag based on model type
                 if model_type == "triton":
                     which_arg = "TRITON"
@@ -3885,7 +3949,10 @@ def _per_sim_event_page_sources(wildcards):
                     "executor": "slurm",
                     "jobs": max_concurrent,
                     "latency-wait": 60,
-                    "max-jobs-per-second": 5,
+                    # 9.15.0: `max-jobs-per-second` is parsed and IGNORED because the
+                    # `--max-jobs-per-timespan` default ("100/1s") is never None; only the
+                    # timespan form reaches JobRateLimiter. Same 5 jobs/s intent, live key.
+                    "max-jobs-per-timespan": "5/1s",
                     "max-status-checks-per-second": 10,
                     # Retain the executor's per-job log tree. The SLURM executor plugin
                     # writes `{logdir}/rule_{rule}/{wildcards}/{jobid}.log` at submit --
@@ -7747,6 +7814,7 @@ exit $snakemake_status
         run_rule_inputs: list[str],
         wait_walltime_cap_min: int,
         analysis_dir_override: str | None = None,
+        extra_output_paths: list[str] | None = None,
     ) -> str:
         """Emit a Snakemake rule body that waits on the original SLURM job's
         completion-marker write, in place of a normal ``rule run_*`` block.
@@ -7810,7 +7878,7 @@ exit $snakemake_status
             f"    input:\n"
             f"        {inputs_block}\n"
             f"    output:\n"
-            f'        "{flag_output_path}"\n'
+            f'        "{flag_output_path}"\n' + "".join(f'        "{p}"\n' for p in (extra_output_paths or [])) +
             # Fail-fast: a wait-rule observing a _failed/ marker means the original
             # sim died; re-polling cannot change that. retries: 0 keeps the wait-rule
             # from inheriting the global restart-times baseline (= hpc_restart_times_other)
@@ -7820,7 +7888,7 @@ exit $snakemake_status
             f"    shell:\n"
             f'        "{python_exe} -m hhemt.wait_for_sentinel_runner "\n'
             f'        "--rule-token {rule_token} "\n'
-            f'        "--flag-output {{output}} "\n'
+            f'        "--flag-output {{output[0]}} "\n'
             f'        "--analysis-dir {analysis_dir} "\n'
             f'        "--max-wait-minutes {wait_walltime_cap_min}"\n\n'
         )
@@ -8538,6 +8606,17 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         )
 
         # Determine the single enabled model type for sensitivity analysis
+        if bool(getattr(self.experiment.cfg_analysis, "process_in_sim_rule", False)):
+            raise ConfigurationError(
+                field="process_in_sim_rule",
+                message=(
+                    "process_in_sim_rule=True is not supported on a sensitivity analysis yet: "
+                    "the sensitivity-master generator still emits separate process_member_* "
+                    "rules, so the toggle would be silently inert. Set it False for this "
+                    "analysis, or land the member-rule branch first."
+                ),
+                config_path=None,
+            )
         # Sensitivity analysis doesn't support multi-model (would explode parameter space)
         enabled_models = []
         if self.system.cfg_system.toggle_triton_model:
@@ -8936,6 +9015,7 @@ onerror:
         "{setup_target_flag}",
         "_status/member-{member_id}_inputs.json"
     output: "{prep_outflag}"
+    priority: 10
     log: "{log_dir_str}/sims/{prep_rule_name}.log"
     conda: "{conda_env_path}"
     resources:
@@ -8989,6 +9069,7 @@ onerror:
         "_status/member-{member_id}_inputs.json"
     output: "{sim_outflag}"
     retries: {self._base_builder._resolved_simulate_retries()}
+    priority: {20 if model_type == "swmm" else 0}
     log: "{log_dir_str}/sims/{sim_rule_name}.log"
     conda: "{conda_env_path}"
     threads: {snakemake_threads}

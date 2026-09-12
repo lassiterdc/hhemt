@@ -326,6 +326,17 @@ def main():
         help="Event id slug for the flag sidecar payload",
     )
     parser.add_argument(
+        "--defer-terminal-markers",
+        action="store_true",
+        default=False,
+        help=(
+            "Option A (in-rule processing): write NO _status/_completed/ marker and do NOT "
+            "unlink _status/_submitted/ at sim end -- the process runner that follows in the "
+            "same shell owns both (process_timeseries_runner --write-terminal-markers). "
+            "_failed/ on a SIM failure and _submitted/ at start are written as before."
+        ),
+    )
+    parser.add_argument(
         "--execution-locus",
         type=str,
         choices=["local", "slurm"],
@@ -774,7 +785,8 @@ def main():
         # is a clean return path — write the completed marker. The explicit-
         # failure path above writes _failed_ before returning so this branch
         # is a no-op there.
-        if _marker_ctx is not None and _marker_ctx.jobid:
+        _defer = bool(getattr(args, "defer_terminal_markers", False))
+        if _marker_ctx is not None and _marker_ctx.jobid and not _defer:
             _completed_marker = _marker_ctx.completed_dir / f"{_marker_ctx.rule_token}.json"
             _failed_marker = _marker_ctx.failed_dir / f"{_marker_ctx.rule_token}.json"
             if not _completed_marker.exists() and not _failed_marker.exists():
@@ -786,7 +798,7 @@ def main():
                 _completed_tmp = _completed_marker.with_suffix(".json.tmp")
                 _completed_tmp.write_text(json.dumps(_payload))
                 os.replace(_completed_tmp, _completed_marker)
-        if _sentinel is not None:
+        if _sentinel is not None and not _defer:
             # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
 

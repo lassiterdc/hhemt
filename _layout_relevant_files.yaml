@@ -1513,3 +1513,16 @@ non_breaking_allowlist:
       under which fetched/rebuilt images live at their identity path). INPUT-config schema only;
       no on-disk analysis-tree change.
     layout_signature: c8c1e49bbd76b2320852e88c96ec434a9dcd527ba9f4f38441f026616841c4fb
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      In-rule processing (Option A, 2026-09-12): adds analysis_config.process_in_sim_rule
+      (bool, default False). INPUT-config schema only; default reproduces the prior Snakefile
+      byte-for-byte; no on-disk analysis-tree change (the c_run/d_process flags keep their
+      paths and writers).
+    layout_signature: 8d3bd0d33b5407a29f0e6c9cfd3b814d75a98db53c4c9e6d56cd3a8144993f54
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      In-rule processing (Option A, 2026-09-12): one docstring word in executor_profile_extras
+      (`max-jobs-per-second` -> `max-jobs-per-timespan`, the live 9.15.0 key). Prose only; no
+      field, default, validator or on-disk change.
+    layout_signature: e1bff8e9ae076f0fc7dfb4c22f8c5e71e964fb794ffb785a3c8855c5906780ef

@@ -150,6 +150,18 @@ def main():
         help="Event id slug for the flag sidecar payload",
     )
     parser.add_argument(
+        "--write-terminal-markers",
+        action="store_true",
+        default=False,
+        help=(
+            "Option A (in-rule processing): this runner owns the v2 terminal markers for the "
+            "combined rule -- on exit it writes _status/_completed/ (rc 0) or _status/_failed/ "
+            "(rc != 0) for the token {--rule-name}_evt-{--event-id} and unlinks "
+            "_status/_submitted/. Inert unless SLURM_JOB_ID is set. Handled by the "
+            "_main_with_terminal_markers wrapper, not by main()."
+        ),
+    )
+    parser.add_argument(
         "--member-id",
         type=str,
         default=None,
@@ -503,5 +515,49 @@ def main():
         tracemalloc.stop()
 
 
+def _main_with_terminal_markers() -> int:
+    """Run main() and, under --write-terminal-markers, own the v2 terminal markers.
+
+    Kept OUTSIDE main() deliberately: main() has nine early ``return 1`` sites and its own
+    ``finally`` (tracemalloc), so the return code is only observable here. Pre-scans argv
+    with parse_known_args so main()'s own parser stays the single owner of every other flag.
+    """
+    import argparse as _argparse
+
+    _pre = _argparse.ArgumentParser(add_help=False)
+    _pre.add_argument("--write-terminal-markers", action="store_true", default=False)
+    _pre.add_argument("--rule-name", type=str, default=None)
+    _pre.add_argument("--event-id", type=str, default=None)
+    _pre.add_argument("--flag-output", type=Path, default=None)
+    _known, _ = _pre.parse_known_args()
+    _jobid = os.environ.get("SLURM_JOB_ID")
+    _own = bool(_known.write_terminal_markers) and bool(_jobid) and _known.rule_name and _known.event_id
+    rc = 1
+    try:
+        rc = main()
+        return rc
+    finally:
+        if _own:
+            from hhemt.terminal_markers import rule_token_for, unlink_submitted_sentinel, write_terminal_marker
+
+            _status_dir = (
+                _known.flag_output.resolve().parent if _known.flag_output is not None else Path.cwd() / "_status"
+            )
+            _token = rule_token_for(_known.rule_name, _known.event_id)
+            write_terminal_marker(
+                _status_dir,
+                _token,
+                status="completed" if rc == 0 else "failed",
+                jobid=_jobid,
+                payload_base={
+                    "run_uuid": os.environ.get("SLURM_JOB_NAME"),
+                    "rule_name": _known.rule_name,
+                    "event_id": _known.event_id,
+                    "owner": "process_timeseries_runner",
+                },
+            )
+            unlink_submitted_sentinel(_status_dir, _token)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main_with_terminal_markers())

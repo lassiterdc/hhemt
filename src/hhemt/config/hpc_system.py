@@ -286,7 +286,7 @@ class hpc_system_config(BaseModel):
             ".snakemake_profile/{mode}/config.yaml. Use ONLY for plugin-level "
             "snakemake-executor-plugin-slurm settings the toolkit does not model "
             "(e.g. slurm-init-seconds-before-status-checks, slurm-requeue, "
-            "slurm-reservation, max-jobs-per-second). A reject-guard FORBIDS "
+            "slurm-reservation, max-jobs-per-timespan). A reject-guard FORBIDS "
             "set-resources / default-resources entries that name toolkit-emitted "
             "resources (tasks, tasks_per_gpu, mpi, gres, slurm_extra, "
             "slurm_partition, runtime, mem_mb, cpus_per_task, nodes). Those are "

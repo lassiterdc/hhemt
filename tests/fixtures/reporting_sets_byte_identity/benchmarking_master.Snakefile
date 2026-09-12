@@ -80,6 +80,7 @@ rule prepare_member_0_evt_event_index_0:
         "_status/a_setup_target_0_complete.flag",
         "_status/member-0_inputs.json"
     output: "_status/b_prepare_member-0_evt-event_index.0_complete.flag"
+    priority: 10
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_0_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
@@ -111,6 +112,7 @@ rule simulation_member_0_evt_event_index_0:
         "_status/member-0_inputs.json"
     output: "_status/c_run_tritonswmm_member-0_evt-event_index.0_complete.flag"
     retries: 2
+    priority: 0
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_0_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 2
@@ -201,6 +203,7 @@ rule prepare_member_1_evt_event_index_0:
         "_status/a_setup_target_0_complete.flag",
         "_status/member-1_inputs.json"
     output: "_status/b_prepare_member-1_evt-event_index.0_complete.flag"
+    priority: 10
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_1_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
@@ -232,6 +235,7 @@ rule simulation_member_1_evt_event_index_0:
         "_status/member-1_inputs.json"
     output: "_status/c_run_tritonswmm_member-1_evt-event_index.0_complete.flag"
     retries: 2
+    priority: 0
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_1_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 2
@@ -321,6 +325,7 @@ rule prepare_member_2_evt_event_index_0:
         "_status/a_setup_target_0_complete.flag",
         "_status/member-2_inputs.json"
     output: "_status/b_prepare_member-2_evt-event_index.0_complete.flag"
+    priority: 10
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_2_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
@@ -352,6 +357,7 @@ rule simulation_member_2_evt_event_index_0:
         "_status/member-2_inputs.json"
     output: "_status/c_run_tritonswmm_member-2_evt-event_index.0_complete.flag"
     retries: 2
+    priority: 0
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_2_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 4
@@ -442,6 +448,7 @@ rule prepare_member_3_evt_event_index_0:
         "_status/a_setup_target_0_complete.flag",
         "_status/member-3_inputs.json"
     output: "_status/b_prepare_member-3_evt-event_index.0_complete.flag"
+    priority: 10
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/prepare_member_3_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
@@ -473,6 +480,7 @@ rule simulation_member_3_evt_event_index_0:
         "_status/member-3_inputs.json"
     output: "_status/c_run_tritonswmm_member-3_evt-event_index.0_complete.flag"
     retries: 2
+    priority: 0
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_member_3_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
