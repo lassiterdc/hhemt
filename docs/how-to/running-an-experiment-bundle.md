@@ -21,10 +21,10 @@ experiments/my_experiment/
     └── analysis_config_uva.yaml
 ```
 
-A minimal `experiment.yaml`:
+The descriptor carries no identity key: the bundle is named by its directory, and the
+analysis identity comes from the analysis config. A minimal `experiment.yaml`:
 
 ```yaml
-experiment_id: my_experiment          # must equal the directory name
 description: One-line description.
 system_config: configs/system_config_uva.yaml    # bundle-relative
 analysis_config: configs/analysis_config_uva.yaml # bundle-relative
@@ -39,12 +39,19 @@ inputs:
 toolkit_pin:
   version: "0.1.0"                      # PyPI version: the durable, installable identifier
 container:
-  def_recipe: containers/uva-cuda.def
+  def_recipe: containers/uva-cuda.def    # bundle-relative, or ${VAR}-rooted for a shared recipe
   sha256_source: ro-crate              # the SIF digest's authoritative home is the RO-Crate
 ```
 
 See the [config-filling](config-filling.md) and [HPC-profile setup](hpc-profile-setup.md)
 guides for the system/analysis and `hpc_system_config` contents.
+
+`def_recipe` declares its own root. A bare relative value such as `containers/uva-cuda.def`
+is resolved against the bundle directory; a `${VAR}`-rooted value such as
+`${HHEMT_TOOLKIT}/containers/uva-cuda.def` names one recipe shared across several
+experiments. An absolute path, a `~`-rooted path, or an unbraced `$VAR` is refused when the
+descriptor loads, because such a value is rooted on one operator's machine and cannot be
+reproduced by anyone else.
 
 ## Run it
 
@@ -59,6 +66,43 @@ hhemt run-experiment --bundle experiments/my_experiment --cluster uva
 `--cluster` selects which `hpc_system_config[<cluster>]` and which per-cluster `destinations`
 apply. The verb loads and validates `experiment.yaml`, resolves the HPC profile, then hands the
 two configs to the toolkit.
+
+## Run modes and the wipe guard
+
+`--mode` selects what happens to an analysis directory that already holds work. The default
+is `resume`: a second invocation, or a SLURM requeue, picks up where the last one left off,
+and completed simulations are never deleted under `resume`.
+
+| `--mode` | Behaviour |
+|----------|-----------|
+| `resume` (default) | Continue from the last checkpoint; completed simulations are kept. |
+| `fresh` | Delete the whole analysis directory first, then rebuild everything. Guarded; see below. |
+| `overwrite` | Accepted; currently behaves as `resume`, continuing from the last checkpoint. |
+
+```bash
+# Start over, deleting the analysis directory (refused if it holds completed work):
+hhemt run-experiment --bundle experiments/my_experiment --cluster uva --mode fresh
+
+# Start over even though the directory holds completed work:
+hhemt run-experiment --bundle experiments/my_experiment --cluster uva --mode fresh --override-wipe-nonempty
+```
+
+The wipe guard refuses `--mode fresh` (exit 2) when the analysis directory still holds
+completed simulations, consolidated output, in-flight submission sentinels, or an orchestrator
+sentinel; the refusal names what it found. Pass `--override-wipe-nonempty` to delete that work
+deliberately. This flag is not `--yes`: `--yes` accepts the descriptor-override table (see
+[The override gate](#the-override-gate)) and authorizes no deletion, and
+`--override-wipe-nonempty` authorizes the deletion and accepts no override. To remove an
+analysis rather than re-run it, use `hhemt delete`, which carries its own confirmation.
+
+## Waiting for completion
+
+For a SLURM-dispatched run, `--wait` / `--no-wait` control whether the verb blocks until the
+workflow finishes. With neither flag given, the verb waits when running inside an sbatch
+allocation (`$SLURM_JOB_ID` is set, so the detached orchestrator would otherwise die with the
+allocation) and returns immediately on a login node. A detached invocation exits `0` as soon
+as the workflow is submitted; the exit code reports the workflow's outcome only when the verb
+waits.
 
 ## `${VAR}` placeholders in configs
 
@@ -86,14 +130,17 @@ hhemt run-experiment --bundle experiments/my_experiment --cluster uva --yes
 
 Without `--yes`, a non-interactive invocation that would override the descriptor **refuses**
 rather than silently preferring the CLI. When the CLI adds nothing the descriptor does not
-already say, no confirmation is needed: that is the common one-config path.
+already say, no confirmation is needed: that is the common one-config path. `--yes` accepts
+only this table. Deleting completed work with `--mode fresh` goes through a separate gate with
+its own flag; see [Run modes and the wipe guard](#run-modes-and-the-wipe-guard).
 
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | success (or `--dry-run` planned cleanly) |
-| 2 | configuration error (bad `experiment.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_path`, declined override gate) |
+| 1 | the run finished without succeeding: Snakemake exited non-zero, `sbatch` refused the submission, or a rule failed permanently; the console output printed just before the exit names the cause |
+| 2 | configuration error (bad `experiment.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_path`, declined override gate, `--mode fresh` refused by the wipe guard) |
 | 5 | workflow / processing / simulation error |
 | 10 | unexpected error |
 
@@ -112,9 +159,9 @@ ExperimentConfig.model_validate(yaml.safe_load(open(sys.argv[1] + '/experiment.y
 print('OK')" experiments/my_experiment
 ```
 
-Working from a repo checkout, the fuller checker additionally verifies that `experiment_id`
-matches the directory name, that the declared `system_config`/`analysis_config` paths exist,
-and that `README.md` + `rerun.sh` are present:
+Working from a repo checkout, the fuller checker additionally verifies that the declared
+`system_config`/`analysis_config` paths exist on disk and that `README.md` + `rerun.sh` are
+present:
 
 ```bash
 uv run --locked python scripts/check_experiment_structure.py experiments/my_experiment
