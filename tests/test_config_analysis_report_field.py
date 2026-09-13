@@ -103,8 +103,18 @@ def test_analysis_config_rejects_unknown_report_subkey(tmp_path, stubbed_paths):
     # hand-enumerated dict is satisfied by any unrelated failure -- measured 2026-09-12,
     # when `hhemt_sha` became required this test stayed green while checking nothing about
     # `extra='forbid'`. Narrowing keeps it discriminating the next time the required-field
-    # set moves. The FULL loc tuple, not loc[-1]: a `bogus_key` at TOP level also yields
-    # `extra_forbidden` with loc[-1] == 'bogus_key', so the short form would pass on an
-    # input where the NESTED propagation this test is about was never exercised.
+    # set moves. FIRST-and-LAST rather than the whole loc tuple, which buys both directions:
+    # it still REJECTS a top-level `bogus_key` (loc ('bogus_key',) -- loc[0] is not 'report'),
+    # which a bare loc[-1] test would have accepted on an input where the NESTED propagation
+    # this test is about was never exercised; and it TOLERATES an interposed model name if
+    # `report` is ever union-ized (loc ('report','report_config','bogus_key')), which an
+    # exact-tuple test would red on without the contract having changed.
+    # WHAT IT GIVES UP, stated here because this comment is what a future reader trusts: it
+    # does NOT distinguish a bogus key nested DEEPER than `report` itself. Measured --
+    # `report: {interactive: {static_backend: ..., bogus_key: True}}` yields loc
+    # ('report','interactive','bogus_key'), which the exact-tuple form REJECTS and this form
+    # ACCEPTS, so `report_config` could stop forbidding while a grandchild still forbids and
+    # this assertion would still pass. Unreachable without editing this test's own literal
+    # payload (nothing parametrizes it), which is why it is disclosed rather than closed.
     forbidden = {e["loc"] for e in excinfo.value.errors() if e["type"] == "extra_forbidden"}
-    assert ("report", "bogus_key") in forbidden
+    assert any(loc[0] == "report" and loc[-1] == "bogus_key" for loc in forbidden)
