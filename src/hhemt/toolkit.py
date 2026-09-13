@@ -25,7 +25,8 @@ Example:
 from pathlib import Path
 from typing import Literal
 
-from .orchestration import WorkflowResult, WorkflowStatus
+from .exceptions import ConfigurationError
+from .orchestration import RunMode, WorkflowResult, WorkflowStatus
 from .system import TRITONSWMM_system
 
 __all__ = ["Toolkit"]
@@ -247,7 +248,7 @@ class Toolkit:
 
     def run(
         self,
-        mode: Literal["fresh", "resume", "overwrite"] = "resume",
+        mode: RunMode | str = RunMode.resume,
         events: list[int] | None = None,
         dry_run: bool = False,
         verbose: bool = True,
@@ -268,10 +269,13 @@ class Toolkit:
 
         Parameters
         ----------
-        mode : {'fresh', 'resume', 'overwrite'}, default 'resume'
-            Execution mode controlling checkpoint behavior. ``fresh`` starts from
-            scratch and overwrites all outputs; ``resume`` continues from the last
-            checkpoint; ``overwrite`` reruns existing scenarios without a full reset.
+        mode : RunMode or {'fresh', 'resume'}, default 'resume'
+            Execution mode controlling checkpoint behavior. ``fresh`` deletes the
+            analysis directory and rebuilds everything (refused while it holds
+            completed work unless ``override_wipe_nonempty=True``); ``resume``
+            continues from the last checkpoint. Any other value raises
+            ``ConfigurationError``. To re-run completed scenarios without a wipe,
+            pass ``override_force_rerun`` instead.
         events : list of int, or None
             Event indices to process. When None, every event in the analysis is
             processed.
@@ -279,6 +283,11 @@ class Toolkit:
             Print the workflow plan without executing it.
         verbose : bool, default True
             Print progress messages during execution.
+        override_force_rerun : {'all', 'none'} or dict, optional
+            Runtime override for ``cfg_analysis.force_rerun`` for this invocation
+            only; ``"all"`` re-runs every completed scenario and everything
+            downstream without deleting the analysis directory. None, the default,
+            reads the config field.
 
         Returns
         -------
@@ -291,7 +300,7 @@ class Toolkit:
         Raises
         ------
         ConfigurationError
-            If the configuration is invalid.
+            If the configuration is invalid, or ``mode`` is not a ``RunMode`` member.
         WorkflowError
             If workflow execution fails.
 
@@ -332,10 +341,20 @@ class Toolkit:
         # Auto-detect execution mode
         execution_mode = self._detect_execution_mode()
 
+        # Refuse an out-of-set mode HERE, the layer that owns the reduction below. The
+        # CLI closes --mode at parse time, but a notebook calls this method with the bare
+        # word, and an unknown value must not silently resume (measured: it did).
+        try:
+            run_mode = RunMode(mode)
+        except ValueError as exc:
+            raise ConfigurationError(
+                field="mode",
+                message=f"must be one of {[m.value for m in RunMode]}; got {mode!r}",
+            ) from exc
+
         # Map the public ``mode`` knob to ``analysis.run()``'s ``from_scratch`` flag.
-        # ``analysis.run()`` accepts neither ``mode`` nor ``phases`` (Gotcha 8):
-        # "fresh" starts from scratch; "resume"/"overwrite" resume from checkpoint.
-        from_scratch = mode == "fresh"
+        # ``analysis.run()`` accepts neither ``mode`` nor ``phases`` (Gotcha 8).
+        from_scratch = run_mode == RunMode.fresh
 
         # Delegate to analysis.run()
         # wait_for_completion=None preserves analysis.run()'s own default

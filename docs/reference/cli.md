@@ -113,13 +113,15 @@ fixture cache rather than a property of these flags: see
 ## Exit codes
 
 The CLI uses structured exit codes, so a script can branch on the failure class
-rather than parsing stderr:
+rather than parsing stderr. This table is the contract for `run` and `run-experiment`,
+whose codes are read from one shared map; some other verbs still exit `1` on a failure
+the table maps to `3`, `4` or `5`:
 
 | Code | Meaning |
 |---|---|
 | `0` | Success |
 | `2` | Argument or configuration validation failure |
-| `3` | Workflow or compilation failure |
+| `3` | Workflow or compilation failure, including a workflow that ran and reported failure |
 | `4` | Simulation failure |
 | `5` | Processing failure |
 | `6` | Bundle schema mismatch |

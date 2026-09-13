@@ -27,7 +27,9 @@ analysis.run(override_force_rerun={"sa_id": ["member_3", "member_7"]})
 
 `override_force_rerun` accepts `"all"`, `"none"`, or a dict keyed by
 `"event_iloc"` / `"sa_id"`. It overrides the config's `force_rerun` field for a
-single invocation without mutating the config.
+single invocation without mutating the config. The same knob is available on the
+command line as `hhemt run-experiment --override-force-rerun` (and on `hhemt run`), taking
+the same values with the dict written as JSON.
 
 ## Add scenarios or events to a running sweep
 

@@ -618,6 +618,14 @@ non_breaking_allowlist:
       TYPE is unchanged and no caller's behaviour changes; adds no on-disk
       analysis-tree layout, no _version.json field and no consolidated-output
       variable. Same class as the case_manifest.py / reprex_config.py entries.
+  - path: src/hhemt/config/loaders.py
+    justification: >-
+      run-experiment mode/exit-code alignment (D115 item 1, Group L): _load_config wraps
+      ONLY its model_validate failure in ConfigurationError(config_path=...) so a
+      schema-invalid config exits 2 with its file name. The exception TYPE of one
+      branch changes and no caller's on-disk behaviour does; adds no analysis-tree
+      layout, no _version.json field and no consolidated-output variable. Same class
+      as the entry above.
   - path: src/hhemt/log.py
     justification: >-
       version-provenance-four-axes — ADDITIVE LogField[str] quartet on

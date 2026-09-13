@@ -3413,7 +3413,7 @@ class TRITONSWMM_analysis:
         Use recommended mode:
 
         >>> status = analysis.get_workflow_status()
-        >>> result = analysis.run(mode=status.recommended_mode)
+        >>> result = analysis.run(from_scratch=status.recommended_mode == "fresh")
 
         Notes
         -----
@@ -3425,7 +3425,7 @@ class TRITONSWMM_analysis:
         --------
         run : High-level workflow execution method
         """
-        from .orchestration import PhaseStatus, WorkflowStatus
+        from .orchestration import PhaseStatus, RunMode, WorkflowStatus
 
         # Check setup phase
         system_log = self._system.log
@@ -3545,31 +3545,31 @@ class TRITONSWMM_analysis:
         # Determine current phase and recommendation
         if not setup_complete:
             current = "setup"
-            rec_mode = "fresh"
+            rec_mode = RunMode.fresh
             rec_text = "Setup incomplete. Use 'fresh' mode to process system inputs."
         elif not all_prepared:
             current = "preparation"
-            rec_mode = "resume"
+            rec_mode = RunMode.resume
             rec_text = f"Use 'resume' to create {len(not_prepared)} remaining scenarios."
         elif not all_run:
             current = "simulation"
-            rec_mode = "resume"
+            rec_mode = RunMode.resume
             rec_text = f"Use 'resume' to run {len(not_run)} pending/failed simulations."
         elif not proc_complete:
             current = "processing"
-            rec_mode = "resume"
+            rec_mode = RunMode.resume
             rec_text = "Use 'resume' to process simulation outputs."
         elif not summaries_exist:
             current = "consolidation"
-            rec_mode = "resume"
+            rec_mode = RunMode.resume
             rec_text = "Use 'resume' to consolidate analysis summaries."
         else:
             current = "complete"
             # 'fresh' is the only actionable mode for a complete analysis (resume has
             # nothing left to do); it is a valid translate_mode() input, so
-            # analysis.run(mode=status.recommended_mode) works. 'n/a' is not a member
-            # of the documented {fresh, resume} run-mode set and is not run()-able.
-            rec_mode = "fresh"
+            # tk.run(mode=status.recommended_mode) works. 'n/a' is not a member of
+            # the RunMode set and is not run()-able.
+            rec_mode = RunMode.fresh
             rec_text = "All phases complete. Use 'fresh' to redo the analysis from scratch."
 
         return WorkflowStatus(

@@ -133,8 +133,11 @@ def test_report_config_rejects_unknown_field(tmp_path: Path):
         tmp_path / "report.yaml",
         "system-map:\n  target_epsg: 4326\n",  # hyphen, not underscore
     )
-    with pytest.raises(ValidationError, match="extra_forbidden"):
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="extra_forbidden") as excinfo:
         yaml_to_model(yaml_path, report_config)
+    assert isinstance(excinfo.value.__cause__, ValidationError)
 
 
 def test_report_config_sensitivity_missing_independent_vars(tmp_path: Path):
@@ -145,7 +148,9 @@ def test_report_config_sensitivity_missing_independent_vars(tmp_path: Path):
         tmp_path / "report.yaml",
         "sensitivity:\n  mode: benchmarking\n",  # missing independent_vars
     )
-    with pytest.raises(ValidationError, match="independent_vars"):
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="independent_vars"):
         yaml_to_model(yaml_path, report_config)
 
 

@@ -158,3 +158,91 @@ def test_augment_clean_run_keeps_success(slurm_ready_builder, monkeypatch):
     result = slurm_ready_builder._augment_result_with_partial_failures({"success": True, "snakemake_logfile": None})
     assert result["partial_failures"] == []
     assert result["success"] is True
+
+
+def test_augment_rewrites_message_on_partial_failure(tmp_path):
+    """The producer rewrites `message` when it flips `success`, so every consumer tells the
+    same truth. Both-states anchor: the message is NOT the input sentence and carries the
+    rule token. RED pre-fix: the input message came back unchanged.
+
+    A `SimpleNamespace` self carries the only two attributes the method reads, so no
+    builder, no norfolk case and no Snakemake is involved.
+    """
+    from types import SimpleNamespace
+
+    from hhemt.workflow import SnakemakeWorkflowBuilder
+
+    fake_self = SimpleNamespace(
+        analysis_paths=SimpleNamespace(analysis_dir=tmp_path),
+        _sweep_failed_rules=lambda analysis_dir, snakemake_stderr="": [
+            {"rule_token": "run_triton_evt-0", "reason": "x"}
+        ],
+    )
+    result = SnakemakeWorkflowBuilder._augment_result_with_partial_failures(
+        fake_self, {"success": True, "message": "Workflow completed successfully", "snakemake_logfile": None}
+    )
+    assert result["success"] is False
+    assert result["message"] != "Workflow completed successfully"
+    assert "run_triton_evt-0" in result["message"]
+
+    # Differently-positioned satisfying input: a clean sweep leaves the producer's sentence alone.
+    clean_self = SimpleNamespace(
+        analysis_paths=SimpleNamespace(analysis_dir=tmp_path),
+        _sweep_failed_rules=lambda analysis_dir, snakemake_stderr="": [],
+    )
+    clean = SnakemakeWorkflowBuilder._augment_result_with_partial_failures(
+        clean_self, {"success": True, "message": "Workflow completed successfully", "snakemake_logfile": None}
+    )
+    assert clean["message"] == "Workflow completed successfully"
+
+
+def test_raise_if_dry_run_failed_helper():
+    """The helper's contract. GREEN the moment the helper exists (RED pre-fix as ImportError),
+    which is why the site-level node below is kept beside it."""
+    from hhemt.exceptions import WorkflowPlanningError
+    from hhemt.workflow import _raise_if_dry_run_failed
+
+    assert _raise_if_dry_run_failed({"success": True}, phase="x") is None
+
+    with pytest.raises(WorkflowPlanningError) as excinfo:
+        _raise_if_dry_run_failed(
+            {"success": False, "message": "reason-token-7f3", "snakemake_logfile": None}, phase="batch_job"
+        )
+    assert excinfo.value.phase == "batch_job"
+    assert "Dry run failed" in str(excinfo.value)
+    assert "reason-token-7f3" in str(excinfo.value)
+
+
+def test_failed_dry_run_raises_workflow_planning_error():
+    """SITE-level differential through the unbound `_validate_single_job_dry_run`, driven by a
+    `SimpleNamespace` self whose `run_snakemake_local` returns a failed plan (no Snakemake is
+    invoked). RED pre-fix: a bare RuntimeError. Both-states anchor: `Dry run failed` in the
+    message. The satisfying arm returns the plan when it succeeded."""
+    from types import SimpleNamespace
+
+    from hhemt.exceptions import WorkflowPlanningError
+    from hhemt.workflow import SnakemakeWorkflowBuilder
+
+    def _analysis(cores: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            cfg_analysis=SimpleNamespace(hpc_cpus_per_node=4, hpc_total_nodes=2, local_cpu_cores_for_workflow=cores)
+        )
+
+    failing_self = SimpleNamespace(
+        run_snakemake_local=lambda **kw: {"success": False, "message": "plan failed", "snakemake_logfile": None}
+    )
+    analysis = _analysis(cores=1)
+    with pytest.raises(WorkflowPlanningError) as excinfo:
+        SnakemakeWorkflowBuilder._validate_single_job_dry_run(
+            failing_self, snakefile_path=None, analysis=analysis, verbose=False
+        )
+    assert "Dry run failed" in str(excinfo.value)
+    assert excinfo.value.phase == "single_job"
+    assert analysis.cfg_analysis.local_cpu_cores_for_workflow == 1, "the finally must restore the cores"
+
+    passing_self = SimpleNamespace(run_snakemake_local=lambda **kw: {"success": True, "message": "ok"})
+    out = SnakemakeWorkflowBuilder._validate_single_job_dry_run(
+        passing_self, snakefile_path=None, analysis=_analysis(cores=1), verbose=False
+    )
+    assert out["success"] is True
+    assert out["mode"] == "single_job"

@@ -77,7 +77,8 @@ and completed simulations are never deleted under `resume`.
 |----------|-----------|
 | `resume` (default) | Continue from the last checkpoint; completed simulations are kept. |
 | `fresh` | Delete the whole analysis directory first, then rebuild everything. Guarded; see below. |
-| `overwrite` | Accepted; currently behaves as `resume`, continuing from the last checkpoint. |
+
+Any other value is refused at parse time (exit 2); `hhemt run-experiment --help` lists the two.
 
 ```bash
 # Start over, deleting the analysis directory (refused if it holds completed work):
@@ -94,6 +95,18 @@ deliberately. This flag is not `--yes`: `--yes` accepts the descriptor-override 
 [The override gate](#the-override-gate)) and authorizes no deletion, and
 `--override-wipe-nonempty` authorizes the deletion and accepts no override. To remove an
 analysis rather than re-run it, use `hhemt delete`, which carries its own confirmation.
+
+To re-run completed scenarios without deleting anything, keep `--mode resume` and pass
+`--override-force-rerun`: `all`, `none`, or a JSON subject dict such as
+`'{"event_iloc":[3,7]}'`. It overrides the analysis config's `force_rerun` field for this
+invocation only and clears the completion markers of the targeted scenarios, so Snakemake
+runs them (and everything downstream) again in place. See
+[Forcing and suppressing re-runs](forcing-reruns.md).
+
+```bash
+# Re-run every completed scenario in place, no wipe:
+hhemt run-experiment --bundle experiments/my_experiment --cluster uva --override-force-rerun all
+```
 
 ## Waiting for completion
 
@@ -136,12 +149,16 @@ its own flag; see [Run modes and the wipe guard](#run-modes-and-the-wipe-guard).
 
 ## Exit codes
 
+These are the same codes, with the same meanings, as the
+[CLI reference exit-code table](../reference/cli.md#exit-codes).
+
 | Code | Meaning |
 |------|---------|
 | 0 | success (or `--dry-run` planned cleanly) |
-| 1 | the run finished without succeeding: Snakemake exited non-zero, `sbatch` refused the submission, or a rule failed permanently; the console output printed just before the exit names the cause |
-| 2 | configuration error (bad `experiment.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_path`, declined override gate, `--mode fresh` refused by the wipe guard) |
-| 5 | workflow / processing / simulation error |
+| 2 | configuration error (bad `experiment.yaml`, a schema-invalid `system.yaml` or `analysis.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_path`, declined override gate, an unknown `--mode` value, `--mode fresh` refused by the wipe guard) |
+| 3 | workflow or compilation failure, including a workflow that ran and reported failure (Snakemake exited non-zero, `sbatch` refused the submission, or a rule failed permanently) and a `--dry-run` whose plan failed; the console output printed just before the exit names the cause |
+| 4 | simulation failure |
+| 5 | processing failure |
 | 10 | unexpected error |
 
 ## Verifying a bundle conforms

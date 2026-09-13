@@ -19,6 +19,7 @@ from pathlib import Path
 
 from hhemt.config.experiment_bundle import ExperimentConfig
 from hhemt.exceptions import ConfigurationError
+from hhemt.orchestration import RunMode
 
 
 @dataclass(frozen=True)
@@ -425,15 +426,23 @@ def run_experiment(
     hpc_system_config_yaml: str | Path | None = None,
     assume_yes: bool = False,
     wait: bool | None = None,
-    mode: str = "resume",
+    mode: RunMode = RunMode.resume,
     override_wipe_nonempty: bool = False,
+    override_force_rerun: str | dict | None = None,
     **cli_overrides: object,
 ):
     """Load -> validate -> gate overrides -> build -> run.
 
-    mode: 'resume' (default) picks up where the last invocation left off; 'fresh' wipes the
-    analysis_dir first; 'overwrite' reruns existing scenarios without a full reset. The default
-    matches ``Toolkit.run``'s own default so the two layers state one value rather than two.
+    mode: a ``RunMode`` member. ``resume`` (default) picks up where the last invocation left
+    off; ``fresh`` wipes the analysis_dir first. The default matches ``Toolkit.run``'s own
+    default so the two layers state one value rather than two. This is a typed pass-through:
+    the CLI refuses an unknown value at parse time and ``Toolkit.run`` refuses one at the
+    reduction site, so no third check lives here.
+
+    override_force_rerun: per-invocation override of the bundle analysis config's
+    ``force_rerun`` (``"all"``, ``"none"``, or a subject dict), threaded untouched into
+    ``Toolkit.run``. None, the default, reads the config field. This is the honest route to
+    re-running completed scenarios without a wipe; it is a knob, not a mode.
 
     The override gate is the R8 contract: if `resolve_overrides` returns a non-empty
     list, print the side-by-side table and require explicit confirmation. A non-TTY
@@ -479,4 +488,5 @@ def run_experiment(
         dry_run=dry_run,
         wait_for_completion=wait,
         override_wipe_nonempty=override_wipe_nonempty,
+        override_force_rerun=override_force_rerun,
     )

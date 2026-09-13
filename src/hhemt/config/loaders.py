@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TypeVar
 
+import pydantic
 import yaml
 
 from hhemt.config.analysis import analysis_config
@@ -10,6 +11,7 @@ from hhemt.config.brand_theme import brand_theme
 from hhemt.config.globus import GlobusTransferSpec
 from hhemt.config.hpc_system import hpc_system_config
 from hhemt.config.system import system_config
+from hhemt.exceptions import ConfigurationError
 
 _M = TypeVar("_M")
 
@@ -64,7 +66,19 @@ def _load_config(cfg_yaml: Path, model_cls: type[_M]) -> _M:
             "Under high parallel I/O this can indicate a concurrent-write race; "
             "see sensitivity_analysis.py::_create_members."
         )
-    return model_cls.model_validate(raw)
+    # A schema violation is born HERE with the file it came from. pydantic's own error
+    # names the model and the field but never the path, and the CLI maps ConfigurationError
+    # (exit 2, `Configuration Error`) while a bare ValidationError reached the catch-all.
+    # ONLY the model_validate call is wrapped: the FileNotFoundError and parsed-to-None
+    # branches above keep their classes, which existing tests pin.
+    try:
+        return model_cls.model_validate(raw)
+    except pydantic.ValidationError as exc:
+        raise ConfigurationError(
+            field=cfg_yaml.name,
+            message=f"schema violation: {exc}",
+            config_path=cfg_yaml,
+        ) from exc
 
 
 def yaml_to_model(cfg_yaml: Path, model_cls: type[_M]) -> _M:

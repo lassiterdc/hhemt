@@ -298,3 +298,52 @@ def test_run_experiment_wait_autodetect(tmp_path, monkeypatch, wait_arg, dry_run
         wait=wait_arg,
     )
     assert captured["wait_for_completion"] is expected_wait
+
+
+def test_run_experiment_threads_override_force_rerun_to_tk_run(tmp_path, monkeypatch):
+    """RED pre-fix: `run_experiment` had no `override_force_rerun` keyword, and `**cli_overrides`
+    swallowed it silently, so nothing reached `tk.run` (KeyError at the capture, not TypeError).
+    The satisfying arm is the omitted keyword arriving as None (read the config field)."""
+    bundle_dir = _write_bundle_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
+    captured: dict = {}
+
+    class _FakeTk:
+        def run(self, **kwargs):
+            captured.update(kwargs)
+            return object()
+
+    monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: _FakeTk())
+    eb.run_experiment(
+        bundle_dir,
+        "uva",
+        hpc_system_config_yaml="/other/path.yaml",
+        assume_yes=True,
+        override_force_rerun={"event_iloc": [3]},
+    )
+    assert captured["override_force_rerun"] == {"event_iloc": [3]}
+
+    captured.clear()
+    eb.run_experiment(bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True)
+    assert captured["override_force_rerun"] is None
+
+
+def test_run_experiment_forwards_mode_to_tk_run(tmp_path, monkeypatch):
+    """Regression pin, green in both states: the mode value arrives at tk.run untouched
+    (a StrEnum member compares equal to the bare word), and the default is resume."""
+    from hhemt.orchestration import RunMode
+
+    bundle_dir = _write_bundle_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
+    captured: dict = {}
+
+    class _FakeTk:
+        def run(self, **kwargs):
+            captured.update(kwargs)
+            return object()
+
+    monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: _FakeTk())
+    eb.run_experiment(bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True, mode=RunMode.fresh)
+    assert captured["mode"] == "fresh"
+
+    captured.clear()
+    eb.run_experiment(bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True)
+    assert captured["mode"] == "resume"

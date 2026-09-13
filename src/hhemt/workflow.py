@@ -36,7 +36,7 @@ from hhemt.config.hpc_system import (
     system_directory_bind,
 )
 from hhemt.constants import consolidate_experiment_flag
-from hhemt.exceptions import ConfigurationError, WorkflowError
+from hhemt.exceptions import ConfigurationError, WorkflowError, WorkflowPlanningError
 from hhemt.orchestration import resolve_execution_locus
 from hhemt.report_plot_ids import (
     _OUTPUT_EXT_BY_RENDERER,
@@ -842,6 +842,30 @@ def _resolve_snakefile_path(analysis_dir: Path, *, dry_run: bool) -> Path:
     return production
 
 
+def _raise_if_dry_run_failed(dry_run_result: dict, *, phase: str) -> None:
+    """Raise ``WorkflowPlanningError`` when a pre-submit dry run reported failure.
+
+    ONE site for the check every submit arm performs before it submits or returns its
+    ``dry_run_result``. A failed plan is a planning failure with a documented class and
+    exit code (``EXIT_CODE_MAP[WorkflowPlanningError]``, 3), not a bare ``RuntimeError``
+    that the CLI reports as ``Unexpected Error`` (10). ``phase`` names the calling arm
+    (``single_job``, ``batch_job``, ``local``, ``slurm``, or their ``sensitivity_``
+    forms) and is exposed as ``exc.phase``; the composed message keeps the historical
+    ``Dry run failed; workflow submission aborted.`` text as its reason.
+    """
+    if dry_run_result.get("success"):
+        return
+    raise WorkflowPlanningError(
+        phase=phase,
+        reason=(
+            "Dry run failed; workflow submission aborted.\n"
+            f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
+            f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
+            "  (the log may be node-local and absent if this ran in a batch job)"
+        ),
+    )
+
+
 def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int:
     """Upper bound on how long a sim job could plausibly run: its own SLURM
     walltime + slack (queue/startup/accounting lag). Single source of truth for
@@ -1243,10 +1267,17 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         result["partial_failures"] = partial_failures
         if partial_failures:
             result["success"] = False
+            tokens = ", ".join(r.get("rule_token", "?") for r in partial_failures)
+            # The producer rewrites the sentence when it flips the verdict, so every
+            # consumer (the CLI reporter, WorkflowResult.__str__, a notebook printing
+            # result.message) tells the same truth instead of "completed successfully".
+            result["message"] = (
+                f"{len(partial_failures)} rule(s) permanently failed under --keep-going "
+                f"(the rest of the DAG completed): {tokens}"
+            )
             print(
                 f"[Workflow] {len(partial_failures)} rule(s) permanently failed "
-                f"(--keep-going let the rest complete): "
-                + ", ".join(r.get("rule_token", "?") for r in partial_failures),
+                f"(--keep-going let the rest complete): {tokens}",
                 flush=True,
             )
         return result
@@ -4461,13 +4492,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
         finally:
             analysis.cfg_analysis.local_cpu_cores_for_workflow = original_local_cores
 
-        if not dry_run_result.get("success"):
-            raise RuntimeError(
-                "Dry run failed; workflow submission aborted.\n"
-                f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
-                f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
-                "  (the log may be node-local and absent if this ran in a batch job)"
-            )
+        _raise_if_dry_run_failed(dry_run_result, phase="single_job")
 
         # Override mode to indicate intended execution context
         dry_run_result["mode"] = "single_job"
@@ -6524,13 +6549,7 @@ exit $snakemake_status
                 verbose=verbose,
             )
 
-            if not dry_run_result.get("success"):
-                raise RuntimeError(
-                    "Dry run failed; workflow submission aborted.\n"
-                    f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
-                    f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
-                    "  (the log may be node-local and absent if this ran in a batch job)"
-                )
+            _raise_if_dry_run_failed(dry_run_result, phase="batch_job")
 
             if dry_run:
                 self.analysis._refresh_log()
@@ -6620,13 +6639,7 @@ exit $snakemake_status
                 dry_run=True,
             )
 
-        if not dry_run_result.get("success"):
-            raise RuntimeError(
-                "Dry run failed; workflow submission aborted.\n"
-                f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
-                f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
-                "  (the log may be node-local and absent if this ran in a batch job)"
-            )
+        _raise_if_dry_run_failed(dry_run_result, phase=mode)
 
         if dry_run:
             self.analysis._refresh_log()
@@ -10349,13 +10362,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 verbose=verbose,
             )
 
-            if not dry_run_result.get("success"):
-                raise RuntimeError(
-                    "Dry run failed; workflow submission aborted.\n"
-                    f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
-                    f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
-                    "  (the log may be node-local and absent if this ran in a batch job)"
-                )
+            _raise_if_dry_run_failed(dry_run_result, phase="sensitivity_batch_job")
 
             if dry_run:
                 self.sensitivity_analysis._update_experiment_log()
@@ -10460,13 +10467,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 dry_run=True,
             )
 
-        if not dry_run_result.get("success"):
-            raise RuntimeError(
-                "Dry run failed; workflow submission aborted.\n"
-                f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
-                f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
-                "  (the log may be node-local and absent if this ran in a batch job)"
-            )
+        _raise_if_dry_run_failed(dry_run_result, phase=f"sensitivity_{mode}")
 
         if dry_run:
             self.sensitivity_analysis._update_experiment_log()

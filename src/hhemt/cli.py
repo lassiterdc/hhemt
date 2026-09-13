@@ -13,13 +13,12 @@ from rich.table import Table
 
 from .exceptions import (
     CLIValidationError,
-    CompilationError,
     ConfigurationError,
     ProcessingError,
     SimulationError,
     WorkflowError,
-    WorkflowPlanningError,
 )
+from .orchestration import RunMode  # typer reads the --mode enum annotation at import time
 from .recompute import RecomputeScope  # typer reads the --scope enum annotation at import time
 from .suite._cli import test_app as _test_app
 
@@ -317,6 +316,10 @@ def run_command(
             --partition debug --walltime 00:20:00
 
     """
+    from rich.markup import escape
+
+    from .cli_utils import EXIT_CODE_MAP, label_for, map_exception_to_exit_code, report_workflow_result
+
     try:
         # ═══════════════════════════════════════════════════════════════
         # Stage 1: Required Argument Check
@@ -440,57 +443,29 @@ def run_command(
             override_live_driver=override_live_driver,
         )
 
-        # Check workflow result
-        if not result.success:
-            console_err.print(f"[bold red]Workflow Error:[/bold red] {result.message}")
-            raise typer.Exit(3)
-
-        if dry_run:
-            console.print("\n[bold green]✓ Dry-run validation complete![/bold green]")
-            console.print("[dim]No simulations were executed.[/dim]")
-        else:
-            console.print("[bold green]✓ Workflow complete![/bold green]")
-            # Keyed on the ARTIFACT, not on a locus string: a job id exists iff a
-            # SLURM job was submitted, so `result.job_id` is the exact condition and
-            # it stays correct now that execution_mode is "auto" at this point.
-            if result.job_id:
-                console.print(f"[dim]SLURM Job ID: {result.job_id}[/dim]")
-            if result.execution_time:
-                console.print(f"[dim]Execution time: {result.execution_time:.1f}s[/dim]")
-
-        raise typer.Exit(0)
+        # Report the result through the ONE reporter both workflow verbs share: it tests
+        # `success` before printing anything green (dry-run included) and returns the
+        # documented exit code (0, or 3 for a workflow that ran and reported failure).
+        raise typer.Exit(
+            report_workflow_result(result, verb="run", dry_run=dry_run, console=console, console_err=console_err)
+        )
 
     except typer.Exit:
         # Re-raise Typer exits (clean exits with specific codes)
         raise
 
-    except CLIValidationError as e:
-        console_err.print(f"[bold red]Argument Error:[/bold red] {e}")
-        raise typer.Exit(2) from e
-
-    except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2) from e
-
-    except (CompilationError, WorkflowError, WorkflowPlanningError) as e:
-        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
-        raise typer.Exit(3) from e
-
-    except SimulationError as e:
-        console_err.print(f"[bold red]Simulation Error:[/bold red] {e}")
-        raise typer.Exit(4) from e
-
-    except ProcessingError as e:
-        console_err.print(f"[bold red]Processing Error:[/bold red] {e}")
-        raise typer.Exit(5) from e
-
-    except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        if verbose:
+    except Exception as exc:
+        # EXIT_CODE_MAP is the single source of the published exit-code table; the label
+        # comes from the same class-keyed vocabulary (`Argument Error`, `Configuration
+        # Error`, `Workflow Error`, `Simulation Error`, `Processing Error`, else
+        # `Unexpected Error`).
+        code = map_exception_to_exit_code(exc)
+        console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
+        if verbose and code == EXIT_CODE_MAP[Exception]:
             import traceback
 
             console_err.print(traceback.format_exc())
-        raise typer.Exit(10) from e
+        raise typer.Exit(code) from exc
 
 
 @app.command(name="cleanup-orphans")
@@ -1242,14 +1217,27 @@ def run_experiment_command(
         help="Override the bundle's declared hpc_system_config for this cluster.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Plan only; write nothing."),
-    mode: str = typer.Option(
-        "resume",
+    mode: RunMode = typer.Option(
+        RunMode.resume,
         "--mode",
         help=(
-            "resume (default) picks up where the last invocation left off; "
-            "fresh WIPES the analysis directory first; overwrite reruns existing "
-            "scenarios without a full reset."
+            "resume (default) continues from the last checkpoint and never deletes "
+            "completed simulations; fresh DELETES the analysis directory first and "
+            "rebuilds everything (refused while it holds completed work unless "
+            "--override-wipe-nonempty is given). To re-run completed scenarios without "
+            "a wipe, use --override-force-rerun."
         ),
+    ),
+    override_force_rerun: str = typer.Option(
+        None,
+        "--override-force-rerun",
+        help=(
+            "Runtime override for the bundle analysis config's force_rerun, for this "
+            'invocation only. Accepts "all", "none", or a JSON dict: '
+            '\'{"sa_id":["member_3"]}\' (sensitivity) or \'{"event_iloc":[3,7]}\' '
+            "(non-sensitivity). When omitted, the config field is read."
+        ),
+        callback=lambda value: _parse_override_force_rerun(value),
     ),
     override_wipe_nonempty: bool = typer.Option(
         False,
@@ -1281,6 +1269,10 @@ def run_experiment_command(
     The bundle's experiment.yaml is the single config. Any CLI argument that overrides
     a descriptor-declared value prints both values and requires confirmation.
     """
+    from rich.markup import escape
+
+    from .cli_utils import label_for, map_exception_to_exit_code, report_workflow_result
+
     try:
         from .experiment_bundle import run_experiment
 
@@ -1293,29 +1285,25 @@ def run_experiment_command(
             wait=wait,
             mode=mode,
             override_wipe_nonempty=override_wipe_nonempty,
+            override_force_rerun=override_force_rerun,
         )
-        message = getattr(result, "message", "") or ""
-        if dry_run:
-            console.print(f"[green]--dry-run OK[/green] — plan only, nothing written. {message}")
-        else:
-            success = getattr(result, "success", None)
-            console.print(f"[green]run-experiment complete[/green] (success={success}). {message}")
-        # A refused submit must not read as success to the shell. tk.run RETURNS a WorkflowResult
-        # and does not raise, so exiting 0 unconditionally writes green over zero work -- measured
-        # on Irene job 18708464, and the reason the stochastic submit script hand-rolls this gate.
-        # dry_run has no success field to test, so it keeps the unconditional 0.
-        raise typer.Exit(0 if (dry_run or getattr(result, "success", None)) else 1)
+        # A refused submit must not read as success to the shell: tk.run RETURNS a
+        # WorkflowResult and does not raise (measured on Irene job 18708464). The shared
+        # reporter tests `success` before printing anything green, on the --dry-run arm too,
+        # and returns the documented code (0, or 3 for a workflow that ran and reported failure).
+        raise typer.Exit(
+            report_workflow_result(
+                result, verb="run-experiment", dry_run=dry_run, console=console, console_err=console_err
+            )
+        )
     except typer.Exit:
         raise
-    except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2) from e
-    except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Error:[/bold red] {e}")
-        raise typer.Exit(5) from e
-    except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        raise typer.Exit(10) from e
+    except Exception as exc:
+        # One mapping for both workflow verbs: EXIT_CODE_MAP decides the code and the
+        # class-keyed label vocabulary decides the stderr prefix.
+        code = map_exception_to_exit_code(exc)
+        console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
+        raise typer.Exit(code) from exc
 
 
 @app.command(name="static-plots")

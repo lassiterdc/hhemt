@@ -13,12 +13,37 @@ Key components:
 """
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from hhemt.exceptions import ConfigurationError
 
 _SLURM_RUN_METHODS: tuple[str, ...] = ("1_job_many_srun_tasks", "batch_job")
+
+
+class RunMode(StrEnum):
+    """The closed set of user-facing run modes.
+
+    ONE declaration read by every layer that accepts a ``mode``: the ``hhemt run-experiment``
+    ``--mode`` option (Typer renders the members as the choice set and refuses anything else
+    at parse time), ``experiment_bundle.run_experiment``, ``Toolkit.run`` (whose
+    ``RunMode(mode)`` call is the runtime guard for a notebook caller passing the bare word),
+    ``WorkflowStatus.recommended_mode`` and ``translate_mode``. Members are ``str``, so
+    ``mode == "fresh"``, dict lookup by the bare string, f-strings and JSON all keep working.
+
+    ``fresh`` deletes the analysis directory and rebuilds everything (guarded by
+    ``assert_wipe_is_deliberate``); ``resume`` continues from the last checkpoint. There is
+    no third member: re-running completed scenarios without a wipe lives on the
+    ``force_rerun`` axis (``override_force_rerun``), never on a mode value.
+
+    Declared at the top of the module rather than beside ``translate_mode`` because
+    ``WorkflowStatus`` is a dataclass whose ``recommended_mode`` default is a member, and a
+    dataclass default must be bound before the class body runs.
+    """
+
+    fresh = "fresh"
+    resume = "resume"
 
 
 def resolve_execution_locus(
@@ -154,9 +179,9 @@ class WorkflowStatus:
         Number of simulations not yet attempted
     current_phase : str
         Which phase is currently incomplete
-    recommended_mode : str
-        Recommended execution mode: "fresh" or "resume" (the modes translate_mode
-        accepts). A complete analysis recommends "fresh" (redo from scratch).
+    recommended_mode : RunMode
+        Recommended execution mode, a ``RunMode`` member (``fresh`` or ``resume``, the
+        modes translate_mode accepts). A complete analysis recommends ``fresh``.
     recommendation : str
         Human-readable explanation of recommendation
 
@@ -183,7 +208,7 @@ class WorkflowStatus:
     simulations_pending: int = 0
 
     current_phase: str = ""
-    recommended_mode: str = "resume"
+    recommended_mode: RunMode = RunMode.resume
     recommendation: str = ""
 
     def __str__(self) -> str:
@@ -276,7 +301,7 @@ class WorkflowResult:
 
     Examples
     --------
-    >>> result = analysis.run(mode="fresh")
+    >>> result = analysis.run(from_scratch=True)
     >>> if result.success:
     ...     print(f"Processed {len(result.events_processed)} events")
     >>> if result:  # Truthiness check
@@ -353,13 +378,14 @@ class RunOverrides:
     live_driver: str | None = None
 
 
-def translate_mode(mode: Literal["fresh", "resume"]) -> dict:
+def translate_mode(mode: RunMode | Literal["fresh", "resume"]) -> dict:
     """Translate user-friendly mode to workflow parameters.
 
     Parameters
     ----------
-    mode : Literal["fresh", "resume"]
-        User-specified execution mode
+    mode : RunMode or Literal["fresh", "resume"]
+        User-specified execution mode. A bare string is coerced through ``RunMode``,
+        so a value outside the set raises ``ValueError`` here rather than ``KeyError``.
 
     Returns
     -------
@@ -394,7 +420,7 @@ def translate_mode(mode: Literal["fresh", "resume"]) -> dict:
             "pickup_where_leftoff": True,
         },
     }
-    return MODE_TRANSLATION[mode].copy()
+    return MODE_TRANSLATION[RunMode(mode)].copy()
 
 
 def translate_phases(
