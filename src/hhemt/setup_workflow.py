@@ -4,7 +4,12 @@ Standalone script for setting up the TRITON-SWMM workflow.
 
 This script handles Phase 1 of the consolidated SLURM workflow:
 1. Process system-level inputs (DEM, Mannings files)
-2. Compile enabled model types (TRITON-SWMM, TRITON-only, SWMM)
+2. In native mode, assert that every enabled model type (TRITON-SWMM, TRITON-only,
+   SWMM) already has a successful build. Container mode skips the check, because the
+   SIF carries the binary.
+
+Compiling is opt-in and no emitted setup rule requests it: pass one or more of the
+--compile-* flags below to build from this script by hand.
 
 This script is designed to run as a single task in a heterogeneous SLURM job,
 before the array of simulation tasks begins.

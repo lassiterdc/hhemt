@@ -53,8 +53,10 @@ class UniqueSystemTarget:
     # Phase 6 (DQ7a): the ensemble partition this build target compiles for.
     # All member_ids in a target share (hw, backend) by dedup-key construction, so any
     # member's partition yields the correct GPU build; the first member's is stored.
-    # Threaded to the setup rule's --target-partition so the GPU compile resolves
-    # the right PartitionSpec hardware per build target (not the master partition).
+    # Threaded to the setup rule's --target-partition so that rule's native-mode build
+    # assertion reads the GPU build for the right PartitionSpec hardware per build
+    # target (not the master partition). It is also what a by-hand compile of this
+    # target must pass to build for that hardware.
     target_partition: str | None = None
 
 

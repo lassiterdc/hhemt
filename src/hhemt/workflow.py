@@ -1878,8 +1878,9 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             inject into ``TRITONSWMM_system``. Emitted as ``--target-partition`` ONLY
             when provided — the shared/non-GPU-compile rule emissions pass None and
             stay byte-identical. The GPU-compile target is the ENSEMBLE (sim)
-            partition for BOTH the setup rule (which compiles the binary that runs on
-            the sim partition) and the sim rule (which runs it) — NOT the processing
+            partition for BOTH the setup rule (whose native-mode build assertion reads
+            the GPU build for that partition) and the sim rule (which runs it), NOT the
+            processing
             partition (which is CPU post-processing and carries no GPU hardware).
 
         Returns
@@ -2869,7 +2870,7 @@ rule consolidate_scenario:
         Generate Snakefile content with separate rules for prep, simulation, and processing.
 
         This creates a five-phase workflow:
-        1. Setup: System inputs processing and compilation
+        1. Setup: System inputs processing, and (native mode) the build assertion
         2. Scenario preparation: SWMM model generation (lightweight, 1 CPU)
         3. Simulation execution: TRITON-SWMM runs (resource-intensive, GPUs/CPUs)
         4. Output processing: Timeseries extraction and compression (I/O bound, 1-2 CPUs)
@@ -2882,9 +2883,16 @@ rule consolidate_scenario:
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM in Phase 1
+            If True, the Phase 1 setup rule's shell runs ``hhemt.setup_workflow``,
+            which in native mode asserts that every enabled model already has a
+            successful build. In container mode it performs no such check, because
+            the SIF carries the binary. If False, and ``process_system_level_inputs``
+            is also False, that shell only touches its completion flag. Neither
+            branch compiles: no ``--compile-*`` flag is emitted. Named for the
+            behaviour it used to have.
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            If True, pass ``--recompile-if-already-done`` to the setup rule.
+            Inert while that rule performs no compile.
         prepare_scenarios : bool
             If True, each simulation will prepare its scenario before running
         overwrite_scenario_if_already_set_up : bool
@@ -2949,12 +2957,12 @@ rule consolidate_scenario:
         # Get absolute path to conda environment file using helper
         conda_env_path = self._get_conda_env_path()
         config_args = self._get_config_args()
-        # Phase-4 (4c): the SETUP rule (compiles the GPU binary) and the SIM rule
-        # (runs it) resolve GPU hardware/backend from the ENSEMBLE (sim) partition's
-        # PartitionSpec — the compile/run target — via --target-partition. NB: the
-        # ensemble partition (NOT the processing partition) is the GPU-compile source
-        # for the setup rule too, because the binary it builds runs on the sim
-        # partition. Other rules keep the shared config_args (no --target-partition).
+        # Phase-4 (4c): the SETUP rule (which in native mode asserts the GPU build)
+        # and the SIM rule (which runs it) resolve GPU hardware/backend from the
+        # ENSEMBLE (sim) partition's PartitionSpec via --target-partition. NB: the
+        # ensemble partition (NOT the processing partition) is the source for the
+        # setup rule too, because the build it checks for is the one the sims run.
+        # Other rules keep the shared config_args (no --target-partition).
         gpu_compile_config_args = self._get_config_args(target_partition=self.cfg_analysis.hpc_ensemble_partition)
         skip_setup = not (process_system_level_inputs or compile_TRITON_SWMM)
 
@@ -6352,9 +6360,16 @@ exit $snakemake_status
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM in Phase 1
+            If True, the Phase 1 setup rule's shell runs ``hhemt.setup_workflow``,
+            which in native mode asserts that every enabled model already has a
+            successful build. In container mode it performs no such check, because
+            the SIF carries the binary. If False, and ``process_system_level_inputs``
+            is also False, that shell only touches its completion flag. Neither
+            branch compiles: no ``--compile-*`` flag is emitted. Named for the
+            behaviour it used to have.
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            If True, pass ``--recompile-if-already-done`` to the setup rule.
+            Inert while that rule performs no compile.
         prepare_scenarios : bool
             If True, each simulation will prepare its scenario before running
         overwrite_scenario_if_already_set_up : bool
@@ -8338,7 +8353,8 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # Phase 3: unique compile targets (deduplicated by compile-relevant tuple
         # in Phase 1). One Snakemake `rule setup_target_{N}` is emitted per entry
         # so a sensitivity study spanning different gpu_hardware / DEM resolution
-        # values compiles once per target rather than once per member.
+        # values gets one setup rule per DISTINCT target rather than one per member.
+        # Those rules assert an existing build (native mode); they do not compile.
         self.unique_system_targets = sensitivity_analysis.unique_system_targets
 
         # Compose base workflow builder for common patterns
@@ -8468,9 +8484,14 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM in master setup rule
+            Inert on this path. The per-target setup rules are emitted whatever
+            this value is, and in native mode they assert that every enabled model
+            already has a successful build rather than compiling one. In container
+            mode they perform no such check, because the SIF carries the binary.
+            Named for the behaviour it used to have.
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            If True, pass ``--recompile-if-already-done`` to those rules.
+            Inert while they perform no compile.
         prepare_scenarios : bool
             If True, prepare scenarios before running
         overwrite_scenario_if_already_set_up : bool
@@ -8764,7 +8785,9 @@ onerror:
 
         # Phase 3: emit one setup rule per unique compile target. For a sensitivity
         # study that varies gpu_hardware or target_dem_resolution across members,
-        # this materializes the per-target compile DAG without redundant compilation.
+        # this materializes one setup rule per DISTINCT build target rather than one
+        # per member. Those rules assert an existing build (native mode) and never
+        # compile: no --compile-* flag is emitted below.
         # Backward-compat: a study with no `system_config_yaml` column (or all rows
         # collapsing to one target) yields exactly one rule (`setup_target_0`).
         for target in self.unique_system_targets:
@@ -10145,9 +10168,14 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM
+            Inert on this path. The per-target setup rules are emitted whatever
+            this value is, and in native mode they assert that every enabled model
+            already has a successful build rather than compiling one. In container
+            mode they perform no such check, because the SIF carries the binary.
+            Named for the behaviour it used to have.
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            If True, pass ``--recompile-if-already-done`` to those rules.
+            Inert while they perform no compile.
         prepare_scenarios : bool
             If True, prepare scenarios before running
         overwrite_scenario_if_already_set_up : bool

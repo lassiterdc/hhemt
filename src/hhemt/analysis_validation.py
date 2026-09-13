@@ -622,8 +622,9 @@ def _read_triton_provenance(analysis: TRITONSWMM_analysis) -> str | None:
 
 
 #: The stage denominator, and the ONLY place it is defined. `setup` leads because it is
-#: the rung that compiles TRITON and standalone SWMM, so it is where the non-hhemt version
-#: axes are captured; omitting it made the coverage ratio unable to report on the very
+#: the rung that resolves the solver build (native mode asserts an existing one; container
+#: mode reads the SIF's labels), so it is where the non-hhemt version axes belong;
+#: omitting it made the coverage ratio unable to report on the very
 #: stage the version-provenance contract is mostly about. Any caller stating a COUNT must
 #: derive it from len() of this tuple -- a literal count in prose goes stale silently, and
 #: did (the docstring below said "six" while this tuple held seven).
