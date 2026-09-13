@@ -49,6 +49,7 @@ def _minimum_valid_cfg_analysis_dict(stub_root: Path) -> dict:
         "open_boundaries": 1,
         "analysis_dir": str(stub_root),
         "is_experiment_member": False,
+        "hhemt_sha": "0" * 40,  # schema-only tests; never compared to a running identity
     }
 
 
@@ -96,5 +97,14 @@ def test_analysis_config_rejects_unknown_report_subkey(tmp_path, stubbed_paths):
     }
     cfg_path = tmp_path / "cfg_analysis.yaml"
     cfg_path.write_text(yaml.safe_dump(base))
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as excinfo:
         yaml_to_model(cfg_path, analysis_config)
+    # Discriminate, rather than accept ANY ValidationError: a bare `raises` over this
+    # hand-enumerated dict is satisfied by any unrelated failure -- measured 2026-09-12,
+    # when `hhemt_sha` became required this test stayed green while checking nothing about
+    # `extra='forbid'`. Narrowing keeps it discriminating the next time the required-field
+    # set moves. The FULL loc tuple, not loc[-1]: a `bogus_key` at TOP level also yields
+    # `extra_forbidden` with loc[-1] == 'bogus_key', so the short form would pass on an
+    # input where the NESTED propagation this test is about was never exercised.
+    forbidden = {e["loc"] for e in excinfo.value.errors() if e["type"] == "extra_forbidden"}
+    assert ("report", "bogus_key") in forbidden
