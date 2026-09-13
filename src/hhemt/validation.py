@@ -1803,45 +1803,142 @@ def _validate_per_member_row_caps(
                 )
 
 
-def _running_toolkit_sha() -> str | None:
-    """The commit the RUNNING toolkit is at, or None when that is not knowable.
+_LABELS_PATH = Path("/.singularity.d/labels.json")
+"""In-image discriminator: Apptainer bakes this file into the rootfs at build (metadata.go:263),
+so it exists under every ``apptainer exec`` form and never on a host. A PRIVATE module attribute
+so tests can monkeypatch the seam; deliberately NOT an environment variable (an env var is a
+runtime override surface, i.e. a fallback -- [Q331])."""
 
-    Delegates to the established ``bundle._emit._get_toolkit_git_sha`` rather than
-    re-implementing the git read -- a second copy is the drift surface
-    ``container_labels.py`` was extracted to remove. Its ``strict=False`` arm returns
-    the sentinel ``"unknown"``; this maps that to ``None`` so the caller can tell
-    NOT-COMPARED apart from COMPARED-AND-EQUAL, which a sentinel string cannot.
+_UNSUBSTITUTED_STAMP = "$Format:%H$"
+"""What ``HHEMT_SHA`` reads in a checkout (git substitutes it only in ``git archive`` output,
+per ``.gitattributes`` ``export-subst``)."""
 
-    A wheel install has no sha and is the intended fallback, not a failure -- so the
-    caller warns rather than erroring. NEVER raises: a preflight helper that can abort
-    a launch over its own unavailability is worse than one that reports it.
+
+@dataclass(frozen=True)
+class RunningIdentity:
+    """Which hhemt commit this process is running, and in what kind of tree.
+
+    ``shape`` is one of ``"image"`` (inside a SIF: ``/.singularity.d/labels.json`` exists),
+    ``"checkout"`` (``{root}/.git`` exists) or ``"archive"`` (a host-side ``git archive``).
+    ``dirty`` is meaningful for a checkout only (an archive or image is an exact commit)."""
+
+    sha: str
+    shape: str
+    dirty: bool
+
+
+def _toolkit_root() -> Path:
+    """The toolkit ROOT, from the installed package's own location -- a filesystem fact.
+
+    NEVER ``git rev-parse --show-toplevel``: that honours ``GIT_DIR`` and would classify a
+    ``.git``-less archive as a checkout of whatever repository the environment names (measured:
+    a host clone's sha reported from inside an image)."""
+    from hhemt.bundle._emit import _toolkit_source_dir
+
+    return _toolkit_source_dir().resolve().parents[2]
+
+
+def running_identity() -> RunningIdentity:
+    """The ONE source of the running toolkit's commit, chosen by the tree's own evidence.
+
+    Exactly one rule applies, selected by filesystem tests only (no git command decides a
+    row); every state the rules do not name is a refusal. There is no fallback chain.
+
+      1. image    -- ``_LABELS_PATH`` exists: the sha is ``{root}/HHEMT_SHA`` (git wrote it at
+                     ``git archive``; the recipe's %post asserted it and copied it into the
+                     ``org.hhemt.hhemt_sha`` label). Refuse if the file is unsubstituted, if
+                     the label disagrees, or if a ``.git`` is present under the root (a bind
+                     over the image's source is an unspecified configuration).
+      2. checkout -- ``{root}/.git`` exists (a file in a linked worktree): the sha is
+                     ``git rev-parse HEAD``; ``HHEMT_SHA`` MUST be unsubstituted; ``dirty`` is
+                     ``git status --porcelain --untracked-files=no`` non-empty.
+      3. archive  -- neither, and ``HHEMT_SHA`` is 40-hex: a host-side ``git archive``.
+      4. refuse   -- anything else (a wheel, a bare copy): no identity.
+
+    Raises ``ConfigurationError(field="hhemt_sha")`` on every refusal.
     """
-    try:
-        from hhemt.bundle._emit import _get_toolkit_git_sha
-
-        sha = (_get_toolkit_git_sha(strict=False) or "").strip()
-    except Exception:  # pragma: no cover - defensive: never block preflight on provenance
-        return None
-    return None if (not sha or sha == "unknown") else sha
-
-
-def _running_toolkit_sha_full() -> str | None:
-    """The 40-hex commit the RUNNING toolkit is at, or None (a wheel install). Sibling of
-    ``_running_toolkit_sha`` (12-hex, kept for its label-compare consumers): the SIF identity
-    needs the FULL sha because the image's %post compares it to git's own ``%H`` (40 chars)."""
+    import json
     import subprocess
 
-    try:
-        from hhemt.bundle._emit import _toolkit_source_dir
-
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=_toolkit_source_dir(), capture_output=True, text=True, check=True
-        ).stdout.strip()
-    except Exception:  # pragma: no cover - never block preflight on provenance
-        return None
     from hhemt.sif.pins import is_full_sha
 
-    return out if is_full_sha(out) else None
+    root = _toolkit_root()
+    stamp_path = root / "HHEMT_SHA"
+    stamp = stamp_path.read_text().strip() if stamp_path.is_file() else None
+    git_dir = root / ".git"
+
+    if _LABELS_PATH.exists():
+        if git_dir.exists():
+            raise ConfigurationError(
+                field="hhemt_sha",
+                message=(
+                    f"toolkit root {root} inside a container carries a git tree — a bind over the "
+                    "image's source is an unspecified configuration"
+                ),
+            )
+        if stamp is None or stamp == _UNSUBSTITUTED_STAMP or not is_full_sha(stamp):
+            raise ConfigurationError(
+                field="hhemt_sha",
+                message=(
+                    f"{stamp_path} is {stamp!r}: the staged tree was not produced by git archive, so the "
+                    "image carries no toolkit identity"
+                ),
+            )
+        try:
+            labels = json.loads(_LABELS_PATH.read_text()) or {}
+        except (OSError, ValueError) as exc:
+            raise ConfigurationError(
+                field="hhemt_sha", message=f"{_LABELS_PATH} unreadable inside the image: {exc}"
+            ) from exc
+        label = labels.get("org.hhemt.hhemt_sha")
+        if label != stamp:
+            raise ConfigurationError(
+                field="hhemt_sha",
+                message=(
+                    f"image label org.hhemt.hhemt_sha={label!r} != staged source {stamp[:12]} — a bind or a "
+                    "rebuilt rootfs replaced the image's source"
+                ),
+            )
+        return RunningIdentity(sha=stamp, shape="image", dirty=False)
+
+    if git_dir.exists():
+        if stamp is not None and stamp != _UNSUBSTITUTED_STAMP:
+            raise ConfigurationError(
+                field="hhemt_sha",
+                message=(
+                    f"{stamp_path} is substituted ({stamp[:12]}) inside a git checkout — an archive file "
+                    "copied into a checkout is a mixed shape"
+                ),
+            )
+        try:
+            sha = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+            ).stdout.strip()
+            porcelain = subprocess.run(
+                ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            raise ConfigurationError(
+                field="hhemt_sha", message=f"git cannot read the checkout at {root}: {exc}"
+            ) from exc
+        if not is_full_sha(sha):
+            raise ConfigurationError(field="hhemt_sha", message=f"git rev-parse HEAD at {root} returned {sha!r}")
+        return RunningIdentity(sha=sha, shape="checkout", dirty=bool(porcelain))
+
+    if stamp is not None and is_full_sha(stamp):
+        return RunningIdentity(sha=stamp, shape="archive", dirty=False)
+
+    raise ConfigurationError(
+        field="hhemt_sha",
+        message=(
+            f"the running toolkit at {root} has no identity: not a git checkout, not a git archive, not an "
+            "image (a wheel install or a bare copy) — `pip install -e` a clone at analysis_config.hhemt_sha "
+            "or run inside the SIF"
+        ),
+    )
 
 
 def _validate_container_config(

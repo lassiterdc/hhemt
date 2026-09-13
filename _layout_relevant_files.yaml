@@ -1533,3 +1533,15 @@ non_breaking_allowlist:
       metadata-renderer guide tests were red without it). Static table only; no on-disk
       layout / figure stem / zarr / log / path change.
     layout_signature: a861c58434412e96b7a7e3c6777544c44af1c4e039e9f33eea17bd03c81a57c6
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      running-identity ([Q331], 2026-09-12): REQUIRED `hhemt_sha` field (40-hex, no default).
+      INPUT-config schema only — no on-disk analysis-tree layout / figure stem / zarr / log /
+      path change; every existing config must gain the field (a loud load-time refusal, never
+      a silent reinterpretation of on-disk state).
+    layout_signature: 4240077bbb7798f1e740df50111f65572a6e7728be93f1550d87eef64059e447
+  - path: src/hhemt/config/reprex_taxonomy.py
+    justification: >-
+      running-identity ([Q331], 2026-09-12): one _FIELD_BUCKET entry — hhemt_sha -> "experiment".
+      Static table only; no on-disk change.
+    layout_signature: db666259f911cd41eb2cf53b366b2ff9edffdae55a0ac6012e1ec42ddb26d406

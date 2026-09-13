@@ -1,4 +1,5 @@
 analysis_id: synth_multi_sim
+hhemt_sha: '0000000000000000000000000000000000000000'  # fixture placeholder: this bundle is only model-validated, never constructed into an analysis
 weather_event_indices:
 - event_index
 weather_timeseries: external/weather.nc

@@ -44,6 +44,20 @@ from tests.fixtures._triton_source_cache import (
     slug_runs_root,
 )
 
+
+def _tree_under_test_sha() -> str:
+    """The 40-hex sha of the toolkit tree THIS interpreter imports (D3, [Q331]).
+
+    Read through `hhemt.validation.running_identity` — the same source the analysis
+    constructor compares against — so a synthetic config always names the tree under
+    test (a worktree PWI, a `file://` clone, the main checkout). Never a literal: a
+    hard-coded sha goes stale at the next commit and refuses every synth test.
+    """
+    from hhemt.validation import running_identity
+
+    return running_identity().sha
+
+
 # NOTE: the former _SHARED_ARTIFACT_CACHE cross-worktree _software symlink was
 # removed because CMake build dirs are non-relocatable — sharing the build tier
 # across worktrees stamped CMakeCache.txt::CMAKE_HOME_DIRECTORY and triton.exe's
@@ -148,6 +162,7 @@ class retrieve_TRITON_SWMM_test_case:
 
         # update analysis attributes
         cfg_analysis.analysis_id = analysis_name
+        cfg_analysis.hhemt_sha = _tree_under_test_sha()  # D3: the tree the interpreter imports, never a literal
         cfg_analysis.analysis_description = analysis_description
         f_weather_indices = anlysys_dir / "weather_indices.csv"
         cfg_analysis.weather_events_to_simulate = f_weather_indices
@@ -515,6 +530,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
 
         analysis_cfg = {
             "analysis_id": self.analysis_name,
+            "hhemt_sha": _tree_under_test_sha(),  # D3: computed from the tree under test
             "weather_event_indices": ["event_index"],
             "weather_timeseries": str(self.artifacts.weather),
             "weather_time_series_timestep_dimension_name": "time",

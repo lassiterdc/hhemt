@@ -79,16 +79,15 @@ From: rocm/dev-ubuntu-24.04@sha256:8dcd5c10e095ff8ef20c7eb0fcf8f5a4f0df905a67ee7
     # container) -> `uv sync` would query that broken interpreter and die (exit 127).
     # Remove it so uv builds a clean container-native venv from uv.lock.
     cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
-    # Strip the copied `.git` BEFORE it lands in the image. `%files` has NO ignore
-    # mechanism -- there is no `.apptainerignore`, and `.dockerignore` is a Docker-only
-    # build-context filter -- so `../` copies the repo's full history: author names,
-    # e-mail addresses, branch names, and any secret ever committed. Nothing else here
-    # removes it, and `scripts/check_anonymization.py` cannot see it, because that guard
-    # enumerates `git ls-files` in a WORKING TREE and never reads image contents.
-    # Safe to remove: the toolkit version is static (`pyproject.toml` version = "0.1.0",
-    # setuptools, no setuptools_scm), and `org.hhemt.hhemt_sha` is stamped HOST-side by
-    # `build_sifs_uva.sh` (`git -C "$TOOLKIT" rev-parse HEAD` + `sed` into a derived
-    # .def) BEFORE the build -- so no in-image consumer needs `.git`. Removed AFTER
+    # The staged tree is a `git archive` of the identity's hhemt_sha (see %files), which NEVER
+    # carries `.git`, so this strip is inert today; it stays as a guard against a `%files ../`
+    # regression (a clone's `.git` holds every author e-mail and every committed secret, and
+    # `scripts/check_anonymization.py` enumerates a WORKING TREE, never image contents).
+    # The in-image toolkit identity is NOT git: it is `/opt/hhemt-src/HHEMT_SHA` (written by
+    # git's export-subst at archive time, asserted below in %post) plus the
+    # `org.hhemt.hhemt_sha` / `org.hhemt.identity` labels, read at run time by
+    # `hhemt.validation.running_identity` (the image rule: labels present -> the file is the
+    # sha, the label must agree, a `.git` under the root is refused). Removed AFTER
     # `uv sync` so the install path is unaffected regardless.
     rm -rf /opt/hhemt-src/.git
     # THIRD PRUNE -- see containers/uva-cpu.def for the measured rationale and the 16 G / 1.74 GB

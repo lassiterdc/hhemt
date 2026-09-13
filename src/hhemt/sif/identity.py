@@ -133,9 +133,10 @@ def derive_identity(
     *,
     recipes_dir: Path | None = None,
 ) -> SifIdentity:
-    """The RECOMPUTED source. ``running_sha`` MUST be a 40-hex sha of the RUNNING toolkit
-    (``validation._running_toolkit_sha_full``). None is NOT legal here (a wheel install has
-    no sha): container mode refuses a wheel driver — see the item-11 statement in the VMS."""
+    """The RECOMPUTED source. ``running_sha`` MUST be the 40-hex sha of the RUNNING toolkit
+    (``validation.running_identity().sha`` — the one identity source, [Q331]). None is NOT legal
+    here: a wheel driver has no identity and ``running_identity`` refuses it before this is reached;
+    the check below stays as the fail-closed floor for any caller that hands a bare value."""
     if not is_full_sha(running_sha):
         raise ConfigurationError(
             field="container",

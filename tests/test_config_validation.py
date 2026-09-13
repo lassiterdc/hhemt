@@ -43,6 +43,7 @@ def _minimal_system_config_dict(tmp_path: Path) -> dict:
 def _minimal_analysis_config_dict(tmp_path: Path) -> dict:
     return {
         "analysis_id": "analysis_01",
+        "hhemt_sha": "0" * 40,  # schema-only tests; never compared to a running identity
         "weather_event_indices": ["event_id"],
         "weather_timeseries": str(_touch(tmp_path / "inputs" / "weather.nc")),
         "weather_time_series_timestep_dimension_name": "timestep",

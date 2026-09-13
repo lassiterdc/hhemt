@@ -2277,7 +2277,7 @@ def build_sifs_command(
     from hhemt.sif.driver import detach, driver_command, run_build_dag
     from hhemt.sif.plan import ExperimentInputs, plan_sif_set
     from hhemt.sif.snakefile_generator import reconcile_sif_root, write_sif_snakefile
-    from hhemt.validation import _running_toolkit_sha_full
+    from hhemt.validation import running_identity
 
     try:
         build_host = yaml_to_model(build_hpc_config, _hpc_model)
@@ -2326,7 +2326,7 @@ def build_sifs_command(
         plan = plan_sif_set(
             experiments,
             sif_root=sb.sif_root,
-            running_sha=_running_toolkit_sha_full(),
+            running_sha=running_identity().sha,
             recipes_dir=sb.recipes_dir,
             toolkit_root=sb.toolkit_root,
             force=force,

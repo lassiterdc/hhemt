@@ -23,6 +23,7 @@ from hhemt import orchestrator_sentinels as _osent
 from hhemt.config.analysis import ClearRawValue, ForceRerunValue, analysis_config
 from hhemt.config.hpc_system import resolve_gpu_target
 from hhemt.config.loaders import load_analysis_config, load_hpc_system_config
+from hhemt.exceptions import ConfigurationError
 from hhemt.execution import (
     LocalConcurrentExecutor,
     SerialExecutor,
@@ -50,7 +51,7 @@ from hhemt.swmm_output_parser import (
     retrieve_swmm_performance_stats_from_rpt,
 )
 from hhemt.utils import fast_rmtree, parse_triton_log_file
-from hhemt.validation import ValidationResult, assert_configs_visible_cross_node, preflight_validate
+from hhemt.validation import ValidationResult, assert_configs_visible_cross_node, preflight_validate, running_identity
 from hhemt.wipe_guard import assert_wipe_is_deliberate
 from hhemt.workflow import (
     SnakemakeDiagnostics,
@@ -419,6 +420,57 @@ class TRITONSWMM_analysis:
         # "python", resolved by the conda-env activation emitted in the shell prefix —
         # byte-identical to the prior python_path-absent emission.
         self._python_executable = "python"
+        # [Q331] running identity: this process runs the hhemt commit the config names, or it
+        # stops HERE — before the workflow builder (whose container branch derives the SIF
+        # identity) and before any I/O. Every process that constructs an analysis (the driver,
+        # the sim runner, the in-image process runner, the consolidator, the plot CLI) passes
+        # through this line. A dirty checkout is an unspecified version (D2).
+        _running = running_identity()
+        if _running.sha != self.cfg_analysis.hhemt_sha:
+            raise ConfigurationError(
+                field="hhemt_sha",
+                message=(
+                    f"analysis_config.hhemt_sha {self.cfg_analysis.hhemt_sha[:12]} != running toolkit "
+                    f"{_running.sha[:12]} ({_running.shape}); check out / rebake at the configured commit, "
+                    "or set hhemt_sha to the commit you mean to run"
+                ),
+                config_path=str(analysis_config_yaml),
+            )
+        if _running.dirty:
+            raise ConfigurationError(
+                field="hhemt_sha",
+                message=(
+                    f"the running toolkit checkout is at {_running.sha[:12]} but has modified tracked files "
+                    "(git status --porcelain --untracked-files=no): a dirty tree is an unspecified version; "
+                    "commit or discard the changes (a launcher that runs `uv sync --frozen` cannot dirty the "
+                    "tree by rewriting the lockfile)"
+                ),
+                config_path=str(analysis_config_yaml),
+            )
+        if _running.shape == "image" and self.cfg_hpc_system is not None:
+            # A3: the image itself must be the one THIS config derives — hhemt_sha equality proved
+            # the toolkit, the identity label proves the family / base digest / TRITON / recipe.
+            # cfg_hpc_system, cfg_system and hpc_ensemble_partition are all bound above, so this is
+            # the first point every input of derive_identity exists.
+            import json as _json
+
+            from hhemt.sif.identity import derive_identity
+            from hhemt.validation import _LABELS_PATH
+
+            _expected = derive_identity(
+                self.cfg_hpc_system, self._system.cfg_system, self.cfg_analysis.hpc_ensemble_partition, _running.sha
+            ).key
+            _labels = _json.loads(_LABELS_PATH.read_text()) or {}
+            _found = _labels.get("org.hhemt.identity")
+            if _found != _expected:
+                raise ConfigurationError(
+                    field="container",
+                    message=(
+                        f"this image's org.hhemt.identity={_found!r} is not the identity this config derives "
+                        f"({_expected}): the image was built for a different family / base / TRITON / recipe"
+                    ),
+                    config_path=str(analysis_config_yaml),
+                )
         self._workflow_builder = SnakemakeWorkflowBuilder(self)
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
@@ -2304,9 +2356,9 @@ class TRITONSWMM_analysis:
         """The recomputed SifIdentity for ``partition``. A wheel driver (no 40-hex sha) raises
         ConfigurationError here — container mode requires a git-checkout driver (item 11)."""
         from hhemt.sif.identity import derive_identity
-        from hhemt.validation import _running_toolkit_sha_full
+        from hhemt.validation import running_identity
 
-        return derive_identity(self.cfg_hpc_system, self._system.cfg_system, partition, _running_toolkit_sha_full())
+        return derive_identity(self.cfg_hpc_system, self._system.cfg_system, partition, running_identity().sha)
 
     def _build_sifs_prestep(
         self, *, no_wait: bool, force: bool, sif_build_config_path: "Path | None"
@@ -2322,7 +2374,7 @@ class TRITONSWMM_analysis:
         from hhemt.sif.driver import detach, driver_command
         from hhemt.sif.plan import ExperimentInputs, plan_sif_set
         from hhemt.sif.snakefile_generator import reconcile_sif_root, write_sif_snakefile
-        from hhemt.validation import _running_toolkit_sha_full
+        from hhemt.validation import running_identity
 
         if sif_build_config_path is None:
             raise ConfigurationError(
@@ -2339,7 +2391,7 @@ class TRITONSWMM_analysis:
         plan = plan_sif_set(
             [exp],
             sif_root=cfg.sif_root,
-            running_sha=_running_toolkit_sha_full(),
+            running_sha=running_identity().sha,
             recipes_dir=cfg.recipes_dir,
             toolkit_root=cfg.toolkit_root,
             force=force,

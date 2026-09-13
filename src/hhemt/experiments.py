@@ -22,7 +22,7 @@ Case-Specific API (convenience wrappers):
     from hhemt.experiments import NorfolkIreneExperiment
 
     # Load Norfolk example (convenience wrapper)
-    norfolk = NorfolkIreneExperiment.load()
+    norfolk = NorfolkIreneExperiment.load(hhemt_sha="0123456789abcdef0123456789abcdef01234567")  # the commit you run
     system = norfolk.system
 
 Adding New Case Studies:
@@ -188,6 +188,8 @@ class TRITON_SWMM_experiment:
         analysis_description: str,
         download_if_exists: bool = False,
         example_data_dir: Path | None = None,
+        *,
+        hhemt_sha: str,
     ):
         """
         Load a case study example from configuration templates.
@@ -211,6 +213,10 @@ class TRITON_SWMM_experiment:
             Re-download the HydroShare data even when it is already present.
         example_data_dir : Path or None
             Override for the data storage location, when one is given.
+        hhemt_sha : str
+            REQUIRED, keyword-only ([Q331]): the FULL 40-hex hhemt commit this experiment runs,
+            written into the generated analysis config's ``hhemt_sha`` field over the template's
+            non-40-hex FILL-ME placeholder — nothing defaults it.
 
         Returns
         -------
@@ -225,6 +231,7 @@ class TRITON_SWMM_experiment:
         ...     system_config_template=NORFOLK_SYSTEM_CONFIG,
         ...     analysis_config_template=NORFOLK_ANALYSIS_CONFIG,
         ...     case_config_filename=NORFOLK_CASE_CONFIG,
+        ...     hhemt_sha="0123456789abcdef0123456789abcdef01234567",
         ... )
         """
         cfg_system_yaml = cls._load_case_system_config(
@@ -240,6 +247,7 @@ class TRITON_SWMM_experiment:
             cfg_system_yaml=cfg_system_yaml,
             weather_events_to_simulate=weather_events_to_simulate,
             analysis_description=analysis_description,
+            hhemt_sha=hhemt_sha,
             example_data_dir=example_data_dir,
         )
 
@@ -581,7 +589,7 @@ class TRITON_SWMM_experiment:
         from hhemt.sif.identity import SifIdentity, manifest_path, resolve_sif
         from hhemt.sif.plan import SifBuildPlan, live_sentinels
         from hhemt.sif.snakefile_generator import reconcile_sif_root, write_sif_snakefile
-        from hhemt.validation import _running_toolkit_sha_full
+        from hhemt.validation import running_identity
 
         plan = SifBuildPlan()
         for m in carried:
@@ -595,7 +603,7 @@ class TRITON_SWMM_experiment:
         if not plan.entries:
             print(f"[Ingest] every carried image is present under {sif_root}", flush=True)
             return
-        running = _running_toolkit_sha_full()
+        running = running_identity().sha
         wrong = sorted({i.hhemt_sha for i in plan.entries.values() if i.hhemt_sha != running})
         if wrong:
             raise ConfigurationError(
@@ -917,6 +925,7 @@ class TRITON_SWMM_experiment:
         cfg_system_yaml: Path,
         weather_events_to_simulate: str,
         analysis_description: str,
+        hhemt_sha: str,
         example_data_dir: Path | None = None,
     ):
         """
@@ -940,6 +949,7 @@ class TRITON_SWMM_experiment:
         weatherpath = placeholder_weather_path.parent / weather_events_to_simulate
         filled_yaml_data["weather_events_to_simulate"] = str(weatherpath)
         filled_yaml_data["analysis_description"] = analysis_description
+        filled_yaml_data["hhemt_sha"] = hhemt_sha  # [Q331]: over the template's FILL-ME placeholder; never defaulted
         cfg_system = load_system_config(cfg_system_yaml)
         analysis_id = filled_yaml_data["analysis_id"]
         cfg_yaml = Path(cfg_system.system_directory) / f"config_analysis_{analysis_id}.yaml"
@@ -1418,7 +1428,7 @@ class NorfolkIreneExperiment:
     Examples
     --------
     >>> from hhemt.experiments import NorfolkIreneExperiment
-    >>> norfolk = NorfolkIreneExperiment.load()
+    >>> norfolk = NorfolkIreneExperiment.load(hhemt_sha="0123456789abcdef0123456789abcdef01234567")
     >>> system = norfolk.system
     """
 
@@ -1427,6 +1437,8 @@ class NorfolkIreneExperiment:
         cls,
         download_if_exists: bool = False,
         example_data_dir: Path | None = None,
+        *,
+        hhemt_sha: str,
     ) -> TRITON_SWMM_experiment:
         """
         Load Norfolk coastal flooding example.
@@ -1437,6 +1449,8 @@ class NorfolkIreneExperiment:
             Re-download the HydroShare data even when it is already present.
         example_data_dir : Path or None
             Override for the data directory, when one is given.
+        hhemt_sha : str
+            REQUIRED, keyword-only ([Q331]): the FULL 40-hex hhemt commit this experiment runs.
 
         Returns
         -------
@@ -1454,6 +1468,7 @@ class NorfolkIreneExperiment:
             case_config_filename=cnst.NORFOLK_CASE_CONFIG,
             weather_events_to_simulate=weather_events_to_simulate,
             analysis_description=analysis_description,
+            hhemt_sha=hhemt_sha,
             download_if_exists=download_if_exists,
             example_data_dir=example_data_dir,
         )
@@ -1470,7 +1485,7 @@ class NorfolkObservedExperiment:
     Examples
     --------
     >>> from hhemt.experiments import NorfolkObservedExperiment
-    >>> norfolk = NorfolkObservedExperiment.load()
+    >>> norfolk = NorfolkObservedExperiment.load(hhemt_sha="0123456789abcdef0123456789abcdef01234567")
     >>> system = norfolk.system
     """
 
@@ -1479,6 +1494,8 @@ class NorfolkObservedExperiment:
         cls,
         download_if_exists: bool = False,
         example_data_dir: Path | None = None,
+        *,
+        hhemt_sha: str,
     ) -> TRITON_SWMM_experiment:
         """
         Load Norfolk coastal flooding example.
@@ -1489,6 +1506,8 @@ class NorfolkObservedExperiment:
             Re-download the HydroShare data even when it is already present.
         example_data_dir : Path or None
             Override for the data directory, when one is given.
+        hhemt_sha : str
+            REQUIRED, keyword-only ([Q331]): the FULL 40-hex hhemt commit this experiment runs.
 
         Returns
         -------
@@ -1508,6 +1527,7 @@ class NorfolkObservedExperiment:
             case_config_filename=cnst.NORFOLK_CASE_CONFIG,
             weather_events_to_simulate=weather_events_to_simulate,
             analysis_description=analysis_description,
+            hhemt_sha=hhemt_sha,
             download_if_exists=download_if_exists,
             example_data_dir=example_data_dir,
         )

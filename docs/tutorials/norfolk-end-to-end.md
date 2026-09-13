@@ -18,7 +18,7 @@ Start with the one path that is guaranteed to succeed on a laptop: load the Norf
 
 ```python
 from hhemt.experiments import NorfolkIreneExperiment
-norfolk = NorfolkIreneExperiment.load()
+norfolk = NorfolkIreneExperiment.load(hhemt_sha="0123456789abcdef0123456789abcdef01234567")  # sha = the commit you have checked out
 norfolk.analysis.test()                         # optional smoke first
 result = norfolk.analysis.run(from_scratch=False, execution_mode="local")
 norfolk.analysis.render_report()                # renders the analysis report

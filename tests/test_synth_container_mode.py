@@ -100,8 +100,10 @@ def test_container_mode_process_prefix_in_snakefile() -> None:
     blocks = _rule_blocks(got)
     for rule in ("process_triton", "process_tritonswmm", "process_swmm"):
         assert rule in blocks, f"expected rule {rule} not found in generated Snakefile"
-        assert "apptainer exec /opt/test.sif " in blocks[rule], (
-            f"rule {rule} is missing the container process-prefix `apptainer exec /opt/test.sif `"
+        _sif = builder._container_process_prefix.split("apptainer exec ", 1)[1].strip()
+        assert _sif.startswith("/opt/sifs/") and _sif.endswith(".sif"), _sif
+        assert f"apptainer exec {_sif} " in blocks[rule], (
+            f"rule {rule} is missing the container process-prefix `apptainer exec {_sif} `"
         )
     # No apptainer exec leaks into the sim/consolidate/plot/render shells.
     for name, body in blocks.items():
@@ -138,7 +140,7 @@ def test_container_mode_sim_runner_wraps_exe() -> None:
     # `-B {host_out}:/opt/hhemt/out_tritonswmm` redirects TRITON's argv[0]-two-up
     # output path (/opt/hhemt inside the read-only SIF) to the writable host dir.
     assert "apptainer exec --rocm -B " in full_cmd and (
-        ":/opt/hhemt/out_tritonswmm /opt/test.sif /opt/hhemt/bin/triton.exe" in full_cmd
+        ":/opt/hhemt/out_tritonswmm /opt/sifs/" in full_cmd and ".sif /opt/hhemt/bin/triton.exe" in full_cmd
     ), (
         "container GPU mode did not wrap the innermost {exe} in "
         "`apptainer exec --rocm -B {host_out}:/opt/hhemt/out_tritonswmm /opt/test.sif "
@@ -438,7 +440,7 @@ def test_every_container_def_builds_a_triton_only_exe() -> None:
     standalone cfg legitimately omits it. Shipping only the coupled build made
     ``run_triton`` unrunnable in EVERY container image (Rivanna 17090704/17091179).
     Instance-level runtime tests cannot catch this; this recipe-level invariant can."""
-    defs = sorted((_REPO_ROOT / "containers").glob("*.def"))
+    defs = sorted((_REPO_ROOT / "src" / "hhemt" / "sif" / "recipes").glob("*.def"))
     assert defs, "no container definition files found"
     for d in defs:
         text = d.read_text()
@@ -532,7 +534,7 @@ def test_every_container_def_fronts_an_hhemt_interpreter_on_path() -> None:
     recipe's %environment prepends its uv-built venv bin dir to PATH. If a recipe
     stops doing that, the default silently degrades to the system interpreter and
     the process rung dies ModuleNotFoundError on the cluster."""
-    defs = sorted((_REPO_ROOT / "containers").glob("*.def"))
+    defs = sorted((_REPO_ROOT / "src" / "hhemt" / "sif" / "recipes").glob("*.def"))
     assert defs, "no container definition files found"
     for d in defs:
         env_block = d.read_text().split("%environment", 1)

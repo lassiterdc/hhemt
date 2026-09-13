@@ -27,7 +27,6 @@ import contextlib
 import json
 import re
 import shutil
-import subprocess
 import tempfile
 import warnings
 import zipfile
@@ -1403,73 +1402,29 @@ def _toolkit_source_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
-def _toolkit_repo_root() -> Path:
-    """The git worktree root containing the toolkit source.
-
-    Raises ConfigurationError when the toolkit is not a git checkout — which is what
-    _get_toolkit_git_sha's own error message has always claimed it enforces, and what
-    README.md:25-31 names as the supported install. Works from a linked worktree
-    (where .git is a file, not a directory).
-    """
-    from hhemt.exceptions import ConfigurationError
-
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=_toolkit_source_dir(),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-        raise ConfigurationError(
-            field="toolkit_repo_root",
-            message=(
-                f"The installed hhemt at {_toolkit_source_dir()} is not inside a git "
-                f"checkout ({exc}). Bundle emission records the toolkit SHA and carries "
-                "the pinned source tree, both of which require it. Install per README.md: "
-                "`git clone` + `pip install -e . --no-deps`."
-            ),
-            config_path=None,
-        ) from exc
-    return Path(result.stdout.strip())
-
-
 def _get_toolkit_git_sha(strict: bool = True) -> str:
-    """Resolve the toolkit's git SHA for bundle provenance.
+    """Resolve the toolkit's git SHA (12-hex) for bundle provenance.
 
-    strict=True (emit-side): raise ConfigurationError if unavailable.
-    strict=False (consume-side): return "unknown" if unavailable.
+    Delegates to ``validation.running_identity`` — the ONE source of the running toolkit's
+    commit ([Q331]) — and keeps this function's two contracts: strict=True (emit-side)
+    raises ConfigurationError when the toolkit has no identity; strict=False
+    (consume-side) returns "unknown". The 12-hex width is this function's consumers'
+    (bundle manifest, crate, combine) and is a truncation of the one 40-hex value, never a
+    second git read.
     """
     from hhemt.exceptions import ConfigurationError
+    from hhemt.validation import running_identity
 
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short=12", "HEAD"],
-            cwd=_toolkit_source_dir(),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        sha = result.stdout.strip()
-        if not sha:
-            if not strict:
-                return "unknown"
-            raise ConfigurationError(
-                field="toolkit_git_sha",
-                message=("git rev-parse returned empty SHA — toolkit may be in a detached state"),
-                config_path=None,
-            )
-        return sha
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        return running_identity().sha[:12]
+    except ConfigurationError as exc:
         if not strict:
             return "unknown"
         raise ConfigurationError(
             field="toolkit_git_sha",
             message=(
-                "Cannot resolve toolkit git SHA for bundle provenance: "
-                f"{exc}. Ensure git is installed and the hhemt "
-                "package is installed from a git checkout (not a wheel)."
+                "Cannot resolve the toolkit sha for bundle provenance: "
+                f"{exc}. Install hhemt from a git checkout (not a wheel) or run inside the SIF."
             ),
             config_path=None,
         ) from exc

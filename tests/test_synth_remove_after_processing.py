@@ -341,6 +341,7 @@ def test_rename_accepts_the_new_key_and_rejects_the_old_one():
     # is guaranteed -- which is exactly why `match=` is load-bearing: it pins the
     # failure to the RETIRED KEY rather than to the missing required fields.
     _payload = {name: f.default for name, f in analysis_config.model_fields.items() if not f.is_required()}
+    _payload["hhemt_sha"] = "0" * 40  # [Q331]: the one required field this schema-only probe must supply
     with _pytest.raises(ValidationError, match="reclaim_after_processing"):
         analysis_config.model_validate({**_payload, "reclaim_after_processing": "all"})
 

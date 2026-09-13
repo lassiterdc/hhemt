@@ -28,7 +28,7 @@ The example uses the Norfolk, VA coastal-flooding case study. You do not downloa
 
 ```python
 from hhemt.experiments import NorfolkIreneExperiment
-norfolk = NorfolkIreneExperiment.load()       # anonymous Hydroshare download; builds system + analysis
+norfolk = NorfolkIreneExperiment.load(hhemt_sha="0123456789abcdef0123456789abcdef01234567")  # anonymous Hydroshare download; sha = the commit you run
 result = norfolk.analysis.run(from_scratch=False, execution_mode="auto")
 ```
 

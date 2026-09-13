@@ -28,11 +28,11 @@ def validate_container_images(cfg_analysis, cfg_hpc_system, cfg_system, result, 
     from hhemt.container_labels import HHEMT_SHA_LABEL, IDENTITY_LABEL, SWMM_VERSION_LABEL, TRITON_SHA_LABEL
     from hhemt.exceptions import ConfigurationError
     from hhemt.sif.identity import derive_identity, manifest_path, resolve_sif
-    from hhemt.validation import _running_toolkit_sha_full
+    from hhemt.validation import running_identity
 
     cspec = getattr(cfg_hpc_system, "container", None)
     root = Path(cspec.sif_root)
-    running = _running_toolkit_sha_full()
+    running = running_identity().sha
     for part in sorted(_matrix_required_partitions(cfg_analysis, cfg_hpc_system)):
         try:
             ident = derive_identity(cfg_hpc_system, cfg_system, part, running)

@@ -91,6 +91,7 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "hpc_cpu_sim_partition": "hpc",
     "execution_environment": "hpc",  # native<->container is HPC-revisable (UVA->Frontier, FQ3/FQ4)
     "process_in_sim_rule": "hpc",  # in-rule per-sim processing (2026-09-12): result-neutral scheduling topology
+    "hhemt_sha": "experiment",  # the experiment's toolkit identity ([Q331]): Keep, never amend on a reproducer
     "local_cpu_cores_for_workflow": "hpc",  # machine-local exec resource (sibling of local_gpus_for_workflow)
     # ---- every remaining non-Path field of system_config + analysis_config -> "experiment" ----
     "SWMM_git_URL": "experiment",

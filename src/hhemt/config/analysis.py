@@ -687,6 +687,19 @@ class analysis_config(cfgBaseModel):
         None,
         description="For readability.",
     )
+    hhemt_sha: Annotated[
+        str,
+        Field(
+            ...,
+            pattern=r"^[0-9a-f]{40}$",
+            description="The hhemt commit this experiment runs: the FULL 40-hex lowercase sha, nothing "
+            "else (no tag, no branch, no short sha). REQUIRED, no default ([Q331]): every process that "
+            "constructs an analysis — the driver, the simulation runner, the in-image processing runner, "
+            "the consolidator — compares it to the running toolkit's own identity (validation."
+            "running_identity) before doing anything else and refuses on a mismatch (exit 2).",
+            json_schema_extra=field_meta(),
+        ),
+    ]
 
     # TRITON-SWMM PARAMETERS
     target_processed_output_type: Literal["zarr", "nc"] = Field(
