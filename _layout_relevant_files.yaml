@@ -1545,3 +1545,19 @@ non_breaking_allowlist:
       running-identity ([Q331], 2026-09-12): one _FIELD_BUCKET entry — hhemt_sha -> "experiment".
       Static table only; no on-disk change.
     layout_signature: db666259f911cd41eb2cf53b366b2ff9edffdae55a0ac6012e1ec42ddb26d406
+  - path: src/hhemt/process_simulation.py
+    justification: >-
+      marker-latch fix (M19 gate 3) -- TWO edit classes in this file, both behaviour-only.
+      (1) O3: at each of the six latch-exposed completion markers, reconcile the marker
+      from its own _already_written verdict ABOVE the branch that verdict dominates, so a
+      scenario whose artifact record is already committed still acquires its marker on the
+      skip pass. (2) The is-not-None sweep of the 13 bare-truthiness LogField write guards
+      in this file, which ship together because O3's entire job is the None -> True
+      transition a value-based __bool__ would block through those guards.
+      NO on-disk shape changes: every marker written already exists in the log schema, is
+      written to a file that already exists, and takes a value the same field already takes
+      on the do-work path. No artifact is created, renamed, moved or re-serialised; the set
+      is conditioned on the already-written branch precisely so the do-work path emits the
+      same single log write it emits today. No LAYOUT_VERSION bump, no V-module, no golden
+      fixtures.
+    layout_signature: "3efe314fdd873528baa79e275f9e5584542869865b2b654ab695eb0ee8b151c5"

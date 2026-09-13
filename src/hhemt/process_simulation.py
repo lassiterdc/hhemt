@@ -748,6 +748,15 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and O3's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if log_field is not None:
+                log_field.set(True)
             return
 
         start_time = time.time()
@@ -856,6 +865,15 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and O3's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if log_field is not None:
+                log_field.set(True)
             return
 
         ds = ds.sum(dim="timestep_min").max(dim="Rank")
@@ -896,6 +914,15 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and O3's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if self.log.TRITON_timeseries_written is not None:
+                self.log.TRITON_timeseries_written.set(True)
             if self._should_clear_raw_for_model(resolved_clear_raw, "tritonswmm"):
                 self._clear_raw_outputs("tritonswmm")
             return
@@ -947,7 +974,7 @@ class TRITONSWMM_sim_post_processing:
         self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 
         # Mark timeseries as written
-        if self.log.TRITON_timeseries_written:
+        if self.log.TRITON_timeseries_written is not None:
             self.log.TRITON_timeseries_written.set(True)
 
         if self._should_clear_raw_for_model(resolved_clear_raw, "tritonswmm"):
@@ -971,6 +998,15 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and O3's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if self.log.TRITON_timeseries_written is not None:
+                self.log.TRITON_timeseries_written.set(True)
             if self._should_clear_raw_for_model(resolved_clear_raw, "triton"):
                 self._clear_raw_outputs("triton")
             return
@@ -1035,7 +1071,7 @@ class TRITONSWMM_sim_post_processing:
         self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 
         # Mark timeseries as written
-        if self.log.TRITON_timeseries_written:
+        if self.log.TRITON_timeseries_written is not None:
             self.log.TRITON_timeseries_written.set(True)
 
         if self._should_clear_raw_for_model(resolved_clear_raw, "triton"):
@@ -1152,9 +1188,9 @@ class TRITONSWMM_sim_post_processing:
                 notes="links are written after nodes so time elapsed reflecs writing both link AND node time series",
             )
         # Mark timeseries as written (set both node and link flags)
-        if self.log.SWMM_node_timeseries_written:
+        if self.log.SWMM_node_timeseries_written is not None:
             self.log.SWMM_node_timeseries_written.set(True)
-        if self.log.SWMM_link_timeseries_written:
+        if self.log.SWMM_link_timeseries_written is not None:
             self.log.SWMM_link_timeseries_written.set(True)
 
         # Phase 1.3: Explicit garbage collection after large dataset operations
@@ -1289,19 +1325,19 @@ class TRITONSWMM_sim_post_processing:
     @property
     def TRITON_outputs_processed(self) -> bool:
         """Check if TRITON outputs processed for current model log."""
-        if self.log.TRITON_timeseries_written:
+        if self.log.TRITON_timeseries_written is not None:
             return bool(self.log.TRITON_timeseries_written.get())
         return False
 
     @property
     def raw_TRITON_outputs_cleared(self) -> bool:
-        if self.log.raw_TRITON_outputs_cleared:
+        if self.log.raw_TRITON_outputs_cleared is not None:
             return bool(self.log.raw_TRITON_outputs_cleared.get())
         return False
 
     @property
     def raw_SWMM_outputs_cleared(self) -> bool:
-        if self.log.raw_SWMM_outputs_cleared:
+        if self.log.raw_SWMM_outputs_cleared is not None:
             return bool(self.log.raw_SWMM_outputs_cleared.get())
         return False
 
@@ -1323,7 +1359,7 @@ class TRITONSWMM_sim_post_processing:
         else:
             swmm_links = self._already_written(self.scen_paths.output_swmm_only_link_time_series)
         # With model-specific logs, just set the single field
-        if self.log.SWMM_link_timeseries_written:
+        if self.log.SWMM_link_timeseries_written is not None:
             self.log.SWMM_link_timeseries_written.set(swmm_links)
         return swmm_links
 
@@ -1333,7 +1369,7 @@ class TRITONSWMM_sim_post_processing:
         else:
             swmm_nodes = self._already_written(self.scen_paths.output_swmm_only_node_time_series)
         # With model-specific logs, just set the single field
-        if self.log.SWMM_node_timeseries_written:
+        if self.log.SWMM_node_timeseries_written is not None:
             self.log.SWMM_node_timeseries_written.set(swmm_nodes)
         return swmm_nodes
 
@@ -1627,6 +1663,15 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and O3's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if self.log.TRITON_summary_written is not None:
+                self.log.TRITON_summary_written.set(True)
             return
 
         # Validate that input timeseries exists.
@@ -1674,7 +1719,7 @@ class TRITONSWMM_sim_post_processing:
         elapsed_s = time.time() - start_time
         self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
         # With model-specific logs, just set the single field
-        if self.log.TRITON_summary_written:
+        if self.log.TRITON_summary_written is not None:
             self.log.TRITON_summary_written.set(True)
         return
 
@@ -1717,6 +1762,20 @@ class TRITONSWMM_sim_post_processing:
         nodes_already_written = self._already_written(f_out_nodes)
         links_already_written = self._already_written(f_out_links)
 
+        # O3 PLACEMENT CONSTRAINT: reconcile PER ARM and ABOVE every branch below.
+        # The combined early return and the two `if not ..._already_written:` blocks
+        # all sit lower, so a set placed in any of them is unreachable on the skip
+        # pass -- which is the only pass an already-latched scenario ever takes again.
+        # PER ARM rather than on the combined condition, because the partial state
+        # (nodes written, links not) skips the nodes block without reaching the
+        # combined return. `is not None`, never bare truthiness: LogField defines no
+        # __bool__, and O3's whole job is the None -> True transition a value-based
+        # __bool__ would silently block.
+        if nodes_already_written and self.log.SWMM_node_summary_written is not None:
+            self.log.SWMM_node_summary_written.set(True)
+        if links_already_written and self.log.SWMM_link_summary_written is not None:
+            self.log.SWMM_link_summary_written.set(True)
+
         if nodes_already_written and links_already_written:
             if verbose:
                 print(f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting.")
@@ -1752,7 +1811,7 @@ class TRITONSWMM_sim_post_processing:
             self._write_output(ds_nodes_summary, f_out_nodes, comp_level, verbose, mode=node_mode)
             self.log.add_sim_processing_entry(f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True)
             # With model-specific logs, just set the single field
-            if self.log.SWMM_node_summary_written:
+            if self.log.SWMM_node_summary_written is not None:
                 self.log.SWMM_node_summary_written.set(True)
 
         # Summarize links
@@ -1769,7 +1828,7 @@ class TRITONSWMM_sim_post_processing:
                 notes="links summary written after nodes summary",
             )
             # With model-specific logs, just set the single field
-            if self.log.SWMM_link_summary_written:
+            if self.log.SWMM_link_summary_written is not None:
                 self.log.SWMM_link_summary_written.set(True)
 
         return
@@ -2145,7 +2204,7 @@ class TRITONSWMM_sim_post_processing:
     @property
     def TRITON_summary_processed(self) -> bool:
         """Check if TRITON summary has been created for current model log."""
-        if self.log.TRITON_summary_written:
+        if self.log.TRITON_summary_written is not None:
             return bool(self.log.TRITON_summary_written.get())
         return False
 
