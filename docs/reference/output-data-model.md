@@ -8,24 +8,47 @@ Every variable below carries CF-1.13 attributes. `src/hhemt/cf_conventions.py` i
 the single source of truth for `standard_name`, `long_name`, `units`, and
 `cell_methods`; the table on this page is derived from it.
 
-## The three output tiers
+## The output tiers
 
-hhemt writes results at three levels, and they differ in both shape and format.
+hhemt writes results at four tiers, and they differ in both shape and format.
 
 | Tier | Artifact | Format |
 |---|---|---|
 | Per-scenario | `sims/{event_id}/processed/` | Flat Zarr (default) or NetCDF, selected by `target_processed_output_type` |
 | Per-analysis | `analysis_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
+| Per-experiment | `experiment_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 | Per-system | `system_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 
-A sensitivity analysis additionally writes `experiment_datatree.zarr` at the
-master level, with one node per completed member. Trees written before the store
-unification carry `sensitivity_datatree.zarr` (or, for a regular analysis,
-`analysis_datatree.zarr`) and are migrated in place on the next run.
+A regular analysis writes the per-scenario and per-analysis tiers in its own
+directory, and writes no experiment tree. A sensitivity analysis writes one
+directory per member, and each member carries its own per-scenario and
+per-analysis tiers under `members/member_{member_id}/`. The experiment root is
+where `experiment_datatree.zarr` is written, with one node per completed member.
+
+`sensitivity_datatree.zarr` is the retired pre-unification name for the
+experiment tree. You convert a tree that still carries it with an explicit
+command, never automatically on the next run:
+`python -m hhemt.version_migration migrate {analysis_dir} --apply`. Without
+`--apply` the command reports what it would do and changes nothing. The
+conversion can leave a superseded copy of the tree beside the promoted one, named
+`experiment_datatree.zarr.superseded-v0022`. That copy is kept on purpose, and
+nothing removes it for you.
 
 **The per-scenario tier is flat and the consolidated tiers are hierarchical.**
 That distinction matters when you open them: the flat tier is a plain `Dataset`,
 the consolidated tiers are `DataTree`s.
+
+Treat the completion flag, not the directory listing, as the signal that a
+per-scenario TRITON timeseries store is finished. The flag is a sibling file
+named after the store, for example `TRITONSWMM_TRITON_tseries.zarr.done`, and it
+is written only once every chapter of the store has been verified and merged. An
+existing store with no flag beside it is an interrupted write, not a simulation
+that produced nothing. A `.chapters` sibling directory exists while the store is
+being written, and it is normally removed as soon as the flag lands. A process
+killed between those two steps leaves it behind indefinitely, so a `.chapters`
+directory beside a flagged store is harmless leftover rather than an incomplete
+result. A forced rerun of the scenario removes both the flag and the `.chapters`
+directory.
 
 ## Opening the consolidated output
 
@@ -43,7 +66,7 @@ tree = xr.open_datatree(
 `consolidated=False` is not optional: these stores are written without
 consolidated metadata.
 
-For a sensitivity master, the root carries a `parameters` dataset describing
+For an experiment tree, the root carries a `parameters` dataset describing
 **every defined** member, while only **completed** members appear as
 `member_*` nodes. A tree with fewer nodes than parameter rows is therefore an
 expected partial-completion state, not a corrupt store.
