@@ -232,7 +232,7 @@ behaviour or delete information.
 | Right, and the compliant form is behaviour-identical | Comply | A suppression here is debt against no offsetting truth. |
 | Right, but compliance is genuinely unavailable | `# noqa` or `per-file-ignores` + a reason naming the blocker | The blocker is the reason — and blockers expire, so it must be checkable. |
 | Right, and complying would delete information | `# noqa: XXX` + reason | Column alignment, an assertion, and a deliberate shape are all information. |
-| A real defect nobody is fixing today | Fix it, or ignore it with an explicit tracked note | See the `docs/*.ipynb` F403 block in `pyproject.toml`. |
+| A real defect nobody is fixing today | Fix it, or ignore it with an explicit tracked note | A tracked note keeps the defect visible and dated; a bare suppression hides it. |
 
 **Unused variables, imports and function arguments are governed by "No cruft" above,
 which is narrower than this table.** Investigate first; do not suppress an F401, F841

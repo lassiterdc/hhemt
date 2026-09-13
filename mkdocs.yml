@@ -96,8 +96,6 @@ validation:
     anchors: warn
 
 exclude_docs: |
-  running a simulation.ipynb
-  processing_sim_outputs.ipynb
   _snippets/
 
 nav:

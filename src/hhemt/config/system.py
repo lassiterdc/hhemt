@@ -199,12 +199,18 @@ class system_config(cfgBaseModel):
     # CONSTANTS
     dem_outside_watershed_height: float | None = Field(
         None,
-        description="DEM height applied to grid cells outside of the watershed boundary. Used for scaling DEM plot "
-        "colorbars.",
+        description="Elevation burned into the DEM outside the watershed boundary. Report figures never test cells "
+        "against it directly. Cells at or above the smaller of this and dem_building_height (or the one that is "
+        "set), less wall_threshold_buffer_m, are painted as walls, so a value below the raster's real terrain paints "
+        "terrain as wall and reports no error. Leave unset when the DEM carries no such sentinel.",
     )
     dem_building_height: float | None = Field(
         None,
-        description="DEM height applied to DEM gridcells overlapping buildings. Used for scaling DEM plot colorbars.",
+        description="Elevation burned into DEM cells overlapping buildings. Report figures drop cells whose value "
+        "equals this number from the DEM colorbar range, and paint cells at or above the smaller of this and "
+        "dem_outside_watershed_height (or the one that is set), less wall_threshold_buffer_m, as walls. A value that "
+        "does not match the raster leaves rooftops in the colorbar and reports no error. Leave unset when the DEM "
+        "carries no such sentinel.",
     )
     # TOGGLES
     toggle_use_swmm_for_hydrology: bool = Field(

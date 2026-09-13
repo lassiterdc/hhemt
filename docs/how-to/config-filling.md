@@ -30,6 +30,15 @@ Set `target_dem_resolution` to the cell size you actually want to simulate at.
 This coarsens the full-resolution DEM, and it is the single field with the largest
 effect on runtime.
 
+If your DEM carries burned-in sentinel elevations, for buildings or for the area
+outside the watershed, set `dem_building_height` and `dem_outside_watershed_height`
+to those exact values. Report figures drop cells equal to the building value from
+the DEM colorbar range, and paint every cell at or above the smaller of the two
+values (or the one you set), less `wall_threshold_buffer_m`, as a wall. A value
+that does not match your raster reports no error: the symptoms are a colorbar
+stretched by rooftop cells, or real terrain painted as wall. Leave both unset if
+your raster carries no sentinels; neither field is required.
+
 ## 3. Resolve the toggles
 
 Each toggle you flip makes other fields required. Set the toggles first, then fill
