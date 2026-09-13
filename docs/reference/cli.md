@@ -25,6 +25,19 @@ Pass it as `--hpc-system-config`. See
 | `run-experiment` | Run a self-describing experiment bundle: a directory whose `experiment.yaml` names its own configs, inputs, and toolkit pin. See [Running an experiment bundle](../how-to/running-an-experiment-bundle.md). |
 | `reprocess` | Re-run the downstream stages (process → consolidate → render) against simulation outputs that already exist, without re-running the simulations. This is the command for "the results are fine but the report is wrong". |
 
+**A run refuses to submit while another orchestration driver may still be alive.**
+Every submit records a driver sentinel under
+`{analysis_dir}/_status/_orchestrator/`, and the next submit refuses with exit `3`
+while any recorded driver is alive, or cannot be probed from the host you are on.
+Prefer re-running from the sentinel's own origin host, where the probe returns a
+measurement instead of a belief. Only if that host is unreachable, and only once
+you have established the driver is gone, pass `--override-live-driver DRIVER_ID` to
+`hhemt run`, naming the exact `driver_id` you read from a `*.json` file in that
+sentinel directory. It is an assertion rather than a force flag: the submit still
+refuses while any other driver is alive or indeterminate, and an id matching no
+sentinel is refused rather than honoured. `hhemt run-experiment` is gated the same
+way and exposes no override.
+
 ## Inspecting and reporting
 
 | Command | What it does |
@@ -76,7 +89,7 @@ is not the tier you run while iterating.
 
 | Command | What it does |
 |---|---|
-| `plan --toolkit {path} --runs-root {path}` | Collect the universe, derive chunk membership, write `manifest.json`, print the run id. **It also compiles: `plan` runs the warm inline, on the invoking node, unless the underlying module is given `--warm-performed-externally`, a flag this CLI does not expose.** Do not run it on a shared login node. A harness that dispatches chunks should invoke `python -m hhemt.suite._runner` with that flag and supply its own awaited warm. |
+| `plan --toolkit {path} --runs-root {path}` | Collect the universe, derive chunk membership, write `manifest.json`, print the run id. **It also compiles: `plan` runs the warm inline, on the invoking node, unless the underlying module is given `--warm-performed-externally`, a flag this CLI does not expose.** The warm is the suite's own `tests/test_synth_00_compile_models.py`, so it is a different build from the workstation recipe in [Compile the solver](../how-to/compiling-the-solver.md). Do not run it on a shared login node. A harness that dispatches chunks should invoke `python -m hhemt.suite._runner` with that flag and supply its own awaited warm. |
 | `chunk --chunk {n} --run-dir {path}` | Execute one chunk. The exit code is pytest's. |
 | `aggregate --run-dir {path}` | Compute the cross-chunk verdict and write the summary pair. `--allow-not-green` exits 0 even when the verdict is not GREEN. |
 | `triage --toolkit {path} --runs-root {path}` | **PLANS** a re-run of only the prior run's failed and unevaluated set: it writes a manifest, prints `run_id=`, and returns. **It executes nothing.** Submit that run's single chunk to actually run the set. `--from-run {id}` names the source run. |
@@ -91,6 +104,19 @@ one of two independent arms guarding it; the other is the `.triage` run-director
 
 Only `scope=union`, the array plus its complement, supports a suite-level green claim.
 A `scope=array` result does not cover the complement's tests at all.
+
+`aggregate` exposes no `--scope`, so a verdict produced through this CLI is
+`scope=array`, or `scope=triage` when the run's manifest declares a triage intent.
+Union is reached only through the underlying module, the same way
+`--warm-performed-externally` is:
+
+```bash
+python -m hhemt.suite.aggregate --run-dir RUN_DIR --scope union
+```
+
+Even there the aggregator downgrades the scope back to `array`, and records why,
+unless some chunk reported `covers=complement` and every structurally gated test
+was attempted.
 
 **Splitting a heavy component.** A single heavy component can dominate the array's wall
 clock. `python -m hhemt.suite._runner --heavy-split-budget-min {minutes}` splits each heavy
@@ -113,9 +139,14 @@ fixture cache rather than a property of these flags: see
 ## Exit codes
 
 The CLI uses structured exit codes, so a script can branch on the failure class
-rather than parsing stderr. This table is the contract for `run` and `run-experiment`,
-whose codes are read from one shared map; some other verbs still exit `1` on a failure
-the table maps to `3`, `4` or `5`:
+rather than parsing stderr. Four verbs read every code from one shared map, so for
+those four the table is exact: `run`, `run-experiment`, `build-sif` and `ingest`.
+
+Four verbs predate that map and still exit `1` where the table says `3`, `4` or `5`:
+`reprocess`, `recompute-plan`, `check-invalidating-fixes` and `delete`. `delete`
+also exits `1` for two outcomes that are not failures of the run at all: you
+declined its confirmation prompt, or it finished with the analysis directory still
+on disk.
 
 | Code | Meaning |
 |---|---|

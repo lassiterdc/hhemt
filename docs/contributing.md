@@ -103,8 +103,9 @@ open an issue to discuss before submitting.
       restriction the toolkit imposes: as the paragraph above says, `PERMITTED_VENUES`
       names a capability, and nothing in the code knows what Rivanna is. Tests that
       neither compile the solver nor execute a simulation are NOT restricted and may run
-      locally. A suite-level green claim additionally requires `scope=union` (see the
-      [CLI reference](reference/cli.md#hhemt-test-toolkit)), and it is produced there.
+      locally. A suite-level green claim additionally requires `scope=union`, which
+      the `hhemt test toolkit` CLI cannot produce (see the
+      [CLI reference](reference/cli.md#hhemt-test-toolkit)).
       For why the guard is shaped this way, see
       [the compile venue, and why the token relaxes rather than arms](explanation/testing-the-toolkit.md#the-compile-venue-and-why-the-token-relaxes-rather-than-arms).
   Which tier `just qa` gives you does NOT depend on your machine: `compile_tier` is
