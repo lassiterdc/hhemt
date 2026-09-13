@@ -506,7 +506,7 @@ def test_container_prefixed_shells_never_invoke_a_host_interpreter() -> None:
     declared_in_sif = {cspec.python_in_sif, *cspec.exe_in_sif.values()}
     from hhemt.sif.identity import resolve_sif
 
-    _sif = resolve_sif(cspec.sif_root, tc.analysis.sif_identity_for(tc.analysis.cfg_analysis.hpc_ensemble_partition))
+    _sif = resolve_sif(cspec.sif_root, tc.analysis._sif_identity_for(tc.analysis.cfg_analysis.hpc_ensemble_partition))
     found = re.findall(r"apptainer exec\s+(?:-\S+\s+|\S+:\S+\s+)*" + re.escape(str(_sif)) + r"\s+(\S+)", got)
     assert found, "container mode emitted no `apptainer exec {sif} <exe>` command to check"
     for exe in found:

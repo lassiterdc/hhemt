@@ -1277,7 +1277,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # identically to before; native mode is untouched (prefix stays "").
             _mod = f"module load {_cspec.apptainer_module}; " if _cspec.apptainer_module else ""
             _sif = resolve_sif(
-                _cspec.sif_root, self.analysis.sif_identity_for(self.cfg_analysis.hpc_ensemble_partition)
+                _cspec.sif_root, self.analysis._sif_identity_for(self.cfg_analysis.hpc_ensemble_partition)
             )
             self._container_process_prefix = f'{_mod}export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_sif} '
             # The interpreter must resolve INSIDE the image. self.python_executable

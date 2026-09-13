@@ -1082,7 +1082,7 @@ def _emit_sif_manifests(analysis: TRITONSWMM_analysis) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     for part in sorted(_matrix_required_partitions(analysis.cfg_analysis, cfg_hpc)):
-        ident = analysis.sif_identity_for(part)
+        ident = analysis._sif_identity_for(part)
         if ident.key in seen:
             continue
         seen.add(ident.key)

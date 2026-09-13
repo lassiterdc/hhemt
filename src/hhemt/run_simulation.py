@@ -1023,7 +1023,7 @@ class TRITONSWMM_run:
             from hhemt.sif.identity import resolve_sif
 
             _sif = resolve_sif(
-                cspec.sif_root, self._analysis.sif_identity_for(self._analysis.cfg_analysis.hpc_ensemble_partition)
+                cspec.sif_root, self._analysis._sif_identity_for(self._analysis.cfg_analysis.hpc_ensemble_partition)
             )
             _gpu = f"{cspec.gpu_flag} " if (run_mode == "gpu" and cspec.gpu_flag) else ""
             _extra = (" ".join(cspec.extra_exec_args) + " ") if cspec.extra_exec_args else ""

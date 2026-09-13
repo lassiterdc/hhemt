@@ -2352,7 +2352,7 @@ class TRITONSWMM_analysis:
         self._update_log()
 
     # ---- SIF identity accessor: the ONE seam every image consumer calls (SIF quest, ADR-21) ----
-    def sif_identity_for(self, partition: str):
+    def _sif_identity_for(self, partition: str):
         """The recomputed SifIdentity for ``partition``. A wheel driver (no 40-hex sha) raises
         ConfigurationError here — container mode requires a git-checkout driver (item 11)."""
         from hhemt.sif.identity import derive_identity

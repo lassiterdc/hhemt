@@ -314,7 +314,7 @@ def main() -> int:
                 if _cspec is not None and _cspec.sif_root:
                     from hhemt.sif.identity import manifest_path, resolve_sif
 
-                    _sif = resolve_sif(_cspec.sif_root, analysis.sif_identity_for(args.target_partition))
+                    _sif = resolve_sif(_cspec.sif_root, analysis._sif_identity_for(args.target_partition))
                     _man = manifest_path(_sif)
 
                     # ADR-19 (ii-a) — the SIF's own content digest, captured HERE.
