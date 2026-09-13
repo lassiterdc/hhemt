@@ -15,6 +15,7 @@ the numbered steps instead.
 | Symptom | What it usually means |
 |---|---|
 | [It ran but produced nothing](#it-ran-but-produced-nothing) | A phase never started: find which flag is missing |
+| [Setup says a model is enabled but not compiled](#setup-says-a-model-is-enabled-but-not-compiled) | Native mode needs a one-time compile, and nothing has been built on this machine |
 | [The job died at walltime](#the-job-died-at-walltime) | Expected; it resumes from its last checkpoint |
 | [The report is wrong but the results are fine](#the-report-is-wrong-but-the-results-are-fine) | The simulations are sound; the stages after them need rebuilding |
 | [A run I expected to be a no-op re-executed everything](#a-run-i-expected-to-be-a-no-op-re-executed-everything) | **Not a failure**: a re-run trigger fired |
@@ -115,6 +116,20 @@ started, and the cause is upstream: setup, compilation, or dispatch. If
 `c_run_*` exists but `d_process_*` does not, the simulation ran and processing
 failed; the raw outputs are still on disk under `sims/{event_id}/out_*/`, so
 nothing is lost and `reprocess` can retry.
+
+### Setup says a model is enabled but not compiled
+
+No `a_setup_*` flag exists, and `logs/setup.log` (`logs/setup_target_{N}.log` on
+an experiment) ends with a line of this shape:
+
+```text
+TRITON-SWMM is enabled but not compiled and --compile-triton-swmm not specified
+```
+
+In native mode the setup step checks for a compiled solver and never builds one.
+The flag the line names belongs to the standalone compile command, and neither
+`hhemt run` nor `analysis.run()` takes it. Compile once, following
+[Compile the solver](compiling-the-solver.md), then start the run again.
 
 ### The job died at walltime
 

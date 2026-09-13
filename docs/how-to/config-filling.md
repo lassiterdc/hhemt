@@ -76,6 +76,10 @@ For a stronger check that runs a minimal subset of your own analysis end to end
 against a solver you have already compiled, use `analysis.test()`. See the
 [Norfolk end-to-end tutorial](../tutorials/norfolk-end-to-end.md).
 
+A real run needs the same, and neither `analysis.test()` nor `analysis.run()`
+builds one. Compile it once first, following
+[Compile the solver](compiling-the-solver.md).
+
 !!! warning "Sensitivity analyses: edit the XLSX, never the CSV"
     With `toggle_sensitivity_analysis: true`, the derived
     `sensitivity_analysis_definition.csv` is re-generated from your XLSX on

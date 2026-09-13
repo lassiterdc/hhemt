@@ -21,7 +21,7 @@ Pass it as `--hpc-system-config`. See
 
 | Command | What it does |
 |---|---|
-| `run` | Execute the workflow from a system + analysis config. The main entry point. `--dry-run` validates and prints the plan without executing. |
+| `run` | Execute the workflow from a system + analysis config. The main entry point. `--dry-run` validates and prints the plan without executing. In native mode the solver must already be compiled; see [Compile the solver](../how-to/compiling-the-solver.md). |
 | `run-experiment` | Run a self-describing experiment bundle: a directory whose `experiment.yaml` names its own configs, inputs, and toolkit pin. See [Running an experiment bundle](../how-to/running-an-experiment-bundle.md). |
 | `reprocess` | Re-run the downstream stages (process → consolidate → render) against simulation outputs that already exist, without re-running the simulations. This is the command for "the results are fine but the report is wrong". |
 

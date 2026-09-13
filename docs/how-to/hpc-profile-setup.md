@@ -112,6 +112,11 @@ name must be a key under `partitions:` in this profile.
 
 On the profile above that gives you `standard`, `gpu-a6000` and `gpu-a100-80`.
 
+The same partition entry decides what the solver is built for, and a run checks
+for that build rather than making it. Before the first run on a partition, compile
+for it with the command-line form on
+[Compile the solver](compiling-the-solver.md#on-a-cluster).
+
 ## A second cluster, and what actually differs
 
 A Frontier profile is not a different kind of file. It is the same schema with

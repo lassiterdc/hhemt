@@ -67,6 +67,11 @@ hhemt run-experiment --bundle experiments/my_experiment --cluster uva
 apply. The verb loads and validates `experiment.yaml`, resolves the HPC profile, then hands the
 two configs to the toolkit.
 
+In native mode the solver must already be built for the partition the run targets; the
+verb checks for the build and never performs it. Run the `--dry-run` form first: it writes
+the resolved configs to `$SCRATCH_DIR/resolved_configs/`, and those are the two paths the
+compile command on [Compile the solver](compiling-the-solver.md#on-a-cluster) takes.
+
 ## Run modes and the wipe guard
 
 `--mode` selects what happens to an analysis directory that already holds work. The default

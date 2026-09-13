@@ -5,8 +5,9 @@ Get from a fresh clone to a running coupled TRITON-SWMM simulation in a few minu
 ## Prerequisites
 
 --8<-- "prerequisites-base.md"
-- `conda` (Miniforge or Miniconda). No HPC and no CLI: this tutorial drives
-  everything from an interactive Python session.
+- `conda` (Miniforge or Miniconda), plus `git` and `make` on your `PATH`: the
+  solver build uses both. No HPC and no CLI: this tutorial drives everything from
+  an interactive Python session.
 
 ## 1. Clone and set up the environment
 
@@ -29,16 +30,18 @@ The example uses the Norfolk, VA coastal-flooding case study. You do not downloa
 ```python
 from hhemt.experiments import NorfolkIreneExperiment
 norfolk = NorfolkIreneExperiment.load()       # anonymous Hydroshare download; builds system + analysis
+norfolk.system.compile_TRITON_SWMM()          # once per machine: clones and builds the solver
 result = norfolk.analysis.run(from_scratch=False, execution_mode="auto")
 ```
 
-`NorfolkIreneExperiment.load()` downloads the case data (once), builds the system and analysis objects, and hands you back an experiment whose `.analysis` is the orchestrator. `run(from_scratch=False)` resumes any completed work rather than rebuilding from scratch, and `execution_mode="auto"` detects whether you are in a SLURM allocation or on a local machine.
+`NorfolkIreneExperiment.load()` downloads the case data (once), builds the system and analysis objects, and hands you back an experiment whose `.analysis` is the orchestrator. `compile_TRITON_SWMM()` builds the solver the first time and skips the build once it exists. A run checks for that build and never performs it, so this line comes before the first `run()` on every machine. [Compile the solver](../how-to/compiling-the-solver.md) has the cluster form and when to rebuild. `run(from_scratch=False)` resumes any completed work rather than rebuilding from scratch, and `execution_mode="auto"` detects whether you are in a SLURM allocation or on a local machine.
 
 For user-authored configs instead of the canned example:
 
 ```python
 from hhemt import Toolkit
 tk = Toolkit.from_configs("system.yaml", "analysis.yaml")
+tk.system.compile_TRITON_SWMM()                # once per machine
 result = tk.analysis.run(from_scratch=False)   # tk.analysis.run(...), not tk.run(...)
 ```
 
