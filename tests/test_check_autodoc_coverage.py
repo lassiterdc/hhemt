@@ -9,6 +9,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_autodoc_coverage.py"
 
 
@@ -260,3 +262,131 @@ def test_the_rule_does_not_admit_imported_names():
         "hhemt.experiment_bundle.ConfigurationError",
     ):
         assert leaked not in expected, f"{leaked} is an imported name and must not be expected"
+
+
+# --- the population root: THIS checkout's src, not what the interpreter finds ----
+#
+# The seven ``sys.modules``-injected fixtures above pin classification and exit
+# codes and pin NOTHING about resolution: ``import_module`` returns the injected
+# entry before any finder runs. These arms construct both trees under ``tmp_path``
+# and pin one half of the binder each: the prepend (cold, foreign copy first on
+# ``sys.path``), the purge (warm, foreign module already imported), and the funnel's
+# CALL to the provenance assert (a ``src`` that exists and supplies nothing).
+
+_FAKE_PACKAGE = (
+    '__all__ = ["{name}"]\n\n\n'
+    "class {name}:\n"
+    '    """Documented, so the docstring clause is never the reason a node is red."""\n'
+)
+
+
+@pytest.fixture
+def clean_fakepkg():
+    """Leave ``sys.modules`` clear of every ``fakepkg*`` entry a constructed arm loads,
+    and put ``sys.path`` back to what it was before the arm ran.
+
+    The cold arm imports a REAL ``fakepkg`` from a ``tmp_path`` pytest will delete, and
+    every arm's funnel call prepends its ``src_root`` to ``sys.path``. ``monkeypatch``
+    restores ``sys.path`` only for an arm that called ``syspath_prepend`` itself, which
+    the warm arm does not, and it does nothing to ``sys.modules``. Without this teardown
+    the warm arm would leave its ``repo/src`` first on ``sys.path`` for every later node,
+    and would inherit a module that is not its decoy, so its precondition would be
+    satisfied for the wrong reason.
+    """
+
+    def _pop() -> None:
+        for name in [n for n in sys.modules if n == "fakepkg" or n.startswith("fakepkg.")]:
+            del sys.modules[name]
+
+    saved_path = sys.path[:]
+    _pop()
+    yield
+    _pop()
+    sys.path[:] = saved_path
+    importlib.invalidate_caches()
+
+
+def _two_trees(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """``repo/src/fakepkg`` exporting ``InRepo``, ``other/fakepkg`` exporting ``Elsewhere``.
+
+    Returns ``(repo_src, other, api_page)``; the page declares ``::: fakepkg``.
+    """
+    repo_src = tmp_path / "repo" / "src"
+    other = tmp_path / "other"
+    for root, name in ((repo_src, "InRepo"), (other, "Elsewhere")):
+        pkg = root / "fakepkg"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text(_FAKE_PACKAGE.format(name=name), encoding="utf-8")
+    api_page = tmp_path / "repo" / "docs" / "reference" / "api.md"
+    api_page.parent.mkdir(parents=True)
+    api_page.write_text("# API\n\n::: fakepkg\n", encoding="utf-8")
+    return repo_src, other, api_page
+
+
+def _load_decoy(path: Path) -> types.ModuleType:
+    """A ``fakepkg`` loaded from ``path`` with NO finder consulted."""
+    spec = importlib.util.spec_from_file_location("fakepkg", path)
+    assert spec is not None and spec.loader is not None
+    decoy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(decoy)
+    return decoy
+
+
+def _origin_of(name: str) -> Path:
+    return Path(sys.modules[name].__file__).resolve()
+
+
+def test_enumerator_binds_to_src_root_over_a_foreign_copy_first_on_sys_path(tmp_path, monkeypatch, clean_fakepkg):
+    """The PREPEND half. Red today: the foreign copy is first on ``sys.path`` and nothing rebinds.
+
+    Today this node is red for a reason other than the one its assertion states:
+    ``expected_qualnames`` accepts no ``api_page``/``src_root`` keywords, so the call
+    raises ``TypeError`` before any import. After the repair the assertion is what
+    discriminates, and this arm alone cannot tell a prepend-only rebind from
+    prepend-plus-purge; the warm arm below can.
+    """
+    repo_src, other, api_page = _two_trees(tmp_path)
+    monkeypatch.syspath_prepend(str(other))
+    expected = cac.expected_qualnames(api_page=api_page, src_root=repo_src)
+    assert expected == {"fakepkg.InRepo"}
+    assert _origin_of("fakepkg").is_relative_to(repo_src.resolve())
+
+
+def test_enumerator_evicts_a_warm_foreign_module_before_importing(tmp_path, monkeypatch, clean_fakepkg):
+    """The PURGE half: the only arm a prepend-only rebind fails.
+
+    ``import_module`` returns the ``sys.modules`` entry before any finder runs, so a
+    prepend changes nothing here and only an eviction restores the right tree. The
+    decoy is loaded by path and installed with ``monkeypatch.setitem`` so no finder
+    is consulted and the precondition, asserted before the enumerator runs, cannot
+    be satisfied by a module another node left warm. Red today for the same
+    ``TypeError`` reason as the cold arm.
+    """
+    repo_src, other, api_page = _two_trees(tmp_path)
+    decoy = _load_decoy(other / "fakepkg" / "__init__.py")
+    monkeypatch.setitem(sys.modules, "fakepkg", decoy)
+    assert _origin_of("fakepkg").is_relative_to(other.resolve())
+    expected = cac.expected_qualnames(api_page=api_page, src_root=repo_src)
+    assert expected == {"fakepkg.InRepo"}
+    assert _origin_of("fakepkg").is_relative_to(repo_src.resolve())
+
+
+def test_enumerator_refuses_a_package_the_src_root_cannot_supply(tmp_path, monkeypatch, clean_fakepkg):
+    """The ASSERT half's CALL SITE: a ``src`` that exists and holds no ``fakepkg``.
+
+    The prepend lands on a directory that supplies nothing, the purge evicts, the
+    import falls through to the foreign copy on ``sys.path`` (the stand-in for the
+    editable ``.pth``), and the funnel's provenance assert is the only thing left
+    that can distinguish that from success. With the assert call deleted this
+    returns ``{"fakepkg.Elsewhere"}`` and raises nothing, so the both-states anchor
+    is raise-versus-return, not wording. Today red for the wrong reason: the
+    ``TypeError`` on the unknown keywords, not a missing raise.
+    """
+    _, other, api_page = _two_trees(tmp_path)
+    empty_src = tmp_path / "empty" / "src"
+    empty_src.mkdir(parents=True)
+    monkeypatch.syspath_prepend(str(other))
+    with pytest.raises(RuntimeError) as excinfo:
+        cac.expected_qualnames(api_page=api_page, src_root=empty_src)
+    assert str(empty_src.resolve()) in str(excinfo.value)
+    assert str(other.resolve()) in str(excinfo.value)

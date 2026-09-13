@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import importlib.util
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -34,28 +33,10 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # plain `import hhemt` from a worktree silently imports the main tree and this
 # page would describe code that is not the code under review. Measured this
 # round: `hhemt.__file__` resolved to the main clone while building the
-# worktree. Prepending keeps the worktree ahead of the `.pth` entry.
+# worktree. The binder that keeps the worktree ahead of the `.pth` entry and
+# evicts an already-imported main-tree package lives in `scripts/local_src.py`,
+# is loaded by path in `_load_local_src` below, and `on_config` runs it first.
 _SRC = _REPO_ROOT / "src"
-
-
-def _bind_local_src() -> None:
-    """Make `import hhemt` resolve to THIS checkout, deterministically.
-
-    Prepending to `sys.path` is not sufficient on its own: by the time a hook
-    runs, `hhemt` may already be in `sys.modules` from the editable install's
-    `.pth`, and an already-imported package wins regardless of path order. So
-    the stale modules are dropped before the import.
-    """
-    if sys.path and sys.path[0] != str(_SRC):
-        sys.path.insert(0, str(_SRC))
-    stale = [
-        name
-        for name, mod in list(sys.modules.items())
-        if name == "hhemt" or name.startswith("hhemt.")
-        if not str(getattr(mod, "__file__", "") or "").startswith(str(_SRC))
-    ]
-    for name in stale:
-        del sys.modules[name]
 
 
 # --- Step 1: the derivation primitive ---------------------------------------
@@ -119,6 +100,15 @@ def _type_name(annotation: Any) -> str:
 def _load_lint():
     path = _REPO_ROOT / "scripts" / "check_docs_content.py"
     spec = importlib.util.spec_from_file_location("_hhemt_docs_lint", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_local_src():
+    """The checkout binder, loaded by path for the reason `_load_lint` is: `scripts/` is not a package."""
+    path = _REPO_ROOT / "scripts" / "local_src.py"
+    spec = importlib.util.spec_from_file_location("_hhemt_local_src", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -451,7 +441,7 @@ def on_config(config):
     rewritten from the live models on every build and is never hand-maintained,
     so it cannot drift. It is build output and belongs in `.gitignore`.
     """
-    _bind_local_src()
+    _load_local_src().bind_local_src(_SRC, {"hhemt"})
     markdown = _render()
     # Two passes over two different populations. The generator's OWN prose --
     # headings, intro, section labels -- answers to all four classes. The
