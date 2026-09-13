@@ -217,15 +217,27 @@ class system_config(cfgBaseModel):
     )
     toggle_triton_model: bool = Field(
         ...,
-        description="Determines whether or not a TRITON-only model will be compiled and run",
+        description=(
+            "Determines whether or not a TRITON-only model is enabled. The build is "
+            "not performed here: in native mode the setup rule asserts that an enabled "
+            "model already has a successful build."
+        ),
     )
     toggle_tritonswmm_model: bool = Field(
         ...,
-        description="Determines whether or not a TRITON-SWMM coupled model will be compiled and run",
+        description=(
+            "Determines whether or not a TRITON-SWMM coupled model is enabled. The "
+            "build is not performed here: in native mode the setup rule asserts that an "
+            "enabled model already has a successful build."
+        ),
     )
     toggle_swmm_model: bool = Field(
         ...,
-        description="Determines whether or not a standalone SWMM model will be compiled and run",
+        description=(
+            "Determines whether or not a standalone SWMM model is enabled. The build is "
+            "not performed here: in native mode the setup rule asserts that an enabled "
+            "model already has a successful build."
+        ),
     )
     # PARAMETERS
     target_dem_resolution: float = Field(

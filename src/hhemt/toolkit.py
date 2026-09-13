@@ -150,7 +150,7 @@ class Toolkit:
             ...     analysis_config="configs/analysis.yaml"
             ... )
             >>>
-            >>> # Toolkit is ready - system inputs processed, executables compiled
+            >>> # Toolkit is ready - configs loaded, validated, and bound
             >>> print(f"Analysis directory: {tk.analysis.analysis_dir}")
             >>> print(f"Total simulations: {tk.analysis.n_simulations}")
         """
@@ -261,11 +261,15 @@ class Toolkit:
 
         This is the main entry point for workflow execution. It handles:
         - System input processing (DEM, Manning's coefficients)
-        - TRITON/SWMM compilation
+        - Asserting that every enabled model already has a successful build (native mode)
         - Scenario preparation (SWMM model generation)
         - Simulation execution (TRITON-SWMM runs)
         - Output processing (timeseries extraction, compression)
         - Consolidation (analysis-level aggregation)
+
+        The solver is not built here. In native mode, build it once per
+        machine and GPU target before the first run; see
+        [Compile the solver](../how-to/compiling-the-solver.md).
 
         Parameters
         ----------

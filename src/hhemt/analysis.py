@@ -217,9 +217,11 @@ class TRITONSWMM_analysis:
     ``test()``
         Run a strict, least-demanding subset of *this* analysis under
         ``{analysis_dir}/_test/``, exercising the real
-        compile-run-process-consolidate-report path for one minimum-device
-        representative per unique compute configuration. This is the smoke test
-        to run before committing an allocation to a full run.
+        run-process-consolidate-report path for one minimum-device
+        representative per unique compute configuration. In native mode the
+        solver must already be built: the run checks for the build and never
+        performs it. This is the smoke test to run before committing an
+        allocation to a full run.
     ``validate()``
         Preflight the configuration without executing anything.
     ``get_workflow_status()``
@@ -2910,8 +2912,10 @@ class TRITONSWMM_analysis:
         (enabled-model-toggles x compilation-backend x partition x compute-config)
         group present in the analysis, materializes each under
         ``{analysis_dir}/_test/``, truncates its inputs to ~``n_reporting_timesteps``
-        reporting frames, and runs the full compile->run->process->consolidate->
-        report path. A strict subset of the user's defined analysis -- no sweeps,
+        reporting frames, and runs the full run->process->consolidate->report
+        path. In native mode the solver must already be built: the emitted setup rule
+        asserts that every enabled model has a successful build and never performs one.
+        A strict subset of the user's defined analysis -- no sweeps,
         no synthetic substitution (PIP O-f requirements 1-7).
 
         Notes
@@ -2946,7 +2950,7 @@ class TRITONSWMM_analysis:
                 verbose=verbose,
                 wait_for_job_completion=wait_for_job_completion,
                 dry_run=dry_run,
-            )  # full compile->run->process->consolidate->report
+            )  # full run->process->consolidate->report
             results.append(
                 TestSubResult(
                     representative=rep,
@@ -3632,9 +3636,16 @@ class TRITONSWMM_analysis:
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM in Phase 1
+            If True, the Phase 1 setup rule's shell runs ``hhemt.setup_workflow``,
+            which in native mode asserts that every enabled model already has a
+            successful build. In container mode it performs no such check, because
+            the SIF carries the binary. If False, and ``process_system_level_inputs``
+            is also False, that shell only touches its completion flag. Neither
+            branch compiles: no ``--compile-*`` flag is emitted. Named for the
+            behaviour it used to have.
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            If True, pass ``--recompile-if-already-done`` to the setup rule.
+            Inert while that rule performs no compile.
         prepare_scenarios : bool
             If True, each simulation will prepare its scenario before running
         overwrite_scenario_if_already_set_up : bool

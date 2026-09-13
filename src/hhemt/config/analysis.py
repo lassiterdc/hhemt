@@ -383,10 +383,11 @@ class analysis_config(cfgBaseModel):
         gt=0,
         description=(
             "Memory allocation (in MB) for the setup_target SLURM rule that runs "
-            "system-input processing (DEM coarsening, Manning's raster) and TRITON-SWMM "
-            "compilation. Default 12 GB covers 0.35 m DEM processing (empirical peak "
-            "~5.15 GB parent-process RSS) with 2.3x headroom and the compile-side peak "
-            "(~1.34 GB) ~9x. Increase for higher-resolution DEMs or larger watersheds."
+            "system-input processing (DEM coarsening, Manning's raster) and, in native mode, "
+            "asserts that every enabled model already has a successful build. Default 12 GB "
+            "covers 0.35 m DEM processing (empirical peak ~5.15 GB parent-process RSS) with "
+            "2.3x headroom; the rule performs no compile, so it needs no compile-side headroom. "
+            "Increase for higher-resolution DEMs or larger watersheds."
         ),
     )
     hpc_runtime_min_for_setup: int = Field(
@@ -394,9 +395,9 @@ class analysis_config(cfgBaseModel):
         gt=0,
         description=(
             "Time allocation (in minutes) for the setup_target SLURM rule. Default 60 "
-            "covers 0.35 m DEM processing (empirical wall time ~2:24) plus a -j4 GPU "
-            "compile (~3 min) with headroom. Increase for higher-resolution DEMs or "
-            "slower nodes."
+            "covers 0.35 m DEM processing (empirical wall time ~2:24) with headroom; the "
+            "rule performs no compile. Increase for higher-resolution DEMs or slower "
+            "nodes."
         ),
     )
 
@@ -414,7 +415,8 @@ class analysis_config(cfgBaseModel):
             "number rather than a value derived from the memory allocation — no "
             "physical relation ties walltime to job RAM, and inventing one would state "
             "an assumption as a computed value. NOT hpc_runtime_min_for_setup (a "
-            "DIFFERENT rule — DEM processing and compilation) and NOT any process_* "
+            "DIFFERENT rule: DEM processing and the build assertion) and NOT any "
+            "process_* "
             "knob (those are in-runner byte/count budgets, not SLURM allocations)."
         ),
     )
@@ -917,7 +919,7 @@ class analysis_config(cfgBaseModel):
     execution_environment: Literal["native", "container"] = Field(
         "native",
         description=(
-            "ADR-1: 'native' runs compile+sim+processing on the host (today's "
+            "ADR-1: 'native' runs sim+processing on the host (today's "
             "behavior, byte-identical); 'container' wraps the innermost sim {exe} and "
             "the process_{model} runners in `apptainer exec {sif}`, where the cluster "
             "SIF is described by hpc_system_config.container (ContainerSpec). Additive "
@@ -927,7 +929,7 @@ class analysis_config(cfgBaseModel):
         ),
         json_schema_extra=field_meta(
             options={
-                "native": "Compile, simulate and process on the host. Today's behavior, byte-identical.",
+                "native": "Simulate and process on the host. Today's behavior, byte-identical.",
                 "container": (
                     "Wrap the sim executable and the process_{model} runners in "
                     "`apptainer exec {sif}`, per hpc_system_config.container."

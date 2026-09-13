@@ -448,9 +448,14 @@ class TRITONSWMM_sensitivity_analysis:
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM
+            Inert on this path. The per-target setup rules are emitted whatever
+            this value is, and in native mode they assert that every enabled model
+            already has a successful build rather than compiling one. In container
+            mode they perform no such check, because the SIF carries the binary.
+            Named for the behaviour it used to have.
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            If True, pass ``--recompile-if-already-done`` to those rules.
+            Inert while they perform no compile.
         prepare_scenarios : bool
             If True, prepare scenarios before running
         overwrite_scenario_if_already_set_up : bool
@@ -2841,7 +2846,10 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         recompile_if_already_done_successfully: bool = False,
     ):
-        """Compile the solver once per unique system target (workflow phase 1).
+        """Compile the solver once per unique system target.
+
+        Direct-execution helper. The emitted workflow does not call it: the
+        per-target setup rules assert an existing build rather than building.
 
         members that agree on the compile-relevant tuple
         ``(target_dem_resolution, gpu_hardware, gpu_compilation_backend)``
