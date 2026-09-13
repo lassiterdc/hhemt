@@ -27,6 +27,24 @@ bundle_dir = sensitivity.reprex_bundle()
 sibling directory) so the round-trip below can consume it directly. Pass
 `output_path=Path(...)` to control where the bundle is written.
 
+For a **container-mode** analysis (`execution_environment: container`, which is not the
+default) you must also pass one Apptainer `.def` per distinct architecture in the matrix.
+Both surfaces take it:
+
+```python
+from pathlib import Path
+
+defs = [Path("containers/uva-cuda-a100.def")]
+
+bundle_dir = analysis.reprex_bundle(container_defs=defs)
+bundle_dir = sensitivity.reprex_bundle(container_defs=defs)
+```
+
+Emitting without it raises `ConfigurationError`: no field of the analysis or HPC-system
+config names a `.def` (`ContainerSpec` has none), so it is an emit-time operator input.
+An experiment bundle is the exception, because `ContainerRef.def_recipe` does name one.
+A native analysis ignores the argument.
+
 The emitted bundle root carries the minimal runnable set:
 
 - `cfg_system.yaml` + `cfg_analysis.yaml`: path-scrubbed configs (your machine-local
@@ -103,9 +121,14 @@ result = Bundle.from_directory(bundle_dir).reprex(my_reprex, my_hpc_profile)
    that your image file is byte-identical to the producer's. A mismatch
    raises `ProcessingError` before any validation runs. A best-effort `apptainer verify`
    PGP check runs too (`result.sif_signature_ok` is `None` when `apptainer` or the
-   producer key is unavailable, which is a warning rather than a failure). A **native run** records no
-   SIF in its crate, so `result.sif_reference_present` is `False` and verification is a
-   vacuous pass.
+   producer key is unavailable, which is a warning rather than a failure). A bundle whose
+   crate carries no SIF entity reports `result.sif_reference_present = False`. That alone
+   does **not** mean the run was native: a container-mode bundle emitted before the
+   `container_build` manifest block existed, or one whose manifest is missing or
+   unreadable, lands there too. No field on `ReprexResult` reliably tells those apart
+   today. `result.sif_verified` is informative in one direction only: `None` proves a
+   container bundle with nothing to verify against, while `True` is consistent with both
+   a genuinely native run and an unverifiable container one.
 
 2. **Re-aim preflight at your profile.** Validation is re-run with your partition
    selectors overlaid, so the report reflects *your* cluster's caps.
@@ -117,8 +140,10 @@ result = Bundle.from_directory(bundle_dir).reprex(my_reprex, my_hpc_profile)
    | `runnable` | `True` when no sensitivity row exceeds a target partition cap |
    | `problem_pairs` | one `ValidationIssue` per `(member_id, column)` that exceeds a cap, naming the exact rows/resources to reduce |
    | `amendments` | per-field experiment amendments, each labelled `validated` (a deterministic target-partition lookup pins the value) or `advisory` (you must decide, with a named reason) |
-   | `sif_reference_present` / `sif_verified` / `sif_signature_ok` | SIF verification outcome (see step 1) |
-   | `zero_user_info_leaks` | informational: producer tokens still present in the bundle (see below) |
+   | `sif_reference_present` | `True` when the crate carries a SIF entity. `False` does **not** imply a native run (see step 1) |
+   | `sif_verified` | `True` when the digest matched. Also `True`, ambiguously, when no SIF entity is present and the bundle does not announce container mode: that covers a genuinely native run **and** a container bundle whose `bundle_manifest.json` carries no `container_build` block, is missing, or is unreadable. `None` is the one unambiguous state: the bundle does announce container mode and carries no digest, so nothing was checked. `False` is unreachable, because a mismatch raises rather than returns |
+   | `sif_signature_ok` | best-effort `apptainer verify` PGP result. `None` when `apptainer` or the producer key is unavailable, or when there was no SIF to check |
+   | `zero_user_info_leaks` | informational. One entry per producer token still present in the bundle; on an install where no blocklist carrier is reachable it instead carries the gate's own diagnosis (see below) |
 
    ```python
    if not result.runnable:
@@ -146,3 +171,18 @@ information, but that is not yet enforced at emit time.
     still leak through `bundle_manifest.json`, harvested SWMM `.inp` `FILE`
     references, and `validation_report.json`, all surfaces the config-field scrub
     does not yet cover.
+
+    Four further things about the gate. Its blocklist carrier comes from
+    `$HHEMT_REPREX_BLOCKLIST` when that variable is set, and from the source checkout's
+    `scripts/reprex_blocklist.txt` only when it is not. The override is terminal rather
+    than the first step of a fallback chain: if it is set and does not point at an
+    existing file, resolution stops there and the source-checkout copy is never
+    consulted. There is deliberately no packaged-data copy, because a wheel could ship
+    either the real private tokens or synthetic ones that would certify a pass it never
+    performed. When no carrier is reachable (the usual case for a PyPI install), the gate
+    raises a diagnosed `ProcessingError` which `reprex()` catches and records: the
+    diagnosis lands in `result.zero_user_info_leaks` as a finding rather than crashing
+    the round-trip. So a non-empty `zero_user_info_leaks` is not automatically a list of
+    leaks. Read the entries. Note also that the gate is producer-local by design. It can
+    only find tokens it was given, so pointing the override at a list you wrote yourself
+    buys a pass the gate never earned.
