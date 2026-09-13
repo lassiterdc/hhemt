@@ -10,7 +10,7 @@
     The full multi-config sweep (serial → OpenMP → MPI → hybrid → GPU under both execution modes) needs an HPC allocation and hours of compute and is not runnable in CI. This tutorial is authored-and-code-checked; run the pieces your hardware supports.
 
 !!! tip
-    Run `analysis.test()` first. It runs a strict `_test/` subset (compile → run → process → consolidate → report) as a fast smoke before committing full compute.
+    Run `analysis.test()` first. It runs a strict `_test/` subset (setup → run → process → consolidate → report) as a fast smoke before committing full compute. The setup step checks that the solver is already compiled rather than compiling it.
 
 ## The worked path: a local serial run
 
@@ -27,7 +27,7 @@ norfolk.analysis.render_report()                # renders the analysis report
 Here is what each step does:
 
 - **`NorfolkIreneExperiment.load()`** downloads the Norfolk case-study data once (anonymously, with no HydroShare account needed), builds the system and analysis objects, and hands you back an experiment whose `.analysis` is the orchestrator and whose `.system` holds the DEM/compilation state.
-- **`norfolk.analysis.test()`** is the optional smoke test. It runs a strict, least-demanding `_test/` subset of the analysis end-to-end (compile → run → process → consolidate → report) under `{analysis_dir}/_test/`, so you find a broken compile or a missing input in minutes instead of hours into the real run.
+- **`norfolk.analysis.test()`** is the optional smoke test. It runs a strict, least-demanding `_test/` subset of the analysis end-to-end (setup → run → process → consolidate → report) under `{analysis_dir}/_test/`, so you find an uncompiled solver or a missing input in minutes instead of hours into the real run.
 - **`norfolk.analysis.run(from_scratch=False, execution_mode="local")`** does the real work. `from_scratch=False` resumes any completed work rather than rebuilding, and `execution_mode="local"` forces a local run (no SLURM) using a thread pool sized to your machine.
 - **`norfolk.analysis.render_report()`** assembles the self-contained report from the completed outputs.
 

@@ -47,20 +47,29 @@ If you prefer the filesystem, the same information is in the status flags:
 ls analysis_dir/_status/
 ```
 
-The leading letter encodes phase order, so a sorted listing reads as progress:
+The table below is in execution order. The leading letter encodes that order
+with one exception, `f_consolidate_scenario_evt-*`, which runs before
+`e_consolidate_*` and so sorts after the rung it precedes; read progress down
+this table rather than down a sorted listing:
 
 | Prefix | Phase |
 |---|---|
-| `a_setup_*` | System setup: DEM, Manning's, compilation |
+| `a_setup_*` | System setup: DEM and Manning's processing, plus a check that every enabled solver is already compiled |
 | `b_prepare_*` | Scenario preparation: SWMM `.inp` generation, boundary conditions. Emitted only when preparation runs as its own rule; on a run where it does not, the ladder reads `a_` then `c_` with no gap. |
-| `c_run_*` | Simulation |
-| `d_process_*` | Per-scenario output processing |
-| `e_consolidate_member-*` | Per-member consolidation |
+| `c_run_*` | Simulation, one flag per (model type, event) |
+| `d_process_*` | Per-scenario output processing, one flag per (model type, event) |
+| `f_consolidate_scenario_evt-*` | Per-scenario fan-in once every enabled model has processed that event; when `remove_after_processing` elects scenario-scoped classes, their inputs are reclaimed here. Regular analyses only, and it runs before `e_consolidate_*` despite its letter |
+| `e_consolidate_*` | Analysis-level consolidation: `e_consolidate_complete.flag` on a regular analysis, `e_consolidate_member-*` per member of an experiment |
 | `f_consolidate_experiment_*` | Experiment consolidation |
 
-**The last prefix present is the phase that completed; the failure is in the next
-one.** Each flag has a `.flag.json` sidecar naming the rule, model type,
+**The last rung present, reading down the table, is the phase that completed; the
+failure is in the next rung down.** Each flag has a `.flag.json` sidecar naming the rule, model type,
 member and event it belongs to.
+
+A cold-cache failure shows here as no `a_setup_*` flag at all, with the uncompiled
+model named in `logs/setup.log` (`logs/setup_target_{N}.log` on an experiment): the
+setup rule asserts the build and never performs it. A container run makes no such
+check, because its solver ships inside the image.
 
 ## 2. Read the log for the phase that did not complete
 
@@ -73,8 +82,12 @@ ls analysis_dir/logs/sims/
 # model_{model_type}_{analysis_id}_evt{N}.log        (sensitivity member)
 ```
 
-Look for the completion marker. TRITON writes `Simulation ends`; the runner
-writes `simulation completed successfully`. **Absence of the marker on a job that
+Look for the completion marker. TRITON writes `Simulation ends` and standalone
+SWMM writes `EPA SWMM completed` (with no `There are errors.` on the same line)
+into the model log above. The runner's own `Simulation completed successfully`
+line goes to the rule log beside it, `{model_type}_evt-{event_id}.log`
+(`simulation_member_{member_id}_evt_{event_id}.log` on an experiment).
+**Absence of the marker on a job that
 `sacct` reports COMPLETED is the signature of a silent early exit**. That
 combination means the process was reaped or returned early, so the elapsed time
 the scheduler reports is not the time the solver ran.

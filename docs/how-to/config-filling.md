@@ -72,8 +72,8 @@ execute. A non-zero exit names the offending field. Preflight validation
 accumulates every error and reports them together, so you fix one round of
 problems rather than discovering them one at a time.
 
-For a stronger check that actually compiles and runs a minimal subset of your own
-analysis, use `analysis.test()`. See the
+For a stronger check that runs a minimal subset of your own analysis end to end
+against a solver you have already compiled, use `analysis.test()`. See the
 [Norfolk end-to-end tutorial](../tutorials/norfolk-end-to-end.md).
 
 !!! warning "Sensitivity analyses: edit the XLSX, never the CSV"
