@@ -219,8 +219,8 @@ class hpc_system_config(BaseModel):
             "rather than being compared against a large number.\n\n"
             "WHEN SET, the per-rule weight is what SLURM METERS, never what the job requests: a "
             "full-node `--exclusive` GPU hold is charged `nodes x cpus_per_node`, measured at 6x "
-            "the requested `tasks x cpus_per_task` on job 14452815 (ReqTRES cpu=16 vs AllocTRES "
-            "cpu=96). A budget that under-counts is worse than no budget, because it permits "
+            "the requested `tasks x cpus_per_task` on one observed allocation (ReqTRES cpu=16 vs "
+            "AllocTRES cpu=96). A budget that under-counts is worse than no budget, because it permits "
             "breaching the ceiling while reporting compliance.\n\n"
             "DENOMINATION CAVEAT -- this budget counts CPUs, and it tracks a site ceiling only "
             "where that ceiling also meters `cpu`. Where a QOS meters `billing` instead, this "
@@ -248,7 +248,7 @@ class hpc_system_config(BaseModel):
             "below this many bytes, the driver CANCELS the in-flight SIMULATIONS, leaves every "
             "processing job running, and exits so a later run resumes via the v2 sentinels. "
             "Leave UNSET (the default) and no polling happens and no branch is taken.\n\n"
-            "SIMS ONLY, NEVER PROCESSING ([Q212]). Processing is what CONVERTS raw output into "
+            "SIMS ONLY, NEVER PROCESSING. Processing is what CONVERTS raw output into "
             "the summaries the campaign is for and is what makes reclaim eligible; cancelling it "
             "during a disk squeeze removes the only thing draining the disk.\n\n"
             "FREE BYTES, not a free fraction: the campaign shares this filesystem, so the "
@@ -282,7 +282,7 @@ class hpc_system_config(BaseModel):
             "set-resources / default-resources entries that name toolkit-emitted "
             "resources (tasks, tasks_per_gpu, mpi, gres, slurm_extra, "
             "slurm_partition, runtime, mem_mb, cpus_per_task, nodes). Those are "
-            "correctness-critical per-rule emissions (see Gotcha 32) and may not "
+            "correctness-critical per-rule emissions and may not "
             "be overridden via the profile."
         ),
     )

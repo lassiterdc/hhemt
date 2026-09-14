@@ -32,7 +32,7 @@ class HydrologyPanelConfig(cfgBaseModel):
         "#03152e",
         description=(
             "Rainfall bar color (hex). Near-black navy for maximum legibility "
-            "against Plotly's white panel background; iter3 darkened past "
+            "against Plotly's white panel background; darkened past "
             "ColorBrewer Blues 9/9 (#08306b) because the thinner Plotly bars "
             "still read as pale at scale. Mid-tone alternatives like #3182bd "
             "and the deeper #08306b were both flagged as too light."
@@ -87,11 +87,9 @@ class PerSimMapConfig(cfgBaseModel):
     wse_cmap: str = Field(
         "plasma",
         description=(
-            "WSE colormap. Perceptually uniform, CVD-safe. Default plasma per "
-            "user preference (iter4 of Phase 3 design-figure); the Plotly "
-            "branch's earlier hardcoded `cividis` is also CVD-safe and was "
-            "the iter1-3 transient default, but user prefers plasma's warmer "
-            "range for the WSE-on-real-terrain colorbar after iter3's "
+            "WSE colormap. Perceptually uniform, CVD-safe. Default plasma; "
+            "`cividis` is also CVD-safe and is a sound alternative. Plasma's "
+            "warmer range suits the WSE-on-real-terrain colorbar given "
             "building-cell exclusion (which produces WSE [1.81, 6.05] m on "
             "the norfolk fixture — well within plasma's high-contrast band)."
         ),
@@ -132,10 +130,9 @@ class PerSimMapConfig(cfgBaseModel):
         description=(
             "Upper-quantile clip on the DEPTH colorbar vmax (computed across "
             "wetted cells in _shared_depth_max), mirroring wse_clip_quantile_upper. "
-            "Default 0.98 (clip ON by default — D-USER-1) so a single deep cell "
+            "Default 0.98 (clip ON by default) so a single deep cell "
             "no longer compresses the sub-meter range where most flooding lives; "
-            "set to None to disable and use the raw cross-event max. The exact "
-            "value is reviewed/locked by the Phase 3 /design-figure pass (R12). "
+            "set to None to disable and use the raw cross-event max. "
             "RECONCILIATION: this is the depth-map counterpart of "
             "wse_clip_quantile_upper (WSE map, itself default-ON at 0.99) and is "
             "DISTINCT from PerSimFigureSpec.vmax_quantile (per-figure-spec scope); "
@@ -219,7 +216,7 @@ class ElevationPanelStyle(cfgBaseModel):
         "cividis",
         description=(
             "Perceptually-uniform CVD-safe sequential colormap for DEM "
-            "elevation. Previous default 'terrain' is a cartographic-mimic "
+            "elevation. Avoid 'terrain': it is a cartographic-mimic "
             "palette with green-brown luminance non-monotonicity and fails "
             "deuteranope/protanope CVD simulation (per Moreland 2016 / "
             "Wilke 2019 Ch. 19). 'cividis' is the CVD-optimized viridis-"
@@ -332,11 +329,8 @@ class InteractiveBackendConfig(cfgBaseModel):
             "Master switch. When False, renderers emit static PNG via the "
             "matplotlib branch of emit_plot_with_sources (legacy behavior). "
             "When True (default), renderers with an HTML emit-path emit HTML "
-            "via the str branch of emit_plot_with_sources. Flipped from "
-            "False to True at Phase 9 of the interactive_report_renderers PWI "
-            "after Phase 8.5's cleanup_stale_metadata mechanism landed, so "
-            "the first post-flip invocation against an existing analysis_dir "
-            "handles the one-shot rule-rename cleanup cascade silently."
+            "via the str branch of emit_plot_with_sources. Set False to fall "
+            "back to the static-PNG path."
         ),
     )
     static_backend: Literal["matplotlib", "plotly"] = Field(
@@ -350,12 +344,10 @@ class InteractiveBackendConfig(cfgBaseModel):
             "current behavior. Renderers without a Plotly branch fall "
             "back to matplotlib regardless of this flag (with a "
             "one-time warning per renderer per process — see "
-            "report_renderers/_static_backend_warning.py, introduced "
-            "in Plan Phase 5). Default 'plotly' per Plan Phase 2 D3 + "
-            "Decision 4: the bundle workflow's headline use case is "
-            "interactive Plotly reports, so the default matches the "
-            "headline experience. kaleido is a core dependency "
-            "(Plan Phase 1), so the Plotly static-export path is "
+            "report_renderers/_static_backend_warning.py). Default "
+            "'plotly' because the bundle workflow's headline use case is "
+            "interactive Plotly reports. kaleido is a core dependency, "
+            "so the Plotly static-export path is "
             "available by default; set this field to 'matplotlib' in "
             "cfg_analysis.yaml to force the matplotlib branch."
         ),
@@ -366,8 +358,8 @@ class InteractiveBackendConfig(cfgBaseModel):
             "When True, the HTML emit branch (_emit_html_with_sources) also "
             "writes a <stem>.preview.png raster of the pre-composition Plotly "
             "figure via kaleido, and sets the manifest preview_path to it. This "
-            "lets /design-figure's subagent visual-review operate on interactive "
-            "Plotly figures. Default False: preview_path stays None (no behavior "
+            "gives a raster stand-in for visual review of interactive Plotly "
+            "figures. Default False: preview_path stays None (no behavior "
             "change). No-op when kaleido is unavailable (the rasterize helper "
             "returns None)."
         ),
@@ -460,10 +452,10 @@ class PerSimMapInteractiveConfig(cfgBaseModel):
         description=(
             "Pre-rasterize via Datashader Canvas.raster() when per-frame cell "
             "count exceeds this. Below the threshold, frames go directly to "
-            "go.Heatmap. Tuned during Phase 3 design-figure closeout "
-            "(2026-05-17): the prior 1_000_000 default skipped Datashader on "
+            "go.Heatmap. The default is set low deliberately: a 1,000,000-cell "
+            "threshold would skip Datashader on "
             "the norfolk fixture (29,542 valid cells), pushing per-figure "
-            "HTML to 6.76 MB > 5 MB DoD budget; lowering to 25,000 fires the "
+            "HTML to 6.76 MB against a 5 MB target; 25,000 fires the "
             "branch on any norfolk-scale and larger fixture, trims the per-"
             "figure HTML by replacing the 29,542-cell raster JSON with a "
             "512×512 datashader aggregate."
@@ -927,16 +919,16 @@ class report_config(cfgBaseModel):
         ["default"],
         validate_default=True,
         description=(
-            "ADR-5/ADR-7 layer-3 active reporting-set selector. Names one or more "
+            "Active reporting-set selector. Names one or more "
             "entries in the ReportingSet registry (report_renderers/_reporting_sets.py); "
-            "a bare string is normalized to a one-element list (S19), and an empty "
-            "list means the field is absent and takes the sentinel path (D72). The sentinel "
+            "a bare string is normalized to a one-element list, and an empty "
+            "list is treated as absent and takes the sentinel path. The sentinel "
             "'default' resolves at analysis.run() entry to 'benchmarking' when "
             "toggle_sensitivity_analysis is True, else to the standard set, and cannot "
             "be named alongside another set. Validated against the registry at "
             "run-entry (NOT at field-construction time — that would create a "
             "config.report -> report_renderers import cycle). A future named set is "
-            "selected by writing its registered name here, with no code edit (TO-8)."
+            "selected by writing its registered name here, with no code edit."
         ),
     )
     disabled_renderers: list[str] = Field(

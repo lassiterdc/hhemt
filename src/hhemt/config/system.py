@@ -143,7 +143,16 @@ class system_config(cfgBaseModel):
     )
     TRITONSWMM_branch_key: str | None = Field(
         None,
-        description="TRITONSWMM branch to checkout. Known working branches: 02438b60613a7d913d884e7b836f9f5ff421fe7d",
+        description=(
+            "Git ref the TRITONSWMM clone is pinned to. In native mode this may be a "
+            "branch, a tag, or a commit sha; in container mode it MUST be a full commit "
+            "sha, because a container skips the compile and there is no clone to resolve "
+            "a branch name against. The pin is re-checked on every run, and a run is "
+            "refused when an existing clone sits at a different commit. That check is "
+            "the only protection against stale numerics: an existing clone is never "
+            "re-checked-out and its cached build is never invalidated. Leave "
+            "unset to build whatever the clone's default branch resolves to."
+        ),
     )
     SWMM_git_URL: str = Field(
         "https://github.com/USEPA/Stormwater-Management-Model.git",

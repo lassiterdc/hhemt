@@ -63,9 +63,10 @@ severity:
 | `blocking` | A different experiment entirely (e.g. differing weather events or enabled models). | **Aborts** the combine. |
 
 ??? note "How this severity differs from the bug-registry severity"
-    `CompatibilitySeverity` (combine-admissibility) is distinct from the ADR-17
-    bug-registry `severity` (output-invalidation). They answer different questions.
-    See the decision doc *"CompatibilitySeverity is orthogonal to ADR-17 severity"*.
+    `CompatibilitySeverity` (combine-admissibility) is distinct from the
+    bug-registry `severity` (output-invalidation). They answer different questions:
+    one decides whether two bundles may be combined, the other whether a recorded
+    bug invalidates an output.
 
 ### Compatibility gates
 
