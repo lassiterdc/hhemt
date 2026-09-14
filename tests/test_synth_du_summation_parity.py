@@ -5,11 +5,10 @@ Maps to reprocess-report-du-fixes master plan R3/R4/R5/R7:
 - R3/R4 (assertions a-c): ``sum_child_sentinels(analysis_dir)`` reproduces
   ``_walk_root_and_breakdown(analysis_dir)`` total AND ``sub_path_breakdown``
   byte-for-byte on a steady-state tree, and ``Σ breakdown == disk_utilization_bytes``.
-  This is Decision D-A (Option A): each child's OWN top-level ``_status/`` bytes
-  are added back via ``_walk_root_bytes(child/"_status")`` so the hierarchical
-  sum matches the full walk (which counts ``child/_status/**`` under the child's
-  top-level breakdown key). The parity holds recursively — the per-sub sentinels
-  are themselves produced by ``sum_child_sentinels`` over their ``sims/``.
+  Under clause 6 ``_status/`` is never DU-counted at ANY depth: neither the
+  hierarchical sum nor the full walk counts those bytes, at any scope. The parity
+  holds recursively — the per-sub sentinels are themselves produced by
+  ``sum_child_sentinels`` over their ``sims/``.
 - R7 (assertion d): re-summing an unchanged tree does NOT rewrite the analysis
   ``_du.json`` (compare-and-write mtime invariant — the property Snakemake's
   ``--rerun-triggers mtime input`` depends on).
@@ -20,8 +19,12 @@ Maps to reprocess-report-du-fixes master plan R3/R4/R5/R7:
 
 The fixture seeds NON-EMPTY nested ``_status/`` dirs at BOTH scenario and sub
 scope (the ``.flag.json`` sidecars + ``_du.json`` a completed run produces).
-This is load-bearing: on an all-empty-``_status`` tree assertions (a)/(b) would
-pass trivially even WITHOUT the D-A ``_status`` add-back, defeating the test.
+This is load-bearing: the seeding is what makes the clause-6 exclusion
+falsifiable. A scenario's own ``_status/`` is excluded from its OWN sentinel by
+the top-level rule either way, while the analysis-level walk reaches those same
+files under ``top="members"`` — so it is the INTERACTION of the two skip rules
+that non-empty seeding exercises. On an all-empty-``_status`` tree there are no
+bytes to disagree about and the assertions pass regardless.
 
 Run:
     conda run -n hhemt python -m pytest tests/test_synth_du_summation_parity.py -v
@@ -50,10 +53,12 @@ def _seed_status(status_dir: Path, *, n_flags: int) -> None:
     """Populate a scope's ``_status/`` with realistic, non-empty flag + sidecar
     files (the ``c_run`` flags + ``.flag.json`` payloads a completed run writes).
 
-    A non-empty nested ``_status/`` at both scenario and sub scope is required —
-    an all-empty-``_status`` tree would satisfy the parity assertions even
-    without the Decision D-A ``_status`` add-back, so this fixture is what makes
-    the test discriminating.
+    A non-empty nested ``_status/`` at both scenario and sub scope is required,
+    and under clause 6 the reason is the exclusion itself: an
+    all-empty-``_status`` tree would satisfy the parity assertions whether or not
+    those bytes were excluded, so the non-empty seeding is what makes the
+    clause-6 exclusion falsifiable — the same role the ``out/_status/deep.flag``
+    seed plays one level down.
     """
     status_dir.mkdir(parents=True, exist_ok=True)
     for i in range(n_flags):

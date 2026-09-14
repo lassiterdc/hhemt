@@ -68,8 +68,10 @@ def _scandir_walk(
         file directly under ``root`` it is the FILE's own name — identical to the
         prior ``p.relative_to(root).parts[0]``.
       * When ``skip_status_top``: files whose ``top`` starts with ``"_status"``
-        are skipped (matching ``_walk_root_and_breakdown``); when False, no skip
-        (matching ``_walk_root_bytes``).
+        are skipped. When ``skip_status_any_depth``: any directory named exactly
+        ``"_status"`` is not descended, at any depth. The two are independent and
+        BOTH production callers set the second — ``_walk_root_and_breakdown`` sets
+        both, ``_walk_root_bytes`` sets only the second (clause 6).
       * ``walk_errors`` increments on any per-entry OSError (is_dir / is_file /
         stat) AND on a directory that cannot be scandir'd.
     """

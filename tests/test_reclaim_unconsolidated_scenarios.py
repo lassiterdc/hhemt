@@ -44,7 +44,7 @@ def _probe(tmp_path, monkeypatch):
         constructed.append(_EVENTS[iloc])
         return types.SimpleNamespace(event_iloc=iloc, log=types.SimpleNamespace())
 
-    def _fake_reclaim(scen, scoped, adir, verbose=False):
+    def _fake_reclaim(scen, scoped, verbose=False):
         reclaimed.append(_EVENTS[scen.event_iloc])
         return {"prep_inputs": True}
 

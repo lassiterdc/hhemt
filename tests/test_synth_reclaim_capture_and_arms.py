@@ -23,16 +23,16 @@ _RPT_TAIL = (
 def _truncate(rpt_path):
     """Drive _truncate_coupled_rpt without a built analysis.
 
-    The method needs only `rpt_path`, `analysis_dir` and `verbose`, and re-stamps DU
-    sentinels against `analysis_dir` -- so a tmp dir standing in for the analysis root
-    exercises the real code path with no fixture. Bound HERE rather than named as a
-    seam for "the applier", which is what round 6 halted on.
+    The method needs only `rpt_path` and `verbose` and re-stamps nothing -- the DU
+    restamp and the `analysis_dir` that fed it were retired with
+    restamp_parent_sentinels -- so it exercises the real code path with no fixture.
+    Bound HERE rather than named as a seam for "the applier".
     """
     from hhemt.process_simulation import TRITONSWMM_sim_post_processing as _P
 
     # No shim: _truncate_coupled_rpt is a @staticmethod (it binds no instance state),
-    # so the unbound call takes the three real arguments and nothing else.
-    return _P._truncate_coupled_rpt(rpt_path, rpt_path.parent, False)
+    # so the unbound call takes its two real arguments and nothing else.
+    return _P._truncate_coupled_rpt(rpt_path, False)
 
 
 class _FakeScenario:
