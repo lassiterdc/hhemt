@@ -93,6 +93,42 @@ and those values are correct for Rivanna as written.
     Container mode is opt-in and needs a transferred, signed Apptainer image. Get a
     native run working first, then see `containers/README.md`.
 
+## Verify two site caps before you rely on them
+
+Two optional fields on the HPC-system config hold a cap that tracks your
+cluster's real ceiling only if your cluster meters the same thing the field
+counts. Measure both before you set either.
+
+### `max_concurrent_cpus` counts CPUs
+
+It tracks a site ceiling only where that ceiling also meters `cpu`. Check what
+your QOS meters:
+
+```bash
+sacctmgr -nP show qos standard,normal format=Name,MaxTRESPU,GrpTRES,MaxTRES
+```
+
+On Rivanna this returns `standard|cpu=1500||cpu=1500`, and no QOS on that
+cluster meters `billing`, so the CPU budget tracks the real ceiling there. Where
+a QOS meters `billing` instead, the budget still holds exactly the CPUs it
+names, but that hold will not track the cluster's own ceiling.
+
+### `halt_sims_below_free_bytes` reads `statvfs`
+
+`statvfs` reports the filesystem's free space, which equals your quota only
+where the quota is a GPFS fileset with `filesetdf` enabled. Otherwise a
+quota-exhausted run gets `EDQUOT` on write while `statvfs` still reports free
+space, and the guard never fires. Check what `statvfs` sees, substituting your
+own analysis directory:
+
+```bash
+python3 -c "import os,sys; s=os.statvfs(sys.argv[1]); print(s.f_blocks*s.f_frsize/1e12,'TB total')" /path/to/analysis_dir
+```
+
+On Rivanna `/scratch` this reported 13.19 TB total, which is the real filesystem
+ceiling rather than a smaller soft limit, so the guard covers the binding one
+there.
+
 ## Choose a partition
 
 Pick a partition name on your **analysis** config, using

@@ -223,7 +223,7 @@ class ElevationPanelStyle(cfgBaseModel):
             "palette with green-brown luminance non-monotonicity and fails "
             "deuteranope/protanope CVD simulation (per Moreland 2016 / "
             "Wilke 2019 Ch. 19). 'cividis' is the CVD-optimized viridis-"
-            "family variant. Overridable per-deployment via report_config.yaml."
+            "family variant. Override it in the `report:` block of `cfg_analysis.yaml`."
         ),
     )
     over_color: str = Field(

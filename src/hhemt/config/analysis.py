@@ -725,29 +725,29 @@ class analysis_config(cfgBaseModel):
         200,
         description="Target memory budget (MiB) PER LOAD CHUNK for streaming-chunked operations on per-scenario "
         "timeseries "
-        "output. This is the in-memory RSS guard ONLY; it does NOT govern zarr-append granularity (see "
-        "process_append_batch_timesteps). Consumed by both write_timeseries_outputs (raw-to-zarr chunked LOAD at "
-        "process_simulation.py L544/L736) AND summarize_triton_simulation_results' "
+        "output. This is the in-memory RSS guard ONLY; it does NOT govern how many timesteps go into one "
+        "output chapter (see process_append_batch_timesteps). Consumed by both the chunked raw-to-zarr LOAD "
+        "inside write_timeseries_outputs AND summarize_triton_simulation_results' "
         "_streaming_argmax_with_companions helper (per-cell argmax+companion reduction). On fine grids a single "
         "float64 timestep can meet/exceed this budget, flooring the load chunk to 1 timestep — that is a correct "
-        "memory guard, NOT a performance bug, because append granularity is decoupled via "
-        "process_append_batch_timesteps. See Gotcha #23/#24.",
+        "memory guard, NOT a performance bug, because write granularity is decoupled via "
+        "process_append_batch_timesteps.",
     )
     process_append_batch_timesteps: int = Field(
         128,
-        description="Number of LOADED timesteps to accumulate before emitting ONE zarr append in "
+        description="Number of LOADED timesteps to accumulate before emitting ONE output chapter in "
         "write_timeseries_outputs. "
-        "Decouples zarr-append granularity from the in-memory load-chunk size "
+        "Decouples write granularity from the in-memory load-chunk size "
         "(process_output_target_chunksize_mb), "
-        "so fine grids that floor the load chunk to 1 timestep still emit only ceil(N_timesteps / this) appends "
-        "instead of O(N_timesteps) tiny appends. Independent of the streaming-summary reduction (which does not "
-        "append). Buffer RSS is additionally byte-capped at 2x the load budget at write time, so raising this is "
+        "so fine grids that floor the load chunk to 1 timestep still emit only ceil(N_timesteps / this) chapters "
+        "instead of O(N_timesteps) tiny ones. Independent of the streaming-summary reduction (which writes no "
+        "chapter). Buffer RSS is additionally byte-capped at 2x the load budget at write time, so raising this is "
         "safe.",
     )
     process_append_batch_memory_budget_mb: int | None = Field(
         None,
         description=(
-            "Memory budget (MiB) governing BOTH the zarr-append batch byte cap in "
+            "Memory budget (MiB) governing BOTH the output-chapter batch byte cap in "
             "write_timeseries_outputs AND the streaming-argmax summary reduction in "
             "summarize_triton_simulation_results. Distinct from "
             "process_output_target_chunksize_mb (the small per-LOAD-chunk RSS guard, "
@@ -846,7 +846,8 @@ class analysis_config(cfgBaseModel):
     )
     experiment_cfg_yaml: Path | None = Field(
         None,
-        description="Path to the configuration file of the master analysis.",
+        description="Path to the configuration file of the parent experiment this analysis is a member of. "
+        "Required when is_experiment_member is true.",
     )
     report: _report_config_model = Field(
         ...,
