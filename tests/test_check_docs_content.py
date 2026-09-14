@@ -649,7 +649,7 @@ def test_the_skip_line_names_what_each_page_declares(tmp_path):
     import io
     import re
     import subprocess
-    from contextlib import redirect_stdout
+    from contextlib import redirect_stderr, redirect_stdout
 
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     docs = tmp_path / "docs"
@@ -658,10 +658,23 @@ def test_the_skip_line_names_what_each_page_declares(tmp_path):
     (docs / "a.md").write_text(f"<!-- {cdc.REPO_INTERNAL_MARKER_NAME} exempt=prose -->\n# A\n", encoding="utf-8")
     (docs / "b.md").write_text(f"<!-- {cdc.REPO_INTERNAL_MARKER_NAME} exempt=binary -->\n# B\n", encoding="utf-8")
 
-    buf = io.StringIO()
-    with redirect_stdout(buf):
+    # BOTH streams, then ONLY the skip lines. `_run` prints skip_lines to stdout
+    # on its green branch and to stderr on its red one, and class 6 reddens THIS
+    # fixture: the docs-to-source registry names a page that does not exist under
+    # a tmp_path docs dir, so its rows land as `docs-source-page-absent` findings.
+    # The invariant under test is the skip line's CONTENT, which is
+    # stream-independent -- capturing one stream ties it to an unrelated gate
+    # staying green. Narrowing to `skipped ` lines is what keeps the widening from
+    # also admitting the FINDINGS block, whose excerpts are up to 110 characters of
+    # arbitrary scanned text: an excerpt carrying `(exempt=...)` would be counted
+    # by the assertion below, which both reddens this test for a reason unrelated
+    # to its invariant and lets a `_skip_line` that dropped a whole marker kind
+    # pass on a restored count. Finding lines are indented two spaces, so the
+    # prefix match excludes them.
+    buf, errbuf = io.StringIO(), io.StringIO()
+    with redirect_stdout(buf), redirect_stderr(errbuf):
         cdc.main(["--docs-dir", str(docs)])
-    out = buf.getvalue()
+    out = "\n".join(line for line in (buf.getvalue() + errbuf.getvalue()).splitlines() if line.startswith("skipped "))
 
     pages = cdc.generated_files(docs) + cdc.personal_voice_files(docs) + cdc.repo_internal_files(docs)
     rendered = re.findall(r"\(exempt=([a-z,]+)\)", out)
@@ -670,3 +683,108 @@ def test_the_skip_line_names_what_each_page_declares(tmp_path):
     assert "gen.md (exempt=binary)" in out, out
     assert "a.md (exempt=prose)" in out, out
     assert "b.md (exempt=binary)" in out, out
+
+
+# ---- Class 6: docs-to-source filename agreement -----------------------------
+#
+# One test per ARM, each pinning the code AND a discriminating substring, per
+# this module's convention: an assertion on the code alone does not say which
+# path produced it. The satisfying arm is last and is the one that catches an
+# assertion firing on a correct page, which is the failure the rule exists to
+# avoid shipping.
+_V0022 = "hhemt.version_migration.versions.V0022__promote_producer_written_experiment_tree"
+_PAGE = "reference/output-data-model.md"
+
+
+def _docs_dir():
+    return _REPO / "docs"
+
+
+def test_a_registered_module_that_is_absent_is_a_finding_not_a_skip():
+    rows = ((_PAGE, "x.zarr", "hhemt.version_migration.versions.V9999__nope", "_X", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-module-absent"], out
+    assert "V9999__nope" in out[0][3], f"the finding names a different row: {out[0][3]!r}"
+
+
+def test_a_registered_attribute_that_is_absent_is_a_finding_not_a_skip():
+    rows = ((_PAGE, "x.zarr", _V0022, "_NO_SUCH_NAME", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-attribute-absent"], out
+    assert "_NO_SUCH_NAME" in out[0][3], f"the finding names a different row: {out[0][3]!r}"
+
+
+def test_a_non_literal_constant_is_its_own_finding_rather_than_a_crash():
+    """`_SCHEMA_VERSION = str(version_to)` is the real shape this arm exists for.
+
+    Under a rendered-string reduction this input raises and reaches the exit-3
+    catch-all, which is a false statement about a constant somebody legitimately
+    made computed. The node discrimination makes it a local, catchable outcome.
+    """
+    rows = ((_PAGE, "22", _V0022, "_SCHEMA_VERSION", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-attribute-not-literal"], out
+    assert "_SCHEMA_VERSION" in out[0][3], f"the finding names a different row: {out[0][3]!r}"
+
+
+def test_a_literal_disagreeing_with_its_constant_is_reported_with_the_bound_value():
+    rows = ((_PAGE, "WRONG.zarr", _V0022, "_SUPERSEDED", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-literal-disagrees"], out
+    assert "bound=" in out[0][3], f"the finding hides the value it disagreed with: {out[0][3]!r}"
+
+
+def test_a_registered_page_that_is_absent_is_a_finding_not_a_skip():
+    rows = (("reference/no-such-page.md", "sensitivity_datatree.zarr", _V0022, "_RETIRED_SENSITIVITY", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-page-absent"], out
+    assert "no-such-page" in out[0][3], f"the finding names a different row: {out[0][3]!r}"
+
+
+def test_a_wrong_occurrence_count_reddens_and_addresses_the_first_occurrence():
+    """The rename-one-of-two case, which presence alone cannot see.
+
+    `experiment_datatree.zarr` occurs twice on the page. Declaring 1 stands in
+    for an editor having renamed one of them: the survivor still matches, so a
+    presence assertion stays green and only the count moves.
+    """
+    rows = ((_PAGE, "experiment_datatree.zarr", _V0022, "_UNIFIED_EXPERIMENT", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-page-count"], out
+    assert "found 2" in out[0][3], f"the finding hides the measured count: {out[0][3]!r}"
+    assert out[0][2] > 1, "the finding must address an occurrence, not default to line 1"
+
+
+def test_a_total_rename_on_the_page_reddens_and_addresses_the_page_head():
+    """Count 0 -- every occurrence on the page renamed while the constant is
+    untouched, which is the defect the count assertion exists for and which a
+    presence assertion cannot see. There is no occurrence to address, so the
+    finding falls back to line 1; pinned here so the fallback is a decision
+    rather than an accident."""
+    rows = (("reference/api.md", "experiment_datatree.zarr.superseded-v0022", _V0022, "_SUPERSEDED", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-page-count"], out
+    assert "found 0" in out[0][3], f"the finding hides the measured count: {out[0][3]!r}"
+    assert out[0][2] == 1, "with no occurrence to address the finding pins the page head"
+
+
+def test_a_malformed_registry_row_is_a_finding_not_a_crash():
+    """A row missing a field is VALID PYTHON: it imports cleanly and fails at the
+    unpack, so without this guard the likeliest hand-edit on a five-field tuple
+    reports as an internal crash at exit 3."""
+    shapes = (
+        (_PAGE, "x.zarr", _V0022, "_X"),
+        (_PAGE, "x.zarr", _V0022, "_X", "1"),
+        (5, "x.zarr", _V0022, "_X", 1),
+        [_PAGE, "x.zarr", _V0022, "_X", 1],
+    )
+    for shape in shapes:
+        out = cdc.scan_docs_source_filenames(_docs_dir(), registry=(shape,))
+        assert [f[0] for f in out] == ["docs-source-registry-malformed"], (shape, out)
+
+
+def test_the_shipped_registry_is_satisfied_by_the_tree_it_ships_with():
+    """The satisfying arm. An assertion that fires on a correct page is the
+    failure this rule exists to avoid shipping, and only this test can catch it.
+    """
+    assert cdc.scan_docs_source_filenames(_docs_dir()) == []

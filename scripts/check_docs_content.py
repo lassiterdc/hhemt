@@ -2,11 +2,12 @@
 """CI check: the published docs carry no self-declared placeholder, no bare
 ``path:line`` citation into a live source file, and no banned vocabulary.
 
-FIVE defect classes across three tiers, and the TIERS are the design. A rule's
+SIX defect classes across three tiers, and the TIERS are the design. A rule's
 tier is decided by what a finding COSTS a reader and by whether resolving it
 needs judgment — not by how confident the pattern is:
 
-  * FAILING, fence-skipping  — classes 1 and 2 below (placeholder, line citation)
+  * FAILING, fence-skipping  — classes 1, 2 and 6 below (placeholder, line
+                               citation, docs-to-source filename agreement)
   * FAILING, fence-INCLUSIVE — class 3 (banned vocabulary); see WORD_BAN_PATTERNS
   * FAILING, unfenced        — class 4 (punctuation); see PUNCTUATION_PATTERNS
   * ADVISORY, never failing  — class 5; see ADVISORY_PATTERNS
@@ -50,6 +51,7 @@ against it and could not collect the test module that imports this one.
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import re
 import sys
@@ -155,6 +157,88 @@ PUNCTUATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (("em-dash", re.
 # so each hit needs a human judgment and a hard gate on 23 sites would be a gate
 # that gets routed around. Surfaced by `--advisory`, excluded from the exit code.
 ADVISORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (("deletable-clause-candidate", re.compile(r",\s+not\b")),)
+
+
+# ---- Docs-to-source filename agreement --------------------------------------
+#
+# DEFECT CLASS 6, and the FIRST rule in this file whose predicate reads a SECOND
+# ARTIFACT. Every class above is a total function of one file's bytes: a pattern
+# runs over a line and the verdict needs nothing else. This one compares a
+# filename a page PUBLISHES against the constant that BINDS it in `src/`.
+#
+# WHY IT EXISTS, in the order the reasons actually bind.
+#
+# 1. DOCS-TO-CODE, which nothing in this repository detects. A prose edit that
+#    introduces a wrong filename -- a typo, a paste from a pre-migration draft,
+#    a paragraph rewrite that drops a suffix -- is invisible to every gate here.
+#    `bare-line-citation` is the near miss that proves it: it bans the citation
+#    FORM and never opens the cited file.
+# 2. CODE-TO-DOCS, and this is NOT redundant with the migration's own test.
+#    `tests/test_version_migration_V0022.py` carries ZERO references to `docs/`.
+#    It re-declares the literal itself and asserts the on-disk directory name,
+#    so it reddens on the CONSTANT and names no page. A renamer who sees red,
+#    updates that test's own constant and sees green has repaired nothing about
+#    the page, and the green now certifies the rename as complete. It is a
+#    tripwire, not a pointer.
+# 3. ITS OWN SCOPE, stated because a green here is narrower than it looks. The
+#    rule checks the REGISTERED rows and nothing else; the page locate is
+#    backtick-delimited, so a filename published INSIDE A FENCED BLOCK is not
+#    covered at all. `_run` prints the unregistered residual on both branches.
+#
+# THE COUNT IS PART OF THE ASSERTION, not a convenience. On
+# `docs/reference/output-data-model.md`, `experiment_datatree.zarr` occurs twice
+# (a tier-table row and prose) and is a PROPER PREFIX of
+# `experiment_datatree.zarr.superseded-v0022`, so a bare substring returns 3
+# where a backticked one returns 2. Presence alone is satisfied by either
+# occurrence: an editor who renames one leaves the other matching and the row
+# green, because the renamed text is a string this rule never searches for --
+# the defect removes its own counterexample from the set it would be found in.
+# Asserting "over every occurrence" does not close that; only a count does.
+#
+# The LITERAL field is not redundant with the constant it is compared against.
+# It is the value a human verified and recorded; the constant is whatever `src/`
+# says today. Comparing the two IS the rule, and collapsing the row to
+# (page, module, attribute) would make it self-satisfying.
+#: (page relative to --docs-dir, published literal, module, attribute, expected
+#: backtick-delimited occurrence count on that page). A LIST rather than a
+#: discovery pass: the filename-to-constant mapping is one-to-many in BOTH
+#: directions in this corpus, so a discovery pass would have to pick a binding
+#: with no ground for the choice. Adding a row is a reviewed data change, the
+#: same posture `--write-citation-ledger` takes for pinned tokens.
+DOCS_SOURCE_FILENAMES: tuple[tuple[str, str, str, str, int], ...] = (
+    (
+        "reference/output-data-model.md",
+        "sensitivity_datatree.zarr",
+        "hhemt.version_migration.versions.V0022__promote_producer_written_experiment_tree",
+        "_RETIRED_SENSITIVITY",
+        1,
+    ),
+    (
+        "reference/output-data-model.md",
+        "experiment_datatree.zarr",
+        "hhemt.version_migration.versions.V0022__promote_producer_written_experiment_tree",
+        "_UNIFIED_EXPERIMENT",
+        2,
+    ),
+    (
+        "reference/output-data-model.md",
+        "experiment_datatree.zarr.superseded-v0022",
+        "hhemt.version_migration.versions.V0022__promote_producer_written_experiment_tree",
+        "_SUPERSEDED",
+        1,
+    ),
+)
+
+#: Filename-shaped inline literals, for the unregistered residual only -- never
+#: for the assertion, which looks for one known literal rather than discovering
+#: candidates. The extension set is the one this corpus actually publishes.
+_FILENAME_LITERAL = re.compile(r"`([^`\s]+\.(?:zarr|json|csv|nc|done|yaml|yml|toml|cff|parquet)[\w.\-]*)`")
+
+#: Distinct from `None` because a constant may legitimately be bound to `None`,
+#: and distinct from each other because a rename and a computed value are
+#: different findings a reader acts on differently.
+_ABSENT = object()
+_NOT_LITERAL = object()
 
 
 COMMENT_LINE = re.compile(r"^\s*(?:#|//|--|;)\s")
@@ -1263,6 +1347,139 @@ def scan_rendered_docstrings(
     return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
 
 
+def _module_level_literal(module_file: Path, attribute: str) -> object:
+    """The value bound to `attribute` at module level, from the assignment NODE.
+
+    Returns the value, or `_ABSENT` when no module-level assignment binds the
+    name, or `_NOT_LITERAL` when one does but its right-hand side is not a
+    literal. Three outcomes rather than two, because a rule that cannot tell a
+    RENAME from a COMPUTED VALUE reports them identically and a reader fixes the
+    wrong thing: `_SCHEMA_VERSION = str(version_to)` sits two lines below
+    `_SUPERSEDED` in the module this registry names.
+
+    The value comes from the NODE, never from a rendered string. `griffe` is not
+    used here even though this module imports it: its `Attribute.value` is a
+    display expression whose `str()` happens to re-parse, which is an incidental
+    property of a documentation API rather than a contract -- and `mkdocs.yml`
+    sets `filters: ["!^_"]`, under which every underscore-prefixed constant this
+    registry names is excluded from any griffe-derived surface in this
+    repository anyway.
+    """
+    tree = ast.parse(module_file.read_text(encoding="utf-8"), filename=str(module_file))
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == attribute:
+                try:
+                    return ast.literal_eval(node.value)
+                except (ValueError, TypeError, SyntaxError):
+                    return _NOT_LITERAL
+    return _ABSENT
+
+
+def scan_docs_source_filenames(
+    docs_dir: Path,
+    registry: tuple[tuple[str, str, str, str, int], ...] = DOCS_SOURCE_FILENAMES,
+    src: Path = SRC_ROOT,
+) -> list[tuple[str, Path, int, str]]:
+    """Class-6 findings, sorted: a registered literal must EQUAL the constant
+    that binds it and occur on its page exactly as many times as declared.
+
+    SEVEN arms, every one a FINDING at exit 1. There is deliberately NO exit-2 arm
+    and no `PopulationDerivationError`: a stale registry row is drift discovered
+    by a gate that RAN, which is what exit 1 means here, and exit 2's handler
+    lives in `main()` and returns before `_run` prints a single skip line -- so
+    routing a stale row there would discard the denominator this rule publishes.
+    The registry is a module constant, so no run-time READ or PARSE can fail and
+    exit 2's "population this gate cannot derive" has no instance here. A
+    malformed ROW is a different thing and is NOT an import error: a four-field
+    tuple is valid Python, imports cleanly, and raises `ValueError` at the
+    unpack -- so without the first arm below, the likeliest hand-edit on a
+    five-field row reports as an internal crash at exit 3, which is a false
+    statement about the docs.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    for row in registry:
+        if not (
+            isinstance(row, tuple)
+            and len(row) == 5
+            and all(isinstance(field, str) for field in row[:4])
+            and isinstance(row[4], int)
+        ):
+            findings.append(("docs-source-registry-malformed", docs_dir, 1, repr(row)[:110]))
+            continue
+        page_rel, literal, module, attribute, expected = row
+        page = docs_dir / page_rel
+        row = f"{page_rel} `{literal}` <- {module.rsplit('.', 1)[-1]}.{attribute} x{expected}"
+        module_file = _module_file(module, src)
+        if module_file is None:
+            findings.append(("docs-source-module-absent", page, 1, row))
+            continue
+        bound = _module_level_literal(module_file, attribute)
+        if bound is _ABSENT:
+            findings.append(("docs-source-attribute-absent", page, 1, row))
+            continue
+        if bound is _NOT_LITERAL:
+            findings.append(("docs-source-attribute-not-literal", page, 1, row))
+            continue
+        if bound != literal:
+            findings.append(("docs-source-literal-disagrees", page, 1, f"{row}; bound={bound!r}"))
+            continue
+        if not page.is_file():
+            findings.append(("docs-source-page-absent", page, 1, row))
+            continue
+        text = page.read_text(encoding="utf-8", errors="ignore")
+        needle = f"`{literal}`"
+        count = text.count(needle)
+        if count != expected:
+            lineno = next((i for i, ln in enumerate(text.splitlines(), 1) if needle in ln), 1)
+            findings.append(("docs-source-page-count", page, lineno, f"{row}; found {count}"))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
+
+
+def _docs_source_scope_line(
+    docs_dir: Path,
+    registry: tuple[tuple[str, str, str, str, int], ...] = DOCS_SOURCE_FILENAMES,
+) -> str:
+    """The class-6 denominator, printed on BOTH of `_run`'s branches.
+
+    Per registered page, the filename-shaped literals on it that carry no row;
+    then ONE corpus line for the scanned pages carrying no row at all. Per-page
+    alone would report on the pages it covers and be silent about the rest while
+    reading as a complete account, which is the shape of a green that misleads.
+    The residual is taken over `_scanned_markdown`, which IS this class's whole
+    population. A marker exempts the class GROUPS it declares, not the page: every
+    live marker declares only `prose`, so all 53 pages are scanned for the binary
+    tier today, and `EXEMPTABLE_CLASS_GROUPS` holds no group that could exempt
+    class 6 at any point. Filtering marked pages out here understates the
+    denominator by 9 of 53, in the one line whose job is not to.
+    """
+    registered = {row[0] for row in registry}
+    parts: list[str] = []
+    for page_rel in sorted(registered):
+        page = docs_dir / page_rel
+        if not page.is_file():
+            parts.append(f"{page_rel} (absent)")
+            continue
+        on_page = set(_FILENAME_LITERAL.findall(page.read_text(encoding="utf-8", errors="ignore")))
+        rest = sorted(on_page - {row[1] for row in registry if row[0] == page_rel})
+        parts.append(
+            f"{page_rel}: {len(rest)} unregistered ({', '.join(rest)})" if rest else f"{page_rel}: 0 unregistered"
+        )
+    covered = {(docs_dir / page_rel).resolve() for page_rel in registered}
+    uncovered = sum(1 for md in _scanned_markdown(docs_dir) if md.resolve() not in covered)
+    return (
+        f"docs-to-source filename rows: {len(registry)} checked on {len(registered)} page(s) "
+        f"[{'; '.join(parts)}]; {uncovered} further scanned page(s) carry no registered row "
+        f"and were not checked for filename agreement"
+    )
+
+
 def _apply_citation_ledger(published, repo_root: Path, spans):
     """Split the published-line findings against the pinned ledger.
 
@@ -1484,12 +1701,14 @@ def _run(args: argparse.Namespace) -> int:
         + scan_shipped_metadata(repo_root)
         + [f for f in published if f not in tolerated]
         + orphaned
+        + scan_docs_source_filenames(args.docs_dir)
     )
     skip_lines.append(
         f"citation ledger: {ledger_lines} pinned token(s) tolerated on "
         f"{len(tolerated)} published line(s); {len(retired)} retired this run; "
         f"{len(orphaned)} orphaned"
     )
+    skip_lines.append(_docs_source_scope_line(args.docs_dir))
     if findings:
         print("docs content check FAILED:", file=sys.stderr)
         for code, path, lineno, excerpt in findings:

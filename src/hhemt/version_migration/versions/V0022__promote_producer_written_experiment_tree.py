@@ -95,6 +95,12 @@ description: str = (
 
 _RETIRED_SENSITIVITY = "sensitivity_datatree.zarr"
 _UNIFIED_EXPERIMENT = "experiment_datatree.zarr"
+# RENAMING THIS VALUE IS CONSTRAINED BY ITS SHAPE, not just by its consumers:
+# the `.zarr` must stay MEDIAL. A trailing `.zarr` -- the more conventional
+# spelling, and therefore the likelier cleanup -- makes this store visible to
+# every name-based reader in the package. The full argument is in the module
+# docstring above, under `THE RETAINED NAME IS SAFE BY CONSTRUCTION`; this is
+# the line somebody editing the name is actually looking at.
 _SUPERSEDED = "experiment_datatree.zarr.superseded-v0022"
 _SIDECAR = "ro-crate-metadata.json"
 _SCHEMA_VERSION = str(version_to)  # the LITERAL terminus, never LAYOUT_VERSION

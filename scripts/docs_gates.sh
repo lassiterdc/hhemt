@@ -24,8 +24,8 @@ gate() {
   $RUN "$@"
 }
 
-# Strict build, including the htmlproofer internal-link check. The three gates
-# below read the site this produces, so it runs first.
+# Strict build, including the htmlproofer internal-link check. Two of the three
+# gates below read the site this produces, so it runs first.
 gate mkdocs build --strict
 
 # Two independent assertions: every public symbol renders an anchor, AND

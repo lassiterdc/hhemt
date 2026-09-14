@@ -214,6 +214,27 @@ non_breaking_allowlist:
       Re-stamp layout_signature on any further non-breaking edit; a change to the
       applied operations must bump LAYOUT_VERSION instead.
     layout_signature: "e27854c6749b72a3c78e6771bad21be061bfe9c2b3cb89510c333e6d1b940b22"
+  - path: src/hhemt/version_migration/versions/V0022__promote_producer_written_experiment_tree.py
+    justification: >-
+      Docs-staleness-check paired edit (`### D116`) — a six-line comment above
+      _SUPERSEDED recording that the constant's `.zarr` must stay MEDIAL, because a
+      trailing `.zarr` would make the retained store visible to every name-based
+      reader in the package. The argument already existed in the module docstring
+      under `THE RETAINED NAME IS SAFE BY CONSTRUCTION`; the comment is a LOCALITY
+      repair, placed where someone editing the name is actually looking.
+      COMMENT-ONLY: version_from/version_to, the applied operations and the upgrade()
+      body are byte-unchanged, so no on-disk state this migration produces can differ.
+      The signature below is stamped for the state this entry lands WITH, which differs
+      from the comment's first applied form in two ways rather than one: the comment sits
+      ABOVE _SUPERSEDED, and its closing pointer names the docstring heading rather than a
+      line distance. Neither is where or what first landed — the original spec anchored on
+      the line the comment describes rather than the line before it, so the comment was
+      applied below the constant and read as an annotation of _SIDECAR. The two states
+      differ in hash and by twenty bytes, so a stale stamp here fails check-b rather than
+      passing silently.
+      Re-stamp layout_signature on any further non-breaking edit; a change to the
+      applied operations must bump LAYOUT_VERSION instead.
+    layout_signature: "1924d5c2ce9faabee911975e5f37f5548bbad84b5c44ad6ed03f12385af24039"
   - path: src/hhemt/scenario.py
     justification: >-
       Several collapsed non-breaking changes, appended in order below.
