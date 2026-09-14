@@ -21,7 +21,7 @@ sits outside the workflow graph, see
 By directory, which re-derives both configs from the directory itself:
 
 ```bash
-hhemt eda --analysis-dir runs/synth_cc/master/
+hhemt eda --analysis-dir {analysis_dir}
 ```
 
 By explicit config paths, which is the form to use when the directory does not
@@ -51,7 +51,7 @@ To try a different figure selection without editing the analysis config, pass a
 YAML file carrying only the `eda` block:
 
 ```bash
-hhemt eda --analysis-dir runs/synth_cc/master/ \
+hhemt eda --analysis-dir {analysis_dir} \
     --override-eda-config my_eda_selection.yaml
 ```
 
@@ -133,7 +133,7 @@ import json
 from pathlib import Path
 
 verdict = json.loads(
-    Path("runs/synth_cc/master/eda/b4b_clean_identity.verdict.json").read_text()
+    Path("{analysis_dir}/eda/b4b_clean_identity.verdict.json").read_text()
 )
 verdict["passed"]           # bool
 verdict["applicable"]       # False when the calculation did not apply
