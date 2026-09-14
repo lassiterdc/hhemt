@@ -116,7 +116,8 @@ record.
 A sensitivity analysis deposits its **master** tree the same way:
 
 ```python
-sensitivity.publish(target="zenodo")   # deposits experiment_datatree.zarr + master sidecar
+# The analysis-directory set, with experiment_datatree.zarr as the consolidated zarr
+sensitivity.publish(target="zenodo")
 ```
 
 ## Fetch a case study's inputs by DOI/PID
