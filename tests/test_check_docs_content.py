@@ -788,3 +788,30 @@ def test_the_shipped_registry_is_satisfied_by_the_tree_it_ships_with():
     failure this rule exists to avoid shipping, and only this test can catch it.
     """
     assert cdc.scan_docs_source_filenames(_docs_dir()) == []
+
+
+def test_the_path_sense_master_ban_reaches_fenced_content_and_spares_the_role_sense():
+    """Both of Spec 1's forms, pinned inside fences, plus the role-sense population.
+
+    The entry's reach is the CLASS's property rather than the pattern's: every
+    path-sense site this corpus has carried has been inside a fenced block, so
+    routing word bans through `_unfenced_lines` would take BOTH arms to zero
+    while every other assertion in this module stayed green. That is what the
+    tuple's own header comment warns against. No count is asserted here, for the
+    same reason the entry's own comment states none.
+    """
+    delimiter = "# Page\n\n```bash\nhhemt eda --analysis-dir runs/x/master/\n```\n"
+    artifact = "# Page\n\n```python\npublish()   # deposits experiment_datatree.zarr + master sidecar\n```\n"
+    for label, text in (("delimiter", delimiter), ("artifact-noun", artifact)):
+        codes = {c for c, _p, _l, _e in cdc._gate_findings(Path("<synthetic>"), text)}
+        assert "banned-path-sense-master" in codes, f"the {label} arm no longer reaches fenced content"
+    for keep in (
+        "A sensitivity analysis deposits its **master** tree the same way:",
+        "one sensitivity master per model arm",
+        "toggles match the master system config",
+        "a clean-vs-resume sensitivity-master pair",
+        "Master switch. When False, renderers emit static PNG",
+        "ControlMaster auto",
+    ):
+        codes = {c for c, _p, _l, _e in cdc._gate_findings(Path("<synthetic>"), keep + "\n")}
+        assert "banned-path-sense-master" not in codes, f"the ban fired on role sense: {keep!r}"

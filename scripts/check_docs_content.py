@@ -124,6 +124,40 @@ WORD_BAN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # project's internal history: "under v2 graceful-rerun ..." tells a reader
     # there was a v1 they cannot see and cannot need.
     ("development-provenance", re.compile(r"\bunder v\d+\b|\bas of v\d+\b|\bsince v\d+\b", re.I)),
+    # Concurred carrier for the P22 invariant: the PATH sense of `master` is
+    # eliminated and the ROLE sense is retained (three-party concurrence, this
+    # agent's round 17). TWO forms carry the path sense and both are matched
+    # here. A path SEGMENT, delimited by `/` or `\`. And an ARTIFACT NOUN
+    # immediately after the word, which is how the archetypal instance was
+    # written: `experiment_datatree.zarr + master sidecar`. The noun list is
+    # closed and short on purpose, and `tree` is deliberately NOT in it. The
+    # ground is LATENT rather than live, and the counterfactual is what
+    # establishes it: appending `tree` to the list gates ZERO sites. Both
+    # attested `master tree` uses are spared by accidents rather than by this
+    # pattern. `deposits its **master** tree` escapes only because the closing
+    # bold marker sits between the two words, and `a 28-scenario master tree`
+    # only because its page declares `exempt=prose`. Delete the asterisks in an
+    # unrelated copyedit, or move that description off an exempt page, and the
+    # site begins to gate attested role-sense vocabulary. That is the reason the
+    # list has to stay closed under future pressure; "it does not fire today"
+    # is not.
+    # WHAT THIS ENTRY CAN AND CANNOT SAY. It can only ever assert that the path
+    # sense is ABSENT; role-sense RETENTION is asserted per cluster, never here.
+    # No count is stated: a count measured before a landing precondition is
+    # measured on the wrong side of it, and this entry lands after a repair that
+    # changes the corpus it would have counted.
+    # Its reach depends on the class being fence-INCLUSIVE, which the header
+    # comment above warns against "fixing": every path-sense site this corpus
+    # has carried has been inside a fence. It also reaches rendered `src/`
+    # docstrings through the advisory tier, which never gates: four of the five
+    # sites the `tree` counterfactual surfaces are there.
+    (
+        "banned-path-sense-master",
+        re.compile(
+            r"[/\\]master(?:[/\\]|\b)|\bmaster[ _.-](?:sidecar|zarr|store|dir|directory|path|file)\b",
+            re.I,
+        ),
+    ),
 )
 
 # ---- Punctuation rules ------------------------------------------------------
