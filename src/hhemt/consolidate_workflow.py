@@ -272,7 +272,7 @@ def reclaim_unconsolidated_scenarios(analysis, enabled_models, scoped, analysis_
         if not scenario_summaries_present(analysis, _eid, enabled_models):
             continue  # SKIP 2 -- precondition unmet; this event is mid-recovery
         _scen = TRITONSWMM_scenario(_iloc, analysis)
-        _outcome = reclaim_scenario_scoped_classes(_scen, scoped, analysis_dir, verbose=True)
+        _outcome = reclaim_scenario_scoped_classes(_scen, scoped, verbose=True)
         # Disclosure printed UNCONDITIONALLY; the log write is the seam to the deferred
         # log-schema migration and skips while the fields are absent. Mirrors the
         # --event-id arm's block so there is ONE disclosure shape.
@@ -456,7 +456,6 @@ def main() -> int:
                 _outcome = reclaim_scenario_scoped_classes(
                     _scen,
                     _scoped,
-                    analysis.analysis_paths.analysis_dir,
                     verbose=True,
                 )
                 # Disclosure, printed UNCONDITIONALLY and written to the scenario log when the
@@ -472,6 +471,11 @@ def main() -> int:
                 logger.error(f"Per-scenario consolidate target does not exist: {scenario_dir}")
                 return 1
             try:
+                # CLAUSE 10 -- THE RECONCILIATION POINT. This is the ONE place a scenario's
+                # DU is re-derived from scratch (a bounded own-walk of this scenario only),
+                # once per scenario per campaign. The delta chain that
+                # du_sentinels.delete_and_account maintains between consolidations is
+                # corrected here; nothing else in the toolkit walks a scenario.
                 compute_and_write_scope_sentinel(
                     scenario_dir,
                     scope="scenario",
@@ -664,14 +668,24 @@ def main() -> int:
                 if args.member_id is not None:
                     from hhemt.du_sentinels import (
                         compute_and_write_scope_sentinel,
+                        sum_child_sentinels,
                     )
 
                     analysis_dir = analysis.analysis_paths.analysis_dir
-                    compute_and_write_scope_sentinel(
-                        analysis_dir,
-                        scope="member",
-                        include_breakdown=True,
-                    )
+                    # CLAUSE 10 on the sensitivity path: no `rule consolidate_scenario` is
+                    # emitted for a members tree (workflow.py:3531 is multisim-only), so this
+                    # arm is the ONE place a member's scenarios are re-derived from scratch --
+                    # one bounded own-walk per scenario per member-consolidate, the same files
+                    # the retired member full-walk visited. Without it a scenario sentinel on a
+                    # members tree is only ever seeded (near-empty) and decremented.
+                    for _scen_dir in sorted(p for p in (analysis_dir / "sims").iterdir() if p.is_dir()):
+                        compute_and_write_scope_sentinel(_scen_dir, scope="scenario")
+                    # Clause 7: a member's total is the SUM of its scenarios' sentinels,
+                    # never a walk of the member tree (which contains sims/). Same rule as
+                    # sensitivity_analysis.py:941. Scenario sentinels exist because clause 3
+                    # (scenario.py::_create_directories) seeds them at creation -- this hunk
+                    # is applied in the SAME commit as that one, never before it.
+                    sum_child_sentinels(analysis_dir, scope="member", child_scope_dirs=["sims"])
                     logger.info(f"Member DU sentinel written at {analysis_dir}/_status/_du.json")
             except Exception as e:
                 logger.error(f"Failed to consolidate to DataTree: {e}")

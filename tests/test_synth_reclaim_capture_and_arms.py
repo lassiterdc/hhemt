@@ -328,7 +328,7 @@ def test_capture_is_declined_when_the_summary_section_is_unrecognizable(tmp_path
 
     inp, rpt = _write_hydro_pair(tmp_path, subcatchments=[("S1", "1.0"), ("S2", "2.0")], include_summary=False)
     scen = _FakeScenario(tmp_path, inp)
-    out = reclaim_scenario_scoped_classes(scen, ("standalone_rpt",), tmp_path, verbose=False)
+    out = reclaim_scenario_scoped_classes(scen, ("standalone_rpt",), verbose=False)
     assert rpt.exists(), "hydro.rpt must be KEPT when its capture cannot be verified"
     assert not (tmp_path / "processed" / "hydrology_rpt_summary.zarr").exists()
     assert out["standalone_rpt"] is False
@@ -345,6 +345,6 @@ def test_capture_and_delete_still_proceed_on_a_legal_zero_subcatchment_model(tmp
 
     inp, rpt = _write_hydro_pair(tmp_path, subcatchments=[("S1", "0"), ("S2", "0")])
     scen = _FakeScenario(tmp_path, inp)
-    out = reclaim_scenario_scoped_classes(scen, ("standalone_rpt",), tmp_path, verbose=False)
+    out = reclaim_scenario_scoped_classes(scen, ("standalone_rpt",), verbose=False)
     assert not rpt.exists(), "a legal zero-subcatchment model must still reclaim its report"
     assert out["standalone_rpt"] is True

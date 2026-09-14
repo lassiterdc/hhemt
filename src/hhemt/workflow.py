@@ -2138,7 +2138,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # so every existing caller is byte-identical.
         if stage == "render" and not dry_run:
             plots_dir = self.analysis_paths.analysis_dir / "plots"
-            _freed_render: dict[str, int] = {}
+            _render_targets: list[Path] = []
             if plots_dir.exists():
                 for fig_path in sorted(plots_dir.rglob("*")):
                     if fig_path.is_dir() or fig_path.name.endswith(".manifest.json"):
@@ -2155,23 +2155,12 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                         continue
                     logger.info("force_rerun[stage=render]: deleting figure %s", fig_path)
                     sidecar = fig_path.with_suffix(fig_path.suffix + ".manifest.json")
-                    # Sizes BEFORE the unlink -- a post-unlink stat is impossible. Gotcha 38
-                    # names the render-path delete of known-size artifacts as an O(1)
-                    # decrement, explicitly NOT a restamp and explicitly NOT an exemption.
-                    _freed_render["plots"] = _freed_render.get("plots", 0) + (
-                        fig_path.stat().st_size if fig_path.exists() else 0
-                    )
-                    _freed_render["plots"] = _freed_render.get("plots", 0) + (
-                        sidecar.stat().st_size if sidecar.exists() else 0
-                    )
-                    fig_path.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
-                    sidecar.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
-            if _freed_render.get("plots"):
-                from hhemt.du_sentinels import decrement_scope_sentinel
+                    _render_targets += [fig_path, sidecar]
+            # Clause 1: ONE accounting call for every figure + sidecar (Gotcha 38's O(1)
+            # decrement now lives inside the tool).
+            from hhemt.du_sentinels import delete_and_account
 
-                decrement_scope_sentinel(
-                    self.analysis_paths.analysis_dir, scope="analysis", child_deltas=dict(_freed_render)
-                )
+            delete_and_account(_render_targets, scope_dir=self.analysis_paths.analysis_dir, scope="analysis")
 
     def _cpu_sim_partition(self) -> str | None:
         """Resolve the SLURM partition for CPU-ONLY simulation rules (``run_swmm``).

@@ -85,6 +85,7 @@ def _make_proc(
         out_tritonswmm=None,
         out_triton=None,
         swmm_full_out_file=swmm_out_file,
+        sim_folder=out_dir_path.parent,
     )
     setattr(scen_paths, out_dir_attr, out_dir_path)
 
@@ -103,9 +104,10 @@ def _make_proc(
     proc = TRITONSWMM_sim_post_processing.__new__(TRITONSWMM_sim_post_processing)
     proc.scen_paths = scen_paths
     proc.log = log
-    # The PATTERN-A/B restamp edits in process_simulation.py read
-    # self._analysis.analysis_paths.analysis_dir; point it at the parent of the
-    # seeded out_dir so restamp_parent_sentinels no-ops (no _status/ tree there).
+    # The deletion-tool call sites in process_simulation.py read
+    # self.scen_paths.sim_folder (the owning scenario); the stub's sim_folder is the
+    # parent of the seeded out_dir, which carries no _status/_du.json, so the tool
+    # deletes and skips the sentinel adjustment.
     # The analysis-level log carries multi_allocation_in_progress, which the P3
     # _clear_raw_outputs guard reads via self._analysis.log.
     proc._analysis = SimpleNamespace(

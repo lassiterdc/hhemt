@@ -74,7 +74,7 @@ def test_merged_store_keeps_the_inherited_time_chunk_grid(tmp_path, specs, expec
     _write_chapters(chapters, specs)
     final = tmp_path / "tseries.zarr"
 
-    merge_chapters_to_unified(chapters, final)
+    merge_chapters_to_unified(chapters, final, scenario_dir=chapters.parent)
 
     assert unified_flag_for(final).exists(), "merge did not publish its completion flag"
     merged = xr.open_zarr(final, consolidated=False)

@@ -1405,6 +1405,7 @@ class TRITONSWMM_analysis:
                 f"[Transfer] Clearing existing destination: {dest_dir}",
                 flush=True,
             )
+            # EXEMPT-DU: outside-analysis-tree
             shutil.rmtree(dest_dir)
 
         elif policy == "prompt":
@@ -2628,7 +2629,9 @@ class TRITONSWMM_analysis:
                 ready, _, _ = select.select([sys.stdin], [], [], 15)
                 answer = sys.stdin.readline().strip().lower() if ready else "n"
                 if answer in ("y", "yes"):
-                    fast_rmtree(test_dir, analysis_dir=self.analysis_paths.analysis_dir)
+                    du_sentinels.delete_and_account(
+                        [test_dir], scope_dir=self.analysis_paths.analysis_dir, scope="analysis"
+                    )
                     print(f"[test] Deleted {test_dir}.", flush=True)
                 else:
                     print("[test] Keeping _test/.", flush=True)
@@ -4550,7 +4553,6 @@ class TRITONSWMM_analysis:
         runs (delete consolidate flag + zarr). The report always regenerates.
         Never deletes ``c_run_*`` (sim) flags. (Phase 2 — FQ1 Option A.)
         """
-        from hhemt.du_sentinels import restamp_parent_sentinels
 
         analysis_dir = self.analysis_paths.analysis_dir
         sd = analysis_dir / "_status"
@@ -4564,47 +4566,23 @@ class TRITONSWMM_analysis:
             """
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
-            # D3 — capture deleted-artifact sizes BEFORE unlink so the O(1)
-            # decrement has the bytes to subtract (post-unlink stat is impossible).
-            _html_bytes = report_html.stat().st_size if report_html.exists() else 0
-            _zip_bytes = report_zip.stat().st_size if report_zip.exists() else 0
-            # EXEMPT-DU: du-handled-by-decrement
-            report_html.unlink(missing_ok=True)
-            # EXEMPT-DU: du-handled-by-decrement
-            report_zip.unlink(missing_ok=True)
             plots_dir = analysis_dir / "plots"
-            plots_total_bytes = 0
+            # Clause 1: ONE accounting call for the report shell + every plot artifact. The
+            # tool measures what it deletes and adjusts this scope's sentinel once; the
+            # former FIX-3 "skip the decrement on the regenerate arms" gate is gone because
+            # the later zarr deletion now also routes through the tool, which is idempotent
+            # per path rather than a re-walk (a double decrement cannot occur: each path is
+            # deleted, and therefore counted, exactly once).
+            _targets = [report_html, report_zip]
             if plots_dir.exists():
-                for _art in plots_dir.rglob("*"):
-                    if _art.is_file():
-                        try:
-                            plots_total_bytes += _art.stat().st_size
-                        except OSError:
-                            pass
-                for art in plots_dir.rglob("*"):
-                    if art.is_file():
-                        # EXEMPT-DU: du-handled-by-decrement
-                        art.unlink(missing_ok=True)
+                _targets += [a for a in plots_dir.rglob("*") if a.is_file()]
             if not dry_run:
-                # PATTERN B replaced by D3 — O(1)/O(plots) decrement instead of a
-                # full-tree walk. FIX 3: on the regenerate_existing
-                # process/consolidate arms a LATER zarr deletion restamps the tree
-                # anyway, so skip the redundant decrement there (the default
-                # regenerate_existing=False path decrements). Sizes captured above
-                # BEFORE unlink (post-unlink stat is impossible); routes through
-                # write_du_sentinel so the compare-and-write mtime invariant holds.
-                if not (start_with in ("process", "consolidate") and regenerate_existing):
-                    from hhemt.du_sentinels import decrement_scope_sentinel
-
-                    child_deltas: dict[str, int] = {}
-                    if _html_bytes:
-                        child_deltas["analysis_report.html"] = _html_bytes
-                    if _zip_bytes:
-                        child_deltas["analysis_report.zip"] = _zip_bytes
-                    if plots_total_bytes:
-                        child_deltas["plots"] = plots_total_bytes
-                    if child_deltas:
-                        decrement_scope_sentinel(analysis_dir, scope="analysis", child_deltas=child_deltas)
+                du_sentinels.delete_and_account(_targets, scope_dir=analysis_dir, scope="analysis")
+            else:
+                # dry_run: the deletes are the mtime trigger the stipulation sanctions; the
+                # sentinel is deliberately NOT written on a dry run.
+                for _t in _targets:
+                    _t.unlink(missing_ok=True)  # EXEMPT-DU: dry-run-trigger
 
         if start_with == "process":
             if regenerate_existing:
@@ -4616,7 +4594,7 @@ class TRITONSWMM_analysis:
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
                     if _zarr is not None and _zarr.exists():
-                        fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
+                        du_sentinels.delete_and_account([_zarr], scope_dir=analysis_dir, scope="analysis")
             _delete_report_and_plot_artifacts()
         elif start_with == "consolidate":
             if regenerate_existing:
@@ -4625,7 +4603,7 @@ class TRITONSWMM_analysis:
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
                     if _zarr is not None and _zarr.exists():
-                        fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
+                        du_sentinels.delete_and_account([_zarr], scope_dir=analysis_dir, scope="analysis")
             # regenerate_existing=False: leave consolidate flag AND zarr intact
             # (the flag IS the completion signal per D5); only report+plots re-fire.
             _delete_report_and_plot_artifacts()
@@ -4635,12 +4613,7 @@ class TRITONSWMM_analysis:
             # "report shell only" path).
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
-            # EXEMPT-DU: du-handled-by-decrement
-            report_html.unlink(missing_ok=True)
-            # EXEMPT-DU: du-handled-by-decrement
-            report_zip.unlink(missing_ok=True)
-            if not dry_run:
-                restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)  # PATTERN B
+            du_sentinels.delete_and_account([report_html, report_zip], scope_dir=analysis_dir, scope="analysis")
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 
@@ -4686,12 +4659,11 @@ class TRITONSWMM_analysis:
         #    drift-proof (no ScenarioPaths attr-name maintenance — the prior
         #    16-attr tuple had wrong names) and is exactly the granularity R8's
         #    SLURM-offload wraps.
-        analysis_dir = self.analysis_paths.analysis_dir
         for event_iloc in range(len(self.df_sims)):
             scen = TRITONSWMM_scenario(event_iloc, self)
             processed_dir = scen.scen_paths.sim_folder / "processed"
             if processed_dir.exists():
-                fast_rmtree(processed_dir, analysis_dir=analysis_dir)  # PATTERN A
+                du_sentinels.delete_and_account([processed_dir], scope_dir=scen.scen_paths.sim_folder, scope="scenario")
         # The consolidated zarr is deleted by _invalidate_downstream_flags'
         # regenerate_existing=True process-arm — no duplicate deletion here.
 
@@ -4820,7 +4792,7 @@ class TRITONSWMM_analysis:
             for child in sorted(sub_dir.iterdir()):
                 if child.name == config_name:
                     continue
-                fast_rmtree(child, analysis_dir=self.analysis_paths.analysis_dir)
+                du_sentinels.delete_and_account([child], scope_dir=sub_dir, scope="member")
             # The sub's analysis-level model runtime logs do NOT live under sub_dir --
             # model_logfile_for routes them to the MASTER's logs/sims/ so all sims of a
             # sensitivity sweep share one directory. Leaving them behind reproduces, at member
@@ -4831,21 +4803,14 @@ class TRITONSWMM_analysis:
             # a ledger surviving its log would double-count into wall_clock_ledger_s on the
             # re-run. Best-effort: a missing file is the normal case on a first restart.
             _simlogs = self.analysis_paths.simlog_directory
+            _log_targets: list[Path] = []
             for _log in _simlogs.glob(f"model_*_member_{member}_evt*.log"):
-                _log.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
                 _ledger = _simlogs / "_walltime" / f"{_log.stem}.jsonl"
-                _ledger.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
-            # These bytes ARE DU-counted -- `simlog_directory` is `{analysis_dir}/logs/sims`,
-            # and `sum_child_sentinels`' own-files walk excludes only child-scope dirs and
-            # top-level `_status*`, so `logs/` is reached. The exemption marker previously
-            # here named a nonexistent runtime-log category and was a FALSE claim rather than a
-            # miscategorization -- these bytes were never exempt. ONE restamp AFTER the loop
-            # rather than one per unlink: a per-file restamp inside a delete loop re-walks the
-            # scope's children once per file and does not finish at ensemble scale, which is
-            # the recorded pathology behind the raw-SWMM-binaries reclaim.
-            from hhemt.du_sentinels import restamp_parent_sentinels as _restamp_simlogs
-
-            _restamp_simlogs(_simlogs, analysis_dir=self.analysis_paths.analysis_dir)
+                _log_targets += [_log, _ledger]
+            # These bytes ARE DU-counted (`logs/sims` is an analysis-scope own dir). ONE
+            # accounting call for the whole set (clause 1), at the ANALYSIS scope that owns
+            # `logs/`; the member sentinel is unaffected because the logs are not under it.
+            du_sentinels.delete_and_account(_log_targets, scope_dir=self.analysis_paths.analysis_dir, scope="analysis")
         self._workflow_builder._delete_flags_for_force_rerun(
             ResolvedForceRerunSpec(scope="member", tokens=tuple(restart_ids), stage="simulate")
         )
@@ -5451,7 +5416,6 @@ class TRITONSWMM_analysis:
         else:
             raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
 
-        analysis_dir = self.analysis_paths.analysis_dir
         for event_iloc in range(len(self.df_sims)):
             scen = TRITONSWMM_scenario(event_iloc, self)
             if scen.event_id not in target_event_ids:
@@ -5461,9 +5425,7 @@ class TRITONSWMM_analysis:
             # be dead code reading as a safety check.
             processed = scen.scen_paths.sim_folder / "processed"
             for artifact in sorted(processed.glob("*.chapters")) + sorted(processed.glob("*.done")):
-                # fast_rmtree handles a dir OR a file and re-stamps DU internally,
-                # so PATTERN A is satisfied and no EXEMPT-DU annotation is owed.
-                fast_rmtree(artifact, analysis_dir=analysis_dir)
+                du_sentinels.delete_and_account([artifact], scope_dir=scen.scen_paths.sim_folder, scope="scenario")
 
     def _all_event_id_slugs(self) -> list[str]:
         """Helper: enumerate every scenario's event_id slug for ``"all"`` scope.

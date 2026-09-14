@@ -111,18 +111,17 @@ def fast_rmtree(
     *,
     missing_ok: bool = True,
     onerror: Callable | None = None,
-    analysis_dir: str | Path | None = None,
 ) -> int:
     """Fast, cross-platform directory delete. Returns bytes reclaimed.
 
     Uses OS-native delete commands for speed; falls back to shutil.rmtree.
 
-    When `analysis_dir` is provided AND `path` is not itself the analysis_dir,
-    `du_sentinels.restamp_parent_sentinels(path, analysis_dir=...)` is invoked
-    after the delete completes so parent-scope DU sentinels stay accurate. The
-    `path == analysis_dir` short-circuit converts the EXEMPT-site convention
-    (root-wipe — re-stamping a directory being deleted is meaningless) from a
-    prose comment into grep-detectable code (SE F-I Flag 2).
+    THIS IS A PRIMITIVE, NOT AN ACCOUNTING SITE. It measures and deletes; it
+    maintains no DU sentinel. Every DU-counted deletion under src/hhemt/ routes
+    through `du_sentinels.delete_and_account`, which calls this and adjusts the
+    owning scope's sentinel once ([Q354] ruling 4; clause 1). Calling this directly
+    outside du_sentinels.py is a `check_du_sentinel_sites` violation unless the
+    site carries a still-valid `# EXEMPT-DU:` category.
 
     Parameters
     ----------
@@ -132,11 +131,6 @@ def fast_rmtree(
         If True, silently return when path does not exist.
     onerror : callable, optional
         Error handler passed to shutil.rmtree (fallback only).
-    analysis_dir : str | Path, optional
-        Root of the analysis tree this delete is scoped to. When provided,
-        parent-scope DU sentinels under `analysis_dir` are re-stamped after
-        the delete; when None, no re-stamping occurs (the caller is responsible
-        for sentinel accuracy out-of-band).
     """
     path = Path(path)
 
@@ -164,7 +158,6 @@ def fast_rmtree(
 
     if path.is_symlink() or path.is_file():
         path.unlink()
-        _restamp_after_mutation(path, analysis_dir)
         return freed
 
     try:
@@ -185,35 +178,10 @@ def fast_rmtree(
     except Exception:
         shutil.rmtree(path, onerror=onerror)
 
-    _restamp_after_mutation(path, analysis_dir)
     return freed
 
 
-def _restamp_after_mutation(path: Path, analysis_dir: str | Path | None) -> None:
-    """Re-stamp parent DU sentinels for `path` under `analysis_dir`.
-
-    No-op when `analysis_dir` is None, when `path == analysis_dir` (root-wipe
-    short-circuit per SE F-I Flag 2), or when path resolution fails. Imports
-    `restamp_parent_sentinels` lazily to keep `utils.py` free of a top-level
-    dependency on `du_sentinels.py`.
-    """
-    if analysis_dir is None:
-        return
-    try:
-        path_resolved = Path(path).resolve()
-        analysis_resolved = Path(analysis_dir).resolve()
-    except OSError:
-        return
-    if path_resolved == analysis_resolved:
-        return
-    if not analysis_resolved.exists():
-        return
-    from hhemt.du_sentinels import restamp_parent_sentinels
-
-    restamp_parent_sentinels(Path(path), analysis_dir=analysis_resolved)
-
-
-def _recover_and_clear_publish_temps(final, aside, tmp, *, analysis_dir=None) -> None:
+def _recover_and_clear_publish_temps(final, aside, tmp) -> None:
     """Steps 0 and 1 of the crash-safe publish. Shared by the callable-wrapping
     form below and by the inline form in process_simulation, so the .aside/.tmp
     preference has exactly ONE implementation -- two copies is how it gets undone.
@@ -258,7 +226,7 @@ def _recover_and_clear_publish_temps(final, aside, tmp, *, analysis_dir=None) ->
             if tmp.exists():
                 # Died in the step3->step4 gap: .tmp is the complete new store.
                 os.rename(tmp, final)
-                fast_rmtree(aside, analysis_dir=analysis_dir)
+                fast_rmtree(aside)  # EXEMPT-DU: transient-intermediate
             else:
                 warnings.warn(
                     f"Recovering {aside}: a previous publish died mid-swap with no "
@@ -269,13 +237,13 @@ def _recover_and_clear_publish_temps(final, aside, tmp, *, analysis_dir=None) ->
                 os.rename(aside, final)
         else:
             # Died in the step4->step5 gap: the aside is superseded.
-            fast_rmtree(aside, analysis_dir=analysis_dir)
+            fast_rmtree(aside)  # EXEMPT-DU: transient-intermediate
     if tmp.exists():
         warnings.warn(f"Discarding un-publishable partial store {tmp}.", stacklevel=2)
-        fast_rmtree(tmp, analysis_dir=analysis_dir)
+        fast_rmtree(tmp)  # EXEMPT-DU: transient-intermediate
 
 
-def _publish_store_crash_safe(write_fn, fname_out, *, analysis_dir=None) -> None:
+def _publish_store_crash_safe(write_fn, fname_out) -> None:
     """Build a zarr store under a temp name and publish it by rename.
 
     GUARANTEE, and it is exactly this one: `fname_out` is either ABSENT or a
@@ -315,13 +283,13 @@ def _publish_store_crash_safe(write_fn, fname_out, *, analysis_dir=None) -> None
     aside = final.with_name(final.name + ".aside")
     tmp = final.with_name(final.name + ".tmp")
 
-    _recover_and_clear_publish_temps(final, aside, tmp, analysis_dir=analysis_dir)
+    _recover_and_clear_publish_temps(final, aside, tmp)
     write_fn(tmp)  # step 2
     if final.exists():
         os.rename(final, aside)  # step 3
     os.replace(tmp, final)  # step 4
     if aside.exists():
-        fast_rmtree(aside, analysis_dir=analysis_dir)  # step 5
+        fast_rmtree(aside)  # step 5  # EXEMPT-DU: transient-intermediate
 
 
 def chapters_dir_for(fname_out) -> Path:
@@ -437,7 +405,7 @@ def covered_timesteps(chapters: Path) -> set:
     return out
 
 
-def reap_unflagged_chapters(chapters: Path, *, analysis_dir=None) -> None:
+def reap_unflagged_chapters(chapters: Path, *, scenario_dir: Path) -> None:
     """STATE 3: a chapter store with no flag was interrupted mid-write. Delete it.
 
     Never deletes a FLAGGED chapter -- after a raw clear a flagged chapter is the
@@ -450,10 +418,12 @@ def reap_unflagged_chapters(chapters: Path, *, analysis_dir=None) -> None:
         k = int(store.stem.split("_")[1])
         if not chapter_flag_for(chapters, k).exists():
             warnings.warn(f"Discarding unflagged (interrupted) chapter store {store}.", stacklevel=2)
-            fast_rmtree(store, analysis_dir=analysis_dir)
+            from hhemt.du_sentinels import delete_and_account
+
+            delete_and_account([store], scope_dir=scenario_dir, scope="scenario")
 
 
-def clear_raw_for_timesteps(df_outputs, timesteps, *, analysis_dir=None) -> int:
+def clear_raw_for_timesteps(df_outputs, timesteps, *, scenario_dir: Path) -> int:
     """Delete ONLY the raw per-timestep files this chapter consumed. Returns bytes.
 
     DELIBERATELY NOT `process_simulation._clear_raw_outputs`, and it MUST NOT be
@@ -468,24 +438,18 @@ def clear_raw_for_timesteps(df_outputs, timesteps, *, analysis_dir=None) -> int:
     list: it deletes only paths named in `df_outputs`, which contains the
     per-variable per-timestep data files and nothing else.
     """
-    freed = 0
-    for path in df_outputs.loc[list(timesteps)].to_numpy().ravel():
-        p = Path(path)
-        if not p.exists():
-            continue
-        # Routed through fast_rmtree rather than a bare unlink + wrapper call. Three
-        # reasons, and the first is a correctness one: restamp_parent_sentinels has NO
-        # None guard (`if not analysis_dir.exists()`), and analysis_dir defaults to None
-        # here, so calling it directly -- the change that would satisfy the DU checker's
-        # _is_restamp_call most obviously -- raises AttributeError on every caller that
-        # omits analysis_dir. fast_rmtree handles a FILE, guards None via
-        # _restamp_after_mutation, and RETURNS the bytes it freed ([Q232]), which
-        # replaces the manual stat.
-        freed += fast_rmtree(p, analysis_dir=analysis_dir)
-    return freed
+    # ONE accounting call for the whole chapter (clause 1). The pre-2026-09-13 form
+    # called fast_rmtree(p, analysis_dir=...) per file, and each call re-summed the
+    # ANALYSIS scope over ~3,798 sentinel-less children -- 528 times per chapter
+    # flush. That is the chunk-6 stall. The tool below stats only what it deletes
+    # and adjusts only this scenario's sentinel.
+    from hhemt.du_sentinels import delete_and_account
+
+    paths = df_outputs.loc[list(timesteps)].to_numpy().ravel()
+    return delete_and_account(paths, scope_dir=Path(scenario_dir), scope="scenario")
 
 
-def merge_chapters_to_unified(chapters: Path, fname_out, *, analysis_dir=None) -> None:
+def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) -> None:
     """STATES 4/5/6: concatenate flagged chapters into the unified store.
 
     A flagless unified store is a merge that was interrupted; it is deleted and
@@ -505,7 +469,9 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, analysis_dir=None) -
     flag = unified_flag_for(final)
     if final.exists() and not flag.exists():
         warnings.warn(f"Discarding un-flagged (interrupted) unified store {final}; re-merging.", stacklevel=2)
-        fast_rmtree(final, analysis_dir=analysis_dir)
+        from hhemt.du_sentinels import delete_and_account
+
+        delete_and_account([final], scope_dir=scenario_dir, scope="scenario")
     parts = completed_chapters(chapters)
     if not parts:
         raise ProcessingError(
@@ -562,7 +528,9 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, analysis_dir=None) -
     tmp.write_text("ok", encoding="utf-8")
     os.replace(tmp, flag)
     # STATE 6: chapters die ONLY now, after the unified flag.
-    fast_rmtree(chapters, analysis_dir=analysis_dir)
+    from hhemt.du_sentinels import delete_and_account
+
+    delete_and_account([chapters], scope_dir=scenario_dir, scope="scenario")
 
 
 def fix_line_endings(file_path, target_ending="\n"):
@@ -1353,7 +1321,6 @@ def write_datatree_zarr(
     tree: "xr.DataTree",
     fname_out: Path,
     compression_level: int = 5,
-    analysis_dir=None,
 ) -> None:
     """Write a DataTree to a hierarchical zarr store.
 
@@ -1374,11 +1341,10 @@ def write_datatree_zarr(
         _publish_store_crash_safe(
             lambda _dest: tree.to_zarr(_dest, mode="w", encoding=encoding, consolidated=False),
             fname_out,
-            analysis_dir=analysis_dir,
         )
 
 
-def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto", analysis_dir=None):
+def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
     encoding = return_dic_zarr_encodings(ds, compression_level)
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
@@ -1392,7 +1358,6 @@ def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto", an
         _publish_store_crash_safe(
             lambda _dest: ds.to_zarr(_dest, mode="w", encoding=encoding, consolidated=False),
             fname_out,
-            analysis_dir=analysis_dir,
         )
 
 

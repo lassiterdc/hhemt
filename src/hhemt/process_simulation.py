@@ -27,7 +27,6 @@ from hhemt.utils import (
     convert_datetime_to_str,
     covered_timesteps,
     current_datetime_string,
-    fast_rmtree,
     get_file_size_MiB,
     merge_chapters_to_unified,
     paths_to_strings,
@@ -295,9 +294,9 @@ class TRITONSWMM_sim_post_processing:
         # skips timesteps on three paths, so a count of published timesteps and its
         # POSITION in timestep_list diverge whenever any timestep is skipped.
         _chapters = chapters_dir_for(fname_out)
-        _ad = self._analysis.analysis_paths.analysis_dir
+        _scen_dir = self._scenario.scen_paths.sim_folder
         _chapters.mkdir(parents=True, exist_ok=True)
-        reap_unflagged_chapters(_chapters, analysis_dir=_ad)
+        reap_unflagged_chapters(_chapters, scenario_dir=_scen_dir)
         if unified_flag_for(fname_out).exists():
             warnings.warn(
                 f"{Path(fname_out).name} already carries its unified completion flag; "
@@ -457,7 +456,9 @@ class TRITONSWMM_sim_post_processing:
                 ds_batch.to_zarr(_store, mode="w", encoding=encoding, consolidated=False)
                 verify_and_flag_chapter(_store, _flag, _n)
                 if _clear_raw_ok:
-                    _freed_bytes += clear_raw_for_timesteps(df_outputs, _ts, analysis_dir=_ad)
+                    _freed_bytes += clear_raw_for_timesteps(
+                        df_outputs, _ts, scenario_dir=self._scenario.scen_paths.sim_folder
+                    )
                 _next_chapter += 1
                 first_chunk = False
                 del ds_batch
@@ -487,7 +488,9 @@ class TRITONSWMM_sim_post_processing:
             ds_batch.to_zarr(_store, mode="w", encoding=encoding, consolidated=False)
             verify_and_flag_chapter(_store, _flag, _n)
             if _clear_raw_ok:
-                _freed_bytes += clear_raw_for_timesteps(df_outputs, _ts, analysis_dir=_ad)
+                _freed_bytes += clear_raw_for_timesteps(
+                    df_outputs, _ts, scenario_dir=self._scenario.scen_paths.sim_folder
+                )
             _next_chapter += 1
             first_chunk = False
             del ds_batch
@@ -505,7 +508,7 @@ class TRITONSWMM_sim_post_processing:
                 f"files missing?). Zarr store not created; nothing to consolidate."
             )
 
-        merge_chapters_to_unified(_chapters, fname_out, analysis_dir=_ad)
+        merge_chapters_to_unified(_chapters, fname_out, scenario_dir=_scen_dir)
         if _freed_bytes:
             print(f"[Chunked Processing] Reclaimed {_freed_bytes} raw byte(s) across chapters.", flush=True)
 
@@ -1426,7 +1429,7 @@ class TRITONSWMM_sim_post_processing:
                 "after the final-allocation consolidation succeeds and clears the flag."
             )
 
-        from hhemt.du_sentinels import restamp_parent_sentinels
+        from hhemt.du_sentinels import delete_and_account
 
         _OUT_DIR_BY_MODEL = {
             "tritonswmm": self.scen_paths.out_tritonswmm,
@@ -1436,9 +1439,8 @@ class TRITONSWMM_sim_post_processing:
             out_dir = _OUT_DIR_BY_MODEL[model_type]
             if out_dir is None or not out_dir.exists():
                 return
-            for child in out_dir.iterdir():
-                if child.is_dir() and child.name in _CLEAR_RAW_DELETE_SUBDIRS:
-                    fast_rmtree(child, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
+            _targets = [c for c in out_dir.iterdir() if c.is_dir() and c.name in _CLEAR_RAW_DELETE_SUBDIRS]
+            delete_and_account(_targets, scope_dir=self.scen_paths.sim_folder, scope="scenario")
             # Reclaim the coupled-SWMM exchange-replay side-file (R7): it is dead weight
             # once the FINAL allocation is done (this method is guarded against a
             # mid-multi-allocation invocation above) and grows unbounded in sim length if
@@ -1457,10 +1459,7 @@ class TRITONSWMM_sim_post_processing:
         elif model_type == "swmm":
             out_file = self.scen_paths.swmm_full_out_file
             if out_file is not None and Path(out_file).exists():
-                Path(out_file).unlink()
-                restamp_parent_sentinels(
-                    Path(out_file), analysis_dir=self._analysis.analysis_paths.analysis_dir
-                )  # PATTERN B
+                delete_and_account([Path(out_file)], scope_dir=self.scen_paths.sim_folder, scope="scenario")
             if getattr(self.log, "raw_SWMM_outputs_cleared", None):
                 self.log.raw_SWMM_outputs_cleared.set(True)
         else:
@@ -1486,21 +1485,19 @@ class TRITONSWMM_sim_post_processing:
         Called ONLY from the ``tritonswmm`` branch of ``_clear_raw_outputs``, which is already
         gated (a) on the ``multi_allocation_in_progress`` guard (final allocation complete)
         and (b) on the ``clear_raw`` config electing tritonswmm cleanup. Size-mutating, so it
-        re-stamps the DU sentinels per the ``du sentinels written at every mutation site``
-        stipulation (PATTERN B: unlink + ``restamp_parent_sentinels``) — NOT ``# EXEMPT-DU``.
+        routes through ``du_sentinels.delete_and_account`` (the unified deletion tool), which
+        adjusts this scenario's own sentinel once — NOT ``# EXEMPT-DU``.
         """
-        from hhemt.du_sentinels import restamp_parent_sentinels
+        from hhemt.du_sentinels import delete_and_account
 
         out_dir = self.scen_paths.out_tritonswmm
         if out_dir is None or not out_dir.exists():
             return
-        analysis_dir = self._analysis.analysis_paths.analysis_dir
-        for sidefile in out_dir.glob("**/swmm/*_exchange_replay.bin"):
-            try:
-                sidefile.unlink()  # EXEMPT-DU: du-handled-by-decrement
-            except OSError:
-                continue
-            restamp_parent_sentinels(sidefile, analysis_dir=analysis_dir)  # PATTERN B
+        delete_and_account(
+            list(out_dir.glob("**/swmm/*_exchange_replay.bin")),
+            scope_dir=self.scen_paths.sim_folder,
+            scope="scenario",
+        )
 
     @staticmethod
     def _should_clear_raw_for_model(
@@ -1939,23 +1936,13 @@ class TRITONSWMM_sim_post_processing:
         return out
 
     @staticmethod
-    def _remove_reclaimed(path: Path, analysis_dir, verbose: bool) -> None:
-        """Delete one reclaimed artifact, re-stamping the DU sentinels either way.
-
-        Both patterns are preserved verbatim from the function this one replaces, because
-        scripts/check_du_sentinel_sites.py enforces them statically: PATTERN A for a
-        directory (fast_rmtree re-stamps in line), PATTERN B for a file (unlink then
-        restamp_parent_sentinels).
-        """
-        from hhemt.du_sentinels import restamp_parent_sentinels
+    def _remove_reclaimed(path: Path, scenario_dir: Path, verbose: bool) -> None:
+        """Delete one reclaimed artifact through the unified deletion tool (clause 1)."""
+        from hhemt.du_sentinels import delete_and_account
 
         if verbose:
             print(f"[reclaim] removing {path}", flush=True)
-        if path.is_dir():
-            fast_rmtree(path, analysis_dir=analysis_dir)  # PATTERN A
-        else:
-            path.unlink()
-            restamp_parent_sentinels(path, analysis_dir=analysis_dir)  # PATTERN B
+        delete_and_account([path], scope_dir=scenario_dir, scope="scenario")
 
     @staticmethod
     def _capture_landed(path) -> bool:
@@ -2038,7 +2025,7 @@ class TRITONSWMM_sim_post_processing:
         return n
 
     @staticmethod
-    def _truncate_coupled_rpt(rpt_path: Path, analysis_dir, verbose: bool) -> bool:
+    def _truncate_coupled_rpt(rpt_path: Path, verbose: bool) -> bool:
         """Truncate a finalized coupled rpt to header+summaries+trailer. Returns True iff written.
 
         STREAMING by construction: the Norfolk rpt is ~318 MB / ~5M lines, so this reads
@@ -2051,8 +2038,6 @@ class TRITONSWMM_sim_post_processing:
         - no body start -> either already truncated (the idempotent no-op) or a structure
           this was never measured against; in both cases doing nothing is correct.
         """
-        from hhemt.du_sentinels import restamp_parent_sentinels
-
         head: list[str] = []
         trailer_lines: list[str] = []
         trailer_started = False
@@ -2105,7 +2090,8 @@ class TRITONSWMM_sim_post_processing:
             out.write(_RPT_TRUNCATION_MARKER.format(n_dropped=n_dropped))
             out.writelines(trailer_lines)
         os.replace(tmp, rpt_path)
-        restamp_parent_sentinels(rpt_path, analysis_dir=analysis_dir)  # PATTERN B
+        # DN-3: an in-place rewrite (os.replace of a smaller file) is a WRITE; the
+        # scenario sentinel is re-derived at consolidate_scenario (clause 10).
         if verbose:
             print(f"[reclaim] truncated {rpt_path}: dropped {n_dropped} time-series line(s).", flush=True)
         return True
@@ -2148,8 +2134,6 @@ class TRITONSWMM_sim_post_processing:
         if not classes:
             return
 
-        analysis_dir = self._analysis.analysis_paths.analysis_dir
-
         # The raw_swmm_binaries class no-ops when clear_raw == "none", and the decline is
         # LOGGED rather than silent. Its only reader, eda.raw_resume_identity.compare_swmm_raw,
         # needs out_tritonswmm/swmm/hydraulics.out ALONGSIDE the raw H/QX/QY/MH set that
@@ -2177,14 +2161,14 @@ class TRITONSWMM_sim_post_processing:
         if "coupled_rpt" in classes and model_type == "tritonswmm":
             rpt = self.scen_paths.swmm_hydraulics_rpt
             if rpt is not None and rpt.exists():
-                truncated_rpt = self._truncate_coupled_rpt(rpt, analysis_dir, verbose)
+                truncated_rpt = self._truncate_coupled_rpt(rpt, verbose)
 
         effective_policy = list(classes)
         removed: set[str] = set()
         for klass, path in self._reclaim_paths(model_type, policy=effective_policy, which=which):
             if not path.exists():
                 continue
-            self._remove_reclaimed(path, analysis_dir, verbose)
+            self._remove_reclaimed(path, self.scen_paths.sim_folder, verbose)
             removed.add(klass)
 
         # Per-scenario disclosure ground truth, written by the ACTOR. analysis_validation's
@@ -2216,7 +2200,7 @@ class TRITONSWMM_sim_post_processing:
         return node_ok and link_ok
 
 
-def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: bool = False) -> dict[str, bool]:
+def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> dict[str, bool]:
     """Reclaim the four SCENARIO-SCOPED artifact classes for one scenario.
 
     WHY THESE FOUR AND NOT THE OTHER THREE. The selector is the per-class SCOPE
@@ -2250,6 +2234,7 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
     rather than what the config elected -- the same actor-writes-the-record rule the
     per-model disclosure block follows.
     """
+    scenario_dir = Path(scen.scen_paths.sim_folder)
     _P = TRITONSWMM_sim_post_processing
     reclaimed_hydro_out = False
     removed_prep_inputs = False
@@ -2264,7 +2249,7 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
     if "hydro_out" in classes:
         _hydro_out = Path(str(scen.scen_paths.swmm_hydro_inp).replace(".inp", ".out"))
         if _hydro_out.exists():
-            _P._remove_reclaimed(_hydro_out, analysis_dir, verbose)
+            _P._remove_reclaimed(_hydro_out, scenario_dir, verbose)
             reclaimed_hydro_out = True
 
     # T0 -- regenerable by prepare_scenario template-fill, no solver. No capture gate:
@@ -2276,7 +2261,7 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
             scen.scen_paths.weather_timeseries,
         ):
             if _p is not None and Path(_p).exists():
-                _P._remove_reclaimed(Path(_p), analysis_dir, verbose)
+                _P._remove_reclaimed(Path(_p), scenario_dir, verbose)
                 removed_prep_inputs = True
 
     # T1 -- CAPTURE-GATED, and the gate is the whole safety property.
@@ -2285,7 +2270,7 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
         if _P._capture_landed(_cap):
             for _p in (scen.scen_paths.hyg_timeseries, scen.scen_paths.hyg_locs):
                 if _p is not None and Path(_p).exists():
-                    _P._remove_reclaimed(Path(_p), analysis_dir, verbose)
+                    _P._remove_reclaimed(Path(_p), scenario_dir, verbose)
                     removed_hydrographs = True
         elif verbose:
             print(
@@ -2303,12 +2288,11 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
     if "standalone_rpt" in classes:
         _full_rpt = scen.scen_paths.swmm_full_rpt_file
         if _full_rpt is not None and Path(_full_rpt).exists():
-            if _P._truncate_coupled_rpt(Path(_full_rpt), analysis_dir, verbose):
+            if _P._truncate_coupled_rpt(Path(_full_rpt), verbose):
                 removed_standalone_rpt = True
         _hydro_rpt = Path(str(scen.scen_paths.swmm_hydro_inp).replace(".inp", ".rpt"))
         _hydro_cap = Path(scen.scen_paths.sim_folder) / "processed" / "hydrology_rpt_summary.zarr"
         if _hydro_rpt.exists() and not _P._capture_landed(_hydro_cap):
-            from hhemt.du_sentinels import restamp_parent_sentinels
             from hhemt.swmm_output_parser import parse_hydrology_rpt_summary
 
             # The capture is written ONLY when it carries what the model declares. An
@@ -2339,7 +2323,7 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
             if _ds is not None and _declared is not None and _captured == _declared:
                 _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
                 _ds.to_zarr(_hydro_cap, mode="w")
-                restamp_parent_sentinels(_hydro_cap, analysis_dir=analysis_dir)  # PATTERN B
+                # DN-3: a WRITE; picked up at the clause-10 reconciliation.
             elif verbose:
                 # THREE reasons and THREE remedies, built together. Splitting the reason
                 # while appending one remedy to all three is the shape this replaced: on a
@@ -2374,7 +2358,7 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
                     flush=True,
                 )
         if _hydro_rpt.exists() and _P._capture_landed(_hydro_cap):
-            _P._remove_reclaimed(_hydro_rpt, analysis_dir, verbose)
+            _P._remove_reclaimed(_hydro_rpt, scenario_dir, verbose)
             removed_standalone_rpt = True
 
     return {

@@ -244,6 +244,7 @@ class MigrationContext:
         keep = set(expected_set)
         for entry in parent_path.iterdir():
             if entry.is_dir() and entry.name not in keep:
+                # EXEMPT-DU: migration-primitive
                 shutil.rmtree(entry)
 
     # ---- JSON log operations (filelock-safe) ----
@@ -856,6 +857,7 @@ class MigrationContext:
             # backup. Keep the first one; skip the clear on re-run.
             return
         shutil.copytree(metadata_dir, backup_dir)
+        # EXEMPT-DU: migration-primitive
         shutil.rmtree(metadata_dir)
         logger.info(
             "[%s] cleared .snakemake/metadata/; backup at %s",
@@ -878,6 +880,7 @@ class MigrationContext:
             for scenario_dir in sims.iterdir():
                 build = scenario_dir / "build"
                 if build.is_dir() and condition_fn(build):
+                    # EXEMPT-DU: migration-primitive
                     shutil.rmtree(build)
 
     def regenerate_scenario_status_csv(self) -> None:
@@ -944,6 +947,7 @@ class MigrationContext:
         if not src_path.exists():
             return
         if src_path.is_dir():
+            # EXEMPT-DU: migration-primitive
             shutil.rmtree(src_path)
         else:
             # EXEMPT-DU: migration-primitive

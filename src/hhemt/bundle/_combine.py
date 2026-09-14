@@ -225,6 +225,7 @@ def _emit_combined_bundle(
     for eid, root in zip(experiment_ids, roots, strict=True):
         dest = crates_dir / eid
         if dest.exists():
+            # EXEMPT-DU: bundle-root
             shutil.rmtree(dest)
         shutil.copytree(root, dest)
         child_crates.append(f"{_CHILD_CRATES_SUBDIR}/{eid}")

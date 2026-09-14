@@ -126,7 +126,7 @@ def _prune_undeclared_figures(analysis_dir: Path, plots_dir: Path) -> list[str]:
     if declared is None or not plots_dir.exists():
         return []
     removed: list[str] = []
-    _freed: dict[str, int] = {}
+    _prune_targets: list[Path] = []
     for path in sorted(plots_dir.rglob("*")):
         if path.is_dir() or path.name.endswith(".manifest.json"):
             continue
@@ -136,18 +136,12 @@ def _prune_undeclared_figures(analysis_dir: Path, plots_dir: Path) -> list[str]:
             continue
         removed.append(str(path.relative_to(analysis_dir)))
         _sidecar = path.with_suffix(path.suffix + ".manifest.json")
-        # Sizes BEFORE the unlink -- a post-unlink stat is impossible. This prune runs
-        # against the LIVE analysis tree (called at PRUNE-BEFORE-HARVEST, before
-        # _copy_supporting_files stages anything), so `bundle-root` would be the wrong
-        # ground: these are DU-counted `plots/` bytes.
-        _freed["plots"] = _freed.get("plots", 0) + (path.stat().st_size if path.exists() else 0)
-        _freed["plots"] = _freed.get("plots", 0) + (_sidecar.stat().st_size if _sidecar.exists() else 0)
-        path.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
-        _sidecar.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
-    if _freed.get("plots"):
-        from hhemt.du_sentinels import decrement_scope_sentinel
+        # This prune runs against the LIVE analysis tree (PRUNE-BEFORE-HARVEST), so these
+        # are DU-counted `plots/` bytes: route through the tool (clause 1).
+        _prune_targets += [path, _sidecar]
+    from hhemt.du_sentinels import delete_and_account
 
-        decrement_scope_sentinel(analysis_dir, scope="analysis", child_deltas=dict(_freed))
+    delete_and_account(_prune_targets, scope_dir=analysis_dir, scope="analysis")
     return removed
 
 

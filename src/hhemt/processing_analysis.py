@@ -376,9 +376,7 @@ class TRITONSWMM_analysis_post_processing:
         # runs for every member each time the master consolidate runs.
         #
         # The D6 fold in consolidate_workflow.py:664-672 corrected the label on the
-        # per-member RULE path -- it is not the only corrector (restamp_parent_sentinels
-        # already derives via _infer_scope at du_sentinels.py:385), but it is the only one
-        # on the consolidation path, and it fires as a rule SIDE-EFFECT. Deriving here
+        # per-member RULE path -- but it fires as a rule SIDE-EFFECT. Deriving here
         # removes the dependency on any rule firing again.
         _du_scope_dir = self._analysis.analysis_paths.analysis_dir
         sum_child_sentinels(

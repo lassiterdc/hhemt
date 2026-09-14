@@ -1561,3 +1561,33 @@ non_breaking_allowlist:
       same single log write it emits today. No LAYOUT_VERSION bump, no V-module, no golden
       fixtures.
     layout_signature: "3efe314fdd873528baa79e275f9e5584542869865b2b654ab695eb0ee8b151c5"
+  - path: src/hhemt/scenario.py
+    layout_signature: 33edba35da8673a2201da24ee5233396ec89c9972f3313b335d0d3444550c114
+    justification: >-
+      chunk-6 stall fix (2026-09-13), clause 3: _create_directories seeds
+      {scenario_dir}/_status/_du.json at scenario creation. ADDITIVE file; every
+      reader (du_sentinels.read_du_sentinel, scenario.disk_utilization_bytes,
+      cli._du_via_sentinel, the DU renderers) is graceful-absent, so no existing
+      tree becomes unreadable and no LAYOUT_VERSION bump is owed. computed_under:
+      clause-6 rule (_status/ never DU-counted at any depth) -- a sentinel written
+      before 2026-09-13 at member/analysis scope includes child _status/ bytes; the
+      one-off re-aggregation in the estate README procedure re-derives those.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 429913b07eee5fdd3bd300f0c94437e4b8a32f28e5cf23fc9b477ed06b380c5d
+    justification: >-
+      chunk-6 stall fix (2026-09-13), clause 1: every raw-output deletion routes
+      through du_sentinels.delete_and_account. No on-disk NAME or SHAPE changes;
+      only WHEN and HOW OFTEN the scenario sentinel is written. computed_under:
+      clause-6 rule, as for scenario.py above.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: d0a3b71315e86d368cc62874f2a968e720770d350a63fc76bab24f7f22274e39
+    justification: >-
+      chunk-6 stall fix (2026-09-13), clauses 1-2: reprocess deletions route through
+      the tool; the report-html write-restamp is dropped (DN-3). No on-disk NAME or
+      SHAPE changes. computed_under: clause-6 rule, as above.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: c2b20d468fefe2ba34f13c1231a39e5c33e800593a647ba15a233abe737fce86
+    justification: >-
+      chunk-6 stall fix (2026-09-13), M6b review: comment-only edit -- a stale comment
+      naming the deleted du_sentinels.restamp_parent_sentinels walker was scrubbed
+      ([Q356] 3). No code, no on-disk NAME or SHAPE change.

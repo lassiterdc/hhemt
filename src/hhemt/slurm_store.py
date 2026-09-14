@@ -535,10 +535,12 @@ def write_store(
     ds = rows_to_dataset(merged, availability=availability, derived_from=derived_from)
     tmp = path.with_suffix(path.suffix + ".tmp")
     if tmp.exists():
+        # EXEMPT-DU: outside-analysis-tree
         shutil.rmtree(tmp)
     tmp.parent.mkdir(parents=True, exist_ok=True)
     ds.to_zarr(tmp, mode="w", consolidated=False, zarr_format=ZARR_FORMAT)
     if path.exists():
+        # EXEMPT-DU: outside-analysis-tree
         shutil.rmtree(path)
     os.replace(tmp, path)
     return path

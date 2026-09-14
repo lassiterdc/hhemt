@@ -782,19 +782,19 @@ class TRITONSWMM_run:
         interior files: that would break the count/step identity the watcher relies on and
         the kill would then fire one reporting step late per missing file.
 
-        Size-mutating, so it re-stamps the DU sentinels per the ``du sentinels written at
-        every mutation site`` stipulation (PATTERN B: unlink + ``restamp_parent_sentinels``)
-        — NOT ``# EXEMPT-DU``: these cfgs live inside the scenario scope and ARE DU-counted.
+        Size-mutating, so the whole prune routes through ``du_sentinels.delete_and_account``
+        (the unified deletion tool) in ONE accounting call — NOT ``# EXEMPT-DU``: these cfgs
+        live inside the scenario scope and ARE DU-counted.
 
         Returns the number of cfg files removed (0 when nothing was above ``target_step``).
         """
-        from hhemt.du_sentinels import restamp_parent_sentinels
+        from hhemt.du_sentinels import delete_and_account
 
         cfg_dir = self._hotstart_cfg_dir(model_type)
         if cfg_dir is None or not cfg_dir.exists():
             return 0
-        analysis_dir = self._analysis.analysis_paths.analysis_dir
-        n_removed = 0
+        scenario_dir = self._scenario.scen_paths.sim_folder
+        to_remove: list[Path] = []
         for f_cfg in sorted(cfg_dir.glob("*.cfg")):
             try:
                 step = return_the_reporting_step_from_a_cfg(f_cfg)
@@ -802,20 +802,11 @@ class TRITONSWMM_run:
                 continue  # unparseable name: leave it alone rather than guess
             if step <= target_step:
                 continue
-            try:
-                f_cfg.unlink()
-                # PATTERN B — must be the IMMEDIATELY-following sibling of the unlink, in
-                # the same block: check_du_sentinel_sites only accepts the next statement
-                # in the same statement list, or the trailing statement of a `finally`. A
-                # `finally` is wrong here because it would restamp on the failure path too.
-                # Consequence of living inside the try: an OSError from the restamp is
-                # caught by the same handler, so such a file is deleted but not counted —
-                # an under-report that correctly signals its DU obligation did not complete.
-                restamp_parent_sentinels(f_cfg, analysis_dir=analysis_dir)
-            except OSError:
-                continue
-            n_removed += 1
-        return n_removed
+            to_remove.append(f_cfg)
+        # ONE accounting call for the whole prune (clause 1); the prior form restamped
+        # the analysis scope once PER cfg file inside this loop.
+        delete_and_account(to_remove, scope_dir=scenario_dir, scope="scenario")
+        return len(to_remove)
 
     def wait_with_deterministic_checkpoint_kill(
         self,

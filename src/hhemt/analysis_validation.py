@@ -2089,8 +2089,6 @@ def persist_validation_report(analysis: TRITONSWMM_analysis) -> Path:
     import json
     from dataclasses import asdict
 
-    from hhemt import du_sentinels
-
     analysis_dir = Path(analysis.analysis_paths.analysis_dir)
     report = validate_analysis(analysis)
     out = analysis_dir / _VALIDATION_REPORT_FILENAME
@@ -2098,7 +2096,8 @@ def persist_validation_report(analysis: TRITONSWMM_analysis) -> Path:
     tmp = out.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2))
     tmp.replace(out)  # atomic
-    du_sentinels.restamp_parent_sentinels(out, analysis_dir=analysis_dir)
+    # DN-3: validation_report.json is an analysis-scope OWN file; the clause-11
+    # own-files walk counts it at the next aggregation. No per-write accounting.
     return out
 
 

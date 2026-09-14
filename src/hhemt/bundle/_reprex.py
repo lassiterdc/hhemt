@@ -190,6 +190,7 @@ def extract_reprex_bundle(zip_path: Path) -> Path:
     zip_path = Path(zip_path)
     dest = zip_path.with_suffix("")  # strip the trailing ".zip"
     if dest.exists():
+        # EXEMPT-DU: bundle-root
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     with zipfile.ZipFile(zip_path) as zf:

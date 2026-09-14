@@ -282,8 +282,6 @@ class SWMMRunoffModeler:
         import numpy as np
         import xarray as xr
 
-        from hhemt.du_sentinels import restamp_parent_sentinels
-
         if not d_node_capture or times_hr is None:
             return
         out_path = Path(self.scenario.scen_paths.sim_folder) / "processed" / "hydrology_inflow_summary.zarr"
@@ -333,9 +331,11 @@ class SWMMRunoffModeler:
         ds = ds.assign_coords(event_iloc=self.scenario.event_iloc).expand_dims("event_iloc")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         ds.to_zarr(out_path, mode="w")
-        restamp_parent_sentinels(  # PATTERN B
-            out_path, analysis_dir=self.scenario._analysis.analysis_paths.analysis_dir
-        )
+        # DN-3 / clause 2: a WRITE during scenario preparation needs no per-mutation
+        # accounting; the scenario's own sentinel is re-derived at consolidate_scenario
+        # (clause 10). The removed restamp fired once per scenario preparation and
+        # re-summed the ANALYSIS scope over every sentinel-less sibling -- this was the
+        # prepare_scenario starvation mode on the Norfolk stochastic campaign.
 
     def write_hydrograph_files(self) -> None:
         """

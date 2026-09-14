@@ -86,6 +86,12 @@ def _build_sensitivity_tree(analysis_dir: Path) -> None:
             # Vary sizes per (sub, event) so a transposed/wrong breakdown is detectable.
             (scen / "summary.zarr").write_bytes(b"s" * (100 + 10 * k + e))
             _seed_status(scen / "_status", n_flags=2)
+            # Clause 6 discriminator: a `_status` directory BELOW the scenario root. A walker
+            # that skips `_status` only at scope roots counts this file; the summation and
+            # the any-depth walk never do. Present on every scenario so the fixture cannot
+            # pass by accident of which event carries it.
+            (scen / "out" / "_status").mkdir(parents=True, exist_ok=True)
+            (scen / "out" / "_status" / "deep.flag").write_bytes(b"\x00" * 7)
         _seed_status(sub / "_status", n_flags=3)
         (sub / "analysis_datatree.zarr").write_bytes(b"d" * (200 + 5 * k))
     (analysis_dir / "analysis_report.html").write_bytes(b"h" * 500)
@@ -135,6 +141,10 @@ def test_summation_total_and_breakdown_parity(tmp_path: Path) -> None:
     assert payload["sub_path_breakdown"] == oracle_breakdown
     # (c) Σ breakdown.values() == disk_utilization_bytes.
     assert sum(payload["sub_path_breakdown"].values()) == payload["disk_utilization_bytes"]
+    # Clause 6 discriminator, exact on one scenario: event_0 of member_0 holds a 100-byte
+    # summary.zarr, a scope-root _status/ (excluded), and out/_status/deep.flag (7 bytes,
+    # excluded at any depth). Pre-fix the walk returned 107.
+    assert du_sentinels._walk_root_and_breakdown(analysis_dir / "members" / "member_0" / "sims" / "event_0")[0] == 100
     # The members aggregate must be present and non-trivial (sanity on the fixture).
     assert payload["sub_path_breakdown"]["members"] > 0
     assert payload["sub_path_breakdown"]["analysis_report.html"] == 500

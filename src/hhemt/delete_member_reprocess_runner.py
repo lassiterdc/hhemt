@@ -15,8 +15,8 @@ import os
 import sys
 from pathlib import Path
 
+from hhemt.du_sentinels import delete_and_account
 from hhemt.status_flags import write_status_flag
-from hhemt.utils import fast_rmtree
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
             for processed_dir in sorted(sub_dir.glob("sims/*/processed")):
                 if processed_dir.is_dir():
                     print(f"[delete-member-reprocess] removing {processed_dir}", flush=True)
-                    fast_rmtree(processed_dir, analysis_dir=sub_dir)  # PATTERN A
+                    delete_and_account([processed_dir], scope_dir=processed_dir.parent, scope="scenario")
         # "analysis_datatree.zarr" is the canonical consolidated-zarr default
         # (analysis.py:160 sets analysis_paths.analysis_datatree_zarr to
         # analysis_dir / "analysis_datatree.zarr"). Hardcoded here because the
@@ -76,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         sub_zarr = sub_dir / "analysis_datatree.zarr"
         if sub_zarr.exists():
             print(f"[delete-member-reprocess] removing {sub_zarr}", flush=True)
-            fast_rmtree(sub_zarr, analysis_dir=sub_dir)  # PATTERN A
+            delete_and_account([sub_zarr], scope_dir=sub_dir, scope="member")
         flag_path = sub_dir / "_status" / "_deleting_reprocess" / "member_reprocess.flag"
         write_status_flag(flag_path, rule_name=f"delete_member_reprocess_{args.member_id}", member_id=args.member_id)
         return 0

@@ -303,7 +303,7 @@ def sweep(
             continue
         size = _dir_size(child)
         if not dry_run:
-            fast_rmtree(child, analysis_dir=None)
+            fast_rmtree(child)  # EXEMPT-DU: test-example-fixture
         report.reaped.append(owner)
         report.bytes_reclaimed += size
 

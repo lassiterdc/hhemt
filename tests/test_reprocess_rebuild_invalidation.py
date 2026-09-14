@@ -431,7 +431,10 @@ def _build_synthetic_post_processing(*, fname_out, raw_dir, batch_timesteps, ny,
     inst._run = SimpleNamespace(raw_triton_output_dir=lambda model_type: raw_dir)
     inst._system = SimpleNamespace(processed_dem_rds=rds_dem)
     inst.scen_paths = SimpleNamespace(output_tritonswmm_triton_timeseries=fname_out)
-    inst._scenario = SimpleNamespace(latest_sim_date=lambda model_type, astype: "2020-01-01")
+    inst._scenario = SimpleNamespace(
+        latest_sim_date=lambda model_type, astype: "2020-01-01",
+        scen_paths=SimpleNamespace(sim_folder=fname_out.parent),
+    )
     # MagicMock tolerates the post-write log-field accesses (add_sim_processing_entry,
     # TRITON_timeseries_written.set(...)) without modelling each one.
     inst.log = MagicMock()
@@ -575,8 +578,8 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
     path BOTH the early report-restamp AND the O(1) DU decrement are SKIPPED (a
     later zarr deletion restamps the tree anyway — gating avoids the redundant
     multi-minute login-node stat() walk). On the default regenerate_existing=False
-    path the O(1) ``decrement_scope_sentinel`` FIRES (Phase 2 replaced the prior
-    ``restamp_parent_sentinels`` full-tree walk with the O(1) decrement). Drives
+    path the deletion tool (``du_sentinels.delete_and_account``) FIRES exactly once
+    for the report shell + plots. Drives
     TRITONSWMM_analysis._invalidate_downstream_flags directly; the gate is pure
     routing logic, so no compile is required."""
     import hhemt.du_sentinels as du_sentinels
@@ -593,18 +596,16 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
 
     # Both helpers are imported method-locally from du_sentinels, so the patch
     # target is the source module (the local import re-fetches at call time).
-    restamp_mock = MagicMock()
-    decrement_mock = MagicMock()
-    monkeypatch.setattr(du_sentinels, "restamp_parent_sentinels", restamp_mock)
-    monkeypatch.setattr(du_sentinels, "decrement_scope_sentinel", decrement_mock)
+    # After clause 1 every report/zarr deletion routes through the tool; the two
+    # former patch targets no longer exist / are no longer called from this path.
+    tool_mock = MagicMock(return_value=0)
+    monkeypatch.setattr(du_sentinels, "delete_and_account", tool_mock)
 
     # regenerate_existing=True: a later zarr deletion restamps -> BOTH skipped.
     inst._invalidate_downstream_flags("consolidate", regenerate_existing=True, dry_run=False)
-    assert restamp_mock.call_count == 0, "report-restamp must be SKIPPED on the regenerate_existing=True path"
-    assert decrement_mock.call_count == 0, (
-        "O(1) DU decrement must be SKIPPED on the regenerate_existing=True path "
-        "(the later zarr deletion restamps the tree anyway)"
-    )
+    # ONE tool call (report shell + plots); the zarr branch is guarded on
+    # `analysis_datatree_zarr`, which this stub sets to None.
+    assert tool_mock.call_count == 1, "exactly one accounting call (report+plots) on the regenerate_existing=True path"
 
     # Re-seed the report artifact: the regenerate_existing=True call above ran
     # _delete_report_and_plot_artifacts (the report unlink is unconditional; only
@@ -615,8 +616,5 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
     # regenerate_existing=False (default): no later deletion -> O(1) decrement FIRES,
     # the legacy full-tree restamp does NOT (Phase 2 D3 replaced it).
     inst._invalidate_downstream_flags("consolidate", regenerate_existing=False, dry_run=False)
-    assert decrement_mock.call_count == 1, "O(1) DU decrement must FIRE on the default regenerate_existing=False path"
-    assert restamp_mock.call_count == 0, (
-        "the legacy full-tree restamp must NOT fire on the default path "
-        "(Phase 2 D3 replaced it with the O(1) decrement)"
-    )
+    # Same rule on the default path: ONE accounting call (report+plots), never a restamp.
+    assert tool_mock.call_count == 2, "exactly one further accounting call on the regenerate_existing=False path"

@@ -67,7 +67,7 @@ def _probe(tmp_path: Path, *, unrun: tuple[str, ...]):
     )
     fake._reclaim_classes = _P._reclaim_classes
     fake._resolve_clear_raw = lambda *_a, **_k: "none"
-    fake._remove_reclaimed = lambda p, ad, v: __import__("shutil").rmtree(p) if Path(p).is_dir() else Path(p).unlink()
+    fake._remove_reclaimed = lambda p, sd, v: __import__("shutil").rmtree(p) if Path(p).is_dir() else Path(p).unlink()
     fake._reclaim_paths = lambda *a, **k: []
     _P.remove_after_processing(fake, model_type="tritonswmm", which="both", verbose=False)
     return dats, extbc_dir, weather
@@ -119,12 +119,13 @@ def test_prep_inputs_is_reclaimed_at_the_relocated_call_site(tmp_path):
     scen = types.SimpleNamespace(
         event_iloc=0,
         scen_paths=types.SimpleNamespace(
+            sim_folder=tmp_path,
             dir_weather_datfiles=dats,
             extbc_tseries=extbc_dir / "tseries.txt",
             weather_timeseries=weather,
         ),
     )
-    outcome = reclaim_scenario_scoped_classes(scen, ("prep_inputs",), tmp_path, verbose=False)
+    outcome = reclaim_scenario_scoped_classes(scen, ("prep_inputs",), verbose=False)
     assert outcome["prep_inputs"] is True
     assert not dats.exists()
     assert not extbc_dir.exists()

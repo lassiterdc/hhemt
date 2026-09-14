@@ -16,10 +16,11 @@ import os
 import sys
 from pathlib import Path
 
+from hhemt.du_sentinels import delete_and_account
 from hhemt.status_flags import write_status_flag
-from hhemt.utils import fast_rmtree
 
 logger = logging.getLogger(__name__)
+
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -27,17 +28,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--analysis-dir", type=Path, required=True)
     return parser.parse_args(argv)
 
+
 def _write_submission_sentinel(sentinel_path: Path, *, rule_token: str, slurm_job_id: str, event_id: str) -> None:
     sentinel_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = sentinel_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({
-        "slurm_jobid": slurm_job_id,
-        "run_uuid": os.environ.get("SLURM_JOB_NAME"),
-        "rule_token": rule_token,
-        "event_id": event_id,
-        "submitted_at": datetime.datetime.now().isoformat(),
-    }))
+    tmp.write_text(
+        json.dumps(
+            {
+                "slurm_jobid": slurm_job_id,
+                "run_uuid": os.environ.get("SLURM_JOB_NAME"),
+                "rule_token": rule_token,
+                "event_id": event_id,
+                "submitted_at": datetime.datetime.now().isoformat(),
+            }
+        )
+    )
     os.replace(tmp, sentinel_path)
+
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
@@ -52,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         processed_dir = analysis_dir / "sims" / args.event_id / "processed"
         if processed_dir.exists():
             print(f"[delete-processed] removing {processed_dir}", flush=True)
-            fast_rmtree(processed_dir, analysis_dir=analysis_dir)  # PATTERN A
+            delete_and_account([processed_dir], scope_dir=processed_dir.parent, scope="scenario")
         else:
             logger.warning("sims/%s/processed absent; recording sentinel anyway (idempotent).", args.event_id)
         flag_path = analysis_dir / "_status" / "_deleting_reprocess" / f"processed_evt-{args.event_id}.flag"
@@ -62,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         if _sentinel is not None:
             # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     sys.exit(main())
