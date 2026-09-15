@@ -1494,3 +1494,123 @@ def convert_datetime_to_str(obj: Any) -> Any:
         return {convert_datetime_to_str(v) for v in obj}
 
     return obj
+
+
+def delete_regenerable_figures(
+    analysis_dir,
+    root,
+    *,
+    dry_run: bool = False,
+    keep: "Callable[[Path], bool] | None" = None,
+    on_delete: "Callable[[Path], None] | None" = None,
+) -> int:
+    """Delete regenerable figures under `root`, sparing unregenerable subtrees.
+
+    THE ONE PLACE THIS CODEBASE DELETES FIGURES. Three callers route through it:
+    Analysis._invalidate_downstream_flags' reprocess pre-delete, workflow.py's
+    force-rerun render floor, and bundle/_emit.py's undeclared-figure prune. Before
+    this helper the eda exemption was present at two of those three and absent at the
+    third, which destroyed user-authored EDA plots on the default reprocess path.
+    Adding a fourth deletion path means calling this, not copying the walk.
+
+    WHAT IS SPARED, and why the key is analysis-dir-relative. Every path under
+    `root` is tested against constants.UNREGENERABLE_ANALYSIS_SUBTREES as a path
+    RELATIVE TO analysis_dir, not to `root`. That is what lets one registry name
+    both `plots/eda` and `eda_local`, which sit at different depths: a caller
+    sweeping `{analysis_dir}/plots` can only ever match the first, and a caller
+    sweeping the analysis root matches both. The subset each caller sees therefore
+    follows from its sweep root and is not a per-caller skip list anyone maintains.
+
+    THE ROOTING PRECONDITION IS THE GUARANTEE, AND IT IS SUFFICIENT ON ITS OWN.
+    The registry key is only computable when `root` is `analysis_dir` or lies under
+    it; on any other pair no entry could ever match and this function would delete
+    everything it walks -- fail-open, in the fix for a fail-open defect. So a
+    non-ancestor pair RAISES rather than being absorbed: it is a caller error, it is
+    a property of the two arguments alone, and it is checkable once.
+
+    NO PER-PATH FALLBACK IS NEEDED, and this paragraph exists so the next author
+    does not add one back. `Path.relative_to` compares path COMPONENTS and never
+    resolves a symlink, and `rglob` yields every result by prefixing `root` -- so if
+    `root` is lexically under `analysis_dir`, every yielded path is too, and a
+    symlink under `root` pointing outside the tree is yielded as the LINK's path,
+    not its target's. Measured: with a file symlink and a directory symlink placed
+    under plots/ and pointing outside the analysis dir, `relative_to` raised on
+    nothing and rglob did not descend through the directory link. A fail-closed
+    `except ValueError: continue` here would be unreachable -- and worse than
+    unreachable if the precondition were ever deleted, because it would convert a
+    loud fail-open into a SILENT no-op: zero deletions, zero bytes, no exception,
+    and on the preserved-flag arm the plot rules would simply stop re-firing.
+
+    DRY RUN DELETES NOTHING AND RETURNS ZERO. The consequence is that a previewed
+    DAG under-reports the plot rules a real run would fire, because on the
+    preserved-flag arm an absent output is the only remaining re-fire trigger. That
+    cost was already weighed and accepted for this exact member at
+    analysis.py:3765-3771 -- "gates only the render-stage FIGURE deletion, which is
+    the member with zero preview yield and an unbounded cost". Cite that rather than
+    re-deriving it.
+
+    ORPHAN SIDECARS SURVIVE. A `.manifest.json` is skipped at the top of the walk
+    and is deleted only as the pair of a figure deleted in the same iteration, so a
+    sidecar whose figure is already gone is reached by neither branch. That matches
+    what workflow.py and bundle/_emit.py already did; whether an orphan sidecar is
+    garbage or retained provenance is a question nothing here answers.
+
+    Parameters
+    ----------
+    analysis_dir : Path
+        Root the registry entries are relative to. Must be `root` or an ancestor of
+        it; anything else raises.
+    root : Path
+        Directory walked. Absent root is not an error; the helper returns 0.
+    dry_run : bool
+        When True, nothing is unlinked and the return is 0.
+    keep : callable, optional
+        Extra per-path eligibility test. Returning True spares the path. Used by
+        bundle/_emit.py to spare figures the Snakefile still declares; the other two
+        callers pass nothing.
+    on_delete : callable, optional
+        Invoked with each figure path immediately before it is unlinked. Used for
+        per-figure logging; never for side effects the deletion depends on.
+
+    Returns
+    -------
+    int
+        Total bytes freed, figures plus their `.manifest.json` sidecars. The caller
+        composes its own `child_deltas` and calls `decrement_scope_sentinel` itself,
+        so that contract stays entirely caller-side.
+
+    Raises
+    ------
+    ValueError
+        When `root` is neither `analysis_dir` nor a descendant of it.
+    """
+    from hhemt.constants import UNREGENERABLE_ANALYSIS_SUBTREES
+
+    analysis_dir = Path(analysis_dir)
+    root = Path(root)
+    if not (root == analysis_dir or root.is_relative_to(analysis_dir)):
+        raise ValueError(
+            f"delete_regenerable_figures: root {root} is not under analysis_dir "
+            f"{analysis_dir}, so no UNREGENERABLE_ANALYSIS_SUBTREES entry could "
+            f"match and every walked path would be eligible for deletion. This is a "
+            f"caller error, not a tree state."
+        )
+    if dry_run or not root.exists():
+        return 0
+    freed = 0
+    for path in sorted(root.rglob("*")):
+        if path.is_dir() or path.name.endswith(".manifest.json"):
+            continue
+        rel = path.relative_to(analysis_dir).as_posix()
+        if any(rel == p or rel.startswith(p + "/") for p in UNREGENERABLE_ANALYSIS_SUBTREES):
+            continue
+        if keep is not None and keep(path):
+            continue
+        if on_delete is not None:
+            on_delete(path)
+        sidecar = path.with_suffix(path.suffix + ".manifest.json")
+        freed += path.stat().st_size if path.exists() else 0
+        freed += sidecar.stat().st_size if sidecar.exists() else 0
+        path.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+        sidecar.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+    return freed

@@ -68,7 +68,7 @@ from hhemt.summary_paths import (
 from hhemt.summary_paths import (  # noqa: F401  (re-export shim under the historical private name)
     scenario_summaries_present as _scenario_summaries_present,
 )
-from hhemt.utils import fast_rmtree
+from hhemt.utils import delete_regenerable_figures, fast_rmtree
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -2005,36 +2005,21 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # --dry-run` took four masters from 70/40/70/40 figures to 2 each, the survivors being
         # exactly the `plots/eda/` family this block exempts. Keyword-only with a False default,
         # so every existing caller is byte-identical.
-        if stage == "render" and not dry_run:
-            plots_dir = self.analysis_paths.analysis_dir / "plots"
+        if stage == "render":
+            # The dry-run gate now lives INSIDE delete_regenerable_figures, so this call
+            # site no longer carries `and not dry_run`: one condition, one place. The
+            # unregenerable-subtree skip that used to be spelled out here moves there too,
+            # from the same fact rather than a second copy of the rule. Gotcha 38's O(1)
+            # decrement is unchanged and stays caller-side, fed by the returned byte total.
             _freed_render: dict[str, int] = {}
-            if plots_dir.exists():
-                for fig_path in sorted(plots_dir.rglob("*")):
-                    if fig_path.is_dir() or fig_path.name.endswith(".manifest.json"):
-                        continue
-                    # plots/eda/ is EXEMPT, from the SAME constant
-                    # bundle/_emit.py::_prune_undeclared_figures reads: those figures come
-                    # from analysis.eda(), a non-Snakemake in-process facade, so NO rule
-                    # regenerates them after deletion. Deleting them here removes the EDA
-                    # family permanently and silently -- a re-render restores only the
-                    # Snakemake-driven figures.
-                    from hhemt.constants import EDA_PLOTS_SUBDIR
-
-                    if EDA_PLOTS_SUBDIR in fig_path.relative_to(plots_dir).parts:
-                        continue
-                    logger.info("force_rerun[stage=render]: deleting figure %s", fig_path)
-                    sidecar = fig_path.with_suffix(fig_path.suffix + ".manifest.json")
-                    # Sizes BEFORE the unlink -- a post-unlink stat is impossible. Gotcha 38
-                    # names the render-path delete of known-size artifacts as an O(1)
-                    # decrement, explicitly NOT a restamp and explicitly NOT an exemption.
-                    _freed_render["plots"] = _freed_render.get("plots", 0) + (
-                        fig_path.stat().st_size if fig_path.exists() else 0
-                    )
-                    _freed_render["plots"] = _freed_render.get("plots", 0) + (
-                        sidecar.stat().st_size if sidecar.exists() else 0
-                    )
-                    fig_path.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
-                    sidecar.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+            _freed_bytes = delete_regenerable_figures(
+                self.analysis_paths.analysis_dir,
+                self.analysis_paths.analysis_dir / "plots",
+                dry_run=dry_run,
+                on_delete=lambda p: logger.info("force_rerun[stage=render]: deleting figure %s", p),
+            )
+            if _freed_bytes:
+                _freed_render["plots"] = _freed_bytes
             if _freed_render.get("plots"):
                 from hhemt.du_sentinels import decrement_scope_sentinel
 

@@ -618,3 +618,141 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
         "the legacy full-tree restamp must NOT fire on the default path "
         "(Phase 2 D3 replaced it with the O(1) decrement)"
     )
+
+
+def test_delete_regenerable_figures_raises_on_a_non_ancestor_rooting(tmp_path):
+    """The precondition. A mismatched pair makes every registry entry unreachable.
+
+    Without this the helper fails OPEN: no entry can match a key it cannot compute,
+    so every walked path becomes eligible and the one function whose purpose is
+    sparing stops sparing. Measured before this guard existed: the eda figure did
+    not survive.
+    """
+    import pytest
+
+    from hhemt.utils import delete_regenerable_figures
+
+    analysis_dir = tmp_path / "a"
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "plots" / "eda").mkdir(parents=True)
+    authored = elsewhere / "plots" / "eda" / "authored.html"
+    authored.write_text("authored")
+    analysis_dir.mkdir()
+
+    with pytest.raises(ValueError, match="not under analysis_dir"):
+        delete_regenerable_figures(analysis_dir, elsewhere / "plots")
+
+    assert authored.exists(), "the guard must refuse before walking, not after deleting"
+
+
+def test_delete_regenerable_figures_spares_a_path_whose_key_is_uncomputable(tmp_path):
+    """The residual branch: a symlink under root resolving outside analysis_dir.
+
+    The precondition cannot see this -- root IS under analysis_dir -- so the per-path
+    guard is what keeps the guarantee available. It spares rather than raising, so a
+    half-finished sweep is never left indeterminate.
+    """
+    from hhemt.utils import delete_regenerable_figures
+
+    analysis_dir = tmp_path / "a"
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True)
+    (analysis_dir / "plots").mkdir(parents=True)
+    external = outside / "external.html"
+    external.write_text("external")
+    link = analysis_dir / "plots" / "linked.html"
+    link.symlink_to(external)
+    pipeline = analysis_dir / "plots" / "cost_error.html"
+    pipeline.write_text("pipeline")
+
+    delete_regenerable_figures(analysis_dir, analysis_dir / "plots")
+
+    assert external.exists(), "a path whose registry key is uncomputable must be spared"
+    assert not pipeline.exists(), "an ordinary regenerable figure must still be deleted"
+
+
+def test_figure_deletion_under_plots_is_pinned_to_the_shared_helper():
+    """A REGRESSION PIN over walks that name a plots directory. NOT a class closure.
+
+    What it delivers: any `glob`/`rglob` walk whose iterable mentions `plots` -- as a
+    literal, an attribute, a bare name, or a local alias bound to such an expression
+    -- with `unlink`, `fast_rmtree` or `rmtree` in its body, in any module but
+    utils.py. Measured against six hand-written evasions of an earlier name-based
+    form: all six are caught, and the four non-deleting `plots_dir` walks in this
+    package are not.
+
+    What it does NOT deliver, stated because a docstring claiming class closure is
+    false however good the predicate is. Closing the class means catching any FIGURE
+    deletion, which requires distinguishing figure deletions from the many legitimate
+    deletions in this package -- status flags, reports, zarr stores, chapter sets. No
+    on-disk property discriminates regenerable from unregenerable; the only
+    discriminator is the DIRECTORY, which is what UNREGENERABLE_ANALYSIS_SUBTREES
+    encodes. A checker strong enough to close the class would re-implement the
+    registry and would then be checking itself. So a walk over a directory named by a
+    different literal, or computed from config, escapes this by construction.
+    """
+    import ast
+    import pathlib
+
+    import hhemt
+
+    deleters = ("unlink", "fast_rmtree", "rmtree")
+
+    def mentions_plots(node, aliases):
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and "plots" in sub.value:
+                return True
+            if isinstance(sub, ast.Name) and ("plots" in sub.id or sub.id in aliases):
+                return True
+            if isinstance(sub, ast.Attribute) and "plots" in sub.attr:
+                return True
+        return False
+
+    def is_walk(node):
+        return any(
+            isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in ("glob", "rglob")
+            for sub in ast.walk(node)
+        )
+
+    def deletes(nodes):
+        for n in nodes:
+            for sub in ast.walk(n):
+                if isinstance(sub, ast.Call):
+                    fn = sub.func
+                    if isinstance(fn, ast.Attribute) and fn.attr in deleters:
+                        return True
+                    if isinstance(fn, ast.Name) and fn.id in deleters:
+                        return True
+        return False
+
+    src = pathlib.Path(hhemt.__file__).parent
+    offenders = []
+    for py in sorted(src.rglob("*.py")):
+        if py.name == "utils.py":
+            continue
+        tree = ast.parse(py.read_text())
+        scopes = [n for n in ast.walk(tree) if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef))]
+        for scope in scopes:
+            aliases = {
+                t.id
+                for stmt in ast.walk(scope)
+                if isinstance(stmt, ast.Assign) and mentions_plots(stmt.value, set())
+                for t in stmt.targets
+                if isinstance(t, ast.Name)
+            }
+            for node in ast.walk(scope):
+                if isinstance(node, (ast.For, ast.AsyncFor)):
+                    if is_walk(node.iter) and mentions_plots(node.iter, aliases) and deletes(node.body):
+                        offenders.append(f"{py.relative_to(src)}:{node.lineno}")
+                if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+                    gens = [g.iter for g in node.generators]
+                    if (
+                        any(is_walk(g) for g in gens)
+                        and any(mentions_plots(g, aliases) for g in gens)
+                        and deletes([node])
+                    ):
+                        offenders.append(f"{py.relative_to(src)}:{node.lineno}")
+    assert sorted(set(offenders)) == [], (
+        "figure deletion under plots/ must route through utils.delete_regenerable_figures; "
+        f"these walk a plots dir and delete inside it: {sorted(set(offenders))}"
+    )

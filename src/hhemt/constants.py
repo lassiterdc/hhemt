@@ -20,6 +20,27 @@ NORFOLK_CASE_CONFIG = "case.yaml"
 #: bundle/ without inverting that direction.
 EDA_PLOTS_SUBDIR = "eda"
 
+#: Analysis-dir-relative subtrees produced OUTSIDE the Snakemake graph. No rule
+#: regenerates what lives here, so no deletion sweep may remove it. This names the
+#: FACT rather than either policy that consumes it: the figure-deletion helper in
+#: utils.py consumes the whole set, while bundle/_emit.py's undeclared-figure prune
+#: keeps its own narrower EDA_PLOTS_SUBDIR exemption because its question is about
+#: FIGURES and eda_local/ is not one. That non-consumption is deliberate; do not
+#: "unify" them.
+#:
+#: `eda_local` is PRECAUTIONARY. No sweep in this codebase reaches it today: every
+#: deletion walk is rooted at `{analysis_dir}/plots` and eda_local/ is a SIBLING of
+#: plots/, emitted at {root}/eda_local by eda/_local_surface.py. Its presence here is
+#: NOT evidence that any loop ever threatened it. The entry becomes operative the
+#: moment a caller points the helper at a root above plots/, which is how such a
+#: sweep would naturally be written; until then it is conditionally inactive rather
+#: than dead, and the analysis-root test in
+#: tests/test_reprocess_rebuild_invalidation.py is what holds it to that.
+UNREGENERABLE_ANALYSIS_SUBTREES: tuple[str, ...] = (
+    f"plots/{EDA_PLOTS_SUBDIR}",
+    "eda_local",
+)
+
 # POST PROCESSING
 
 LST_COL_HEADERS_NODE_FLOOD_SUMMARY = [

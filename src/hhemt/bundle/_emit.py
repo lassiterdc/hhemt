@@ -65,6 +65,7 @@ if TYPE_CHECKING:
 from hhemt.constants import EDA_PLOTS_SUBDIR
 from hhemt.exceptions import StaleReadModelError
 from hhemt.provenance import producing_stamp
+from hhemt.utils import delete_regenerable_figures
 
 # Local alias: the shared constant is the single source, and keeping the historical name
 # means the existing in-file references need no edit.
@@ -127,23 +128,27 @@ def _prune_undeclared_figures(analysis_dir: Path, plots_dir: Path) -> list[str]:
         return []
     removed: list[str] = []
     _freed: dict[str, int] = {}
-    for path in sorted(plots_dir.rglob("*")):
-        if path.is_dir() or path.name.endswith(".manifest.json"):
-            continue
-        if _EDA_SUBDIR in path.relative_to(plots_dir).parts:
-            continue
-        if _figure_stem(path.name) in declared:
-            continue
-        removed.append(str(path.relative_to(analysis_dir)))
-        _sidecar = path.with_suffix(path.suffix + ".manifest.json")
-        # Sizes BEFORE the unlink -- a post-unlink stat is impossible. This prune runs
-        # against the LIVE analysis tree (called at PRUNE-BEFORE-HARVEST, before
-        # _copy_supporting_files stages anything), so `bundle-root` would be the wrong
-        # ground: these are DU-counted `plots/` bytes.
-        _freed["plots"] = _freed.get("plots", 0) + (path.stat().st_size if path.exists() else 0)
-        _freed["plots"] = _freed.get("plots", 0) + (_sidecar.stat().st_size if _sidecar.exists() else 0)
-        path.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
-        _sidecar.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
+    # Routed through the ONE figure-deletion helper. This prune runs against the LIVE
+    # analysis tree (PRUNE-BEFORE-HARVEST, before _copy_supporting_files stages
+    # anything), so these are DU-counted `plots/` bytes and the O(1) decrement below is
+    # unchanged. The `keep` predicate is this caller's own question -- a figure the
+    # Snakefile still declares is not an orphan -- and it stays here rather than moving
+    # into the helper, which knows nothing about declarations.
+    #
+    # DELIBERATE NON-CONSUMPTION: this site does NOT read
+    # constants.UNREGENERABLE_ANALYSIS_SUBTREES whole. The helper applies it, and because
+    # this walk is rooted at plots/ the only member it can reach is plots/eda -- which is
+    # the right subset, since eda_local/ is not a figure and an undeclared-FIGURE prune
+    # has no business exempting it. The subset follows from the root, not from a skip
+    # list anyone maintains here.
+    _freed_bytes = delete_regenerable_figures(
+        analysis_dir,
+        plots_dir,
+        keep=lambda p: _figure_stem(p.name) in declared,
+        on_delete=lambda p: removed.append(str(p.relative_to(analysis_dir))),
+    )
+    if _freed_bytes:
+        _freed["plots"] = _freed_bytes
     if _freed.get("plots"):
         from hhemt.du_sentinels import decrement_scope_sentinel
 

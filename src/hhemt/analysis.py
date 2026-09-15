@@ -49,7 +49,7 @@ from hhemt.snakemake_snakefile_parsing import (
 from hhemt.swmm_output_parser import (
     retrieve_swmm_performance_stats_from_rpt,
 )
-from hhemt.utils import fast_rmtree, parse_triton_log_file
+from hhemt.utils import delete_regenerable_figures, fast_rmtree, parse_triton_log_file
 from hhemt.validation import ValidationResult, assert_configs_visible_cross_node, preflight_validate
 from hhemt.wipe_guard import assert_wipe_is_deliberate
 from hhemt.workflow import (
@@ -4443,19 +4443,12 @@ class TRITONSWMM_analysis:
             report_html.unlink(missing_ok=True)
             # EXEMPT-DU: du-handled-by-decrement
             report_zip.unlink(missing_ok=True)
-            plots_dir = analysis_dir / "plots"
-            plots_total_bytes = 0
-            if plots_dir.exists():
-                for _art in plots_dir.rglob("*"):
-                    if _art.is_file():
-                        try:
-                            plots_total_bytes += _art.stat().st_size
-                        except OSError:
-                            pass
-                for art in plots_dir.rglob("*"):
-                    if art.is_file():
-                        # EXEMPT-DU: du-handled-by-decrement
-                        art.unlink(missing_ok=True)
+            # Routed through the ONE figure-deletion helper (utils.delete_regenerable_figures).
+            # It supplies the two guards this site never had: the unregenerable-subtree skip,
+            # which is why the default reprocess used to destroy plots/eda/, and the dry-run
+            # gate, which is why a preview used to delete the deliverable it was previewing.
+            # It returns bytes rather than decrementing, so the composition below is unchanged.
+            plots_total_bytes = delete_regenerable_figures(analysis_dir, analysis_dir / "plots", dry_run=dry_run)
             if not dry_run:
                 # PATTERN B replaced by D3 — O(1)/O(plots) decrement instead of a
                 # full-tree walk. FIX 3: on the regenerate_existing

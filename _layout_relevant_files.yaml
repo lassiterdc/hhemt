@@ -1034,3 +1034,30 @@ non_breaking_allowlist:
       from permanently exempt to change-scoped, a governance change affecting every future
       edit to it -- the identical judgement recorded at the 02053c7c row and again in this
       workstream's unit-1 rows, and surfaced for the commit holder rather than taken here.
+  - path: src/hhemt/constants.py
+    justification: >-
+      LAYOUT-RELEVANT AND NON-BREAKING, and both halves are load-bearing. This row covers the
+      addition of UNREGENERABLE_ANALYSIS_SUBTREES, a tuple of analysis-dir-relative on-disk
+      subtree paths (plots/eda, eda_local) read by the single figure-deletion helper in
+      utils.py. RELEVANT because its VALUES ARE on-disk paths, so it is a constant ABOUT the
+      layout rather than an unrelated addition -- this row does not claim the change is
+      layout-neutral. NON-BREAKING because no extant on-disk artifact changes name, location
+      or interpretation: nothing is renamed, nothing moves, and nothing already written is
+      reinterpreted.
+      NO MIGRATION IS POSSIBLE TO WRITE, which is the part a reader will not infer from the
+      field name. The change makes the code delete LESS, so a V0023 would have nothing to do
+      -- a figure already destroyed cannot be restored by a migration, and one not yet
+      destroyed needs no action. A bump would mint an empty rung in a ladder that has one
+      module per step and no squash, and would report verify FAIL on every analysis stamped
+      at 22 until migrated.
+      DO NOT READ THIS ROW AGAINST THE OTHER constants.py ROW IN THIS FILE. That row opens
+      "COVERED BY V0020 (22fa8162), not non-breaking" and documents a change that WAS
+      breaking, parked here because check-b could not see V0020's coverage. It describes a
+      different change and does not govern this one.
+      CHANGE-SCOPED via layout_signature -- APPENDED, not edited in place, which is the
+      shape the one prior re-stamp row in this file records: a signature-less append would
+      INHERIT 78b5736a under _load_allowlist's merge rule and check-b would still re-fire.
+      KNOWN EXPIRY, stated so nobody reads this exemption as permanent: this row expires on
+      the next change to constants.py, exactly as its predecessor did, and the next edit is
+      adjudicated again.
+    layout_signature: "a0a0d78d7a76d409fb77cc4ea40a3ad8fbfd18da22ad2a2b860851950f9f5438"
