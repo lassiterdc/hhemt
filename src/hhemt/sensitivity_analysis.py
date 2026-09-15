@@ -582,7 +582,9 @@ class TRITONSWMM_sensitivity_analysis:
 
         return result
 
-    def _invalidate_processing_log_for_member_ids(self, member_id_tokens: tuple[str, ...]) -> None:
+    def _invalidate_processing_log_for_member_ids(
+        self, member_id_tokens: tuple[str, ...], *, set_force_marker: bool = False
+    ) -> None:
         """Per-member_id dispatch for processing-log invalidation under
         ``override_force_rerun={"member_id": [...]}``.
 
@@ -612,7 +614,7 @@ class TRITONSWMM_sensitivity_analysis:
                     f"members missing entry for member_id={member_id!r} after "
                     f"validation passed; df_setup/members are out of sync"
                 )
-            analysis._invalidate_processing_log_for_force_rerun(all_spec)
+            analysis._invalidate_processing_log_for_force_rerun(all_spec, set_force_marker=set_force_marker)
 
     def reprocess(
         self,

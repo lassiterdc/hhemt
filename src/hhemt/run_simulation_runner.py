@@ -656,6 +656,23 @@ def main():
                 # already used at the workflow.py Popen sites.
                 start_new_session=True,
             )
+            # B-iii CONSUME. Clear the force marker NOW -- after Popen returned (the solver is
+            # launched) and BEFORE the wait. Not before prepare_simulation_command (the gate
+            # would then short-circuit and no solver would run) and NOT at the terminal
+            # write below: a walltime kill between launch and that write would leave the
+            # marker set, the retry would re-prune the fresh run's own checkpoints and restart
+            # from zero on every kill -- an infinite zero-restart. Cleared here, the forced run
+            # IS an ordinary run and a later kill takes today's retry path (truncated run log
+            # defeats the triton gate; swmm_open reopens hydraulics.rpt at every coupled init
+            # so an unfinalized rpt defeats the tritonswmm gate) and RESUMES from the fresh
+            # checkpoints. Residual, stated: a kill in the window between Popen returning and
+            # this write landing leaves the marker set with ~zero fresh checkpoints, so the
+            # retry re-prunes nothing of value and restarts from zero once -- bounded, never a
+            # strand. Fresh get_log() so the write overlays only this field (lost-update
+            # discipline, see the terminal-write comment below).
+            _ml_consume = scenario.get_log(model_type)
+            if _ml_consume.force_rerun_pending.get():
+                _ml_consume.force_rerun_pending.set(False)
             if _arm_deterministic_kill:
                 logger.info(
                     f"[{event_iloc}] Multi-resume interruption kill ARMED: "

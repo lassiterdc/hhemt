@@ -555,6 +555,15 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # at the resume-decision site in run_simulation.py. Unset on legacy logs;
     # consumers MUST coalesce None -> 0 (LogField.get() returns None when unset).
     n_resumes: LogField[int] = Field(default_factory=LogField)
+    # force_rerun_pending is the POSITIVE force-rerun marker (B-iii). SET True by
+    # analysis._invalidate_processing_log_for_force_rerun for every (scenario, model) a
+    # stage="simulate" force names; CONSULTED by run_simulation.prepare_simulation_command
+    # AHEAD of the completion short-circuit (which otherwise returns None for a completed
+    # scenario and runs no solver); CONSUMED (set False) by run_simulation_runner
+    # immediately after subprocess.Popen returns. DECLARED here, never attached lazily: a
+    # lazily-assigned LogField has no parent bound by model_post_init and its set() raises.
+    # Legacy logs omit the key; consumers MUST coalesce None -> False.
+    force_rerun_pending: LogField[bool] = Field(default_factory=LogField)
     # resume_reporting_tsteps records the REALIZED resume reporting-step (config_NNNN.cfg
     # NNNN = the reporting step, return_the_reporting_step_from_a_cfg) per resume attempt,
     # appended in run_simulation.py's hotstart branch. First-class durable record of WHERE
@@ -623,6 +632,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "raw_SWMM_binaries_reclaimed",
         "coupled_rpt_truncated",
         "hydro_out_reclaimed",
+        "force_rerun_pending",
         mode="before",
     )(_create_logfield_validator(bool))
 
@@ -661,6 +671,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "raw_SWMM_binaries_reclaimed",
         "coupled_rpt_truncated",
         "hydro_out_reclaimed",
+        "force_rerun_pending",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 

@@ -5043,7 +5043,11 @@ class TRITONSWMM_analysis:
         # guard therefore does not transfer -- that argument turns on the planner reading
         # the deleted thing.
         if spec.stage in ("simulate", "process"):
-            self._invalidate_processing_log_for_force_rerun(spec, dry_run=dry_run)
+            # B-iii: the force is the ONE caller that may arm the marker, and only at the
+            # simulate floor -- a process floor re-runs processing, never the solver.
+            self._invalidate_processing_log_for_force_rerun(
+                spec, dry_run=dry_run, set_force_marker=(spec.stage == "simulate")
+            )
             # The chapter set is a PROCESS-stage artifact and gates the RESUME decision
             # the way processing_log gates _already_written, so the same act must reach
             # it. Without this, a force-rerun clears the log, leaves the previous run's
@@ -5322,7 +5326,7 @@ class TRITONSWMM_analysis:
             )
 
     def _invalidate_processing_log_for_force_rerun(
-        self, spec: "ResolvedForceRerunSpec", *, dry_run: bool = False
+        self, spec: "ResolvedForceRerunSpec", *, dry_run: bool = False, set_force_marker: bool = False
     ) -> None:
         """Invalidate per-scenario log ``processing_log.outputs`` entries
         that match the force-rerun spec.
@@ -5365,7 +5369,7 @@ class TRITONSWMM_analysis:
 
         if spec.scope == "member":
             # Sensitivity dispatch — members own their scenarios.
-            self.sensitivity._invalidate_processing_log_for_member_ids(spec.tokens)
+            self.sensitivity._invalidate_processing_log_for_member_ids(spec.tokens, set_force_marker=set_force_marker)
             return
 
         if spec.scope == "all":
@@ -5390,6 +5394,20 @@ class TRITONSWMM_analysis:
                 model_log = scen.get_log(model_type)
                 # Clear the processing_log dict and persist.
                 model_log.processing_log.outputs.clear()
+                # B-iii MARKER, SET HERE and nowhere else. The completion short-circuit in
+                # prepare_simulation_command reads a record set DISJOINT from everything this
+                # method clears (simulation_completed + the per-arm terminal artifacts + the
+                # "Simulation ends" fallback), so without this write a stage="simulate" force
+                # re-fires the sim rule, runs no solver, re-emits a green c_run flag, and the
+                # processing rule re-crashes on the same raw. KEYED ON AN EXPLICIT OPT-IN, NOT
+                # ON spec.stage: this method is reused by three process-stage paths that build
+                # a spec with a literal stage="simulate" (the regenerate-existing reprocess at
+                # two sites and the stale-flag reconcile), and a stage-keyed set would make a
+                # REPROCESS re-run every solver. Only _apply_force_rerun passes True, and only
+                # for the simulate floor. The scope, model and dry-run guards above bound
+                # WHICH logs this line reaches.
+                if set_force_marker:
+                    model_log.force_rerun_pending.set(True)
                 # Also reset raw-outputs-cleared markers so the next
                 # processing pass re-runs the clear_raw step on top of
                 # the re-written outputs.

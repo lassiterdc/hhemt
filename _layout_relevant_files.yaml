@@ -1678,3 +1678,69 @@ non_breaking_allowlist:
       _status flag name, or to the member directory layout is NOT this class and must be
       judged on its own -- for those, the on-disk artifact really does change shape and a
       forward-only migration really can act on it.
+  - path: src/hhemt/log.py
+    layout_signature: 082f682fbf2efd05a29da23ff54ab607300a633bf306c5c5d8ca9bf8f1a86d9d
+    justification: >-
+      ragged-frame full remedy, Half B (2026-09-14): ONE ADDITIVE OPTIONAL LogField --
+      `force_rerun_pending: LogField[bool]` declared beside n_resumes, registered in the
+      bool validator and serializer lists. The POSITIVE force-rerun marker: set by the
+      invalidator for a stage="simulate" force, consulted by prepare_simulation_command
+      ahead of the completion short-circuit, consumed by the runner after Popen.
+      SAME CHANGE CLASS as this file's already-allowlisted additive n_resumes and
+      raw_SWMM_binaries_reclaimed rows, and NOT justified on the "no on-disk change"
+      sentence: the per-model log_{model}.json IS on-disk state and every post-change write
+      carries the new key. THE TWO-QUESTION TEST. (i) Which reader is harmed? NEW code
+      meeting OLD data: none -- a legacy log lacks the key, from_json leaves the LogField
+      unset, .get() returns None and every consumer coalesces None -> False (SPEC 6 reads
+      the marker as an `is True` identity, so None, False and any non-bool read as unset).
+      OLD code meeting NEW data: an old toolkit's write() emits the
+      "DROPS non-null on-disk field" WARNING for a False marker and proceeds -- a forward
+      direction no LAYOUT_VERSION bump can govern (the migration ships in the new toolkit).
+      (ii) Loud or silent? Neither reader reinterprets existing state: the new reader takes
+      a default, the old reader warns and drops a key whose only effect is to make a forced
+      solver re-run happen, so the worst case is a force silently NOT reaching the solver
+      under an old toolkit -- the pre-change behaviour, not a corruption.
+      EXPIRY CONDITION: covers an additive optional LogField with a coalesced default.
+      A rename of any on-disk log key, or a change to the JSON shape of an existing key,
+      is NOT this class and must bump LAYOUT_VERSION with a migration.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 53c66deb7395b0d8a7515c7c30239bb9bd6a7c75864cdae3eb72733266f34787
+    justification: >-
+      ragged-frame full remedy, Half A (2026-09-14): behaviour-only edits in the chapter-
+      build path -- a fail-closed index-equality precondition in return_fpath_wlevels
+      (Component 1), the exists() skip converted to a raise (Delta 2a), and the deletion of
+      one structurally-dead index guard, the second stat loop with its value guard, and the
+      two `continue`s those deletions leave dead (Component 2 + Delta 2b). ARGUED ON WHAT
+      THIS MODULE WRITES, not on the false "no on-disk change" sentence: this module writes
+      the per-chapter zarr stores, their .done flags, the unified timeseries store and its
+      flag, and the per-scenario summaries. Every edit here RAISES BEFORE A WRITE or removes
+      a path that could write LESS; none changes the shape, naming, chunking, attrs or
+      location of any artifact a correct run already produces -- a chapter written post-
+      change carries every timestep of its chunk for every variable, which is exactly what
+      a chapter written pre-change carried whenever no skip fired. THE TWO-QUESTION TEST.
+      (i) Which reader is harmed? None in either direction: no key, stem, dimension or
+      attribute changes, so an old reader reads a new store and a new reader reads an old
+      store identically. The one artifact class that DOES differ is a DEFECTIVE pre-change
+      chapter that a skip left silently incomplete -- and this change does not repair it
+      (constraint 1), it makes the next build of it refuse loudly. (ii) Loud or silent?
+      This change converts two silent-skip paths into loud refusals and removes two
+      unreachable skips; it introduces no silent reinterpretation of any existing artifact.
+      EXPIRY CONDITION: covers raise-before-write and dead-path deletion in the chapter
+      loop. A change to what a chapter store CONTAINS (variables, coords, chunking, attrs),
+      to a store or flag name, or to the summary schema is NOT this class and must bump
+      LAYOUT_VERSION with a migration.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 2f10e520d580aa0ca0333715f46f3ca265263283b2d5b85a7638d568b3d0ec13
+    justification: >-
+      ragged-frame full remedy, Half B (2026-09-14): ONE keyword-only parameter with a
+      backward-compatible default (`set_force_marker`) on
+      _invalidate_processing_log_for_member_ids, forwarded to the one per-member
+      invalidator call. SAME CLASS as this file's 3d782f34 row directly above (a pure
+      runtime-construction edit on an in-memory frozen dataclass that is never serialized)
+      and justified on the same ground: no persisted artifact, key, flag name, fingerprint
+      payload or directory layout is touched, and the lazy LAYOUT_VERSION stamp is a writer
+      left as-is. The threading exists so a member-scoped stage="simulate" force reaches
+      the new force_rerun_pending marker in every member scenario instead of dropping the
+      opt-in at the dispatch boundary.
+      EXPIRY CONDITION: as the row above -- a change to this file's fingerprint payload, a
+      _status flag name, or the member directory layout is NOT this class.

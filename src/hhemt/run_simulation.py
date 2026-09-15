@@ -1050,8 +1050,43 @@ class TRITONSWMM_run:
             # `exe` now expands inside launch_cmd_str's `{exe} {cfg}` as
             #   srun … apptainer exec --rocm -B {host_out}:/opt/hhemt/out_tritonswmm {sif} {exe} {cfg}
 
-        # Check if already completed
-        if self._scenario.model_run_completed(model_type):
+        # B-iii: consult the POSITIVE force marker BEFORE the completion short-circuit.
+        # model_run_completed is three-path (log field -> per-arm artifact conjunct ->
+        # "Simulation ends" fallback) and every path returns True for a completed scenario,
+        # so nothing the invalidator clears can reach it; the marker is the ONE record
+        # written by the force and read here, and it is read FIRST. On the non-force path
+        # it is None/False and this block is a no-op -- every gate below is byte-identical.
+        # `is True`, not bool(): the marker is a POSITIVE record exactly as simulation_completed
+        # is ("ONLY a POSITIVE (True) record is authoritative", model_run_completed), and a
+        # truthiness read arms the branch on any non-bool a caller hands it -- measured: the
+        # MagicMock scenario in tests/test_in_rule_processing_markers.py reads True under
+        # bool() and the completed-sim short-circuit that test pins is skipped.
+        _force_pending = self._scenario.get_log(model_type).force_rerun_pending.get() is True
+        if _force_pending and model_type != "swmm":
+            # RESET THE RESUME POINT IN-TOOLKIT. A forced run that merely bypassed the gate
+            # would fall into the hotstart branch below and RESUME from the latest surviving
+            # checkpoint -- above the damage, so the ragged raw group is never rewritten.
+            # prune_hotstart_cfgs_above_step(target_step=0) removes every config_NNNN.cfg
+            # through ONE delete_and_account call scoped to this scenario (DU rules engaged
+            # and satisfied; cfg/ is never in the processing frame), its docstring mandates
+            # it precede the picker, and the picker then returns None so the solver starts
+            # at reporting step 0 and writes every timestep. performance/ is deliberately
+            # NOT pruned: a completed fresh run rewrites every performance{N}.txt by number,
+            # and the top-level performance.txt is a LIVE completion predicate that must
+            # never be touched. SWMM has no checkpoints, so a forced swmm arm bypasses the
+            # gate and simply re-runs. The marker is CONSUMED by the runner immediately after
+            # Popen returns, not here -- consuming it before the gate would make this
+            # branch unreachable, and consuming it at the terminal write would re-prune the
+            # fresh run's own checkpoints on every walltime-kill retry.
+            _n_pruned = self.prune_hotstart_cfgs_above_step(model_type, target_step=0)
+            if verbose:
+                print(
+                    f"force_rerun_pending set for {model_type}: bypassing the completion gate; "
+                    f"pruned {_n_pruned} hotstart checkpoint(s) so the solver starts at step 0",
+                    flush=True,
+                )
+        # Check if already completed (SKIPPED when the force marker is set -- see above)
+        if not _force_pending and self._scenario.model_run_completed(model_type):
             if verbose:
                 print(f"{model_type} simulation already completed", flush=True)
             return None

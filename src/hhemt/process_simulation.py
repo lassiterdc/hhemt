@@ -381,51 +381,40 @@ class TRITONSWMM_sim_post_processing:
                 lst_ds_timesteps = []
 
                 for tstep_min in chunk_timesteps:
-                    if tstep_min not in files.index:
-                        continue
                     f = files[tstep_min]
+                    # DELTA 2a -- FAIL-CLOSED. Post-Component-1 the frame is index-equal by
+                    # construction, so a file that vanished between listing and read is a
+                    # genuine anomaly. Skipping it produces a chapter with this variable absent
+                    # at this timestep, written and FLAGGED complete (verify_and_flag_chapter is
+                    # per-variable blind). No guard in this consumer may continue past a missing
+                    # per-variable cell; the only admissible response is a loud refusal.
                     if not f.exists():
-                        if verbose:
-                            print(
-                                f"[Chunked Processing] Warning: Missing file {f}, skipping",
-                                flush=True,
-                            )
-                        continue
+                        raise ProcessingError(
+                            "chapter build (raw output file missing between listing and read)",
+                            filepath=f,
+                            reason=(
+                                f"variable {varname!r} at timestep_min={tstep_min} was listed by "
+                                "return_fpath_wlevels but does not exist at read time. Refusing to "
+                                "skip it: a skipped cell yields a silently-incomplete flagged chapter."
+                            ),
+                        )
 
                     ds_triton_output = load_triton_output_w_xarray(rds_dem, f, varname, raw_out_type)
                     lst_ds_timesteps.append(ds_triton_output)
 
-                if not lst_ds_timesteps:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] No valid files for {varname} in this chunk",
-                            flush=True,
-                        )
-                    continue
-
-                # Determine valid timesteps (those we actually loaded)
-                valid_timesteps = []
-                for tstep_min in chunk_timesteps:
-                    if tstep_min in files.index:
-                        f_path = files[tstep_min]
-                        if isinstance(f_path, Path) and f_path.exists():
-                            valid_timesteps.append(tstep_min)
-
+                # DELTA 2b. Post-Component-1 + Delta 2a the loop above either appended every
+                # member of chunk_timesteps or raised, so the loaded set IS chunk_timesteps by
+                # construction: no second stat loop, no value guard, and no `continue` --
+                # a skip that drops a whole variable is a worse survivor than the index guard
+                # this change removed, because it produces a flagged chapter missing that
+                # variable at every timestep of the chunk.
                 ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep_min")
-                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=valid_timesteps)
+                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=chunk_timesteps)
                 lst_ds_vars_chunk.append(ds_var_chunk)
 
                 # Clear per-variable temporaries
                 del lst_ds_timesteps
                 gc.collect()
-
-            if not lst_ds_vars_chunk:
-                if verbose:
-                    print(
-                        f"[Chunked Processing] No valid data in chunk {chunk_idx + 1}, skipping",
-                        flush=True,
-                    )
-                continue
 
             ds_chunk = xr.merge(lst_ds_vars_chunk)
             pending_chunks.append(ds_chunk)
@@ -2762,8 +2751,34 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
     s_outputs_qx = return_filelist_by_tstep(fldr_out_triton, "QX", min_per_tstep, "velocity_x_mps")
     s_outputs_qy = return_filelist_by_tstep(fldr_out_triton, "QY", min_per_tstep, "velocity_y_mps")
     lst_out = [s_outputs_mh, s_outputs_h, s_outputs_qx, s_outputs_qy]
-    non_empty_dfs = [s for s in lst_out if s is not None]
-    df_outputs = pd.concat(non_empty_dfs, axis=1)
+    # COMPONENT 1 -- FAIL-CLOSED AT CONSTRUCTION. The concat below is an OUTER join: it
+    # keeps the union of the four index sets and writes NaN where one variable lacks a
+    # timestep another has, and the consumer then dereferences that NaN as a Path. The
+    # ragged frame has TWO independent producers -- an interrupted clear_raw_for_timesteps
+    # (deletes MH first) and an interrupted solver write (writes MH last) -- so no cleanup-
+    # side fix closes the class; the ONLY complete guard is refusing the frame here, before
+    # any consumer, naming what is missing. No repair, no drop, no inner join, no warn-and-
+    # continue: a value guard in the consumer converts this loud failure into a silently
+    # incomplete FLAGGED chapter (verify_and_flag_chapter is per-variable blind).
+    _labels = ("MH", "H", "QX", "QY")
+    _index_sets = {lbl: set(s.index) for lbl, s in zip(_labels, lst_out, strict=True)}
+    _union = set().union(*_index_sets.values())
+    _missing = {lbl: sorted(_union - idx) for lbl, idx in _index_sets.items() if _union - idx}
+    if _missing:
+        raise ProcessingError(
+            "return_fpath_wlevels (ragged raw output frame)",
+            filepath=fldr_out_triton,
+            reason=(
+                "the four per-variable timestep index sets are NOT equal; short variable(s) and "
+                f"missing timestep_min values: {_missing}. This frame is refused rather than "
+                "joined, because an outer join would fabricate NaN cells the consumer treats as "
+                "paths (the AttributeError: 'float' object has no attribute 'exists' class). "
+                "Produced by an interrupted raw clear (MH deleted first) or an interrupted solver "
+                "write (MH written last); do NOT repair by hand or delete raw selectively -- re-run "
+                "the simulation via a force at stage='simulate' naming this model arm."
+            ),
+        )
+    df_outputs = pd.concat(lst_out, axis=1)
     return df_outputs
 
 
