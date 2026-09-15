@@ -1744,3 +1744,27 @@ non_breaking_allowlist:
       opt-in at the dispatch boundary.
       EXPIRY CONDITION: as the row above -- a change to this file's fingerprint payload, a
       _status flag name, or the member directory layout is NOT this class.
+  - path: src/hhemt/constants.py
+    layout_signature: 8d4f0dc31bcbcd49ade193ac6cc87166b59135d787899209b579dd51a8d2bf23
+    justification: >-
+      force-rerun flag-name inverse (2026-09-15): ONE ADDED READER of the flag-name
+      grammar -- `FLAG_NAME_WITH_MODEL_RE` + `model_type_from_flag_name(name)` beside the
+      builders, plus the `import re` it needs -- and ZERO builder output strings changed
+      (checkable: `git diff` of this file touches no f-string containing `_complete.flag`
+      and no `_inputs.json` line; every `sim_run_flag_per_member` /
+      `process_timeseries_flag_per_member` / `consolidate_analysis_flag` /
+      `consolidate_experiment_flag` / `member_inputs_fingerprint_flag` body is byte-identical).
+      This row cites the row above for its FORM only (mapping row, `layout_signature` present,
+      computed post-apply); its GROUND is the opposite of that row's -- that one is a V0020
+      migration-COVERAGE argument for a flag RENAME, and nothing here is renamed.
+      THE TWO-QUESTION TEST. (i) Which reader is harmed? None in either direction: old code
+      meeting new trees sees the identical flag names the unchanged builders mint; new code
+      meeting old trees parses names it has always parsed (both shapes were minted by these
+      same builders before this change). (ii) Loud or silent? The reader adds a loud
+      ValueError on a malformed model-bearing name and introduces no silent reinterpretation
+      of any existing artifact -- the only behaviour change is that a sensitivity member's
+      c_run_/d_process_ flag is now deletable by the force that names it, which is the
+      documented contract of the force, not a new on-disk shape.
+      EXPIRY CONDITION: covers an added parser with unchanged builders. Any edit to a
+      builder's emitted string, to a flag family prefix, or to the `_status` directory name is
+      NOT this class and must bump LAYOUT_VERSION with a migration.

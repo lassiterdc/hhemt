@@ -35,7 +35,7 @@ from hhemt.config.hpc_system import (
     resolve_gpus_per_node,
     system_directory_bind,
 )
-from hhemt.constants import consolidate_experiment_flag
+from hhemt.constants import consolidate_experiment_flag, model_type_from_flag_name
 from hhemt.exceptions import ConfigurationError, WorkflowError
 from hhemt.orchestration import resolve_execution_locus
 from hhemt.report_plot_ids import (
@@ -2114,32 +2114,28 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         def _model_matches(name: str) -> bool:
             """True when a flag belongs to one of the requested MODEL arms.
 
-            ANCHORED ON THE MODEL SEGMENT, never a substring test. `swmm` is a substring of
-            `tritonswmm`, so a bare `m in name` containment test would exclude the COUPLED
-            arm along with the standalone one and the force would delete nothing it was
-            aimed at -- a no-op reporting success. The form below is immune by construction
-            rather than by discipline: it anchors LEFT on the flag-family prefix and RIGHT
-            on the `_evt-` separator, so `d_process_swmm_evt-` cannot occur inside
-            `d_process_tritonswmm_evt-`. Same class as the `member-1`/`member-10` trap
-            `_subject_matches` above documents.
-
-            The comprehension tests `startswith(prefixes)` against a TUPLE and does not
-            retain WHICH member matched, so this predicate re-scans that tuple itself.
+            The model segment is READ by `constants.model_type_from_flag_name`, the inverse
+            of the builders that MINT flag names — the one place the flag-name grammar is
+            parsed, and it covers BOTH shapes (plain `c_run_{m}_evt-…` and sensitivity
+            `c_run_{m}_member-{id}_evt-…`). This predicate used to split on `_evt-` itself
+            and read `tritonswmm_member-0` as the model of every member-shaped flag, so no
+            sensitivity member's `c_run_`/`d_process_` flag was ever deletable by a force.
+            Anchoring on the model SEGMENT (never a substring test) is what keeps `swmm`
+            from matching inside `tritonswmm` — the same class as the `member-1`/`member-10`
+            trap `_subject_matches` above documents.
 
             FAIL-OPEN on a name carrying no model segment (`a_setup_complete`,
             `b_prepare_evt-...`): those are already excluded by the floor's prefix tuple
             before this runs, and returning False here would silently stop deleting them
             if a future floor ever included such a prefix. The prefix tuple is the thing
             that bounds the delete set; this axis narrows within it.
+
+            A model-bearing name that does not fit the grammar makes the inverse raise, so a
+            malformed `c_run_`/`d_process_` file under `_status/` aborts the whole force at
+            submit time, loudly, rather than being silently skipped or deleted.
             """
-            for _pfx in prefixes:
-                if name.startswith(_pfx):
-                    _rest = name[len(_pfx) :]
-                    if "_evt-" not in _rest:
-                        return True  # no model segment on this flag family
-                    _model = _rest.split("_evt-", 1)[0]
-                    return _model in spec.models
-            return True
+            _model = model_type_from_flag_name(name)
+            return _model is None or _model in spec.models
 
         matched_flags: set[Path] = {
             p

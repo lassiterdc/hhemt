@@ -26,21 +26,28 @@ from hhemt.workflow import ResolvedForceRerunSpec
 
 
 def test_model_axis_preserves_the_coupled_arm_against_the_containment_trap(synth_all_models_analysis):
-    """models=("swmm",) must delete ONLY the standalone arm's flags.
+    """models=("swmm",) must delete ONLY the standalone arm's flags — in BOTH flag shapes.
 
     The load-bearing property is failure under a CONTAINMENT filter: the name
     "d_process_tritonswmm_evt-e0_complete.flag" contains "swmm", so a `model in name`
-    test deletes the coupled flag and the last three asserts break.
+    test deletes the coupled flag and the tritonswmm survival asserts break.
+
+    The seed is the product {c_run_, d_process_} x {triton, tritonswmm, swmm} x
+    {plain: evt-e0, member: member-0_evt-e0}, one member arm carrying a `_`/`.`-bearing id.
+    Pre-fix (the `_evt-`-split predicate) the MEMBER-shaped names all SURVIVE whatever
+    `models` names — measured on the concurred diagnosis: `tritonswmm_member-0` is what the
+    split extracts, and it is in no model set — so the member-shaped `swmm` deletion asserts
+    fail. The member-shaped tritonswmm/triton survival asserts are the differential arm: green
+    pre-fix for the wrong reason (everything survives) and green post-fix for the right one.
     """
     analysis = synth_all_models_analysis
     status_dir = analysis.analysis_paths.analysis_dir / "_status"
     status_dir.mkdir(parents=True, exist_ok=True)
     seeded = [
-        "c_run_swmm_evt-e0_complete.flag",
-        "d_process_swmm_evt-e0_complete.flag",
-        "c_run_triton_evt-e0_complete.flag",
-        "c_run_tritonswmm_evt-e0_complete.flag",
-        "d_process_tritonswmm_evt-e0_complete.flag",
+        f"{family}_{model}_{shape}_complete.flag"
+        for family in ("c_run", "d_process")
+        for model in ("triton", "tritonswmm", "swmm")
+        for shape in ("evt-e0", "member-0_evt-e0", "member-serial_6.r1_evt-e0")
     ]
     for name in seeded:
         (status_dir / name).touch()
@@ -50,12 +57,12 @@ def test_model_axis_preserves_the_coupled_arm_against_the_containment_trap(synth
     spec = ResolvedForceRerunSpec(scope="event", tokens=("e0",), stage="simulate", models=("swmm",))
     builder._delete_flags_for_force_rerun(spec)
 
-    assert not (status_dir / "c_run_swmm_evt-e0_complete.flag").exists()
-    assert not (status_dir / "d_process_swmm_evt-e0_complete.flag").exists()
-    assert not (status_dir / "d_process_swmm_evt-e0_complete.flag.json").exists()
-    assert (status_dir / "c_run_triton_evt-e0_complete.flag").exists()
-    assert (status_dir / "c_run_tritonswmm_evt-e0_complete.flag").exists()
-    assert (status_dir / "d_process_tritonswmm_evt-e0_complete.flag").exists()
+    for name in seeded:
+        if "_swmm_" in name:
+            assert not (status_dir / name).exists(), f"{name} survived a force naming swmm"
+            assert not (status_dir / (name + ".json")).exists(), f"{name}.json survived a force naming swmm"
+        else:
+            assert (status_dir / name).exists(), f"{name} was deleted by a force naming only swmm"
 
 
 def test_full_model_set_matches_pre_axis_behaviour(synth_all_models_analysis):
@@ -102,3 +109,53 @@ def test_models_default_is_omitted_on_the_public_model():
     from hhemt.config.analysis import ForceRerunSpec
 
     assert ForceRerunSpec(subject="all").models is None
+
+
+def test_model_type_from_flag_name_is_the_builders_inverse():
+    """The inverse round-trips every builder output, in both shapes, and refuses what it
+    cannot attribute.
+
+    Pre-fix this fails at import: `model_type_from_flag_name` does not exist. That is
+    new-capability coverage and evidentially empty on its own; the load-bearing cases are the
+    `-`-bearing id and slug (a charset-restricted regex returns None or raises there — the
+    builder accepts a `-` id even though the CSV load path rejects it, and the event slug is
+    unconstrained), the malformed model-bearing name (must RAISE, never return None and fall
+    open), and the path-form input (basename contract).
+    """
+    from hhemt.constants import (
+        consolidate_analysis_flag,
+        consolidate_experiment_flag,
+        member_inputs_fingerprint_flag,
+        model_type_from_flag_name,
+        process_timeseries_flag_per_member,
+        sim_run_flag_per_member,
+    )
+
+    def basename(path: str) -> str:
+        return path.rsplit("/", 1)[1]
+
+    ids = ("0", "serial_6_r1", "cpu.mpi_4", "serial-6")
+    slugs = ("e0", "year.102_event_type.surge_event_id.1", "2024-01-05T00.00")
+    for model in ("triton", "tritonswmm", "swmm"):
+        for member_id in ids:
+            for event_id in slugs:
+                for builder in (sim_run_flag_per_member, process_timeseries_flag_per_member):
+                    assert model_type_from_flag_name(basename(builder(model, member_id, event_id))) == model
+        for event_id in slugs:
+            for family in ("c_run", "d_process"):
+                assert model_type_from_flag_name(f"{family}_{model}_evt-{event_id}_complete.flag") == model
+
+    for name in (
+        basename(consolidate_analysis_flag("0")),
+        basename(consolidate_experiment_flag()),
+        basename(member_inputs_fingerprint_flag("0")),
+        "e_consolidate_complete.flag",
+        "a_setup_complete.flag",
+        "b_prepare_member-0_evt-x_complete.flag",
+    ):
+        assert model_type_from_flag_name(name) is None, name
+
+    with pytest.raises(ValueError):
+        model_type_from_flag_name("c_run_evt-x_complete.flag")
+    with pytest.raises(AssertionError):
+        model_type_from_flag_name(sim_run_flag_per_member("triton", "0", "e0"))

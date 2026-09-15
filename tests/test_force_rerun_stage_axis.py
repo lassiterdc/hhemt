@@ -277,8 +277,8 @@ def test_simulate_floor_dry_run_still_deletes_flags(synth_sensitivity_analysis, 
 
     for name in flags:
         assert not (status_dir / name).exists(), (
-            f"{name} survived a simulate-floor dry run -- the dry-run gate was widened "
-            f"past the figure branch and the DAG preview is now empty"
+            f"{name} survived a simulate-floor dry run -- the flag pre-delete must run on a "
+            f"dry run so the DAG preview is non-empty"
         )
 
 
