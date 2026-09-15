@@ -597,7 +597,11 @@ class TRITONSWMM_sensitivity_analysis:
         """
         from hhemt.workflow import ResolvedForceRerunSpec
 
-        all_spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
+        # Members inherit the master's model toggles, so the experiment's enabled set IS
+        # each member's. `_get_enabled_model_types` is the tree's single source for it.
+        all_spec = ResolvedForceRerunSpec(
+            scope="all", tokens=(), stage="simulate", models=tuple(self.experiment._get_enabled_model_types())
+        )
         for member_id in member_id_tokens:
             analysis = self.members.get(member_id)
             if analysis is None:

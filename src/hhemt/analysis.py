@@ -4375,7 +4375,9 @@ class TRITONSWMM_analysis:
                 from hhemt.workflow import ResolvedForceRerunSpec
 
                 self._invalidate_processing_log_for_force_rerun(
-                    ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
+                    ResolvedForceRerunSpec(
+                        scope="all", tokens=(), stage="simulate", models=tuple(self._get_enabled_model_types())
+                    )
                 )
         else:
             self._delete_processed_outputs_for_reprocess(
@@ -4647,7 +4649,9 @@ class TRITONSWMM_analysis:
             # did not cover step 1.
             return  # dry-run performs no destructive filesystem mutation
         self._invalidate_processing_log_for_force_rerun(
-            ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
+            ResolvedForceRerunSpec(
+                scope="all", tokens=(), stage="simulate", models=tuple(self._get_enabled_model_types())
+            )
         )
 
         # 2) Delete the per-scenario PROCESSED artifacts on disk. ALL processed
@@ -4734,22 +4738,44 @@ class TRITONSWMM_analysis:
         # "simulate", which is the defect this whole change closes. Read the stage BEFORE
         # rebinding the name below — the subject read discards the object carrying it.
         _stage = resolved_force_rerun.stage
+        # READ BEFORE REBINDING, for the identical reason the comment above gives for
+        # `stage`: the subject read discards the object carrying it. Resolved to a concrete
+        # tuple HERE -- the SINGLE resolution point -- so the three consumers receive the
+        # model set and never re-derive "all enabled". `_get_enabled_model_types` is the
+        # tree's existing single source for that set.
+        _models = resolved_force_rerun.models
+        _enabled = tuple(self._get_enabled_model_types())
+        if _models is None:
+            _models = _enabled
+        else:
+            _unknown = [m for m in _models if m not in _enabled]
+            if _unknown:
+                raise ConfigurationError(
+                    field="override_force_rerun",
+                    message=(
+                        f"override_force_rerun.models names model type(s) not enabled for "
+                        f"this analysis: {sorted(_unknown)}. Enabled: {sorted(_enabled)}."
+                    ),
+                )
+            _models = tuple(_models)
         resolved_force_rerun = resolved_force_rerun.subject
 
         if resolved_force_rerun == "all":
-            return ResolvedForceRerunSpec(scope="all", tokens=(), stage=_stage)
+            return ResolvedForceRerunSpec(scope="all", tokens=(), stage=_stage, models=_models)
         if resolved_force_rerun == "none":
-            return ResolvedForceRerunSpec(scope="none", tokens=(), stage=_stage)
+            return ResolvedForceRerunSpec(scope="none", tokens=(), stage=_stage, models=_models)
         assert isinstance(resolved_force_rerun, dict)
         key = next(iter(resolved_force_rerun))
         values = resolved_force_rerun[key]
         if key == "sa_id":
-            return ResolvedForceRerunSpec(scope="member", tokens=tuple(str(v) for v in values), stage=_stage)
+            return ResolvedForceRerunSpec(
+                scope="member", tokens=tuple(str(v) for v in values), stage=_stage, models=_models
+            )
         # event_iloc → event_id slug per V0001 stable slug invariant.
         slugs = tuple(
             compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(int(iloc))) for iloc in values
         )
-        return ResolvedForceRerunSpec(scope="event", tokens=slugs, stage=_stage)
+        return ResolvedForceRerunSpec(scope="event", tokens=slugs, stage=_stage, models=_models)
 
     def _clean_restart_wipe(self, member_ids: list[str]) -> None:
         """Targeted clean-restart wipe for a resume-sweep recovery: remove ONLY the
@@ -4812,7 +4838,12 @@ class TRITONSWMM_analysis:
             # `logs/`; the member sentinel is unaffected because the logs are not under it.
             du_sentinels.delete_and_account(_log_targets, scope_dir=self.analysis_paths.analysis_dir, scope="analysis")
         self._workflow_builder._delete_flags_for_force_rerun(
-            ResolvedForceRerunSpec(scope="member", tokens=tuple(restart_ids), stage="simulate")
+            ResolvedForceRerunSpec(
+                scope="member",
+                tokens=tuple(restart_ids),
+                stage="simulate",
+                models=tuple(self._get_enabled_model_types()),
+            )
         )
 
     def _reconcile_build_stamp_force(self, override_force_rerun, *, dry_run: bool = False):
@@ -5208,7 +5239,12 @@ class TRITONSWMM_analysis:
             # event-scoped force-rerun log invalidator (cheap per-scenario JSON
             # rewrites; no GPFS tree walk).
             self._invalidate_processing_log_for_force_rerun(
-                ResolvedForceRerunSpec(scope="event", tokens=tuple(reconciled_event_ids), stage="simulate")
+                ResolvedForceRerunSpec(
+                    scope="event",
+                    tokens=tuple(reconciled_event_ids),
+                    stage="simulate",
+                    models=tuple(self._get_enabled_model_types()),
+                )
             )
         return reconciled
 
@@ -5344,6 +5380,13 @@ class TRITONSWMM_analysis:
             if scen.event_id not in target_event_ids:
                 continue
             for model_type in scen.run.model_types_enabled:
+                # MODEL AXIS. Same shape as the event guard two lines above: a model the
+                # force did not name keeps its processing_log records and its
+                # raw-outputs-cleared markers untouched. Without this the force would
+                # preserve a correct arm's FLAGS while silently resetting its LOG -- a
+                # half-scoped invalidation of exactly the class this axis exists to remove.
+                if model_type not in spec.models:
+                    continue
                 model_log = scen.get_log(model_type)
                 # Clear the processing_log dict and persist.
                 model_log.processing_log.outputs.clear()
@@ -5401,7 +5444,13 @@ class TRITONSWMM_analysis:
             sensitivity = getattr(self, "sensitivity", None)  # Gotcha 26: not always present
             if sensitivity is None:
                 raise RuntimeError("force_rerun scope='member' on an analysis with no sensitivity attribute")
-            all_spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage=spec.stage)
+            # THREADS `models`, not the default. This RE-DERIVES a spec from an existing
+            # one -- it already threads `stage=spec.stage` deliberately -- so taking "all
+            # enabled" for the models here would widen a two-arm force back to three inside
+            # every member, silently, one function away from the guard above. DISCRIMINATOR
+            # for a future construction site: any site passing `stage=spec.stage` rather
+            # than a literal is threading and must thread `models` too.
+            all_spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage=spec.stage, models=spec.models)
             for member_id in spec.tokens:
                 member = sensitivity.members.get(member_id)
                 if member is None:

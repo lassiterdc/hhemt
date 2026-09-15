@@ -116,6 +116,19 @@ class ResolvedForceRerunSpec:
     # "simulate" without saying so, which is exactly the silence this field exists to end:
     # the axis was declared in config and honoured by the actuator, and dropped here.
     stage: Literal["simulate", "process", "consolidate", "render"]
+    # REQUIRED for the same reason `stage` is, and the reasoning transfers exactly rather
+    # than by analogy. The hazard the rule above names is a user-declared axis dropped at
+    # the RESOLVER -- not a behaviour change -- and with `models` declared on the public
+    # `ForceRerunSpec` that drop is available, its consequence being a model arm
+    # invalidated that nobody asked to touch. A default of "every enabled model" would
+    # also be the most aggressive value applied silently, which is the same shape as
+    # `stage`'s "simulate". The PUBLIC model defaults; this one does not. That split is
+    # already this pair's pattern for `stage`, and the developer ratified it by approving
+    # the corrected size this requirement produces and rejecting the defaulted variant.
+    #
+    # Resolved to a concrete tuple by `_build_force_rerun_spec`, the SINGLE resolution
+    # point, so the three consumers never re-derive "all enabled".
+    models: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -2097,8 +2110,41 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # STAGE -- it must not resurrect the pre-floor behaviour of deleting every flag.
         if spec.scope not in ("all", "member", "event"):
             raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
+
+        def _model_matches(name: str) -> bool:
+            """True when a flag belongs to one of the requested MODEL arms.
+
+            ANCHORED ON THE MODEL SEGMENT, never a substring test. `swmm` is a substring of
+            `tritonswmm`, so a bare `m in name` containment test would exclude the COUPLED
+            arm along with the standalone one and the force would delete nothing it was
+            aimed at -- a no-op reporting success. The form below is immune by construction
+            rather than by discipline: it anchors LEFT on the flag-family prefix and RIGHT
+            on the `_evt-` separator, so `d_process_swmm_evt-` cannot occur inside
+            `d_process_tritonswmm_evt-`. Same class as the `member-1`/`member-10` trap
+            `_subject_matches` above documents.
+
+            The comprehension tests `startswith(prefixes)` against a TUPLE and does not
+            retain WHICH member matched, so this predicate re-scans that tuple itself.
+
+            FAIL-OPEN on a name carrying no model segment (`a_setup_complete`,
+            `b_prepare_evt-...`): those are already excluded by the floor's prefix tuple
+            before this runs, and returning False here would silently stop deleting them
+            if a future floor ever included such a prefix. The prefix tuple is the thing
+            that bounds the delete set; this axis narrows within it.
+            """
+            for _pfx in prefixes:
+                if name.startswith(_pfx):
+                    _rest = name[len(_pfx) :]
+                    if "_evt-" not in _rest:
+                        return True  # no model segment on this flag family
+                    _model = _rest.split("_evt-", 1)[0]
+                    return _model in spec.models
+            return True
+
         matched_flags: set[Path] = {
-            p for p in status_dir.glob("*.flag") if p.name.startswith(prefixes) and _subject_matches(p.name)
+            p
+            for p in status_dir.glob("*.flag")
+            if p.name.startswith(prefixes) and _subject_matches(p.name) and _model_matches(p.name)
         }
 
         for flag_path in sorted(matched_flags):

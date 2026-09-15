@@ -54,6 +54,11 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
 
         '{"subject": "all", "stage": "render"}'
         '{"subject": {"sa_id": ["serial_6_r1"]}, "stage": "process"}'
+        '{"subject": {"event_iloc": [3, 7]}, "models": ["triton", "tritonswmm"]}'
+
+    ``models`` names WHICH model arms to force; omit it for every enabled model, which is
+    the historical behaviour. Naming a subset leaves the unnamed arms' completion state
+    untouched, so a correct arm is not invalidated by a force aimed at a damaged one.
 
     ``stage`` is a FLOOR: that stage and everything downstream re-run. Values are
     ``simulate`` (default, the historical meaning) / ``process`` / ``consolidate`` /

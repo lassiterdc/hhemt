@@ -1591,3 +1591,90 @@ non_breaking_allowlist:
       chunk-6 stall fix (2026-09-13), M6b review: comment-only edit -- a stale comment
       naming the deleted du_sentinels.restamp_parent_sentinels walker was scrubbed
       ([Q356] 3). No code, no on-disk NAME or SHAPE change.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: c0b8716d0b8c91cdbd4bb286f618866c6e90d039c3dc0ff6978aeec974941683
+    justification: >-
+      force-rerun model axis (2026-09-14): ADDITIVE OPTIONAL `ForceRerunSpec.models`
+      (`list[Literal["triton","tritonswmm","swmm"]] | None`, default None = every enabled
+      model = the historical behaviour) plus an after-validator rejecting an empty list and
+      duplicates.
+      NON-BREAKING -- and NOT on the "no on-disk change" ground that several rows above use,
+      which is FALSE here and must not be reused. {analysis_dir}/cfg_analysis.yaml IS written
+      into the live tree (analysis.py, eda()), into every bundle (bundle/_emit.py) and into
+      every publish deposit (publishing.py); version_migration/__main__.py IDENTIFIES an
+      analysis dir BY that file's presence, and V0005 opens and rewrites it. It is a member
+      of the migrated state, not adjacent to it, and a post-change tree's copy differs.
+      THE ACTUAL GROUND, three parts.
+      (1) No NEW-toolkit reader is harmed: an additive optional field with a historical
+      default is the category bundle/__init__.py's own consume-side guard text calls "breaks
+      nothing -- a cfg missing them takes their defaults".
+      (2) No derived on-disk DATA artifact changes. The per-member input fingerprint projects
+      only analysis_independent_vars (sensitivity_analysis.py), and its whole-dump sha1 arm
+      hashes cfg_system, NOT cfg_analysis. process_simulation.py's whole-config `config_attr`
+      is computed and DISCARDED -- both bindings carry `# noqa: F841` and the
+      ds.attrs["configuration"] consumer is commented out. EXPIRY CONDITION: if those
+      commented lines are ever re-enabled, this classification MUST be revisited, because the
+      config dump would then land in every per-scenario summary zarr's attrs and an
+      analysis_config field addition would change on-disk data content.
+      (3) The one reader that IS harmed is an OLD toolkit, and LAYOUT_VERSION cannot govern
+      that direction. force_rerun defaults to a ForceRerunSpec instance (not None) and every
+      dump site omits exclude_none, so EVERY post-change cfg_analysis.yaml carries
+      `models: null` unconditionally; the pinned pre-change model refuses it with pydantic
+      extra_forbidden (measured). That is FORWARD-incompatibility: a migration ships in the
+      NEW toolkit, registry.plan raises RegistryError on any downgrade, and across
+      analysis.py / system.py / cli.py / config/ every reference to the migration package is
+      stamp_new_target -- a WRITER. The layout version is write-only ON THE CONFIG-LOAD PATH,
+      so a v23 stamp cannot warn a v22 reader, which dies on Pydantic before any stamp site
+      runs.
+      A BUMP IS NOT FREE INSURANCE -- it has a measured cost, which is why arm 1 is wrong
+      rather than merely expensive. The layout version is NOT write-only in the toolkit:
+      metadata.py writes it into the RO-Crate root Dataset as `schemaVersion`, and
+      bundle/_compatibility.py::_rocrate_schema_version READS IT BACK for version-skew
+      classification in `hhemt combine`. Under a bump every post-change bundle would carry
+      schemaVersion 23 against 22 on every extant one, so every combine spanning the bump
+      reports a version-skew divergence for a change with no incompatibility. It grades
+      WARNING (surfaced, non-blocking), so the cost is noise in a compatibility report, not a
+      refused combine -- modest, but real, and in the wrong direction.
+      NOTE the name collision: the crate's `schemaVersion` carries LAYOUT_VERSION, not
+      BUNDLE_SCHEMA_VERSION. They are different counters.
+      The instrument for cross-version config-load compatibility is BUNDLE_SCHEMA_VERSION,
+      whose own comment in version_migration/constants.py documents this exact extra="forbid"
+      hazard. Measured precedent 546c8dcf RENAMED an analysis_config field (strictly harder
+      than additive-optional), bumped BUNDLE_SCHEMA_VERSION 3->4, and left LAYOUT_VERSION at
+      18 with no migration and no fixtures. It is NOT bumped here: the guard is exact-match in
+      both directions, so bumping would hard-reject every extant bundle that by the guard's
+      own rule loads fine. Residual, named rather than absorbed: a post-change bundle read by
+      a PRE-change toolkit yields an opaque extra_forbidden traceback instead of a
+      BundleSchemaError.
+      THE TEST TO APPLY TO YOUR OWN CHANGE, since that is what this row is for: (i) can a
+      FORWARD-ONLY rewriter act on it -- i.e. is the harmed reader NEW code meeting OLD data
+      (migration) or OLD code meeting NEW data (not a migration, and no bump reaches it); and
+      (ii) is the failure a LOUD load-time refusal or a SILENT reinterpretation of existing
+      on-disk state? Loud + old-reader is outside this mechanism in both dimensions. This
+      change is one class WEAKER than the hhemt_sha row above ([Q331]), which was a REQUIRED
+      no-default field and was ruled non-breaking on exactly test (ii).
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 3d782f344b92bf2935a3e89120e4905dbdd3edceb3caed81873eb7083d19ebb9
+    justification: >-
+      force-rerun model axis (2026-09-14): ONE keyword at ONE construction site --
+      `ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate",
+      models=tuple(self.experiment._get_enabled_model_types()))`.
+      A DIFFERENT CLASS from the config/analysis.py row above, and the difference is the
+      reason both rows exist rather than one verdict applied twice. This file is flagged by
+      `layout_relevant.paths` (individually enumerated), not by the config glob; and
+      ResolvedForceRerunSpec is a `@dataclass(frozen=True)` in workflow.py -- an in-memory
+      runtime object that is never serialized -- so this edit touches NO persisted artifact of
+      any kind, adds no key to any file, and renames no flag, directory, figure stem or zarr.
+      The value passed is the experiment's existing enabled-model set from the tree's single
+      source for it, so the resolved behaviour is identical to the prior implicit "all
+      enabled".
+      NOTHING in this file's own layout-relevant surface is touched: it mints the per-member
+      input fingerprint and the member _status flag names, and neither the fingerprint payload
+      (_compute_member_id_fingerprint_payload, which projects only analysis_independent_vars)
+      nor any flag builder is in the diff. The lazy LAYOUT_VERSION stamp at ~line 695 is
+      likewise untouched and is a writer.
+      EXPIRY CONDITION: this exemption covers a pure runtime-construction edit. Re-stamp only
+      for another change of that kind; a change to this file's fingerprint payload, to a
+      _status flag name, or to the member directory layout is NOT this class and must be
+      judged on its own -- for those, the on-disk artifact really does change shape and a
+      forward-only migration really can act on it.

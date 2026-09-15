@@ -105,6 +105,42 @@ class ForceRerunSpec(cfgBaseModel):
             "rule and is always explicit and user-invoked."
         ),
     )
+    models: list[Literal["triton", "tritonswmm", "swmm"]] | None = Field(
+        None,
+        description=(
+            "WHICH model arms to force. None (default) means every model type enabled for "
+            "this analysis, which is the historical behaviour. Naming a subset leaves the "
+            "unnamed arms' completion state entirely untouched -- their flags, their "
+            "per-model processing-log records and their chapter sets are not cleared -- so "
+            "a correct, complete arm is not invalidated by a force aimed at a damaged one."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_models_shape(self):
+        """`models` is None or a non-empty list of distinct model types.
+
+        An EMPTY list is rejected rather than treated as "force nothing": it is
+        indistinguishable in effect from `subject="none"` and is far more likely a
+        mistake than an intent. Duplicates are rejected because they cannot change the
+        result and their presence signals the caller believes the field means something
+        it does not.
+
+        Whether the named models are ENABLED for this analysis is deliberately NOT
+        checked here -- that needs sibling-field context this model does not hold (it is
+        `system_config`'s toggles), and it is validated in `analysis.py` at the same
+        place the subject's toggle cross-check already lives.
+        """
+        if self.models is None:
+            return self
+        if not self.models:
+            raise ValueError(
+                "force_rerun.models must be omitted (meaning every enabled model) or a "
+                "non-empty list; an empty list is not a valid subject."
+            )
+        if len(set(self.models)) != len(self.models):
+            raise ValueError(f"force_rerun.models contains duplicate entries: {self.models}")
+        return self
 
     @model_validator(mode="before")
     @classmethod
