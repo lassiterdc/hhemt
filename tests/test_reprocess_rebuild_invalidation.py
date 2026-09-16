@@ -71,11 +71,11 @@ def _seed_scenario_processing_log(scen: TRITONSWMM_scenario) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitivity_analysis, monkeypatch):
+def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(synth_sensitivity_analysis, monkeypatch):
     """Sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route deletes every sub's ``d_process_*`` flags AND
     clears every scenario's per-model ``processing_log.outputs`` (FIX 1, hunk 2a)."""
-    experiment = norfolk_sensitivity_analysis
+    experiment = synth_sensitivity_analysis
     sensitivity = experiment.sensitivity
 
     # Force the SLURM-offload route: batch_job → _hpc=True → route_delete_via_slurm.
@@ -175,13 +175,13 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitiv
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivity_analysis):
+def test_reprocess_generator_emits_rebuild_after_invalidation(synth_sensitivity_analysis):
     """Pure generator test (no reprocess() call). With ``c_run`` flags present
     and ``d_process`` flags absent, the reprocess master generator emits a
     ``process_*`` rebuild rule per (member, event) and routes each per-member
     consolidate's input through the ``d_process`` flag. The generated Snakefile
     PARSES (Snakemake dry-run, no compiler needed)."""
-    experiment = norfolk_sensitivity_analysis
+    experiment = synth_sensitivity_analysis
     builder = experiment.sensitivity._workflow_builder
 
     analysis_dir = builder.experiment.analysis_paths.analysis_dir
@@ -273,11 +273,13 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivit
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(norfolk_multi_sim_analysis, monkeypatch):
+def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(
+    synth_multi_sim_analysis, monkeypatch, ack_node_local_configs
+):
     """Non-sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route clears each scenario's per-model
     ``processing_log.outputs`` (FIX 1, CHANGE A1)."""
-    analysis = norfolk_multi_sim_analysis
+    analysis = synth_multi_sim_analysis
 
     # Force the SLURM-offload route.
     analysis.cfg_analysis.multi_sim_run_method = "batch_job"
@@ -333,7 +335,7 @@ def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(norfolk_mult
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_consolidate_inprocess_preserves_processed(norfolk_sensitivity_analysis, monkeypatch):
+def test_reprocess_consolidate_inprocess_preserves_processed(synth_sensitivity_analysis, monkeypatch):
     """A CONSOLIDATE-stage in-process ``reprocess(regenerate_existing=True)`` must
     PRESERVE each sub's per-scenario ``processed/`` — that directory is the
     rebuild source the consolidate stage reads from; only a PROCESS-stage
@@ -348,7 +350,7 @@ def test_reprocess_consolidate_inprocess_preserves_processed(norfolk_sensitivity
     coverage gap that previously let the defect reach only the ~4-min
     compile-gated Tier-2 gate.
     """
-    experiment = norfolk_sensitivity_analysis
+    experiment = synth_sensitivity_analysis
     sensitivity = experiment.sensitivity
 
     # In-process (local) route: pass delete_via_slurm=False so
@@ -429,7 +431,10 @@ def _build_synthetic_post_processing(*, fname_out, raw_dir, batch_timesteps, ny,
     inst._run = SimpleNamespace(raw_triton_output_dir=lambda model_type: raw_dir)
     inst._system = SimpleNamespace(processed_dem_rds=rds_dem)
     inst.scen_paths = SimpleNamespace(output_tritonswmm_triton_timeseries=fname_out)
-    inst._scenario = SimpleNamespace(latest_sim_date=lambda model_type, astype: "2020-01-01")
+    inst._scenario = SimpleNamespace(
+        latest_sim_date=lambda model_type, astype: "2020-01-01",
+        scen_paths=SimpleNamespace(sim_folder=fname_out.parent),
+    )
     # MagicMock tolerates the post-write log-field accesses (add_sim_processing_entry,
     # TRITON_timeseries_written.set(...)) without modelling each one.
     inst.log = MagicMock()
@@ -573,8 +578,8 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
     path BOTH the early report-restamp AND the O(1) DU decrement are SKIPPED (a
     later zarr deletion restamps the tree anyway — gating avoids the redundant
     multi-minute login-node stat() walk). On the default regenerate_existing=False
-    path the O(1) ``decrement_scope_sentinel`` FIRES (Phase 2 replaced the prior
-    ``restamp_parent_sentinels`` full-tree walk with the O(1) decrement). Drives
+    path the deletion tool (``du_sentinels.delete_and_account``) FIRES exactly once
+    for the report shell + plots. Drives
     TRITONSWMM_analysis._invalidate_downstream_flags directly; the gate is pure
     routing logic, so no compile is required."""
     import hhemt.du_sentinels as du_sentinels
@@ -591,18 +596,16 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
 
     # Both helpers are imported method-locally from du_sentinels, so the patch
     # target is the source module (the local import re-fetches at call time).
-    restamp_mock = MagicMock()
-    decrement_mock = MagicMock()
-    monkeypatch.setattr(du_sentinels, "restamp_parent_sentinels", restamp_mock)
-    monkeypatch.setattr(du_sentinels, "decrement_scope_sentinel", decrement_mock)
+    # After clause 1 every report/zarr deletion routes through the tool; the two
+    # former patch targets no longer exist / are no longer called from this path.
+    tool_mock = MagicMock(return_value=0)
+    monkeypatch.setattr(du_sentinels, "delete_and_account", tool_mock)
 
     # regenerate_existing=True: a later zarr deletion restamps -> BOTH skipped.
     inst._invalidate_downstream_flags("consolidate", regenerate_existing=True, dry_run=False)
-    assert restamp_mock.call_count == 0, "report-restamp must be SKIPPED on the regenerate_existing=True path"
-    assert decrement_mock.call_count == 0, (
-        "O(1) DU decrement must be SKIPPED on the regenerate_existing=True path "
-        "(the later zarr deletion restamps the tree anyway)"
-    )
+    # ONE tool call (report shell + plots); the zarr branch is guarded on
+    # `analysis_datatree_zarr`, which this stub sets to None.
+    assert tool_mock.call_count == 1, "exactly one accounting call (report+plots) on the regenerate_existing=True path"
 
     # Re-seed the report artifact: the regenerate_existing=True call above ran
     # _delete_report_and_plot_artifacts (the report unlink is unconditional; only
@@ -613,14 +616,11 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
     # regenerate_existing=False (default): no later deletion -> O(1) decrement FIRES,
     # the legacy full-tree restamp does NOT (Phase 2 D3 replaced it).
     inst._invalidate_downstream_flags("consolidate", regenerate_existing=False, dry_run=False)
-    assert decrement_mock.call_count == 1, "O(1) DU decrement must FIRE on the default regenerate_existing=False path"
-    assert restamp_mock.call_count == 0, (
-        "the legacy full-tree restamp must NOT fire on the default path "
-        "(Phase 2 D3 replaced it with the O(1) decrement)"
-    )
+    # Same rule on the default path: ONE accounting call (report+plots), never a restamp.
+    assert tool_mock.call_count == 2, "exactly one further accounting call on the regenerate_existing=False path"
 
 
-def test_delete_regenerable_figures_raises_on_a_non_ancestor_rooting(tmp_path):
+def test_select_regenerable_figures_raises_on_a_non_ancestor_rooting(tmp_path):
     """The precondition. A mismatched pair makes every registry entry unreachable.
 
     Without this the helper fails OPEN: no entry can match a key it cannot compute,
@@ -630,7 +630,7 @@ def test_delete_regenerable_figures_raises_on_a_non_ancestor_rooting(tmp_path):
     """
     import pytest
 
-    from hhemt.utils import delete_regenerable_figures
+    from hhemt.utils import select_regenerable_figures
 
     analysis_dir = tmp_path / "a"
     elsewhere = tmp_path / "elsewhere"
@@ -640,19 +640,22 @@ def test_delete_regenerable_figures_raises_on_a_non_ancestor_rooting(tmp_path):
     analysis_dir.mkdir()
 
     with pytest.raises(ValueError, match="not under analysis_dir"):
-        delete_regenerable_figures(analysis_dir, elsewhere / "plots")
+        select_regenerable_figures(analysis_dir, elsewhere / "plots")
 
-    assert authored.exists(), "the guard must refuse before walking, not after deleting"
+    # Belt-and-braces under S1 rather than the discriminating clause: the selector
+    # deletes nothing, so this holds however the guard behaves. The RAISE above is
+    # what discriminates, and it is what fails if the precondition is ever removed.
+    assert authored.exists()
 
 
-def test_delete_regenerable_figures_spares_a_path_whose_key_is_uncomputable(tmp_path):
+def test_select_regenerable_figures_spares_a_path_whose_key_is_uncomputable(tmp_path):
     """The residual branch: a symlink under root resolving outside analysis_dir.
 
     The precondition cannot see this -- root IS under analysis_dir -- so the per-path
     guard is what keeps the guarantee available. It spares rather than raising, so a
     half-finished sweep is never left indeterminate.
     """
-    from hhemt.utils import delete_regenerable_figures
+    from hhemt.utils import select_regenerable_figures
 
     analysis_dir = tmp_path / "a"
     outside = tmp_path / "outside"
@@ -665,10 +668,13 @@ def test_delete_regenerable_figures_spares_a_path_whose_key_is_uncomputable(tmp_
     pipeline = analysis_dir / "plots" / "cost_error.html"
     pipeline.write_text("pipeline")
 
-    delete_regenerable_figures(analysis_dir, analysis_dir / "plots")
+    targets = select_regenerable_figures(analysis_dir, analysis_dir / "plots")
 
-    assert external.exists(), "a path whose registry key is uncomputable must be spared"
-    assert not pipeline.exists(), "an ordinary regenerable figure must still be deleted"
+    # Under S1 the subject is SELECTION, not deletion: the walk yields the LINK's own
+    # path, never its target, so a file outside the analysis dir can never enter the
+    # target list that `delete_and_account` is handed.
+    assert external not in targets, "a path outside the analysis dir must never be selected"
+    assert pipeline in targets, "an ordinary regenerable figure must still be selected"
 
 
 def test_figure_deletion_under_plots_is_pinned_to_the_shared_helper():
@@ -753,6 +759,6 @@ def test_figure_deletion_under_plots_is_pinned_to_the_shared_helper():
                     ):
                         offenders.append(f"{py.relative_to(src)}:{node.lineno}")
     assert sorted(set(offenders)) == [], (
-        "figure deletion under plots/ must route through utils.delete_regenerable_figures; "
+        "figure deletion under plots/ must route through utils.select_regenerable_figures; "
         f"these walk a plots dir and delete inside it: {sorted(set(offenders))}"
     )

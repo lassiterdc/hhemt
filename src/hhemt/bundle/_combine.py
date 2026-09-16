@@ -225,6 +225,7 @@ def _emit_combined_bundle(
     for eid, root in zip(experiment_ids, roots, strict=True):
         dest = crates_dir / eid
         if dest.exists():
+            # EXEMPT-DU: bundle-root
             shutil.rmtree(dest)
         shutil.copytree(root, dest)
         child_crates.append(f"{_CHILD_CRATES_SUBDIR}/{eid}")
@@ -651,7 +652,6 @@ def _rerender_child_report_figures(bundle_root: Path) -> None:
     import importlib
 
     from hhemt.config.analysis import analysis_config
-    from hhemt.config.loaders import yaml_to_model
 
     crates = bundle_root / _CHILD_CRATES_SUBDIR
     if not crates.exists():
@@ -661,7 +661,19 @@ def _rerender_child_report_figures(bundle_root: Path) -> None:
         if not cfg_path.exists():
             continue
         try:
-            cfg_analysis = yaml_to_model(cfg_path, analysis_config)
+            # report_config is itself a cfgBaseModel, so the armed "*" existence
+            # validator DOES run on it; it is safe ONLY because report_config carries
+            # ZERO Path fields TODAY. analysis_config.brand_theme shows that shape is
+            # already live one model over, so ADDING a Path field to report_config
+            # invalidates this reasoning at that moment.
+            # SILENT-FAILURE WARNING: this load sits inside its OWN try whose except is
+            # the very next statement, so a raising reader skips the CHILD WHOLESALE and
+            # never reaches the per-renderer except-continue further down. Either way the
+            # STALE HARVESTED figure survives and every gate stays green. Verify by
+            # asserting the re-render HAPPENED, never by the suite staying green.
+            from hhemt.bundle._path_policy import load_bundle_config
+
+            cfg_analysis = load_bundle_config(cfg_path, analysis_config, child)
         except Exception:
             continue
         ctx = _ChildReportRenderContext(analysis_dir=child, cfg_analysis=cfg_analysis)

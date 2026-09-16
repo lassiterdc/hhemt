@@ -1,3 +1,5 @@
+import re
+
 # Re-exports from version_migration.constants so the CI Check A
 # (Phase 4 scripts/check_layout_version.py) can grep without importing.
 from hhemt.version_migration.constants import (  # noqa: F401
@@ -182,3 +184,60 @@ def member_inputs_fingerprint_flag(member_id: str) -> str:
     """Per-member input fingerprint file used as an mtime-trigger sentinel for per-member rules."""
     _validate_id_fragment("member_id", member_id)
     return f"{STATUS_DIR_NAME}/member-{member_id}_inputs.json"
+
+
+# ============================================================================
+# Flag-name GRAMMAR, READ in exactly one place.
+#
+# The builders above MINT `_status/` flag names; this is their inverse, and it is the
+# only place in the tree that PARSES a model type out of a flag name. Two shapes are
+# minted, and both carry the model in the same position:
+#
+#   plain analysis:        c_run_{model}_evt-{event_id}_complete.flag
+#   sensitivity member:    c_run_{model}_member-{member_id}_evt-{event_id}_complete.flag
+#   (and the same two shapes under the d_process_ family)
+#
+# The DELIMITERS carry the parse, not the id charsets: `_member-` and `_evt-` are
+# literal, and the model group is `[a-z]+` terminated by `_` (the three model types are
+# `triton`, `tritonswmm`, `swmm`). The member_id charset `^[A-Za-z0-9_.]+$` IS enforced,
+# but at CSV/XLSX load by sensitivity_analysis._retrieve_df_setup, NOT by
+# _validate_id_fragment above (which forbids only `/`, `\`, `.flag` and whitespace), so
+# a builder can be handed a `-`-bearing id; and the event slug from
+# scenario.compute_event_id_slug is unconstrained (it joins raw weather-indexer values).
+# The id and slug groups are therefore PERMISSIVE. A previous inline parser split on
+# `_evt-` alone and read `tritonswmm_member-0` as the model of every member-shaped flag,
+# so no sensitivity member's c_run_/d_process_ flag was ever deletable by a force.
+# ============================================================================
+
+#: The flag families whose names carry a model segment. e_consolidate_* /
+#: f_consolidate_experiment / a_setup / *_inputs.json carry none.
+_MODEL_BEARING_FLAG_PREFIXES: tuple[str, ...] = ("c_run_", "d_process_")
+
+FLAG_NAME_WITH_MODEL_RE = re.compile(r"^(?:c_run|d_process)_(?P<model>[a-z]+)_(?:member-.+?_)?evt-.+_complete\.flag$")
+
+
+def model_type_from_flag_name(name: str) -> str | None:
+    """Return the model type a `_status/` flag BASENAME was minted for.
+
+    Inverse of `sim_run_flag_per_member` / `process_timeseries_flag_per_member` and of
+    the plain-shape `c_run_{model}_evt-…` / `d_process_{model}_evt-…` names the multisim
+    generator emits. Basename only — the builders return `_status/…` paths, callers pass
+    `Path.name`; a path component is a caller bug and is refused loudly.
+
+    Returns None ONLY when `name` does not start with a model-bearing family prefix (the
+    consolidate / setup / fingerprint families carry no model segment). Raises ValueError
+    when `name` starts with `c_run_` / `d_process_` and does not fit the grammar, so a
+    consumer deciding whether to DELETE the flag can never fail open on a model-bearing
+    name it could not attribute.
+    """
+    if "/" in name:
+        raise AssertionError(f"model_type_from_flag_name takes a basename, got a path: {name!r}")
+    m = FLAG_NAME_WITH_MODEL_RE.match(name)
+    if m:
+        return m.group("model")
+    if name.startswith(_MODEL_BEARING_FLAG_PREFIXES):
+        raise ValueError(
+            f"flag name {name!r} starts with a model-bearing family prefix but does not fit "
+            f"the flag-name grammar {FLAG_NAME_WITH_MODEL_RE.pattern!r}"
+        )
+    return None

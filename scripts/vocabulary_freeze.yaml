@@ -146,6 +146,30 @@ frozen:
       - subanalyses
       - sa_22
 
+  src/hhemt/version_migration/versions/V0022__promote_producer_written_experiment_tree.py:
+    reason: >-
+      Identifies RETIRED-form member groups by prefix, to refuse a promotion that would
+      regress the V0019 vocabulary. `_member_group_prefixes` tests
+      `child.name.startswith(prefix)` against `_RETIRED_MEMBER_PREFIX`, and
+      `_vocabulary_inverted` is the module's only decidable refusal trigger, so sweeping the
+      literal would silently disarm the gate rather than break it: the predicate would return
+      False on every tree, `upgrade` would fall through to the positional promotion, and the
+      measured demotion this migration exists to prevent would come back with the checker
+      green.
+      THE PINNED TOKEN IS THE ASSIGNMENT, NOT THE BARE WORD, and that choice is the whole
+      point of this entry. The `sa_*` occurrences that triggered the undeclared-file check are
+      BOTH PROSE -- a `#:` constant comment and a docstring sentence -- and pinning `sa_*`
+      would freeze those two comments while leaving the executable `"sa_"` unprotected. That
+      is exactly the defeat this manifest documents for V0007, arriving through a remedy
+      rather than through a sweep, so the token below carries its code syntax per the
+      file-header rule. The prose occurrences are deliberately NOT pinned: they should stay
+      free to be reworded.
+      NOT the same shape as the V0001 entry, which is correctly prose-only because that
+      migration's tokens are in a docstring describing an on-disk shape it reads. This module
+      EXECUTES its retired token.
+    tokens:
+      - '_RETIRED_MEMBER_PREFIX = "sa_"'
+
 # Fixture trees. A vN fixture is a RECORD of what a vN tree looked like, so renaming
 # a directory inside one makes the vN-1 -> vN golden pair assert a shape that never
 # existed. Checked as directory existence rather than substring.

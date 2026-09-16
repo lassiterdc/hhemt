@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import os
 import sys as _sys
+import time
 from pathlib import Path
 
 # Initialize GDAL (rasterio/rioxarray) BEFORE the synthetic-model chain pulls in swmm.toolkit
@@ -58,13 +59,17 @@ if str(_REPO_ROOT) not in _sys.path:
 # every row container-mode. ONE matrix -> ONE bundle -> 3 SIFs (Option A / ADR-19 amended).
 _MATRIX = _REPO_ROOT / "tests/fixtures/doi_emitter_and_ingestion_verification/matrix_cross_hardware.csv"
 
-# The 3 per-arch build recipes carried in the bundle. Each .def self-describes its arch via
-# %labels org.hhemt.gpu_hardware (a100 / a6000 / none-for-CPU); from_doi builds one SIF each.
-_CONTAINER_DEFS = [
-    _REPO_ROOT / "containers/uva-cuda.def",  # a100  / AMPERE80
-    _REPO_ROOT / "containers/uva-cuda-a6000.def",  # a6000 / AMPERE86
-    _REPO_ROOT / "containers/uva-cpu.def",  # CPU   / no gpu_hardware label
-]
+# The sif_build_config the producer AND the reproducer build with (sif_root, build partition,
+# resources, toolkit_root). Both stages resolve it from the environment so the run edits ZERO
+# git-tracked files; the runbook (__main__ below) exports it. One config -> one build host.
+_SIF_BUILD_CONFIG = Path(
+    os.environ.get("HHEMT_Q8_SIF_BUILD_CONFIG", f"/scratch/{os.environ.get('USER', 'user')}/q8_sif_build.yaml")
+)
+# The 8-row matrix resolves to exactly 3 identities (openmpi-cpu, openmpi-cuda/a100,
+# openmpi-cuda/a6000); `hhemt build-sifs --dry-run` prints the table this count must match.
+_N_IDENTITIES = 3
+# Set by verify() at stage start; _assert_sif_builds counts manifests written after it.
+_VERIFY_STARTED: float = 0.0
 
 # In-tree anonymized COPY-ME template — the operator reconstructs the real config in the
 # estate from this (never the live config; the run edits ZERO git-tracked files).
@@ -85,23 +90,6 @@ _PRODUCER_SIF_DIR = Path(
         f"/scratch/{os.environ.get('USER', 'user')}/q8_producer_sifs",
     )
 )
-
-
-def _def_gpu_hardware(def_path: Path) -> str | None:
-    """The .def's `org.hhemt.gpu_hardware` label value ("a100"/"a6000"), or None for the
-    CPU/no-arch carrier. Mirrors bundle/_emit.py::_parse_def_labels + the target_arch
-    derivation (_emit.py:869) so the producer's sif_paths_by_arch keys ("a100"/"a6000")
-    match the gpu_hardware namespace resolve_gpu_target[0] returns at the SIM rung."""
-    in_labels = False
-    for line in Path(def_path).read_text().splitlines():
-        if line.startswith("%"):
-            in_labels = line.strip().split()[0] == "%labels"
-            continue
-        if in_labels and line.strip().startswith("org.hhemt.gpu_hardware"):
-            parts = line.split()
-            if len(parts) >= 2:
-                return parts[1]
-    return None
 
 
 def _resolve_hpc_system_config(override: str | None = None) -> Path:
@@ -209,106 +197,73 @@ def provision_producer_sifs(
     *,
     hpc_system_config_yaml: str | None = None,
 ) -> Path:
-    """PRODUCER-side per-arch SIF provisioning (ADR-19). Batch-build all 3 bundle .defs into
-    the dedicated _PRODUCER_SIF_DIR, then write a DERIVED hpc_system_config whose
-    container.sif_paths_by_arch maps each GPU arch ("a100"/"a6000") to its SIF and
-    container.sif_path names the CPU SIF. Returns the derived config path.
+    """PRODUCER-side SIF provisioning (ADR-21). Run `hhemt build-sifs` IN THE FOREGROUND for the
+    Q8 experiment definition so every identity the 8-row matrix needs lands under
+    `sif_build.sif_root` with its `.manifest.json`, then write a DERIVED hpc_system_config whose
+    `container.sif_root` names that root. Returns the derived config path.
 
-    Mirror of experiments._repoint_sif_paths (the reproducer analog). REQUIRED because the
-    SIM rung (run_simulation.py:417-418) resolves each row's arch via
-    resolve_gpu_target(cfg, partition)[0] and looks the SIF up in sif_paths_by_arch, falling
-    back to sif_path for CPU rows — so without this every row would resolve to the single
-    sif_path (an a100 SIF), running an AMPERE80 binary on a6000 devices and a GPU SIF on CPU
-    nodes. All 3 are rebuilt FRESH from the bundle's OWN .defs (never the pre-existing UCX
-    SIF, FQ3) so the producer validates the exact recipes the reproducer builds. The SIFs
-    live in _PRODUCER_SIF_DIR (absolute), NEVER in sif_cache_root(), so from_doi cannot
-    cache-hit them (FQ2).
+    Nothing here names an image: the SIM and PROCESS rungs resolve each row's image by
+    IDENTITY (hhemt.sif.identity.resolve_sif) from the partition's PartitionSpec + the running
+    checkout, so a wrong-arch fall-through is impossible by construction (preflight refuses an
+    absent or mislabelled image). The build host is _SIF_BUILD_CONFIG.sif_root, dedicated and
+    outside the reproducer's root, so from_doi cannot cache-hit the producer's images (FQ2).
     """
-    from hhemt.container_build import build_sif
+    import subprocess
+
+    from hhemt.config.loaders import yaml_to_model
+    from hhemt.config.sif_build import sif_build_config
     from hhemt.utils import read_yaml, write_yaml
 
     cfg_path = _resolve_hpc_system_config(hpc_system_config_yaml)
     _hpc = read_yaml(cfg_path) or {}
     account = _hpc.get("default_account")
-    apptainer_module = (_hpc.get("container") or {}).get("apptainer_module")
     if (not account) or ("{your-" in str(account)):
         raise ValueError(
             f"{cfg_path}: default_account is unset or a placeholder ({account!r}); the SIF "
-            f"build sbatch needs a real UVA allocation."
+            f"build jobs need a real UVA allocation."
         )
-    _PRODUCER_SIF_DIR.mkdir(parents=True, exist_ok=True)
-
-    # PARITY FIX (container-specialist q8b, 2026-07-17): build from the SAME clean git-archive
-    # staging + %files rewrite the reproducer's from_doi uses, NOT the live 2.0 GB worktree.
-    # `%files ../` over the live worktree dereferences (apptainer `cp -fLr`) and FATALs on the
-    # first dangling symlink among the untracked build artifacts (test_data/norfolk_coastal_
-    # flooding/triton/build*/input, tests/*/sims/*/build*; job 17069925), and also drags in
-    # .venv/.git/caches. `git archive HEAD` is exactly the tracked set (0 tracked symlinks,
-    # .venv gitignored), so this eliminates the whole class AND makes the producer validate the
-    # EXACT build context the reproducer builds -- this function's stated contract. Reuses the
-    # emit path's own tested helpers (bundle/_emit.py).
-    from hhemt.bundle._emit import (
-        SOURCE_TREE_RELPATH,
-        _carry_source_tree,
-        _rewrite_files_section,
-    )
-
-    _build_ctx = _PRODUCER_SIF_DIR / "_build_ctx"
-    _build_ctx.mkdir(parents=True, exist_ok=True)
-    _carry_source_tree(_build_ctx)  # git archive HEAD -> {_build_ctx}/hhemt_src (clean tree)
-
-    sif_paths_by_arch: dict[str, str] = {}
-    cpu_sif: Path | None = None
-    for container_def in _CONTAINER_DEFS:
-        # Land the rewritten .def beside the staged source so `cd {def.parent}` + the rewritten
-        # `%files hhemt_src` resolve to the clean tree (mirrors _emit_container_build).
-        staged_def = _build_ctx / container_def.name
-        staged_def.write_text(_rewrite_files_section(container_def.read_text(), SOURCE_TREE_RELPATH))
-        built = build_sif(
-            def_path=staged_def,
-            sif_out=_PRODUCER_SIF_DIR / f"{container_def.stem}.sif",
-            account=account,
-            apptainer_module=apptainer_module,
-            mode="batch",  # every bundle .def compiles in %post -> CPU-batch, never login-node
+    if not _SIF_BUILD_CONFIG.is_file():
+        raise FileNotFoundError(
+            f"{_SIF_BUILD_CONFIG}: no sif_build_config; export HHEMT_Q8_SIF_BUILD_CONFIG (see __main__)."
         )
-        arch = _def_gpu_hardware(container_def)  # labels unchanged by the %files rewrite
-        if arch:
-            sif_paths_by_arch[arch] = str(built.resolve())
-        else:
-            cpu_sif = built.resolve()
-
-    # OE-1: the producer has NO arch-coverage preflight (unlike from_doi's
-    # _assert_container_arch_set_covers_matrix). Assert coverage HERE so a missing arch is a
-    # loud failure, not a silent SIM-rung fall-through to the wrong-arch sif_path.
-    import csv as _csv
-
-    with open(_MATRIX) as _f:
-        _parts = {r["hpc.partition"] for r in _csv.DictReader(_f)}
-    _gpu_arch_by_partition = {"gpu": "a100", "gpu-a6000": "a6000"}  # standard -> CPU (sif_path)
-    _need = {_gpu_arch_by_partition[p] for p in _parts if p in _gpu_arch_by_partition}
-    _missing = _need - set(sif_paths_by_arch)
-    if _missing:
+    sb = yaml_to_model(_SIF_BUILD_CONFIG, sif_build_config)
+    # The producer's experiment definition: the tracked case (build_case) materialises the
+    # system/analysis configs; hand them to the ONE verb as a raw triplet. --foreground keeps
+    # the DAG in this shell because emit_bundle_only must not proceed until every image exists.
+    tc = build_case(hpc_system_config_yaml=str(cfg_path), start_from_scratch=False)
+    argv = [
+        "hhemt",
+        "build-sifs",
+        "--build-hpc-config",
+        str(cfg_path),
+        "--sif-build-config",
+        str(_SIF_BUILD_CONFIG),
+        "--system-config",
+        str(tc.system_config_yaml),
+        "--analysis-config",
+        str(tc.analysis_config_yaml),
+        "--target-hpc-config",
+        str(cfg_path),
+        "--foreground",
+    ]
+    print(f"[provision] {' '.join(argv)}", flush=True)
+    rc = subprocess.run(argv).returncode
+    if rc != 0:
+        raise RuntimeError(f"hhemt build-sifs exited {rc}; see {sb.sif_root}/_build/ for the DAG log")
+    manifests = sorted(Path(sb.sif_root).glob("*/*.manifest.json"))
+    if len(manifests) < _N_IDENTITIES:
         raise RuntimeError(
-            f"producer SIF provisioning incomplete: matrix needs GPU arch(es) {sorted(_missing)} "
-            f"but only built {sorted(sif_paths_by_arch)}. A missing arch would silently run the "
-            f"wrong-arch sif_path at the SIM rung."
-        )
-    if cpu_sif is None:
-        raise RuntimeError(
-            "no CPU/no-arch .def among _CONTAINER_DEFS -> cannot set container.sif_path for the "
-            "CPU rows / arch-agnostic process rung."
+            f"producer SIF provisioning incomplete: expected >= {_N_IDENTITIES} identity manifests "
+            f"under {sb.sif_root}, found {len(manifests)}: {[m.name for m in manifests]}"
         )
 
     container = dict(_hpc.get("container") or {})
-    container["sif_path"] = str(cpu_sif)  # CPU rows + arch-agnostic process rung
-    container["sif_paths_by_arch"] = sif_paths_by_arch  # {a100: ..., a6000: ...}
+    container["sif_root"] = str(sb.sif_root)  # every identity resolves under it (ADR-21)
     _hpc["container"] = container
-    derived = _PRODUCER_SIF_DIR / "hpc_system_config.producer.yaml"
+    derived = Path(sb.sif_root) / "hpc_system_config.producer.yaml"
     write_yaml(_hpc, derived)
     print(
-        f"[provision] built {len(_CONTAINER_DEFS)} producer SIFs in {_PRODUCER_SIF_DIR}\n"
-        f"[provision]   sif_paths_by_arch -> {sorted(sif_paths_by_arch)}; "
-        f"sif_path -> {cpu_sif.name}\n"
+        f"[provision] {len(manifests)} identity manifest(s) under {sb.sif_root}\n"
         f"[provision]   derived config: {derived} "
         f"(your source config {cfg_path} is unmodified)",
         flush=True,
@@ -335,8 +290,8 @@ def emit_bundle_only(
     """
     from hhemt.bundle import emit_bundle
 
-    # FQ1/FQ3 (R9): build the 3 per-arch SIFs (fresh, from the bundle's own .defs) and get a
-    # DERIVED producer config carrying sif_paths_by_arch + the CPU sif_path. MUST precede
+    # FQ1/FQ3 (R9): build every identity the matrix needs (hhemt build-sifs, foreground) and get a
+    # DERIVED producer config carrying container.sif_root. MUST precede
     # run() (OE-3: emit_bundle harvests a fully-green run's render sidecars). The estate
     # config is never edited; the derived config is what the run consumes.
     producer_cfg = provision_producer_sifs(hpc_system_config_yaml=hpc_system_config_yaml)
@@ -357,7 +312,6 @@ def emit_bundle_only(
     bundle_zip = emit_bundle(
         tc.analysis,
         exclude_config=Path(exclude_config).expanduser() if exclude_config else None,
-        container_defs=list(_CONTAINER_DEFS),
     )
     print(f"bundle_zip={bundle_zip}")
     return str(bundle_zip)
@@ -422,22 +376,26 @@ def verify(
     ``target_dir``/``software_dir`` MUST live OUTSIDE any bundle_root (from_doi rmtree's
     bundle_root on ingest).
     """
-    from hhemt.container_build import sif_cache_root
-    from hhemt.experiments import TRITON_SWMM_experiment
+    from hhemt.utils import read_yaml
 
     cfg_path = _resolve_hpc_system_config(hpc_system_config_yaml)
+    global _VERIFY_STARTED
+    _VERIFY_STARTED = time.time()
 
-    # FQ2 false-green guard (R9): from_doi must GENUINELY BUILD all 3 SIFs on ingest, not
-    # cache-hit the producer's. The reproducer cache MUST be a fresh dir (set HHEMT_SIF_CACHE_DIR
-    # before this stage; the runbook points it at an empty q8_reproducer_sif_cache). Assert it
-    # starts empty of built SIFs, so a hit here is a FAIL rather than a silent false-green.
-    _cache = sif_cache_root()
-    _pre = sorted(_cache.glob("hhemt-*.sif")) if _cache.is_dir() else []
+    # FQ2 false-green guard (R9): from_doi must GENUINELY place-or-rebuild every carried identity
+    # under the REPRODUCER's sif_root, never resolve the producer's. The reproducer root is
+    # `container.sif_root` of the reproducer config (or {software_dir}/sifs when unset, mirroring
+    # experiments.from_doi); it MUST start empty of identity manifests so a hit is a FAIL.
+    _repro_root = Path(
+        ((read_yaml(cfg_path) or {}).get("container") or {}).get("sif_root")
+        or (Path(software_dir).expanduser() / "sifs" if software_dir else Path("."))
+    ).resolve()
+    _pre = sorted(_repro_root.glob("*/*.manifest.json")) if _repro_root.is_dir() else []
     if _pre:
         raise RuntimeError(
-            f"FALSE-GREEN GUARD: reproducer SIF cache {_cache} already holds {len(_pre)} built "
-            f"SIF(s) {[p.name for p in _pre]} pre-ingest. Point HHEMT_SIF_CACHE_DIR at a FRESH "
-            f"dir so from_doi builds on ingest instead of cache-hitting."
+            f"FALSE-GREEN GUARD: reproducer sif_root {_repro_root} already holds {len(_pre)} identity "
+            f"manifest(s) {[p.name for p in _pre]} pre-ingest. Point container.sif_root at a FRESH "
+            f"dir so from_doi places/rebuilds on ingest instead of resolving pre-existing images."
         )
 
     # defect-8: from_doi extracts bundle_root UNDER target_dir, and a container-mode ingest
@@ -450,25 +408,28 @@ def verify(
         target_dir = os.environ.get("HHEMT_Q8_INGEST_DIR") or (
             f"/scratch/{os.environ.get('USER', 'user')}/q8_doi/q8_ingest"
         )
+    from hhemt.experiments import TRITON_SWMM_experiment
+
     exp = TRITON_SWMM_experiment.from_doi(
         doi=doi,
         host="zenodo",
         hpc_system_config_yaml=cfg_path,
         target_dir=Path(target_dir).expanduser() if target_dir else None,
         software_dir=Path(software_dir).expanduser() if software_dir else None,
+        sif_build_config_yaml=_SIF_BUILD_CONFIG,
     )
 
-    # FQ2 (R9): prove the build-on-ingest actually happened (3 fresh content-addressed SIFs).
-    _post = sorted(_cache.glob("hhemt-*.sif"))
+    # FQ2 (R9): prove the place-or-rebuild actually happened (one identity manifest per image).
+    _post = sorted(_repro_root.glob("*/*.manifest.json"))
     print(
-        f"[verify] build-on-ingest: {len(_post)} SIF(s) freshly built in {_cache}: {[p.name for p in _post]}",
+        f"[verify] build-on-ingest: {len(_post)} identity manifest(s) under {_repro_root}: {[p.name for p in _post]}",
         flush=True,
     )
-    if len(_post) < 3:
+    if len(_post) < _N_IDENTITIES:
         raise RuntimeError(
-            f"FALSE-GREEN GUARD: expected >=3 freshly-built SIFs in {_cache} after from_doi, "
-            f"found {len(_post)}. Inspect the ingest log for 3 `[build-sif] cache MISS ... "
-            f"-> building` lines and 3 COMPLETED `hhemt_sif_build` jobs in sacct."
+            f"FALSE-GREEN GUARD: expected >={_N_IDENTITIES} identity manifests under {_repro_root} "
+            f"after from_doi, found {len(_post)}. Inspect the ingest log for the place-or-rebuild "
+            f"lines and the build DAG log under {_repro_root}/_build/."
         )
     result = exp.analysis.test(execution_mode="slurm", wait_for_job_completion=True, verbose=True)
     ok = _adjudicate_per_arch_pass(exp, result)
@@ -563,37 +524,19 @@ def _compare_group_against_reference(analysis, ref_sim_dir: Path) -> tuple[list,
     return problems, n_cmp, n_signal
 
 
-def _assert_sif_builds(expected: int = 3, since: str = "now-1day") -> bool:
-    """REQ-2: N=3 hhemt_sif_build jobs COMPLETED (container_build.py:197 names the sbatch job).
-    COLD-CACHE assertion: get_or_build_sif is content-addressed (container_build.py:101-107),
-    so a WARM sif cache skips builds and this reports fewer than `expected` — run [Q8] with a
-    fresh sif_cache_root. Returns True iff >= expected COMPLETED and 0 FAILED (or sacct absent)."""
-    import subprocess
-
-    try:
-        out = subprocess.run(
-            ["sacct", "--name", "hhemt_sif_build", "--starttime", since, "--noheader", "-P", "-o", "JobID,State"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        ).stdout
-    except Exception as exc:  # noqa: BLE001 — sacct unavailable is non-fatal for REQ-2
-        print(f"  REQ-2: sacct unavailable ({exc}); skipping the {expected}-build assertion.")
-        return True
-    states = [
-        ln.split("|")[-1].strip()
-        for ln in out.splitlines()
-        if ln.strip() and not ln.split("|")[0].endswith((".batch", ".extern"))
-    ]
-    completed = sum(1 for s in states if s.startswith("COMPLETED"))
-    failed = sum(1 for s in states if s.startswith(("FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL")))
+def _assert_sif_builds(expected: int = 3) -> bool:
+    """REQ-2: `expected` identities were PLACED-OR-REBUILT on ingest — one `.manifest.json` per
+    identity under the reproducer's sif_root, each written AFTER _VERIFY_STARTED. The build DAG's
+    SLURM jobs carry the executor's run-UUID JobName, so sacct cannot be keyed by name; the
+    manifest sidecar (written only by a successful hhemt.sif.transaction) is the artifact."""
+    root = Path(os.environ.get("HHEMT_Q8_REPRODUCER_SIF_ROOT") or ".").resolve()
+    manifests = sorted(root.glob("*/*.manifest.json")) if root.is_dir() else []
+    fresh = [m for m in manifests if m.stat().st_mtime >= _VERIFY_STARTED]
     print(
-        f"  REQ-2: hhemt_sif_build -> {completed} COMPLETED, {failed} failed "
-        f"since {since} (expect >= {expected} COMPLETED on a COLD cache; a warm "
-        f"sif_cache_root skips builds). The window matters: without --starttime, a PRIOR "
-        f"cycle's builds satisfy this run's threshold."
+        f"  REQ-2: {len(fresh)} identity manifest(s) written under {root} since the verify stage "
+        f"started (expect >= {expected}); {len(manifests)} present in total."
     )
-    return failed == 0 and completed >= expected
+    return len(fresh) >= expected
 
 
 def _adjudicate_per_arch_pass(exp, result) -> bool:
@@ -651,8 +594,8 @@ def _adjudicate_per_arch_pass(exp, result) -> bool:
                     f"({n_cmp} comparisons, {n_signal} with signal)"
                 )
 
-    # REQ-2: the 3 per-arch SIFs were built on ingest (cold-cache).
-    if not _assert_sif_builds(expected=len(_CONTAINER_DEFS)):
+    # REQ-2: the 3 identities were placed-or-rebuilt on ingest (fresh reproducer sif_root).
+    if not _assert_sif_builds(expected=_N_IDENTITIES):
         all_ok = False
     return all_ok
 

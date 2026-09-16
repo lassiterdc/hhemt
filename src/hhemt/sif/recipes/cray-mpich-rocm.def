@@ -1,0 +1,224 @@
+# =============================================================================
+# hhemt Frontier-ROCm production SIF (component C1; ADR-1/2/3/4).
+#
+# Productionized from the validated probe.def (Frontier job 4898044) + the
+# in-SIF TRITON-SWMM build (Kokkos-HIP, gfx90a/MI250X) + Change-B runtime
+# hardening. Build OFF-SITE where root/`--fakeroot` exists, `apptainer sign`,
+# then transfer the signed SIF to $MEMBERWORK and reference it by DOI+SHA-256
+# (never embed). See containers/README.md for the build -> sign -> transfer
+# recipe and the pin-capture procedure.
+#
+# Pin contract (ADR-2 pinned/signed/DOI-referenced; ADR-4 within-family
+# identity). The signed, fetched SIF's SHA-256 is the identity carrier -- a
+# byte-identical SquashFS rebuild is foreclosed (ADR-4); these pins make a
+# REBUILD functionally equivalent (same package set -> same triton.exe
+# behavior). The <PLACEHOLDER> tokens below are values produced BY the off-site
+# build and recorded at build time (base digest, MPICH sha256, the pinned
+# TRITON git URL + commit SHA, the conda lockfile). Every %post/%environment/
+# %labels structural decision is fully specified here.
+# =============================================================================
+
+Bootstrap: docker
+# ADR-2 base-digest pin (glibc 2.39 >= Frontier host 2.38 floor; ROCm major==6
+# host-major HEURISTIC -- the validation probe rung is the falsifiability check).
+# Capture the digest off-site:  docker buildx imagetools inspect \
+#   rocm/dev-ubuntu-24.04:6.4.3-complete   (or read it from the apptainer build log).
+# Digest-ONLY form (repo@sha256) of rocm/dev-ubuntu-24.04:6.4.3-complete, captured 2026-09-11
+# via the Docker Hub v2 manifest API; the tag is retained here in prose for legibility.
+From: rocm/dev-ubuntu-24.04@sha256:8dcd5c10e095ff8ef20c7eb0fcf8f5a4f0df905a67ee7aa1ea8cdeda91aa35ba
+
+%files
+    # The hhemt source tree (uv sync --frozen for the in-container process runner,
+    # FB2: the process_{model} rules run `apptainer exec {sif} python -m hhemt.{runner}`).
+    # Deps come from the COMMITTED uv.lock inside this tree (the project's real lockfile)
+    # -- NOT a conda explicit lockfile, which is unsatisfiable (hhemt is uv/pyproject-
+    # packaged, no environment.yml/conda-lock). Mirrors uva-cuda.def.
+    hhemt_src  /opt/hhemt-src
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    # Rootless `--fakeroot` on a host with NO /etc/subuid range for the building user runs in a
+    # SINGLE-UID root-mapped namespace; apt's Acquire sandbox then drops privilege to `_apt`
+    # (uid 42), which is not in that map -> `E: Failed to setgroups (Operation not permitted)`
+    # and apt exits 100. Running apt as the mapped root avoids the drop, and is HARMLESS when
+    # subuid IS provisioned. This recipe builds off-site under --fakeroot (see header), so the
+    # host's subuid provisioning is not knowable here -- hence the unconditional drop-in.
+    # Empirically confirmed on Rivanna; see
+    # knowledge/container/apptainer_rivanna_rootless_build_blocked_by_missing_subuid.md.
+    printf 'APT::Sandbox::User "root";\n' > /etc/apt/apt.conf.d/00rootless-nosandbox
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        git cmake build-essential gfortran wget ca-certificates libnuma-dev python3
+
+    # --- (1) MPICH 3.4.3 ch4:ofi -- the ABI line OLCF documents as compatible
+    #     with the host cray-mpich-abi module. --disable-wrapper-rpath is
+    #     Change-B: stop mpicxx baking -Wl,-rpath,/opt/mpich/lib into triton.exe
+    #     so the runtime APPTAINERENV host Cray-MPICH bind wins (ADR-3).
+    cd /tmp
+    wget -q https://www.mpich.org/static/downloads/3.4.3/mpich-3.4.3.tar.gz
+    # Verify the pinned source hash (pin contract item 3):
+    echo "8154d89f3051903181018166678018155f4c2b6f04a9bb6fe9515656452c4fd7  mpich-3.4.3.tar.gz" | sha256sum -c - || \
+        echo "WARNING: MPICH sha256 unverified -- set the pin for the production build"
+    tar xf mpich-3.4.3.tar.gz && cd mpich-3.4.3
+    ./configure --prefix=/opt/mpich --with-device=ch4:ofi --disable-fortran \
+        --disable-wrapper-rpath FFLAGS=-fallow-argument-mismatch
+    make -j"$(nproc)" && make install
+    cd /tmp && rm -rf mpich-3.4.3 mpich-3.4.3.tar.gz
+
+    # --- (2) hhemt Python runtime via uv from the COMMITTED uv.lock (NO re-solve;
+    #     hhemt is uv/pyproject-packaged -- no conda-lock). The conda libstdcxx-ng pin
+    #     is MOOT inside the SIF (triton.exe links the container gcc-13 libstdc++, one
+    #     coherent toolchain -- M-7 dissolution), so uv sync --frozen (URL+hash pinned
+    #     from uv.lock) preserves the ADR-2 reproducibility contract. Mirrors uva-cuda.def.
+    wget -qO /tmp/uv-installer.sh https://astral.sh/uv/0.11.7/install.sh
+    sh /tmp/uv-installer.sh && rm /tmp/uv-installer.sh
+    export PATH=/root/.local/bin:${PATH}
+    # `%files ../ /opt/hhemt-src` copies the build-context repo verbatim, INCLUDING any
+    # host `.venv` whose python references host-only libs (libpython3.x.so absent in the
+    # container) -> `uv sync` would query that broken interpreter and die (exit 127).
+    # Remove it so uv builds a clean container-native venv from uv.lock.
+    cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
+    # The staged tree is a `git archive` of the identity's hhemt_sha (see %files), which NEVER
+    # carries `.git`, so this strip is inert today; it stays as a guard against a `%files ../`
+    # regression (a clone's `.git` holds every author e-mail and every committed secret, and
+    # `scripts/check_anonymization.py` enumerates a WORKING TREE, never image contents).
+    # The in-image toolkit identity is NOT git: it is `/opt/hhemt-src/HHEMT_SHA` (written by
+    # git's export-subst at archive time, asserted below in %post) plus the
+    # `org.hhemt.hhemt_sha` / `org.hhemt.identity` labels, read at run time by
+    # `hhemt.validation.running_identity` (the image rule: labels present -> the file is the
+    # sha, the label must agree, a `.git` under the root is refused). Removed AFTER
+    # `uv sync` so the install path is unaffected regardless.
+    rm -rf /opt/hhemt-src/.git
+    # THIRD PRUNE -- see containers/uva-cpu.def for the measured rationale and the 16 G / 1.74 GB
+    # packed-vs-unpacked reconciliation. Kept identical across all four recipes deliberately.
+    rm -rf /opt/hhemt-src/test_data
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
+
+    # --- (3) TRITON-SWMM at a PINNED COMMIT (not the moving TRITONSWMM_branch_key
+    #     -- OE-3, ADR-4 bit-identity carrier). `git submodule --recursive` pins
+    #     Kokkos + the bundled SWMM transitively AND is the first correctness
+    #     check (a non-recursive clone leaves external/kokkos absent).
+    git clone {{ TRITON_URL }} /opt/triton
+    cd /opt/triton && git checkout {{ TRITON_SHA }} \
+        && git submodule update --init --recursive
+    mkdir -p build && cd build
+    # machine.cmake FORCE-sets CXX=mpic++ even under IGNORE_MACHINE_FILES; make
+    # that wrapper BE hipcc so Kokkos-HIP gets its HIP compiler AND TRITON's MPI
+    # links resolve in one wrapper (the in-SIF analogue of system.py's CUDA
+    # branch passing -DCMAKE_CXX_COMPILER=$MPICXX).
+    export MPICH_CXX=hipcc
+    # The three HIP flags system.py's current native HIP branch OMITS (OE-1):
+    #   -DKokkos_ARCH_AMD_GFX90A=ON, -DTRITON_BACKEND=HIP, and TRITON_HIP_LAUNCHER
+    #   (the hand-launched __launch_bounds__(256) path, architecture Gotcha 17).
+    # -DTRITON_SWMM_FLOODING_DEBUG=ON matches system.py:795 for byte-parity
+    #   (OE-5; double precision is the load-bearing default -- do NOT pass
+    #   -DUSE_SINGLE_PRECISION, it would flip MPI_DATA_TYPE / break BIT4BIT).
+    # libstdc++ reconciliation RETIRED (Q3 INVARIANT, M-7 dissolution): NO
+    #   -L${CONDA_PREFIX}/lib -l:libstdc++.so.6 fragment -- one coherent
+    #   container toolchain (container gcc-13 <-> matched libstdc++).
+    cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON \
+          -DTRITON_IGNORE_MACHINE_FILES=ON \
+          -DTRITON_BACKEND=HIP \
+          -DKokkos_ENABLE_HIP=ON -D{{ KOKKOS_ARCH }}=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DCMAKE_CXX_COMPILER=/opt/mpich/bin/mpicxx -DCMAKE_C_COMPILER=/opt/mpich/bin/mpicc \
+          -DCMAKE_CXX_FLAGS='-O3 -DTRITON_HIP_LAUNCHER' \
+          -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
+          /opt/triton
+    make -j"$(nproc)"
+    test -x /opt/triton/build/triton.exe   # fail the build if the coupled exe is absent
+
+    # --- SECOND build: TRITON-ONLY (SWMM coupling COMPILED OUT).
+    # The `triton` model type is a DISTINCT BINARY, not a runtime mode: the SWMM
+    # init sits behind a compile-time `#ifdef TRITON_SWMM` (triton/src/triton.h:426)
+    # and calls read_inp_file(inp_filename) UNCONDITIONALLY, with no empty-string
+    # guard (triton/src/swmm_triton.h:139,146-153). A SWMM=ON binary therefore
+    # ALWAYS opens inp_filename, while the standalone cfg legitimately omits it, so
+    # the coupled exe dies for model_type=triton with `[ERROR] Error reading file: `.
+    # Natively this is ALREADY a separate build (build_triton_cpu/, no swmm5 target).
+    # Flags identical to the coupled build except the SWMM pair and the build dir.
+    mkdir -p /opt/triton/build_triton_only && cd /opt/triton/build_triton_only
+    cmake -DTRITON_ENABLE_SWMM=OFF \
+          -DTRITON_IGNORE_MACHINE_FILES=ON \
+          -DTRITON_BACKEND=HIP \
+          -DKokkos_ENABLE_HIP=ON -D{{ KOKKOS_ARCH }}=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DCMAKE_CXX_COMPILER=/opt/mpich/bin/mpicxx -DCMAKE_C_COMPILER=/opt/mpich/bin/mpicc \
+          -DCMAKE_CXX_FLAGS='-O3 -DTRITON_HIP_LAUNCHER' \
+          -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
+          /opt/triton
+    make -j"$(nproc)"
+    test -x /opt/triton/build_triton_only/triton.exe   # fail if the TRITON-only exe is absent
+
+    # --- (4) Standalone SWMM v5.2.4 (runswmm) for the `swmm` model type.
+    #     Built like system.py: cmake the SWMM source, make -> runswmm.
+    git clone --branch {{ SWMM_TAG }} --depth 1 \
+        https://github.com/USEPA/Stormwater-Management-Model.git /opt/swmm-src
+    mkdir -p /opt/swmm-src/build && cd /opt/swmm-src/build
+    cmake .. -DCMAKE_BUILD_TYPE=Release && make -j"$(nproc)"
+
+    # --- (5) Install the binaries to the convention path the example profiles'
+    #     ContainerSpec.exe_in_sif points at (/opt/hhemt/bin) + pip install -e
+    #     the toolkit (the in-container process runner).
+    mkdir -p /opt/hhemt/bin
+    cp /opt/triton/build/triton.exe /opt/hhemt/bin/triton.exe
+    # The `triton` (TRITON-only) model type needs the SWMM-DISABLED build.
+    cp /opt/triton/build_triton_only/triton.exe /opt/hhemt/bin/triton_only.exe
+    cp "$(find /opt/swmm-src/build -maxdepth 3 -type f -name runswmm -o -name swmm5 | head -1)" \
+        /opt/hhemt/bin/runswmm
+    chmod +x /opt/hhemt/bin/triton.exe /opt/hhemt/bin/runswmm
+    # The hhemt toolkit is already installed editable into /opt/hhemt-src/.venv by
+    # `uv sync --frozen` in (2) -- no separate pip install (conda env retired).
+
+    # ---- GPU-TARGET ASSERT ([Q315] 9(a)): a {{ GFX }} code object must be present ----
+    roc-obj-ls /opt/hhemt/bin/triton.exe | grep -q "{{ GFX }}" || { echo "FATAL: no {{ GFX }} code object in triton.exe"; roc-obj-ls /opt/hhemt/bin/triton.exe; exit 1; }
+    roc-obj-ls /opt/hhemt/bin/triton_only.exe | grep -q "{{ GFX }}" || { echo "FATAL: no {{ GFX }} code object in triton_only.exe"; exit 1; }
+
+    # ---- MEASURED LABELS: what LANDED, never what was intended ([Q315] 10(ii)) ----
+    _measured_triton="$(git -C /opt/triton rev-parse HEAD)"
+    [ "$_measured_triton" = "{{ TRITON_SHA }}" ] || { echo "FATAL: TRITON at $_measured_triton, requested {{ TRITON_SHA }}"; exit 1; }
+    _landed_hhemt="$(cat /opt/hhemt-src/HHEMT_SHA)"
+    case "$_landed_hhemt" in *Format*) echo "FATAL: HHEMT_SHA not substituted: the staged tree was not produced by git archive"; exit 1;; esac
+    [ "$_landed_hhemt" = "{{ HHEMT_SHA }}" ] || { echo "FATAL: staged hhemt is $_landed_hhemt, requested {{ HHEMT_SHA }}"; exit 1; }
+    _swmm_coupled="$(sed -n 's/.*VERSION \([0-9][0-9.]*\).*/\1/p' /opt/triton/external/swmm/CMakeLists.txt | head -1)"
+    _swmm_standalone="$(git -C /opt/swmm-src describe --tags --exact-match HEAD)"
+    _mpi="$(/opt/mpich/bin/mpichversion | head -1)"
+    _hhemt_version="$(/opt/hhemt-src/.venv/bin/python -c 'from importlib.metadata import version; print(version("hhemt"))')"
+    {
+      echo "org.hhemt.triton_sha $_measured_triton"
+      echo "org.hhemt.hhemt_sha $_landed_hhemt"
+      echo "org.hhemt.version $_hhemt_version"
+      echo "org.hhemt.swmm_coupled_version $_swmm_coupled"
+      echo "org.hhemt.swmm_standalone_version $_swmm_standalone"
+      echo "org.hhemt.mpi $_mpi"
+    } >> "$APPTAINER_LABELS"
+
+%environment
+    export MPI_ROOT=/opt/mpich
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/hhemt/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
+    # Change-B (runtime MPI-shadow hardening): /opt/mpich/lib is DELIBERATELY
+    # ABSENT from LD_LIBRARY_PATH so no in-container path can shadow the host
+    # Cray libmpi.so.12 bound via APPTAINERENV_LD_LIBRARY_PATH (ADR-3). Keep
+    # MPI_ROOT for standalone/build use; the runtime MPI LD path comes from the
+    # host-env segment the runner emits (run_simulation.py container_host_env_str).
+    export LD_LIBRARY_PATH=/opt/rocm/lib:${LD_LIBRARY_PATH:-}
+
+%labels
+    # Read by process_timeseries_runner's container-toolkit guard via
+    # /.singularity.d/labels.json: the rung refuses to process when the imported
+    # `hhemt` resolves outside this root. Must match the `%files ../ <dest>` target.
+    org.hhemt.toolkit_root /opt/hhemt-src
+    org.hhemt.identity {{ LBL_IDENTITY }}
+    org.hhemt.family {{ LBL_FAMILY }}
+    org.hhemt.accel {{ LBL_ACCEL }}
+    org.hhemt.gpu_hardware {{ LBL_GPU_HARDWARE }}
+    org.hhemt.gpu_arch {{ LBL_GPU_ARCH }}
+    org.hhemt.gpu_compilation_backend {{ LBL_GPU_BACKEND }}
+    org.hhemt.triton_url {{ TRITON_URL }}
+    org.hhemt.base_digest {{ BASE_REF }}
+    org.hhemt.recipe_sha256 {{ LBL_RECIPE_SHA256 }}
+    org.hhemt.rocm        6.4.3-complete
+    org.hhemt.mpich       3.4.3-ch4ofi
+    org.hhemt.gcc         13.x
+
+%runscript
+    exec "$@"

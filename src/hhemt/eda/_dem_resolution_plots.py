@@ -332,7 +332,10 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     # sits one level up as system_config.yaml (the master root carries no cfg_system.yaml,
     # so load_eda_context does not apply here). [DRAFT: EPSG-source is a /design-figure
     # confirm point -- see the figure-family EPSG note.]
-    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config)
+    # `metadata`: this reads ONE scalar (crs.horizontal_epsg) off a live analysis tree's
+    # config. Its declared inputs may have been reclaimed since the campaign, and none of
+    # them is needed to render a figure from the consolidated tree.
+    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
     epsg = cfg_system.crs.horizontal_epsg
 
     dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
@@ -583,7 +586,8 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
 
     # horizontal_epsg for the kernel's Guard-1 CRS fill (same source as fig-1;
     # [DRAFT: EPSG-source is a /design-figure confirm point]).
-    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config)
+    # `metadata` -- see the sibling call in the cost/error figure for the reason.
+    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
     epsg = cfg_system.crs.horizontal_epsg
 
     dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
@@ -1119,7 +1123,8 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
     # horizontal_epsg for the regrid kernel's Guard-1 CRS fill. Canonical source is
     # cfg_system.crs.horizontal_epsg; at a sensitivity-MASTER root the system config sits
     # one level up as system_config.yaml (the master root carries no cfg_system.yaml).
-    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config)
+    # `metadata` -- see the sibling call in the cost/error figure for the reason.
+    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
     epsg = cfg_system.crs.horizontal_epsg
 
     dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
@@ -1360,7 +1365,8 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
     from hhemt.eda._config_diff import _apply_mask, _watershed_mask, _watershed_polygon
     from hhemt.eda._dem_resolution import regrid_to_fine
 
-    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config)
+    # `metadata` -- see the sibling call in the cost/error figure for the reason.
+    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
     epsg = cfg_system.crs.horizontal_epsg
 
     dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)

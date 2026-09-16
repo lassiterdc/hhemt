@@ -17,8 +17,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHECKER_PATH = REPO_ROOT / "scripts" / "check_du_sentinel_sites.py"
 
-_RESTAMP_IMPORT = "from hhemt.du_sentinels import restamp_parent_sentinels\n"
-
 
 def _load_checker():
     spec = importlib.util.spec_from_file_location("_du_checker_vocab", CHECKER_PATH)
@@ -56,19 +54,6 @@ def test_raw_shutil_rmtree_is_flagged() -> None:
     assert "RAW_RMTREE_UNMAINTAINED" in _rules_for("import shutil\ndef f(p):\n    shutil.rmtree(p)\n")
 
 
-def test_rmtree_with_adjacent_restamp_is_clean() -> None:
-    """INVARIANT across the change: a compliant site must not be flagged. This is
-    what catches an over-widening that starts claiming correct code."""
-    assert (
-        _rules_for(
-            "import shutil\n"
-            + _RESTAMP_IMPORT
-            + "def f(p, ad):\n    shutil.rmtree(p)\n    restamp_parent_sentinels(p, analysis_dir=ad)\n"
-        )
-        == set()
-    )
-
-
 def test_str_replace_is_not_claimed() -> None:
     """INVARIANT. os.replace is in the vocabulary; str.replace shares its attribute
     name and occurs 112 times in src/hhemt. This fails if qualified-name resolution
@@ -82,27 +67,40 @@ def test_from_import_rmtree_resolves_qualified() -> None:
     assert "RAW_RMTREE_UNMAINTAINED" in _rules_for("from shutil import rmtree\ndef f(p):\n    rmtree(p)\n")
 
 
-def test_from_import_rmtree_with_restamp_is_clean() -> None:
-    """The compliant from-import site. A census-only closure would flag this, which
-    is why the alias-map form is the correct one."""
-    assert (
-        _rules_for(
-            "from shutil import rmtree\n"
-            + _RESTAMP_IMPORT
-            + "def f(p, ad):\n    rmtree(p)\n    restamp_parent_sentinels(p, analysis_dir=ad)\n"
-        )
-        == set()
-    )
-
-
 def test_attribute_move_on_a_plain_object_is_not_claimed() -> None:
     """INVARIANT. `move` is a common method name; only shutil.move is in scope."""
     assert _rules_for("def f(o):\n    o.move(1, 2)\n") == set()
 
 
 def test_unlink_pattern_b_baseline_is_unchanged() -> None:
-    """REGRESSION GUARD. The .unlink branch keeps MUTATION_SITE_MISSING_RESTAMP, which
-    is NOT warn-listed; this fails if the new rule id is ever collapsed back into it."""
+    """REGRESSION GUARD. The .unlink branch emits DELETION_NOT_ROUTED_THROUGH_TOOL, which
+    is NOT warn-listed; this fails if the route rule is ever downgraded to warn-tier."""
     checker = _load_checker()
-    assert "MUTATION_SITE_MISSING_RESTAMP" not in checker.WARN_ONLY_RULES
-    assert "MUTATION_SITE_MISSING_RESTAMP" in _rules_for("def f(p):\n    p.unlink()\n")
+    assert "DELETION_NOT_ROUTED_THROUGH_TOOL" not in checker.WARN_ONLY_RULES
+    assert "DELETION_NOT_ROUTED_THROUGH_TOOL" in _rules_for("def f(p):\n    p.unlink()\n")
+
+
+def test_direct_fast_rmtree_with_analysis_dir_kwarg_is_a_violation() -> None:
+    """Clause 9: the route-based predicate rejects a direct fast_rmtree even WITH the old
+    analysis_dir= keyword (the retired presence test passed it)."""
+    rules = _rules_for("from hhemt.utils import fast_rmtree\ndef f(p, root):\n    fast_rmtree(p, analysis_dir=root)\n")
+    assert rules == {"DELETION_NOT_ROUTED_THROUGH_TOOL"}
+
+
+def test_rmtree_with_adjacent_restamp_is_no_longer_clean() -> None:
+    """Clause 9: PATTERN B no longer exists; an un-annotated raw rmtree is WARN-tier regardless
+    of what follows it."""
+    assert _rules_for(
+        "import shutil\ndef f(p, ad):\n    shutil.rmtree(p)\n    restamp_parent_sentinels(p, analysis_dir=ad)\n"
+    ) == {"RAW_RMTREE_UNMAINTAINED"}
+
+
+def test_deletion_routed_through_tool_is_clean() -> None:
+    """The compliant site under the route predicate."""
+    assert (
+        _rules_for(
+            "from hhemt.du_sentinels import delete_and_account\n"
+            'def f(p, sd):\n    delete_and_account([p], scope_dir=sd, scope="scenario")\n'
+        )
+        == set()
+    )

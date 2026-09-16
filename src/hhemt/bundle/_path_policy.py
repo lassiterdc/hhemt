@@ -265,3 +265,61 @@ def enumerate_path_fields(cfg_model: type) -> list[str]:
         if args and Path in args:
             names.append(name)
     return names
+
+
+def rebase_bundle_relative_paths(cfg_dict: dict, cfg_model: type, bundle_root: Path) -> dict:
+    """Return a copy of `cfg_dict` with every non-absolute Path-field value resolved
+    against `bundle_root`.
+
+    THE SINGLE REBASE IMPLEMENTATION. A bundle's stored `cfg_system.yaml` /
+    `cfg_analysis.yaml` are ARCHIVE records whose Path fields were rewritten to
+    `external/{filename}` (BUNDLE_RELATIVE) or `"."` (FORCED_DOT) at emit time, and those
+    resolve only against the bundle root, which a config loader is not given. Every
+    consumer that validates one of those files through a runnable-config model rebases
+    here rather than inline.
+
+    This module imports nothing from `hhemt`, so it is importable from `config/`,
+    `bundle/` and `eda/` without a cycle; `cfg_model` is a parameter for that reason.
+    """
+    out = dict(cfg_dict)
+    for name in set(enumerate_path_fields(cfg_model)):
+        value = out.get(name)
+        if value is None:
+            continue
+        if isinstance(value, list):
+            out[name] = [str((bundle_root / v).resolve()) if not Path(v).is_absolute() else v for v in value]
+            continue
+        if isinstance(value, str) and not Path(value).is_absolute():
+            out[name] = str((bundle_root / value).resolve())
+    return out
+
+
+def load_bundle_config(cfg_path: Path, cfg_model: type, bundle_root: Path):
+    """Read a bundle's archived config YAML, rebase its Path fields, and validate.
+
+    The one-line substitution for `yaml_to_model(cfg_path, cfg_model)` at every site that
+    reads a BUNDLE archive rather than a runnable config. Keeps the MODEL, because the
+    render path consumes real submodels (`report`, `eda`, `brand_theme`).
+    """
+    import yaml
+
+    return cfg_model.model_validate(
+        rebase_bundle_relative_paths(
+            yaml.safe_load(Path(cfg_path).read_text()), cfg_model, Path(bundle_root).resolve()
+        ),
+        # A bundle's archived cfg is an ARCHIVE RECORD. This function validates the
+        # record's SHAPE; whether the bundle carries the files the record declares is a
+        # separate question with a separate, per-caller answer, and it is deliberately not
+        # asked here:
+        #   - load_eda_context and _combine.py read scalars only and require nothing on
+        #     disk (_combine's own note at :666 records zero Path fields in its read set);
+        #   - Bundle.from_directory is a construction step, and the one field its
+        #     regenerate_report path OPENS -- brand_theme -- is checked explicitly there,
+        #     by _assert_render_inputs_present, where the requirement actually lives;
+        #   - the DOI/run path's answer is experiments.py::_assert_declared_inputs_exist,
+        #     which fetches via contentUrl, sha256-verifies, and reports citation +
+        #     place-it-at on failure.
+        # Do not add an earlier, weaker refusal here: it preempts that last one and says
+        # less than any of the three.
+        context={"existence": "metadata"},
+    )

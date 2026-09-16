@@ -28,6 +28,7 @@ import pytest
 
 from hhemt import orchestrator_sentinels as osent
 from hhemt.provenance import store_build_mismatch
+from hhemt.utils import resolve_experiment_tree
 from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV, WorkflowError
 
 pytestmark = [pytest.mark.requires_snakemake_subprocess]
@@ -56,7 +57,7 @@ def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sens
     reprocess(consolidate) PRESERVES the master datatree zarr (mtime unchanged —
     no rebuild, no DU restamp) and re-fires the report."""
     member = synthetic_sensitivity_completed_isolated
-    mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
+    mdt = resolve_experiment_tree(member.experiment.analysis_paths.analysis_dir)
     assert mdt.exists(), "fixture should have materialized sensitivity_datatree.zarr"
     mtime_target = _zarr_mtime_target(mdt)
     mtime0 = mtime_target.stat().st_mtime
@@ -79,7 +80,7 @@ def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(syn
     """Phase 2 regenerate_existing=True: sensitivity master reprocess(consolidate)
     deletes and rebuilds the master datatree zarr (mtime advances)."""
     member = synthetic_sensitivity_completed_isolated
-    mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
+    mdt = resolve_experiment_tree(member.experiment.analysis_paths.analysis_dir)
     assert mdt.exists(), "fixture precondition: master zarr present"
     # DROP-WITNESS PRECONDITION. This test asserts an mtime ADVANCE, which is only
     # evidence about regenerate_existing=True while the consolidation build gate is
@@ -229,7 +230,7 @@ def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensiti
     from hhemt.du_sentinels import compute_and_write_scope_sentinel
 
     member = synthetic_sensitivity_completed_isolated
-    master_zarr = member.analysis_paths.sensitivity_datatree_zarr
+    master_zarr = resolve_experiment_tree(member.analysis_paths.analysis_dir)
     assert master_zarr is not None and master_zarr.exists(), "fixture precondition: master zarr present"
     sub_zarrs = [
         s.analysis_paths.analysis_datatree_zarr
@@ -271,7 +272,7 @@ def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed_isol
     mtime advances and ``result["success"]`` is True.
     """
     member = synthetic_sensitivity_completed_isolated
-    mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
+    mdt = resolve_experiment_tree(member.experiment.analysis_paths.analysis_dir)
     assert mdt.exists(), "fixture precondition: master sensitivity_datatree.zarr present"
     # DROP-WITNESS PRECONDITION -- see the identical guard in
     # test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr for why
@@ -362,7 +363,7 @@ def test_reprocess_conditional_emit_over_partial_state(synth_partial_state_analy
     assert result["success"], (
         f"conditional-emit reprocess over partial state must succeed; got {result.get('message')!r}"
     )
-    mdt = member.experiment.analysis_paths.sensitivity_datatree_zarr
+    mdt = resolve_experiment_tree(member.experiment.analysis_paths.analysis_dir)
     assert mdt.exists(), "master sensitivity_datatree.zarr must be rebuilt after partial-state reprocess"
 
 

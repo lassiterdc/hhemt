@@ -97,7 +97,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "invalidating-fix registry": (
         "Invalidating-fix registry",
-        "No calculation-invalidating fix in the registry applies to the toolkit build " "that produced this analysis.",
+        "No calculation-invalidating fix in the registry applies to the toolkit build that produced this analysis.",
     ),
     "resume validity": (
         "Resume validity",
@@ -111,7 +111,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "Resume schedule honored": (
         "Resume schedule",
-        "Every resumed sim's realized resume count and boundary match the schedule its " "configuration requested.",
+        "Every resumed sim's realized resume count and boundary match the schedule its configuration requested.",
     ),
     "EDA calc ran": (
         "EDA calculation",
@@ -216,7 +216,7 @@ def _render_overall_banner(report: ValidationReport) -> str:
         # to the single omission caption `render()` emits once (item 7's "one economical
         # omission caption"), so it is stated in exactly one place on the page.
         cls = "pass" if not n_qualified else "info"
-        return f'<div class="banner {cls}">✓ {n_passed} of {len(applicable)} applicable ' "checks passed.</div>"
+        return f'<div class="banner {cls}">✓ {n_passed} of {len(applicable)} applicable checks passed.</div>'
     n_failed = len(applicable) - n_passed
     return (
         f'<div class="banner fail">✗ {n_failed} of {len(applicable)} applicable '

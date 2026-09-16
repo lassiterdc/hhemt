@@ -30,12 +30,25 @@ def _build_tree(root: Path) -> None:
     status = root / "_status"
     status.mkdir()
     (status / "_du.json").write_bytes(b"{}")  # excluded by the _status filter
+    # Clause-6 discriminator: a `_status` BELOW a normal child, not only at the
+    # scope root. Without it the walker-agreement assertion in
+    # test_walk_root_bytes_parity is falsified by mutating _walk_root_bytes but
+    # NOT _walk_root_and_breakdown, whose skip_status_top already excludes a root
+    # `_status`. With it, both mutations falsify. Same discriminator S9a added to
+    # the parity-oracle fixture.
+    deep_status = root / "a" / "_status"
+    deep_status.mkdir()
+    (deep_status / "deep.flag").write_bytes(b"\x00" * 7)
 
 
 def _reference_walk(root: Path) -> tuple[int, dict[str, int], int]:
     total = 0
     per_child: dict[str, int] = {}
-    for dirpath, _dirs, files in os.walk(root):
+    for dirpath, dirs, files in os.walk(root):
+        # Clause 6: `_status` is excluded at ANY depth, matching
+        # _walk_root_and_breakdown's skip_status_any_depth. EXACT equality — a
+        # `startswith` prune would also drop `_status_old/`, which production counts.
+        dirs[:] = [d for d in dirs if d != "_status"]
         for name in files:
             p = Path(dirpath) / name
             rel = p.relative_to(root)
@@ -79,10 +92,20 @@ def test_walk_issues_no_realpath(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 
 def _reference_bytes(root: Path) -> tuple[int, int]:
-    """Independent os.walk reference for _walk_root_bytes: counts ALL files
-    (NO _status skip), recursing into real dirs only (matching rglob)."""
+    """Independent os.walk reference for _walk_root_bytes: counts every file
+    EXCEPT those under a `_status` directory at any depth (clause 6), recursing
+    into real dirs only (matching rglob).
+
+    The prune predicate is EXACT equality. `d.startswith("_status")` is WRONG and
+    is corroborated by the wrong instrument: on a tree with `_status_old/f.bin`
+    (17 B) + `_status/_du.json` (2 B) + `keep.bin` (3 B), production and this
+    reference both read 20, a startswith prune reads 3 -- and
+    _walk_root_and_breakdown also reads 3, because it applies a startswith rule at
+    the TOP level for its own separate reason.
+    """
     total = 0
-    for dirpath, _dirs, files in os.walk(root):
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d != "_status"]
         for name in files:
             total += (Path(dirpath) / name).stat().st_size
     return total, 0
@@ -90,20 +113,23 @@ def _reference_bytes(root: Path) -> tuple[int, int]:
 
 def test_walk_root_bytes_parity(tmp_path: Path) -> None:
     """_walk_root_bytes (os.scandir rewrite) is bit-identical to an independent
-    os.walk reference, and — unlike _walk_root_and_breakdown — does NOT skip
-    `_status` children."""
+    os.walk reference implementing clause 6: `_status` directories are excluded at
+    ANY depth, so the two production walkers agree on this fixture."""
     root = tmp_path / "scope"
     _build_tree(root)
     total, walk_errors = du_sentinels._walk_root_bytes(root)
     ref_total, ref_errors = _reference_bytes(root)
     assert total == ref_total
     assert walk_errors == ref_errors == 0
-    # The _status/_du.json byte is counted by _walk_root_bytes (no skip) but
-    # excluded by _walk_root_and_breakdown (skip). The difference is exactly the
-    # _status subtree's bytes, which proves the skip_status_top asymmetry holds.
+    # Clause 6 collapsed the old skip_status_top asymmetry: BOTH walkers exclude
+    # every `_status` directory at any depth, so they agree on this fixture. The
+    # fixture carries a `_status` at the root AND one under `a/`, which is what
+    # makes this a property with content rather than a constant -- it is falsified
+    # by removing skip_status_any_depth from EITHER helper (measured on the
+    # repaired module: 361 vs 352 for _walk_root_bytes, 352 vs 359 for
+    # _walk_root_and_breakdown).
     bd_total, _breakdown, _bd_errors = du_sentinels._walk_root_and_breakdown(root)
-    status_bytes = (root / "_status" / "_du.json").stat().st_size
-    assert total - bd_total == status_bytes
+    assert total == bd_total
 
 
 def test_walk_root_bytes_file_root(tmp_path: Path) -> None:

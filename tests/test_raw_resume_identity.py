@@ -307,9 +307,9 @@ def test_b4b_family_key_collapses_every_gpu_hardware_to_one_family():
     assert _b4b_family_key(a6000) == "gpu"
     assert _b4b_family_key(a100) == "gpu"
     # The property that matters is that they are the SAME family, not the token's spelling.
-    assert _b4b_family_key(a6000) == _b4b_family_key(
-        a100
-    ), "two GPU hardwares in different families -> cross-hardware divergence is unfalsifiable"
+    assert _b4b_family_key(a6000) == _b4b_family_key(a100), (
+        "two GPU hardwares in different families -> cross-hardware divergence is unfalsifiable"
+    )
 
 
 def test_b4b_family_key_keeps_cpu_separate_from_gpu():

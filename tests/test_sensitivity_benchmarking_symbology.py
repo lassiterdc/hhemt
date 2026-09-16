@@ -263,12 +263,12 @@ def test_colour_and_symbol_are_locked_one_to_one_on_the_built_figure():
     pairs = {p for v in pairs_by_key.values() for p in v}
     symbols = {s for s, _c in pairs}
     colours = {c for _s, c in pairs}
-    assert len(symbols) == len(
-        pairs
-    ), f"a symbol is drawn in more than one colour, so the lock is broken: {sorted(pairs)}"
-    assert len(colours) == len(
-        pairs
-    ), f"a colour is drawn with more than one symbol, so the lock is broken: {sorted(pairs)}"
+    assert len(symbols) == len(pairs), (
+        f"a symbol is drawn in more than one colour, so the lock is broken: {sorted(pairs)}"
+    )
+    assert len(colours) == len(pairs), (
+        f"a colour is drawn with more than one symbol, so the lock is broken: {sorted(pairs)}"
+    )
 
 
 def test_marker_colour_equals_line_colour_for_every_connected_series():
@@ -400,9 +400,9 @@ def test_both_hollow_spellings_parse_in_their_own_renderer():
 
     from hhemt.report_renderers.sensitivity_benchmarking import _HOLLOW_FILL, _HOLLOW_FILL_MPL
 
-    assert (
-        mcolors.to_rgba(_HOLLOW_FILL_MPL)[3] == 0.0
-    ), f"_HOLLOW_FILL_MPL={_HOLLOW_FILL_MPL!r} is not a transparent matplotlib colour"
+    assert mcolors.to_rgba(_HOLLOW_FILL_MPL)[3] == 0.0, (
+        f"_HOLLOW_FILL_MPL={_HOLLOW_FILL_MPL!r} is not a transparent matplotlib colour"
+    )
     with pytest.raises(ValueError):
         mcolors.to_rgba(_HOLLOW_FILL)
     assert _HOLLOW_FILL.startswith("rgba("), (
@@ -531,9 +531,9 @@ def test_labelled_ticks_are_a_subset_of_plotted_positions():
     """
     fig = build_figure()
     violations, checked = tick_violations(fig)
-    assert (
-        checked > 0
-    ), "no panel declared a tick scheme, so this assertion checked nothing -- a vacuous pass, not a passing figure"
+    assert checked > 0, (
+        "no panel declared a tick scheme, so this assertion checked nothing -- a vacuous pass, not a passing figure"
+    )
     assert not violations, "axis ticks at positions no run occupies:\n  " + "\n  ".join(violations)
 
 

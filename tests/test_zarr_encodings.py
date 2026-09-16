@@ -3,8 +3,11 @@
 Verifies:
 - store_float32=True sets dtype float32 on float data-vars (and not on int/coord vars).
 - store_float32=False preserves float64 (no dtype override).
-- time_chunk sets the on-disk chunk size on the timestep_min axis; None preserves
-  first-write-extent chunking.
+- time_chunk sets the on-disk chunk size on the timestep_min axis; None declares no
+  chunks key at all, which leaves zarr's auto-chunker to size each store from its FULL
+  shape -- so a chapter's spatial grid becomes a function of its time extent. That is
+  the defect utils.resolve_chunk_grid exists to remove, and it is why the test below is
+  named for what it asserts rather than for a behaviour the None path does not have.
 - The dtype encoding is orthogonal to CF attributes: round-tripping float32 vs
   float64 yields identical long_name/standard_name/units/cell_methods (R6).
 """
@@ -53,7 +56,20 @@ def test_time_chunk_sets_timestep_axis_chunk():
     assert enc["wlevel"]["chunks"] == (2, 4, 5)
 
 
-def test_time_chunk_none_preserves_first_write_extent():
+def test_neither_chunk_grid_nor_time_chunk_declares_no_chunks_key():
+    """With neither time_chunk nor chunk_grid supplied the builder declares NO grid.
+
+    THE NAME IS THE ASSERTION AND THAT IS WHY IT CHANGED. This test asserted only that
+    no `chunks` key is emitted; its former name -- `..._preserves_first_write_extent` --
+    claimed the None path has a defined, safe behaviour, which it does not: with no
+    declared grid zarr's own auto-chunker sizes each store from its FULL shape, so a
+    chapter's spatial grid becomes a function of its TIME extent and the short final
+    chapter of a scenario receives a coarser grid than its siblings. That false claim
+    propagated verbatim into the `process_timestep_chunk` config docstring. A test name
+    is read as a specification by everyone who greps for coverage and is almost never
+    read against its body, which is what makes it the most durable carrier of a wrong
+    model in a codebase.
+    """
     ds = _make_ds()
     enc = return_dic_zarr_encodings(ds, time_chunk=None)
     assert "chunks" not in enc["wlevel"]

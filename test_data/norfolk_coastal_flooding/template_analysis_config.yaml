@@ -1,4 +1,5 @@
 analysis_id: 'single_sim' # analysis folder name; will be created if it doesn't exist
+hhemt_sha: REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT  # REQUIRED ([Q331]); every process refuses unless the running toolkit IS this commit
 weather_event_indices: ['year', 'event_type', 'event_id']
 weather_time_series_storm_tide_datavar: 'waterlevel_m'
 weather_time_series_timestep_dimension_name: 'timestep'

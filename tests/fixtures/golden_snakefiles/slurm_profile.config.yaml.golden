@@ -8,7 +8,7 @@ rerun-triggers:
 executor: slurm
 jobs: 16
 latency-wait: 60
-max-jobs-per-second: 5
+max-jobs-per-timespan: 5/1s
 max-status-checks-per-second: 10
 slurm-keep-successful-logs: true
 slurm-delete-logfiles-older-than: 0

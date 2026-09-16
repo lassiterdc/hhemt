@@ -22,6 +22,7 @@ from hhemt.version_migration.constants import (
     LOCK_TIMEOUT_SECONDS,
     VERSION_FILE_NAME,
 )
+from hhemt.version_migration.exceptions import LayoutVersionError, VersionFileUnreadableError
 
 
 @dataclass
@@ -85,11 +86,28 @@ def _lock_file(target_dir: Path) -> Path:
 
 
 def read_version_file(target_dir: Path) -> VersionState | None:
-    """Read _version.json from ``target_dir``; return None if missing."""
+    """Read _version.json from ``target_dir``; return None if MISSING, raise if UNREADABLE.
+
+    ABSENT AND MALFORMED ARE DIFFERENT ANSWERS AND THIS FUNCTION NO LONGER CONFLATES THEM.
+    A missing file is a legitimate state -- an unstamped tree -- and returns None so the
+    caller can decide. A file that EXISTS and does not parse is not a state, it is a broken
+    record, and it previously surfaced as a bare JSONDecodeError or KeyError raised from
+    whichever construction path happened to touch the tree first, naming neither the file
+    nor the tree. Every one of the six stamp call sites and the detection ladder's first rung
+    read through here without a guard, so the opaque raise could arrive from any of them.
+    """
     vf = _version_file(target_dir)
     if not vf.exists():
         return None
-    return VersionState.from_dict(json.loads(vf.read_text()))
+    try:
+        return VersionState.from_dict(json.loads(vf.read_text()))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise VersionFileUnreadableError(
+            f"{vf} exists but does not parse as a layout-version record ({type(exc).__name__}: "
+            f"{exc}). The tree's layout version is therefore unknown and no operation may "
+            f"assume it. Inspect the file; if it is unrecoverable, restate the tree's version "
+            f"explicitly with `python -m hhemt.version_migration baseline {target_dir} {{N}}`."
+        ) from exc
 
 
 def _unlocked_write_version_file(target_dir: Path, state: VersionState) -> None:
@@ -113,20 +131,92 @@ def write_version_file(target_dir: Path, state: VersionState) -> None:
         _unlocked_write_version_file(target_dir, state)
 
 
-def stamp_new_target(target_dir: Path, layout_version: int) -> VersionState:
-    """Stamp a fresh target at the given version. Idempotent.
+def stamp_new_target(target_dir: Path, layout_version: int, *, mode: str = "fresh") -> VersionState:
+    """Stamp a target that has no layout record. Idempotent on a matching record.
 
-    If _version.json exists with the same layout_version, no write occurs.
-    If it exists with a different layout_version, ``LayoutVersionError`` is
-    NOT raised here — that is the runner's job. This helper is purely for
-    new-target stamping wired into __init__.
+    THIS HELPER NO LONGER RELABELS AN EXISTING RECORD. Relabelling was DESTRUCTIVE
+    rather than merely silent: measured, a tree claiming 20 became 22 with zero
+    warnings, its `created_at` and `toolkit_version` overwritten and its
+    `migration_history` entry for V0020 deleted, so nothing survived from which the
+    prior claim could be recovered.
+
+    THREE CALLER INTENTS, which is why `mode` is not a boolean:
+
+    - "fresh" (default, the five execution sites): the caller expects a target with
+      no record. Refuse on a differing record, and refuse when the record is ABSENT
+      but the tree carries migratable content -- that second arm is the one a
+      two-valued `existing != layout_version` test cannot see, because an absent
+      record means either "being created now" (stamp) or "pre-existing, version
+      unknown" (refuse) and only CONTENT separates them.
+    - "construction": `TRITONSWMM_system.__init__` stamps eagerly and a constructor
+      may not raise on a pre-existing tree. Warn and LEAVE THE RECORD ALONE instead
+      of overwriting it, and stamp an absent record without consulting content.
+    - "established": `runner` has just derived the version from layout evidence, so
+      content is expected and must not refuse. Stamp it.
+
+    The content test is rung-PRESENCE, by path checks only: it opens no zarr store
+    and derives no version, ~0.02 ms against ~3.3 ms for the full ladder on a
+    datatree-bearing tree, and it reads only `target_dir` so no cross-tree read.
     """
+    if mode not in ("fresh", "construction", "established"):
+        raise ValueError(f"unknown stamp mode {mode!r}")
     existing = read_version_file(target_dir)
     if existing is not None and existing.layout_version == layout_version:
         return existing
+    if existing is not None:
+        if mode != "construction":
+            raise LayoutVersionError(
+                current=existing.layout_version,
+                target=layout_version,
+                reason=(
+                    f"refusing to relabel {_version_file(target_dir)} from "
+                    f"{existing.layout_version} to {layout_version}: the tree states its own "
+                    f"layout version and this helper only stamps targets that have none. "
+                    f"Migration is forward-only. If this tree is OLDER than the build, "
+                    f"migrate it with `python -m hhemt.version_migration migrate "
+                    f"{target_dir} --apply` (it dry-runs without --apply); if it is NEWER, "
+                    f"there is no downgrade -- use a toolkit matching the tree. To restate "
+                    f"the tree's own claim instead, `python -m hhemt.version_migration "
+                    f"baseline {target_dir} {layout_version} --force`"
+                ),
+            )
+        warnings.warn(
+            f"{_version_file(target_dir)} states layout_version {existing.layout_version} "
+            f"but this build is at {layout_version}; leaving the record as-is rather than "
+            f"relabelling it. Migrate the tree before relying on its layout.",
+            stacklevel=2,
+        )
+        return existing
+    if mode == "fresh" and _has_migratable_content(target_dir):
+        raise LayoutVersionError(
+            current=-1,
+            target=layout_version,
+            reason=(
+                f"refusing to stamp {_version_file(target_dir)} at {layout_version}: the tree "
+                f"carries migratable content but states no layout version, so its version is "
+                f"UNRECOGNIZED and assigning the current one would be a guess. Inspect it, "
+                f"then restate it with `baseline {target_dir} {{N}}`"
+            ),
+        )
     state = VersionState.fresh(layout_version, _toolkit_version())
     write_version_file(target_dir, state)
     return state
+
+
+def _has_migratable_content(target_dir: Path) -> bool:
+    """True when any detection-ladder rung's artifact is present at `target_dir`.
+
+    Rung PRESENCE, not rung VALUE: path checks only, no zarr open, no cross-tree
+    read. `any(target_dir.iterdir())` is NOT a substitute -- measured, it returns
+    True for every `system_directory`, which always carries DEM/Manning's/logs.
+    """
+    if _has_legacy_iloc_prefix(target_dir):
+        return True
+    if (target_dir / "experiment_datatree.zarr").exists():
+        return True
+    if (target_dir / "analysis_datatree.zarr").exists():
+        return True
+    return _has_flat_mode_zarrs(target_dir)
 
 
 def record_migration(
@@ -177,6 +267,24 @@ def infer_layout_version(target_dir: Path) -> int | None:
         return st.layout_version if st else None
     if _has_legacy_iloc_prefix(target_dir):
         return 0
+    # A nested per-member tier's version is not unknown: its master's record states it,
+    # and the two are written by the same run. PRECEDENCE IS THREE-TIER and this rung is
+    # the third tier, which is why it sits HERE and not higher: (1) the target's own
+    # record wins outright -- rung 1 above; (2) positive legacy-content evidence found in
+    # the target itself beats a stamp inherited from elsewhere -- the rung directly above,
+    # which is why this block sits BELOW it; (3) an inherited stamp beats a
+    # version-discriminating content heuristic, which is what makes a CF-1.13 member
+    # resolve to its master's version instead of refusing. Measured when this block was
+    # placed above the legacy rung: a member carrying iloc-prefixed sims under a master
+    # stamped 22 inferred 22 and planned ZERO of the 22 migrations its own contents prove
+    # are needed -- a total silent skip, the same failure the rung below records.
+    # The container names are inlined to match `_has_legacy_iloc_prefix` above, which
+    # already hardcodes the same pair.
+    tier = target_dir.parent
+    if tier.name in ("members", "subanalyses"):
+        master = read_version_file(tier.parent)
+        if master is not None:
+            return master.layout_version
     if (target_dir / "experiment_datatree.zarr").exists():
         # A store under the unified name is post-V0021 by construction, so the
         # flat-summary branch below must NOT claim it as layout 1. Measured: without
@@ -227,11 +335,20 @@ def _has_flat_mode_zarrs(target_dir: Path) -> bool:
     return any(target_dir.glob("*_summary.zarr")) or any(target_dir.glob("*_timeseries.zarr"))
 
 
-def _detect_zarr_layout_version(target_dir: Path) -> int:
+def _detect_zarr_layout_version(target_dir: Path) -> int | None:
     """Inspect analysis_datatree.zarr root attrs for layout_version hints.
 
     V0003 introduced the datatree (no Conventions attr); V0004 added
-    Conventions.
+    Conventions. That discriminator DECAYED at V0005: `apply_cf_attributes`
+    stamps CF-1.13 on every consolidated tree at every later layout, so the
+    attribute's presence establishes only a LOWER BOUND of "post-V0004" and
+    fixes no exact version. Reporting `4` from it schedules every migration
+    in (4, LAYOUT_VERSION] against a tree that may already be current.
+    Returning None mirrors the repair the unified-store rung above already
+    received, whose comment states the same lower-bound principle; the sole
+    consumer (`runner._resolve_current`) already raises BaselineRequiredError
+    on None, so the operator gets an actionable `baseline {N}` remedy.
+
 
     Refuses to silently default on a hard ambiguity: if the zarr store is
     unreadable (corruption, zarr library version mismatch, partial write),
@@ -260,5 +377,5 @@ def _detect_zarr_layout_version(target_dir: Path) -> int:
 
         raise BaselineRequiredError(target_dir) from exc
     if str(attrs.get("Conventions", "")).startswith("CF-1.13"):
-        return 4
+        return None
     return 3

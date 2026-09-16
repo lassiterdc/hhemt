@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from hhemt.exceptions import ProcessingError
 from hhemt.utils import (
     chapter_flag_for,
     chapter_store_for,
@@ -74,7 +75,7 @@ def test_merged_store_keeps_the_inherited_time_chunk_grid(tmp_path, specs, expec
     _write_chapters(chapters, specs)
     final = tmp_path / "tseries.zarr"
 
-    merge_chapters_to_unified(chapters, final)
+    merge_chapters_to_unified(chapters, final, scenario_dir=chapters.parent)
 
     assert unified_flag_for(final).exists(), "merge did not publish its completion flag"
     merged = xr.open_zarr(final, consolidated=False)
@@ -89,3 +90,49 @@ def test_merged_store_keeps_the_inherited_time_chunk_grid(tmp_path, specs, expec
         "the write succeeds and the store is a memory hazard, which is exactly the "
         "failure a success-only assertion cannot see"
     )
+
+
+def test_merge_refuses_a_spatially_divergent_chapter_set(tmp_path):
+    """A chapter set whose SPATIAL grids differ is refused, loudly, naming the divergence.
+
+    THE MODULE ABOVE CANNOT CONSTRUCT THIS STATE AND THAT IS WHY THIS CASE EXISTS.
+    `_write_chapters` declares `(time_chunk, ny, nx)` on every chapter, so the spatial
+    grid is uniform by construction and only the concat axis can diverge. The failure
+    that terminated a 3,798-event campaign was on the NON-concat axis: twelve chapters
+    at (17,135,138) and one short final chapter at (2,269,276), because nothing declared
+    a grid and zarr's auto-chunker balances bytes jointly across all three axes. A green
+    module named as this function's chunk-grid contract, structurally blind to the axis
+    that broke, is the falsified comment's scope boundary encoded a second time.
+    """
+    chapters = tmp_path / "tseries.zarr.chapters"
+    chapters.mkdir(parents=True, exist_ok=True)
+    ny, nx = 8, 10
+    first = 0
+    # Chapter 0 at the fine spatial grid; chapter 1 at a COARSER one, which is the
+    # measured production signature -- the short chapter is the coarser side.
+    for index, (n_t, grid) in enumerate([(12, (6, 4, 5)), (4, (6, 8, 10))]):
+        ds = xr.Dataset(
+            {"wlevel_m": (("timestep_min", "y", "x"), np.zeros((n_t, ny, nx), dtype="float32"))},
+            coords={
+                "timestep_min": np.arange(first, first + n_t),
+                "y": np.arange(ny),
+                "x": np.arange(nx),
+            },
+        )
+        ds["wlevel_m"].encoding["chunks"] = grid
+        store = chapter_store_for(chapters, index)
+        ds.to_zarr(store, mode="w", consolidated=False)
+        chapter_flag_for(chapters, index).write_text("ok", encoding="utf-8")
+        first += n_t
+
+    final = tmp_path / "tseries.zarr"
+    with pytest.raises(ProcessingError) as excinfo:
+        merge_chapters_to_unified(chapters, final, scenario_dir=chapters.parent)
+
+    # The MESSAGE is asserted, not merely the exception type. A refusal that does not
+    # name the divergence is the opaque dask-position ValueError this replaces.
+    assert "do not share one non-concat chunk grid" in str(excinfo.value)
+    assert "wlevel_m" in str(excinfo.value)
+    # And the store must NOT have been published. Spec 13 makes the publish atomic, so
+    # a refusal before it leaves nothing at the published path.
+    assert not final.exists(), "a refused merge published a store"

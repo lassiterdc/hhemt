@@ -70,7 +70,7 @@ def baseline(target_dir: Path, version: int, *, force: bool = False) -> RunResul
             reason="refusing to baseline over existing _version.json without --force",
         )
     if existing is None:
-        state.stamp_new_target(target_dir, version)
+        state.stamp_new_target(target_dir, version, mode="established")
     else:
         if version < existing.layout_version:
             # --force path: dropping below current resets history (semantic
@@ -155,7 +155,7 @@ def run_migration(
     # layout artifacts, stamp it before the first record_migration bumps it.
     # Dry-run path does not mutate disk.
     if apply and state.read_version_file(target_dir) is None:
-        state.stamp_new_target(target_dir, current)
+        state.stamp_new_target(target_dir, current, mode="established")
 
     applied: list[str] = []
     for m in plan_modules:

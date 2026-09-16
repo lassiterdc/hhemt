@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
 """CI check enforcing the DU-sentinel mutation-site restamp contract.
 
-Implements the MUTATION_SITE_MISSING_RESTAMP audit rule deferred by the
-stipulation `du sentinels written at every mutation site.md`. Pure-stdlib
+Implements the DELETION_NOT_ROUTED_THROUGH_TOOL audit rule (the route-based successor
+of the retired MUTATION_SITE_MISSING_RESTAMP / FAST_RMTREE_MISSING_ANALYSIS_DIR rules)
+under the stipulation `du sentinels written at every mutation site.md`. Pure-stdlib
 ast.NodeVisitor; mirrors scripts/check_layout_version.py. Full-corpus scan of
 src/hhemt/**/*.py (NOT git-diff-scoped). Exit 0 = clean, 1 = >=1
 failure.
 
 Rules:
-  FAST_RMTREE_MISSING_ANALYSIS_DIR  PATTERN A: fast_rmtree(...) lacks analysis_dir=
-  MUTATION_SITE_MISSING_RESTAMP     PATTERN B: .unlink() not adjacent-followed
-                                    by restamp_parent_sentinels(...)
+  DELETION_NOT_ROUTED_THROUGH_TOOL  a fast_rmtree / .unlink / shutil.rmtree outside
+                                    du_sentinels.py that is neither the tool nor exempt
   EXEMPT_MISSING_CATEGORY           bare `# EXEMPT-DU:` with no category
   EXEMPT_UNKNOWN_CATEGORY           category not in EXEMPT_CATEGORIES
   EXEMPT_ORPHAN                     exempt comment with no associated mutation (warn-only)
-  RAW_RMTREE_UNMAINTAINED           raw shutil.rmtree(...) not adjacent-followed by
-                                    restamp_parent_sentinels(...) (warn-only; prefer
-                                    fast_rmtree(path, analysis_dir=...))
+  RAW_RMTREE_UNMAINTAINED           raw shutil.rmtree(...) outside du_sentinels.py, un-annotated
+                                    (warn-tier by design: raw shutil.rmtree is only ever used
+                                    outside an analysis scope; annotate, never route)
   UNCLASSIFIED_MUTATION             a declared FS_MUTATORS name with no rule (warn-only)
+
+status-flag: {scope}/_status/** bytes are never DU-counted at ANY depth (du_sentinels
+clause 6), so unlinking a flag changes zero counted bytes at every scope -- not only the
+top rollup.
 """
 
 from __future__ import annotations
@@ -45,9 +49,11 @@ EXEMPT_CATEGORIES = frozenset(
         "test-example-fixture",
         "canonical-helper",
         # Added Phase 1 (2026-06-13) after the full-corpus Bucket-2 triton classification:
-        "du-handled-by-decrement",  # DU-counted, but maintained by decrement_scope_sentinel(...)
-        # or a non-adjacent (e.g. `if not dry_run:`-gated) restamp the
-        # AST checker cannot see as an adjacent sibling.
+        # "du-handled-by-decrement" RETIRED 2026-09-13 (clause 9): the tool performs
+        # the decrement, so every site that carried this category is now a tool call.
+        "dry-run-trigger",  # a reprocess dry_run deletes report/plot artifacts as the rerun
+        # trigger but MUST NOT write _du.json (reprocess-dry_run stipulation); the sentinel
+        # is corrected by the real run.
         "transient-intermediate",  # write-staging intermediate (e.g. an intermediate .zarr in a
         # generic helper) deleted within its creating call, never
         # observed by a committed sentinel; durable DU computed downstream.
@@ -104,7 +110,7 @@ DELIBERATELY_UNHANDLED: dict[str, str] = {
 _CANONICAL_HELPER_FUNCS = frozenset(
     {
         ("utils.py", "fast_rmtree"),
-        ("utils.py", "_restamp_after_mutation"),
+        ("du_sentinels.py", "delete_and_account"),
     }
 )
 
@@ -141,10 +147,10 @@ def _build_exempt_map(text: str) -> dict[int, str | None]:
 
 
 def _import_alias_map(tree: ast.AST) -> dict[str, str]:
-    """local_name -> canonical_name for fast_rmtree / restamp_parent_sentinels,
+    """local_name -> canonical_name for fast_rmtree / delete_and_account,
     plus module aliases (e.g. `import ...utils as u` -> 'u' -> '<module:utils>')."""
     aliases: dict[str, str] = {}
-    canonical = {"fast_rmtree", "restamp_parent_sentinels"}
+    canonical = {"fast_rmtree", "delete_and_account"}
     _FS_MODULES = {"os", "shutil", "subprocess", "pathlib"}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
@@ -165,8 +171,8 @@ def _import_alias_map(tree: ast.AST) -> dict[str, str]:
 
 
 def _resolve_call_name(call: ast.Call, aliases: dict[str, str]) -> str | None:
-    """Return canonical name ('fast_rmtree' / 'restamp_parent_sentinels' /
-    'unlink' / 'rm') for a Call node, or None if not a tracked mutation/restamp."""
+    """Return canonical name ('fast_rmtree' / 'delete_and_account' /
+    'unlink' / 'rm') for a Call node, or None if not a tracked mutation."""
     func = call.func
     if isinstance(func, ast.Name):
         return aliases.get(func.id, func.id)
@@ -183,12 +189,11 @@ def _resolve_call_name(call: ast.Call, aliases: dict[str, str]) -> str | None:
 
 def _statement_call(stmt: ast.stmt) -> ast.Call | None:
     """Return the Call node when `stmt` is an expression-statement whose value is
-    a Call (the mutation/restamp-site shape: `fast_rmtree(x)`, `p.unlink()`,
-    `restamp_parent_sentinels(...)`). Otherwise None.
+    a Call (the mutation-site shape: `fast_rmtree(x)`, `p.unlink()`,
+    `delete_and_account(...)`). Otherwise None.
 
-    Mutation sites in this codebase are always bare `ast.Expr(Call)` statements;
-    detecting at the statement level is what makes PATTERN-B sibling-adjacency
-    (FQ1) well-defined.
+    Mutation sites in this codebase are always bare `ast.Expr(Call)` statements,
+    so detection at the statement level is exact.
     """
     if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
         return stmt.value
@@ -196,8 +201,9 @@ def _statement_call(stmt: ast.stmt) -> ast.Call | None:
 
 
 class _MutationSiteVisitor(ast.NodeVisitor):
-    """Walks statement-body lists; for each mutation statement checks the next
-    sibling (PATTERN B) or kwargs (PATTERN A), keyed against the exempt map."""
+    """Walks statement-body lists; each mutation statement is judged on its own
+    (routed through du_sentinels.delete_and_account, or exempt), keyed against the
+    exempt map."""
 
     def __init__(self, relpath: str, aliases: dict[str, str], exempt: dict[int, str | None]):
         self.relpath = relpath  # repo-relative path, used for Violation.path
@@ -229,21 +235,13 @@ class _MutationSiteVisitor(ast.NodeVisitor):
         for ln in self._exempt_lines_for(stmt):
             self.used_exempt_lines.add(ln)
 
-    def _next_is_restamp(self, nxt: ast.stmt | None) -> bool:
-        if nxt is None:
-            return False
-        call = _statement_call(nxt)
-        if call is None:
-            return False
-        return _resolve_call_name(call, self.aliases) == "restamp_parent_sentinels"
+    # ---- per-statement detection (route predicate) ------------------------
 
-    # ---- per-statement detection (PATTERN A + B) -------------------------
-
-    def _check_stmt(self, stmt: ast.stmt, nxt: ast.stmt | None) -> None:
-        """Detect PATTERN-A (fast_rmtree missing analysis_dir) and PATTERN-B
-        (.unlink without an adjacent restamp). Honor the exempt map on the
-        statement's first line / line above / trailing line. Record used exempt
-        lines so orphan-exempts can be reported (linting-specialist H4 FQ1/FQ2).
+    def _check_stmt(self, stmt: ast.stmt) -> None:
+        """Detect a direct fast_rmtree / .unlink / shutil.rmtree outside du_sentinels.py
+        that is not exempt (DELETION_NOT_ROUTED_THROUGH_TOOL / RAW_RMTREE_UNMAINTAINED).
+        Honor the exempt map on the statement's first line / line above / trailing
+        line. Record used exempt lines so orphan-exempts can be reported.
         """
         call = _statement_call(stmt)
         if call is None:
@@ -251,9 +249,18 @@ class _MutationSiteVisitor(ast.NodeVisitor):
         name = _resolve_call_name(call, self.aliases)
 
         if name == "fast_rmtree":
-            kwarg_names = {kw.arg for kw in call.keywords if kw.arg is not None}
-            if "analysis_dir" in kwarg_names:
-                return  # PATTERN A satisfied
+            # RULING-5 FINDING, recorded here so it is not lost: the predicate this
+            # replaces was `if "analysis_dir" in kwarg_names: return` -- a keyword-NAME
+            # presence test that never read the value, so `fast_rmtree(p,
+            # analysis_dir=None)` passed it and so did the per-file restamp storm. It
+            # was fail-open on value. The predicate is now ROUTE-based: a deletion is
+            # accounted for iff it goes through du_sentinels.delete_and_account.
+            # INVARIANT this early return rests on: du_sentinels.py contains EXACTLY ONE
+            # `fast_rmtree(` call, inside delete_and_account. Measuring command:
+            #   grep -c "fast_rmtree(" src/hhemt/du_sentinels.py   -> 1
+            # A second call there would be exempted by this line without review.
+            if self.relpath.endswith("du_sentinels.py"):
+                return  # the tool's own primitive call
             if self._is_exempt(stmt):
                 self._mark_exempt_used(stmt)
                 return
@@ -261,17 +268,15 @@ class _MutationSiteVisitor(ast.NodeVisitor):
                 Violation(
                     self.relpath,
                     stmt.lineno,
-                    "FAST_RMTREE_MISSING_ANALYSIS_DIR",
-                    "fast_rmtree(...) call lacks analysis_dir= kwarg; pass "
-                    "analysis_dir=<analysis root> so parent DU sentinels are "
-                    "re-stamped, or annotate the site with `# EXEMPT-DU: {category}`",
+                    "DELETION_NOT_ROUTED_THROUGH_TOOL",
+                    "direct fast_rmtree(...) outside du_sentinels.py; route the deletion "
+                    "through du_sentinels.delete_and_account(paths, scope_dir=..., scope=...) "
+                    "or annotate the site with `# EXEMPT-DU: {category}`",
                 )
             )
             return
 
         if name == "shutil.rmtree":
-            if self._next_is_restamp(nxt):
-                return
             if self._is_exempt(stmt):
                 self._mark_exempt_used(stmt)
                 return
@@ -280,9 +285,8 @@ class _MutationSiteVisitor(ast.NodeVisitor):
                     self.relpath,
                     stmt.lineno,
                     "RAW_RMTREE_UNMAINTAINED",
-                    f"raw {name}(...) is not maintained; prefer "
-                    "fast_rmtree(path, analysis_dir=...) which re-stamps internally, or "
-                    "add restamp_parent_sentinels(...) as the next sibling, or annotate "
+                    f"raw {name}(...) is not maintained; route the deletion through "
+                    "du_sentinels.delete_and_account(...) if the path is DU-counted, or annotate "
                     "with `# EXEMPT-DU: {category}`",
                 )
             )
@@ -304,8 +308,6 @@ class _MutationSiteVisitor(ast.NodeVisitor):
             return
 
         if name == "unlink":
-            if self._next_is_restamp(nxt):
-                return  # PATTERN B satisfied
             if self._is_exempt(stmt):
                 self._mark_exempt_used(stmt)
                 return
@@ -313,11 +315,9 @@ class _MutationSiteVisitor(ast.NodeVisitor):
                 Violation(
                     self.relpath,
                     stmt.lineno,
-                    "MUTATION_SITE_MISSING_RESTAMP",
-                    ".unlink() mutation is not immediately followed by a "
-                    "restamp_parent_sentinels(...) call; add the restamp as the next "
-                    "sibling statement (or as the sole/last statement of an "
-                    "immediately-following finally), or annotate with "
+                    "DELETION_NOT_ROUTED_THROUGH_TOOL",
+                    ".unlink() outside du_sentinels.py; route through "
+                    "du_sentinels.delete_and_account(...) or annotate with "
                     "`# EXEMPT-DU: {category}`",
                 )
             )
@@ -325,13 +325,11 @@ class _MutationSiteVisitor(ast.NodeVisitor):
 
     # ---- body-bearing visitors ------------------------------------------
 
-    def _scan_body(self, stmts: list[ast.stmt], tail_next: ast.stmt | None = None) -> None:
-        """Check each statement against its next sibling. `tail_next` supplies a
-        synthetic next-sibling for the LAST statement (used by visit_Try to wire
-        a try-body's trailing mutation to a finally-body restamp)."""
-        for i, stmt in enumerate(stmts):
-            nxt = stmts[i + 1] if i + 1 < len(stmts) else tail_next
-            self._check_stmt(stmt, nxt)
+    def _scan_body(self, stmts: list[ast.stmt]) -> None:
+        """Check each statement of a body. Under the route predicate a site is judged on
+        its own (routed through the tool, or exempt); no sibling-adjacency is consulted."""
+        for stmt in stmts:
+            self._check_stmt(stmt)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         if node.name not in self._skip_funcs:
@@ -347,16 +345,7 @@ class _MutationSiteVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Try(self, node: ast.Try) -> None:
-        # PATTERN-B try/finally carve-out: a mutation in `body` whose restamp is
-        # the sole/last stmt of `finalbody` is compliant. Wire the finally's
-        # trailing restamp as the synthetic next-sibling for the try body.
-        final_restamp: ast.stmt | None = None
-        if node.finalbody:
-            last_final = node.finalbody[-1]
-            call = _statement_call(last_final)
-            if call is not None and _resolve_call_name(call, self.aliases) == "restamp_parent_sentinels":
-                final_restamp = last_final
-        self._scan_body(node.body, tail_next=final_restamp)
+        self._scan_body(node.body)
         for h in node.handlers:
             self._scan_body(h.body)
         self._scan_body(node.orelse)

@@ -751,12 +751,12 @@ def test_resume_schedule_honored_surfaces_unverifiable_when_no_realized_boundari
     df = pd.DataFrame([{"model_type": "triton", "n_resumes": 3, "scenario_directory": "sim_0"}])
     res = check_resume_schedule_honored(_triton_arm_b_stub(df))
 
-    assert any(
-        "CANNOT BE VERIFIED" in d["detail"] for d in res.details
-    ), "a resumed sim with no realized boundaries must be surfaced, not silently passed"
-    assert any(
-        "start_from_scratch" in d["detail"] for d in res.details
-    ), "the detail must name the operational cause a reader can act on"
+    assert any("CANNOT BE VERIFIED" in d["detail"] for d in res.details), (
+        "a resumed sim with no realized boundaries must be surfaced, not silently passed"
+    )
+    assert any("start_from_scratch" in d["detail"] for d in res.details), (
+        "the detail must name the operational cause a reader can act on"
+    )
 
 
 def test_resume_schedule_honored_is_quiet_when_realized_boundaries_match():
@@ -993,6 +993,6 @@ def test_affected_pin_with_resumed_sims_still_selects(monkeypatch):
     """
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
     res = check_coupled_resume_validity(_analysis_stub(coupled=False, df=_resumed_df(model_type="triton")))
-    assert (
-        "no known resume defect" not in res.summary
-    ), "the positive-PASS branch fired on a pin carrying a PRESENT defect"
+    assert "no known resume defect" not in res.summary, (
+        "the positive-PASS branch fired on a pin carrying a PRESENT defect"
+    )

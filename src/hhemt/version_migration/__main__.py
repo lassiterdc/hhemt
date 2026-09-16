@@ -24,6 +24,7 @@ from hhemt.version_migration.exceptions import (
     MigrationConflictError,
     MigrationError,
     RegistryError,
+    VersionFileUnreadableError,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -34,6 +35,7 @@ _VALIDATION_ERRORS: tuple[type[MigrationError], ...] = (
     BaselineRequiredError,
     MigrationBlockedError,
     RegistryError,
+    VersionFileUnreadableError,
 )
 
 

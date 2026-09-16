@@ -89,7 +89,7 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "Pre-existing (~1469). Same retirement path."
     ),
     ("_plotting.py", P2, "_b4b_faceted_figure"): (
-        "Pre-existing EDA figure, no Iteration-7 feedback item. Retire when " "figure_layout.align_x is adopted here."
+        "Pre-existing EDA figure, no Iteration-7 feedback item. Retire when figure_layout.align_x is adopted here."
     ),
     ("raw_resume_identity.py", P1, "build_binary_timestep_figure"): (
         "Pre-existing EDA figure, out of Iteration-7 scope."

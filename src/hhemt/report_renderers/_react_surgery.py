@@ -62,7 +62,7 @@ _SHOW_CATEGORY_NEW = (
     "    }"
 )
 
-_GUARD_RENDER_OLD = "    render() {\n" "        if (this.state.data.toggleLabels.size > 0) {"
+_GUARD_RENDER_OLD = "    render() {\n        if (this.state.data.toggleLabels.size > 0) {"
 
 _GUARD_RENDER_NEW = (
     "    render() {\n"
@@ -157,7 +157,7 @@ function reportRenderGuardPanel(err, where) {
 # populated is byte-identical; when it is not, the row opens its own figure -- which is
 # the desired result for an unpaired entry. Idempotent: the old literals are gone after
 # the first pass.
-_TOGGLE_CELL_OLD = "            let entryPath = data.entries.get(arrayKey(entryLabels))" ".get(arrayKey(toggleLabels));"
+_TOGGLE_CELL_OLD = "            let entryPath = data.entries.get(arrayKey(entryLabels)).get(arrayKey(toggleLabels));"
 
 _TOGGLE_CELL_NEW = (
     "            let _cell = data.entries.get(arrayKey(entryLabels));\n"
@@ -166,8 +166,7 @@ _TOGGLE_CELL_NEW = (
 )
 
 _TOGGLE_CB_OLD = (
-    "                let targetPath = _this.state.data.entries.get(arrayKey(entryLabels))"
-    ".get(arrayKey(toggleLabels));"
+    "                let targetPath = _this.state.data.entries.get(arrayKey(entryLabels)).get(arrayKey(toggleLabels));"
 )
 
 _TOGGLE_CB_NEW = (

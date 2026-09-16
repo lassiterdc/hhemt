@@ -703,12 +703,20 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
             out["processing"] = got
             break
 
-    # plots: any figure sidecar. The stamp is per-figure and uniform within a render,
-    # so the first readable sidecar is representative; a genuinely mixed render is a
-    # different finding and belongs to the caller's build-disagreement branch.
+    # plots: any figure sidecar WHOSE FIGURE IS STILL THERE. The stamp is per-figure and
+    # uniform within a render, so the first readable LIVE sidecar is representative; a
+    # genuinely mixed render is a different finding and belongs to the caller's
+    # build-disagreement branch. An ORPHAN sidecar is readable too, so without the guard
+    # a dead figure's stamp could stand for the whole stage. If none survives the guard
+    # the key is left unset, which this function already treats as uncaptured -- the same
+    # disposition it takes for `sim` below, and a true answer rather than a suppressed one.
     plots = adir / "plots"
     if plots.exists():
+        from hhemt.utils import figure_exists_for
+
         for sidecar in sorted(plots.rglob("*.manifest.json")):
+            if not figure_exists_for(sidecar):
+                continue
             got = _from_json(sidecar)
             if got:
                 out["plots"] = got
@@ -2090,8 +2098,6 @@ def persist_validation_report(analysis: TRITONSWMM_analysis) -> Path:
     import json
     from dataclasses import asdict
 
-    from hhemt import du_sentinels
-
     analysis_dir = Path(analysis.analysis_paths.analysis_dir)
     report = validate_analysis(analysis)
     out = analysis_dir / _VALIDATION_REPORT_FILENAME
@@ -2099,7 +2105,8 @@ def persist_validation_report(analysis: TRITONSWMM_analysis) -> Path:
     tmp = out.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2))
     tmp.replace(out)  # atomic
-    du_sentinels.restamp_parent_sentinels(out, analysis_dir=analysis_dir)
+    # DN-3: validation_report.json is an analysis-scope OWN file; the clause-11
+    # own-files walk counts it at the next aggregation. No per-write accounting.
     return out
 
 

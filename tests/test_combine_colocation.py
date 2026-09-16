@@ -274,9 +274,9 @@ def test_distinct_child_categories_excludes_chrome_only_categories(tmp_path) -> 
     _write_child(bundle_root, "expA_tritonswmm", "maps_fig", _TS_HTML)
     _write_child(bundle_root, "expA_triton", "maps_fig", _TRI_HTML)
     cats = _distinct_child_categories(bundle_root)
-    assert (
-        "Simulation Health (placeholder)" not in cats
-    ), f"chrome-only reserved slot leaked into the combined sidebar order: {cats}"
+    assert "Simulation Health (placeholder)" not in cats, (
+        f"chrome-only reserved slot leaked into the combined sidebar order: {cats}"
+    )
     assert cats, "no per-experiment categories survived the filter"
 
 
@@ -286,9 +286,9 @@ def test_distinct_child_categories_no_model_token_shape(tmp_path) -> None:
     _write_child(bundle_root, "synth_multi_sim", "maps_fig", _TS_HTML)
     _write_child(bundle_root, "synth_multi_sim__1__b4b", "maps_fig", _TRI_HTML)
     cats = _distinct_child_categories(bundle_root)
-    assert (
-        "Simulation Health (placeholder)" not in cats
-    ), f"chrome-only reserved slot leaked into the combined sidebar order: {cats}"
+    assert "Simulation Health (placeholder)" not in cats, (
+        f"chrome-only reserved slot leaked into the combined sidebar order: {cats}"
+    )
 
 
 def test_combined_order_suppresses_placeholder_in_surgered_html(tmp_path) -> None:

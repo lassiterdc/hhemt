@@ -86,6 +86,11 @@ class system_config(cfgBaseModel):
     system_directory: Path = Field(
         ...,
         description="Path where TRITON-SWMM system outputs will be stored.",
+        # A toolkit-owned OUTPUT: from_case_study mkdirs it AFTER the pre-download
+        # validation, and for the shipped Norfolk case it is ${PACKAGE_DIR}/system,
+        # ignored by .gitignore:243 and absent on a fresh clone. Exempt from the
+        # load-time existence check for the same reason the two software dirs are.
+        json_schema_extra={"toolkit_owned_output": True},
     )
     watershed_gis_polygon: Path = Field(..., description="Watershed or subcatchment gis used for plotting.")
     DEM_fullres: Path = Field(..., description="DEM to be formatted and, if desired, coarsened, for TRITON")
@@ -121,7 +126,7 @@ class system_config(cfgBaseModel):
     )
     SWMM_software_directory: Path | None = Field(
         None,
-        json_schema_extra={"toolkit_owned_output": True},
+        json_schema_extra={"toolkit_owned_output": True, "toolkit_clones_into": True},
         description="Folder containing the SWMM model software (created by the clone/build gate at run/setup).",
     )
     # Optional[Path] (not required) ONLY so a portability-scrubbed render bundle's
@@ -131,7 +136,7 @@ class system_config(cfgBaseModel):
     # SWMM_software_directory sibling above.
     TRITONSWMM_software_directory: Path | None = Field(
         None,
-        json_schema_extra={"toolkit_owned_output": True},
+        json_schema_extra={"toolkit_owned_output": True, "toolkit_clones_into": True},
         description="Folder containing the TRITONSWMM model software (created by the clone/build gate at run/setup). "
         "May be "
         "null in a reconstituted reprex bundle's synthesized system_config.yaml -- the round-trip re-derives it "

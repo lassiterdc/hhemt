@@ -1,0 +1,247 @@
+# =============================================================================
+# hhemt Frontier-CPU SIF — Kokkos OPENMP+SERIAL, no GPU.
+#
+# *** UNVALIDATED. THIS RECIPE HAS NEVER BEEN BUILT. ***
+# It is authored to be RUN, not because it has run. Validating it needs a Rivanna
+# compute node and roughly two hours, and neither the author nor the reviewer of
+# this file could do that. Expect the first build to fail; the header section
+# "EXPECTED FIRST-BUILD FAILURES" below names where, and why each is suspected.
+# Delete this banner only after a green build whose SIF you have inspected.
+#
+# WHY THIS FILE EXISTS AT ALL, in one sentence: containers/frontier-rocm.def builds
+# BOTH of its TRITON binaries with -DKokkos_ENABLE_OPENMP=OFF (its lines 109 and 130),
+# so that image's triton.exe cannot execute a single `openmp` or `hybrid` row. Kokkos
+# backends are compiled in and mutually exclusive; a second image is a MECHANICAL
+# requirement, not a packaging preference.
+#
+# WHY IT LIVES IN THE ESTATE AND NOT IN THE TOOLKIT: adding it to hhemt/containers/
+# would move the campaign's toolkit pin off ffc4cfb7, and the three UVA benchmarking
+# arms RUNNING right now would then fail container preflight on the shas_match gate
+# (validation.py:2030 for TRITON, :1999 for the toolkit). The build reads this file by
+# absolute path, so an estate home costs nothing — but see the BUILD CWD note below,
+# which is the one thing that does NOT follow the .def's location.
+#
+# WHY IT IS NOT A COPY OF uva-cpu.def, which is the obvious shortcut and is wrong:
+# that recipe builds its own OpenMPI into /opt/openmpi and compiles TRITON against
+# /opt/openmpi/bin/mpic++. Frontier swaps in the HOST Cray-MPICH at runtime via
+# `cray_mpich_abi_module: true` (hpc/hpc_system_config_frontier_cpu.yaml), and an
+# OpenMPI-linked binary cannot participate in that ABI swap. The MPI layer therefore
+# comes from frontier-rocm.def (MPICH 3.4.3 ch4:ofi, --disable-wrapper-rpath) and only
+# the Kokkos flags come from uva-cpu.def.
+#
+# CONSTRUCTION = frontier-rocm.def base + MPI layer, with uva-cpu.def's Kokkos flags:
+#   KEEP from frontier-rocm.def : ubuntu-24.04 lineage, MPICH 3.4.3 ch4:ofi with
+#                                 --disable-wrapper-rpath (Change-B), uv sync --frozen,
+#                                 the empty-RPATH cmake pair, the two-binary split,
+#                                 standalone SWMM, /opt/hhemt/bin install convention.
+#   TAKE from uva-cpu.def       : -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON,
+#                                 and the org.hhemt.hhemt_sha label (see LABELS below).
+#   DROP entirely               : ROCm base, MPICH_CXX=hipcc, -DTRITON_BACKEND=HIP,
+#                                 -DKokkos_ARCH_AMD_GFX90A, -DTRITON_HIP_LAUNCHER,
+#                                 /opt/rocm on PATH and LD_LIBRARY_PATH, gpu_arch label.
+#
+# PINS ARE NOT LITERAL HERE. The TRITON URL and SHA below are the ORNL-upstream values
+# that every committed recipe carries; hpc/build_sifs_frontier.sh sed-derives them to the
+# campaign pin at build time and VERIFIES each substitution landed. Do not hand-edit them
+# to 21e666d6 — that would make the derivation a silent no-op and remove its check.
+#
+# EXPECTED FIRST-BUILD FAILURES, in the order they would surface:
+#  1. MPICH ./configure. frontier-rocm.def builds this identically, so the layer itself is
+#     exercised — but only on the ROCm base, which ships a different package set. On plain
+#     ubuntu:24.04 a missing dev header would surface here. Cheapest tell: configure exits
+#     non-zero within the first few minutes.
+#  2. Kokkos OpenMP discovery. This is the one combination NOTHING in the tree has built:
+#     Kokkos-OpenMP behind an MPICH mpicxx wrapper. uva-cpu.def proves Kokkos-OpenMP behind
+#     OpenMPI; frontier-rocm.def proves MPICH behind Kokkos-HIP. The intersection is new.
+#     If cmake cannot find OpenMP through the wrapper, pass -DCMAKE_CXX_FLAGS='-O3 -fopenmp'
+#     or set OMPI_CXX/MPICH_CXX to a bare g++ so the wrapper stops hiding the flag.
+#  3. The `test -x` guards. They exist so a silent partial build fails HERE rather than
+#     inside a sim job on Frontier. A failure at a guard means the make above it did not
+#     produce the binary, not that the guard is wrong.
+#  4. SWMM binary name. The find below accepts `runswmm` OR `swmm5` because the name has
+#     varied; if both are absent the cp fails loudly, which is the intended behavior.
+#
+# BUILD CWD IS LOAD-BEARING AND DOES NOT FOLLOW THIS FILE. `%files ../ /opt/hhemt-src`
+# resolves `../` against the BUILD CWD, not against this .def's directory. Build from
+# $TOOLKIT/containers or `../` becomes some other parent: build_sifs_uva.sh:186-192 records
+# a measured 228 GB blowup when it did not (job 18577645, killed at 3m16s while "Copying ../").
+# hpc/build_sifs_frontier.sh does the cd for you. Do not invoke `apptainer build` by hand.
+# =============================================================================
+
+Bootstrap: docker
+# ubuntu:24.04, NOT the rocm/dev-ubuntu-24.04 base frontier-rocm.def uses. That base IS
+# ubuntu 24.04 plus a ~30 GB ROCm stack this arm cannot use, so dropping it keeps the same
+# glibc-2.39 / gcc-13 lineage (glibc 2.39 >= the Frontier host 2.38 floor — the ADR-2
+# reasoning frontier-rocm.def states at its own From: line) while shedding the GPU layer.
+# Keeping the lineage matters: the two Frontier images should differ in Kokkos backend and
+# nothing else, so a CPU-vs-GPU timing difference is attributable to the backend.
+From: ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+
+%files
+    # `hhemt_src` is the `git archive` of the identity's hhemt_sha, staged beside this
+    # recipe by hhemt.sif.transaction (the build CWD is that staging dir); it carries the
+    # git-export-substituted HHEMT_SHA file that %post asserts against {{ HHEMT_SHA }}.
+    hhemt_src  /opt/hhemt-src
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    # Rootless --fakeroot on a host with no /etc/subuid range for the building user runs in a
+    # SINGLE-UID root-mapped namespace; apt then drops to `_apt` (uid 42), which is not in that
+    # map -> `E: Failed to setgroups (Operation not permitted)` and apt exits 100. Running apt
+    # as the mapped root avoids the drop and is harmless when subuid IS provisioned.
+    # Empirically confirmed on Rivanna (frontier-rocm.def carries the same drop-in).
+    printf 'APT::Sandbox::User "root";\n' > /etc/apt/apt.conf.d/00rootless-nosandbox
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        git cmake build-essential gfortran wget ca-certificates libnuma-dev python3
+
+    # --- (1) MPICH 3.4.3 ch4:ofi — the ABI line OLCF documents as compatible with the host
+    #     cray-mpich-abi module. --disable-wrapper-rpath is Change-B: stop mpicxx baking
+    #     -Wl,-rpath,/opt/mpich/lib into triton.exe so the runtime host Cray-MPICH bind wins.
+    #     IDENTICAL to frontier-rocm.def's layer, deliberately — this is the half of the image
+    #     that must behave the same as the GPU image, because the same ABI swap runs against it.
+    cd /tmp
+    wget -q https://www.mpich.org/static/downloads/3.4.3/mpich-3.4.3.tar.gz
+    echo "8154d89f3051903181018166678018155f4c2b6f04a9bb6fe9515656452c4fd7  mpich-3.4.3.tar.gz" | sha256sum -c - || \
+        echo "WARNING: MPICH sha256 unverified -- set the pin for the production build"
+    tar xf mpich-3.4.3.tar.gz && cd mpich-3.4.3
+    ./configure --prefix=/opt/mpich --with-device=ch4:ofi --disable-fortran \
+        --disable-wrapper-rpath FFLAGS=-fallow-argument-mismatch
+    make -j"$(nproc)" && make install
+    cd /tmp && rm -rf mpich-3.4.3 mpich-3.4.3.tar.gz
+
+    # --- (2) hhemt Python runtime via uv from the COMMITTED uv.lock (no re-solve).
+    wget -qO /tmp/uv-installer.sh https://astral.sh/uv/0.11.7/install.sh
+    sh /tmp/uv-installer.sh && rm /tmp/uv-installer.sh
+    export PATH=/root/.local/bin:${PATH}
+    # `%files ../ /opt/hhemt-src` copies the build-context repo verbatim, INCLUDING any host
+    # `.venv` whose python references host-only libs -> `uv sync` would query that broken
+    # interpreter and die (exit 127). Remove it so uv builds a container-native venv.
+    cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/mpich/bin:${PATH}
+
+    # --- (3) TRITON-SWMM at a PINNED COMMIT. `git submodule --recursive` pins Kokkos and the
+    #     bundled SWMM transitively AND is the first correctness check (a non-recursive clone
+    #     leaves external/kokkos absent). URL+SHA are sed-derived at build time — see header.
+    git clone {{ TRITON_URL }} /opt/triton
+    cd /opt/triton && git checkout {{ TRITON_SHA }} \
+        && git submodule update --init --recursive
+    mkdir -p build && cd build
+    # NO MPICH_CXX override. frontier-rocm.def sets MPICH_CXX=hipcc so Kokkos-HIP gets its HIP
+    # compiler through the wrapper machine.cmake force-sets; the CPU build wants the wrapper's
+    # default g++, so the override is DROPPED rather than repointed.
+    #
+    # -DTRITON_SWMM_FLOODING_DEBUG=ON matches system.py:795 for byte-parity. Double precision is
+    # the load-bearing default: do NOT pass -DUSE_SINGLE_PRECISION, it would flip MPI_DATA_TYPE.
+    # No -DTRITON_BACKEND: the CPU path takes Kokkos's OpenMP/Serial backends directly, and
+    # naming a backend here is what would drag the HIP toolchain back in.
+    # No libstdc++ reconciliation fragment: one coherent container toolchain (gcc-13 with its
+    # matched libstdc++), so the -L${CONDA_PREFIX}/lib dance the NATIVE UVA build needs is moot.
+    cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON \
+          -DTRITON_IGNORE_MACHINE_FILES=ON \
+          -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON \
+          -DCMAKE_CXX_COMPILER=/opt/mpich/bin/mpicxx -DCMAKE_C_COMPILER=/opt/mpich/bin/mpicc \
+          -DCMAKE_CXX_FLAGS='-O3' \
+          -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
+          /opt/triton
+    make -j"$(nproc)"
+    test -x /opt/triton/build/triton.exe   # fail the build if the coupled exe is absent
+
+    # --- SECOND build: TRITON-ONLY (SWMM coupling COMPILED OUT).
+    # The `triton` model type is a DISTINCT BINARY, not a runtime mode: the SWMM init sits
+    # behind a compile-time `#ifdef TRITON_SWMM` (triton/src/triton.h:426) and calls
+    # read_inp_file(inp_filename) UNCONDITIONALLY with no empty-string guard
+    # (triton/src/swmm_triton.h:139,146-153). A SWMM=ON binary therefore ALWAYS opens
+    # inp_filename, while the standalone cfg legitimately omits it, so the coupled exe dies for
+    # model_type=triton with `[ERROR] Error reading file: `. Flags identical except the SWMM
+    # pair and the build dir.
+    #
+    # NOTE for this campaign specifically: both Frontier benchmarking arms enable ONLY
+    # tritonswmm, so this binary is not exercised by them. It is built anyway because the image
+    # is the arm's general CPU carrier and a missing binary is a worse failure than a spare one.
+    mkdir -p /opt/triton/build_triton_only && cd /opt/triton/build_triton_only
+    cmake -DTRITON_ENABLE_SWMM=OFF \
+          -DTRITON_IGNORE_MACHINE_FILES=ON \
+          -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON \
+          -DCMAKE_CXX_COMPILER=/opt/mpich/bin/mpicxx -DCMAKE_C_COMPILER=/opt/mpich/bin/mpicc \
+          -DCMAKE_CXX_FLAGS='-O3' \
+          -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
+          /opt/triton
+    make -j"$(nproc)"
+    test -x /opt/triton/build_triton_only/triton.exe   # fail if the TRITON-only exe is absent
+
+    # --- (4) Standalone SWMM v5.2.4 (runswmm) for the `swmm` model type.
+    git clone --branch {{ SWMM_TAG }} --depth 1 \
+        https://github.com/USEPA/Stormwater-Management-Model.git /opt/swmm-src
+    mkdir -p /opt/swmm-src/build && cd /opt/swmm-src/build
+    cmake .. -DCMAKE_BUILD_TYPE=Release && make -j"$(nproc)"
+
+    # --- (5) Install to the convention path ContainerSpec.exe_in_sif points at.
+    mkdir -p /opt/hhemt/bin
+    cp /opt/triton/build/triton.exe /opt/hhemt/bin/triton.exe
+    cp /opt/triton/build_triton_only/triton.exe /opt/hhemt/bin/triton_only.exe
+    cp "$(find /opt/swmm-src/build -maxdepth 3 -type f -name runswmm -o -name swmm5 | head -1)" \
+        /opt/hhemt/bin/runswmm
+    chmod +x /opt/hhemt/bin/triton.exe /opt/hhemt/bin/triton_only.exe /opt/hhemt/bin/runswmm
+
+    # Prove the OpenMP backend is actually IN the binary. This is the single defect that would
+    # otherwise reach Frontier silently: a triton.exe built with OpenMP quietly disabled runs
+    # every `openmp` and `hybrid` row single-threaded and reports plausible-but-wrong timings,
+    # which is exactly the failure this whole image exists to prevent. `ldd` naming libgomp is
+    # necessary, not sufficient — it is what can be checked at build time without a job.
+    ldd /opt/hhemt/bin/triton.exe | grep -q 'libgomp' || { \
+        echo "FATAL: triton.exe does not link libgomp -- the OpenMP backend did not compile in."; \
+        echo "       Building this image without OpenMP defeats its entire purpose; see header item 2."; \
+        exit 1; }
+
+    # ---- MEASURED LABELS: what LANDED, never what was intended ([Q315] 10(ii)) ----
+    _measured_triton="$(git -C /opt/triton rev-parse HEAD)"
+    [ "$_measured_triton" = "{{ TRITON_SHA }}" ] || { echo "FATAL: TRITON at $_measured_triton, requested {{ TRITON_SHA }}"; exit 1; }
+    _landed_hhemt="$(cat /opt/hhemt-src/HHEMT_SHA)"
+    case "$_landed_hhemt" in *Format*) echo "FATAL: HHEMT_SHA not substituted: the staged tree was not produced by git archive"; exit 1;; esac
+    [ "$_landed_hhemt" = "{{ HHEMT_SHA }}" ] || { echo "FATAL: staged hhemt is $_landed_hhemt, requested {{ HHEMT_SHA }}"; exit 1; }
+    _swmm_coupled="$(sed -n 's/.*VERSION \([0-9][0-9.]*\).*/\1/p' /opt/triton/external/swmm/CMakeLists.txt | head -1)"
+    _swmm_standalone="$(git -C /opt/swmm-src describe --tags --exact-match HEAD)"
+    _mpi="$(/opt/mpich/bin/mpichversion | head -1)"
+    _hhemt_version="$(/opt/hhemt-src/.venv/bin/python -c 'from importlib.metadata import version; print(version("hhemt"))')"
+    {
+      echo "org.hhemt.triton_sha $_measured_triton"
+      echo "org.hhemt.hhemt_sha $_landed_hhemt"
+      echo "org.hhemt.version $_hhemt_version"
+      echo "org.hhemt.swmm_coupled_version $_swmm_coupled"
+      echo "org.hhemt.swmm_standalone_version $_swmm_standalone"
+      echo "org.hhemt.mpi $_mpi"
+    } >> "$APPTAINER_LABELS"
+
+%environment
+    export MPI_ROOT=/opt/mpich
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/hhemt/bin:/opt/mpich/bin:${PATH}
+    # Change-B (runtime MPI-shadow hardening): /opt/mpich/lib is DELIBERATELY ABSENT from
+    # LD_LIBRARY_PATH so no in-container path can shadow the host Cray libmpi.so.12 bound via
+    # APPTAINERENV_LD_LIBRARY_PATH. Keep MPI_ROOT for standalone/build use; the runtime MPI LD
+    # path comes from the host-env segment run_simulation.py emits.
+    # Nothing is prepended here at all: unlike frontier-rocm.def there is no container ROCm to
+    # put first, and the gcc-13 libstdc++ this binary needs is already on the default loader
+    # path. An empty prepend is the correct value, not an omission.
+
+%labels
+    # STATIC half of the identity (hhemt.sif.identity.SifIdentity.labels(), compared by the
+    # read-back gate); the MEASURED half (triton_sha, hhemt_sha, version, swmm_*_version,
+    # mpi) is appended by %post above. toolkit_root is read by process_timeseries_runner's
+    # container-toolkit guard via /.singularity.d/labels.json and must match the %files dest.
+    org.hhemt.identity {{ LBL_IDENTITY }}
+    org.hhemt.family {{ LBL_FAMILY }}
+    org.hhemt.accel {{ LBL_ACCEL }}
+    org.hhemt.gpu_hardware {{ LBL_GPU_HARDWARE }}
+    org.hhemt.gpu_arch {{ LBL_GPU_ARCH }}
+    org.hhemt.gpu_compilation_backend {{ LBL_GPU_BACKEND }}
+    org.hhemt.triton_url {{ TRITON_URL }}
+    org.hhemt.base_digest {{ BASE_REF }}
+    org.hhemt.recipe_sha256 {{ LBL_RECIPE_SHA256 }}
+    org.hhemt.toolkit_root /opt/hhemt-src
+    org.hhemt.mpich       3.4.3-ch4ofi
+    org.hhemt.gcc         13.x
+
+%runscript
+    exec "$@"

@@ -233,7 +233,7 @@ def _assert_reconstituted_run(exp, prebuilt_software_dir: Path) -> None:
     and assert real consolidated outputs (a --dry-run could not satisfy these)."""
     resolved = Path(exp.system.cfg_system.TRITONSWMM_software_directory).resolve()
     assert resolved == Path(prebuilt_software_dir / "tritonswmm").resolve(), (
-        f"from_doi did not adopt the pre-built software_dir (got {resolved}); the run would " "git-clone + recompile."
+        f"from_doi did not adopt the pre-built software_dir (got {resolved}); the run would git-clone + recompile."
     )
     result = exp.analysis.test(execution_mode="local", verbose=False)
     assert (exp.bundle_root / "_test").exists(), "no _test subtree materialized"
@@ -309,9 +309,9 @@ def test_leg2_exclude_config_roundtrip_fetches_by_reference(
     assert deposits, "the excluded input emitted no input_deposit block"
     # The excluded input was NOT carried — it was fetched, and is now on disk.
     for block in deposits:
-        assert (
-            exp.bundle_root / block["relpath"]
-        ).exists(), f"by-reference input {block['relpath']} was never materialized on ingest"
+        assert (exp.bundle_root / block["relpath"]).exists(), (
+            f"by-reference input {block['relpath']} was never materialized on ingest"
+        )
 
     _assert_reconstituted_run(exp, prebuilt_software_dir)
 
@@ -394,9 +394,9 @@ def test_leg3_hydroshare_authenticated_private_retrieval(
         # fetch), so the retrieval proves the full HydroShare consume path.
         manifest = exp.bundle_root / "bundle_manifest.json"
         if manifest.exists():
-            assert not json.loads(manifest.read_text()).get(
-                "input_deposit"
-            ), "the staged bundle was self-contained; an input_deposit block is unexpected"
+            assert not json.loads(manifest.read_text()).get("input_deposit"), (
+                "the staged bundle was self-contained; an input_deposit block is unexpected"
+            )
         _assert_reconstituted_run(exp, prebuilt_software_dir)
     finally:
         _clear_resource_files(resource)  # leave the private resource clean for the next run

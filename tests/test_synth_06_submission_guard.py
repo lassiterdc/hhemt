@@ -405,7 +405,9 @@ def test_force_rerun_does_not_descend_into_status_subdirs(synthetic_multisim_bui
     nested_flag.touch()
 
     try:
-        b._delete_flags_for_force_rerun(ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate"))
+        b._delete_flags_for_force_rerun(
+            ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate", models=("triton", "tritonswmm", "swmm"))
+        )
 
         assert not top_flag.exists(), "top-level _status/*.flag must be deleted by scope='all'"
         assert nested_flag.exists(), "nested _status/**/*.flag must survive — glob is non-recursive (R10)"
@@ -436,7 +438,11 @@ def test_force_rerun_member_scope_does_not_touch_submitted_sentinels(synthetic_m
     other_member_flag.touch()
 
     try:
-        b._delete_flags_for_force_rerun(ResolvedForceRerunSpec(scope="member", tokens=("0",), stage="simulate"))
+        b._delete_flags_for_force_rerun(
+            ResolvedForceRerunSpec(
+                scope="member", tokens=("0",), stage="simulate", models=("triton", "tritonswmm", "swmm")
+            )
+        )
 
         assert not member_flag.exists(), "member-0 flag must be deleted by scope='member' tokens=('0',)"
         assert other_member_flag.exists(), "member-10 must NOT be matched by member-0 (delimiter-anchored glob)"
@@ -466,9 +472,9 @@ def test_run_submit_uses_mtime_only_rerun_triggers(synthetic_multisim_builder, m
         f"so a post-death resume cannot re-fire completed sims via the `input` "
         f"trigger; got {config['rerun-triggers']!r}"
     )
-    assert (
-        "input" not in config["rerun-triggers"]
-    ), f"mode={mode}: `input` must be absent from run-path rerun-triggers (Phase 1)"
+    assert "input" not in config["rerun-triggers"], (
+        f"mode={mode}: `input` must be absent from run-path rerun-triggers (Phase 1)"
+    )
 
 
 def test_one_job_script_inherits_mtime_only_via_profile(synthetic_multisim_builder):

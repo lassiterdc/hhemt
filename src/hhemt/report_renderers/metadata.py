@@ -1515,21 +1515,31 @@ def _config_field_rows() -> tuple[dict[str, list[list[str]]], list[str]]:
     return rows_by_bucket, unclassified
 
 
-def _is_toolkit_owned(field_info: Any) -> bool:
-    """True when the field is marked `json_schema_extra={"toolkit_owned_output": True}`.
+def _toolkit_clones_into(field_info: Any) -> bool:
+    """True when the field is marked `json_schema_extra={"toolkit_clones_into": True}`.
 
-    Not a judgement call: this is the SAME marker `validation.py` and `config/base.py`
-    already honour to skip existence checks on a path the toolkit creates for itself.
-    Today it marks the two software-directory fields. NOTE WHAT THE SENTINEL DOES AND
-    DOES NOT MEAN: it exempts the path from the load-time existence check because the
-    toolkit CREATES that directory. It is NOT a statement that the user does not supply
+    DELIBERATELY NOT `toolkit_owned_output`, and the distinction is the point. That
+    sentinel means one thing -- skip the load-time existence check -- and is carried by
+    FOUR fields: the two software directories plus `system_directory` and `analysis_dir`.
+    This predicate answers a different question: does the user name a directory the
+    clone/build gate BUILDS INTO? True for the two software directories only. Keying the
+    Reproduction Guide's requiredness cell on the existence-skip sentinel would render
+    `system_directory` as "the toolkit clones/builds into it" (it does not -- outputs are
+    written there) and `analysis_dir` as Required (it is `Path | None`, default None, and
+    the config's own description says the run places it for you) -- the OPPOSITE of the
+    truth, on the page whose entire purpose is telling a reproducer what to supply.
+    One flag must not carry two unrelated meanings.
+
+    NOTE WHAT THIS DOES AND DOES NOT MEAN: it exempts nothing by itself -- the
+    existence skip is `toolkit_owned_output`'s job, on a superset of these fields.
+    It is NOT a statement that the user does not supply
     the path -- the user names the directory the clone/build gate builds into, and
     `system.py` raises ConfigurationError when it is None. These fields are schema-
     Optional only so a portability-scrubbed bundle's cfg_system.yaml loads for
     bundle-local EDA; they are required for any real run.
     """
     extra = getattr(field_info, "json_schema_extra", None)
-    return isinstance(extra, dict) and bool(extra.get("toolkit_owned_output"))
+    return isinstance(extra, dict) and bool(extra.get("toolkit_clones_into"))
 
 
 def _options_tooltip(field_info: Any) -> str:
@@ -1645,7 +1655,7 @@ def _requiredness_cell(field_info: Any) -> str:
     """
     from hhemt.config.base import declared, render_clauses
 
-    if _is_toolkit_owned(field_info):
+    if _toolkit_clones_into(field_info):
         return "<strong>Required</strong> — you choose the location; the toolkit clones/builds into it"
     try:
         required = field_info.is_required()

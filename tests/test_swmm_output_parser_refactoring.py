@@ -21,7 +21,6 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-import tests.fixtures.test_case_catalog as cases
 from hhemt.constants import (
     APP_NAME,
 )
@@ -63,13 +62,6 @@ BASELINE_RETRIEVE_SECONDS = 20.295690
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-
-@pytest.fixture(scope="module")
-def test_case_analysis():
-    nrflk_multisim_ensemble = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
-    analysis = nrflk_multisim_ensemble.analysis
-    return analysis
 
 
 @pytest.fixture(scope="module")
@@ -121,7 +113,7 @@ def reference_node_tseries():
     return ds_nodes.drop_vars([var for var in drop_vars if var in ds_nodes.data_vars])
 
 
-def wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis):
+def wrap_retrieve_SWMM_outputs_as_datasets():
     ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
         REF_INP,
         REF_HYDRAULICS_RPT,
@@ -130,9 +122,9 @@ def wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis):
 
 
 @pytest.fixture(scope="module")
-def parsed_outputs(test_case_analysis):
+def parsed_outputs():
     """Parse SWMM outputs using the current implementation."""
-    ds_nodes, ds_links = wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
+    ds_nodes, ds_links = wrap_retrieve_SWMM_outputs_as_datasets()
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
 
@@ -389,7 +381,7 @@ class TestWarningSuppression:
             f"Found {len(caught_warnings)} warning(s): {[str(w.message) for w in caught_warnings]}"
         )
 
-    def test_full_pipeline_no_warnings(self, test_case_analysis):
+    def test_full_pipeline_no_warnings(self):
         """Verify full parsing pipeline produces no warnings."""
         # if not REF_INP.exists() or not REF_HYDRAULICS_RPT.exists():
         #     pytest.skip("Reference input files not found")
@@ -397,7 +389,7 @@ class TestWarningSuppression:
         with warnings.catch_warnings(record=True) as caught_warnings:
             warnings.simplefilter("always")
 
-            wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
+            wrap_retrieve_SWMM_outputs_as_datasets()
 
         assert len(caught_warnings) == 0, (
             f"Found {len(caught_warnings)} warning(s): {[str(w.message) for w in caught_warnings]}"
@@ -493,10 +485,10 @@ class TestPerformance:
     """Tests to ensure no performance regression."""
 
     @pytest.mark.slow
-    def test_retrieve_swmm_outputs_baseline(self, test_case_analysis):
+    def test_retrieve_swmm_outputs_baseline(self):
         """Track retrieve_SWMM_outputs_as_datasets baseline timing across phases."""
         start_time = time.time()
-        wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
+        wrap_retrieve_SWMM_outputs_as_datasets()
         elapsed = time.time() - start_time
 
         savings = BASELINE_RETRIEVE_SECONDS - elapsed

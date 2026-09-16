@@ -589,7 +589,9 @@ class TRITONSWMM_sensitivity_analysis:
 
         return result
 
-    def _invalidate_processing_log_for_member_ids(self, member_id_tokens: tuple[str, ...]) -> None:
+    def _invalidate_processing_log_for_member_ids(
+        self, member_id_tokens: tuple[str, ...], *, set_force_marker: bool = False
+    ) -> None:
         """Per-member_id dispatch for processing-log invalidation under
         ``override_force_rerun={"member_id": [...]}``.
 
@@ -604,7 +606,11 @@ class TRITONSWMM_sensitivity_analysis:
         """
         from hhemt.workflow import ResolvedForceRerunSpec
 
-        all_spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
+        # Members inherit the master's model toggles, so the experiment's enabled set IS
+        # each member's. `_get_enabled_model_types` is the tree's single source for it.
+        all_spec = ResolvedForceRerunSpec(
+            scope="all", tokens=(), stage="simulate", models=tuple(self.experiment._get_enabled_model_types())
+        )
         for member_id in member_id_tokens:
             analysis = self.members.get(member_id)
             if analysis is None:
@@ -615,7 +621,7 @@ class TRITONSWMM_sensitivity_analysis:
                     f"members missing entry for member_id={member_id!r} after "
                     f"validation passed; df_setup/members are out of sync"
                 )
-            analysis._invalidate_processing_log_for_force_rerun(all_spec)
+            analysis._invalidate_processing_log_for_force_rerun(all_spec, set_force_marker=set_force_marker)
 
     def reprocess(
         self,
@@ -744,11 +750,9 @@ class TRITONSWMM_sensitivity_analysis:
         # invalidation). "render" leaves consolidate flags intact and only
         # invalidates the rendered report artifact.
         from hhemt.du_sentinels import (
-            decrement_scope_sentinel,
-            restamp_parent_sentinels,
+            delete_and_account,
             sum_child_sentinels,
         )
-        from hhemt.utils import fast_rmtree as _fast_rmtree
 
         experiment_dir = self.experiment.analysis_paths.analysis_dir
         status_dir = experiment_dir / "_status"
@@ -834,20 +838,9 @@ class TRITONSWMM_sensitivity_analysis:
             # regenerates from the preserved zarr on the default path (FQ1 parity).
             _report_html = experiment_dir / "analysis_report.html"
             _report_zip = experiment_dir / "analysis_report.zip"
-            # EXEMPT-DU: du-handled-by-decrement
-            _report_html.unlink(missing_ok=True)
-            # EXEMPT-DU: du-handled-by-decrement
-            _report_zip.unlink(missing_ok=True)
-            # FIX 3 — when regenerate_existing (and not dry_run), a LATER
-            # deletion restamps the master _du.json anyway (SLURM route: the
-            # reprocess-delete workflow's per-sub + master rules; in-process
-            # route: compute_and_write_scope_sentinel(master, scope="analysis")
-            # below). The early report-restamp here would otherwise force a
-            # full-tree GPFS stat() walk on the login node before any SLURM
-            # offload — the observed multi-minute stall. The default
-            # (regenerate_existing=False) path still restamps (no later deletion).
-            if not dry_run and not regenerate_existing:
-                restamp_parent_sentinels(_report_html, analysis_dir=experiment_dir)  # PATTERN B (FIX 3 gate)
+            delete_and_account([_report_html, _report_zip], scope_dir=experiment_dir, scope="analysis")
+            # DN-3: the report deletion is accounted by the tool call above; no
+            # per-mutation ancestor restamp (clause 2) -- the FIX-3 gated restamp is gone.
             # Consolidated-zarr deletion + batched DU restamp are the EXPENSIVE
             # GPFS work — gate behind regenerate_existing. Default path preserves
             # the zarrs (consolidate stays inert) and runs NO restamp walk.
@@ -939,11 +932,11 @@ class TRITONSWMM_sensitivity_analysis:
                     )
                     _sub_zarr = analysis.analysis_paths.analysis_datatree_zarr
                     if _sub_zarr is not None and _sub_zarr.exists():
-                        _fast_rmtree(_sub_zarr, analysis_dir=None)  # batched-restamp
+                        delete_and_account([_sub_zarr], scope_dir=analysis.analysis_paths.analysis_dir, scope="member")
                         affected_sub_dirs.add(analysis.analysis_paths.analysis_dir)
                 _master_zarr = self.analysis_paths.sensitivity_datatree_zarr
                 if _master_zarr is not None and _master_zarr.exists():
-                    _fast_rmtree(_master_zarr, analysis_dir=None)  # batched-restamp
+                    delete_and_account([_master_zarr], scope_dir=experiment_dir, scope="analysis")
                 for _sub_dir in affected_sub_dirs:
                     sum_child_sentinels(_sub_dir, scope="member", child_scope_dirs=["sims"])
                 sum_child_sentinels(experiment_dir, scope="analysis", child_scope_dirs=["members", "sims"])
@@ -954,24 +947,7 @@ class TRITONSWMM_sensitivity_analysis:
             # runs even on dry_run (see D6); only the DU restamp is gated.
             _report_html = experiment_dir / "analysis_report.html"
             _report_zip = experiment_dir / "analysis_report.zip"
-            # D3 — capture sizes BEFORE unlink so the O(1) decrement has the bytes.
-            _html_bytes = _report_html.stat().st_size if _report_html.exists() else 0
-            _zip_bytes = _report_zip.stat().st_size if _report_zip.exists() else 0
-            # EXEMPT-DU: du-handled-by-decrement
-            _report_html.unlink(missing_ok=True)
-            # EXEMPT-DU: du-handled-by-decrement
-            _report_zip.unlink(missing_ok=True)
-            if not dry_run:
-                # D3 — O(1) decrement of the two report children (no plots on the
-                # sensitivity render arm). Mirrors the non-sensitivity render path;
-                # routes through write_du_sentinel (compare-and-write mtime invariant).
-                _child_deltas: dict[str, int] = {}
-                if _html_bytes:
-                    _child_deltas["analysis_report.html"] = _html_bytes
-                if _zip_bytes:
-                    _child_deltas["analysis_report.zip"] = _zip_bytes
-                if _child_deltas:
-                    decrement_scope_sentinel(experiment_dir, scope="analysis", child_deltas=_child_deltas)
+            delete_and_account([_report_html, _report_zip], scope_dir=experiment_dir, scope="analysis")
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 
@@ -2145,7 +2121,7 @@ class TRITONSWMM_sensitivity_analysis:
         ValueError
             If ``dry_run=False`` and ``force=False``.
         """
-        from hhemt.utils import fast_rmtree
+        from hhemt.du_sentinels import delete_and_account
 
         orphans = self.find_orphan_member_dirs()
         if verbose:
@@ -2169,7 +2145,7 @@ class TRITONSWMM_sensitivity_analysis:
             if verbose:
                 print(f"[cleanup-orphans] Deleting {p}", flush=True)
             try:
-                fast_rmtree(p, analysis_dir=experiment_dir)  # PATTERN A
+                delete_and_account([p], scope_dir=experiment_dir, scope="analysis")
                 deleted.append(p)
             except Exception as exc:
                 failed.append((p, exc))
@@ -2307,7 +2283,7 @@ class TRITONSWMM_sensitivity_analysis:
         ValueError
             If ``dry_run=False`` and ``force=False``.
         """
-        from hhemt.utils import fast_rmtree
+        from hhemt.du_sentinels import delete_and_account
 
         result = {
             "dirs": self.find_orphan_member_dirs(),
@@ -2346,7 +2322,7 @@ class TRITONSWMM_sensitivity_analysis:
         for p in result["dirs"]:
             if verbose:
                 print(f"[cleanup-orphans] Deleting dir {p}", flush=True)
-            fast_rmtree(p, analysis_dir=experiment_dir)  # PATTERN A
+            delete_and_account([p], scope_dir=experiment_dir, scope="analysis")
         for p in result["status_flags"]:
             if verbose:
                 print(f"[cleanup-orphans] Unlinking flag {p}", flush=True)
@@ -2367,7 +2343,7 @@ class TRITONSWMM_sensitivity_analysis:
                         f"[cleanup-orphans] Deleting {zarr_path.name} (rebuild on next run): {zarr_path}",
                         flush=True,
                     )
-                fast_rmtree(zarr_path, analysis_dir=experiment_dir)  # PATTERN A
+                delete_and_account([zarr_path], scope_dir=experiment_dir, scope="analysis")
                 result["sensitivity_datatree_removed"] = True
             master_flag = self.analysis_paths.analysis_dir / "_status" / "f_consolidate_experiment_complete.flag"
             if master_flag.exists():
@@ -2404,15 +2380,16 @@ class TRITONSWMM_sensitivity_analysis:
 
         from hhemt.config.system import system_config
         from hhemt.system import TRITONSWMM_system
-        from hhemt.utils import fast_rmtree
 
         sensitivity_csv = self.experiment.cfg_analysis.sensitivity_analysis
         analysis_dir = self.experiment.analysis_paths.analysis_dir
         generated_dir = analysis_dir / "_generated"
 
         if is_main_orchestrator:
-            # PATTERN A (_generated is DU-counted; not _status*-prefixed)
-            fast_rmtree(generated_dir, missing_ok=True, analysis_dir=analysis_dir)
+            # _generated is DU-counted (not _status*-prefixed): route through the tool.
+            from hhemt.du_sentinels import delete_and_account
+
+            delete_and_account([generated_dir], scope_dir=analysis_dir, scope="analysis")
             generated_dir.mkdir(parents=True, exist_ok=True)
 
         has_yaml_col = "system_config_yaml" in df_setup_full.columns

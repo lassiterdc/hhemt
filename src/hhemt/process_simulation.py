@@ -27,11 +27,11 @@ from hhemt.utils import (
     convert_datetime_to_str,
     covered_timesteps,
     current_datetime_string,
-    fast_rmtree,
     get_file_size_MiB,
     merge_chapters_to_unified,
     paths_to_strings,
     reap_unflagged_chapters,
+    resolve_chunk_grid,
     return_dic_zarr_encodings,
     unified_flag_for,
     verify_and_flag_chapter,
@@ -60,6 +60,27 @@ from hhemt.utils import (
 # adding `swmm` here would INVERT the intent and delete the side-file. The side-file
 # is reclaimed (bounded-retention) at a sanctioned point AFTER the final allocation —
 # see `_reclaim_exchange_replay_sidefiles` below.
+#
+# THIRD load-bearing reason, and it names a FILE rather than a directory:
+# `out_triton/performance.txt` (and its `out_tritonswmm/` sibling) is a LIVE COMPLETION
+# PREDICATE, not an output. `run_simulation._coupled_swmm_report_finalized`'s `triton` arm
+# returns False when it is absent, and `model_run_completed` calls that gate on BOTH the
+# log-True branch and the raw-marker fallback -- so deleting it converts every COMPLETED
+# triton sim into a permanently-incomplete one and burns the `retries:` budget re-running
+# work that already succeeded. It MUST NEVER be added to this allowlist nor to any
+# file-level reclaim allowlist under `out_*/`.
+#
+# CANONICAL STATEMENT of why it survives, and the ONLY one -- every other site points here
+# rather than restating it. The delete this allowlist feeds is guarded on
+# `child.is_dir() and child.name in _CLEAR_RAW_DELETE_SUBDIRS`
+# (`_clear_raw_outputs`, THIS file), so a top-level FILE is unreachable by it: the guard
+# makes the survival STRUCTURAL rather than documentary. TRITON puts the two on purpose --
+# `output<T>::write_times` writes `{output_folder}/performance/performance{N}.txt` for an
+# intermediate checkpoint and `{output_folder}/performance.txt` for the final state, on
+# separate branches -- so `performance.txt` sits BESIDE the reclaimable `performance/`
+# directory, not inside it. A future FILE-level reclaim under `out_triton/` would need an
+# explicit carve-out that this one does not. Cite this block by name, not by line number:
+# the prior citation of it in run_simulation.py went stale by 168 lines.
 _CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset({"H", "QX", "QY", "MH", "bin", "cfg", "performance"})
 
 # FILE-suffix allowlist for the post-processing reclaim INSIDE `out_tritonswmm/swmm/`.
@@ -257,6 +278,20 @@ class TRITONSWMM_sim_post_processing:
             n_variables=n_variables,
             memory_budget_MiB=memory_budget_MiB,
         )
+        # THE ON-DISK CHUNK GRID IS RESOLVED ONCE, HERE, AND REUSED BY EVERY CHAPTER.
+        # Its inputs are the processed DEM's spatial extent and the stored dtype width,
+        # both constant across this scenario by construction -- so every chapter of this
+        # store declares the same grid, including the short final one and including a
+        # chapter a LATER invocation writes on the resume path. It is deliberately NOT
+        # derived from `chunk_size` or from any flush quantity above: those resolve from
+        # the process rule's memory allocation and are constant within one invocation
+        # only. See utils.resolve_chunk_grid for why the timestep count is not an input.
+        _chunk_grid = resolve_chunk_grid(
+            ny=len(rds_dem.y),
+            nx=len(rds_dem.x),
+            itemsize=4 if self._analysis.cfg_analysis.process_store_float32 else 8,
+            override_t=self._analysis.cfg_analysis.process_timestep_chunk,
+        )
         if chunk_size == 1:
             print(
                 f"[Chunked Processing] WARNING: load chunk floored to 1 timestep "
@@ -274,9 +309,9 @@ class TRITONSWMM_sim_post_processing:
         # skips timesteps on three paths, so a count of published timesteps and its
         # POSITION in timestep_list diverge whenever any timestep is skipped.
         _chapters = chapters_dir_for(fname_out)
-        _ad = self._analysis.analysis_paths.analysis_dir
+        _scen_dir = self._scenario.scen_paths.sim_folder
         _chapters.mkdir(parents=True, exist_ok=True)
-        reap_unflagged_chapters(_chapters, analysis_dir=_ad)
+        reap_unflagged_chapters(_chapters, scenario_dir=_scen_dir)
         if unified_flag_for(fname_out).exists():
             warnings.warn(
                 f"{Path(fname_out).name} already carries its unified completion flag; "
@@ -339,7 +374,6 @@ class TRITONSWMM_sim_post_processing:
 
         # Process in chunks; accumulate into batches to decouple append
         # granularity from the in-memory load-chunk size.
-        first_chunk = True
         pending_chunks: list = []
         pending_timesteps = 0
 
@@ -361,51 +395,40 @@ class TRITONSWMM_sim_post_processing:
                 lst_ds_timesteps = []
 
                 for tstep_min in chunk_timesteps:
-                    if tstep_min not in files.index:
-                        continue
                     f = files[tstep_min]
+                    # DELTA 2a -- FAIL-CLOSED. Post-Component-1 the frame is index-equal by
+                    # construction, so a file that vanished between listing and read is a
+                    # genuine anomaly. Skipping it produces a chapter with this variable absent
+                    # at this timestep, written and FLAGGED complete (verify_and_flag_chapter is
+                    # per-variable blind). No guard in this consumer may continue past a missing
+                    # per-variable cell; the only admissible response is a loud refusal.
                     if not f.exists():
-                        if verbose:
-                            print(
-                                f"[Chunked Processing] Warning: Missing file {f}, skipping",
-                                flush=True,
-                            )
-                        continue
+                        raise ProcessingError(
+                            "chapter build (raw output file missing between listing and read)",
+                            filepath=f,
+                            reason=(
+                                f"variable {varname!r} at timestep_min={tstep_min} was listed by "
+                                "return_fpath_wlevels but does not exist at read time. Refusing to "
+                                "skip it: a skipped cell yields a silently-incomplete flagged chapter."
+                            ),
+                        )
 
                     ds_triton_output = load_triton_output_w_xarray(rds_dem, f, varname, raw_out_type)
                     lst_ds_timesteps.append(ds_triton_output)
 
-                if not lst_ds_timesteps:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] No valid files for {varname} in this chunk",
-                            flush=True,
-                        )
-                    continue
-
-                # Determine valid timesteps (those we actually loaded)
-                valid_timesteps = []
-                for tstep_min in chunk_timesteps:
-                    if tstep_min in files.index:
-                        f_path = files[tstep_min]
-                        if isinstance(f_path, Path) and f_path.exists():
-                            valid_timesteps.append(tstep_min)
-
+                # DELTA 2b. Post-Component-1 + Delta 2a the loop above either appended every
+                # member of chunk_timesteps or raised, so the loaded set IS chunk_timesteps by
+                # construction: no second stat loop, no value guard, and no `continue` --
+                # a skip that drops a whole variable is a worse survivor than the index guard
+                # this change removed, because it produces a flagged chapter missing that
+                # variable at every timestep of the chunk.
                 ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep_min")
-                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=valid_timesteps)
+                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=chunk_timesteps)
                 lst_ds_vars_chunk.append(ds_var_chunk)
 
                 # Clear per-variable temporaries
                 del lst_ds_timesteps
                 gc.collect()
-
-            if not lst_ds_vars_chunk:
-                if verbose:
-                    print(
-                        f"[Chunked Processing] No valid data in chunk {chunk_idx + 1}, skipping",
-                        flush=True,
-                    )
-                continue
 
             ds_chunk = xr.merge(lst_ds_vars_chunk)
             pending_chunks.append(ds_chunk)
@@ -428,7 +451,7 @@ class TRITONSWMM_sim_post_processing:
                     ds_batch,
                     comp_level,
                     store_float32=self._analysis.cfg_analysis.process_store_float32,
-                    time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
+                    chunk_grid=_chunk_grid,
                 )
                 ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
                 ds_batch.attrs["output_creation_date"] = current_datetime_string()
@@ -436,9 +459,10 @@ class TRITONSWMM_sim_post_processing:
                 ds_batch.to_zarr(_store, mode="w", encoding=encoding, consolidated=False)
                 verify_and_flag_chapter(_store, _flag, _n)
                 if _clear_raw_ok:
-                    _freed_bytes += clear_raw_for_timesteps(df_outputs, _ts, analysis_dir=_ad)
+                    _freed_bytes += clear_raw_for_timesteps(
+                        df_outputs, _ts, scenario_dir=self._scenario.scen_paths.sim_folder
+                    )
                 _next_chapter += 1
-                first_chunk = False
                 del ds_batch
                 pending_chunks = []
                 pending_timesteps = 0
@@ -458,7 +482,7 @@ class TRITONSWMM_sim_post_processing:
                 ds_batch,
                 comp_level,
                 store_float32=self._analysis.cfg_analysis.process_store_float32,
-                time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
+                chunk_grid=_chunk_grid,
             )
             ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
             ds_batch.attrs["output_creation_date"] = current_datetime_string()
@@ -466,25 +490,14 @@ class TRITONSWMM_sim_post_processing:
             ds_batch.to_zarr(_store, mode="w", encoding=encoding, consolidated=False)
             verify_and_flag_chapter(_store, _flag, _n)
             if _clear_raw_ok:
-                _freed_bytes += clear_raw_for_timesteps(df_outputs, _ts, analysis_dir=_ad)
+                _freed_bytes += clear_raw_for_timesteps(
+                    df_outputs, _ts, scenario_dir=self._scenario.scen_paths.sim_folder
+                )
             _next_chapter += 1
-            first_chunk = False
             del ds_batch
             pending_chunks = []
 
-        # Guard (SE F-I-2): if no batch was ever written (first_chunk still
-        # True), every chunk was skipped — all source output files missing — so
-        # the zarr store was never created with mode="w". Consolidating a
-        # nonexistent store raises a cryptic error; raise a diagnosable signal
-        # instead.
-        if first_chunk:
-            raise ProcessingError(
-                f"write_timeseries_outputs: no valid timesteps to write for "
-                f"{fname_out.name} — every chunk was skipped (all source output "
-                f"files missing?). Zarr store not created; nothing to consolidate."
-            )
-
-        merge_chapters_to_unified(_chapters, fname_out, analysis_dir=_ad)
+        merge_chapters_to_unified(_chapters, fname_out, scenario_dir=_scen_dir)
         if _freed_bytes:
             print(f"[Chunked Processing] Reclaimed {_freed_bytes} raw byte(s) across chapters.", flush=True)
 
@@ -727,6 +740,15 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and O3's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if log_field is not None:
+                log_field.set(True)
             return
 
         start_time = time.time()
@@ -835,6 +857,15 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and O3's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if log_field is not None:
+                log_field.set(True)
             return
 
         ds = ds.sum(dim="timestep_min").max(dim="Rank")
@@ -859,6 +890,41 @@ class TRITONSWMM_sim_post_processing:
         log_field.set(True)
         return
 
+    def _triton_raw_frame_or_raise(self, fldr_out_triton, reporting_interval_s, *, model_label: str):
+        """The per-timestep raw-output frame, or a loud refusal naming which condition failed.
+
+        ONE PREFLIGHT, SHARED BY BOTH TRITON EXPORTS, and the sharing is the point. The
+        two arms previously grew two different preflights: the TRITON-only arm tested
+        DIRECTORY emptiness (`any(dir.iterdir())`), which is TRUE when the directory
+        holds only TRITON's `GR_*` ghost-ring side-files -- not processable output -- so
+        control fell through and a later step raised on genuinely absent data; the
+        coupled arm had no emptiness test at all. A predicate for "is there processable
+        output here" that is expressed anywhere but in the enumerator can drift from it,
+        which is the defect shape being removed, so this asks the ENUMERATOR.
+
+        Two conditions, two messages, because they are genuinely different faults: a
+        MISSING directory means the simulation did not write where it was told to, and
+        an EMPTY frame means the directory exists and holds nothing this toolkit can
+        process. The ragged-frame case is not handled here -- `return_fpath_wlevels`
+        already refuses it with a better message than this function could write.
+        """
+        if fldr_out_triton is None or not Path(fldr_out_triton).exists():
+            raise FileNotFoundError(
+                f"Raw TRITON outputs not found for {model_label} at {fldr_out_triton}. "
+                "Ensure the simulation completed and wrote outputs to the configured "
+                "output directory."
+            )
+        df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
+        if df_outputs.empty:
+            raise FileNotFoundError(
+                f"No processable TRITON output files (MH, H, QX, QY) found for {model_label} "
+                f"in {fldr_out_triton}. The directory exists but holds no file the frame "
+                "builder recognises -- TRITON's GR_* ghost-ring side-files alone produce "
+                "this state, as does a directory whose raw was already cleared. Ensure the "
+                "simulation completed successfully."
+            )
+        return df_outputs
+
     def _export_TRITONSWMM_TRITON_outputs(
         self,
         *,
@@ -875,6 +941,15 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and O3's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if self.log.TRITON_timeseries_written is not None:
+                self.log.TRITON_timeseries_written.set(True)
             if self._should_clear_raw_for_model(resolved_clear_raw, "tritonswmm"):
                 self._clear_raw_outputs("tritonswmm")
             return
@@ -882,24 +957,15 @@ class TRITONSWMM_sim_post_processing:
         raw_out_type = self._analysis.cfg_analysis.TRITON_raw_output_type
         fldr_out_triton = self._run.raw_triton_output_dir(model_type="tritonswmm")
 
-        if fldr_out_triton is None or not fldr_out_triton.exists():
-            raise FileNotFoundError(
-                f"Raw TRITON-SWMM outputs not found at {fldr_out_triton}. "
-                "Ensure the TRITON-SWMM coupled simulation completed and wrote outputs to "
-                f"the configured output directory."
-            )
         reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         rds_dem = self._system.processed_dem_rds
 
         start_time = time.time()
 
         # Get output files
-        df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
-        if df_outputs.empty:
-            raise FileNotFoundError(
-                f"No TRITON output files (H, QX, QY, MH) found in {fldr_out_triton}. "
-                "Ensure the TRITON-SWMM coupled simulation completed successfully."
-            )
+        df_outputs = self._triton_raw_frame_or_raise(
+            fldr_out_triton, reporting_interval_s, model_label="the TRITON-SWMM coupled model"
+        )
 
         self._streaming_chunked_zarr_write(
             df_outputs,
@@ -926,7 +992,7 @@ class TRITONSWMM_sim_post_processing:
         self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 
         # Mark timeseries as written
-        if self.log.TRITON_timeseries_written:
+        if self.log.TRITON_timeseries_written is not None:
             self.log.TRITON_timeseries_written.set(True)
 
         if self._should_clear_raw_for_model(resolved_clear_raw, "tritonswmm"):
@@ -950,6 +1016,15 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and O3's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if self.log.TRITON_timeseries_written is not None:
+                self.log.TRITON_timeseries_written.set(True)
             if self._should_clear_raw_for_model(resolved_clear_raw, "triton"):
                 self._clear_raw_outputs("triton")
             return
@@ -960,34 +1035,15 @@ class TRITONSWMM_sim_post_processing:
             raise FileNotFoundError("out_triton path is None. Ensure TRITON-only model is enabled in system config.")
         fldr_out_triton = out_triton / raw_out_type
 
-        if not fldr_out_triton.exists() or not any(fldr_out_triton.iterdir()):
-            if self._already_written(fname_out):
-                if verbose:
-                    print(
-                        f"Raw TRITON-only outputs not found, but {fname_out.name} exists. Skipping reprocessing.",
-                        flush=True,
-                    )
-                if self._should_clear_raw_for_model(resolved_clear_raw, "triton"):
-                    self._clear_raw_outputs("triton")
-                return
-            raise FileNotFoundError(
-                "No TRITON outputs found to process for TRITON-only model. "
-                f"Expected files in: {fldr_out_triton} " + f" (raw type: {raw_out_type}). "
-                "Ensure the TRITON-only simulation completed and wrote outputs."
-            )
         reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         rds_dem = self._system.processed_dem_rds
 
         start_time = time.time()
 
         # Get output files
-        df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
-        if df_outputs.empty:
-            raise FileNotFoundError(
-                "No TRITON outputs found to process for TRITON-only model. "
-                f"Expected files in: {fldr_out_triton}. "
-                "Ensure the TRITON-only simulation completed and wrote outputs."
-            )
+        df_outputs = self._triton_raw_frame_or_raise(
+            fldr_out_triton, reporting_interval_s, model_label="the TRITON-only model"
+        )
 
         self._streaming_chunked_zarr_write(
             df_outputs,
@@ -1014,7 +1070,7 @@ class TRITONSWMM_sim_post_processing:
         self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 
         # Mark timeseries as written
-        if self.log.TRITON_timeseries_written:
+        if self.log.TRITON_timeseries_written is not None:
             self.log.TRITON_timeseries_written.set(True)
 
         if self._should_clear_raw_for_model(resolved_clear_raw, "triton"):
@@ -1131,9 +1187,9 @@ class TRITONSWMM_sim_post_processing:
                 notes="links are written after nodes so time elapsed reflecs writing both link AND node time series",
             )
         # Mark timeseries as written (set both node and link flags)
-        if self.log.SWMM_node_timeseries_written:
+        if self.log.SWMM_node_timeseries_written is not None:
             self.log.SWMM_node_timeseries_written.set(True)
-        if self.log.SWMM_link_timeseries_written:
+        if self.log.SWMM_link_timeseries_written is not None:
             self.log.SWMM_link_timeseries_written.set(True)
 
         # Phase 1.3: Explicit garbage collection after large dataset operations
@@ -1268,19 +1324,19 @@ class TRITONSWMM_sim_post_processing:
     @property
     def TRITON_outputs_processed(self) -> bool:
         """Check if TRITON outputs processed for current model log."""
-        if self.log.TRITON_timeseries_written:
+        if self.log.TRITON_timeseries_written is not None:
             return bool(self.log.TRITON_timeseries_written.get())
         return False
 
     @property
     def raw_TRITON_outputs_cleared(self) -> bool:
-        if self.log.raw_TRITON_outputs_cleared:
+        if self.log.raw_TRITON_outputs_cleared is not None:
             return bool(self.log.raw_TRITON_outputs_cleared.get())
         return False
 
     @property
     def raw_SWMM_outputs_cleared(self) -> bool:
-        if self.log.raw_SWMM_outputs_cleared:
+        if self.log.raw_SWMM_outputs_cleared is not None:
             return bool(self.log.raw_SWMM_outputs_cleared.get())
         return False
 
@@ -1302,7 +1358,7 @@ class TRITONSWMM_sim_post_processing:
         else:
             swmm_links = self._already_written(self.scen_paths.output_swmm_only_link_time_series)
         # With model-specific logs, just set the single field
-        if self.log.SWMM_link_timeseries_written:
+        if self.log.SWMM_link_timeseries_written is not None:
             self.log.SWMM_link_timeseries_written.set(swmm_links)
         return swmm_links
 
@@ -1312,7 +1368,7 @@ class TRITONSWMM_sim_post_processing:
         else:
             swmm_nodes = self._already_written(self.scen_paths.output_swmm_only_node_time_series)
         # With model-specific logs, just set the single field
-        if self.log.SWMM_node_timeseries_written:
+        if self.log.SWMM_node_timeseries_written is not None:
             self.log.SWMM_node_timeseries_written.set(swmm_nodes)
         return swmm_nodes
 
@@ -1369,7 +1425,7 @@ class TRITONSWMM_sim_post_processing:
                 "after the final-allocation consolidation succeeds and clears the flag."
             )
 
-        from hhemt.du_sentinels import restamp_parent_sentinels
+        from hhemt.du_sentinels import delete_and_account
 
         _OUT_DIR_BY_MODEL = {
             "tritonswmm": self.scen_paths.out_tritonswmm,
@@ -1379,9 +1435,8 @@ class TRITONSWMM_sim_post_processing:
             out_dir = _OUT_DIR_BY_MODEL[model_type]
             if out_dir is None or not out_dir.exists():
                 return
-            for child in out_dir.iterdir():
-                if child.is_dir() and child.name in _CLEAR_RAW_DELETE_SUBDIRS:
-                    fast_rmtree(child, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
+            _targets = [c for c in out_dir.iterdir() if c.is_dir() and c.name in _CLEAR_RAW_DELETE_SUBDIRS]
+            delete_and_account(_targets, scope_dir=self.scen_paths.sim_folder, scope="scenario")
             # Reclaim the coupled-SWMM exchange-replay side-file (R7): it is dead weight
             # once the FINAL allocation is done (this method is guarded against a
             # mid-multi-allocation invocation above) and grows unbounded in sim length if
@@ -1400,10 +1455,7 @@ class TRITONSWMM_sim_post_processing:
         elif model_type == "swmm":
             out_file = self.scen_paths.swmm_full_out_file
             if out_file is not None and Path(out_file).exists():
-                Path(out_file).unlink()
-                restamp_parent_sentinels(
-                    Path(out_file), analysis_dir=self._analysis.analysis_paths.analysis_dir
-                )  # PATTERN B
+                delete_and_account([Path(out_file)], scope_dir=self.scen_paths.sim_folder, scope="scenario")
             if getattr(self.log, "raw_SWMM_outputs_cleared", None):
                 self.log.raw_SWMM_outputs_cleared.set(True)
         else:
@@ -1429,21 +1481,19 @@ class TRITONSWMM_sim_post_processing:
         Called ONLY from the ``tritonswmm`` branch of ``_clear_raw_outputs``, which is already
         gated (a) on the ``multi_allocation_in_progress`` guard (final allocation complete)
         and (b) on the ``clear_raw`` config electing tritonswmm cleanup. Size-mutating, so it
-        re-stamps the DU sentinels per the ``du sentinels written at every mutation site``
-        stipulation (PATTERN B: unlink + ``restamp_parent_sentinels``) — NOT ``# EXEMPT-DU``.
+        routes through ``du_sentinels.delete_and_account`` (the unified deletion tool), which
+        adjusts this scenario's own sentinel once — NOT ``# EXEMPT-DU``.
         """
-        from hhemt.du_sentinels import restamp_parent_sentinels
+        from hhemt.du_sentinels import delete_and_account
 
         out_dir = self.scen_paths.out_tritonswmm
         if out_dir is None or not out_dir.exists():
             return
-        analysis_dir = self._analysis.analysis_paths.analysis_dir
-        for sidefile in out_dir.glob("**/swmm/*_exchange_replay.bin"):
-            try:
-                sidefile.unlink()  # EXEMPT-DU: du-handled-by-decrement
-            except OSError:
-                continue
-            restamp_parent_sentinels(sidefile, analysis_dir=analysis_dir)  # PATTERN B
+        delete_and_account(
+            list(out_dir.glob("**/swmm/*_exchange_replay.bin")),
+            scope_dir=self.scen_paths.sim_folder,
+            scope="scenario",
+        )
 
     @staticmethod
     def _should_clear_raw_for_model(
@@ -1606,6 +1656,15 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and O3's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if self.log.TRITON_summary_written is not None:
+                self.log.TRITON_summary_written.set(True)
             return
 
         # Validate that input timeseries exists.
@@ -1653,7 +1712,7 @@ class TRITONSWMM_sim_post_processing:
         elapsed_s = time.time() - start_time
         self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
         # With model-specific logs, just set the single field
-        if self.log.TRITON_summary_written:
+        if self.log.TRITON_summary_written is not None:
             self.log.TRITON_summary_written.set(True)
         return
 
@@ -1696,6 +1755,20 @@ class TRITONSWMM_sim_post_processing:
         nodes_already_written = self._already_written(f_out_nodes)
         links_already_written = self._already_written(f_out_links)
 
+        # O3 PLACEMENT CONSTRAINT: reconcile PER ARM and ABOVE every branch below.
+        # The combined early return and the two `if not ..._already_written:` blocks
+        # all sit lower, so a set placed in any of them is unreachable on the skip
+        # pass -- which is the only pass an already-latched scenario ever takes again.
+        # PER ARM rather than on the combined condition, because the partial state
+        # (nodes written, links not) skips the nodes block without reaching the
+        # combined return. `is not None`, never bare truthiness: LogField defines no
+        # __bool__, and O3's whole job is the None -> True transition a value-based
+        # __bool__ would silently block.
+        if nodes_already_written and self.log.SWMM_node_summary_written is not None:
+            self.log.SWMM_node_summary_written.set(True)
+        if links_already_written and self.log.SWMM_link_summary_written is not None:
+            self.log.SWMM_link_summary_written.set(True)
+
         if nodes_already_written and links_already_written:
             if verbose:
                 print(f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting.")
@@ -1731,7 +1804,7 @@ class TRITONSWMM_sim_post_processing:
             self._write_output(ds_nodes_summary, f_out_nodes, comp_level, verbose, mode=node_mode)
             self.log.add_sim_processing_entry(f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True)
             # With model-specific logs, just set the single field
-            if self.log.SWMM_node_summary_written:
+            if self.log.SWMM_node_summary_written is not None:
                 self.log.SWMM_node_summary_written.set(True)
 
         # Summarize links
@@ -1748,7 +1821,7 @@ class TRITONSWMM_sim_post_processing:
                 notes="links summary written after nodes summary",
             )
             # With model-specific logs, just set the single field
-            if self.log.SWMM_link_summary_written:
+            if self.log.SWMM_link_summary_written is not None:
                 self.log.SWMM_link_summary_written.set(True)
 
         return
@@ -1859,23 +1932,13 @@ class TRITONSWMM_sim_post_processing:
         return out
 
     @staticmethod
-    def _remove_reclaimed(path: Path, analysis_dir, verbose: bool) -> None:
-        """Delete one reclaimed artifact, re-stamping the DU sentinels either way.
-
-        Both patterns are preserved verbatim from the function this one replaces, because
-        scripts/check_du_sentinel_sites.py enforces them statically: PATTERN A for a
-        directory (fast_rmtree re-stamps in line), PATTERN B for a file (unlink then
-        restamp_parent_sentinels).
-        """
-        from hhemt.du_sentinels import restamp_parent_sentinels
+    def _remove_reclaimed(path: Path, scenario_dir: Path, verbose: bool) -> None:
+        """Delete one reclaimed artifact through the unified deletion tool (clause 1)."""
+        from hhemt.du_sentinels import delete_and_account
 
         if verbose:
             print(f"[reclaim] removing {path}", flush=True)
-        if path.is_dir():
-            fast_rmtree(path, analysis_dir=analysis_dir)  # PATTERN A
-        else:
-            path.unlink()
-            restamp_parent_sentinels(path, analysis_dir=analysis_dir)  # PATTERN B
+        delete_and_account([path], scope_dir=scenario_dir, scope="scenario")
 
     @staticmethod
     def _capture_landed(path) -> bool:
@@ -1903,7 +1966,62 @@ class TRITONSWMM_sim_post_processing:
         return True
 
     @staticmethod
-    def _truncate_coupled_rpt(rpt_path: Path, analysis_dir, verbose: bool) -> bool:
+    def _declared_nonzero_subcatchments(inp_path) -> int | None:
+        """Count `[SUBCATCHMENTS]` rows whose authored Area is nonzero, or None if unknown.
+
+        This is the DISCRIMINATOR the capture decision needs, and the nonzero-Area
+        restriction is the whole point rather than a refinement. SWMM's summary emitter
+        loops `j < Nobjects[SUBCATCH]` and does `a = Subcatch[j].area; if (a == 0.0)
+        continue;` -- `a` is the divisor of every depth column, so the skip is a
+        divide-by-zero guard that cannot be configured away. A bare row count therefore
+        over-predicts the summary on any model carrying a zero-area subcatchment, and a
+        legal model would be declined forever.
+
+        The authored token and the runtime member differ by a unit conversion:
+        `subcatch.c` assigns `Subcatch[j].area = x[3] / UCF(LANDAREA)`, where
+        `UCF(LANDAREA)` is a strictly positive finite `const` (`{2.2956e-5, 0.92903e-5}`)
+        with no configuration path to zero. Division by a positive constant preserves the
+        zero/nonzero partition exactly, and because both factors are ~1e-5 the division
+        scales UP, so a small nonzero area cannot underflow to zero. The count is exact.
+
+        `Nobjects[SUBCATCH]` is incremented at one site only, keyed on the
+        `[SUBCATCHMENT` section keyword, so rows and objects are the same population.
+
+        None means UNAVAILABLE, never zero: an unreadable file or a missing section is
+        absence of evidence, and the caller must not read it as "zero declared".
+        """
+        from pathlib import Path as _Path
+
+        try:
+            text = _Path(inp_path).read_text(encoding="latin-1")
+        except OSError:
+            return None
+        seen_section = False
+        n = 0
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("["):
+                if seen_section:
+                    break
+                seen_section = stripped.upper().startswith("[SUBCATCHMENT")
+                continue
+            if not seen_section or not stripped or stripped.startswith(";"):
+                continue
+            tok = stripped.split()
+            if len(tok) < 4:
+                return None
+            try:
+                area = float(tok[3])
+            except ValueError:
+                return None
+            if area != 0.0:
+                n += 1
+        if not seen_section:
+            return None
+        return n
+
+    @staticmethod
+    def _truncate_coupled_rpt(rpt_path: Path, verbose: bool) -> bool:
         """Truncate a finalized coupled rpt to header+summaries+trailer. Returns True iff written.
 
         STREAMING by construction: the Norfolk rpt is ~318 MB / ~5M lines, so this reads
@@ -1916,8 +2034,6 @@ class TRITONSWMM_sim_post_processing:
         - no body start -> either already truncated (the idempotent no-op) or a structure
           this was never measured against; in both cases doing nothing is correct.
         """
-        from hhemt.du_sentinels import restamp_parent_sentinels
-
         head: list[str] = []
         trailer_lines: list[str] = []
         trailer_started = False
@@ -1970,7 +2086,8 @@ class TRITONSWMM_sim_post_processing:
             out.write(_RPT_TRUNCATION_MARKER.format(n_dropped=n_dropped))
             out.writelines(trailer_lines)
         os.replace(tmp, rpt_path)
-        restamp_parent_sentinels(rpt_path, analysis_dir=analysis_dir)  # PATTERN B
+        # DN-3: an in-place rewrite (os.replace of a smaller file) is a WRITE; the
+        # scenario sentinel is re-derived at consolidate_scenario (clause 10).
         if verbose:
             print(f"[reclaim] truncated {rpt_path}: dropped {n_dropped} time-series line(s).", flush=True)
         return True
@@ -2013,8 +2130,6 @@ class TRITONSWMM_sim_post_processing:
         if not classes:
             return
 
-        analysis_dir = self._analysis.analysis_paths.analysis_dir
-
         # The raw_swmm_binaries class no-ops when clear_raw == "none", and the decline is
         # LOGGED rather than silent. Its only reader, eda.raw_resume_identity.compare_swmm_raw,
         # needs out_tritonswmm/swmm/hydraulics.out ALONGSIDE the raw H/QX/QY/MH set that
@@ -2042,14 +2157,14 @@ class TRITONSWMM_sim_post_processing:
         if "coupled_rpt" in classes and model_type == "tritonswmm":
             rpt = self.scen_paths.swmm_hydraulics_rpt
             if rpt is not None and rpt.exists():
-                truncated_rpt = self._truncate_coupled_rpt(rpt, analysis_dir, verbose)
+                truncated_rpt = self._truncate_coupled_rpt(rpt, verbose)
 
         effective_policy = list(classes)
         removed: set[str] = set()
         for klass, path in self._reclaim_paths(model_type, policy=effective_policy, which=which):
             if not path.exists():
                 continue
-            self._remove_reclaimed(path, analysis_dir, verbose)
+            self._remove_reclaimed(path, self.scen_paths.sim_folder, verbose)
             removed.add(klass)
 
         # Per-scenario disclosure ground truth, written by the ACTOR. analysis_validation's
@@ -2069,7 +2184,7 @@ class TRITONSWMM_sim_post_processing:
     @property
     def TRITON_summary_processed(self) -> bool:
         """Check if TRITON summary has been created for current model log."""
-        if self.log.TRITON_summary_written:
+        if self.log.TRITON_summary_written is not None:
             return bool(self.log.TRITON_summary_written.get())
         return False
 
@@ -2081,7 +2196,7 @@ class TRITONSWMM_sim_post_processing:
         return node_ok and link_ok
 
 
-def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: bool = False) -> dict[str, bool]:
+def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> dict[str, bool]:
     """Reclaim the four SCENARIO-SCOPED artifact classes for one scenario.
 
     WHY THESE FOUR AND NOT THE OTHER THREE. The selector is the per-class SCOPE
@@ -2115,6 +2230,7 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
     rather than what the config elected -- the same actor-writes-the-record rule the
     per-model disclosure block follows.
     """
+    scenario_dir = Path(scen.scen_paths.sim_folder)
     _P = TRITONSWMM_sim_post_processing
     reclaimed_hydro_out = False
     removed_prep_inputs = False
@@ -2129,7 +2245,7 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
     if "hydro_out" in classes:
         _hydro_out = Path(str(scen.scen_paths.swmm_hydro_inp).replace(".inp", ".out"))
         if _hydro_out.exists():
-            _P._remove_reclaimed(_hydro_out, analysis_dir, verbose)
+            _P._remove_reclaimed(_hydro_out, scenario_dir, verbose)
             reclaimed_hydro_out = True
 
     # T0 -- regenerable by prepare_scenario template-fill, no solver. No capture gate:
@@ -2141,7 +2257,7 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
             scen.scen_paths.weather_timeseries,
         ):
             if _p is not None and Path(_p).exists():
-                _P._remove_reclaimed(Path(_p), analysis_dir, verbose)
+                _P._remove_reclaimed(Path(_p), scenario_dir, verbose)
                 removed_prep_inputs = True
 
     # T1 -- CAPTURE-GATED, and the gate is the whole safety property.
@@ -2150,7 +2266,7 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
         if _P._capture_landed(_cap):
             for _p in (scen.scen_paths.hyg_timeseries, scen.scen_paths.hyg_locs):
                 if _p is not None and Path(_p).exists():
-                    _P._remove_reclaimed(Path(_p), analysis_dir, verbose)
+                    _P._remove_reclaimed(Path(_p), scenario_dir, verbose)
                     removed_hydrographs = True
         elif verbose:
             print(
@@ -2168,20 +2284,77 @@ def reclaim_scenario_scoped_classes(scen, classes, analysis_dir, *, verbose: boo
     if "standalone_rpt" in classes:
         _full_rpt = scen.scen_paths.swmm_full_rpt_file
         if _full_rpt is not None and Path(_full_rpt).exists():
-            if _P._truncate_coupled_rpt(Path(_full_rpt), analysis_dir, verbose):
+            if _P._truncate_coupled_rpt(Path(_full_rpt), verbose):
                 removed_standalone_rpt = True
         _hydro_rpt = Path(str(scen.scen_paths.swmm_hydro_inp).replace(".inp", ".rpt"))
         _hydro_cap = Path(scen.scen_paths.sim_folder) / "processed" / "hydrology_rpt_summary.zarr"
         if _hydro_rpt.exists() and not _P._capture_landed(_hydro_cap):
-            from hhemt.du_sentinels import restamp_parent_sentinels
             from hhemt.swmm_output_parser import parse_hydrology_rpt_summary
 
-            _ds = parse_hydrology_rpt_summary(_hydro_rpt)
-            _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
-            _ds.to_zarr(_hydro_cap, mode="w")
-            restamp_parent_sentinels(_hydro_cap, analysis_dir=analysis_dir)  # PATTERN B
+            # The capture is written ONLY when it carries what the model declares. An
+            # empty-but-openable store satisfies _capture_landed, so writing one here
+            # would delete the .rpt on the strength of a capture holding nothing --
+            # `parse_hydrology_rpt_summary` returns exactly that on a section it cannot
+            # recognize, and its empty return is DELIBERATELY legal (a zero-subcatchment
+            # hydrology model), so the parser cannot be the place this is caught.
+            # Omit-rather-than-write-empty is the convention the `hydrographs` capture
+            # already follows (swmm_runoff_modeling: `if not d_node_capture: return`),
+            # which is why _capture_landed needs no change: absence IS the signal.
+            #
+            # The parse is guarded because it RAISES on a report it cannot read, one line
+            # above the decision that would otherwise decline -- measured: a trailer-less
+            # report gives `ValueError: Analysis end line not found in RPT file.`, and a
+            # walltime-killed SWMM leaves precisely that file. Unguarded, a disk-hygiene
+            # step fails rule consolidate_scenario over data whose validity is gated
+            # elsewhere (the c_run flags and model_run_completed, not this parse). An
+            # unreadable report IS the unavailable case, so it routes to the same decline.
+            _ds = None
+            _parse_error = None
+            try:
+                _ds = parse_hydrology_rpt_summary(_hydro_rpt)
+            except Exception as _exc:  # noqa: BLE001 -- any unreadable report is UNAVAILABLE
+                _parse_error = f"{type(_exc).__name__}: {_exc}"
+            _declared = _P._declared_nonzero_subcatchments(scen.scen_paths.swmm_hydro_inp)
+            _captured = 0 if _ds is None else int(_ds.sizes.get("subcatchment_id", 0))
+            if _ds is not None and _declared is not None and _captured == _declared:
+                _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
+                _ds.to_zarr(_hydro_cap, mode="w")
+                # DN-3: a WRITE; picked up at the clause-10 reconciliation.
+            elif verbose:
+                # THREE reasons and THREE remedies, built together. Splitting the reason
+                # while appending one remedy to all three is the shape this replaced: on a
+                # count mismatch the report parsed fine, so "re-run processing once the
+                # report parses" is false and re-running reproduces the identical decline
+                # forever; on a missing [SUBCATCHMENTS] section the report is not
+                # implicated at all; and an unparseable report needs the SIM re-run, not
+                # processing. A remedy that is wrong for two of three cases is worse than
+                # none, because it is actionable and the action does not work.
+                if _parse_error is not None:
+                    _why = f"the report did not parse ({_parse_error})"
+                    _fix = (
+                        "the simulation most likely did not finish -- check its log for a "
+                        "walltime kill and re-run the SIMULATION; re-running processing "
+                        "alone cannot repair an incomplete report"
+                    )
+                elif _declared is None:
+                    _why = "the hydrology .inp declares no readable [SUBCATCHMENTS] section"
+                    _fix = (
+                        "the report is not implicated -- check scenario preparation, since "
+                        "the .inp is not the file this reclaim expects"
+                    )
+                else:
+                    _why = f"the capture holds {_captured} subcatchment(s) against {_declared} declared"
+                    _fix = (
+                        "the report parsed completely, so re-run PROCESSING for this "
+                        "scenario; the capture is short, not unreadable"
+                    )
+                print(
+                    f"[reclaim] scenario {scen.event_iloc}: 'standalone_rpt' elected but "
+                    f"{_why} -- declining to capture, so hydro.rpt is kept. {_fix}.",
+                    flush=True,
+                )
         if _hydro_rpt.exists() and _P._capture_landed(_hydro_cap):
-            _P._remove_reclaimed(_hydro_rpt, analysis_dir, verbose)
+            _P._remove_reclaimed(_hydro_rpt, scenario_dir, verbose)
             removed_standalone_rpt = True
 
     return {
@@ -2585,8 +2758,34 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
     s_outputs_qx = return_filelist_by_tstep(fldr_out_triton, "QX", min_per_tstep, "velocity_x_mps")
     s_outputs_qy = return_filelist_by_tstep(fldr_out_triton, "QY", min_per_tstep, "velocity_y_mps")
     lst_out = [s_outputs_mh, s_outputs_h, s_outputs_qx, s_outputs_qy]
-    non_empty_dfs = [s for s in lst_out if s is not None]
-    df_outputs = pd.concat(non_empty_dfs, axis=1)
+    # COMPONENT 1 -- FAIL-CLOSED AT CONSTRUCTION. The concat below is an OUTER join: it
+    # keeps the union of the four index sets and writes NaN where one variable lacks a
+    # timestep another has, and the consumer then dereferences that NaN as a Path. The
+    # ragged frame has TWO independent producers -- an interrupted clear_raw_for_timesteps
+    # (deletes MH first) and an interrupted solver write (writes MH last) -- so no cleanup-
+    # side fix closes the class; the ONLY complete guard is refusing the frame here, before
+    # any consumer, naming what is missing. No repair, no drop, no inner join, no warn-and-
+    # continue: a value guard in the consumer converts this loud failure into a silently
+    # incomplete FLAGGED chapter (verify_and_flag_chapter is per-variable blind).
+    _labels = ("MH", "H", "QX", "QY")
+    _index_sets = {lbl: set(s.index) for lbl, s in zip(_labels, lst_out, strict=True)}
+    _union = set().union(*_index_sets.values())
+    _missing = {lbl: sorted(_union - idx) for lbl, idx in _index_sets.items() if _union - idx}
+    if _missing:
+        raise ProcessingError(
+            "return_fpath_wlevels (ragged raw output frame)",
+            filepath=fldr_out_triton,
+            reason=(
+                "the four per-variable timestep index sets are NOT equal; short variable(s) and "
+                f"missing timestep_min values: {_missing}. This frame is refused rather than "
+                "joined, because an outer join would fabricate NaN cells the consumer treats as "
+                "paths (the AttributeError: 'float' object has no attribute 'exists' class). "
+                "Produced by an interrupted raw clear (MH deleted first) or an interrupted solver "
+                "write (MH written last); do NOT repair by hand or delete raw selectively -- re-run "
+                "the simulation via a force at stage='simulate' naming this model arm."
+            ),
+        )
+    df_outputs = pd.concat(lst_out, axis=1)
     return df_outputs
 
 

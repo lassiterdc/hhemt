@@ -111,7 +111,10 @@ def test_selective_cancel_spares_processing_jobs(tmp_path, monkeypatch):
         (sub / f"{tok}.json").write_text(json.dumps({"rule_token": tok, "slurm_jobid": jid}))
 
     a = TRITONSWMM_analysis.__new__(TRITONSWMM_analysis)
-    a.analysis_paths = types.SimpleNamespace(analysis_dir=adir)
+    # The selective arm (_selective_cancel, 7a34488d) also reads analysis_log_directory
+    # (tmux-log widening); an EMPTY log dir pins the pre-widening cancel set below.
+    (adir / "logs").mkdir()
+    a.analysis_paths = types.SimpleNamespace(analysis_dir=adir, analysis_log_directory=adir / "logs")
     # cancel() reads BOTH log fields and analysis_id before reaching the selective
     # arm, so the fake must carry all three. snakemake_pid is read but unused on
     # this arm -- see the ordering finding in the deliverable.
@@ -122,8 +125,13 @@ def test_selective_cancel_spares_processing_jobs(tmp_path, monkeypatch):
     a.cfg_analysis = types.SimpleNamespace(analysis_id="test_analysis")
     # Step 1 resolves the live PID through the builder BEFORE the selective arm is
     # reached, even though that arm never uses it. Stubbed here; the pass-through
-    # dependency is recorded as an ordering finding in the deliverable.
-    a._workflow_builder = types.SimpleNamespace(_get_snakemake_pid_from_tmux=lambda s: 4242)
+    # dependency is recorded as an ordering finding in the deliverable. The selective
+    # arm also asks the builder for the run uuids (tmux-log widening, 7a34488d); an
+    # empty tuple makes _squeue_live_jobids return None without a subprocess.
+    a._workflow_builder = types.SimpleNamespace(
+        _get_snakemake_pid_from_tmux=lambda s: 4242,
+        _tmux_slurm_run_uuids=lambda: (),
+    )
 
     argvs: list[list[str]] = []
 

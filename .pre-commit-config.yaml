@@ -126,8 +126,9 @@ repos:
         always_run: true
 
   # DU-sentinel mutation-site restamp discipline (scripts/check_du_sentinel_sites.py)
-  # Flags fast_rmtree(...) missing analysis_dir= and .unlink() not adjacent-followed
-  # by restamp_parent_sentinels(...), unless the site carries # EXEMPT-DU: {category}.
+  # Flags any fast_rmtree(...) / .unlink() / shutil.rmtree(...) outside du_sentinels.py
+  # that is not routed through du_sentinels.delete_and_account, unless the site carries
+  # # EXEMPT-DU: {category}.
   - repo: local
     hooks:
       - id: check-du-sentinel-sites

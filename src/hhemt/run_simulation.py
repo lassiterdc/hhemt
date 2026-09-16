@@ -364,10 +364,19 @@ class TRITONSWMM_run:
         resumed (or crashed / early-exited) coupled run can leave a 0-byte or
         truncated ``out_tritonswmm/swmm/hydraulics.rpt``. This gate additionally
         requires that rpt to be finalized (carry the terminal ``"Analysis ended on"``
-        marker, via ``swmm_output_parser.rpt_is_complete``). Non-``tritonswmm`` model
-        types are unaffected (always True). Returning False here converts a silent
-        bad coupled output into a RETRIABLE failure, so the existing ``retries:`` +
-        ``--pickup-where-leftoff`` machinery re-runs (and resumes) the sim.
+        marker, via ``swmm_output_parser.rpt_is_complete``). Returning False here converts
+        a silent bad coupled output into a RETRIABLE failure, so the existing ``retries:``
+        + ``--pickup-where-leftoff`` machinery re-runs (and resumes) the sim.
+
+        ALL THREE model types are gated here, each on a STABLE per-scenario terminal
+        artifact: ``swmm`` on ``out_swmm/full.rpt`` (finalized AND error-free),
+        ``tritonswmm`` on ``out_tritonswmm/swmm/hydraulics.rpt``, and ``triton`` on its
+        run-log completion marker AND ``out_triton/performance.txt``. The prior claim that
+        non-``tritonswmm`` types are "unaffected (always True)" was ALREADY false when the
+        swmm and triton arms landed, so it is removed rather than amended. The triton
+        arm's second conjunct exists because its run log is keyed on ``event_iloc`` while
+        the scenario is keyed on a stable slug -- see the in-body comment for the full
+        mechanism and for the reclaim-allowlist obligation it creates.
         """
         if model_type == "swmm":
             # A standalone SWMM run's own artifact, and BOTH conjuncts are load-bearing.
@@ -394,7 +403,65 @@ class TRITONSWMM_run:
             _log = self._analysis_level_model_logfile(model_type)
             if not _log.exists():
                 return False
-            return "Simulation ends" in _log.read_text()
+            if "Simulation ends" not in _log.read_text():
+                return False
+            # SECOND conjunct, and it is about IDENTITY, not about completion.
+            #
+            # `_log` is `{simlog_dir}/model_triton_evt{event_iloc}.log` -- keyed on the CSV
+            # ROW ORDINAL -- while this scenario's directory and its sibling
+            # `log_{model_type}.json` are keyed on the STABLE event slug. Any non-append
+            # edit to `weather_events_to_simulate` (a row removal, a reorder, an insert)
+            # renumbers every ordinal at or after the edit, so a NEWLY ADDED event lands on
+            # the last ordinal and inherits whatever marker the previous occupant left
+            # there. `performance.txt` is written by TRITON into THIS scenario's own
+            # `out_triton/`, so it is absent for a scenario that has never run and the
+            # inherited marker cannot certify it.
+            #
+            # BOTH conjuncts are load-bearing and neither replaces the other. The marker
+            # goes False when a LATER exec crashed -- run_simulation_runner opens this log
+            # "w" on every exec, so a crashed exec's log carries no marker -- which is the
+            # stale-cached-True case this arm was originally added for. The artifact goes
+            # False when the marker belongs to a DIFFERENT event. Dropping the marker in
+            # favour of the artifact alone would REGRESS the first case, because
+            # `performance.txt` persists from the earlier success.
+            #
+            # This ANSWERS the standing objection recorded in the divergence-check comment
+            # below, which declined to actuate the identical check for two reasons. Reason
+            # (1) -- the check "sits only in the raw-marker FALLBACK ... so coverage would
+            # be partial by construction" -- is the strongest ARGUMENT FOR placing it HERE:
+            # this gate is reached from the `if completed:` branch AND from the fallback, so
+            # it closes exactly the coverage gap that comment named. Reason (2) -- that
+            # gating on an artifact "inverts the toolkit's log-based-truth principle" -- does
+            # not reach this conjunct: the log being consulted is keyed on `event_iloc` and
+            # is therefore NOT this scenario's own log, so log-based truth is not what the
+            # marker alone establishes. The principle is intact; the marker's PROVENANCE is
+            # the thing in doubt. That comment's block is narrowed to `tritonswmm` in this
+            # same change, so the two no longer contradict each other.
+            #
+            # `out_triton/performance.txt` is hereby a LIVE COMPLETION PREDICATE, not an
+            # output, and MUST NEVER be added to a reclaim allowlist. Why that survives the
+            # reclaim BY CONSTRUCTION is stated ONCE, beside the constant it depends on, in
+            # process_simulation.py's `_CLEAR_RAW_DELETE_SUBDIRS` comment block; do not
+            # restate the mechanism here or anywhere else.
+            _perf = self.performance_file(model_type=model_type)
+            if not _perf.exists():
+                logger.warning(
+                    "model_run_completed: the %s log at %s carries the completion marker "
+                    "but this scenario's %s is absent. The log is keyed on event_iloc "
+                    "while the scenario is keyed on its stable slug, so the marker most "
+                    "likely belongs to a DIFFERENT event that previously occupied this row "
+                    "position. Reporting NOT complete so the simulation runs. If this "
+                    "fires for EVERY completed sim it is not a stale marker: suspect an "
+                    "output_folder / scen_paths.out_triton disagreement, a file-level "
+                    "reclaim added under out_triton/, or a failed rank-0 write (TRITON's "
+                    "ofstream is unchecked, so a full disk or a bad path prints "
+                    "Simulation ends anyway).",
+                    model_type,
+                    _log,
+                    _perf,
+                )
+                return False
+            return True
         rpt = self._scenario.scen_paths.swmm_hydraulics_rpt
         if rpt is None or not rpt.exists():
             return False
@@ -467,36 +534,67 @@ class TRITONSWMM_run:
             # only the errors clause disqualifies.
             success = "EPA SWMM completed" in log_content and "There are errors." not in log_content
 
-        # Divergence check — WARN, but deliberately NOT load-bearing.
+        # Divergence check — WARN, but deliberately NOT load-bearing. TRITONSWMM ONLY.
         #
         # The prior comment hypothesized a "raw-output-clearing race". That hypothesis is
-        # FALSIFIED: _clear_raw_outputs deletes only children that are DIRECTORIES named in
-        # _CLEAR_RAW_DELETE_SUBDIRS (process_simulation.py:1215), and its docstring states
-        # top-level files such as performance.txt are preserved -- so the only mechanism the
-        # comment named cannot produce the condition it detects. Every observed instance of
-        # this condition has been a DURABLE state (a completion marker that outlived the
-        # artifacts it describes), never a transient one: the log is truncated by
-        # `open(model_logfile, "w")` BEFORE Popen (run_simulation_runner.py:459), so during a
-        # sim `success` is False and this branch is unreachable; and every in-runner call
-        # sits after proc.wait().
+        # FALSIFIED: _clear_raw_outputs deletes only children that are DIRECTORIES, so a
+        # top-level `performance.txt` is unreachable by it -- see the canonical statement in
+        # process_simulation.py's `_CLEAR_RAW_DELETE_SUBDIRS` comment block, cited by NAME
+        # because the prior citation of it here was a line number and went stale by 168
+        # lines. So the only mechanism the comment named cannot produce the condition it
+        # detects. Every observed instance of this condition has been a DURABLE state (a
+        # completion marker that outlived the artifacts it describes), never a transient
+        # one: the log is truncated by `open(model_logfile, "w")` BEFORE Popen
+        # (run_simulation_runner.py), so during a sim `success` is False and this branch is
+        # unreachable; and every in-runner call sits after proc.wait().
         #
-        # Promoted DEBUG -> WARNING so the next instance is visible without a post-mortem.
-        # NOT promoted to actuation (i.e. not folded into the return value) for two reasons:
-        # (1) the check sits only in the raw-marker FALLBACK -- a positive
+        # WHY THIS IS NOW TRITONSWMM-ONLY. The `triton` arm of
+        # `_coupled_swmm_report_finalized` ACTUATES this same condition -- marker present,
+        # this scenario's `performance.txt` absent -- and returns False, so for `triton` the
+        # message below would have become a LIE the moment that gate landed and both
+        # warnings would have fired back to back. `tritonswmm` is adjudicated on
+        # `out_tritonswmm/swmm/hydraulics.rpt` instead, a DIFFERENT artifact, so a coupled
+        # sim with no `performance.txt` is still diagnosed only here. Narrowed rather than
+        # deleted for exactly that reason.
+        #
+        # Reason (1) for not actuating THIS site still holds and is now the argument FOR the
+        # gate's placement: the check sits only in the raw-marker FALLBACK -- a positive
         # `simulation_completed` returns at the `if completed:` branch above and never
-        # reaches here, so coverage would be partial by construction; and (2) gating
-        # completion on an output artifact's presence inverts the toolkit's log-based-truth
-        # principle. The durable fix is that model logs now live INSIDE analysis_dir
-        # (model_logfile_for), so the wipe that removes the outputs removes the marker too.
-        if model_type in ("triton", "tritonswmm") and success:
+        # reaches here, so coverage here is partial by construction, whereas
+        # `_coupled_swmm_report_finalized` is reached from BOTH paths. Reason (2) -- that
+        # gating on an artifact inverts log-based truth -- is answered at the gate: the log
+        # it would otherwise trust is keyed on `event_iloc` and is not this scenario's own.
+        #
+        # The prior claim that "the durable fix is that model logs now live INSIDE
+        # analysis_dir (model_logfile_for), so the wipe that removes the outputs removes the
+        # marker too" is WITHDRAWN as incomplete. It closes the WIPE-SURVIVAL route only. It
+        # does not close SLOT REUSE: the log name carries `event_iloc`, so any non-append
+        # edit to `weather_events_to_simulate` renumbers the ordinals and a newly added
+        # event inherits a marker no wipe ever touched. That route is closed by the artifact
+        # conjunct in `_coupled_swmm_report_finalized`, not by where the log lives.
+        if model_type == "tritonswmm" and success:
             perf_file = self.performance_file(model_type=model_type)
             if not perf_file.exists():
+                # The message asserts NO outcome, deliberately. This site does not read the
+                # artifact that decides one: the return below is
+                # `success and _coupled_swmm_report_finalized(...)`, whose coupled arm turns
+                # on `hydraulics.rpt`. A finalized rpt yields True (complete, and the process
+                # rules then fail on the missing performance/); an absent or unfinalized rpt
+                # yields False (incomplete, retried, and NO process rule runs). Naming the
+                # deciding artifact instead of predicting a verdict is what keeps this true
+                # under a later change to that arm -- committing to one outcome is how the
+                # sentence this replaces came to be wrong.
                 logger.warning(
-                    "model_run_completed: %s log reports completion but performance.txt "
-                    "is absent at %s. This usually means a completion marker outlived the "
-                    "outputs it describes (stale evidence from a prior campaign). "
-                    "Completion is being reported from the log marker anyway; downstream "
-                    "process_* rules will fail on the missing performance/ directory.",
+                    "model_run_completed: the %s log reports completion but this scenario's "
+                    "performance.txt is absent at %s -- a completion marker has outlived the "
+                    "outputs it describes (stale evidence from a prior campaign, a "
+                    "file-level reclaim under out_tritonswmm/, or a failed rank-0 write). "
+                    "Whether this run is nonetheless reported COMPLETE is decided by the "
+                    "coupled rpt gate, which reads out_tritonswmm/swmm/hydraulics.rpt and "
+                    "NOT performance.txt: with a finalized rpt it is reported complete and "
+                    "the downstream process_* rules will fail on the missing performance/ "
+                    "directory; with an absent or unfinalized rpt it is reported incomplete "
+                    "and retried, and no process_* rule runs.",
                     model_type,
                     perf_file,
                 )
@@ -684,19 +782,19 @@ class TRITONSWMM_run:
         interior files: that would break the count/step identity the watcher relies on and
         the kill would then fire one reporting step late per missing file.
 
-        Size-mutating, so it re-stamps the DU sentinels per the ``du sentinels written at
-        every mutation site`` stipulation (PATTERN B: unlink + ``restamp_parent_sentinels``)
-        — NOT ``# EXEMPT-DU``: these cfgs live inside the scenario scope and ARE DU-counted.
+        Size-mutating, so the whole prune routes through ``du_sentinels.delete_and_account``
+        (the unified deletion tool) in ONE accounting call — NOT ``# EXEMPT-DU``: these cfgs
+        live inside the scenario scope and ARE DU-counted.
 
         Returns the number of cfg files removed (0 when nothing was above ``target_step``).
         """
-        from hhemt.du_sentinels import restamp_parent_sentinels
+        from hhemt.du_sentinels import delete_and_account
 
         cfg_dir = self._hotstart_cfg_dir(model_type)
         if cfg_dir is None or not cfg_dir.exists():
             return 0
-        analysis_dir = self._analysis.analysis_paths.analysis_dir
-        n_removed = 0
+        scenario_dir = self._scenario.scen_paths.sim_folder
+        to_remove: list[Path] = []
         for f_cfg in sorted(cfg_dir.glob("*.cfg")):
             try:
                 step = return_the_reporting_step_from_a_cfg(f_cfg)
@@ -704,20 +802,11 @@ class TRITONSWMM_run:
                 continue  # unparseable name: leave it alone rather than guess
             if step <= target_step:
                 continue
-            try:
-                f_cfg.unlink()
-                # PATTERN B — must be the IMMEDIATELY-following sibling of the unlink, in
-                # the same block: check_du_sentinel_sites only accepts the next statement
-                # in the same statement list, or the trailing statement of a `finally`. A
-                # `finally` is wrong here because it would restamp on the failure path too.
-                # Consequence of living inside the try: an OSError from the restamp is
-                # caught by the same handler, so such a file is deleted but not counted —
-                # an under-report that correctly signals its DU obligation did not complete.
-                restamp_parent_sentinels(f_cfg, analysis_dir=analysis_dir)
-            except OSError:
-                continue
-            n_removed += 1
-        return n_removed
+            to_remove.append(f_cfg)
+        # ONE accounting call for the whole prune (clause 1); the prior form restamped
+        # the analysis scope once PER cfg file inside this loop.
+        delete_and_account(to_remove, scope_dir=scenario_dir, scope="scenario")
+        return len(to_remove)
 
     def wait_with_deterministic_checkpoint_kill(
         self,
@@ -922,8 +1011,11 @@ class TRITONSWMM_run:
                 self._analysis.cfg_hpc_system,
                 self._analysis.cfg_analysis.hpc_ensemble_partition,
             )
-            _sim_sif = cspec.sif_paths_by_arch.get(_row_hw) if _row_hw else None
-            _sif = _sim_sif or cspec.sif_path
+            from hhemt.sif.identity import resolve_sif
+
+            _sif = resolve_sif(
+                cspec.sif_root, self._analysis._sif_identity_for(self._analysis.cfg_analysis.hpc_ensemble_partition)
+            )
             _gpu = f"{cspec.gpu_flag} " if (run_mode == "gpu" and cspec.gpu_flag) else ""
             _extra = (" ".join(cspec.extra_exec_args) + " ") if cspec.extra_exec_args else ""
             # Container Change 2 (ROOT CAUSE of zero-output): TRITON derives its output
@@ -958,8 +1050,43 @@ class TRITONSWMM_run:
             # `exe` now expands inside launch_cmd_str's `{exe} {cfg}` as
             #   srun … apptainer exec --rocm -B {host_out}:/opt/hhemt/out_tritonswmm {sif} {exe} {cfg}
 
-        # Check if already completed
-        if self._scenario.model_run_completed(model_type):
+        # B-iii: consult the POSITIVE force marker BEFORE the completion short-circuit.
+        # model_run_completed is three-path (log field -> per-arm artifact conjunct ->
+        # "Simulation ends" fallback) and every path returns True for a completed scenario,
+        # so nothing the invalidator clears can reach it; the marker is the ONE record
+        # written by the force and read here, and it is read FIRST. On the non-force path
+        # it is None/False and this block is a no-op -- every gate below is byte-identical.
+        # `is True`, not bool(): the marker is a POSITIVE record exactly as simulation_completed
+        # is ("ONLY a POSITIVE (True) record is authoritative", model_run_completed), and a
+        # truthiness read arms the branch on any non-bool a caller hands it -- measured: the
+        # MagicMock scenario in tests/test_in_rule_processing_markers.py reads True under
+        # bool() and the completed-sim short-circuit that test pins is skipped.
+        _force_pending = self._scenario.get_log(model_type).force_rerun_pending.get() is True
+        if _force_pending and model_type != "swmm":
+            # RESET THE RESUME POINT IN-TOOLKIT. A forced run that merely bypassed the gate
+            # would fall into the hotstart branch below and RESUME from the latest surviving
+            # checkpoint -- above the damage, so the ragged raw group is never rewritten.
+            # prune_hotstart_cfgs_above_step(target_step=0) removes every config_NNNN.cfg
+            # through ONE delete_and_account call scoped to this scenario (DU rules engaged
+            # and satisfied; cfg/ is never in the processing frame), its docstring mandates
+            # it precede the picker, and the picker then returns None so the solver starts
+            # at reporting step 0 and writes every timestep. performance/ is deliberately
+            # NOT pruned: a completed fresh run rewrites every performance{N}.txt by number,
+            # and the top-level performance.txt is a LIVE completion predicate that must
+            # never be touched. SWMM has no checkpoints, so a forced swmm arm bypasses the
+            # gate and simply re-runs. The marker is CONSUMED by the runner immediately after
+            # Popen returns, not here -- consuming it before the gate would make this
+            # branch unreachable, and consuming it at the terminal write would re-prune the
+            # fresh run's own checkpoints on every walltime-kill retry.
+            _n_pruned = self.prune_hotstart_cfgs_above_step(model_type, target_step=0)
+            if verbose:
+                print(
+                    f"force_rerun_pending set for {model_type}: bypassing the completion gate; "
+                    f"pruned {_n_pruned} hotstart checkpoint(s) so the solver starts at step 0",
+                    flush=True,
+                )
+        # Check if already completed (SKIPPED when the force marker is set -- see above)
+        if not _force_pending and self._scenario.model_run_completed(model_type):
             if verbose:
                 print(f"{model_type} simulation already completed", flush=True)
             return None

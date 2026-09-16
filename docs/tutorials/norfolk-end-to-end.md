@@ -18,7 +18,8 @@ Start with the one path that is guaranteed to succeed on a laptop: load the Norf
 
 ```python
 from hhemt.experiments import NorfolkIreneExperiment
-norfolk = NorfolkIreneExperiment.load()
+# hhemt_sha is the 40-hex commit you are running; `git rev-parse HEAD` prints it.
+norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
 norfolk.system.compile_TRITON_SWMM()            # once per machine; skipped when already built
 norfolk.analysis.test()                         # optional smoke first
 result = norfolk.analysis.run(from_scratch=False, execution_mode="local")

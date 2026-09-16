@@ -8,6 +8,7 @@ import pytest
 import tests.fixtures.test_case_catalog as cases
 from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV
 from tests.fixtures._compile_guard import arm_compile_guard
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
 
 _SYNTH_SENSITIVITY_REPORT_CONFIG = (
     Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
@@ -35,6 +36,75 @@ def _runs_root_override_env(path):
             os.environ.pop(key, None)
         else:
             os.environ[key] = old
+
+
+# Leak tripwire for the runs-root override. The builder honours
+# HHEMT_TEST_RUNS_ROOT_OVERRIDE for READERS as well as writers
+# (test_case_builder.py, the `_runs_root_override` branch), so a setter that does not
+# restore reroutes every later fixture-free `start_from_scratch=False` build in the
+# process -- and which tests share a process with the setter is decided by the suite
+# partition, so the red lands on unrelated tests and moves between chunk maps.
+# Measured 2026-09-11: one bare assignment in a session-scoped fixture produced three
+# reds four hours later in chunk 00 and none in a chunk without that fixture.
+#
+# SEAM, and why it is two hooks rather than one fixture. The snapshot must be taken
+# BEFORE this item's fixtures set up, because the leak fires INSIDE a fixture's setup:
+# a `pytest_runtest_setup` wrapper's pre-yield runs before `SetupState.setup(item)`,
+# whereas an autouse function-scoped fixture runs AFTER every session-scoped fixture
+# the item requests and would snapshot the already-leaked value. The comparison runs
+# in the post-yield of a `pytest_runtest_teardown` wrapper, which follows every
+# finalizer of this item that ran (monkeypatch's undo included). A teardown-only
+# wrapper snapshots after setup and therefore cannot see a leak set in setup.
+#
+# The compare sits INSIDE `finally:` -- both reads AND the fail. When any finalizer of
+# the item raises, pluggy re-enters this wrapper by throwing at the `yield`
+# (pluggy/_callers.py, `teardown.throw(exception)`), so a straight-line post-yield
+# compare never runs and the leak is absorbed into the NEXT item's snapshot, unreported
+# forever. Reads inside `finally` with the `if` placed after the block do NOT fire
+# either: the in-flight exception resumes propagating once `finally` completes, so the
+# `if` is never reached. With the fail inside `finally`, the leak surfaces and Python
+# chains the finalizer's error as its `__context__`, so both are reported.
+#
+# Keyed to the builder's constant, imported rather than restated, so a renamed variable
+# is an ImportError here rather than a silently disarmed check. Scoped to that ONE key:
+# a session-lifetime env change for any other key (e.g. the non-interactive lock-clear
+# toggle below) must not fire this.
+_RUNS_ROOT_OVERRIDE_SNAPSHOT = pytest.StashKey[object]()
+_RUNS_ROOT_OVERRIDE_UNSET = object()
+
+
+def _show_runs_root_override(value):
+    return "<unset>" if value is _RUNS_ROOT_OVERRIDE_UNSET else repr(value)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_setup(item):
+    item.stash[_RUNS_ROOT_OVERRIDE_SNAPSHOT] = os.environ.get(_TEST_RUNS_ROOT_OVERRIDE_ENV, _RUNS_ROOT_OVERRIDE_UNSET)
+    return (yield)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    try:
+        return (yield)
+    finally:
+        before = item.stash.get(_RUNS_ROOT_OVERRIDE_SNAPSHOT, _RUNS_ROOT_OVERRIDE_UNSET)
+        after = os.environ.get(_TEST_RUNS_ROOT_OVERRIDE_ENV, _RUNS_ROOT_OVERRIDE_UNSET)
+        if before != after:
+            if before is _RUNS_ROOT_OVERRIDE_UNSET:
+                direction = "set"
+            elif after is _RUNS_ROOT_OVERRIDE_UNSET:
+                direction = "cleared"
+            else:
+                direction = "changed"
+            pytest.fail(
+                f"{_TEST_RUNS_ROOT_OVERRIDE_ENV} was {direction} across {item.nodeid} and not restored: "
+                f"{_show_runs_root_override(before)} before setup, {_show_runs_root_override(after)} "
+                f"after teardown. This item's fixtures ({sorted(item.fixturenames)}) or body changed it "
+                f"without restoring within the item. Function-scoped setters use monkeypatch.setenv; "
+                f"session-scoped setters wrap construction in _runs_root_override_env (tests/conftest.py).",
+                pytrace=False,
+            )
 
 
 # import tests.fixtures.test_case_catalog as cases
@@ -162,53 +232,6 @@ def _pytest_uses_non_interactive_snakemake_lock_clear():
         os.environ[_NON_INTERACTIVE_LOCK_CLEAR_ENV] = prior
 
 
-@pytest.fixture
-def norfolk_single_sim_analysis_cached():
-    case = cases.Local_TestCases.retrieve_norfolk_all_models_test_case(start_from_scratch=False)
-    return case.analysis
-
-
-@pytest.fixture
-def norfolk_multi_sim_analysis():
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
-    return case.analysis
-
-
-@pytest.fixture
-def norfolk_multi_sim_analysis_cached():
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
-    return case.analysis
-
-
-@pytest.fixture
-def norfolk_sensitivity_analysis():
-    case = cases.Local_TestCases.retrieve_norfolk_cpu_config_sensitivity_case(start_from_scratch=True)
-    return case.analysis
-
-
-@pytest.fixture
-def norfolk_sensitivity_analysis_cached():
-    case = cases.Local_TestCases.retrieve_norfolk_cpu_config_sensitivity_case(start_from_scratch=False)
-    return case.analysis
-
-
-# ========== Multi-Model Test Fixtures ==========
-
-
-@pytest.fixture
-def norfolk_all_models_analysis():
-    """Analysis with all models enabled (TRITON, TRITON-SWMM, SWMM)."""
-    case = cases.Local_TestCases.retrieve_norfolk_all_models_test_case(start_from_scratch=True)
-    return case.analysis
-
-
-@pytest.fixture
-def norfolk_all_models_analysis_cached():
-    """Analysis with all models (cached - for faster iteration)."""
-    case = cases.Local_TestCases.retrieve_norfolk_all_models_test_case(start_from_scratch=False)
-    return case.analysis
-
-
 # ========== Synthetic Test Fixtures ==========
 
 
@@ -222,6 +245,44 @@ def synth_all_models_analysis():
 def synth_all_models_analysis_cached():
     case = cases.Local_TestCases.retrieve_synth_all_models_test_case(start_from_scratch=False)
     return case.analysis
+
+
+@pytest.fixture
+def ack_node_local_configs(monkeypatch):
+    """Acknowledge the node-local config preflight, for a test whose submission is STUBBED.
+
+    ADOPT ONLY WHERE SUBMISSION IS STUBBED, and drop this rather than keep it green if
+    that stops being true. The acknowledgement is a TOTAL bypass of
+    ``validation.assert_configs_visible_cross_node``, whose first executable line is an
+    early return on this env var. A test that replaces every ``submit_*`` method never
+    reaches the hazard the guard pre-empts -- an allocation consumed on inputs a compute
+    node cannot see -- so the bypass costs nothing there. A test that submits for real is
+    exactly the case the guard exists for, and this fixture would make it silently wrong.
+
+    THE CLASS, named so a future red is recognised instead of re-diagnosed.
+    ``synth_multi_sim_analysis`` and ``synth_sensitivity_analysis`` set
+    HHEMT_TEST_RUNS_ROOT_OVERRIDE to ``tmp_path``, and pytest's default basetemp IS
+    ``tempfile.gettempdir()`` -- the same function the guard's ``sys_tmp`` reads. So any
+    consumer of those two fixtures that resolves a SLURM locus trips the guard in EVERY
+    venue: on main, in a worktree, and on the cluster. The symptom is ConfigurationError in
+    field 'analysis_dir' from validation.py, naming the config YAMLs, system_directory and
+    weather_events_to_simulate under /tmp/pytest-of-*/.
+
+    DO NOT CHASE THE VENUE; there is no venue fix. ``--basetemp`` is passed on the pytest
+    COMMAND LINE by the suite runner, which overrides any ``addopts`` entry, and it does not
+    reach the builder's ``tempfile.mkdtemp`` default at all. ``TMPDIR`` moves the guard's
+    forbidden root along with the tree, so the predicate keeps matching. Re-rooting the tree
+    is either node-local (``/var/tmp``, ``/dev/shm`` -- passes the predicate and DEFEATS the
+    guard, turning a false positive into a false negative on the real hazard) or shared
+    (honours the guard, pays the wall-clock cost that refutes moving the basetemp).
+
+    NEVER set this inside ``synth_sensitivity_analysis`` or ``synth_multi_sim_analysis``
+    themselves. All nine arms of ``tests/test_node_local_config_guard.py`` consume the
+    first of those, so a fixture-level acknowledgement disarms the guard's own regression
+    suite -- including its two discriminating ``pytest.raises(ConfigurationError)`` arms.
+    Adopting it at an unrelated test subtracts nothing from that suite.
+    """
+    monkeypatch.setenv("HHEMT_ALLOW_NODE_LOCAL_CONFIGS", "1")
 
 
 @pytest.fixture
@@ -657,7 +718,7 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     # ``f_consolidate_experiment_complete.flag`` is absent, run the master
     # sensitivity workflow once locally to materialize per-member flags + the
     # master flag + the sensitivity_datatree.zarr.
-    payload = ("sensitivity_datatree.zarr", "_status/f_consolidate_experiment_complete.flag")
+    payload = ("experiment_datatree.zarr", "_status/f_consolidate_experiment_complete.flag")
     state = _marker_state(analysis_dir, payload)
     if state == "unsatisfied":
         _warn_unsatisfied(analysis_dir, payload, "synthetic_sensitivity_completed")
@@ -1071,7 +1132,7 @@ def synthetic_two_sensitivity_bundle_fixture(rendered_synth_sensitivity, tmp_pat
 
 
 @pytest.fixture(scope="session")
-def synth_prepared_scenario(tritonswmm_cpu_compiled, tmp_path_factory):
+def synth_prepared_scenario(tritonswmm_cpu_compiled, triton_only_cpu_compiled, tmp_path_factory):
     """A synth scenario prepared far enough to have written its inflow capture.
 
     `tritonswmm_cpu_compiled` is a compile-only GATE: it skips on a missing
@@ -1080,14 +1141,19 @@ def synth_prepared_scenario(tritonswmm_cpu_compiled, tmp_path_factory):
     `rendered_synth_multi_sim` and `synthetic_multisim_completed` already use.
     Treating its value as an analysis is what made this fixture error at setup.
     """
-    import os
-
     from tests.fixtures.test_case_catalog import Local_TestCases
 
-    os.environ["HHEMT_TEST_RUNS_ROOT_OVERRIDE"] = str(tmp_path_factory.mktemp("capture"))
-    case = Local_TestCases.retrieve_synth_all_models_test_case(start_from_scratch=True)
-    scen = case.analysis._retrieve_sim_run_processing_object(0)._scenario
-    scen.prepare_scenario()
+    # census-green-up Phase 1 idiom (see `_runs_root_override_env` at the top of this
+    # file): a SESSION-scoped builder sets the override only AROUND construction and
+    # restores it before its value is handed out. A bare `os.environ[...] =` here leaked
+    # `{basetemp}/capture0` to every later fixture-free reader in the process and
+    # rerouted them under /tmp -- measured 2026-09-11 (run 20260911T040021Z_512952158d51
+    # chunk 00; reproduced in SLURM job 19614141). The scenario's paths are resolved at
+    # construction, so consumers do not need the override to persist.
+    with _runs_root_override_env(tmp_path_factory.mktemp("capture")):
+        case = Local_TestCases.retrieve_synth_all_models_test_case(start_from_scratch=True)
+        scen = case.analysis._retrieve_sim_run_processing_object(0)._scenario
+        scen.prepare_scenario()
     return scen
 
 

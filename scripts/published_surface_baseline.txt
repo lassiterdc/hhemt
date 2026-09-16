@@ -92,11 +92,10 @@ hhemt.eda.render_eda_plots
 hhemt.experiment_bundle
 hhemt.experiment_bundle.OverrideReport
 hhemt.experiment_bundle.build_case_from_bundle
+hhemt.experiment_bundle.bundle_experiment_id
 hhemt.experiment_bundle.expand_config_vars
 hhemt.experiment_bundle.format_override_gate
 hhemt.experiment_bundle.load_bundle
-hhemt.experiment_bundle.resolve_container_defs
-hhemt.experiment_bundle.resolve_def_recipe
 hhemt.experiment_bundle.resolve_hpc_system_config
 hhemt.experiment_bundle.resolve_overrides
 hhemt.experiment_bundle.run_experiment

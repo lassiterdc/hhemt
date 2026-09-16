@@ -184,7 +184,27 @@ non_breaking_allowlist:
       refuted by the same instrument: `git merge-base --is-ancestor 2c176dc9 53d3e052` exits 1, and
       `git merge-base --is-ancestor 2c176dc9 9bde88dc` exits 1 as well -- 9bde88dc is dated 2026-09-01
       while 2c176dc9 is dated 2026-09-03, so the earlier merge could not have carried the later commit.
-    layout_signature: "4b3d1469f53d08d1aacfc2a367d21d88aa6d56ad99dc79d06d48b7b06007acb0"
+      RE-STAMPED 2026-09-09 for the defect-2 completion-predicate fence (M8 rows 553-563). The change is
+      PROVABLY comment-only and I measured it rather than arguing it: `git diff` on the file gives 21 added
+      lines, 0 of them non-comment, and 0 removed. It adds the CANONICAL STATEMENT that
+      out_triton/performance.txt is a LIVE COMPLETION PREDICATE and must never join this allowlist nor any
+      file-level reclaim allowlist under out_*/ -- with the reason the survival is STRUCTURAL rather than
+      documentary: the delete this allowlist feeds is guarded on `child.is_dir() and child.name in
+      _CLEAR_RAW_DELETE_SUBDIRS`, so a top-level FILE is unreachable by it, and TRITON writes
+      {output_folder}/performance/performance{N}.txt for an intermediate checkpoint but
+      {output_folder}/performance.txt for the final state on a SEPARATE branch, so performance.txt sits
+      BESIDE the reclaimable performance/ directory rather than inside it. No executable statement, no
+      on-disk artifact and no schema is touched, so this is resolution path 2 (non-breaking by inspection)
+      rather than a LAYOUT_VERSION bump. Check B fired CLOSED here, which is the designed workflow for a
+      signature-scoped row and the OPPOSITE act from the fail-open this session closed at ee2cfb66; the
+      loader now reports 31 resolved / 0 path-permanent, which independently confirms that fix landed. The
+      applying specialist pre-computed the new digest and REFUSED to make this ninth edit itself, correctly,
+      because a post-apply spec added without a refute is the failure the session register carries by name;
+      I re-derived the digest myself with the same whole-file sha256 `_file_content_hash` uses and the two
+      agree. Its own disclosure is worth keeping: at round 3 it checked run_simulation.py against this list
+      and correctly found it absent, then did not run the sibling check on process_simulation.py, which IS
+      on it -- one grep, and it ran the neighbour instead of the target.
+    layout_signature: "9b104b8f5a7b600b80cf84cbd970fec1c0acbfbd2a6780a40dc94658d62f184c"
   - path: src/hhemt/version_migration/versions/V0021__experiment_tree_unification.py
     justification: >-
       Layout-guard documentation repair — the module's LANDING CONSTRAINT docstring
@@ -1061,3 +1081,904 @@ non_breaking_allowlist:
       the next change to constants.py, exactly as its predecessor did, and the next edit is
       adjudicated again.
     layout_signature: "a0a0d78d7a76d409fb77cc4ea40a3ad8fbfd18da22ad2a2b860851950f9f5438"
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "ca84a5987f43dd641df9c9f2e17eaad8d9466d7bbbfc421515acf25421bccaa9"
+  - path: src/hhemt/config/base.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "f4046d2c5b761fb4e63be182a13628e357a3d6b96d3774e15445a48b885854cf"
+  - path: src/hhemt/config/brand_theme.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "9d8ed0f7daf43ed9786a67edaa26f86d24c4c2fdf378397ab715828f915869eb"
+  - path: src/hhemt/config/case_manifest.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "d4310455f658c127c8716e86b518b789365d27760dc807df9eb56bb4beebbcc3"
+  - path: src/hhemt/config/eda.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "ecdf650c5560f0f42226447b9db04a82dfc8cdc71cff71ea9e36e70b65373aaa"
+  - path: src/hhemt/config/experiment_bundle.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "3c146fe002256fea7a59b451891122fbc67f90a2bc4732f39bb2405d948bdd3b"
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "6e7b75dc24830ac547ea8eb0aa51b6ddc2d0931b1f73246a44936c745b57b34e"
+  - path: src/hhemt/config/invalidating_fixes.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "bcfd7147f079f6fb3875230ead6e776a8e681006da559f1268f97bbd58ca5ee2"
+  - path: src/hhemt/config/loaders.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "eaa46f9f028e520e099397170f2be681ab95a44ce49b2dffd3c31fde45620fd3"
+  - path: src/hhemt/config/report.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "7309f71489bf0ed2bee11552457d63f382343ef6f896d94500ac54cf414f2436"
+  - path: src/hhemt/config/reprex_config.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "cc3fffc43ba77c87cc31125ea9ed03d43cc5460e96b770207121e18d959e4e6b"
+  - path: src/hhemt/config/reprex_taxonomy.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "dd1c19bcfa51f684ad58fc8d8795a0a7710ce6bcb41c7847106c0f77e756fe8c"
+  - path: src/hhemt/config/static_plots.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "44ca6c5cd97d56d184d7c7bcbfae2431e3afc384e2d8ebc0c64e72a2e647be36"
+  - path: src/hhemt/config/synthetic_experiment.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "64e1d4ba80ff522cd62926df75a725f2a5e00dbc6a107816256a95cf195efb5d"
+  - path: src/hhemt/config/system.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "2df3da901d25713a39a5842b62f86035c324d2b350a5291c77ac089ff78b7a60"
+  - path: src/hhemt/config/viz_vocabulary.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "b3591b12204b06dc3d9339b23cce80a2d559d7d64854e08ae21157bc18276b78"
+  - path: src/hhemt/log.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "b27cd547d41de32c31ab040031d79281929f5a5e5b1266d186f891e25147aed4"
+  - path: src/hhemt/paths.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "105383b224d79265049c24ca839156f0864b40f9bb3db32109d9b3a6d0e12f2a"
+  - path: src/hhemt/scenario_inputs.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "38d4595072bb972dfc3080f4ddcb8fa69e7c1c7babf2354354d0d3a3c3de56ec"
+  - path: src/hhemt/sensitivity_analysis.py
+    justification: >-
+      BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
+      convert this path from permanently exempt to change-scoped. The signature
+      pins the content as it stood at 09999048; it asserts EXTENT -- that this
+      exemption covers exactly this content -- and asserts NOTHING about whether
+      that content was examined. No claim of non-breaking is made here. Any later
+      drift re-fires Check B and must be adjudicated on its own merits then.
+    layout_signature: "aed5f1fec08e1f52d58ca04eadc5c35caa1ed4f98eeebde2c10699f95b24eb89"
+
+  - path: src/hhemt/sensitivity_analysis.py
+    justification: >-
+      ADJUDICATED, not baselined. The prior row for this path pinned the content at
+      09999048 and said any later drift "must be adjudicated on its own merits then";
+      this row is that adjudication. The drift came in with the docs-and-experiment-system
+      merge (sister commit 3bd728e0, "finish the numpy conversion"), 39 insertions /
+      26 deletions. NON-BREAKING, and proven rather than asserted: parsing both revisions
+      and comparing ast.dump AFTER stripping every module/class/function docstring returns
+      IDENTICAL, so the change cannot reach any code path and therefore cannot alter an
+      on-disk analysis tree. The comparison was run with a control -- the same instrument
+      against a deliberately mutated copy returns DIFFERENT -- so the identity is a real
+      reading rather than an artifact of an instrument that discriminates nothing.
+      Signature re-stamped to the post-merge content, which is what keeps this exemption
+      CHANGE-SCOPED rather than converting it back to path-permanent.
+    layout_signature: "f8d8d864008d791f343c3508b25d476fd8dab0d5888d2d0ce953e0d7aa60d069"
+  - path: src/hhemt/version_migration/versions/V0022__promote_producer_written_experiment_tree.py
+    justification: >-
+      M19 item 4b -- V0022's DIRECTION decision moves from positional to decidable. The
+      module previously promoted whatever sat at the retired store name, argued from the fact
+      that V0021.upgrade CONSUMES that path, so anything found there must post-date it. That
+      theorem is sound for a tree that ran V0021 and then re-consolidated and UNSOUND for a
+      tree that reached both names by producer evolution -- and such a tree was measured, its
+      retired-name store carrying sa_*-keyed groups produced eight days BEFORE the
+      member_*-keyed store at the unified name. The positional rule would have moved the newer
+      member_* store aside and promoted the older sa_* one, a silent V0019 vocabulary
+      regression that the retention design makes reversible but does not prevent.
+      FOR (non-breaking), answering the question check-b asks. NOTHING a reader of an existing
+      on-disk tree observes differs. No path, directory, filename, zarr group, dtype, chunk,
+      encoding or root-attr KEY is added, renamed or removed; no _version.json field changes;
+      no _status flag token changes; both ctx.move_dir calls are byte-identical and in the same
+      order. The change is one refusal arm ahead of them, one advisory logger.warning, and
+      three module-level readers. A LAYOUT_VERSION bump to 23 would be actively wrong: a V0023
+      would have nothing to transform -- no old-shaped artifact to rename, no field to
+      backfill -- which is the position this repo took at
+      2026-06-27_v0016 migration body is a no-op not a backfill.
+      AGAINST, stated rather than elided because it is the real objection and it is a
+      DISCIPLINE objection rather than a layout one. A migration module is normally immutable
+      once shipped: two trees both stamped 22 could otherwise have had different
+      transformations applied, which is the invariant Alembic and Django both protect by
+      requiring a NEW revision instead of an edit. Two things answer it here. (1) MEASURED:
+      V0022 has never run. Across all 44 stamped trees in the local synthetic cache,
+      migration_history is empty in 44 of 44 -- every tree reached layout 22 through the
+      stamp_new_target forward-relabel defect (M19 item 1), never through the runner. So there
+      is no tree whose applied-V0022 differs from this one. I cannot speak for a production
+      tree outside that cache, and that residual is real. (2) The direction of the change is
+      toward refusing: post-edit V0022 refuses in a case where it previously acted, and it
+      never acts where it previously refused. A tree that already ran the old V0022 correctly
+      would run the new one to the same outcome; only the demoting case diverges, and that
+      case is the defect.
+      WHAT THE NEW ARM KEYS ON, because it is not the obvious thing. It does NOT order the two
+      stores by their producing commit count. A git describe count is a distance from the
+      NEAREST REACHABLE TAG, so it is incommensurable across tag bases and non-monotone across
+      divergent branches on one base -- measured on this repository at 8f47c8fb, 82 of 542
+      v0.1.0-based commits sit in a chronological adjacency where the later commit carries the
+      lower count, and two first-parent mainline commits 34 minutes apart carry
+      pre-public-cut+92 then 0.1.0+89. Ordering on that would have introduced a FALSE REFUSAL
+      whose message instructed an operator to delete a store by hand, outside the retention
+      guarantee this module's design rests on. The arm instead keys on the member-group
+      vocabulary (sa_ at the retired name against member_ at the unified name), which is a
+      total function of the two stores, needs no git and no ancestry, and is decidable on a
+      bundle or an archived tree. The commit count is retained as an advisory logger.warning
+      and is never a refusal trigger.
+      CHANGE-SCOPED via layout_signature. This path carries no prior row, so nothing is
+      inherited and the signature below is its first.
+    layout_signature: "a9b4afc68774a88122e54b7bb05c76d7eb9042609840821e99105ddf1c56cef1"
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      M19 du-member-scope-derivation S1 -- consolidate_to_datatree's tail rollup DERIVES its
+      scope argument via du_sentinels._infer_scope(analysis_dir, analysis_dir) instead of
+      passing the literal "analysis". This SUPERSEDES the 05a68430 row above on this same
+      path.
+      FOR (non-breaking), established by command rather than asserted. (1) NO SCHEMA CHANGE:
+      the _du.json payload keeps the same keys and types at the same path; only the value of
+      the `scope` string changes, and only on a MEMBER root, whose parent dir is `members`.
+      (2) NO TRANSFORM IS REQUIRED FOR AN EXISTING TREE: an old member sentinel labelled
+      "analysis" is read by the new code without error, and write_du_sentinel's
+      compare-and-write handles a changed scope by rewriting rather than by failing -- so
+      there is no state a migration would have to convert, which is the question the layout
+      machinery asks. (3) NO FUNCTIONAL CONSUMER: the only readers of the `scope` field are
+      du_sentinels.py:203's compare-and-write guard, V0019__member_vocabulary.py:176-177, and
+      tests/test_synth_du_sentinel_integrity.py; sum_child_sentinels reads only
+      disk_utilization_bytes and walk_errors from a child, never its scope.
+      THE ONE BEHAVIOURAL EDGE, stated rather than omitted. sum_child_sentinels adds
+      _EPHEMERAL_TOP_LEVEL_DIRS = {"_test"} to its skip set only when scope == "analysis"
+      (du_sentinels.py:304-305), so a member root flipped to "member" would count its own
+      _test/ bytes. Measured: ZERO _test directories exist anywhere under the synth cache,
+      and _test is created only as `analysis_paths.analysis_dir / "_test"` by analysis.test()
+      (analysis.py:2478, :2958, :3057), which builds representatives UNDER _test/ and never
+      gives a member its own. The edge is unreachable on every tree that exists; that it is
+      also arguably undesirable if it became reachable is filed as a separate follow-up
+      against du_sentinels.py:304-305 and is NOT addressed here.
+      CHANGE-SCOPED via layout_signature, set to the post-apply sha256 so the next change to
+      this file re-fires the check.
+    layout_signature: "3ec33b3393b39f6fa2298a9761b4ac30f31fbc16de69106fe161ed7e5b04378f"
+  - path: src/hhemt/process_simulation.py
+    justification: >-
+      hydrology-capture decline -- TWO edits ship together in this file because the second
+      calls the first. (1) A new _declared_nonzero_subcatchments staticmethod that READS the
+      hydrology .inp and counts [SUBCATCHMENTS] rows with nonzero Area; it writes nothing and
+      touches no on-disk artifact. (2) The standalone_rpt arm now writes
+      hydrology_rpt_summary.zarr only when its subcatchment row count equals that declared
+      count, and omits the capture otherwise so _capture_landed declines the delete through
+      its existing contract; the same edit routes a report that does not PARSE to that same
+      decline, instead of letting the pre-existing unguarded parse fail rule
+      consolidate_scenario -- a walltime-killed SWMM leaves a hydro.rpt with no "Analysis
+      ended on" line and produces exactly that. Every path changes WHEN an artifact is
+      written, never its shape: the zarr's schema, path and attrs are untouched, and an
+      omitted capture is the same on-disk state as a scenario whose reclaim never ran. No
+      LAYOUT_VERSION bump, no V-module, no golden fixtures.
+    layout_signature: "81e7ad3463b7b94ea388f678e11533928f8c141081d74cf7858fb76b4cede992"
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      REVIEWED, NOT BASELINE -- this row supersedes the BASELINE-ONLY row above (ca84a598)
+      on the terms that row set for itself: "Any later drift re-fires Check B and must be
+      adjudicated on its own merits then." The drift is the merge of
+      docs-and-experiment-system (tip 53825fea) into sidequest-clearing-08-30, and this row
+      IS that adjudication.
+      THE CHANGE, in full: TWO Field(description=...) prose edits and nothing else.
+      (1) "a documented estate reproduction script" -> "a documented deployment-config
+      reproduction script". (2) "(resolved at analysis.py:1746-1757)" -> "(resolved in
+      TRITONSWMM_analysis.run)", replacing a decayed line citation with the symbol name. No
+      field name, annotation, default, validator or executable statement changes:
+      `git diff HEAD...docs-and-experiment-system -- src/hhemt/config/analysis.py` is two
+      hunks and both sit inside a description string literal.
+      NON-BREAKING, MEASURED RATHER THAN JUDGED. `Field(description=...)` is FieldInfo
+      METADATA and is never serialized. `model_dump(mode="json")` -- the call the bundle emit
+      path makes at bundle/_emit.py:546 to write cfg_analysis.yaml -- emits field VALUES
+      only, verified by running a described field through it (the dump is `{'x': 1}`; the
+      description string is absent). So no on-disk artifact of a COMPLETED analysis, and no
+      persisted config a render or reprex bundle carries, can differ by one byte. A V0023
+      migration would have nothing to transform.
+      THE GENERATED-ARTIFACT SENSE, named because "no effect" is FALSE in it and a future
+      reader would otherwise inherit the ambiguity. These description strings ARE published:
+      hooks/config_reference.py renders each one into a table cell of
+      docs/reference/config-schema.md on every mkdocs build. That page is a DERIVED artifact
+      recomputed from the models at build time with no committed intermediate ("There is no
+      artifact between builds, so the page cannot drift from the models it describes"), so it
+      carries no old-shaped state and is not a migration surface. check_docs_content
+      additionally rules these cells OUT of gate scope (D22b, `src/`-side prose) and routes
+      them to the advisory tier, and scripts/published_surface_baseline.txt pins API SYMBOL
+      NAMES only. LAYOUT_VERSION governs on-disk breaking change to an analysis tree
+      (version_migration/constants.py module docstring), which is the sense check-b protects;
+      the generated-docs sense is governed by the sister's own docs gates, which pass on the
+      merged tree.
+      CHANGE-SCOPED via layout_signature, re-stamping ca84a598 -> ec7f5682. APPENDED rather
+      than edited in place, per the sanctioned shape the prior stamped rows on this path
+      record: a signature-less append would INHERIT ca84a598 under _load_allowlist's merge
+      and check-b would still re-fire.
+    layout_signature: "ec7f568290d6c14bbaa921bf0634caa1199d6f2ee50be090b448b68f5dbdb9e6"
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      REVIEWED, NOT BASELINE -- supersedes the BASELINE-ONLY row above (6e7b75dc) on that
+      row's own terms. Same merge (docs-and-experiment-system tip 53825fea), same
+      adjudication as the sibling src/hhemt/config/analysis.py row appended immediately
+      above; read that row for the full non-breaking argument.
+      THE CHANGE, in full: ONE Field(description=...) prose edit, on max_concurrent_cpus.
+      Two decayed line citations become symbol names -- "(job_scheduler.py:614-620)" and
+      "(:518-521)" become "in JobScheduler.update_available_resources" and "in
+      JobScheduler._free_resources" -- and "snakemake's scheduler" becomes "the scheduler in
+      snakemake (pinned ==9.15.0 in pyproject.toml)". Nothing outside the string literal
+      changes.
+      NON-BREAKING for the same measured reason: description is FieldInfo metadata,
+      `model_dump(mode="json")` emits values only. The bundle carries a VALUE PROJECTION of
+      this model -- bundle/_emit.py:864-866 dumps it and keeps the "partitions" and
+      "gpu_allocation_flavor" keys -- so metadata cannot reach the emitted identity file
+      either. A V0023 migration would have nothing to transform.
+      CHANGE-SCOPED via layout_signature, re-stamping 6e7b75dc -> 8f840b2f. APPENDED rather
+      than edited in place: a signature-less append would INHERIT 6e7b75dc under
+      _load_allowlist's merge and check-b would still re-fire.
+    layout_signature: "8f840b2ff497d2d9cdb14718422081f54ac44144f720c0a73a0e009191c3a698"
+  - path: src/hhemt/config/globus.py
+    justification: >-
+      FORMATTING-ONLY (ruff format). THE PIN THAT GOVERNS IS THE PRE-COMMIT HOOK REV:
+      .pre-commit-config.yaml pins astral-sh/ruff-pre-commit at `rev: v0.15.17`, and that is
+      the tool that actually formats at commit time, because pre-commit runs hook
+      environments rather than the project's dependency set. pyproject.toml's
+      `ruff==0.15.17` agrees, so the claim is true under either citation -- the hook rev is
+      named because it is the one that would still be right if the two ever diverge, which
+      is precisely when someone will read this row. AST-VERIFIED.
+      FIRST ROW FOR THIS PATH -- it carries no prior allowlist row, so nothing is inherited
+      and nothing is superseded; the signature below establishes the exemption rather than
+      re-scoping one.
+      DISCHARGE BY MEASUREMENT, and the measurement is stronger than a content argument.
+      `ast.dump(ast.parse(src), include_attributes=False)` is IDENTICAL between HEAD and the
+      formatted file, and the imported-name set delta is zero added / zero removed. AST
+      identity means no field name, annotation, default, validator, statement or expression
+      changed -- so no persisted value CAN differ, without needing to reason about any
+      individual field. Only whitespace and line breaks moved.
+      A SECOND, INDEPENDENT REASON this module has no persistence surface: every model here
+      is a plain `BaseModel`, not `cfgBaseModel` (GlobusEndpoints, GlobusTransferItem,
+      GlobusTransferSpec, PostRunTransferConfig), deliberately so because the module
+      describes REMOTE HPC paths that do not exist on the local machine. It is therefore
+      outside the `cfgBaseModel` family that `bundle/_path_policy.py::_PATH_FIELD_POLICY`
+      governs and outside the carried-config set a render or reprex bundle serializes.
+      A V0023 migration would have nothing to transform.
+      DISCLOSED, cause UNDETERMINED, because a reader is entitled to ask why a path captured
+      by `src/hhemt/config/**/*.py` since 1e2b6e32 is only now getting its first row. It was
+      MODIFIED (status M, not a rename) at ab8c6523 with LAYOUT_VERSION unchanged at 14 and
+      no exemption row, so check-b's disarm could not have fired and the file scan should
+      have named it. I cannot distinguish the cause from here between (a) that content
+      arriving through a merge commit, which fires no pre-commit hook at all, (b) a
+      multi-commit push, where the pre-push arm's `--range HEAD~1` grades only the last
+      commit, and (c) an explicit bypass. WHERE THE NEXT READER SHOULD LOOK, measured:
+      ab8c6523 is NOT a first-parent ancestor of HEAD (`git rev-list --first-parent HEAD`
+      does not contain it) though it IS an ancestor, so it was authored off-mainline and
+      reached the mainline through merges. That is consistent with (a) AND with (b) and
+      excludes neither, so the cause remains UNDETERMINED -- it narrows where to look, not
+      what happened. It is recorded as an open observation, not as an accusation, and it is NOT what this row discharges: this row covers exactly the
+      content the signature pins.
+      CHANGE-SCOPED via layout_signature, set to the post-sweep sha256 so the next change to
+      this file re-fires the check.
+    layout_signature: "7e2bcdc0ff5451969d2efddba0f462b2325cd87f374ca76736e974cb056148ca"
+  - path: src/hhemt/version_migration/versions/V0005__inline_report_config.py
+    justification: >-
+      FORMATTING-ONLY (ruff format, pinned at `rev: v0.15.17` in .pre-commit-config.yaml --
+      the hook environment that does the formatting; see the globus.py row above for why
+      that citation rather than pyproject.toml's agreeing `ruff==0.15.17`). AST-VERIFIED.
+      RE-STAMP of the already-signed row above (b6ba6fbe), applying that row's OWN discriminator: "a
+      migration module is layout-relevant because its APPLIED OPERATIONS decide on-disk
+      state". Re-measured here rather than inherited -- `version_from` (4), `version_to` (5),
+      `description`, and the `upgrade()` body are all IDENTICAL between HEAD and the
+      formatted file under `ast.unparse` comparison (`unparse(upgrade)` at 882 characters
+      on both sides, function signature included), and whole-module
+      `ast.dump(..., include_attributes=False)`
+      is identical with a zero imported-name delta. So the on-disk result of applying this
+      migration is byte-unchanged.
+      STRICTLY CLEANER THAN THE PRECEDENT IT RE-STAMPS: b6ba6fbe's row discharged an
+      import-SORT delta, and this sweep has no import delta at all.
+      WHY EXEMPTION IS THE RIGHT INSTRUMENT FOR A V-MODULE, stated because it is not obvious
+      and the alternative reading is defensible. A V-module is APPEND-ONLY history: with
+      MINIMUM_SUPPORTED_VERSION at 0 the runner re-applies V0005 to any legacy tree, so its
+      upgrade() body is the record of a transform that has already produced real on-disk
+      state. A SEMANTIC edit to it is therefore not a breaking change that a bump would
+      repair -- a bump cannot retroactively re-transform trees this module already produced;
+      the correct remedy for a wanted behaviour change is a NEW V-module, never an edit to a
+      shipped one. That is what makes formatting-only precisely the class an exemption on
+      this path is FOR, and it is why the discharge predicate here is narrower and more
+      checkable than a config module's: not "no persisted value can differ" but "the applied
+      operations are byte-unchanged".
+      NOT RELIED ON: the golden fixtures are NOT what pins this. check-a demands
+      `v{N-1}/`/`v{N}/` fixtures only when LAYOUT_VERSION bumps, and no bump is proposed, so
+      no fixture requirement is triggered by this change. TWO suites do exercise the applied
+      operations and NEITHER was run in the session that authored this row:
+      tests/test_version_migration_golden.py, and the DEDICATED
+      tests/test_version_migration_V0005.py, which covers this exact module. (V0009 has no
+      dedicated test; the golden suite is its only coverage.) The discharge above rests on
+      the AST measurement alone.
+      CHANGE-SCOPED via layout_signature, re-stamping b6ba6fbe -> 1f36e645. APPENDED rather
+      than edited in place: a signature-less append would INHERIT b6ba6fbe under
+      _load_allowlist's merge and check-b would still re-fire.
+    layout_signature: "1f36e645f892705e421b1e5e10b150e5d297413289d587a55ff247efe9a971f6"
+  - path: src/hhemt/version_migration/versions/V0009__crs_config_composite_submodel.py
+    justification: >-
+      FORMATTING-ONLY (ruff format, pinned at `rev: v0.15.17` in .pre-commit-config.yaml).
+      AST-VERIFIED. RE-STAMP of the already-signed row above (e9263673), on the same grounds and with the same
+      re-measurement as the sibling V0005 row appended immediately above; read that row for
+      the append-only-history argument that makes exemption the right instrument here.
+      Re-measured for this path: `version_from` (8), `version_to` (9), `description`, and the
+      `upgrade()` body are all IDENTICAL under `ast.unparse` comparison (`unparse(upgrade)` at
+      2327 characters on both sides, function signature included); whole-module AST
+      identical; imported-name
+      delta zero added / zero removed.
+      STRICTLY CLEANER THAN THE PRECEDENT IT RE-STAMPS: e9263673's row discharged an
+      IMPORT-ONLY change including an F401 removal of an unused `pathlib.Path`, and this
+      sweep removes no import and adds none.
+      CHANGE-SCOPED via layout_signature, re-stamping e9263673 -> 52d81257. APPENDED rather
+      than edited in place: a signature-less append would INHERIT e9263673 under
+      _load_allowlist's merge and check-b would still re-fire.
+    layout_signature: "52d812575f4ec8d580be100d9f38a1f9bd9c981ae3113e5abfe5be0afe4329f5"
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      REVIEWED, NOT BASELINE. M19 shape (C) -- ADDITIVE ContainerSpec.sif_sha256 (str | None,
+      default None): the EXPECTED sha256 of the file at sif_path, compared at preflight against a
+      digest measured from the artifact. Pure config schema via the config/**/*.py glob; no
+      on-disk analysis-tree, _version.json or datatree change, so NON-BREAKING and no
+      LAYOUT_VERSION bump -- the same ground as the config/report.py, config/reprex_config.py and
+      config/synthetic_experiment.py rows. A None default means every existing config loads
+      unchanged and preflight reports the content check UNPERFORMED rather than failing. Also
+      carries a one-word comment fix: the PROCESS-rung citation read workflow.py:805, which is
+      `def _resolve_snakefile_path(...)`; the live site is workflow.py:1140. CHANGE-SCOPED via
+      layout_signature, re-stamping 8f840b2f -> f4af12d0. APPENDED rather than edited in place: a
+      signature-less append would INHERIT 8f840b2f under _load_allowlist's merge and check-b would
+      still re-fire.
+    layout_signature: "f4af12d01f9ba1d59d9d4ca177f6aaa873b3f2395adad8cc25414eb988d76f29"
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      SIF quest (2026-09, ADR-21): ContainerSpec retires sif_path/sif_paths_by_arch/sif_sha256 for
+      sif_root + identity resolution and renames system_name -> hpc_name. INPUT-config schema
+      only; no on-disk analysis-tree change (the resolver is a pure function of config).
+    layout_signature: 2e42e35e29ae622f88f6d81c0eb7c3a6daeab6c4291c2881f8bcdac8fadb7495
+  - path: src/hhemt/config/sif_build.py
+    justification: >-
+      SIF quest (2026-09, ADR-21): new sif_build_config (build venue + resources; never identity).
+      INPUT-config schema only.
+    layout_signature: 933e3c4fc12669957badce9037ba0bf8bedc74573f3567acabccb22a4d7363f5
+  - path: src/hhemt/config/experiment_bundle.py
+    justification: >-
+      SIF quest (2026-09, ADR-21): ContainerRef retires def_recipe (recipes are toolkit package
+      data selected by the derived family) and refuses a descriptor still carrying it. INPUT-config
+      schema only; no on-disk analysis-tree change.
+    layout_signature: 5a77ab51fc9a91026504f8a779705e8ead22d87682a4b9e3d449ea0f7bb5723a
+  - path: src/hhemt/config/reprex_config.py
+    justification: >-
+      SIF quest (2026-09, ADR-21): reprex_config.sif_path -> sif_root (the target-local root
+      under which fetched/rebuilt images live at their identity path). INPUT-config schema only;
+      no on-disk analysis-tree change.
+    layout_signature: c8c1e49bbd76b2320852e88c96ec434a9dcd527ba9f4f38441f026616841c4fb
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      In-rule processing (Option A, 2026-09-12): adds analysis_config.process_in_sim_rule
+      (bool, default False). INPUT-config schema only; default reproduces the prior Snakefile
+      byte-for-byte; no on-disk analysis-tree change (the c_run/d_process flags keep their
+      paths and writers).
+    layout_signature: 8d3bd0d33b5407a29f0e6c9cfd3b814d75a98db53c4c9e6d56cd3a8144993f54
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      In-rule processing (Option A, 2026-09-12): one docstring word in executor_profile_extras
+      (`max-jobs-per-second` -> `max-jobs-per-timespan`, the live 9.15.0 key). Prose only; no
+      field, default, validator or on-disk change.
+    layout_signature: e1bff8e9ae076f0fc7dfb4c22f8c5e71e964fb794ffb785a3c8855c5906780ef
+  - path: src/hhemt/config/reprex_taxonomy.py
+    justification: >-
+      suite-reds-13-14 (2026-09-12): one _FIELD_BUCKET entry — process_in_sim_rule -> "hpc"
+      (the field ae91b79e added to analysis_config; the totality test and the four
+      metadata-renderer guide tests were red without it). Static table only; no on-disk
+      layout / figure stem / zarr / log / path change.
+    layout_signature: a861c58434412e96b7a7e3c6777544c44af1c4e039e9f33eea17bd03c81a57c6
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      running-identity ([Q331], 2026-09-12): REQUIRED `hhemt_sha` field (40-hex, no default).
+      INPUT-config schema only — no on-disk analysis-tree layout / figure stem / zarr / log /
+      path change; every existing config must gain the field (a loud load-time refusal, never
+      a silent reinterpretation of on-disk state).
+    layout_signature: 4240077bbb7798f1e740df50111f65572a6e7728be93f1550d87eef64059e447
+  - path: src/hhemt/config/reprex_taxonomy.py
+    justification: >-
+      running-identity ([Q331], 2026-09-12): one _FIELD_BUCKET entry — hhemt_sha -> "experiment".
+      Static table only; no on-disk change.
+    layout_signature: db666259f911cd41eb2cf53b366b2ff9edffdae55a0ac6012e1ec42ddb26d406
+  - path: src/hhemt/process_simulation.py
+    justification: >-
+      marker-latch fix (M19 gate 3) -- TWO edit classes in this file, both behaviour-only.
+      (1) O3: at each of the six latch-exposed completion markers, reconcile the marker
+      from its own _already_written verdict ABOVE the branch that verdict dominates, so a
+      scenario whose artifact record is already committed still acquires its marker on the
+      skip pass. (2) The is-not-None sweep of the 13 bare-truthiness LogField write guards
+      in this file, which ship together because O3's entire job is the None -> True
+      transition a value-based __bool__ would block through those guards.
+      NO on-disk shape changes: every marker written already exists in the log schema, is
+      written to a file that already exists, and takes a value the same field already takes
+      on the do-work path. No artifact is created, renamed, moved or re-serialised; the set
+      is conditioned on the already-written branch precisely so the do-work path emits the
+      same single log write it emits today. No LAYOUT_VERSION bump, no V-module, no golden
+      fixtures.
+    layout_signature: "3efe314fdd873528baa79e275f9e5584542869865b2b654ab695eb0ee8b151c5"
+  - path: src/hhemt/scenario.py
+    layout_signature: 33edba35da8673a2201da24ee5233396ec89c9972f3313b335d0d3444550c114
+    justification: >-
+      chunk-6 stall fix (2026-09-13), clause 3: _create_directories seeds
+      {scenario_dir}/_status/_du.json at scenario creation. ADDITIVE file; every
+      reader (du_sentinels.read_du_sentinel, scenario.disk_utilization_bytes,
+      cli._du_via_sentinel, the DU renderers) is graceful-absent, so no existing
+      tree becomes unreadable and no LAYOUT_VERSION bump is owed. computed_under:
+      clause-6 rule (_status/ never DU-counted at any depth) -- a sentinel written
+      before 2026-09-13 at member/analysis scope includes child _status/ bytes; the
+      one-off re-aggregation in the estate README procedure re-derives those.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 429913b07eee5fdd3bd300f0c94437e4b8a32f28e5cf23fc9b477ed06b380c5d
+    justification: >-
+      chunk-6 stall fix (2026-09-13), clause 1: every raw-output deletion routes
+      through du_sentinels.delete_and_account. No on-disk NAME or SHAPE changes;
+      only WHEN and HOW OFTEN the scenario sentinel is written. computed_under:
+      clause-6 rule, as for scenario.py above.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: d0a3b71315e86d368cc62874f2a968e720770d350a63fc76bab24f7f22274e39
+    justification: >-
+      chunk-6 stall fix (2026-09-13), clauses 1-2: reprocess deletions route through
+      the tool; the report-html write-restamp is dropped (DN-3). No on-disk NAME or
+      SHAPE changes. computed_under: clause-6 rule, as above.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: c2b20d468fefe2ba34f13c1231a39e5c33e800593a647ba15a233abe737fce86
+    justification: >-
+      chunk-6 stall fix (2026-09-13), M6b review: comment-only edit -- a stale comment
+      naming the deleted du_sentinels.restamp_parent_sentinels walker was scrubbed
+      ([Q356] 3). No code, no on-disk NAME or SHAPE change.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: c0b8716d0b8c91cdbd4bb286f618866c6e90d039c3dc0ff6978aeec974941683
+    justification: >-
+      force-rerun model axis (2026-09-14): ADDITIVE OPTIONAL `ForceRerunSpec.models`
+      (`list[Literal["triton","tritonswmm","swmm"]] | None`, default None = every enabled
+      model = the historical behaviour) plus an after-validator rejecting an empty list and
+      duplicates.
+      NON-BREAKING -- and NOT on the "no on-disk change" ground that several rows above use,
+      which is FALSE here and must not be reused. {analysis_dir}/cfg_analysis.yaml IS written
+      into the live tree (analysis.py, eda()), into every bundle (bundle/_emit.py) and into
+      every publish deposit (publishing.py); version_migration/__main__.py IDENTIFIES an
+      analysis dir BY that file's presence, and V0005 opens and rewrites it. It is a member
+      of the migrated state, not adjacent to it, and a post-change tree's copy differs.
+      THE ACTUAL GROUND, three parts.
+      (1) No NEW-toolkit reader is harmed: an additive optional field with a historical
+      default is the category bundle/__init__.py's own consume-side guard text calls "breaks
+      nothing -- a cfg missing them takes their defaults".
+      (2) No derived on-disk DATA artifact changes. The per-member input fingerprint projects
+      only analysis_independent_vars (sensitivity_analysis.py), and its whole-dump sha1 arm
+      hashes cfg_system, NOT cfg_analysis. process_simulation.py's whole-config `config_attr`
+      is computed and DISCARDED -- both bindings carry `# noqa: F841` and the
+      ds.attrs["configuration"] consumer is commented out. EXPIRY CONDITION: if those
+      commented lines are ever re-enabled, this classification MUST be revisited, because the
+      config dump would then land in every per-scenario summary zarr's attrs and an
+      analysis_config field addition would change on-disk data content.
+      (3) The one reader that IS harmed is an OLD toolkit, and LAYOUT_VERSION cannot govern
+      that direction. force_rerun defaults to a ForceRerunSpec instance (not None) and every
+      dump site omits exclude_none, so EVERY post-change cfg_analysis.yaml carries
+      `models: null` unconditionally; the pinned pre-change model refuses it with pydantic
+      extra_forbidden (measured). That is FORWARD-incompatibility: a migration ships in the
+      NEW toolkit, registry.plan raises RegistryError on any downgrade, and across
+      analysis.py / system.py / cli.py / config/ every reference to the migration package is
+      stamp_new_target -- a WRITER. The layout version is write-only ON THE CONFIG-LOAD PATH,
+      so a v23 stamp cannot warn a v22 reader, which dies on Pydantic before any stamp site
+      runs.
+      A BUMP IS NOT FREE INSURANCE -- it has a measured cost, which is why arm 1 is wrong
+      rather than merely expensive. The layout version is NOT write-only in the toolkit:
+      metadata.py writes it into the RO-Crate root Dataset as `schemaVersion`, and
+      bundle/_compatibility.py::_rocrate_schema_version READS IT BACK for version-skew
+      classification in `hhemt combine`. Under a bump every post-change bundle would carry
+      schemaVersion 23 against 22 on every extant one, so every combine spanning the bump
+      reports a version-skew divergence for a change with no incompatibility. It grades
+      WARNING (surfaced, non-blocking), so the cost is noise in a compatibility report, not a
+      refused combine -- modest, but real, and in the wrong direction.
+      NOTE the name collision: the crate's `schemaVersion` carries LAYOUT_VERSION, not
+      BUNDLE_SCHEMA_VERSION. They are different counters.
+      The instrument for cross-version config-load compatibility is BUNDLE_SCHEMA_VERSION,
+      whose own comment in version_migration/constants.py documents this exact extra="forbid"
+      hazard. Measured precedent 546c8dcf RENAMED an analysis_config field (strictly harder
+      than additive-optional), bumped BUNDLE_SCHEMA_VERSION 3->4, and left LAYOUT_VERSION at
+      18 with no migration and no fixtures. It is NOT bumped here: the guard is exact-match in
+      both directions, so bumping would hard-reject every extant bundle that by the guard's
+      own rule loads fine. Residual, named rather than absorbed: a post-change bundle read by
+      a PRE-change toolkit yields an opaque extra_forbidden traceback instead of a
+      BundleSchemaError.
+      THE TEST TO APPLY TO YOUR OWN CHANGE, since that is what this row is for: (i) can a
+      FORWARD-ONLY rewriter act on it -- i.e. is the harmed reader NEW code meeting OLD data
+      (migration) or OLD code meeting NEW data (not a migration, and no bump reaches it); and
+      (ii) is the failure a LOUD load-time refusal or a SILENT reinterpretation of existing
+      on-disk state? Loud + old-reader is outside this mechanism in both dimensions. This
+      change is one class WEAKER than the hhemt_sha row above ([Q331]), which was a REQUIRED
+      no-default field and was ruled non-breaking on exactly test (ii).
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 3d782f344b92bf2935a3e89120e4905dbdd3edceb3caed81873eb7083d19ebb9
+    justification: >-
+      force-rerun model axis (2026-09-14): ONE keyword at ONE construction site --
+      `ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate",
+      models=tuple(self.experiment._get_enabled_model_types()))`.
+      A DIFFERENT CLASS from the config/analysis.py row above, and the difference is the
+      reason both rows exist rather than one verdict applied twice. This file is flagged by
+      `layout_relevant.paths` (individually enumerated), not by the config glob; and
+      ResolvedForceRerunSpec is a `@dataclass(frozen=True)` in workflow.py -- an in-memory
+      runtime object that is never serialized -- so this edit touches NO persisted artifact of
+      any kind, adds no key to any file, and renames no flag, directory, figure stem or zarr.
+      The value passed is the experiment's existing enabled-model set from the tree's single
+      source for it, so the resolved behaviour is identical to the prior implicit "all
+      enabled".
+      NOTHING in this file's own layout-relevant surface is touched: it mints the per-member
+      input fingerprint and the member _status flag names, and neither the fingerprint payload
+      (_compute_member_id_fingerprint_payload, which projects only analysis_independent_vars)
+      nor any flag builder is in the diff. The lazy LAYOUT_VERSION stamp at ~line 695 is
+      likewise untouched and is a writer.
+      EXPIRY CONDITION: this exemption covers a pure runtime-construction edit. Re-stamp only
+      for another change of that kind; a change to this file's fingerprint payload, to a
+      _status flag name, or to the member directory layout is NOT this class and must be
+      judged on its own -- for those, the on-disk artifact really does change shape and a
+      forward-only migration really can act on it.
+  - path: src/hhemt/log.py
+    layout_signature: 082f682fbf2efd05a29da23ff54ab607300a633bf306c5c5d8ca9bf8f1a86d9d
+    justification: >-
+      ragged-frame full remedy, Half B (2026-09-14): ONE ADDITIVE OPTIONAL LogField --
+      `force_rerun_pending: LogField[bool]` declared beside n_resumes, registered in the
+      bool validator and serializer lists. The POSITIVE force-rerun marker: set by the
+      invalidator for a stage="simulate" force, consulted by prepare_simulation_command
+      ahead of the completion short-circuit, consumed by the runner after Popen.
+      SAME CHANGE CLASS as this file's already-allowlisted additive n_resumes and
+      raw_SWMM_binaries_reclaimed rows, and NOT justified on the "no on-disk change"
+      sentence: the per-model log_{model}.json IS on-disk state and every post-change write
+      carries the new key. THE TWO-QUESTION TEST. (i) Which reader is harmed? NEW code
+      meeting OLD data: none -- a legacy log lacks the key, from_json leaves the LogField
+      unset, .get() returns None and every consumer coalesces None -> False (SPEC 6 reads
+      the marker as an `is True` identity, so None, False and any non-bool read as unset).
+      OLD code meeting NEW data: an old toolkit's write() emits the
+      "DROPS non-null on-disk field" WARNING for a False marker and proceeds -- a forward
+      direction no LAYOUT_VERSION bump can govern (the migration ships in the new toolkit).
+      (ii) Loud or silent? Neither reader reinterprets existing state: the new reader takes
+      a default, the old reader warns and drops a key whose only effect is to make a forced
+      solver re-run happen, so the worst case is a force silently NOT reaching the solver
+      under an old toolkit -- the pre-change behaviour, not a corruption.
+      EXPIRY CONDITION: covers an additive optional LogField with a coalesced default.
+      A rename of any on-disk log key, or a change to the JSON shape of an existing key,
+      is NOT this class and must bump LAYOUT_VERSION with a migration.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 53c66deb7395b0d8a7515c7c30239bb9bd6a7c75864cdae3eb72733266f34787
+    justification: >-
+      ragged-frame full remedy, Half A (2026-09-14): behaviour-only edits in the chapter-
+      build path -- a fail-closed index-equality precondition in return_fpath_wlevels
+      (Component 1), the exists() skip converted to a raise (Delta 2a), and the deletion of
+      one structurally-dead index guard, the second stat loop with its value guard, and the
+      two `continue`s those deletions leave dead (Component 2 + Delta 2b). ARGUED ON WHAT
+      THIS MODULE WRITES, not on the false "no on-disk change" sentence: this module writes
+      the per-chapter zarr stores, their .done flags, the unified timeseries store and its
+      flag, and the per-scenario summaries. Every edit here RAISES BEFORE A WRITE or removes
+      a path that could write LESS; none changes the shape, naming, chunking, attrs or
+      location of any artifact a correct run already produces -- a chapter written post-
+      change carries every timestep of its chunk for every variable, which is exactly what
+      a chapter written pre-change carried whenever no skip fired. THE TWO-QUESTION TEST.
+      (i) Which reader is harmed? None in either direction: no key, stem, dimension or
+      attribute changes, so an old reader reads a new store and a new reader reads an old
+      store identically. The one artifact class that DOES differ is a DEFECTIVE pre-change
+      chapter that a skip left silently incomplete -- and this change does not repair it
+      (constraint 1), it makes the next build of it refuse loudly. (ii) Loud or silent?
+      This change converts two silent-skip paths into loud refusals and removes two
+      unreachable skips; it introduces no silent reinterpretation of any existing artifact.
+      EXPIRY CONDITION: covers raise-before-write and dead-path deletion in the chapter
+      loop. A change to what a chapter store CONTAINS (variables, coords, chunking, attrs),
+      to a store or flag name, or to the summary schema is NOT this class and must bump
+      LAYOUT_VERSION with a migration.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 2f10e520d580aa0ca0333715f46f3ca265263283b2d5b85a7638d568b3d0ec13
+    justification: >-
+      ragged-frame full remedy, Half B (2026-09-14): ONE keyword-only parameter with a
+      backward-compatible default (`set_force_marker`) on
+      _invalidate_processing_log_for_member_ids, forwarded to the one per-member
+      invalidator call. SAME CLASS as this file's 3d782f34 row directly above (a pure
+      runtime-construction edit on an in-memory frozen dataclass that is never serialized)
+      and justified on the same ground: no persisted artifact, key, flag name, fingerprint
+      payload or directory layout is touched, and the lazy LAYOUT_VERSION stamp is a writer
+      left as-is. The threading exists so a member-scoped stage="simulate" force reaches
+      the new force_rerun_pending marker in every member scenario instead of dropping the
+      opt-in at the dispatch boundary.
+      EXPIRY CONDITION: as the row above -- a change to this file's fingerprint payload, a
+      _status flag name, or the member directory layout is NOT this class.
+  - path: src/hhemt/constants.py
+    layout_signature: 8d4f0dc31bcbcd49ade193ac6cc87166b59135d787899209b579dd51a8d2bf23
+    justification: >-
+      force-rerun flag-name inverse (2026-09-15): ONE ADDED READER of the flag-name
+      grammar -- `FLAG_NAME_WITH_MODEL_RE` + `model_type_from_flag_name(name)` beside the
+      builders, plus the `import re` it needs -- and ZERO builder output strings changed
+      (checkable: `git diff` of this file touches no f-string containing `_complete.flag`
+      and no `_inputs.json` line; every `sim_run_flag_per_member` /
+      `process_timeseries_flag_per_member` / `consolidate_analysis_flag` /
+      `consolidate_experiment_flag` / `member_inputs_fingerprint_flag` body is byte-identical).
+      This row cites the row above for its FORM only (mapping row, `layout_signature` present,
+      computed post-apply); its GROUND is the opposite of that row's -- that one is a V0020
+      migration-COVERAGE argument for a flag RENAME, and nothing here is renamed.
+      THE TWO-QUESTION TEST. (i) Which reader is harmed? None in either direction: old code
+      meeting new trees sees the identical flag names the unchanged builders mint; new code
+      meeting old trees parses names it has always parsed (both shapes were minted by these
+      same builders before this change). (ii) Loud or silent? The reader adds a loud
+      ValueError on a malformed model-bearing name and introduces no silent reinterpretation
+      of any existing artifact -- the only behaviour change is that a sensitivity member's
+      c_run_/d_process_ flag is now deletable by the force that names it, which is the
+      documented contract of the force, not a new on-disk shape.
+      EXPIRY CONDITION: covers an added parser with unchanged builders. Any edit to a
+      builder's emitted string, to a flag family prefix, or to the `_status` directory name is
+      NOT this class and must bump LAYOUT_VERSION with a migration.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 0856f1f79da775c53c43eeff74df7f83211d1d66f85032470d6c9f0c4a3a0e5a
+    justification: >-
+      Per-scenario write-path fixes: the chunk grid is now DECLARED once per scenario
+      from utils.resolve_chunk_grid rather than guessed per chapter by zarr; the two
+      TRITON export preflights are unified on a processable-emptiness predicate and a
+      dead already-written branch is removed; and the stale first_chunk guard and its
+      variable are deleted.
+      JUDGED NON-BREAKING, with the counter-argument recorded so the judgement is
+      auditable. FOR: the only on-disk difference in a COMPLETED analysis is WHICH
+      cells share a zarr chunk. Chunking is within-store encoding -- open_zarr is
+      indifferent to it, every reader returns identical values, no path, name, dtype,
+      dimension, coordinate or attribute changes, and no migration could meaningfully
+      rewrite a chunk grid (it would be a full rewrite of every store to no semantic
+      end). AGAINST: a chapter set written by a PRE-fix build and extended by a
+      POST-fix build would mix grids -- but assert_chapters_match_running_build
+      refuses exactly that, and the encoding change necessarily ships as a new build,
+      so the hazard is closed by an existing guard rather than by this judgement.
+      The two deleted predicates change raise MESSAGES only; grep over tests/ shows no
+      test asserts on the retired strings.
+      EXPIRY CONDITION: covers an encoding-only grid declaration plus two predicate
+      removals. Any change to a store PATH, a flag NAME, a dimension or coordinate, or
+      to the chapter-store naming scheme is NOT this class and must bump
+      LAYOUT_VERSION with a migration.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 501822e0bc2e66fdc87a246fa89eecdb8a7f850dc2b229893c8e16cea1418298
+    justification: >-
+      DOCSTRING-ONLY edits to two fields. process_timestep_chunk's description is
+      corrected (its "preserves the current first-write-extent chunking behavior"
+      clause was false, and the field becomes a read-locality override once the writer
+      always supplies a grid) and allow_mixed_version_chapters' description is
+      corrected (it told operators the build detector is INERT under container
+      execution, which is false -- processing_build_key falls back to the image's own
+      org.hhemt.hhemt_sha label). No field is added, removed, renamed, retyped or
+      given a new default; no validator changes; every config that loaded before loads
+      identically. This file is layout-relevant only via the src/hhemt/config/**/*.py
+      glob, and a description string reaches no on-disk artifact.
+      EXPIRY CONDITION: covers description text only. Any field addition, removal,
+      rename, retype or DEFAULT change is NOT this class.
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      D114 MERGE RE-SIGNING. This path was modified on BOTH sides of the
+      sidequest-clearing-08-30 merge, so neither branch's stamped signature covers the
+      resolved content and check-b re-fires on the merge commit. Resolved content:
+      TAKEN FROM THE AUTO-MERGED CONTENT, which is the union of both sides' independent changes to this path with no hand resolution.
+      NON-BREAKING. Both sides' changes to this path were individually adjudicated
+      non-breaking by their own allowlist rows when they landed, and the merge invents no
+      on-disk meaning -- it is where two already-adjudicated changes meet. This row
+      asserts the conjunction and nothing more.
+      COMPUTED AT step 5 of the merge sequence, over the FINAL resolved content, after
+      every code and documentation conflict was settled and after every post-condition
+      from every axis had been re-run. A hash taken earlier pins unresolved content and
+      the failure is silent at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "09376c7a998f85f5c0ac1d7fc0b38ad6fac6a2a093146f4c001a8e63b1ae6f6c"
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      D114 MERGE RE-SIGNING. This path was modified on BOTH sides of the
+      sidequest-clearing-08-30 merge, so neither branch's stamped signature covers the
+      resolved content and check-b re-fires on the merge commit. Resolved content:
+      TAKEN FROM THE AUTO-MERGED CONTENT, which is the union of both sides' independent changes to this path with no hand resolution.
+      NON-BREAKING. Both sides' changes to this path were individually adjudicated
+      non-breaking by their own allowlist rows when they landed, and the merge invents no
+      on-disk meaning -- it is where two already-adjudicated changes meet. This row
+      asserts the conjunction and nothing more.
+      COMPUTED AT step 5 of the merge sequence, over the FINAL resolved content, after
+      every code and documentation conflict was settled and after every post-condition
+      from every axis had been re-run. A hash taken earlier pins unresolved content and
+      the failure is silent at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "649b22ff944f0662726d25b13b63531b080388cad4df6ca8b54189a1f3ccc77a"
+  - path: src/hhemt/config/loaders.py
+    justification: >-
+      D114 MERGE RE-SIGNING. This path was modified on BOTH sides of the
+      sidequest-clearing-08-30 merge, so neither branch's stamped signature covers the
+      resolved content and check-b re-fires on the merge commit. Resolved content:
+      TAKEN FROM THE HAND-RESOLVED CONTENT. This is the one of the seven that was itself conflicted; its resolution is the code axis's and is a synthesis rather than a side-pick.
+      NON-BREAKING. Both sides' changes to this path were individually adjudicated
+      non-breaking by their own allowlist rows when they landed, and the merge invents no
+      on-disk meaning -- it is where two already-adjudicated changes meet. This row
+      asserts the conjunction and nothing more.
+      COMPUTED AT step 5 of the merge sequence, over the FINAL resolved content, after
+      every code and documentation conflict was settled and after every post-condition
+      from every axis had been re-run. A hash taken earlier pins unresolved content and
+      the failure is silent at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "cb06a42b62412bc57b5c71439fda204c0d985e4d359a0d2370f2b9a996e19ca7"
+  - path: src/hhemt/config/system.py
+    justification: >-
+      D114 MERGE RE-SIGNING. This path was modified on BOTH sides of the
+      sidequest-clearing-08-30 merge, so neither branch's stamped signature covers the
+      resolved content and check-b re-fires on the merge commit. Resolved content:
+      TAKEN FROM THE AUTO-MERGED CONTENT, which is the union of both sides' independent changes to this path with no hand resolution.
+      NON-BREAKING. Both sides' changes to this path were individually adjudicated
+      non-breaking by their own allowlist rows when they landed, and the merge invents no
+      on-disk meaning -- it is where two already-adjudicated changes meet. This row
+      asserts the conjunction and nothing more.
+      COMPUTED AT step 5 of the merge sequence, over the FINAL resolved content, after
+      every code and documentation conflict was settled and after every post-condition
+      from every axis had been re-run. A hash taken earlier pins unresolved content and
+      the failure is silent at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "33755fce90f4b102d8ca9da67369e7384b1e3532edbc4448a067bca0575fc080"
+  - path: src/hhemt/constants.py
+    justification: >-
+      D114 MERGE RE-SIGNING. This path was modified on BOTH sides of the
+      sidequest-clearing-08-30 merge, so neither branch's stamped signature covers the
+      resolved content and check-b re-fires on the merge commit. Resolved content:
+      TAKEN FROM THE AUTO-MERGED CONTENT, which is the union of both sides' independent changes to this path with no hand resolution.
+      NON-BREAKING. Both sides' changes to this path were individually adjudicated
+      non-breaking by their own allowlist rows when they landed, and the merge invents no
+      on-disk meaning -- it is where two already-adjudicated changes meet. This row
+      asserts the conjunction and nothing more.
+      COMPUTED AT step 5 of the merge sequence, over the FINAL resolved content, after
+      every code and documentation conflict was settled and after every post-condition
+      from every axis had been re-run. A hash taken earlier pins unresolved content and
+      the failure is silent at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "85a06116537e21811b8822d70c8cc1a73ba14b3ceb8b6123710cbc446ed6797a"
+  - path: src/hhemt/sensitivity_analysis.py
+    justification: >-
+      D114 MERGE RE-SIGNING. This path was modified on BOTH sides of the
+      sidequest-clearing-08-30 merge, so neither branch's stamped signature covers the
+      resolved content and check-b re-fires on the merge commit. Resolved content:
+      TAKEN FROM THE AUTO-MERGED CONTENT, which is the union of both sides' independent changes to this path with no hand resolution.
+      NON-BREAKING. Both sides' changes to this path were individually adjudicated
+      non-breaking by their own allowlist rows when they landed, and the merge invents no
+      on-disk meaning -- it is where two already-adjudicated changes meet. This row
+      asserts the conjunction and nothing more.
+      COMPUTED AT step 5 of the merge sequence, over the FINAL resolved content, after
+      every code and documentation conflict was settled and after every post-condition
+      from every axis had been re-run. A hash taken earlier pins unresolved content and
+      the failure is silent at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "764c8ff0644ee2b14d8eeaeb173d29dc730d96fbc89113d35171514029634f5c"
+  - path: src/hhemt/version_migration/versions/V0022__promote_producer_written_experiment_tree.py
+    justification: >-
+      D114 MERGE RE-SIGNING. This path was modified on BOTH sides of the
+      sidequest-clearing-08-30 merge, so neither branch's stamped signature covers the
+      resolved content and check-b re-fires on the merge commit. Resolved content:
+      TAKEN FROM THE AUTO-MERGED CONTENT, which is the union of both sides' independent changes to this path with no hand resolution.
+      NON-BREAKING. Both sides' changes to this path were individually adjudicated
+      non-breaking by their own allowlist rows when they landed, and the merge invents no
+      on-disk meaning -- it is where two already-adjudicated changes meet. This row
+      asserts the conjunction and nothing more.
+      COMPUTED AT step 5 of the merge sequence, over the FINAL resolved content, after
+      every code and documentation conflict was settled and after every post-condition
+      from every axis had been re-run. A hash taken earlier pins unresolved content and
+      the failure is silent at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "bae58e14e767efb500d273c21bb5556298f22c4574e2db4a67e8bba08fe4bcaa"

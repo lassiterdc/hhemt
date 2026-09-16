@@ -1,7 +1,7 @@
 """Consolidation refuses a summary store that exists but never completed.
 
 Compile-INDEPENDENT (no GPU, no solver, no real simulation pipeline): uses the
-compile-free ``norfolk_sensitivity_analysis`` object fixture and writes its own
+compile-free ``synth_sensitivity_analysis`` object fixture and writes its own
 tiny zarr stores. The discriminating arm is
 ``test_incomplete_summary_is_refused``: PRE-FIX ``_retrieve_combined_output``
 consults no completion signal at all, so it opens the store and returns; POST-FIX
@@ -56,23 +56,23 @@ def _first_mode(sub):
     pytest.skip("no non-performance summary mode enabled for this fixture")
 
 
-def test_complete_summary_is_accepted(norfolk_sensitivity_analysis):
+def test_complete_summary_is_accepted(synth_sensitivity_analysis):
     """Guard arm: a seeded, record-carrying summary set still consolidates."""
-    sub = next(iter(norfolk_sensitivity_analysis.sensitivity.members.values()))
+    sub = next(iter(synth_sensitivity_analysis.sensitivity.members.values()))
     mode = _first_mode(sub)
     _seed_one_sub(sub, mode)
     ds = sub.process._retrieve_combined_output(mode)
     assert ds is not None
 
 
-def test_incomplete_summary_is_refused(norfolk_sensitivity_analysis):
+def test_incomplete_summary_is_refused(synth_sensitivity_analysis):
     """DISCRIMINATING arm: store present, completion record absent -> refuse.
 
     Deleting the record is the kill analogue: ``add_sim_processing_entry`` runs
     only after ``write_zarr`` RETURNS, so a killed write leaves exactly this state.
     Pre-fix this returns a dataset; post-fix it raises.
     """
-    sub = next(iter(norfolk_sensitivity_analysis.sensitivity.members.values()))
+    sub = next(iter(synth_sensitivity_analysis.sensitivity.members.values()))
     mode = _first_mode(sub)
     seeded = _seed_one_sub(sub, mode)
     scen, f_out, model_type = seeded[0]

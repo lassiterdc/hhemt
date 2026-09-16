@@ -72,8 +72,22 @@ def load_eda_context(root: Path | str) -> EdaContext:
         )
     if not cfg_system_path.exists():
         raise FileNotFoundError(f"{root} is not a valid EDA root: cfg_system.yaml absent.")
-    cfg_analysis = yaml_to_model(cfg_analysis_path, analysis_config)
-    cfg_system = yaml_to_model(cfg_system_path, system_config)
+    if is_bundle:
+        # A bundle's archived cfg carries bundle-relative paths; a live analysis_dir's
+        # may carry whatever the user's YAML carried, so rebasing it would repoint a
+        # legitimately-relative input at the analysis tree. Gate, do not rebase blind.
+        from hhemt.bundle._path_policy import load_bundle_config
+
+        cfg_analysis = load_bundle_config(cfg_analysis_path, analysis_config, root)
+        cfg_system = load_bundle_config(cfg_system_path, system_config, root)
+    else:
+        # `metadata`: a live analysis tree's own configs, read to RENDER. The EDA surface
+        # consumes the consolidated tree and the emitted figures, never a raw simulation
+        # input, so a campaign whose inputs were reclaimed must still re-render. This is
+        # UPSTREAM of the four _dem_resolution_plots.py reads -- without it they are
+        # unreachable on exactly the tree they exist to serve.
+        cfg_analysis = yaml_to_model(cfg_analysis_path, analysis_config, existence="metadata")
+        cfg_system = yaml_to_model(cfg_system_path, system_config, existence="metadata")
 
     from hhemt.utils import resolve_experiment_tree
 

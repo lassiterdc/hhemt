@@ -369,6 +369,9 @@ class TRITONSWMM_scenario:
         self.sim_id_str = self._retrieve_sim_id_str()
         self.event_id = self.sim_id_str
         sim_folder = analysis_simulations_folder / self.sim_id_str
+        # Clause 3: captured BEFORE the first mkdir below -- True exactly once per scenario
+        # lifetime; `_create_directories` seeds the DU sentinel only when this is True.
+        self._created_now = not sim_folder.exists()
         processed_output_folder = sim_folder / "processed"
         processed_output_folder.mkdir(parents=True, exist_ok=True)
         swmm_folder = sim_folder / "swmm"
@@ -651,6 +654,16 @@ class TRITONSWMM_scenario:
             self.scen_paths.out_triton.mkdir(parents=True, exist_ok=True)
         if self.scen_paths.out_tritonswmm:
             self.scen_paths.out_tritonswmm.mkdir(parents=True, exist_ok=True)
+
+        # CLAUSE 3: the scenario-scope DU sentinel is born with the scenario, seeded by a
+        # bounded own-walk of the near-empty directory. It is NOT re-seeded on later
+        # instantiations (clause 13 forbids lazy seed-on-first-touch; the 3,798 pre-existing
+        # scenarios are seeded once by the operator procedure). SAFE ONLY BECAUSE clauses 1-2
+        # landed first: no per-file deletion can reach an ancestor-walking restamp any more.
+        if self._created_now:
+            from hhemt.du_sentinels import compute_and_write_scope_sentinel
+
+            compute_and_write_scope_sentinel(self.scen_paths.sim_folder, scope="scenario")
 
         return
 
@@ -986,13 +999,13 @@ class TRITONSWMM_scenario:
         # DU-immaterial (symlinks themselves are tiny; rglob does not follow symlinks), but
         # if target_link was a real directory the rmtree IS material — pass analysis_dir
         # through fast_rmtree so the EXEMPT short-circuit fires when appropriate.
-        _analysis_dir = self._analysis.analysis_paths.analysis_dir
         if target_link.exists() or target_link.is_symlink():
             if target_link.is_symlink() or target_link.is_file():
                 # EXEMPT-DU: system-dir
                 target_link.unlink()
             elif target_link.is_dir():
-                utils.fast_rmtree(target_link, analysis_dir=_analysis_dir)  # PATTERN A
+                # EXEMPT-DU: system-dir
+                utils.fast_rmtree(target_link)
             else:
                 # EXEMPT-DU: system-dir
                 target_link.unlink()

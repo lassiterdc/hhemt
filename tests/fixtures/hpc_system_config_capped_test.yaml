@@ -11,7 +11,7 @@
 # max_concurrent_cpus is the field S1 introduces. hpc_system_config is
 # extra="forbid", so this file raises ValidationError against a model that does
 # not yet carry it -- S1 must land before anything loads this fixture.
-system_name: test_cluster
+hpc_name: test_cluster
 default_account: test_alloc
 max_concurrent_jobs: 16
 max_concurrent_cpus: 480

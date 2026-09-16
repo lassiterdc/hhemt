@@ -12,6 +12,11 @@ import pytest
 from hhemt.exceptions import ConfigurationError
 from hhemt.workflow import ResolvedForceRerunSpec
 
+# The model axis is REQUIRED on the resolved spec (no default, deliberately). These
+# tests are model-agnostic: they seed flag names across arms and assert on the SUBJECT
+# axis, so every arm is named and the model axis is inert here.
+_ALL_MODELS = ("triton", "tritonswmm", "swmm")
+
 
 def test_run_emits_flag_and_sidecar(synthetic_multisim_completed):
     """After a completed run, every `_status/*.flag` carries a `.flag.json` sidecar."""
@@ -53,8 +58,8 @@ def test_build_force_rerun_spec_all_none():
     from hhemt.analysis import TRITONSWMM_analysis  # noqa: F401
 
     # Pure dataclass shape test — no analysis fixture needed.
-    spec_all = ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
-    spec_none = ResolvedForceRerunSpec(scope="none", tokens=(), stage="simulate")
+    spec_all = ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate", models=_ALL_MODELS)
+    spec_none = ResolvedForceRerunSpec(scope="none", tokens=(), stage="simulate", models=_ALL_MODELS)
     assert spec_all.scope == "all"
     assert spec_none.scope == "none"
 
@@ -84,7 +89,7 @@ def test_delete_flags_for_force_rerun_member_prefix_no_false_match(tmp_path, syn
         (status_dir / (name + ".json")).touch()
 
     builder = analysis._workflow_builder
-    spec = ResolvedForceRerunSpec(scope="member", tokens=("1",), stage="simulate")
+    spec = ResolvedForceRerunSpec(scope="member", tokens=("1",), stage="simulate", models=_ALL_MODELS)
     builder._delete_flags_for_force_rerun(spec)
 
     # The two member-1 flags should be gone; member-10 / member-11 / member-100 untouched.
@@ -109,7 +114,7 @@ def test_delete_flags_for_force_rerun_none_scope_noop(synth_sensitivity_analysis
     seeded.touch()
 
     builder = analysis._workflow_builder
-    spec = ResolvedForceRerunSpec(scope="none", tokens=(), stage="simulate")
+    spec = ResolvedForceRerunSpec(scope="none", tokens=(), stage="simulate", models=_ALL_MODELS)
     builder._delete_flags_for_force_rerun(spec)
 
     assert seeded.exists()
@@ -139,7 +144,7 @@ def test_delete_flags_for_force_rerun_all_clears_status_dir(synth_sensitivity_an
         (status_dir / (name + ".json")).touch()
 
     builder = analysis._workflow_builder
-    spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
+    spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate", models=_ALL_MODELS)
     builder._delete_flags_for_force_rerun(spec)
 
     # In-axis: deleted, with its sidecar.
@@ -180,8 +185,7 @@ def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivit
     scen2 = TRITONSWMM_scenario(0, sub)
     log_after = scen2.get_log(model_type)
     assert log_after.processing_log.outputs == {}, (
-        f"expected empty processing_log.outputs after force-rerun; got "
-        f"{list(log_after.processing_log.outputs.keys())}"
+        f"expected empty processing_log.outputs after force-rerun; got {list(log_after.processing_log.outputs.keys())}"
     )
 
 
@@ -239,6 +243,6 @@ def test_override_force_rerun_event_iloc_invalidates_only_named_events(synthetic
     target_log_after = target_scen2.get_log(model_type).processing_log.outputs
     other_log_after = dict(other_scen2.get_log(model_type).processing_log.outputs)
     assert target_log_after == {}, (
-        f"target event_iloc={target_iloc} log must be invalidated; got " f"{list(target_log_after.keys())}"
+        f"target event_iloc={target_iloc} log must be invalidated; got {list(target_log_after.keys())}"
     )
     assert other_log_before == other_log_after, f"non-target event_iloc={other_iloc} log must be unchanged"

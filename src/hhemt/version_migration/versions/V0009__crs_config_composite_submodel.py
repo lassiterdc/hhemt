@@ -38,7 +38,7 @@ from hhemt.version_migration.context import MigrationContext
 
 version_from: int = 8
 version_to: int = 9
-description: str = "Composite CRSConfig submodel under cfg_system.crs; vertical_crs_epsg " "field on system_log"
+description: str = "Composite CRSConfig submodel under cfg_system.crs; vertical_crs_epsg field on system_log"
 
 
 def upgrade(ctx: MigrationContext) -> None:

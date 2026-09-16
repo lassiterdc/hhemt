@@ -89,6 +89,7 @@ class TRITONSWMM_system_post_processing:
             # Overwrite-if-present semantics per analysis group.
             analysis_root = system_zarr / analysis_id
             if analysis_root.exists():
+                # EXEMPT-DU: system-dir
                 shutil.rmtree(analysis_root)
 
             # Write the analysis root dataset with identifying metadata.
@@ -121,4 +122,5 @@ class TRITONSWMM_system_post_processing:
             return
         target = system_zarr / analysis_id
         if target.exists():
+            # EXEMPT-DU: system-dir
             shutil.rmtree(target)

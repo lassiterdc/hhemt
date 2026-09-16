@@ -45,8 +45,8 @@ from hhemt.exceptions import ConfigurationError  # noqa: E402
 from hhemt.scenario import TRITONSWMM_scenario  # noqa: E402
 from hhemt.workflow import SnakemakeWorkflowBuilder  # noqa: E402
 
-# The Norfolk LOCAL test cases are byte-identity-neutral with this config (all
-# hpc_* selectors null); reused here so cfg_hpc_system is non-None and a
+# The synth LOCAL test cases are byte-identity-neutral with this config (all
+# hpc_* PARTITION selectors null); reused here so cfg_hpc_system is non-None and a
 # ContainerSpec can be attached. See test_workflow_snakefile_byte_identity.py.
 EXAMPLE_HPC_CONFIG = Path(__file__).parent / "fixtures" / "hpc_system_config_test.yaml"
 
@@ -67,9 +67,8 @@ def test_native_snakefile_no_container_artifacts() -> None:
     The container seam is gated behind ``execution_environment == 'container'`` in
     the builder's ``__init__`` (workflow.py), so the default path's process-prefix
     is empty and no ``apptainer`` token leaks into the generated Snakefile."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     assert tc.analysis.cfg_analysis.execution_environment == "native"
@@ -87,23 +86,24 @@ def test_container_mode_process_prefix_in_snakefile() -> None:
     process rungs are CPU post-processing). The sim (``run_{model}``), consolidate,
     plot, and render shells carry NO ``apptainer exec`` — the sim wrap is built at
     runtime, the rest stay native (R2)."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     # Flip to container mode BEFORE constructing the builder — the process-prefix is
     # computed in SnakemakeWorkflowBuilder.__init__ from cfg_analysis + cfg_hpc_system.
     tc.analysis.cfg_analysis.execution_environment = "container"
-    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif")
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_root="/opt/sifs")
     builder = SnakemakeWorkflowBuilder(tc.analysis)
     got = builder.generate_snakefile_content()
 
     blocks = _rule_blocks(got)
     for rule in ("process_triton", "process_tritonswmm", "process_swmm"):
         assert rule in blocks, f"expected rule {rule} not found in generated Snakefile"
-        assert "apptainer exec /opt/test.sif " in blocks[rule], (
-            f"rule {rule} is missing the container process-prefix `apptainer exec /opt/test.sif `"
+        _sif = builder._container_process_prefix.split("apptainer exec ", 1)[1].strip()
+        assert _sif.startswith("/opt/sifs/") and _sif.endswith(".sif"), _sif
+        assert f"apptainer exec {_sif} " in blocks[rule], (
+            f"rule {rule} is missing the container process-prefix `apptainer exec {_sif} `"
         )
     # No apptainer exec leaks into the sim/consolidate/plot/render shells.
     for name, body in blocks.items():
@@ -126,7 +126,7 @@ def test_container_mode_sim_runner_wraps_exe() -> None:
     run = _make_run("gpu", n_gpus=2, in_slurm=True)
     run._analysis.cfg_analysis.execution_environment = "container"
     run._analysis.cfg_hpc_system.container = ContainerSpec(
-        sif_path="/opt/test.sif",
+        sif_root="/opt/sifs",
         gpu_flag="--rocm",
         exe_in_sif={"tritonswmm": "/opt/hhemt/bin/triton.exe"},
     )
@@ -140,7 +140,7 @@ def test_container_mode_sim_runner_wraps_exe() -> None:
     # `-B {host_out}:/opt/hhemt/out_tritonswmm` redirects TRITON's argv[0]-two-up
     # output path (/opt/hhemt inside the read-only SIF) to the writable host dir.
     assert "apptainer exec --rocm -B " in full_cmd and (
-        ":/opt/hhemt/out_tritonswmm /opt/test.sif /opt/hhemt/bin/triton.exe" in full_cmd
+        ":/opt/hhemt/out_tritonswmm /opt/sifs/" in full_cmd and ".sif /opt/hhemt/bin/triton.exe" in full_cmd
     ), (
         "container GPU mode did not wrap the innermost {exe} in "
         "`apptainer exec --rocm -B {host_out}:/opt/hhemt/out_tritonswmm /opt/test.sif "
@@ -171,14 +171,13 @@ def test_container_mode_process_prefix_binds_system_directory() -> None:
     the DEM by absolute path), not just ``analysis_dir``. This is the LOCAL proof
     that D11 lands before a Phase-7 cluster run would otherwise discover the DEM
     outside the mount (Evidence 9)."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
     # binds=[] (default): nothing pre-covers system_directory, so the append fires.
-    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif")
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_root="/opt/sifs")
     builder = SnakemakeWorkflowBuilder(tc.analysis)
 
     sd = builder.system.cfg_system.system_directory
@@ -355,7 +354,7 @@ def _container_run_for(model_type: str):
     run = _make_run("gpu", n_gpus=1, in_slurm=True)
     run._analysis.cfg_analysis.execution_environment = "container"
     run._analysis.cfg_hpc_system.container = ContainerSpec(
-        sif_path="/opt/test.sif",
+        sif_root="/opt/sifs",
         gpu_flag="--rocm",
         exe_in_sif={
             "triton": "/opt/hhemt/bin/triton.exe",
@@ -405,9 +404,8 @@ def test_cpu_only_swmm_rule_routes_to_cpu_partition() -> None:
     ``-p gpu`` -> ``sbatch: error: QOSMinGRES``, 0-byte log). Every other CPU-only
     rule already routes to the processing partition — run_swmm was the anomaly.
     Container-INDEPENDENT: this asserts on the native generator too."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.hpc_ensemble_partition = "gpu"
@@ -442,7 +440,7 @@ def test_every_container_def_builds_a_triton_only_exe() -> None:
     standalone cfg legitimately omits it. Shipping only the coupled build made
     ``run_triton`` unrunnable in EVERY container image (Rivanna 17090704/17091179).
     Instance-level runtime tests cannot catch this; this recipe-level invariant can."""
-    defs = sorted((_REPO_ROOT / "containers").glob("*.def"))
+    defs = sorted((_REPO_ROOT / "src" / "hhemt" / "sif" / "recipes").glob("*.def"))
     assert defs, "no container definition files found"
     for d in defs:
         text = d.read_text()
@@ -495,19 +493,21 @@ def test_container_prefixed_shells_never_invoke_a_host_interpreter() -> None:
     ContainerSpec explicitly declares as in-SIF. A host absolute path is never
     admissible. This is expressible against the GENERATED Snakefile with no
     cluster, no image, and no apptainer binary."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
-    cspec = ContainerSpec(sif_path="/opt/test.sif")
+    cspec = ContainerSpec(sif_root="/opt/sifs")
     tc.analysis.cfg_hpc_system.container = cspec
     builder = SnakemakeWorkflowBuilder(tc.analysis)
     got = builder.generate_snakefile_content()
 
     declared_in_sif = {cspec.python_in_sif, *cspec.exe_in_sif.values()}
-    found = re.findall(r"apptainer exec\s+(?:-\S+\s+|\S+:\S+\s+)*" + re.escape(cspec.sif_path) + r"\s+(\S+)", got)
+    from hhemt.sif.identity import resolve_sif
+
+    _sif = resolve_sif(cspec.sif_root, tc.analysis._sif_identity_for(tc.analysis.cfg_analysis.hpc_ensemble_partition))
+    found = re.findall(r"apptainer exec\s+(?:-\S+\s+|\S+:\S+\s+)*" + re.escape(str(_sif)) + r"\s+(\S+)", got)
     assert found, "container mode emitted no `apptainer exec {sif} <exe>` command to check"
     for exe in found:
         assert exe in declared_in_sif or "/" not in exe, (
@@ -524,7 +524,7 @@ def test_container_python_default_is_a_name_not_a_path() -> None:
     Every in-repo recipe's %environment prepends /opt/hhemt-src/.venv/bin to
     PATH, so a bare name resolves to the in-SIF hhemt venv. Baking that absolute
     path into the model default would hardcode an image layout into src/."""
-    assert "/" not in ContainerSpec(sif_path="/opt/test.sif").python_in_sif
+    assert "/" not in ContainerSpec(sif_root="/opt/sifs").python_in_sif
 
 
 def test_every_container_def_fronts_an_hhemt_interpreter_on_path() -> None:
@@ -534,7 +534,7 @@ def test_every_container_def_fronts_an_hhemt_interpreter_on_path() -> None:
     recipe's %environment prepends its uv-built venv bin dir to PATH. If a recipe
     stops doing that, the default silently degrades to the system interpreter and
     the process rung dies ModuleNotFoundError on the cluster."""
-    defs = sorted((_REPO_ROOT / "containers").glob("*.def"))
+    defs = sorted((_REPO_ROOT / "src" / "hhemt" / "sif" / "recipes").glob("*.def"))
     assert defs, "no container definition files found"
     for d in defs:
         env_block = d.read_text().split("%environment", 1)
@@ -560,13 +560,12 @@ def test_container_process_prefix_loads_the_apptainer_module_when_declared() -> 
 
     Invariant: whenever the ContainerSpec declares an apptainer_module, every
     container-prefixed process command loads it before invoking `apptainer`."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
-    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif", apptainer_module="apptainer/1.5.0")
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_root="/opt/sifs", apptainer_module="apptainer/1.5.0")
     got = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
 
     for line in got.splitlines():
@@ -583,13 +582,12 @@ def test_container_process_prefix_omits_module_load_when_undeclared() -> None:
 
     The module-load prepend is guarded on the field, so a spec that declares no
     module must emit exactly as it did before the fix."""
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     tc.analysis.cfg_analysis.execution_environment = "container"
-    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif")
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_root="/opt/sifs")
     got = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
     assert "module load" not in got.split("process_timeseries_runner")[0].splitlines()[-1]
 
@@ -623,9 +621,8 @@ def test_only_allowlisted_rules_declare_a_snakemake_group() -> None:
     gates the localrules path behind ``rule.group is None``), so such a guard
     could never fire and would manufacture false assurance.
     """
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     content = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
@@ -656,10 +653,12 @@ def test_native_absent_cpu_build_log_raises_configuration_not_compilation(
     compile failure.
 
     Coverage rationale (main-agent apply-time addition, not in the VMS). Anchor F
-    branches the native CPU raise on log existence, but the shared Norfolk fixture
-    carries a real ``compilation.log``, so the sibling test above provably takes the
-    CompilationError arm -- measured, not assumed. Without this test Anchor F's new
-    ConfigurationError branch would ship with zero coverage.
+    branches the native CPU raise on log existence. This test forces the ABSENT-log
+    arm by pointing ``compilation_logfile_cpu`` at a path that does not exist, because
+    the fixture's own build tree carries a real ``compilation.log`` and would otherwise
+    take the CompilationError arm. No other test in this file reaches the CPU arm at
+    all, so without this test Anchor F's ConfigurationError branch ships with zero
+    coverage.
 
     Why the distinction is load-bearing rather than cosmetic: every prep-rung raise
     site passes the hardcoded literal ``return_code=1`` even though no process ran,
@@ -668,9 +667,8 @@ def test_native_absent_cpu_build_log_raises_configuration_not_compilation(
     when defect-10 first surfaced. The two arms also carry different CLI exit codes
     (config 2 vs compile 3), so this is an exit-contract assertion, not a wording one.
     """
-    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+    tc = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=False,
-        download_if_exists=False,
         hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     scen = TRITONSWMM_scenario(event_iloc=0, analysis=tc.analysis)

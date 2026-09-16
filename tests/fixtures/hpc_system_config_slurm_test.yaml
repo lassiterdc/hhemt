@@ -8,8 +8,8 @@
 #      emission at all.
 #
 # max_concurrent_cpus is DELIBERATELY ABSENT: this is the arm that must emit no
-# `resources:` key. system_name and partitions are the model's two required fields.
-system_name: test_cluster
+# `resources:` key. hpc_name and partitions are the model's two required fields.
+hpc_name: test_cluster
 default_account: test_alloc
 max_concurrent_jobs: 16
 partitions:

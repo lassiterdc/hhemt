@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import pydantic
 import yaml
@@ -14,6 +14,14 @@ from hhemt.config.system import system_config
 from hhemt.exceptions import ConfigurationError
 
 _M = TypeVar("_M")
+
+# The document-level LOAD MODE vocabulary. Three values, each a claim that is TRUE OF THE
+# READ and needs no later discharge -- deliberately NOT a value meaning "someone else will
+# check", because a context value cannot enforce that and reads as a guarantee it is not.
+# An obligation lives as an explicit call at the site that owes it (experiments.py's
+# post-download load, and _assert_declared_inputs_exist), never in this vocabulary.
+ExistenceMode = Literal["runnable", "template", "metadata"]
+EXISTENCE_CONTEXT_KEY = "existence"
 
 
 def _missing_config_message(cfg_yaml: Path, exc: FileNotFoundError) -> str:
@@ -54,7 +62,7 @@ def _missing_config_message(cfg_yaml: Path, exc: FileNotFoundError) -> str:
     )
 
 
-def _load_config(cfg_yaml: Path, model_cls: type[_M]) -> _M:
+def _load_config(cfg_yaml: Path, model_cls: type[_M], *, existence: ExistenceMode = "runnable") -> _M:
     try:
         text = cfg_yaml.read_text()
     except FileNotFoundError as exc:
@@ -70,9 +78,11 @@ def _load_config(cfg_yaml: Path, model_cls: type[_M]) -> _M:
     # names the model and the field but never the path, and the CLI maps ConfigurationError
     # (exit 2, `Configuration Error`) while a bare ValidationError reached the catch-all.
     # ONLY the model_validate call is wrapped: the FileNotFoundError and parsed-to-None
-    # branches above keep their classes, which existing tests pin.
+    # branches above keep their classes, which existing tests pin. The `context` argument
+    # is what ARMS cfgBaseModel._check_paths_exist for this document's load mode; dropping
+    # it would re-inert the validator ce2bcc57 exists to arm, and nothing would raise.
     try:
-        return model_cls.model_validate(raw)
+        return model_cls.model_validate(raw, context={EXISTENCE_CONTEXT_KEY: existence})
     except pydantic.ValidationError as exc:
         raise ConfigurationError(
             field=cfg_yaml.name,
@@ -81,9 +91,15 @@ def _load_config(cfg_yaml: Path, model_cls: type[_M]) -> _M:
         ) from exc
 
 
-def yaml_to_model(cfg_yaml: Path, model_cls: type[_M]) -> _M:
-    """Load a YAML file and validate it against a Pydantic model class."""
-    return _load_config(cfg_yaml, model_cls)
+def yaml_to_model(cfg_yaml: Path, model_cls: type[_M], *, existence: ExistenceMode = "runnable") -> _M:
+    """Load a YAML file and validate it against a Pydantic model class.
+
+    ``existence`` is the document-level LOAD MODE (see ``ExistenceMode``). It is
+    keyword-only and defaults to the STRICT intent deliberately: a caller that has not
+    thought about the document's class gets the check, and only a caller that has
+    thought about it can turn it off.
+    """
+    return _load_config(cfg_yaml, model_cls, existence=existence)
 
 
 def load_system_config_from_dict(cfg_dict: dict) -> system_config:

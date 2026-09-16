@@ -39,19 +39,17 @@ inputs:
 toolkit_pin:
   version: "0.1.0"                      # PyPI version: the durable, installable identifier
 container:
-  def_recipe: containers/uva-cuda.def    # bundle-relative, or ${VAR}-rooted for a shared recipe
   sha256_source: ro-crate              # the SIF digest's authoritative home is the RO-Crate
 ```
 
 See the [config-filling](config-filling.md) and [HPC-profile setup](hpc-profile-setup.md)
 guides for the system/analysis and `hpc_system_config` contents.
 
-`def_recipe` declares its own root. A bare relative value such as `containers/uva-cuda.def`
-is resolved against the bundle directory; a `${VAR}`-rooted value such as
-`${HHEMT_TOOLKIT}/containers/uva-cuda.def` names one recipe shared across several
-experiments. An absolute path, a `~`-rooted path, or an unbraced `$VAR` is refused when the
-descriptor loads, because such a value is rooted on one operator's machine and cannot be
-reproduced by anyone else.
+The `container:` block names no recipe. `def_recipe` was retired, and a descriptor still
+carrying that key is refused by name when it loads, with a message naming `container.sif_root`
+as the replacement. Images are addressed by identity under `sif_root` and built by
+`hhemt build-sifs`; `sha256_source` stays, because the digest's authoritative home is still
+the RO-Crate.
 
 ## Run it
 
@@ -160,7 +158,7 @@ These are the same codes, with the same meanings, as the
 | Code | Meaning |
 |------|---------|
 | 0 | success (or `--dry-run` planned cleanly) |
-| 2 | configuration error (bad `experiment.yaml`, a schema-invalid `system.yaml` or `analysis.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_path`, declined override gate, an unknown `--mode` value, `--mode fresh` refused by the wipe guard) |
+| 2 | configuration error (bad `experiment.yaml`, a schema-invalid `system.yaml` or `analysis.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_root`, declined override gate, an unknown `--mode` value, `--mode fresh` refused by the wipe guard) |
 | 3 | workflow or compilation failure, including a workflow that ran and reported failure (Snakemake exited non-zero, `sbatch` refused the submission, or a rule failed permanently) and a `--dry-run` whose plan failed; the console output printed just before the exit names the cause |
 | 4 | simulation failure |
 | 5 | processing failure |

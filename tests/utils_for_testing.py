@@ -1211,12 +1211,15 @@ def mutate_scenario_csv(
 
         slugs = df.apply(_row_slug, axis=1)
         donor_row = df[slugs == donor_event_id].iloc[0].copy()
-        # Capture victim's iloc positions BEFORE removal so we can delete stale model logs.
-        # The toolkit's completion check uses iloc-indexed log names (model_triton_evt{N}.log),
-        # NOT slug-based names. After removing the victim and appending a new scenario, the new
-        # scenario inherits the victim's iloc, causing the completion check to read the victim's
-        # log and declare the new scenario "already done" before running.
-        victim_ilocs = df.index[slugs == remove_event_id].tolist()
+        # No stale-log deletion is performed here, and the omission is deliberate. The
+        # toolkit's completion gate now adjudicates the triton arm on a per-scenario
+        # artifact (`out_triton/performance.txt`) in ADDITION to the ordinal-keyed run-log
+        # marker, so a newly added event that inherits a previous occupant's row position
+        # is no longer certified complete by that occupant's log. The workaround that stood
+        # here deleted `model_*_evt{victim_iloc}.log` on the belief that "the new scenario
+        # inherits the victim's iloc". It does not: `pd.concat(..., ignore_index=True)`
+        # appends the new row at the LAST ordinal, so the workaround targeted the one slot
+        # the stable-slug JSON already covered and left the colliding one untouched.
         df = df[slugs != remove_event_id].copy()
         bumped_col = indexer_cols[-1]
         donor_orig_bumped_val = donor_row[bumped_col]  # save before overwrite in loop below
@@ -1246,14 +1249,6 @@ def mutate_scenario_csv(
         new_weather_nc = analysis.analysis_paths.analysis_dir / f"_rerun_test_input_{kind}_weather.nc"
         ds_expanded.to_netcdf(new_weather_nc)
 
-        # Delete stale iloc-indexed model logs for the victim's row positions. Without this,
-        # the new scenario at victim_iloc passes the log-based completion check (reading the
-        # victim's old log) and the model run is skipped, leaving outputs missing.
-        simlog_dir = analysis.analysis_paths.simlog_directory
-        for model_type in ("triton", "tritonswmm", "swmm"):
-            for vic_iloc in victim_ilocs:
-                stale_log = simlog_dir / f"model_{model_type}_evt{vic_iloc}.log"
-                stale_log.unlink(missing_ok=True)
     elif kind == "sensitivity":
         donor_member_id = donor_key[0]
         remove_member_id = remove_key[0]

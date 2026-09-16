@@ -326,6 +326,17 @@ def main():
         help="Event id slug for the flag sidecar payload",
     )
     parser.add_argument(
+        "--defer-terminal-markers",
+        action="store_true",
+        default=False,
+        help=(
+            "Option A (in-rule processing): write NO _status/_completed/ marker and do NOT "
+            "unlink _status/_submitted/ at sim end -- the process runner that follows in the "
+            "same shell owns both (process_timeseries_runner --write-terminal-markers). "
+            "_failed/ on a SIM failure and _submitted/ at start are written as before."
+        ),
+    )
+    parser.add_argument(
         "--execution-locus",
         type=str,
         choices=["local", "slurm"],
@@ -645,6 +656,23 @@ def main():
                 # already used at the workflow.py Popen sites.
                 start_new_session=True,
             )
+            # B-iii CONSUME. Clear the force marker NOW -- after Popen returned (the solver is
+            # launched) and BEFORE the wait. Not before prepare_simulation_command (the gate
+            # would then short-circuit and no solver would run) and NOT at the terminal
+            # write below: a walltime kill between launch and that write would leave the
+            # marker set, the retry would re-prune the fresh run's own checkpoints and restart
+            # from zero on every kill -- an infinite zero-restart. Cleared here, the forced run
+            # IS an ordinary run and a later kill takes today's retry path (truncated run log
+            # defeats the triton gate; swmm_open reopens hydraulics.rpt at every coupled init
+            # so an unfinalized rpt defeats the tritonswmm gate) and RESUMES from the fresh
+            # checkpoints. Residual, stated: a kill in the window between Popen returning and
+            # this write landing leaves the marker set with ~zero fresh checkpoints, so the
+            # retry re-prunes nothing of value and restarts from zero once -- bounded, never a
+            # strand. Fresh get_log() so the write overlays only this field (lost-update
+            # discipline, see the terminal-write comment below).
+            _ml_consume = scenario.get_log(model_type)
+            if _ml_consume.force_rerun_pending.get():
+                _ml_consume.force_rerun_pending.set(False)
             if _arm_deterministic_kill:
                 logger.info(
                     f"[{event_iloc}] Multi-resume interruption kill ARMED: "
@@ -774,7 +802,8 @@ def main():
         # is a clean return path — write the completed marker. The explicit-
         # failure path above writes _failed_ before returning so this branch
         # is a no-op there.
-        if _marker_ctx is not None and _marker_ctx.jobid:
+        _defer = bool(getattr(args, "defer_terminal_markers", False))
+        if _marker_ctx is not None and _marker_ctx.jobid and not _defer:
             _completed_marker = _marker_ctx.completed_dir / f"{_marker_ctx.rule_token}.json"
             _failed_marker = _marker_ctx.failed_dir / f"{_marker_ctx.rule_token}.json"
             if not _completed_marker.exists() and not _failed_marker.exists():
@@ -786,7 +815,7 @@ def main():
                 _completed_tmp = _completed_marker.with_suffix(".json.tmp")
                 _completed_tmp.write_text(json.dumps(_payload))
                 os.replace(_completed_tmp, _completed_marker)
-        if _sentinel is not None:
+        if _sentinel is not None and not _defer:
             # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
 

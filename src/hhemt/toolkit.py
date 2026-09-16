@@ -50,34 +50,34 @@ class Toolkit:
     Basic workflow execution:
 
     >>> from hhemt import Toolkit
-        >>>
-        >>> # Load configurations
-        >>> tk = Toolkit.from_configs(
-        ...     system_config="configs/system.yaml",
-        ...     analysis_config="configs/analysis.yaml"
-        ... )
-        >>>
-        >>> # Run from scratch
-        >>> result = tk.run(mode="fresh")
-        >>> if result.success:
-        ...     print(f"✓ Workflow complete: {len(result.events_processed)} events")
-        ... else:
-        ...     print(f"✗ Workflow failed: {result.message}")
+    >>>
+    >>> # Load configurations
+    >>> tk = Toolkit.from_configs(
+    ...     system_config="configs/system.yaml",
+    ...     analysis_config="configs/analysis.yaml"
+    ... )
+    >>>
+    >>> # Run from scratch
+    >>> result = tk.run(mode="fresh")
+    >>> if result.success:
+    ...     print(f"✓ Workflow complete: {len(result.events_processed)} events")
+    ... else:
+    ...     print(f"✗ Workflow failed: {result.message}")
 
-        Resume interrupted workflow:
+    Resume interrupted workflow:
 
-        >>> # Check current status
-        >>> status = tk.get_status()
-        >>> print(status)
-        >>> print(f"Recommendation: {status.recommendation}")
-        >>>
-        >>> # Resume from last checkpoint
-        >>> result = tk.run(mode=status.recommended_mode)
+    >>> # Check current status
+    >>> status = tk.get_status()
+    >>> print(status)
+    >>> print(f"Recommendation: {status.recommendation}")
+    >>>
+    >>> # Resume from last checkpoint
+    >>> result = tk.run(mode=status.recommended_mode)
 
-        Run specific events only:
+    Run specific events only:
 
-        >>> # Process events 0-4 only
-        >>> result = tk.run(mode="resume", events=list(range(5)))
+    >>> # Process events 0-4 only
+    >>> result = tk.run(mode="resume", events=list(range(5)))
     """
 
     def __init__(self, system: "TRITONSWMM_system"):
@@ -144,18 +144,23 @@ class Toolkit:
         Examples
         --------
         >>> from hhemt import Toolkit
-            >>>
-            >>> tk = Toolkit.from_configs(
-            ...     system_config="configs/system.yaml",
-            ...     analysis_config="configs/analysis.yaml"
-            ... )
-            >>>
-            >>> # Toolkit is ready - configs loaded, validated, and bound
-            >>> print(f"Analysis directory: {tk.analysis.analysis_dir}")
-            >>> print(f"Total simulations: {tk.analysis.n_simulations}")
+        >>>
+        >>> tk = Toolkit.from_configs(
+        ...     system_config="configs/system.yaml",
+        ...     analysis_config="configs/analysis.yaml"
+        ... )
+        >>>
+        >>> # Toolkit is ready - configs loaded, validated, and bound
+        >>> print(f"Analysis directory: {tk.analysis.analysis_dir}")
+        >>> print(f"Total simulations: {tk.analysis.n_simulations}")
         """
         from .analysis import TRITONSWMM_analysis
         from .system import TRITONSWMM_system
+        from .validation import assert_both_configs_load
+
+        # Report BOTH documents' load errors in one round -- see validation.py's
+        # assert_both_configs_load for why the constructors alone cannot.
+        assert_both_configs_load(Path(system_config), Path(analysis_config))
 
         # Load system and analysis
         system = TRITONSWMM_system(Path(system_config))
@@ -312,29 +317,29 @@ class Toolkit:
         --------
         Fresh run, overwriting everything:
 
-            >>> result = tk.run(mode="fresh")
-            >>> print(f"Success: {result.success}")
-            >>> print(f"Runtime: {result.execution_time:.1f}s")
-            >>> print(f"Events: {result.events_processed}")
+        >>> result = tk.run(mode="fresh")
+        >>> print(f"Success: {result.success}")
+        >>> print(f"Runtime: {result.execution_time:.1f}s")
+        >>> print(f"Events: {result.events_processed}")
 
-            Resume interrupted workflow:
+        Resume interrupted workflow:
 
-            >>> # Check what's done
-            >>> status = tk.get_status()
-            >>> print(f"Progress: {status.simulations_completed}/{status.total_simulations}")
-            >>>
-            >>> # Continue from checkpoint
-            >>> result = tk.run(mode="resume")
+        >>> # Check what's done
+        >>> status = tk.get_status()
+        >>> print(f"Progress: {status.simulations_completed}/{status.total_simulations}")
+        >>>
+        >>> # Continue from checkpoint
+        >>> result = tk.run(mode="resume")
 
-            Run specific events:
+        Run specific events:
 
-            >>> # Process only hurricane Irene and Sandy
-            >>> result = tk.run(mode="resume", events=[5, 12])
+        >>> # Process only hurricane Irene and Sandy
+        >>> result = tk.run(mode="resume", events=[5, 12])
 
-            Dry run (preview without executing):
+        Dry run (preview without executing):
 
-            >>> result = tk.run(mode="fresh", dry_run=True)
-            >>> print(result.message)  # Shows what would be executed
+        >>> result = tk.run(mode="fresh", dry_run=True)
+        >>> print(result.message)  # Shows what would be executed
 
         Notes
         -----
@@ -396,50 +401,50 @@ class Toolkit:
         --------
         Check status and decide next action:
 
-            >>> status = tk.get_status()
-            >>> print(status)
-            Workflow Status Report
-            ════════════════════════════════════════
-            Analysis: norfolk_coastal_flooding
-            Directory: /path/to/analysis
+        >>> status = tk.get_status()
+        >>> print(status)
+        Workflow Status Report
+        ════════════════════════════════════════
+        Analysis: norfolk_coastal_flooding
+        Directory: /path/to/analysis
 
-            Phase Status:
-            ✓ Setup (complete)
-            ✓ Scenario Preparation (complete)
-            ⚠ Simulation (in progress: 12/24 complete)
-            ✗ Output Processing (not started)
-            ✗ Consolidation (not started)
+        Phase Status:
+        ✓ Setup (complete)
+        ✓ Scenario Preparation (complete)
+        ⚠ Simulation (in progress: 12/24 complete)
+        ✗ Output Processing (not started)
+        ✗ Consolidation (not started)
 
-            Progress: 12/24 simulations complete (0 failed)
-            Current Phase: simulation
+        Progress: 12/24 simulations complete (0 failed)
+        Current Phase: simulation
 
-            Recommendation:
-            Use mode='resume' to continue simulation execution.
-            12 simulations have completed successfully.
-            >>>
-            >>> # Follow the recommendation
-            >>> if not status.simulation.complete:
-            ...     result = tk.run(mode=status.recommended_mode)
+        Recommendation:
+        Use mode='resume' to continue simulation execution.
+        12 simulations have completed successfully.
+        >>>
+        >>> # Follow the recommendation
+        >>> if not status.simulation.complete:
+        ...     result = tk.run(mode=status.recommended_mode)
 
-            Inspect phase details:
+        Inspect phase details:
 
-            >>> status = tk.get_status()
-            >>> print(f"Setup complete: {status.setup.complete}")
-            >>> print(f"Simulations done: {status.simulations_completed}")
-            >>> print(f"Simulations failed: {status.simulations_failed}")
-            >>> print(f"Recommended mode: {status.recommended_mode}")
+        >>> status = tk.get_status()
+        >>> print(f"Setup complete: {status.setup.complete}")
+        >>> print(f"Simulations done: {status.simulations_completed}")
+        >>> print(f"Simulations failed: {status.simulations_failed}")
+        >>> print(f"Recommended mode: {status.recommended_mode}")
 
-            Check if workflow is fully complete:
+        Check if workflow is fully complete:
 
-            >>> status = tk.get_status()
-            >>> if all([
-            ...     status.setup.complete,
-            ...     status.preparation.complete,
-            ...     status.simulation.complete,
-            ...     status.processing.complete,
-            ...     status.consolidation.complete,
-            ... ]):
-            ...     print("✓ Workflow fully complete!")
+        >>> status = tk.get_status()
+        >>> if all([
+        ...     status.setup.complete,
+        ...     status.preparation.complete,
+        ...     status.simulation.complete,
+        ...     status.processing.complete,
+        ...     status.consolidation.complete,
+        ... ]):
+        ...     print("✓ Workflow fully complete!")
 
         Notes
         -----
@@ -503,8 +508,8 @@ class Toolkit:
         Examples
         --------
         >>> tk = Toolkit.from_configs(system_cfg, analysis_cfg)
-            >>> print(f"Total simulations: {tk.n_simulations}")
-            Total simulations: 24
+        >>> print(f"Total simulations: {tk.n_simulations}")
+        Total simulations: 24
         """
         return self.analysis.nsims
 

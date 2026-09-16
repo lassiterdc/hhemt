@@ -23,6 +23,7 @@ from hhemt import orchestrator_sentinels as _osent
 from hhemt.config.analysis import ClearRawValue, ForceRerunValue, analysis_config
 from hhemt.config.hpc_system import resolve_gpu_target
 from hhemt.config.loaders import load_analysis_config, load_hpc_system_config
+from hhemt.exceptions import ConfigurationError
 from hhemt.execution import (
     LocalConcurrentExecutor,
     SerialExecutor,
@@ -49,8 +50,8 @@ from hhemt.snakemake_snakefile_parsing import (
 from hhemt.swmm_output_parser import (
     retrieve_swmm_performance_stats_from_rpt,
 )
-from hhemt.utils import delete_regenerable_figures, fast_rmtree, parse_triton_log_file
-from hhemt.validation import ValidationResult, assert_configs_visible_cross_node, preflight_validate
+from hhemt.utils import fast_rmtree, parse_triton_log_file, select_regenerable_figures
+from hhemt.validation import ValidationResult, assert_configs_visible_cross_node, preflight_validate, running_identity
 from hhemt.wipe_guard import assert_wipe_is_deliberate
 from hhemt.workflow import (
     SnakemakeDiagnostics,
@@ -421,6 +422,57 @@ class TRITONSWMM_analysis:
         # "python", resolved by the conda-env activation emitted in the shell prefix —
         # byte-identical to the prior python_path-absent emission.
         self._python_executable = "python"
+        # [Q331] running identity: this process runs the hhemt commit the config names, or it
+        # stops HERE — before the workflow builder (whose container branch derives the SIF
+        # identity) and before any I/O. Every process that constructs an analysis (the driver,
+        # the sim runner, the in-image process runner, the consolidator, the plot CLI) passes
+        # through this line. A dirty checkout is an unspecified version (D2).
+        _running = running_identity()
+        if _running.sha != self.cfg_analysis.hhemt_sha:
+            raise ConfigurationError(
+                field="hhemt_sha",
+                message=(
+                    f"analysis_config.hhemt_sha {self.cfg_analysis.hhemt_sha[:12]} != running toolkit "
+                    f"{_running.sha[:12]} ({_running.shape}); check out / rebake at the configured commit, "
+                    "or set hhemt_sha to the commit you mean to run"
+                ),
+                config_path=str(analysis_config_yaml),
+            )
+        if _running.dirty:
+            raise ConfigurationError(
+                field="hhemt_sha",
+                message=(
+                    f"the running toolkit checkout is at {_running.sha[:12]} but has modified tracked files "
+                    "(git status --porcelain --untracked-files=no): a dirty tree is an unspecified version; "
+                    "commit or discard the changes (a launcher that runs `uv sync --frozen` cannot dirty the "
+                    "tree by rewriting the lockfile)"
+                ),
+                config_path=str(analysis_config_yaml),
+            )
+        if _running.shape == "image" and self.cfg_hpc_system is not None:
+            # A3: the image itself must be the one THIS config derives — hhemt_sha equality proved
+            # the toolkit, the identity label proves the family / base digest / TRITON / recipe.
+            # cfg_hpc_system, cfg_system and hpc_ensemble_partition are all bound above, so this is
+            # the first point every input of derive_identity exists.
+            import json as _json
+
+            from hhemt.sif.identity import derive_identity
+            from hhemt.validation import _LABELS_PATH
+
+            _expected = derive_identity(
+                self.cfg_hpc_system, self._system.cfg_system, self.cfg_analysis.hpc_ensemble_partition, _running.sha
+            ).key
+            _labels = _json.loads(_LABELS_PATH.read_text()) or {}
+            _found = _labels.get("org.hhemt.identity")
+            if _found != _expected:
+                raise ConfigurationError(
+                    field="container",
+                    message=(
+                        f"this image's org.hhemt.identity={_found!r} is not the identity this config derives "
+                        f"({_expected}): the image was built for a different family / base / TRITON / recipe"
+                    ),
+                    config_path=str(analysis_config_yaml),
+                )
         self._workflow_builder = SnakemakeWorkflowBuilder(self)
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
@@ -713,7 +765,7 @@ class TRITONSWMM_analysis:
                 m.unlink(missing_ok=True)
         return settled
 
-    def validate(self) -> ValidationResult:
+    def validate(self, *, build_sifs: bool = False) -> ValidationResult:
         """Run preflight validation on system and analysis configurations.
 
         This method performs comprehensive validation of both system and analysis
@@ -751,6 +803,7 @@ class TRITONSWMM_analysis:
             cfg_system=self._system.cfg_system,
             cfg_analysis=self.cfg_analysis,
             cfg_hpc_system=self.cfg_hpc_system,
+            build_sifs=build_sifs,
         )
 
     @property
@@ -1358,6 +1411,7 @@ class TRITONSWMM_analysis:
                 f"[Transfer] Clearing existing destination: {dest_dir}",
                 flush=True,
             )
+            # EXEMPT-DU: outside-analysis-tree
             shutil.rmtree(dest_dir)
 
         elif policy == "prompt":
@@ -2304,6 +2358,83 @@ class TRITONSWMM_analysis:
                 )
         self._update_log()
 
+    # ---- SIF identity accessor: the ONE seam every image consumer calls (SIF quest, ADR-21) ----
+    def _sif_identity_for(self, partition: str):
+        """The recomputed SifIdentity for ``partition``. A wheel driver (no 40-hex sha) raises
+        ConfigurationError here — container mode requires a git-checkout driver (item 11)."""
+        from hhemt.sif.identity import derive_identity
+        from hhemt.validation import running_identity
+
+        return derive_identity(self.cfg_hpc_system, self._system.cfg_system, partition, running_identity().sha)
+
+    def _build_sifs_prestep(
+        self, *, no_wait: bool, force: bool, sif_build_config_path: "Path | None"
+    ) -> "WorkflowResult":
+        """[Q315] 6(b): plan + reconcile + write the build DAG, then host it in THIS mode's detached
+        driver — the tmux script under batch_job (Spec 21), a setsid chain otherwise — and return
+        a RECEIPT. Never blocks a login shell. Gotcha-69 caveat applies: success here means
+        'chain launched', never 'images built'; the chain's log is the verdict."""
+        from hhemt.config.loaders import yaml_to_model
+        from hhemt.config.sif_build import sif_build_config
+        from hhemt.exceptions import ConfigurationError
+        from hhemt.orchestration import WorkflowResult
+        from hhemt.sif.driver import detach, driver_command
+        from hhemt.sif.plan import ExperimentInputs, plan_sif_set
+        from hhemt.sif.snakefile_generator import reconcile_sif_root, write_sif_snakefile
+        from hhemt.validation import running_identity
+
+        if sif_build_config_path is None:
+            raise ConfigurationError(
+                field="override_sif_build_config",
+                message=(
+                    "run(build_sifs=True) requires override_sif_build_config=<sif_build_config yaml> "
+                    "(build venue + resources)."
+                ),
+            )
+        cfg = yaml_to_model(Path(sif_build_config_path), sif_build_config)
+        exp = ExperimentInputs(
+            self.cfg_analysis.analysis_id, self._system.cfg_system, self.cfg_analysis, self.cfg_hpc_system, None
+        )
+        plan = plan_sif_set(
+            [exp],
+            sif_root=cfg.sif_root,
+            running_sha=running_identity().sha,
+            recipes_dir=cfg.recipes_dir,
+            toolkit_root=cfg.toolkit_root,
+            force=force,
+        )
+        reconcile_sif_root(
+            cfg.sif_root,
+            walltime_min=cfg.walltime_min,
+            force_keys=set(plan.entries) if force else set(),
+            planned_keys=set(plan.entries),
+        )
+        snakefile = write_sif_snakefile(plan, sif_root=cfg.sif_root, build_host=self.cfg_hpc_system, sif_build_cfg=cfg)
+        keys = set(plan.entries) - plan.already_built
+        recheck = [
+            f"{sys.executable} -m hhemt.sif.preflight --system-config {self._system.system_config_yaml} "
+            f"--analysis-config {self.analysis_config_yaml} --hpc-system-config {self.hpc_system_config_yaml}"
+        ]
+        if self.cfg_analysis.multi_sim_run_method == "batch_job":
+            self._workflow_builder.sif_prestep = (snakefile, keys, recheck, no_wait)
+            return None  # the caller continues into submit_workflow; the tmux script carries the chain
+        chain = [driver_command(snakefile, cfg.sif_root, keys)] + recheck
+        if not no_wait:
+            chain.append(
+                f"hhemt run --system-config {self._system.system_config_yaml} "
+                f"--analysis-config {self.analysis_config_yaml} "
+                f"--hpc-system-config {self.hpc_system_config_yaml}"
+            )
+        pid = detach(chain, log=Path(cfg.sif_root) / "_build" / "chain.log")
+        return WorkflowResult(
+            success=True,
+            mode="detached-build-chain",
+            snakefile_path=snakefile,
+            job_id=str(pid),
+            message=f"SIF build chain detached (pid {pid}); log: {Path(cfg.sif_root) / '_build' / 'chain.log'}. "
+            "This is a launch RECEIPT, not an execution verdict (Gotcha 69): read the log.",
+        )
+
     def run(
         self,
         from_scratch: bool = False,
@@ -2330,6 +2461,10 @@ class TRITONSWMM_analysis:
         prune_settled_markers: bool = True,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
+        build_sifs: bool = False,
+        build_sifs_no_wait: bool = False,
+        force_sif_rebuild: bool = False,
+        override_sif_build_config: "Path | None" = None,
     ) -> "WorkflowResult":
         """
         High-level orchestration method for running TRITON-SWMM workflows.
@@ -2500,7 +2635,9 @@ class TRITONSWMM_analysis:
                 ready, _, _ = select.select([sys.stdin], [], [], 15)
                 answer = sys.stdin.readline().strip().lower() if ready else "n"
                 if answer in ("y", "yes"):
-                    fast_rmtree(test_dir, analysis_dir=self.analysis_paths.analysis_dir)
+                    du_sentinels.delete_and_account(
+                        [test_dir], scope_dir=self.analysis_paths.analysis_dir, scope="analysis"
+                    )
                     print(f"[test] Deleted {test_dir}.", flush=True)
                 else:
                     print("[test] Keeping _test/.", flush=True)
@@ -2661,6 +2798,15 @@ class TRITONSWMM_analysis:
                 analysis_dir=self.analysis_paths.analysis_dir,
                 analysis_id=self.cfg_analysis.analysis_id,
             )
+
+        # SIF quest: --build-sifs hosts the build DAG in this mode's detached driver BEFORE anything
+        # else runs; a non-tmux mode RETURNS the chain receipt here (the chain re-invokes `hhemt run`).
+        if build_sifs and not dry_run:
+            _receipt = self._build_sifs_prestep(
+                no_wait=build_sifs_no_wait, force=force_sif_rebuild, sif_build_config_path=override_sif_build_config
+            )
+            if _receipt is not None:
+                return _receipt
 
         start_time = time.time()
 
@@ -3992,9 +4138,16 @@ class TRITONSWMM_analysis:
         # True iff the resolved value would trigger any cleanup for any model.
         would_clear = resolved_clear_raw != "none"
         # Lazy-stamp _version.json at LAYOUT_VERSION (PI-1 pattern, mirroring
-        # run() and submit_workflow). Idempotent under concurrent writers;
-        # if _version.json is missing or stamped at an older version, this
-        # writes a fresh stamp at the current LAYOUT_VERSION.
+        # run() and submit_workflow). Idempotent under concurrent writers and
+        # at a matching version. It does NOT relabel and it does NOT guess:
+        # mode="fresh" raises LayoutVersionError on BOTH of its refusal arms --
+        # a record stating a DIFFERENT version (current=that version), and an
+        # ABSENT record over a tree carrying migratable content (current=-1),
+        # which is the arm a legacy unstamped analysis hits. Only a tree with
+        # no record AND no migratable content is stamped here. Migrating is an
+        # explicit operator act and no execution facade may perform one as a
+        # side effect. Sited above every destructive step below so a refusal
+        # cannot land after an artifact has already been deleted.
         from hhemt.version_migration import LAYOUT_VERSION
         from hhemt.version_migration.state import stamp_new_target
 
@@ -4243,7 +4396,9 @@ class TRITONSWMM_analysis:
                 from hhemt.workflow import ResolvedForceRerunSpec
 
                 self._invalidate_processing_log_for_force_rerun(
-                    ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
+                    ResolvedForceRerunSpec(
+                        scope="all", tokens=(), stage="simulate", models=tuple(self._get_enabled_model_types())
+                    )
                 )
         else:
             self._delete_processed_outputs_for_reprocess(
@@ -4421,7 +4576,6 @@ class TRITONSWMM_analysis:
         runs (delete consolidate flag + zarr). The report always regenerates.
         Never deletes ``c_run_*`` (sim) flags. (Phase 2 — FQ1 Option A.)
         """
-        from hhemt.du_sentinels import restamp_parent_sentinels
 
         analysis_dir = self.analysis_paths.analysis_dir
         sd = analysis_dir / "_status"
@@ -4435,40 +4589,37 @@ class TRITONSWMM_analysis:
             """
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
-            # D3 — capture deleted-artifact sizes BEFORE unlink so the O(1)
-            # decrement has the bytes to subtract (post-unlink stat is impossible).
-            _html_bytes = report_html.stat().st_size if report_html.exists() else 0
-            _zip_bytes = report_zip.stat().st_size if report_zip.exists() else 0
-            # EXEMPT-DU: du-handled-by-decrement
-            report_html.unlink(missing_ok=True)
-            # EXEMPT-DU: du-handled-by-decrement
-            report_zip.unlink(missing_ok=True)
-            # Routed through the ONE figure-deletion helper (utils.delete_regenerable_figures).
-            # It supplies the two guards this site never had: the unregenerable-subtree skip,
-            # which is why the default reprocess used to destroy plots/eda/, and the dry-run
-            # gate, which is why a preview used to delete the deliverable it was previewing.
-            # It returns bytes rather than decrementing, so the composition below is unchanged.
-            plots_total_bytes = delete_regenerable_figures(analysis_dir, analysis_dir / "plots", dry_run=dry_run)
+            plots_dir = analysis_dir / "plots"
+            # Clause 1: ONE accounting call for the report shell + every ELIGIBLE plot
+            # artifact. The tool measures what it deletes and adjusts this scope's sentinel
+            # once; the former FIX-3 "skip the decrement on the regenerate arms" gate is
+            # gone because the later zarr deletion now also routes through the tool, which
+            # is idempotent per path rather than a re-walk (a double decrement cannot
+            # occur: each path is deleted, and therefore counted, exactly once).
+            #
+            # The plots half comes from the ONE selector, utils.select_regenerable_figures,
+            # which supplies the guard this site never had: the unregenerable-subtree skip.
+            # Its absence here is why the DEFAULT reprocess used to destroy plots/eda/, a
+            # family no Snakemake rule regenerates. An unfiltered rglob over plots/ is the
+            # defect, not a shortcut.
+            _targets = [report_html, report_zip]
             if not dry_run:
-                # PATTERN B replaced by D3 — O(1)/O(plots) decrement instead of a
-                # full-tree walk. FIX 3: on the regenerate_existing
-                # process/consolidate arms a LATER zarr deletion restamps the tree
-                # anyway, so skip the redundant decrement there (the default
-                # regenerate_existing=False path decrements). Sizes captured above
-                # BEFORE unlink (post-unlink stat is impossible); routes through
-                # write_du_sentinel so the compare-and-write mtime invariant holds.
-                if not (start_with in ("process", "consolidate") and regenerate_existing):
-                    from hhemt.du_sentinels import decrement_scope_sentinel
-
-                    child_deltas: dict[str, int] = {}
-                    if _html_bytes:
-                        child_deltas["analysis_report.html"] = _html_bytes
-                    if _zip_bytes:
-                        child_deltas["analysis_report.zip"] = _zip_bytes
-                    if plots_total_bytes:
-                        child_deltas["plots"] = plots_total_bytes
-                    if child_deltas:
-                        decrement_scope_sentinel(analysis_dir, scope="analysis", child_deltas=child_deltas)
+                # THE DRY-RUN FIGURE CLAUSE, and it is deliberately the ONLY expression on
+                # this axis at this site. `reprocess dry_run performs no destructive
+                # mutation` places render-stage figure deletion INSIDE the guard, on
+                # cost-and-irreversibility grounds (a measured 63-minute serial render that
+                # nothing on a dry-run path regenerates); the report shell is permitted
+                # OUTSIDE the guard by that same rule's render-stage corner. The rule was
+                # written against a function both branches have since refactored away from,
+                # so its binding at THIS site is with the developer for re-verification --
+                # and if it is answered the other way, this one condition is what moves.
+                _targets += select_regenerable_figures(analysis_dir, plots_dir)
+                du_sentinels.delete_and_account(_targets, scope_dir=analysis_dir, scope="analysis")
+            else:
+                # dry_run: the report-shell unlink is the mtime trigger the stipulation
+                # sanctions OUTSIDE its guard; the sentinel is deliberately NOT written.
+                for _t in _targets:
+                    _t.unlink(missing_ok=True)  # EXEMPT-DU: dry-run-trigger
 
         if start_with == "process":
             if regenerate_existing:
@@ -4480,7 +4631,7 @@ class TRITONSWMM_analysis:
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
                     if _zarr is not None and _zarr.exists():
-                        fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
+                        du_sentinels.delete_and_account([_zarr], scope_dir=analysis_dir, scope="analysis")
             _delete_report_and_plot_artifacts()
         elif start_with == "consolidate":
             if regenerate_existing:
@@ -4489,7 +4640,7 @@ class TRITONSWMM_analysis:
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
                     if _zarr is not None and _zarr.exists():
-                        fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
+                        du_sentinels.delete_and_account([_zarr], scope_dir=analysis_dir, scope="analysis")
             # regenerate_existing=False: leave consolidate flag AND zarr intact
             # (the flag IS the completion signal per D5); only report+plots re-fire.
             _delete_report_and_plot_artifacts()
@@ -4499,12 +4650,7 @@ class TRITONSWMM_analysis:
             # "report shell only" path).
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
-            # EXEMPT-DU: du-handled-by-decrement
-            report_html.unlink(missing_ok=True)
-            # EXEMPT-DU: du-handled-by-decrement
-            report_zip.unlink(missing_ok=True)
-            if not dry_run:
-                restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)  # PATTERN B
+            du_sentinels.delete_and_account([report_html, report_zip], scope_dir=analysis_dir, scope="analysis")
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 
@@ -4538,7 +4684,9 @@ class TRITONSWMM_analysis:
             # did not cover step 1.
             return  # dry-run performs no destructive filesystem mutation
         self._invalidate_processing_log_for_force_rerun(
-            ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate")
+            ResolvedForceRerunSpec(
+                scope="all", tokens=(), stage="simulate", models=tuple(self._get_enabled_model_types())
+            )
         )
 
         # 2) Delete the per-scenario PROCESSED artifacts on disk. ALL processed
@@ -4550,12 +4698,11 @@ class TRITONSWMM_analysis:
         #    drift-proof (no ScenarioPaths attr-name maintenance — the prior
         #    16-attr tuple had wrong names) and is exactly the granularity R8's
         #    SLURM-offload wraps.
-        analysis_dir = self.analysis_paths.analysis_dir
         for event_iloc in range(len(self.df_sims)):
             scen = TRITONSWMM_scenario(event_iloc, self)
             processed_dir = scen.scen_paths.sim_folder / "processed"
             if processed_dir.exists():
-                fast_rmtree(processed_dir, analysis_dir=analysis_dir)  # PATTERN A
+                du_sentinels.delete_and_account([processed_dir], scope_dir=scen.scen_paths.sim_folder, scope="scenario")
         # The consolidated zarr is deleted by _invalidate_downstream_flags'
         # regenerate_existing=True process-arm — no duplicate deletion here.
 
@@ -4626,22 +4773,44 @@ class TRITONSWMM_analysis:
         # "simulate", which is the defect this whole change closes. Read the stage BEFORE
         # rebinding the name below — the subject read discards the object carrying it.
         _stage = resolved_force_rerun.stage
+        # READ BEFORE REBINDING, for the identical reason the comment above gives for
+        # `stage`: the subject read discards the object carrying it. Resolved to a concrete
+        # tuple HERE -- the SINGLE resolution point -- so the three consumers receive the
+        # model set and never re-derive "all enabled". `_get_enabled_model_types` is the
+        # tree's existing single source for that set.
+        _models = resolved_force_rerun.models
+        _enabled = tuple(self._get_enabled_model_types())
+        if _models is None:
+            _models = _enabled
+        else:
+            _unknown = [m for m in _models if m not in _enabled]
+            if _unknown:
+                raise ConfigurationError(
+                    field="override_force_rerun",
+                    message=(
+                        f"override_force_rerun.models names model type(s) not enabled for "
+                        f"this analysis: {sorted(_unknown)}. Enabled: {sorted(_enabled)}."
+                    ),
+                )
+            _models = tuple(_models)
         resolved_force_rerun = resolved_force_rerun.subject
 
         if resolved_force_rerun == "all":
-            return ResolvedForceRerunSpec(scope="all", tokens=(), stage=_stage)
+            return ResolvedForceRerunSpec(scope="all", tokens=(), stage=_stage, models=_models)
         if resolved_force_rerun == "none":
-            return ResolvedForceRerunSpec(scope="none", tokens=(), stage=_stage)
+            return ResolvedForceRerunSpec(scope="none", tokens=(), stage=_stage, models=_models)
         assert isinstance(resolved_force_rerun, dict)
         key = next(iter(resolved_force_rerun))
         values = resolved_force_rerun[key]
         if key == "sa_id":
-            return ResolvedForceRerunSpec(scope="member", tokens=tuple(str(v) for v in values), stage=_stage)
+            return ResolvedForceRerunSpec(
+                scope="member", tokens=tuple(str(v) for v in values), stage=_stage, models=_models
+            )
         # event_iloc → event_id slug per V0001 stable slug invariant.
         slugs = tuple(
             compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(int(iloc))) for iloc in values
         )
-        return ResolvedForceRerunSpec(scope="event", tokens=slugs, stage=_stage)
+        return ResolvedForceRerunSpec(scope="event", tokens=slugs, stage=_stage, models=_models)
 
     def _clean_restart_wipe(self, member_ids: list[str]) -> None:
         """Targeted clean-restart wipe for a resume-sweep recovery: remove ONLY the
@@ -4684,7 +4853,7 @@ class TRITONSWMM_analysis:
             for child in sorted(sub_dir.iterdir()):
                 if child.name == config_name:
                     continue
-                fast_rmtree(child, analysis_dir=self.analysis_paths.analysis_dir)
+                du_sentinels.delete_and_account([child], scope_dir=sub_dir, scope="member")
             # The sub's analysis-level model runtime logs do NOT live under sub_dir --
             # model_logfile_for routes them to the MASTER's logs/sims/ so all sims of a
             # sensitivity sweep share one directory. Leaving them behind reproduces, at member
@@ -4695,23 +4864,21 @@ class TRITONSWMM_analysis:
             # a ledger surviving its log would double-count into wall_clock_ledger_s on the
             # re-run. Best-effort: a missing file is the normal case on a first restart.
             _simlogs = self.analysis_paths.simlog_directory
+            _log_targets: list[Path] = []
             for _log in _simlogs.glob(f"model_*_member_{member}_evt*.log"):
-                _log.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
                 _ledger = _simlogs / "_walltime" / f"{_log.stem}.jsonl"
-                _ledger.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
-            # These bytes ARE DU-counted -- `simlog_directory` is `{analysis_dir}/logs/sims`,
-            # and `sum_child_sentinels`' own-files walk excludes only child-scope dirs and
-            # top-level `_status*`, so `logs/` is reached. The exemption marker previously
-            # here named a nonexistent runtime-log category and was a FALSE claim rather than a
-            # miscategorization -- these bytes were never exempt. ONE restamp AFTER the loop
-            # rather than one per unlink: a per-file restamp inside a delete loop re-walks the
-            # scope's children once per file and does not finish at ensemble scale, which is
-            # the recorded pathology behind the raw-SWMM-binaries reclaim.
-            from hhemt.du_sentinels import restamp_parent_sentinels as _restamp_simlogs
-
-            _restamp_simlogs(_simlogs, analysis_dir=self.analysis_paths.analysis_dir)
+                _log_targets += [_log, _ledger]
+            # These bytes ARE DU-counted (`logs/sims` is an analysis-scope own dir). ONE
+            # accounting call for the whole set (clause 1), at the ANALYSIS scope that owns
+            # `logs/`; the member sentinel is unaffected because the logs are not under it.
+            du_sentinels.delete_and_account(_log_targets, scope_dir=self.analysis_paths.analysis_dir, scope="analysis")
         self._workflow_builder._delete_flags_for_force_rerun(
-            ResolvedForceRerunSpec(scope="member", tokens=tuple(restart_ids), stage="simulate")
+            ResolvedForceRerunSpec(
+                scope="member",
+                tokens=tuple(restart_ids),
+                stage="simulate",
+                models=tuple(self._get_enabled_model_types()),
+            )
         )
 
     def _reconcile_build_stamp_force(self, override_force_rerun, *, dry_run: bool = False):
@@ -4911,7 +5078,11 @@ class TRITONSWMM_analysis:
         # guard therefore does not transfer -- that argument turns on the planner reading
         # the deleted thing.
         if spec.stage in ("simulate", "process"):
-            self._invalidate_processing_log_for_force_rerun(spec, dry_run=dry_run)
+            # B-iii: the force is the ONE caller that may arm the marker, and only at the
+            # simulate floor -- a process floor re-runs processing, never the solver.
+            self._invalidate_processing_log_for_force_rerun(
+                spec, dry_run=dry_run, set_force_marker=(spec.stage == "simulate")
+            )
             # The chapter set is a PROCESS-stage artifact and gates the RESUME decision
             # the way processing_log gates _already_written, so the same act must reach
             # it. Without this, a force-rerun clears the log, leaves the previous run's
@@ -5107,7 +5278,12 @@ class TRITONSWMM_analysis:
             # event-scoped force-rerun log invalidator (cheap per-scenario JSON
             # rewrites; no GPFS tree walk).
             self._invalidate_processing_log_for_force_rerun(
-                ResolvedForceRerunSpec(scope="event", tokens=tuple(reconciled_event_ids), stage="simulate")
+                ResolvedForceRerunSpec(
+                    scope="event",
+                    tokens=tuple(reconciled_event_ids),
+                    stage="simulate",
+                    models=tuple(self._get_enabled_model_types()),
+                )
             )
         return reconciled
 
@@ -5185,7 +5361,7 @@ class TRITONSWMM_analysis:
             )
 
     def _invalidate_processing_log_for_force_rerun(
-        self, spec: "ResolvedForceRerunSpec", *, dry_run: bool = False
+        self, spec: "ResolvedForceRerunSpec", *, dry_run: bool = False, set_force_marker: bool = False
     ) -> None:
         """Invalidate per-scenario log ``processing_log.outputs`` entries
         that match the force-rerun spec.
@@ -5228,7 +5404,7 @@ class TRITONSWMM_analysis:
 
         if spec.scope == "member":
             # Sensitivity dispatch — members own their scenarios.
-            self.sensitivity._invalidate_processing_log_for_member_ids(spec.tokens)
+            self.sensitivity._invalidate_processing_log_for_member_ids(spec.tokens, set_force_marker=set_force_marker)
             return
 
         if spec.scope == "all":
@@ -5243,9 +5419,30 @@ class TRITONSWMM_analysis:
             if scen.event_id not in target_event_ids:
                 continue
             for model_type in scen.run.model_types_enabled:
+                # MODEL AXIS. Same shape as the event guard two lines above: a model the
+                # force did not name keeps its processing_log records and its
+                # raw-outputs-cleared markers untouched. Without this the force would
+                # preserve a correct arm's FLAGS while silently resetting its LOG -- a
+                # half-scoped invalidation of exactly the class this axis exists to remove.
+                if model_type not in spec.models:
+                    continue
                 model_log = scen.get_log(model_type)
                 # Clear the processing_log dict and persist.
                 model_log.processing_log.outputs.clear()
+                # B-iii MARKER, SET HERE and nowhere else. The completion short-circuit in
+                # prepare_simulation_command reads a record set DISJOINT from everything this
+                # method clears (simulation_completed + the per-arm terminal artifacts + the
+                # "Simulation ends" fallback), so without this write a stage="simulate" force
+                # re-fires the sim rule, runs no solver, re-emits a green c_run flag, and the
+                # processing rule re-crashes on the same raw. KEYED ON AN EXPLICIT OPT-IN, NOT
+                # ON spec.stage: this method is reused by three process-stage paths that build
+                # a spec with a literal stage="simulate" (the regenerate-existing reprocess at
+                # two sites and the stale-flag reconcile), and a stage-keyed set would make a
+                # REPROCESS re-run every solver. Only _apply_force_rerun passes True, and only
+                # for the simulate floor. The scope, model and dry-run guards above bound
+                # WHICH logs this line reaches.
+                if set_force_marker:
+                    model_log.force_rerun_pending.set(True)
                 # Also reset raw-outputs-cleared markers so the next
                 # processing pass re-runs the clear_raw step on top of
                 # the re-written outputs.
@@ -5300,7 +5497,13 @@ class TRITONSWMM_analysis:
             sensitivity = getattr(self, "sensitivity", None)  # Gotcha 26: not always present
             if sensitivity is None:
                 raise RuntimeError("force_rerun scope='member' on an analysis with no sensitivity attribute")
-            all_spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage=spec.stage)
+            # THREADS `models`, not the default. This RE-DERIVES a spec from an existing
+            # one -- it already threads `stage=spec.stage` deliberately -- so taking "all
+            # enabled" for the models here would widen a two-arm force back to three inside
+            # every member, silently, one function away from the guard above. DISCRIMINATOR
+            # for a future construction site: any site passing `stage=spec.stage` rather
+            # than a literal is threading and must thread `models` too.
+            all_spec = ResolvedForceRerunSpec(scope="all", tokens=(), stage=spec.stage, models=spec.models)
             for member_id in spec.tokens:
                 member = sensitivity.members.get(member_id)
                 if member is None:
@@ -5315,7 +5518,6 @@ class TRITONSWMM_analysis:
         else:
             raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
 
-        analysis_dir = self.analysis_paths.analysis_dir
         for event_iloc in range(len(self.df_sims)):
             scen = TRITONSWMM_scenario(event_iloc, self)
             if scen.event_id not in target_event_ids:
@@ -5325,9 +5527,7 @@ class TRITONSWMM_analysis:
             # be dead code reading as a safety check.
             processed = scen.scen_paths.sim_folder / "processed"
             for artifact in sorted(processed.glob("*.chapters")) + sorted(processed.glob("*.done")):
-                # fast_rmtree handles a dir OR a file and re-stamps DU internally,
-                # so PATTERN A is satisfied and no EXEMPT-DU annotation is owed.
-                fast_rmtree(artifact, analysis_dir=analysis_dir)
+                du_sentinels.delete_and_account([artifact], scope_dir=scen.scen_paths.sim_folder, scope="scenario")
 
     def _all_event_id_slugs(self) -> list[str]:
         """Helper: enumerate every scenario's event_id slug for ``"all"`` scope.
@@ -5812,6 +6012,88 @@ class TRITONSWMM_analysis:
     def _swmm_only_link_summary(self):
         return self.process.swmm_only_link_summary
 
+    def _selective_cancel(self, *, rule_classes: tuple[str, ...], session_name: str, verbose: bool) -> dict:
+        """Step 1b of cancel(): scancel the SIM class — running AND pending — then kill the driver.
+
+        FQ6 (2026-09-12). _status/_submitted/ is worker-written at process START, so it cannot
+        see a PENDING sim: on 2026-09-12, 678 of them started AFTER the driver was killed and
+        wrote 15-31 GB each with no processing behind them. The set is therefore the union of
+        (i) _submitted/ ids and (ii) every sim token the executor was OBSERVED to submit (tmux
+        orchestrator log, parse_tmux_submissions) that is still PD/R/CG under this run's
+        uuid(s). A multisim token whose c_run flag already exists is SKIPPED: its sim is done
+        and, under analysis_config.process_in_sim_rule, the same job is now RECLAIMING —
+        cancelling it would cost the reclaim. scancel runs BEFORE tmux kill-session on purpose:
+        once the driver is dead nothing else will cancel a pending sim. SIGHUP (kill-session) is
+        kept: SIGTERM would route through Snakemake's cancel_jobs() and take processing with it.
+        Returns the same dict shape the inline arm returned before extraction.
+        """
+        import json as _json
+        import subprocess  # analysis.py binds subprocess function-locally (module style); keep it so here
+
+        from hhemt.workflow import _squeue_live_jobids, parse_tmux_submissions
+
+        _status = self.analysis_paths.analysis_dir / "_status"
+        _sub = _status / "_submitted"
+        _matched: list[tuple[str, str]] = []
+        for _p in sorted(_sub.glob("*.json")) if _sub.is_dir() else []:
+            _tok = _p.stem
+            if not any(_tok.startswith(pfx) for pfx in rule_classes):
+                continue
+            try:
+                _jid = _json.loads(_p.read_text()).get("slurm_jobid")
+            except Exception:
+                _jid = None
+            if _jid:
+                _matched.append((_tok, str(_jid)))
+        _observed: dict[str, str] = {}
+        try:
+            _logs = sorted(
+                self.analysis_paths.analysis_log_directory.glob("tmux_session_*.log"),
+                key=lambda p: p.stat().st_mtime,
+            )
+        except OSError:
+            _logs = []
+        for _lp in _logs:
+            try:
+                _observed.update(parse_tmux_submissions(_lp.read_text(errors="replace")))
+            except OSError:
+                continue
+        _live = _squeue_live_jobids(self._workflow_builder._tmux_slurm_run_uuids()) or set()
+        _seen = {j for _, j in _matched}
+        _skipped_reclaiming = 0
+        for _tok, _jid in _observed.items():
+            if not any(_tok.startswith(pfx) for pfx in rule_classes) or _jid in _seen or _jid not in _live:
+                continue
+            if _tok.startswith("run_") and (_status / f"c_{_tok}_complete.flag").exists():
+                _skipped_reclaiming += 1  # sim done; processing (reclaim) in flight
+                continue
+            _matched.append((_tok, _jid))
+            _seen.add(_jid)
+        if _matched:
+            subprocess.run(["scancel", *[j for _, j in _matched]], capture_output=True)
+        subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+        if verbose:
+            print(
+                f"[Cancel] Selective cancel: {len(_matched)} job(s) matching {list(rule_classes)} "
+                f"({len(_seen)} distinct jobids: _submitted/ + tmux-log∩squeue live; "
+                f"{_skipped_reclaiming} skipped as sim-done/reclaiming); driver session killed "
+                f"AFTER scancel; other jobs left running.",
+                flush=True,
+            )
+        return {
+            "success": True,
+            "session_canceled": True,
+            "workers_canceled": bool(_matched),
+            "jobs_were_running": bool(_matched),
+            "message": (
+                f"Cancelled {len(_matched)} job(s) matching {list(rule_classes)}; "
+                f"processing jobs left running; driver session killed."
+            ),
+            "session_name": session_name,
+            "errors": [],
+            "cancelled": _matched,
+        }
+
     def cancel(
         self,
         verbose: bool = True,
@@ -5979,42 +6261,10 @@ class TRITONSWMM_analysis:
         # tmux calls have no ssh and no-op against a compute-node driver (T11). The DU
         # guard's caller runs WHERE the driver runs, guarding that driver's own disk.
         if rule_classes is not None:
-            import json as _json
-
-            _sub = self.analysis_paths.analysis_dir / "_status" / "_submitted"
-            _matched: list[tuple[str, str]] = []
-            for _p in sorted(_sub.glob("*.json")) if _sub.is_dir() else []:
-                _tok = _p.stem
-                if not any(_tok.startswith(pfx) for pfx in rule_classes):
-                    continue
-                try:
-                    _jid = _json.loads(_p.read_text()).get("slurm_jobid")
-                except Exception:
-                    _jid = None
-                if _jid:
-                    _matched.append((_tok, str(_jid)))
-            if _matched:
-                subprocess.run(["scancel", *[j for _, j in _matched]], capture_output=True)
-            subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
-            if verbose:
-                print(
-                    f"[Cancel] Selective cancel: {len(_matched)} job(s) matching "
-                    f"{list(rule_classes)}; driver session killed, other jobs left running.",
-                    flush=True,
-                )
-            return {
-                "success": True,
-                "session_canceled": True,
-                "workers_canceled": bool(_matched),
-                "jobs_were_running": bool(_matched),
-                "message": (
-                    f"Cancelled {len(_matched)} job(s) matching {list(rule_classes)}; "
-                    f"processing jobs left running; driver session killed."
-                ),
-                "session_name": session_name,
-                "errors": [],
-                "cancelled": _matched,
-            }
+            # Step 1b body lives in _selective_cancel (FQ6, 2026-09-12): one methodology, two
+            # arms — the SIGINT arm below cancels everything; this arm cancels the sim class
+            # (pending + running) and leaves post-sim processing alone.
+            return self._selective_cancel(rule_classes=rule_classes, session_name=session_name, verbose=verbose)
 
         # Step 2: Send SIGINT to Snakemake process
         if verbose:

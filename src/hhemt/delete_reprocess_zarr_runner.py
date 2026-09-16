@@ -18,8 +18,9 @@ import os
 import sys
 from pathlib import Path
 
+from hhemt.du_sentinels import delete_and_account
 from hhemt.status_flags import write_status_flag
-from hhemt.utils import ROOT_TREE_NAMES, fast_rmtree
+from hhemt.utils import ROOT_TREE_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
             path = analysis_dir / name
             if path.exists():
                 print(f"[delete-reprocess-zarr] removing {path}", flush=True)
-                fast_rmtree(path, analysis_dir=analysis_dir)  # PATTERN A
+                delete_and_account([path], scope_dir=analysis_dir, scope="analysis")
         flag_path = analysis_dir / "_status" / "_deleting_reprocess" / "reprocess_consolidation.flag"
         write_status_flag(flag_path, rule_name="delete_reprocess_consolidation")
         return 0

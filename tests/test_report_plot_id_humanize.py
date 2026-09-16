@@ -41,9 +41,7 @@ def test_humanize_is_model_agnostic():
 def test_react_surgery_humanizes_any_card_name():
     # the generalized 8b pass rewrites EVERY figure-card "name" via the grammar humanizer,
     # not just the hardcoded n_devices string. A non-n_devices card must be rewritten.
-    html = (
-        '<html><body>{"name": "benchmarking__compute_config.vs.total.html", ' '"filename": "keep.html"}</body></html>'
-    )
+    html = '<html><body>{"name": "benchmarking__compute_config.vs.total.html", "filename": "keep.html"}</body></html>'
     out = apply_post_process_surgery(html)
     assert '"name": "Benchmarking: compute config vs total runtime"' in out
     # the machine "filename" key is left intact so links/downloads keep working.

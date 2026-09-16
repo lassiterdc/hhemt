@@ -45,7 +45,9 @@ Scope = Literal["scenario", "member", "analysis"]
 _EPHEMERAL_TOP_LEVEL_DIRS: set[str] = {"_test"}
 
 
-def _scandir_walk(root: Path, *, want_breakdown: bool, skip_status_top: bool) -> tuple[int, dict[str, int], int]:
+def _scandir_walk(
+    root: Path, *, want_breakdown: bool, skip_status_top: bool, skip_status_any_depth: bool = False
+) -> tuple[int, dict[str, int], int]:
     """Single-pass os.scandir walk: (total_bytes, per_child_bytes, walk_errors).
 
     Replaces the prior ``root.rglob("*")`` + ``p.is_file()`` + ``p.stat()``
@@ -66,8 +68,10 @@ def _scandir_walk(root: Path, *, want_breakdown: bool, skip_status_top: bool) ->
         file directly under ``root`` it is the FILE's own name — identical to the
         prior ``p.relative_to(root).parts[0]``.
       * When ``skip_status_top``: files whose ``top`` starts with ``"_status"``
-        are skipped (matching ``_walk_root_and_breakdown``); when False, no skip
-        (matching ``_walk_root_bytes``).
+        are skipped. When ``skip_status_any_depth``: any directory named exactly
+        ``"_status"`` is not descended, at any depth. The two are independent and
+        BOTH production callers set the second — ``_walk_root_and_breakdown`` sets
+        both, ``_walk_root_bytes`` sets only the second (clause 6).
       * ``walk_errors`` increments on any per-entry OSError (is_dir / is_file /
         stat) AND on a directory that cannot be scandir'd.
     """
@@ -93,6 +97,8 @@ def _scandir_walk(root: Path, *, want_breakdown: bool, skip_status_top: bool) ->
                     walk_errors += 1
                     continue
                 if is_dir:
+                    if skip_status_any_depth and entry.name == "_status":
+                        continue
                     stack.append((Path(entry.path), entry_top))
                     continue
                 try:
@@ -113,7 +119,7 @@ def _scandir_walk(root: Path, *, want_breakdown: bool, skip_status_top: bool) ->
 def _walk_root_bytes(root: Path) -> tuple[int, int]:
     """Return (total_bytes, walk_errors) of all regular files under `root`.
 
-    Counts every file (NO _status skip) — preserved behavior. Handles a
+    Clause 6: `_status/` directories are never DU-counted at ANY depth. Handles a
     file-root (the only caller path that can pass a file).
     """
     if not root.exists():
@@ -123,18 +129,22 @@ def _walk_root_bytes(root: Path) -> tuple[int, int]:
             return root.stat().st_size, 0
         except OSError:
             return 0, 1
-    total, _per_child, walk_errors = _scandir_walk(root, want_breakdown=False, skip_status_top=False)
+    total, _per_child, walk_errors = _scandir_walk(
+        root, want_breakdown=False, skip_status_top=False, skip_status_any_depth=True
+    )
     return total, walk_errors
 
 
 def _walk_root_and_breakdown(root: Path) -> tuple[int, dict[str, int], int]:
     """Return (total_bytes, per_child_bytes, walk_errors) in a single pass.
 
-    Skips `_status*`-prefixed top-level children — preserved behavior.
+    Skips `_status*`-prefixed top-level children AND every `_status` directory at
+    any depth (clause 6). This is also the parity ORACLE the test suite asserts
+    `sum_child_sentinels` against at exact `==`: production and oracle share one rule.
     """
     if not root.exists() or not root.is_dir():
         return 0, {}, 0
-    return _scandir_walk(root, want_breakdown=True, skip_status_top=True)
+    return _scandir_walk(root, want_breakdown=True, skip_status_top=True, skip_status_any_depth=True)
 
 
 def write_du_sentinel(
@@ -144,6 +154,9 @@ def write_du_sentinel(
     scope: Scope,
     sub_path_breakdown: dict[str, int] | None = None,
     walk_errors: int = 0,
+    cleared_bytes_own: int = 0,
+    cleared_bytes_total: int = 0,
+    absent_children: int = 0,
 ) -> bool:
     """Atomically write `_du.json` with compare-and-write semantics.
 
@@ -178,6 +191,9 @@ def write_du_sentinel(
         "computed_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "scope": scope,
         "walk_errors": int(walk_errors),
+        "cleared_bytes_own": int(cleared_bytes_own),
+        "cleared_bytes_total": int(cleared_bytes_total),
+        "absent_children": int(absent_children),
     }
     if sub_path_breakdown is not None:
         payload["sub_path_breakdown"] = {k: int(v) for k, v in sub_path_breakdown.items()}
@@ -193,8 +209,12 @@ def write_du_sentinel(
     except (OSError, UnicodeDecodeError):
         existing = None
 
-    # Compare on bytes-affecting fields only (computed_at would otherwise
-    # prevent any skip).
+    # Compare on bytes-affecting fields only (computed_at would otherwise prevent any
+    # skip). `cleared_bytes_*` are INSIDE the compare set because `max(0, ...)`
+    # clamping makes a real deletion leave `disk_utilization_bytes` unchanged, and a
+    # counter increment must never be dropped by a skipped write; the scenario sentinel
+    # is a `consolidate_scenario` OUTPUT and no rule's INPUT, so the extra rewrite
+    # costs no rerun trigger. `absent_children` qualifies completeness like walk_errors.
     if existing is not None:
         try:
             existing_payload = json.loads(existing)
@@ -203,6 +223,9 @@ def write_du_sentinel(
                 and existing_payload.get("scope") == payload["scope"]
                 and existing_payload.get("sub_path_breakdown") == payload.get("sub_path_breakdown")
                 and existing_payload.get("walk_errors") == payload["walk_errors"]
+                and existing_payload.get("cleared_bytes_own", 0) == payload["cleared_bytes_own"]
+                and existing_payload.get("cleared_bytes_total", 0) == payload["cleared_bytes_total"]
+                and existing_payload.get("absent_children", 0) == payload["absent_children"]
             ):
                 return False
         except (json.JSONDecodeError, TypeError):
@@ -254,27 +277,44 @@ def compute_and_write_scope_sentinel(
     )
 
 
+#: clause 5 (DN-5): a healthy tree has at most a handful of scenarios between creation
+#: and their first sentinel write; a count above this is the circularity firing.
+_ABSENT_CHILD_WARN_THRESHOLD = 8
+
+
 def sum_child_sentinels(scope_dir: Path, *, scope: Scope, child_scope_dirs: list[str]) -> bool:
     """Compute a scope's DU by SUMMING child-scope _du.json sentinels + a bounded
     own-files walk that does NOT recurse into child-scope dirs. Routes through
-    write_du_sentinel (compare-and-write -> mtime preserved on no-change). Missing
-    child sentinel -> bounded walk of THAT child only (never the whole tree).
+    write_du_sentinel (compare-and-write -> mtime preserved on no-change).
 
-    R4 byte-identity (Decision D-A, Option A): a child's _du.json (and the
-    _walk_root_and_breakdown fallback) EXCLUDES the child's own top-level
-    _status/ dir (skip_status_top), but a full walk of scope_dir counts
-    child/_status/** under the child's top-level breakdown key (from scope_dir
-    that file's `top` is child_dir_name, not "_status"). So for each child we
-    add back its own _status/ bytes via _walk_root_bytes(child/"_status") — a
-    bounded walk of just that dir (a handful of flag/json files), NEVER the
-    whole subtree. With this correction Σ(child totals + child _status) +
-    own-files walk == _walk_root_and_breakdown(scope_dir) exactly (the parity
-    oracle), at every scope, recursively (scope_dir's OWN top-level _status/
-    stays excluded by the own-files-walk `startswith("_status")` guard, matching
-    the full walk which skips scope_dir's own top-level _status)."""
+    A MISSING child sentinel is COUNTED AS ABSENT, never walked ([Q354] ruling 1:
+    higher-level DU is the sum of what the scenario level documented, and nothing
+    else). The payload records `absent_children`; above _ABSENT_CHILD_WARN_THRESHOLD
+    a warning names the count so the condition is legible rather than silent. This
+    replaces the pre-2026-09-13 fallback that full-walked every sentinel-less child
+    (~2.4e7 stats per call at 3,798 children -- the chunk-6 stall).
+
+    `_status/` is never DU-counted at ANY depth (clause 6): a child's own top-level
+    `_status/` is excluded by the child's sentinel and is no longer added back here;
+    `_walk_root_and_breakdown` applies the same rule, so Σ(child totals) + own-files
+    walk == _walk_root_and_breakdown(scope_dir) exactly (the parity oracle).
+
+    `cleared_bytes_total` = this scope's own `cleared_bytes_own` (carried forward
+    from its prior payload; only the deletion tool increments it) + Σ children's
+    `cleared_bytes_total`. At scenario scope the two are equal.
+
+    DISCLOSED EXCEPTION (clause 11): the own-files loop below walks this scope's OWN
+    top-level non-child entries (the consolidated zarr, `plots/`, `_generated/`, ...)
+    at aggregation time. It is the one measurement in this module that is not a sum
+    of child sentinels; it is bounded by artifacts the toolkit itself writes and it
+    fires only when this scope is aggregated, never per mutation."""
+    _prior = read_du_sentinel(scope_dir / "_status" / "_du.json") or {}
+    cleared_own = int(_prior.get("cleared_bytes_own", 0))
     total = 0
     breakdown: dict[str, int] = {}
     walk_errors = 0
+    cleared_children = 0
+    absent_children = 0
     for child_dir_name in child_scope_dirs:
         child_root = scope_dir / child_dir_name
         if not child_root.is_dir():
@@ -287,17 +327,10 @@ def sum_child_sentinels(scope_dir: Path, *, scope: Scope, child_scope_dirs: list
             if sentinel is not None and "disk_utilization_bytes" in sentinel:
                 child_total += int(sentinel["disk_utilization_bytes"])
                 walk_errors += int(sentinel.get("walk_errors", 0))
+                cleared_children += int(sentinel.get("cleared_bytes_total", 0))
+                absent_children += int(sentinel.get("absent_children", 0))
             else:
-                b, _bd, we = _walk_root_and_breakdown(child)
-                child_total += b
-                walk_errors += we
-            # D-A / Option A: add back the child's OWN top-level _status/ bytes
-            # (excluded by both the sentinel and the _walk_root_and_breakdown
-            # fallback), which a full walk of scope_dir attributes to this
-            # child's top-level key. Bounded to child/_status/ only.
-            status_bytes, status_we = _walk_root_bytes(child / "_status")
-            child_total += status_bytes
-            walk_errors += status_we
+                absent_children += 1
         breakdown[child_dir_name] = child_total
         total += child_total
     skip = set(child_scope_dirs)
@@ -319,30 +352,52 @@ def sum_child_sentinels(scope_dir: Path, *, scope: Scope, child_scope_dirs: list
             breakdown[entry.name] = breakdown.get(entry.name, 0) + b
         total += b
         walk_errors += we
+    if absent_children > _ABSENT_CHILD_WARN_THRESHOLD:
+        import warnings
+
+        warnings.warn(
+            f"sum_child_sentinels({scope_dir}, scope={scope!r}): {absent_children} child "
+            f"scope(s) carry no _status/_du.json and were counted as absent. Above "
+            f"{_ABSENT_CHILD_WARN_THRESHOLD} this is the sentinel-creation circularity, "
+            "not normal in-flight state; seed each scenario's sentinel once with "
+            "compute_and_write_scope_sentinel(scenario_dir, scope='scenario') before "
+            "aggregating.",
+            stacklevel=2,
+        )
     return write_du_sentinel(
         scope_dir / "_status" / "_du.json",
         disk_utilization_bytes=total,
         scope=scope,
         sub_path_breakdown=breakdown or None,
         walk_errors=walk_errors,
+        cleared_bytes_own=cleared_own,
+        cleared_bytes_total=cleared_own + cleared_children,
+        absent_children=absent_children,
     )
 
 
-def decrement_scope_sentinel(scope_dir: Path, *, scope: Scope, child_deltas: dict[str, int]) -> bool:
+def decrement_scope_sentinel(
+    scope_dir: Path, *, scope: Scope, child_deltas: dict[str, int], cleared_bytes_delta: int = 0
+) -> bool:
     """O(1)/O(children) decrement of a scope's cached total + named breakdown
     children (no walk). `child_deltas` maps each top-level breakdown child name
     to the bytes to subtract from BOTH the total and that child (each child by
     its OWN size — the two report files / the plots subtree have different
-    sizes, so a single shared delta_bytes would be wrong). Used on the reprocess
-    render path where known-size artifacts are deleted then regenerated. No-op if
-    the sentinel is absent. Routes through write_du_sentinel (compare-and-write ->
-    mtime preserved on a 0-delta call)."""
+    sizes, so a single shared delta_bytes would be wrong). `cleared_bytes_delta` is
+    added to BOTH `cleared_bytes_own` and `cleared_bytes_total` (clause 8). The SOLE
+    caller is `delete_and_account` (clause 1); every deletion routes through it.
+    No-op if the sentinel is absent. Routes through write_du_sentinel (a 0-delta
+    call with a 0 cleared delta preserves mtime)."""
     payload = read_du_sentinel(scope_dir / "_status" / "_du.json")
     if payload is None or "disk_utilization_bytes" not in payload:
         return False
-    total_delta = sum(int(v) for v in child_deltas.values())
-    new_total = max(0, int(payload["disk_utilization_bytes"]) - total_delta)
     breakdown = dict(payload.get("sub_path_breakdown") or {})
+    # Subtract from the total ONLY bytes the breakdown holds (Σ breakdown == total is the
+    # renderer invariant); a key the breakdown never held (an ephemeral top-level dir such
+    # as `_test/`) was never counted and must not drive the total below the counted set.
+    # A sentinel with no breakdown counts everything, as before.
+    total_delta = sum(int(v) for k, v in child_deltas.items() if not breakdown or k in breakdown)
+    new_total = max(0, int(payload["disk_utilization_bytes"]) - total_delta)
     for child, delta in child_deltas.items():
         if child in breakdown:
             nv = max(0, int(breakdown[child]) - int(delta))
@@ -356,41 +411,53 @@ def decrement_scope_sentinel(scope_dir: Path, *, scope: Scope, child_deltas: dic
         scope=scope,
         sub_path_breakdown=breakdown or None,
         walk_errors=int(payload.get("walk_errors", 0)),
+        cleared_bytes_own=int(payload.get("cleared_bytes_own", 0)) + int(cleared_bytes_delta),
+        cleared_bytes_total=int(payload.get("cleared_bytes_total", 0)) + int(cleared_bytes_delta),
+        absent_children=int(payload.get("absent_children", 0)),
     )
 
 
-def restamp_parent_sentinels(removed_path: Path, *, analysis_dir: Path) -> None:
-    """Re-stamp DU sentinels for every parent scope of `removed_path` up to `analysis_dir`.
+def delete_and_account(paths, *, scope_dir: Path, scope: Scope) -> int:
+    """THE unified deletion tool ([Q354] ruling 4; clause 1).
 
-    Called from mutation sites that change disk size to keep parent sentinels
-    accurate. Walks upward from `removed_path` (exclusive) to `analysis_dir`
-    (inclusive); for each ancestor whose directory layout matches a sentinel-
-    bearing scope (scenario / member / analysis), recomputes and writes.
+    Deletes every path in `paths` (files or directories), measuring ONLY what it
+    deletes, and adjusts ONE sentinel -- the one at `{scope_dir}/_status/_du.json`,
+    which the CALLER names as the scope that owns the deleted paths -- by delegating
+    to `decrement_scope_sentinel` with a per-breakdown-child delta and the cleared
+    bytes. It never walks upward and never touches an ancestor scope (clause 2);
+    ancestors re-sum their children at their own aggregation points.
 
-    The scope determination is structural — sentinel-bearing dirs are those
-    that already contain a `_status/_du.json`, OR are one of the recognized
-    canonical layouts (`{analysis_dir}/sims/{event_id}`, `{analysis_dir}/
-    members/member_{member_id}`, `{analysis_dir}`).
+    Returns the bytes removed. Absent paths are skipped. If the named sentinel does
+    not exist the deletion still happens and the return value is still correct --
+    the sentinel is simply not adjusted (the scope's next aggregation or
+    reconciliation re-derives it). A path outside `scope_dir` is deleted and counted
+    in the total but contributes no per-child breakdown delta (it has no top-level
+    key under this scope).
+
+    The per-path measurement is O(deleted): one stat for a file, one traversal of
+    the subtree for a directory -- the traversal `rm -rf` performs anyway. That is
+    the measurement [Q354] ruling 3 asks for and the ONLY one this function performs.
     """
-    if not analysis_dir.exists():
-        return
-    try:
-        cur = removed_path.parent.resolve()
-    except OSError:
-        return
-    analysis_dir = analysis_dir.resolve()
-    while cur == analysis_dir or analysis_dir in cur.parents:
-        sentinel = cur / "_status" / "_du.json"
-        if sentinel.exists() or (cur / "_status").exists():
-            scope: Scope = _infer_scope(cur, analysis_dir)
-            _child_dirs = ["sims"] if scope == "member" else (["members", "sims"] if scope == "analysis" else [])
-            if scope == "scenario" or not _child_dirs:
-                compute_and_write_scope_sentinel(cur, scope=scope)
-            else:
-                sum_child_sentinels(cur, scope=scope, child_scope_dirs=_child_dirs)
-        if cur == analysis_dir:
-            break
-        cur = cur.parent
+    from hhemt.utils import fast_rmtree
+
+    scope_dir = Path(scope_dir)
+    freed = 0
+    child_deltas: dict[str, int] = {}
+    for p in paths:
+        p = Path(p)
+        if not p.exists():
+            continue
+        n = fast_rmtree(p)
+        freed += n
+        try:
+            top = p.resolve().relative_to(scope_dir.resolve()).parts[0]
+        except (ValueError, OSError):
+            continue
+        child_deltas[top] = child_deltas.get(top, 0) + n
+    if freed == 0:
+        return 0
+    decrement_scope_sentinel(scope_dir, scope=scope, child_deltas=child_deltas, cleared_bytes_delta=freed)
+    return freed
 
 
 def _infer_scope(scope_dir: Path, analysis_dir: Path) -> Scope:
@@ -398,7 +465,40 @@ def _infer_scope(scope_dir: Path, analysis_dir: Path) -> Scope:
     # when it equals analysis_dir — the per-sub consolidate/processing runners
     # pass the SUB dir as analysis_dir, so the `== analysis_dir` short-circuit
     # below would otherwise mislabel the sub root scope="analysis" and clobber
-    # the D6 fold's scope="member" write (consolidate_workflow.py:457).
+    # the D6 fold's scope="member" write (consolidate_workflow.py:664-672).
+    #
+    # RESIDUAL, and it is on-disk state rather than a code path. Until this
+    # derivation was adopted at the processing_analysis.py rollup, a member root's
+    # scope was corrected ONLY by the D6 fold, which fires as a side-effect of the
+    # per-member consolidate RULE. That rule is skipped on any tree whose
+    # `e_consolidate_member-*` flags already exist, so member roots on trees
+    # materialized before the derivation landed still carry scope="analysis" and
+    # nothing re-derives them on read. Measured 2026-09-09: the Rivanna suite tree
+    # and one local cache slug both carry the mislabel while two other slugs carry
+    # "member". This is currently INERT — no production code reads the `scope`
+    # field (the only readers are this module's compare-and-write guard,
+    # V0019__member_vocabulary, and the DU-integrity test) — but a future consumer
+    # that groups by scope would inherit the wrong grouping on those trees. The fix
+    # for an affected tree is re-materialization or a relabelling migration; both
+    # were judged disproportionate while no consumer exists.
+    #
+    # "No consumer" is about the ON-DISK FIELD and does NOT mean this function's
+    # return value is inert. Twelve lines below, `_infer_scope`'s answer feeds
+    # `sum_child_sentinels(scope=...)`, whose `scope == "analysis"` test at :304-305
+    # decides whether `_EPHEMERAL_TOP_LEVEL_DIRS` is skipped -- so the derived value
+    # CHANGES a computed total. A reader who takes "inert" as covering the return
+    # value will mis-price any change routed through here.
+    #
+    # A THIRD on-disk state exists and is neither "member" nor "analysis": orphan
+    # `subanalyses/sa_*/_status/_du.json` sentinels carrying the pre-rename
+    # `sub_analysis` token, co-resident with a renamed `members/` tree. Measured
+    # 2026-09-09 on the payload-satisfying cache slug: scopes_seen was
+    # {'analysis': 5, 'sub_analysis': 4}. These are orphan DIRECTORY residue from an
+    # earlier materialization in the same path, not a failed migration -- the tree
+    # was created at layout_version 22 with an empty migration_history, so V0019
+    # correctly never ran. `find_orphan_member_dirs` (sensitivity_analysis.py:2077)
+    # iterates `members_dir` ONLY, so this `subanalyses/` residue currently has NO
+    # owner in the toolkit.
     if scope_dir.parent.name == "members":
         return "member"
     if scope_dir == analysis_dir:

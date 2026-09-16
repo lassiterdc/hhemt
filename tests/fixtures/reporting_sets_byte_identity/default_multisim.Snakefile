@@ -93,6 +93,7 @@ rule setup:
 rule prepare_scenario:
     input: "_status/a_setup_complete.flag"
     output: "_status/b_prepare_evt-{event_id}_complete.flag"
+    priority: 10
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/prepare_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
@@ -122,6 +123,7 @@ rule run_triton:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_triton_evt-{event_id}_complete.flag"
     retries: 2
+    priority: 0
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/triton_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
@@ -152,6 +154,7 @@ rule run_tritonswmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_tritonswmm_evt-{event_id}_complete.flag"
     retries: 2
+    priority: 0
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/tritonswmm_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
@@ -182,6 +185,7 @@ rule run_swmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_swmm_evt-{event_id}_complete.flag"
     retries: 2
+    priority: 20
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/swmm_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
@@ -230,6 +234,16 @@ rule process_triton:
     # for exactly this: a deterministic process failure would re-run a ~100-minute
     # simulation up to the SIM's retry count, across a 3,798-event ensemble.
     # DO NOT add a rule with its own `retries:` directive to this group.
+    #
+    # THIS REJECTION IS ABOUT SNAKEMAKE `group:` (GroupJob retry/output semantics) AND
+    # NOTHING ELSE. A SINGLE COMBINED RULE that runs the sim runner and then the process
+    # runner in one shell (analysis_config.process_in_sim_rule=True, 2026-09-12) is a
+    # different mechanism: no member outputs are removed at group start and no attempt
+    # counter propagates, and its safety under `retries:` rests on the SIM RUNNER's
+    # own idempotence -- run_simulation.prepare_simulation_command returns None when
+    # model_run_completed (the per-model log field), so a processing failure re-runs
+    # only the processing pass, never the solver. Executed 2026-09-12 on a completed
+    # synth scenario. Do not read the paragraph above as forbidding that rule.
     priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
@@ -279,6 +293,16 @@ rule process_tritonswmm:
     # for exactly this: a deterministic process failure would re-run a ~100-minute
     # simulation up to the SIM's retry count, across a 3,798-event ensemble.
     # DO NOT add a rule with its own `retries:` directive to this group.
+    #
+    # THIS REJECTION IS ABOUT SNAKEMAKE `group:` (GroupJob retry/output semantics) AND
+    # NOTHING ELSE. A SINGLE COMBINED RULE that runs the sim runner and then the process
+    # runner in one shell (analysis_config.process_in_sim_rule=True, 2026-09-12) is a
+    # different mechanism: no member outputs are removed at group start and no attempt
+    # counter propagates, and its safety under `retries:` rests on the SIM RUNNER's
+    # own idempotence -- run_simulation.prepare_simulation_command returns None when
+    # model_run_completed (the per-model log field), so a processing failure re-runs
+    # only the processing pass, never the solver. Executed 2026-09-12 on a completed
+    # synth scenario. Do not read the paragraph above as forbidding that rule.
     priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
@@ -328,6 +352,16 @@ rule process_swmm:
     # for exactly this: a deterministic process failure would re-run a ~100-minute
     # simulation up to the SIM's retry count, across a 3,798-event ensemble.
     # DO NOT add a rule with its own `retries:` directive to this group.
+    #
+    # THIS REJECTION IS ABOUT SNAKEMAKE `group:` (GroupJob retry/output semantics) AND
+    # NOTHING ELSE. A SINGLE COMBINED RULE that runs the sim runner and then the process
+    # runner in one shell (analysis_config.process_in_sim_rule=True, 2026-09-12) is a
+    # different mechanism: no member outputs are removed at group start and no attempt
+    # counter propagates, and its safety under `retries:` rests on the SIM RUNNER's
+    # own idempotence -- run_simulation.prepare_simulation_command returns None when
+    # model_run_completed (the per-model log field), so a processing failure re-runs
+    # only the processing pass, never the solver. Executed 2026-09-12 on a completed
+    # synth scenario. Do not read the paragraph above as forbidding that rule.
     priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:

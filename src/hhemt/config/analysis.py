@@ -105,6 +105,42 @@ class ForceRerunSpec(cfgBaseModel):
             "rule and is always explicit and user-invoked."
         ),
     )
+    models: list[Literal["triton", "tritonswmm", "swmm"]] | None = Field(
+        None,
+        description=(
+            "WHICH model arms to force. None (default) means every model type enabled for "
+            "this analysis, which is the historical behaviour. Naming a subset leaves the "
+            "unnamed arms' completion state entirely untouched -- their flags, their "
+            "per-model processing-log records and their chapter sets are not cleared -- so "
+            "a correct, complete arm is not invalidated by a force aimed at a damaged one."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_models_shape(self):
+        """`models` is None or a non-empty list of distinct model types.
+
+        An EMPTY list is rejected rather than treated as "force nothing": it is
+        indistinguishable in effect from `subject="none"` and is far more likely a
+        mistake than an intent. Duplicates are rejected because they cannot change the
+        result and their presence signals the caller believes the field means something
+        it does not.
+
+        Whether the named models are ENABLED for this analysis is deliberately NOT
+        checked here -- that needs sibling-field context this model does not hold (it is
+        `system_config`'s toggles), and it is validated in `analysis.py` at the same
+        place the subject's toggle cross-check already lives.
+        """
+        if self.models is None:
+            return self
+        if not self.models:
+            raise ValueError(
+                "force_rerun.models must be omitted (meaning every enabled model) or a "
+                "non-empty list; an empty list is not a valid subject."
+            )
+        if len(set(self.models)) != len(self.models):
+            raise ValueError(f"force_rerun.models contains duplicate entries: {self.models}")
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -689,6 +725,19 @@ class analysis_config(cfgBaseModel):
         None,
         description="For readability.",
     )
+    hhemt_sha: Annotated[
+        str,
+        Field(
+            ...,
+            pattern=r"^[0-9a-f]{40}$",
+            description="The hhemt commit this experiment runs: the FULL 40-hex lowercase sha, nothing "
+            "else (no tag, no branch, no short sha). REQUIRED, no default ([Q331]): every process that "
+            "constructs an analysis — the driver, the simulation runner, the in-image processing runner, "
+            "the consolidator — compares it to the running toolkit's own identity (validation."
+            "running_identity) before doing anything else and refuses on a mismatch (exit 2).",
+            json_schema_extra=field_meta(),
+        ),
+    ]
 
     # TRITON-SWMM PARAMETERS
     target_processed_output_type: Literal["zarr", "nc"] = Field(
@@ -779,9 +828,17 @@ class analysis_config(cfgBaseModel):
         None,
         description=(
             "Explicit on-disk `timestep_min` zarr chunk size for the per-scenario "
-            "spatial timeseries. When None (default), preserves the current "
-            "first-write-extent chunking behavior. Decouples read-locality from the "
-            "write append-batch size. Consumed by utils.return_dic_zarr_encodings."
+            "spatial timeseries. A READ-LOCALITY OVERRIDE AND NOTHING MORE: it replaces "
+            "the TIME component of the grid utils.resolve_chunk_grid derives, leaving the "
+            "spatial components derived, so no value here can re-introduce an "
+            "extent-dependent grid. When None (default) the derived time component is "
+            "used. This field is NOT what makes the chunk grid safe -- that is the "
+            "writer's once-per-scenario call to resolve_chunk_grid. The previous wording "
+            "said None 'preserves the current first-write-extent chunking behavior', "
+            "which was false and is recorded here because the claim travelled: with no "
+            "grid declared at all, zarr sized each store from its FULL shape, making a "
+            "chapter's spatial grid a function of its time extent. Consumed by "
+            "utils.return_dic_zarr_encodings and utils.resolve_chunk_grid."
         ),
     )
     allow_mixed_version_chapters: bool = Field(
@@ -792,10 +849,16 @@ class analysis_config(cfgBaseModel):
             "refuses loudly rather than publishing one unified store built by two "
             "processing builds. Set True only when you know nothing material changed "
             "between the builds; the run then proceeds and records BOTH builds in the "
-            "chapter set's provenance history. NOTE: under execution_environment='container' "
-            "the detector is INERT and nothing is refused -- the SIF build strips the "
-            "toolkit's .git, so every in-image build stamps the same 'unknown' sha and no "
-            "mismatch is observable. Consumed by "
+            "chapter set's provenance history. NOTE: the detector IS LIVE under "
+            "execution_environment='container'. The SIF build strips the toolkit's .git, so "
+            "an in-image git sha is unresolvable -- but processing_build_key then falls back "
+            "to the image's own org.hhemt.hhemt_sha label, read from "
+            "/.singularity.d/labels.json, which Apptainer materialises inside every running "
+            "container. So the identity resolves and the guard compares normally. This note "
+            "previously said the opposite; an operator acting on it would have set this flag "
+            "believing it disarmed nothing. The guard is what prevents a chapter set written "
+            "with one declared chunk grid from being extended by a build that declares "
+            "another, so leaving this False is load-bearing. Consumed by "
             "provenance.assert_chapters_match_running_build."
         ),
     )
@@ -839,6 +902,10 @@ class analysis_config(cfgBaseModel):
         description="Optional path to analysis directory. If not specified, the analysis directory will be placed "
         "within the "
         "system directory named named with the analysis_id",
+        # A toolkit-owned OUTPUT: the analysis tree is created by the run, not supplied
+        # by the user. Also the FORCED_DOT "." bundle-root marker in a bundle's
+        # cfg_analysis (bundle/_path_policy.py). Exempt from the load-time check.
+        json_schema_extra={"toolkit_owned_output": True},
     )
     is_experiment_member: bool = Field(
         False,
@@ -930,6 +997,29 @@ class analysis_config(cfgBaseModel):
                     "`apptainer exec {sif}`, per hpc_system_config.container."
                 ),
             }
+        ),
+    )
+    process_in_sim_rule: bool = Field(
+        False,
+        description=(
+            "Run each simulation's per-scenario output processing INSIDE the simulation "
+            "rule (one Snakemake rule, one SLURM job: the sim runner, then the process "
+            "runner, in one shell) instead of as the separate `process_{model}` rule. "
+            "Default False reproduces today's Snakefile byte-for-byte. True removes the "
+            "processing job from the SLURM queue entirely, so reclaim of raw output can "
+            "never wait behind a backlog of older simulation jobs (the 2026-09-12 "
+            "stochastic-ensemble stall). The combined rule declares BOTH the c_run and "
+            "d_process flags as outputs, requests mem_mb = max(sim, processing) and "
+            "runtime = sim + processing, and is safe under retries because the sim runner "
+            "short-circuits an already-completed simulation (run_simulation."
+            "prepare_simulation_command returns None on model_run_completed), so a "
+            "processing failure re-runs only the processing pass. Applies to "
+            "multi_sim_run_method='batch_job' and '1_job_many_srun_tasks'; REFUSED on a "
+            "sensitivity analysis (the sensitivity-master generator raises "
+            "ConfigurationError) until its member rules carry the same branch."
+        ),
+        json_schema_extra=field_meta(
+            applies_when=[when("multi_sim_run_method", "batch_job", "1_job_many_srun_tasks")],
         ),
     )
 

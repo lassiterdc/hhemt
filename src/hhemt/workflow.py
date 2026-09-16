@@ -35,7 +35,7 @@ from hhemt.config.hpc_system import (
     resolve_gpus_per_node,
     system_directory_bind,
 )
-from hhemt.constants import consolidate_experiment_flag
+from hhemt.constants import consolidate_experiment_flag, model_type_from_flag_name
 from hhemt.exceptions import ConfigurationError, WorkflowError, WorkflowPlanningError
 from hhemt.orchestration import resolve_execution_locus
 from hhemt.report_plot_ids import (
@@ -49,6 +49,7 @@ from hhemt.report_plot_ids import (
     plot_output_template as _plot_output_template,
 )
 from hhemt.report_renderers._figure_emission import format_sources_rst
+from hhemt.sif.identity import resolve_sif
 
 # SLURM-liveness primitives live in the leaf module so wait_for_sentinel_runner
 # can import them without importing this Snakemake-builder surface. Re-exported
@@ -68,7 +69,7 @@ from hhemt.summary_paths import (
 from hhemt.summary_paths import (  # noqa: F401  (re-export shim under the historical private name)
     scenario_summaries_present as _scenario_summaries_present,
 )
-from hhemt.utils import delete_regenerable_figures, fast_rmtree
+from hhemt.utils import fast_rmtree, select_regenerable_figures
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -115,6 +116,19 @@ class ResolvedForceRerunSpec:
     # "simulate" without saying so, which is exactly the silence this field exists to end:
     # the axis was declared in config and honoured by the actuator, and dropped here.
     stage: Literal["simulate", "process", "consolidate", "render"]
+    # REQUIRED for the same reason `stage` is, and the reasoning transfers exactly rather
+    # than by analogy. The hazard the rule above names is a user-declared axis dropped at
+    # the RESOLVER -- not a behaviour change -- and with `models` declared on the public
+    # `ForceRerunSpec` that drop is available, its consequence being a model arm
+    # invalidated that nobody asked to touch. A default of "every enabled model" would
+    # also be the most aggressive value applied silently, which is the same shape as
+    # `stage`'s "simulate". The PUBLIC model defaults; this one does not. That split is
+    # already this pair's pattern for `stage`, and the developer ratified it by approving
+    # the corrected size this requirement produces and rejecting the defaulted variant.
+    #
+    # Resolved to a concrete tuple by `_build_force_rerun_spec`, the SINGLE resolution
+    # point, so the three consumers never re-derive "all enabled".
+    models: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -878,6 +892,145 @@ def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int
     return base + slack_min
 
 
+# Tmux orchestrator-log parse (FQ5, 2026-09-12). Snakemake prints one `rule {name}:` block per
+# selected job (4-space `input:/output:/log:/jobid:/reason:/wildcards:/…` lines — `jobid:`
+# precedes `wildcards:`) and, once sbatch returns, `Job {n} has been submitted with SLURM jobid
+# {m} (log: …)`. The token is read from the block's FLAG PATH (`output:`, or the `reason:` line
+# that repeats it), which carries the REAL event id in both generators; the master's rule NAME is
+# sanitized (`.`/`-` -> `_`, workflow.py ~:8927) and the multisim `wildcards:` line arrives after
+# `jobid:`, so neither is used.
+_TMUX_SUBMIT_RE = re.compile(r"^Job (\d+) has been submitted with SLURM jobid (\d+)")
+_TMUX_RULE_RE = re.compile(r"^rule (\S+):\s*$")
+_TMUX_JOBID_RE = re.compile(r"^\s+jobid:\s*(\d+)\s*$")
+_TMUX_MULTISIM_FLAG_RE = re.compile(r"_status/c_run_(?P<m>[a-z]+)_evt-(?P<e>[^\s\"',]+?)_complete\.flag")
+_TMUX_MEMBER_FLAG_RE = re.compile(
+    r"_status/c_run_(?P<m>[a-z]+)_member-(?P<mid>[^\s\"',]+?)_evt-(?P<e>[^\s\"',]+?)_complete\.flag"
+)
+
+
+def parse_tmux_submissions(text: str) -> dict[str, str]:
+    """Recover ``{rule_token: slurm_jobid}`` for every SIM rule the executor SUBMITTED, from a
+    tmux orchestrator log. Pure: text in, dict out.
+
+    Tokens follow ``run_simulation_runner``'s ``_rule_token``: ``run_{model}_evt-{event_id}``
+    (multisim, rule ``run_{model}``) and ``simulation_member_{mid}_evt-{event_id}`` (sensitivity
+    master, rule ``simulation_member_{mid}_evt_{sanitized}``), both derived from the c_run FLAG
+    PATH inside the block. A retried job re-prints its block, so the NEWEST submission of a token
+    wins. Every column-0 line that is not ``rule X:`` closes the current block, so a ``jobid:``
+    under ``Error in rule …:`` or ``Group job …`` is never attributed to a stale rule. Non-sim
+    rules (prepare/process/consolidate/wait_for_*/plots) are ignored by rule-name prefix.
+    """
+    by_snakemake_id: dict[str, dict] = {}
+    block: dict | None = None
+    tokens: dict[str, str] = {}
+    for line in text.splitlines():
+        if line and not line[0].isspace():
+            m = _TMUX_RULE_RE.match(line)
+            block = {"rule": m.group(1), "token": None} if m else None
+            m = _TMUX_SUBMIT_RE.match(line)
+            if m:
+                blk = by_snakemake_id.get(m.group(1))
+                if blk and blk["token"]:
+                    tokens[blk["token"]] = m.group(2)
+            continue
+        if block is None:
+            continue
+        r = block["rule"]
+        if block["token"] is None and (r.startswith("run_") or r.startswith("simulation_member_")):
+            mm = _TMUX_MEMBER_FLAG_RE.search(line)
+            if mm and r.startswith("simulation_member_"):
+                block["token"] = f"simulation_member_{mm.group('mid')}_evt-{mm.group('e')}"
+            elif not mm:
+                ms = _TMUX_MULTISIM_FLAG_RE.search(line)
+                if ms and r.startswith("run_"):
+                    block["token"] = f"run_{ms.group('m')}_evt-{ms.group('e')}"
+        m = _TMUX_JOBID_RE.match(line)
+        if m:
+            by_snakemake_id[m.group(1)] = block
+    return tokens
+
+
+def _squeue_live_jobids(run_uuids: tuple[str, ...], *, timeout_s: float = 20.0) -> set[str] | None:
+    """PENDING/RUNNING/COMPLETING SLURM job ids whose sbatch ``--job-name`` is one of ``run_uuids``
+    (the executor names every job after its run UUID). ``None`` when squeue is absent, fails or
+    times out — the caller treats None as NOT-KNOWN (mtime tier governs), never as "nothing live".
+    ``CG`` is included deliberately: a completing job held by the reconcile yields a wait rule that
+    resolves within seconds, and ``scancel`` on a completing job is a no-op — harmless in both
+    consumers."""
+    if not run_uuids:
+        return None
+    live: set[str] = set()
+    for uuid in run_uuids:
+        try:
+            out = subprocess.run(
+                ["squeue", "--name", uuid, "-h", "-t", "PD,R,CG", "-o", "%i"],
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+        except (subprocess.SubprocessError, OSError):  # FileNotFoundError (no squeue) is an OSError
+            return None
+        if out.returncode != 0:
+            return None
+        live.update(tok.strip() for tok in out.stdout.split() if tok.strip())
+    return live
+
+
+def _rekey_queued_from_tmux_logs(queued_dir: Path, pending_tokens: list[str], log_dir: Path | None) -> list[str]:
+    """FQ5 re-keying (2026-09-12): rewrite ``_queued/{token}.json`` with the jobid the executor
+    was OBSERVED to submit, and unlink tokens that were planned but never submitted.
+
+    ``_write_queued_sentinels`` writes the FULL planned token set at launch, so under a
+    ``--jobs`` cap smaller than the plan most sentinels name a sim SLURM never saw (measured
+    2026-09-12: 10,884 sentinels, ~10,374 never submitted). Reads every ``tmux_session_*.log``
+    under ``log_dir`` oldest->newest (a resumed driver's sims were submitted under an earlier
+    log; the newest submission of a token wins). Returns the tokens that SURVIVE. NO-OP —
+    returns ``pending_tokens`` unchanged and unlinks nothing — when ``log_dir`` is None/absent
+    or holds no tmux log: absence of evidence is not evidence of non-submission. KNOWN
+    LIMITATION (C7, 2026-09-12): that guard is directory-level — if an OLDER tmux log of a
+    resumable campaign is pruned while a newer one exists, or the driver is killed inside the
+    sbatch-return->print window, a live token's sentinel is dropped and the sim re-runs
+    (double submission). Operators must not prune older tmux logs of a resumable campaign;
+    a per-log guard is a tracked follow-up, not this round's change.
+    """
+    if not pending_tokens or log_dir is None or not Path(log_dir).is_dir():
+        return list(pending_tokens)
+    logs = sorted(Path(log_dir).glob("tmux_session_*.log"), key=lambda p: p.stat().st_mtime)
+    if not logs:
+        return list(pending_tokens)
+    observed: dict[str, str] = {}
+    for path in logs:
+        try:
+            observed.update(parse_tmux_submissions(path.read_text(errors="replace")))
+        except OSError:
+            continue
+    survivors: list[str] = []
+    n_rekeyed = n_dropped = 0
+    for tok in pending_tokens:
+        qpath = queued_dir / f"{tok}.json"
+        jid = observed.get(tok)
+        if jid is None:
+            # EXEMPT-DU: status-dir-cleanup
+            qpath.unlink(missing_ok=True)  # planned, never submitted -> re-run
+            n_dropped += 1
+            continue
+        payload = json.dumps({"rule_token": tok, "slurm_jobid": jid}, sort_keys=True)
+        try:
+            if qpath.read_text() != payload:
+                qpath.write_text(payload)  # mtime bump is correct: the sentinel now names a real job
+                n_rekeyed += 1
+        except OSError:
+            pass
+        survivors.append(tok)
+    if n_rekeyed or n_dropped:
+        print(
+            f"[reconcile] _queued/ re-key from {len(logs)} tmux log(s): {n_rekeyed} sentinel(s) now carry an "
+            f"observed jobid, {n_dropped} planned-never-submitted sentinel(s) unlinked (they re-run).",
+            flush=True,
+        )
+    return survivors
+
+
 class _ClearedToken(NamedTuple):
     """Self-describing record for an R-STALE-reclaimed stale token (replaces the
     positional 4-tuple so the reconcile surface and tests read field names)."""
@@ -1160,9 +1313,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # declares no apptainer_module (Frontier's Cray path) emits byte-
             # identically to before; native mode is untouched (prefix stays "").
             _mod = f"module load {_cspec.apptainer_module}; " if _cspec.apptainer_module else ""
-            self._container_process_prefix = (
-                f'{_mod}export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
+            _sif = resolve_sif(
+                _cspec.sif_root, self.analysis._sif_identity_for(self.cfg_analysis.hpc_ensemble_partition)
             )
+            self._container_process_prefix = f'{_mod}export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_sif} '
             # The interpreter must resolve INSIDE the image. self.python_executable
             # is the DRIVER's host interpreter (sys.executable at :813) and dies
             # `FATAL: stat …: no such file or directory` under apptainer exec.
@@ -1600,6 +1754,21 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         cap_min = self.cfg_analysis.hpc_max_wait_for_inflight_min
         max_plausible_s = cap_min * 60
 
+        # FQ5 (2026-09-12): rewrite planned-only sentinels with the jobid the executor was
+        # OBSERVED to submit (tmux log), and drop the planned-never-submitted ones. No-op when
+        # no tmux log exists (local mode / pruned logs) — see _rekey_queued_from_tmux_logs.
+        # SCOPE NOTE (sensitivity path): the master builder calls this reconcile once per sub
+        # with base_dir=_sub_dir, so queued_dir is the SUB's while the log dir and run uuids
+        # below are the MASTER's — one driver, one tmux log, which is where every sub's
+        # submissions were printed.
+        _log_dir = self.analysis_paths.analysis_log_directory
+        pending_tokens = _rekey_queued_from_tmux_logs(queued_dir, list(pending_tokens), _log_dir)
+        if not pending_tokens:
+            return []
+        # Run-UUID backstop: the live PD/R/CG set under every run uuid this analysis has used.
+        # None = squeue unavailable -> not consulted (mtime tier governs), never "nothing live".
+        _squeue_live = _squeue_live_jobids(self._tmux_slurm_run_uuids())
+
         # Read each payload's allocation jobid (None = executor-owns / unreadable).
         jobid_by_token: dict[str, str | None] = {}
         for tok in pending_tokens:
@@ -1632,7 +1801,14 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                         continue
                     recovered.append((tok, jid))  # alive (toolkit-owns)
                     continue
-                # jid present but sacct-UNKNOWN -> fall through to mtime fail-safe.
+                # jid present but sacct-UNKNOWN -> run-UUID squeue tier (FQ5), then mtime.
+                if _squeue_live is not None:
+                    if jid in _squeue_live:
+                        recovered.append((tok, jid))  # PENDING/RUNNING under this run's uuid
+                        continue
+                    # EXEMPT-DU: status-dir-cleanup
+                    qpath.unlink(missing_ok=True)  # known-absent from SLURM -> re-run
+                    continue
             # executor-owns (jid None) OR aliased OR sacct-UNKNOWN: presence + mtime.
             try:
                 age_s = time.time() - qpath.stat().st_mtime
@@ -1966,8 +2142,37 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # STAGE -- it must not resurrect the pre-floor behaviour of deleting every flag.
         if spec.scope not in ("all", "member", "event"):
             raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
+
+        def _model_matches(name: str) -> bool:
+            """True when a flag belongs to one of the requested MODEL arms.
+
+            The model segment is READ by `constants.model_type_from_flag_name`, the inverse
+            of the builders that MINT flag names — the one place the flag-name grammar is
+            parsed, and it covers BOTH shapes (plain `c_run_{m}_evt-…` and sensitivity
+            `c_run_{m}_member-{id}_evt-…`). This predicate used to split on `_evt-` itself
+            and read `tritonswmm_member-0` as the model of every member-shaped flag, so no
+            sensitivity member's `c_run_`/`d_process_` flag was ever deletable by a force.
+            Anchoring on the model SEGMENT (never a substring test) is what keeps `swmm`
+            from matching inside `tritonswmm` — the same class as the `member-1`/`member-10`
+            trap `_subject_matches` above documents.
+
+            FAIL-OPEN on a name carrying no model segment (`a_setup_complete`,
+            `b_prepare_evt-...`): those are already excluded by the floor's prefix tuple
+            before this runs, and returning False here would silently stop deleting them
+            if a future floor ever included such a prefix. The prefix tuple is the thing
+            that bounds the delete set; this axis narrows within it.
+
+            A model-bearing name that does not fit the grammar makes the inverse raise, so a
+            malformed `c_run_`/`d_process_` file under `_status/` aborts the whole force at
+            submit time, loudly, rather than being silently skipped or deleted.
+            """
+            _model = model_type_from_flag_name(name)
+            return _model is None or _model in spec.models
+
         matched_flags: set[Path] = {
-            p for p in status_dir.glob("*.flag") if p.name.startswith(prefixes) and _subject_matches(p.name)
+            p
+            for p in status_dir.glob("*.flag")
+            if p.name.startswith(prefixes) and _subject_matches(p.name) and _model_matches(p.name)
         }
 
         for flag_path in sorted(matched_flags):
@@ -2005,27 +2210,24 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # --dry-run` took four masters from 70/40/70/40 figures to 2 each, the survivors being
         # exactly the `plots/eda/` family this block exempts. Keyword-only with a False default,
         # so every existing caller is byte-identical.
-        if stage == "render":
-            # The dry-run gate now lives INSIDE delete_regenerable_figures, so this call
-            # site no longer carries `and not dry_run`: one condition, one place. The
-            # unregenerable-subtree skip that used to be spelled out here moves there too,
-            # from the same fact rather than a second copy of the rule. Gotcha 38's O(1)
-            # decrement is unchanged and stays caller-side, fed by the returned byte total.
-            _freed_render: dict[str, int] = {}
-            _freed_bytes = delete_regenerable_figures(
+        if stage == "render" and not dry_run:
+            # The eda exemption is no longer spelled here. It reaches this site through
+            # utils.select_regenerable_figures, which reads the one registry in
+            # constants.UNREGENERABLE_ANALYSIS_SUBTREES -- so the inline subdirectory test
+            # and its local import are gone rather than kept as a second copy of one rule.
+            # Those figures come from analysis.eda(), a non-Snakemake in-process facade, so
+            # NO rule regenerates them after deletion; deleting them here would remove the
+            # EDA family permanently and silently.
+            _render_targets = select_regenerable_figures(
                 self.analysis_paths.analysis_dir,
                 self.analysis_paths.analysis_dir / "plots",
-                dry_run=dry_run,
-                on_delete=lambda p: logger.info("force_rerun[stage=render]: deleting figure %s", p),
+                on_select=lambda p: logger.info("force_rerun[stage=render]: deleting figure %s", p),
             )
-            if _freed_bytes:
-                _freed_render["plots"] = _freed_bytes
-            if _freed_render.get("plots"):
-                from hhemt.du_sentinels import decrement_scope_sentinel
+            # Clause 1: ONE accounting call for every figure + sidecar (Gotcha 38's O(1)
+            # decrement now lives inside the tool).
+            from hhemt.du_sentinels import delete_and_account
 
-                decrement_scope_sentinel(
-                    self.analysis_paths.analysis_dir, scope="analysis", child_deltas=dict(_freed_render)
-                )
+            delete_and_account(_render_targets, scope_dir=self.analysis_paths.analysis_dir, scope="analysis")
 
     def _cpu_sim_partition(self) -> str | None:
         """Resolve the SLURM partition for CPU-ONLY simulation rules (``run_swmm``).
@@ -2666,6 +2868,16 @@ rule process_{model_type}:
     # for exactly this: a deterministic process failure would re-run a ~100-minute
     # simulation up to the SIM's retry count, across a 3,798-event ensemble.
     # DO NOT add a rule with its own `retries:` directive to this group.
+    #
+    # THIS REJECTION IS ABOUT SNAKEMAKE `group:` (GroupJob retry/output semantics) AND
+    # NOTHING ELSE. A SINGLE COMBINED RULE that runs the sim runner and then the process
+    # runner in one shell (analysis_config.process_in_sim_rule=True, 2026-09-12) is a
+    # different mechanism: no member outputs are removed at group start and no attempt
+    # counter propagates, and its safety under `retries:` rests on the SIM RUNNER's
+    # own idempotence -- run_simulation.prepare_simulation_command returns None when
+    # model_run_completed (the per-model log field), so a processing failure re-runs
+    # only the processing pass, never the solver. Executed 2026-09-12 on a completed
+    # synth scenario. Do not read the paragraph above as forbidding that rule.
     priority: 100
     conda: "{conda_env_path}"
     params:
@@ -2995,11 +3207,19 @@ rule consolidate_scenario:
             cpus_per_task=1,
         )
 
+        # Option A (in-rule processing, 2026-09-12): when the toggle is on AND processing is
+        # requested, the sim rule absorbs the process step, so its allocation must cover
+        # both: mem = max(sim, process), runtime = sim + process. OFF => +0 / max(x, 0),
+        # byte-identical to a tree that has never heard of the field.
+        _in_rule = bool(getattr(self.cfg_analysis, "process_in_sim_rule", False)) and process_timeseries
+        _in_rule_extra_runtime_min = self.cfg_analysis.hpc_runtime_min_for_sim_output_processing if _in_rule else 0
+        _in_rule_mem_floor_mb = self.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb if _in_rule else 0
+
         # Simulation: resource-intensive (multi-CPU, GPUs, high memory)
         sim_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_ensemble_partition,
-            runtime_min=hpc_time_min,
-            mem_mb=mem_mb_per_sim,
+            runtime_min=hpc_time_min + _in_rule_extra_runtime_min,
+            mem_mb=max(mem_mb_per_sim, _in_rule_mem_floor_mb),
             nodes=n_nodes,
             tasks=mpi_ranks,
             cpus_per_task=omp_threads,
@@ -3161,6 +3381,7 @@ rule setup:
 rule prepare_scenario:
     input: "_status/a_setup_complete.flag"
     output: "_status/b_prepare_evt-{{event_id}}_complete.flag"
+    priority: 10
     log: "{log_dir_str}/sims/prepare_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
     params:
@@ -3212,8 +3433,8 @@ rule prepare_scenario:
                 swmm_cpus = self.cfg_analysis.n_omp_threads or 1
                 swmm_resources = self._build_resource_block(
                     partition=self._cpu_sim_partition(),
-                    runtime_min=hpc_time_min,
-                    mem_mb=self.cfg_analysis.mem_gb_per_cpu * swmm_cpus * 1000,
+                    runtime_min=hpc_time_min + _in_rule_extra_runtime_min,
+                    mem_mb=max(self.cfg_analysis.mem_gb_per_cpu * swmm_cpus * 1000, _in_rule_mem_floor_mb),
                     nodes=1,
                     tasks=1,
                     cpus_per_task=swmm_cpus,
@@ -3228,11 +3449,51 @@ rule prepare_scenario:
                 model_threads = snakemake_threads
 
             _loc = self._resolved_execution_locus
+            # Option A / D2 (2026-09-12). OFF => every operand collapses to today's literal.
+            _sim_priority = (
+                20 if model_type == "swmm" else 0
+            )  # D2 ladder: consolidate 100 > swmm 20 > prepare 10 > TRITON 0
+            if _in_rule:
+                _which_arg_by_model = {"triton": "TRITON", "tritonswmm": "both", "swmm": "SWMM"}
+                _in_rule_clear_raw_arg = (
+                    f"--override-clear-raw '{json.dumps(override_clear_raw)}' "
+                    if override_clear_raw is not None
+                    else ""
+                )
+                _run_output_line = (
+                    "    output:\n"
+                    f'        c_run="_status/c_run_{model_type}_evt-{{event_id}}_complete.flag",\n'
+                    f'        d_process="_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"'
+                )
+                _run_flag_ref = "{output.c_run}"
+                _run_defer_arg = "--defer-terminal-markers "
+                _run_shell_tail = (
+                    "            2>&1 | tee {log} && \\\n"
+                    f"        {self._container_process_prefix}{self._process_python_executable} "
+                    "-m hhemt.process_timeseries_runner \\\n"
+                    "            --event-iloc {params.event_iloc} \\\n"
+                    f"            {config_args} \\\n"
+                    f"            --model-type {model_type} \\\n"
+                    f"            --which {_which_arg_by_model[model_type]} \\\n"
+                    f"            {_in_rule_clear_raw_arg}\\\n"
+                    f"            --compression-level {compression_level} \\\n"
+                    "            --flag-output {output.d_process} \\\n"
+                    f"            --rule-name run_{model_type} \\\n"
+                    "            --write-terminal-markers \\\n"
+                    "            --event-id {wildcards.event_id} \\\n"
+                    "            2>&1 | tee -a {log}"
+                )
+            else:
+                _run_output_line = f'    output: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"'
+                _run_flag_ref = "{output}"
+                _run_defer_arg = ""
+                _run_shell_tail = "            2>&1 | tee {log}"
             snakefile_content += f'''
 rule run_{model_type}:
     input: "{sim_input}"
-    output: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
+{_run_output_line}
     retries: {self._resolved_simulate_retries()}
+    priority: {_sim_priority}
     log: "{log_dir_str}/sims/{model_type}_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
     threads: {model_threads}
@@ -3246,11 +3507,11 @@ rule run_{model_type}:
             --event-iloc {{params.event_iloc}} \\
             {gpu_compile_config_args} \\
             --model-type {model_type} \\
-            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
-            --flag-output {{output}} \\
+            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}{_run_defer_arg}\\
+            --flag-output {_run_flag_ref} \\
             --rule-name run_{model_type} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {{wildcards.event_id}} \\
-            2>&1 | tee {{log}}
+{_run_shell_tail}
         """
 '''
 
@@ -3285,13 +3546,18 @@ rule run_{model_type}:
                 snakefile_content += self._emit_wait_for_sim_rule_block(
                     rule_token=rule_token,
                     flag_output_path=flag_output_path,
+                    extra_output_paths=(
+                        [f"_status/d_process_{model_type}_evt-{event_id}_complete.flag"] if _in_rule else None
+                    ),
                     run_rule_inputs=run_rule_inputs,
                     wait_walltime_cap_min=wait_walltime_cap_min,
                 )
 
         # Add output processing rules (one per model type) if requested
         if process_timeseries:
-            for model_type in enabled_models:
+            # Option A: with in-rule processing the run rules already produce d_process;
+            # a separate process rule would be a second producer of the same output.
+            for model_type in [] if _in_rule else enabled_models:
                 # Determine --which flag based on model type
                 if model_type == "triton":
                     which_arg = "TRITON"
@@ -3907,7 +4173,10 @@ def _per_sim_event_page_sources(wildcards):
                     "executor": "slurm",
                     "jobs": max_concurrent,
                     "latency-wait": 60,
-                    "max-jobs-per-second": 5,
+                    # 9.15.0: `max-jobs-per-second` is parsed and IGNORED because the
+                    # `--max-jobs-per-timespan` default ("100/1s") is never None; only the
+                    # timespan form reaches JobRateLimiter. Same 5 jobs/s intent, live key.
+                    "max-jobs-per-timespan": "5/1s",
                     "max-status-checks-per-second": 10,
                     # Retain the executor's per-job log tree. The SLURM executor plugin
                     # writes `{logdir}/rule_{rule}/{wildcards}/{jobid}.log` at submit --
@@ -5391,6 +5660,30 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
             return submission_node
         return login_node or submission_node
 
+    # ---- SIF quest ([Q315] 6(b)): the build DAG hosted INSIDE this mode's detached driver ----
+    sif_prestep: "tuple[Path, set[str], list[str], bool] | None" = None
+    #   (Snakefile.sif, planned keys, [recheck argv-strings], no_wait) — set by
+    #   TRITONSWMM_analysis._build_sifs_prestep under batch_job; None => byte-identical script.
+
+    def _tmux_sif_prelude(self) -> str:
+        """Shell lines prepended to the tmux orchestrator script: run the SIF build DAG, then the
+        STRICT image re-check, and only then fall through to the experiment's snakemake. Empty
+        when no pre-step is staged, so the emitted script is byte-identical to today's."""
+        if self.sif_prestep is None:
+            return ""
+        from hhemt.sif.driver import driver_command
+
+        snakefile, keys, recheck, no_wait = self.sif_prestep
+        lines = [
+            "# ---- SIF quest: build the images this experiment needs, re-check them, THEN submit ----",
+            driver_command(snakefile, snakefile.parent, keys)
+            + ' || { echo "SIF build DAG failed; NOT submitting the experiment"; exit 1; }',
+        ]
+        lines += [c + ' || { echo "SIF preflight failed after the build; NOT submitting"; exit 1; }' for c in recheck]
+        if no_wait:
+            lines.append('echo "--no-wait: images built and verified; the experiment was NOT submitted"; exit 0')
+        return "\n".join(lines)
+
     def _submit_tmux_workflow(
         self,
         snakefile_path: Path,
@@ -5554,6 +5847,8 @@ mkdir -p {self.analysis_paths.analysis_log_directory}
         2>/dev/null | grep -E "^(Name|Version):"
     ${{CONDA_PREFIX}}/bin/python --version 2>&1 | sed 's/^/python: /'
 }} > {self.analysis_paths.analysis_log_directory}/snakemake_versions.txt
+
+{self._tmux_sif_prelude()}
 
 # Trim PATH and LD_LIBRARY_PATH before launching Snakemake.
 # After module load and conda activate, PATH can exceed Linux ARG_MAX limits.
@@ -7732,6 +8027,7 @@ exit $snakemake_status
         run_rule_inputs: list[str],
         wait_walltime_cap_min: int,
         analysis_dir_override: str | None = None,
+        extra_output_paths: list[str] | None = None,
     ) -> str:
         """Emit a Snakemake rule body that waits on the original SLURM job's
         completion-marker write, in place of a normal ``rule run_*`` block.
@@ -7795,7 +8091,7 @@ exit $snakemake_status
             f"    input:\n"
             f"        {inputs_block}\n"
             f"    output:\n"
-            f'        "{flag_output_path}"\n'
+            f'        "{flag_output_path}"\n' + "".join(f'        "{p}"\n' for p in (extra_output_paths or [])) +
             # Fail-fast: a wait-rule observing a _failed/ marker means the original
             # sim died; re-polling cannot change that. retries: 0 keeps the wait-rule
             # from inheriting the global restart-times baseline (= hpc_restart_times_other)
@@ -7805,7 +8101,7 @@ exit $snakemake_status
             f"    shell:\n"
             f'        "{python_exe} -m hhemt.wait_for_sentinel_runner "\n'
             f'        "--rule-token {rule_token} "\n'
-            f'        "--flag-output {{output}} "\n'
+            f'        "--flag-output {{output[0]}} "\n'
             f'        "--analysis-dir {analysis_dir} "\n'
             f'        "--max-wait-minutes {wait_walltime_cap_min}"\n\n'
         )
@@ -7861,27 +8157,29 @@ exit $snakemake_status
         # in-flight and must block a delete exactly like a running sim. Presence-only
         # (no reclaim — consistent with the no-reclaim stance of (2); a stale orphan
         # _queued/ is aged out by the run-path reconcile's mtime fail-safe, or the
-        # operator passes override_in_flight — never destructive cleanup here).
+        # operator passes override_in_flight — no RESULT-file cleanup here; sentinels of
+        # provably-dead or never-submitted jobs ARE unlinked by the shared classifier).
         queued_dir = analysis_dir / "_status" / "_queued"
         if queued_dir.is_dir():
-            for qpath in sorted(queued_dir.glob("*.json")):
-                tok = qpath.stem
-                if any(
-                    (analysis_dir / "_status" / d / f"{tok}.json").exists()
+            # FQ5 (2026-09-12): the SAME classifier as the run-path reconcile — re-keys from
+            # the tmux log, drops planned-never-submitted tokens, sacct/squeue-classifies the
+            # rest, ages out the remainder. A guard that refused a tree nobody could resume
+            # (10,884 planned-only sentinels, 2026-09-12) is a guard that is always overridden.
+            _pending = [
+                p.stem
+                for p in sorted(queued_dir.glob("*.json"))
+                if not any(
+                    (analysis_dir / "_status" / d / f"{p.stem}.json").exists()
                     for d in ("_submitted", "_completed", "_failed")
-                ):
-                    continue  # superseded — already covered by the _submitted/ sweep
-                try:
-                    jid = str(json.loads(qpath.read_text()).get("slurm_jobid") or "")
-                except (json.JSONDecodeError, OSError):
-                    jid = ""
-                alive.append((tok, jid))
+                )
+            ]
+            alive += self._recover_pending_from_queued(_pending, analysis_dir)
 
         # (3) Comment-recovery for the lost-sentinel window (C.4).
         alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
 
         if alive and not override_in_flight:
-            live_jids = sorted({j for _, j in alive})
+            live_jids = sorted({j for _, j in alive if j})  # held-on-presence tokens carry "" — not a jobid
             raise ConfigurationError(
                 field="analysis.delete()",
                 message=(
@@ -7894,7 +8192,7 @@ exit $snakemake_status
                 config_path=str(submitted_dir),
             )
         if alive and override_in_flight:
-            live_jids = sorted({j for _, j in alive})
+            live_jids = sorted({j for _, j in alive if j})  # held-on-presence tokens carry "" — not a jobid
             print(
                 f"[delete] override_in_flight=True — proceeding despite {len(live_jids)} live SLURM jobs: {live_jids}",
                 flush=True,
@@ -8529,6 +8827,17 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         )
 
         # Determine the single enabled model type for sensitivity analysis
+        if bool(getattr(self.experiment.cfg_analysis, "process_in_sim_rule", False)):
+            raise ConfigurationError(
+                field="process_in_sim_rule",
+                message=(
+                    "process_in_sim_rule=True is not supported on a sensitivity analysis yet: "
+                    "the sensitivity-master generator still emits separate process_member_* "
+                    "rules, so the toggle would be silently inert. Set it False for this "
+                    "analysis, or land the member-rule branch first."
+                ),
+                config_path=None,
+            )
         # Sensitivity analysis doesn't support multi-model (would explode parameter space)
         enabled_models = []
         if self.system.cfg_system.toggle_triton_model:
@@ -8929,6 +9238,7 @@ onerror:
         "{setup_target_flag}",
         "_status/member-{member_id}_inputs.json"
     output: "{prep_outflag}"
+    priority: 10
     log: "{log_dir_str}/sims/{prep_rule_name}.log"
     conda: "{conda_env_path}"
     resources:
@@ -8982,6 +9292,7 @@ onerror:
         "_status/member-{member_id}_inputs.json"
     output: "{sim_outflag}"
     retries: {self._base_builder._resolved_simulate_retries()}
+    priority: {20 if model_type == "swmm" else 0}
     log: "{log_dir_str}/sims/{sim_rule_name}.log"
     conda: "{conda_env_path}"
     threads: {snakemake_threads}

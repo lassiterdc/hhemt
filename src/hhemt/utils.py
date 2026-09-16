@@ -111,18 +111,17 @@ def fast_rmtree(
     *,
     missing_ok: bool = True,
     onerror: Callable | None = None,
-    analysis_dir: str | Path | None = None,
 ) -> int:
     """Fast, cross-platform directory delete. Returns bytes reclaimed.
 
     Uses OS-native delete commands for speed; falls back to shutil.rmtree.
 
-    When `analysis_dir` is provided AND `path` is not itself the analysis_dir,
-    `du_sentinels.restamp_parent_sentinels(path, analysis_dir=...)` is invoked
-    after the delete completes so parent-scope DU sentinels stay accurate. The
-    `path == analysis_dir` short-circuit converts the EXEMPT-site convention
-    (root-wipe — re-stamping a directory being deleted is meaningless) from a
-    prose comment into grep-detectable code (SE F-I Flag 2).
+    THIS IS A PRIMITIVE, NOT AN ACCOUNTING SITE. It measures and deletes; it
+    maintains no DU sentinel. Every DU-counted deletion under src/hhemt/ routes
+    through `du_sentinels.delete_and_account`, which calls this and adjusts the
+    owning scope's sentinel once ([Q354] ruling 4; clause 1). Calling this directly
+    outside du_sentinels.py is a `check_du_sentinel_sites` violation unless the
+    site carries a still-valid `# EXEMPT-DU:` category.
 
     Parameters
     ----------
@@ -132,11 +131,6 @@ def fast_rmtree(
         If True, silently return when path does not exist.
     onerror : callable, optional
         Error handler passed to shutil.rmtree (fallback only).
-    analysis_dir : str | Path, optional
-        Root of the analysis tree this delete is scoped to. When provided,
-        parent-scope DU sentinels under `analysis_dir` are re-stamped after
-        the delete; when None, no re-stamping occurs (the caller is responsible
-        for sentinel accuracy out-of-band).
     """
     path = Path(path)
 
@@ -164,7 +158,6 @@ def fast_rmtree(
 
     if path.is_symlink() or path.is_file():
         path.unlink()
-        _restamp_after_mutation(path, analysis_dir)
         return freed
 
     try:
@@ -185,35 +178,10 @@ def fast_rmtree(
     except Exception:
         shutil.rmtree(path, onerror=onerror)
 
-    _restamp_after_mutation(path, analysis_dir)
     return freed
 
 
-def _restamp_after_mutation(path: Path, analysis_dir: str | Path | None) -> None:
-    """Re-stamp parent DU sentinels for `path` under `analysis_dir`.
-
-    No-op when `analysis_dir` is None, when `path == analysis_dir` (root-wipe
-    short-circuit per SE F-I Flag 2), or when path resolution fails. Imports
-    `restamp_parent_sentinels` lazily to keep `utils.py` free of a top-level
-    dependency on `du_sentinels.py`.
-    """
-    if analysis_dir is None:
-        return
-    try:
-        path_resolved = Path(path).resolve()
-        analysis_resolved = Path(analysis_dir).resolve()
-    except OSError:
-        return
-    if path_resolved == analysis_resolved:
-        return
-    if not analysis_resolved.exists():
-        return
-    from hhemt.du_sentinels import restamp_parent_sentinels
-
-    restamp_parent_sentinels(Path(path), analysis_dir=analysis_resolved)
-
-
-def _recover_and_clear_publish_temps(final, aside, tmp, *, analysis_dir=None) -> None:
+def _recover_and_clear_publish_temps(final, aside, tmp) -> None:
     """Steps 0 and 1 of the crash-safe publish. Shared by the callable-wrapping
     form below and by the inline form in process_simulation, so the .aside/.tmp
     preference has exactly ONE implementation -- two copies is how it gets undone.
@@ -258,7 +226,7 @@ def _recover_and_clear_publish_temps(final, aside, tmp, *, analysis_dir=None) ->
             if tmp.exists():
                 # Died in the step3->step4 gap: .tmp is the complete new store.
                 os.rename(tmp, final)
-                fast_rmtree(aside, analysis_dir=analysis_dir)
+                fast_rmtree(aside)  # EXEMPT-DU: transient-intermediate
             else:
                 warnings.warn(
                     f"Recovering {aside}: a previous publish died mid-swap with no "
@@ -269,13 +237,13 @@ def _recover_and_clear_publish_temps(final, aside, tmp, *, analysis_dir=None) ->
                 os.rename(aside, final)
         else:
             # Died in the step4->step5 gap: the aside is superseded.
-            fast_rmtree(aside, analysis_dir=analysis_dir)
+            fast_rmtree(aside)  # EXEMPT-DU: transient-intermediate
     if tmp.exists():
         warnings.warn(f"Discarding un-publishable partial store {tmp}.", stacklevel=2)
-        fast_rmtree(tmp, analysis_dir=analysis_dir)
+        fast_rmtree(tmp)  # EXEMPT-DU: transient-intermediate
 
 
-def _publish_store_crash_safe(write_fn, fname_out, *, analysis_dir=None) -> None:
+def _publish_store_crash_safe(write_fn, fname_out) -> None:
     """Build a zarr store under a temp name and publish it by rename.
 
     GUARANTEE, and it is exactly this one: `fname_out` is either ABSENT or a
@@ -315,13 +283,13 @@ def _publish_store_crash_safe(write_fn, fname_out, *, analysis_dir=None) -> None
     aside = final.with_name(final.name + ".aside")
     tmp = final.with_name(final.name + ".tmp")
 
-    _recover_and_clear_publish_temps(final, aside, tmp, analysis_dir=analysis_dir)
+    _recover_and_clear_publish_temps(final, aside, tmp)
     write_fn(tmp)  # step 2
     if final.exists():
         os.rename(final, aside)  # step 3
     os.replace(tmp, final)  # step 4
     if aside.exists():
-        fast_rmtree(aside, analysis_dir=analysis_dir)  # step 5
+        fast_rmtree(aside)  # step 5  # EXEMPT-DU: transient-intermediate
 
 
 def chapters_dir_for(fname_out) -> Path:
@@ -437,7 +405,7 @@ def covered_timesteps(chapters: Path) -> set:
     return out
 
 
-def reap_unflagged_chapters(chapters: Path, *, analysis_dir=None) -> None:
+def reap_unflagged_chapters(chapters: Path, *, scenario_dir: Path) -> None:
     """STATE 3: a chapter store with no flag was interrupted mid-write. Delete it.
 
     Never deletes a FLAGGED chapter -- after a raw clear a flagged chapter is the
@@ -450,10 +418,12 @@ def reap_unflagged_chapters(chapters: Path, *, analysis_dir=None) -> None:
         k = int(store.stem.split("_")[1])
         if not chapter_flag_for(chapters, k).exists():
             warnings.warn(f"Discarding unflagged (interrupted) chapter store {store}.", stacklevel=2)
-            fast_rmtree(store, analysis_dir=analysis_dir)
+            from hhemt.du_sentinels import delete_and_account
+
+            delete_and_account([store], scope_dir=scenario_dir, scope="scenario")
 
 
-def clear_raw_for_timesteps(df_outputs, timesteps, *, analysis_dir=None) -> int:
+def clear_raw_for_timesteps(df_outputs, timesteps, *, scenario_dir: Path) -> int:
     """Delete ONLY the raw per-timestep files this chapter consumed. Returns bytes.
 
     DELIBERATELY NOT `process_simulation._clear_raw_outputs`, and it MUST NOT be
@@ -468,30 +438,108 @@ def clear_raw_for_timesteps(df_outputs, timesteps, *, analysis_dir=None) -> int:
     list: it deletes only paths named in `df_outputs`, which contains the
     per-variable per-timestep data files and nothing else.
     """
-    freed = 0
-    for path in df_outputs.loc[list(timesteps)].to_numpy().ravel():
-        p = Path(path)
-        if not p.exists():
-            continue
-        # Routed through fast_rmtree rather than a bare unlink + wrapper call. Three
-        # reasons, and the first is a correctness one: restamp_parent_sentinels has NO
-        # None guard (`if not analysis_dir.exists()`), and analysis_dir defaults to None
-        # here, so calling it directly -- the change that would satisfy the DU checker's
-        # _is_restamp_call most obviously -- raises AttributeError on every caller that
-        # omits analysis_dir. fast_rmtree handles a FILE, guards None via
-        # _restamp_after_mutation, and RETURNS the bytes it freed ([Q232]), which
-        # replaces the manual stat.
-        freed += fast_rmtree(p, analysis_dir=analysis_dir)
-    return freed
+    # ONE accounting call for the whole chapter (clause 1). The pre-2026-09-13 form
+    # called fast_rmtree(p, analysis_dir=...) per file, and each call re-summed the
+    # ANALYSIS scope over ~3,798 sentinel-less children -- 528 times per chapter
+    # flush. That is the chunk-6 stall. The tool below stats only what it deletes
+    # and adjusts only this scenario's sentinel.
+    from hhemt.du_sentinels import delete_and_account
+
+    paths = df_outputs.loc[list(timesteps)].to_numpy().ravel()
+    return delete_and_account(paths, scope_dir=Path(scenario_dir), scope="scenario")
 
 
-def merge_chapters_to_unified(chapters: Path, fname_out, *, analysis_dir=None) -> None:
+#: Target on-disk chunk size for per-scenario spatial timeseries, in BYTES.
+#: 1.25 MiB, chosen to sit at the magnitude zarr's own auto-chunker selects for this
+#: data -- it picked (17, 135, 138) float32 = 1.21 MiB for a full chapter -- so
+#: declaring a grid changes WHICH cells share a chunk without changing I/O
+#: granularity. Raising it walks toward Blosc's 2,048 MiB max_buffer_size at fine
+#: DEM resolutions; lowering it multiplies object count on a parallel filesystem.
+CHUNK_BYTE_TARGET_BYTES: int = 1_310_720
+
+
+def _integer_cube_root(n: int) -> int:
+    """The exact integer floor of the cube root, by search. No floating point.
+
+    `round(n ** (1/3))` would do the same job in one line. It is rejected because
+    IEEE-754 does not require `pow` to be correctly rounded, so two machines can differ
+    by an ulp -- and a grid that differs between two nodes of one campaign is a
+    divergent chapter set the mixed-build guard CANNOT SEE, because that guard keys on
+    the TOOLKIT identity and the toolkit is identical. That is the same reason this
+    module owns the sizing rule rather than calling zarr's private `_guess_chunks`: the
+    derivation base must sit inside the boundary the guard can observe.
+    """
+    root = 1
+    while (root + 1) ** 3 <= n:
+        root += 1
+    return root
+
+
+def resolve_chunk_grid(
+    ny: int,
+    nx: int,
+    itemsize: int,
+    *,
+    byte_target: int = CHUNK_BYTE_TARGET_BYTES,
+    override_t: int | None = None,
+) -> tuple[int, int, int]:
+    """The (timestep_min, y, x) zarr chunk grid for a per-scenario spatial timeseries.
+
+    THE INPUT SET IS THE WHOLE POINT. Every argument is constant across a scenario BY
+    CONSTRUCTION -- `ny`/`nx` come from the processed DEM, `itemsize` from the stored
+    dtype -- so every chapter of one scenario receives the SAME grid, including the
+    short final one, and including a chapter written by a LATER invocation on the
+    resume path. A chunk larger than a short chapter's extent is accepted by zarr.
+
+    WHAT IS DELIBERATELY NOT AN INPUT, and why naming it matters more than the rule:
+    the scenario's timestep COUNT. It is scenario-constant as a concept and is NOT
+    constant in any expression reachable here -- `df_outputs` is a glob of the raw
+    output directory and `clear_raw_for_timesteps` deletes exactly what that glob
+    enumerates after every chapter flush, so a resumed invocation sees a shorter
+    frame. Deriving from it would make a resumed writer declare a grid the existing
+    chapters do not carry, which is the defect this function exists to remove.
+    Neither is the flush size an input, for the same reason: it resolves from the
+    process rule's SLURM memory allocation and is constant within one invocation only.
+
+    WHY THE TOOLKIT OWNS THIS RATHER THAN CALLING zarr's `_guess_chunks`. The
+    chapter-set build guard keys on the TOOLKIT identity in both execution modes --
+    the git sha natively, the `org.hhemt.hhemt_sha` image label in container -- so it
+    is structurally incapable of noticing a zarr version change. A zarr-private
+    derivation base would sit OUTSIDE the only mechanism protecting chapter-set
+    consistency: a zarr patch bump would change the declared grid, the guard would not
+    fire because the toolkit sha is unchanged, and the merge's uniformity assert would
+    then refuse every resume against pre-bump chapters. A rule versioned with the
+    toolkit is fully inside that boundary -- changing it changes the toolkit sha.
+
+    All three axes are sized. A time chunk over FULL-EXTENT spatial axes cannot reach
+    any sane byte target at fine DEMs, because with the spatial axes whole one
+    timestep is the floor: 1.13 MiB at 3.5 m, 11.43 MiB at 1.1 m, 112.87 MiB at
+    0.35 m.
+
+    `override_t` is `analysis_config.process_timestep_chunk`, which is a read-locality
+    knob and nothing else. It replaces the time component only; the spatial components
+    stay derived, so no user value can re-introduce an extent-dependent grid.
+    """
+    cells = max(1, byte_target // max(1, itemsize))
+    side = max(1, _integer_cube_root(cells))
+    y = min(int(ny), side)
+    x = min(int(nx), side)
+    t = max(1, cells // (y * x))
+    if override_t is not None:
+        t = max(1, int(override_t))
+    return (t, y, x)
+
+
+def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) -> None:
     """STATES 4/5/6: concatenate flagged chapters into the unified store.
 
-    A flagless unified store is a merge that was interrupted; it is deleted and
-    re-merged rather than trusted, because nothing distinguishes it from a complete
-    one. The chapters are still present -- the interlock holds them until the
-    unified flag lands, which is what makes re-merge possible at all.
+    THE PUBLISH IS ATOMIC. `_publish_store_crash_safe` builds under a temp name and
+    renames, so `fname_out` is either absent or complete and an interrupted merge
+    leaves a `.tmp` sibling rather than a plausible-looking partial store at the
+    published path. That is what makes "the directory exists" mean "the write
+    finished" for every reader, none of which consults the completion flag. The
+    chapters are still present throughout -- the interlock holds them until the
+    unified flag lands, which is what makes a re-merge possible at all.
 
     CONTIGUITY IS ASSERTED, not assumed. `completed_chapters` admits an interior
     hole: a flag whose store was later removed leaves a gap, and concatenating
@@ -503,9 +551,6 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, analysis_dir=None) -
 
     final = Path(fname_out)
     flag = unified_flag_for(final)
-    if final.exists() and not flag.exists():
-        warnings.warn(f"Discarding un-flagged (interrupted) unified store {final}; re-merging.", stacklevel=2)
-        fast_rmtree(final, analysis_dir=analysis_dir)
     parts = completed_chapters(chapters)
     if not parts:
         raise ProcessingError(
@@ -527,22 +572,74 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, analysis_dir=None) -
         [xr.open_zarr(parts[k], consolidated=False) for k in sorted(parts)],
         dim="timestep_min",
     )
-    # `open_zarr` returns DASK-backed arrays chunked on each chapter's STORED zarr
-    # grid, not on the chapter extent -- so a 132-timestep chapter stored at chunk 17
-    # contributes (17 x7, 13) and the next chapter's chunks follow it, putting a SHORT
-    # chunk in the interior. Zarr permits a short FINAL chunk only, and the interior
-    # short chunk also straddles the inherited grid, which xarray >= 2026.4 refuses via
-    # validate_grid_chunks_alignment. Dropping `encoding['chunks']` alone does NOT fix
-    # this: it removes the target grid and leaves zarr to derive one from the same
-    # non-uniform dask chunks, which then fails the uniformity requirement instead.
-    # Making the concat-axis dask grid UNIFORM at the inherited length satisfies both
-    # and preserves the published store's chunking ON THE CONCAT AXIS. That scope is
-    # deliberate: this touches `timestep_min` only, and a NON-concat axis whose grid
-    # differs across chapters is NOT covered. `xr.concat` unifies a non-concat axis to
-    # the FINER grid while chapter 0's encoding survives, so the same refusal would
-    # fire if chapter 0 were the COARSER side. It cannot be, under this writer: chunk
-    # coarseness falls as a chapter's time extent grows, chapters flush at a threshold
-    # so only the LAST is short, and chapter 0 is therefore never strictly coarser.
+    # LOUD, NOT REPAIRED. With the grid declared once per scenario, a divergence
+    # arriving here means something upstream broke -- a partially-migrated chapter set,
+    # an operator-forced `allow_mixed_version_chapters`, a variable with different dims.
+    # `align_chunks=True` would rechunk it away and tell nobody, and `safe_chunks=False`
+    # is measured-corrupting (3.5-4.7% of cells silently to NaN, non-deterministically).
+    # A refusal naming the offending chapter and its grid is the correct instrument in a
+    # failure whose entire lesson is that silence is the danger. This FAILS CLOSED where
+    # a silent repair would succeed, and that is the intended trade.
+    # SCOPED TO THE NON-CONCAT AXES, and the scope is load-bearing in BOTH directions.
+    # The concat axis is legitimately repaired ten lines below by the _time_chunks
+    # unification, which this change RETAINS -- so asserting uniformity there would
+    # duplicate a live repair and contradict the passing test that pins it
+    # (test_merged_store_keeps_the_inherited_time_chunk_grid[measured-production-shape]
+    # merges chapters stored at time-chunk 17 and 3 and expects success). The non-concat
+    # axes are exactly what that repair does NOT cover -- the retired comment said so in
+    # its own words -- and are where the divergence that terminated a campaign lived.
+    #
+    # NO `chunks is not None` GUARD, and its absence is deliberate. `open_zarr` reports
+    # the STORED grid and a zarr store always has one: measured, a chapter written with
+    # NO declared encoding comes back carrying the grid zarr guessed for it, never None.
+    # A None-guard here would be a branch that cannot be entered, which is the defect
+    # class this round exists to remove.
+    _spatial: dict[str, set[tuple]] = {}
+    for _k in sorted(parts):
+        _chap = xr.open_zarr(parts[_k], consolidated=False)
+        try:
+            for _name, _var in _chap.data_vars.items():
+                _g = tuple(
+                    int(_c) for _c, _d in zip(_var.encoding["chunks"], _var.dims, strict=True) if _d != "timestep_min"
+                )
+                _spatial.setdefault(str(_name), set()).add(_g)
+        finally:
+            _chap.close()
+    _diverged = {_n: sorted(_g) for _n, _g in _spatial.items() if len(_g) > 1}
+    if _diverged:
+        raise ProcessingError(
+            operation="merge_chapters_to_unified",
+            filepath=str(chapters),
+            reason=(
+                f"chapter stores do not share one non-concat chunk grid: {_diverged}. Every "
+                "chapter of one store must declare the grid utils.resolve_chunk_grid returns "
+                "for this scenario, so a divergence here is an upstream fault, not something "
+                "to repair at the merge. Do NOT reach for safe_chunks=False -- it is measured "
+                "to write without raising while silently losing 3.5-4.7% of cells to NaN, "
+                "which in a flood-depth field is indistinguishable from dry ground. "
+                "Discard the chapter set with a force at stage='process' and re-run."
+            ),
+        )
+    # THE INVARIANT THIS RELIES ON, AND WHERE IT IS ENFORCED. Every chapter of one
+    # store declares the SAME chunk grid on ALL THREE axes, because the writer resolves
+    # it once per scenario from `utils.resolve_chunk_grid(ny, nx, itemsize)` -- inputs
+    # that are constant across a scenario BY CONSTRUCTION, not by habit. So the boundary
+    # union `xr.concat` forms across chapters is trivially uniform on every axis and
+    # needs no repair here. The assert below is what makes that a checked precondition
+    # rather than an assumption; the chunk unification that follows is retained as the
+    # mechanism that carries the declared grid onto the published store.
+    #
+    # WHAT THE PREVIOUS COMMENT GOT WRONG, recorded so it is not re-derived. It argued
+    # the non-concat-axis case away on two grounds, both falsified by measurement:
+    # `xr.concat` does NOT unify a non-concat axis to the finer grid (it forms the
+    # COMMON REFINEMENT, the union of both boundary sets, which is ragged and is what
+    # the writer refuses); and the refusal is INDIFFERENT to which chapter is coarser,
+    # because a boundary union of two non-nested grids is ragged in either direction.
+    # Measured: twelve chapters at (17,135,138) and one short chapter at (2,269,276) --
+    # INCOMPARABLE, neither strictly coarser. DO NOT re-derive safety here from which
+    # chapter is coarser, from a chapter's time extent, or from the flush threshold.
+    # The safety is that no divergence is created upstream, and the assert proves it.
+    #
     # Derive from data_vars ONLY -- coords carry their own grids and would send every
     # case down the fallback branch, collapsing the time axis to a single chunk.
     _time_chunks = {
@@ -557,12 +654,31 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, analysis_dir=None) -
             _v.encoding.pop("chunks", None)
             _v.encoding.pop("preferred_chunks", None)
         ds = ds.chunk({"timestep_min": min(_time_chunks)})
-    ds.to_zarr(final, mode="w", consolidated=False)
+    # PUBLISH ATOMICALLY. `_publish_store_crash_safe` guarantees that `final` is either
+    # ABSENT or a COMPLETE store, never an incomplete one -- so "the directory exists"
+    # means "the write finished", which is what every reader of this store already
+    # assumes (`_open` gates on `.exists()`) and what nothing previously made true. A
+    # raise inside `to_zarr` used to leave a valid, openable zarr group carrying
+    # coordinates and zero data variables at the published path.
+    #
+    # THIS IS THE EXISTING PRIMITIVE, NOT A NEW ONE, and reaching for it rather than
+    # hand-rolling a temp-and-rename inherits a trap: its step-0 recover-and-clear
+    # cannot be optimised away, because omitting it breaks the rename on the SECOND
+    # recovery run -- which is why a hand-rolled version would pass its own tests. It
+    # is already the publisher for write_zarr and write_datatree_zarr.
+    #
+    # The single-writer caveat is the helper's own and is not repaired here: reprocess
+    # runs with --nolock and the orchestrator gate refuses on a live DRIVER rather than
+    # live WORKERS, so two publishers can still reach one store. That degrades to a loud
+    # rename error, which is strictly better than the silent interleave it replaces.
+    _publish_store_crash_safe(lambda _dest: ds.to_zarr(_dest, mode="w", consolidated=False), final)
     tmp = flag.with_suffix(flag.suffix + ".tmp")
     tmp.write_text("ok", encoding="utf-8")
     os.replace(tmp, flag)
     # STATE 6: chapters die ONLY now, after the unified flag.
-    fast_rmtree(chapters, analysis_dir=analysis_dir)
+    from hhemt.du_sentinels import delete_and_account
+
+    delete_and_account([chapters], scope_dir=scenario_dir, scope="scenario")
 
 
 def fix_line_endings(file_path, target_ending="\n"):
@@ -954,7 +1070,12 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
 
 
 def return_dic_zarr_encodings(
-    ds: xr.Dataset, clevel: int = 5, *, store_float32: bool = False, time_chunk: int | None = None
+    ds: xr.Dataset,
+    clevel: int = 5,
+    *,
+    store_float32: bool = False,
+    time_chunk: int | None = None,
+    chunk_grid: tuple[int, int, int] | None = None,
 ) -> dict:
     """
     Create a dictionary of Zarr encodings for an xarray Dataset.
@@ -992,7 +1113,17 @@ def return_dic_zarr_encodings(
             enc = {"compressors": compressor}
             if store_float32 and dtype_kind == "f":
                 enc["dtype"] = "float32"
-            if time_chunk is not None and "timestep_min" in ds[var].dims:
+            if chunk_grid is not None and "timestep_min" in ds[var].dims:
+                # A DECLARED grid wins. The dims are matched BY NAME, never by
+                # position, so a variable whose axis order differs still receives the
+                # intended per-axis lengths; an axis the grid does not name keeps its
+                # full extent. Each length is clamped to the variable's own extent
+                # only where that is safe -- zarr accepts a chunk LARGER than the
+                # extent, and relying on that is what lets a short final chapter carry
+                # the same grid as its siblings.
+                _named = dict(zip(("timestep_min", "y", "x"), chunk_grid, strict=True))
+                enc["chunks"] = tuple(_named.get(d, s) for d, s in zip(ds[var].dims, ds[var].shape, strict=True))
+            elif time_chunk is not None and "timestep_min" in ds[var].dims:
                 ax = ds[var].dims.index("timestep_min")
                 chunks = list(ds[var].shape)
                 chunks[ax] = time_chunk
@@ -1353,7 +1484,6 @@ def write_datatree_zarr(
     tree: "xr.DataTree",
     fname_out: Path,
     compression_level: int = 5,
-    analysis_dir=None,
 ) -> None:
     """Write a DataTree to a hierarchical zarr store.
 
@@ -1374,11 +1504,10 @@ def write_datatree_zarr(
         _publish_store_crash_safe(
             lambda _dest: tree.to_zarr(_dest, mode="w", encoding=encoding, consolidated=False),
             fname_out,
-            analysis_dir=analysis_dir,
         )
 
 
-def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto", analysis_dir=None):
+def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
     encoding = return_dic_zarr_encodings(ds, compression_level)
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
@@ -1392,7 +1521,6 @@ def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto", an
         _publish_store_crash_safe(
             lambda _dest: ds.to_zarr(_dest, mode="w", encoding=encoding, consolidated=False),
             fname_out,
-            analysis_dir=analysis_dir,
         )
 
 
@@ -1496,17 +1624,48 @@ def convert_datetime_to_str(obj: Any) -> Any:
     return obj
 
 
-def delete_regenerable_figures(
+def sidecar_for(figure: Path) -> Path:
+    """The manifest sidecar `_figure_emission._emit_manifest_sidecar` writes for `figure`.
+
+    STEM-based, matching the single writer exactly: `foo.png` -> `foo.manifest.json`,
+    never `foo.png.manifest.json`. The suffix-appending form this replaces produced a
+    path the writer never creates, so every figure deletion silently orphaned its
+    sidecar. Keep this the only place the forward derivation is spelled.
+    """
+    return figure.parent / f"{figure.stem}.manifest.json"
+
+
+def figure_exists_for(sidecar: Path) -> bool:
+    """True when some non-sidecar file shares `sidecar`'s stem in its directory.
+
+    The extension is unknown at this end (both `.png` and `.html` figures are emitted),
+    so the probe is a glob -- and the sidecar-exclusion is load-bearing rather than
+    tidy: `stem + ".*"` matches the sidecar itself, so without the filter this returns
+    True unconditionally and the guards that consume it can never fire.
+    """
+    stem = sidecar.name.removesuffix(".manifest.json")
+    return any(p for p in sidecar.parent.glob(stem + ".*") if not p.name.endswith(".manifest.json"))
+
+
+def select_regenerable_figures(
     analysis_dir,
     root,
     *,
-    dry_run: bool = False,
     keep: "Callable[[Path], bool] | None" = None,
-    on_delete: "Callable[[Path], None] | None" = None,
-) -> int:
-    """Delete regenerable figures under `root`, sparing unregenerable subtrees.
+    on_select: "Callable[[Path], None] | None" = None,
+) -> "list[Path]":
+    """Select regenerable figures under `root`, sparing unregenerable subtrees.
 
-    THE ONE PLACE THIS CODEBASE DELETES FIGURES. Three callers route through it:
+    THE ONE PLACE THIS CODEBASE DECIDES WHICH FIGURES MAY BE DELETED, and the only
+    place the figure/sidecar pairing is spelled. It DELETES NOTHING: it returns the
+    deletion target list (each eligible figure, followed by its sidecar when one
+    exists), and the caller hands that list to ``du_sentinels.delete_and_account``,
+    which removes the paths and performs the single sentinel write. There is no
+    ``dry_run`` parameter because selection has no side effect -- a selector that
+    returned an empty list on a dry run would be lying about what is eligible -- so
+    the dry-run gate lives at each call site, in one expression per site.
+
+    Three callers route through it:
     Analysis._invalidate_downstream_flags' reprocess pre-delete, workflow.py's
     force-rerun render floor, and bundle/_emit.py's undeclared-figure prune. Before
     this helper the eda exemption was present at two of those three and absent at the
@@ -1541,19 +1700,19 @@ def delete_regenerable_figures(
     loud fail-open into a SILENT no-op: zero deletions, zero bytes, no exception,
     and on the preserved-flag arm the plot rules would simply stop re-firing.
 
-    DRY RUN DELETES NOTHING AND RETURNS ZERO. The consequence is that a previewed
-    DAG under-reports the plot rules a real run would fire, because on the
-    preserved-flag arm an absent output is the only remaining re-fire trigger. That
-    cost was already weighed and accepted for this exact member at
-    analysis.py:3765-3771 -- "gates only the render-stage FIGURE deletion, which is
-    the member with zero preview yield and an unbounded cost". Cite that rather than
-    re-deriving it.
+    THE DRY-RUN GATE IS THE CALLER'S. The cost of suppressing the deletion is that a
+    previewed DAG under-reports the plot rules a real run would fire, because on the
+    preserved-flag arm an absent output is the only remaining re-fire trigger. Which
+    way that trade falls is governed by the `reprocess dry_run performs no destructive
+    mutation` stipulation and is under re-verification; this function takes no
+    position on it and each call site carries the decision in one expression.
 
-    ORPHAN SIDECARS SURVIVE. A `.manifest.json` is skipped at the top of the walk
-    and is deleted only as the pair of a figure deleted in the same iteration, so a
-    sidecar whose figure is already gone is reached by neither branch. That matches
-    what workflow.py and bundle/_emit.py already did; whether an orphan sidecar is
-    garbage or retained provenance is a question nothing here answers.
+    ORPHAN SIDECARS SURVIVE. A `.manifest.json` is skipped at the top of the walk and
+    is selected only as the pair of a figure selected in the same iteration, so a
+    sidecar whose figure is already gone is reached by neither branch. The PAIRING is
+    `sidecar_for`, which is stem-based and therefore matches what the single writer
+    actually emits; the suffix-appending form this replaced named a path that never
+    existed, so every figure deletion silently orphaned its sidecar.
 
     Parameters
     ----------
@@ -1561,23 +1720,24 @@ def delete_regenerable_figures(
         Root the registry entries are relative to. Must be `root` or an ancestor of
         it; anything else raises.
     root : Path
-        Directory walked. Absent root is not an error; the helper returns 0.
-    dry_run : bool
-        When True, nothing is unlinked and the return is 0.
+        Directory walked. Absent root is not an error; the helper returns an empty
+        list.
     keep : callable, optional
         Extra per-path eligibility test. Returning True spares the path. Used by
         bundle/_emit.py to spare figures the Snakefile still declares; the other two
         callers pass nothing.
-    on_delete : callable, optional
-        Invoked with each figure path immediately before it is unlinked. Used for
-        per-figure logging; never for side effects the deletion depends on.
+    on_select : callable, optional
+        Invoked with each eligible FIGURE path (never a sidecar) as it is selected.
+        Used for per-figure logging and for the bundle prune's `removed` list; never
+        for side effects the deletion depends on.
 
     Returns
     -------
-    int
-        Total bytes freed, figures plus their `.manifest.json` sidecars. The caller
-        composes its own `child_deltas` and calls `decrement_scope_sentinel` itself,
-        so that contract stays entirely caller-side.
+    list[Path]
+        The deletion targets, in walk order: each eligible figure followed by its
+        sidecar when one exists. Hand this to
+        ``du_sentinels.delete_and_account(targets, scope_dir=..., scope=...)``, which
+        deletes, measures what it deleted, and performs the single sentinel write.
 
     Raises
     ------
@@ -1590,14 +1750,14 @@ def delete_regenerable_figures(
     root = Path(root)
     if not (root == analysis_dir or root.is_relative_to(analysis_dir)):
         raise ValueError(
-            f"delete_regenerable_figures: root {root} is not under analysis_dir "
+            f"select_regenerable_figures: root {root} is not under analysis_dir "
             f"{analysis_dir}, so no UNREGENERABLE_ANALYSIS_SUBTREES entry could "
             f"match and every walked path would be eligible for deletion. This is a "
             f"caller error, not a tree state."
         )
-    if dry_run or not root.exists():
-        return 0
-    freed = 0
+    if not root.exists():
+        return []
+    targets: list[Path] = []
     for path in sorted(root.rglob("*")):
         if path.is_dir() or path.name.endswith(".manifest.json"):
             continue
@@ -1606,11 +1766,10 @@ def delete_regenerable_figures(
             continue
         if keep is not None and keep(path):
             continue
-        if on_delete is not None:
-            on_delete(path)
-        sidecar = path.with_suffix(path.suffix + ".manifest.json")
-        freed += path.stat().st_size if path.exists() else 0
-        freed += sidecar.stat().st_size if sidecar.exists() else 0
-        path.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
-        sidecar.unlink(missing_ok=True)  # EXEMPT-DU: du-handled-by-decrement
-    return freed
+        if on_select is not None:
+            on_select(path)
+        sidecar = sidecar_for(path)
+        targets.append(path)
+        if sidecar.exists():
+            targets.append(sidecar)
+    return targets

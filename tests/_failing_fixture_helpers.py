@@ -284,9 +284,21 @@ def inject_multi_sim_failures_at_paths(paths: dict) -> None:
     # Delete the master DataTree (Option B's canonical artifact). Under
     # the legacy two-tier consolidation this helper deleted per-mode
     # flat zarrs; those no longer exist post-Option-B.
+    # The literal is CORRECT and must not be routed through resolve_experiment_tree:
+    # analysis.py:383 sets `analysis_paths_kwargs["analysis_datatree_zarr"] = analysis_dir /
+    # "analysis_datatree.zarr"`, and that same field is what processing_analysis.py:207
+    # WRITES and analysis_validation.py:334 CHECKS. The name reads as a retired alias against
+    # the V0021 vocabulary, but producer and check agree on it, so the multisim tree really
+    # does carry it. Resolving here would pick experiment_datatree.zarr when present and
+    # delete a store the check never looks at.
+    # Only the SKIP is wrong: `if ... .exists()` made a missing store a silent no-op.
     target = analysis_dir / "analysis_datatree.zarr"
-    if target.exists():
-        inject_summary_file_missing(target)
+    assert target.exists(), (
+        f"expected {target.name} under {analysis_dir} (the store analysis.py:383 names, "
+        f"processing_analysis.py:207 writes and analysis_validation.py:334 checks); tree "
+        f"carries {sorted(p.name for p in analysis_dir.glob('*datatree.zarr')) or 'no root store'}"
+    )
+    inject_summary_file_missing(target)
 
 
 def inject_sensitivity_failures_at_paths(paths: dict) -> None:
@@ -297,7 +309,7 @@ def inject_sensitivity_failures_at_paths(paths: dict) -> None:
     - member_<second> / event_*: simulation run failure (A2)
     - member_<third> / event_*: timeseries processing failure (A3)
     - System: SWMM compilation marked failed (S1)
-    - System: sensitivity_datatree.zarr deleted (S2)
+    - System: experiment_datatree.zarr deleted (S2)
     """
     analysis_dir = paths["analysis_dir"]
     system_dir = paths["system_dir"]
@@ -332,7 +344,20 @@ def inject_sensitivity_failures_at_paths(paths: dict) -> None:
     sys_log = system_dir / "system_log.json"
     if sys_log.exists():
         _mutate_log_field(sys_log, "compilation_swmm_successful", False)
-    # Delete sensitivity_datatree.zarr if present
-    sens_zarr = analysis_dir / "sensitivity_datatree.zarr"
-    if sens_zarr.exists():
-        inject_summary_file_missing(sens_zarr)
+    # Delete the master store the CHECK reads. The name mirrors
+    # analysis.py:387 (`analysis_paths_kwargs["sensitivity_datatree_zarr"] =
+    # analysis_dir / "experiment_datatree.zarr"`), which is the SAME field
+    # sensitivity_analysis.py:1625 writes and analysis_validation.py:340 reads. Mirror the
+    # FIELD, never resolve_experiment_tree: the resolver's priority order can select a
+    # different store than the one the check looks at, which would delete the wrong tree
+    # and let the check report missing on a store that never existed.
+    # The old literal `sensitivity_datatree.zarr` is the pre-V0021 name, so this mutation
+    # had become a silent NO-OP; FAIL LOUD instead, because a skipped injection and a
+    # working one are indistinguishable at every downstream assertion.
+    sens_zarr = analysis_dir / "experiment_datatree.zarr"
+    assert sens_zarr.exists(), (
+        f"expected {sens_zarr.name} under {analysis_dir} (the store analysis.py:387 names "
+        f"and analysis_validation.py:340 checks); tree carries "
+        f"{sorted(p.name for p in analysis_dir.glob('*datatree.zarr')) or 'no root store'}"
+    )
+    inject_summary_file_missing(sens_zarr)

@@ -21,7 +21,7 @@ def _write_hpc_yaml(path: Path, *, max_gpu: int = 8) -> Path:
     path.write_text(
         textwrap.dedent(
             f"""\
-            system_name: test_synth_cluster
+            hpc_name: test_synth_cluster
             partitions:
               gpu-a6000:
                 max_runtime: 4320

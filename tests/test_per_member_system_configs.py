@@ -32,6 +32,12 @@ from hhemt.validation import (
 )
 
 
+def _touch(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("test")
+    return path
+
+
 def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilation_backend, system_config_yaml: Path):
     """Build a stub TRITONSWMM_system with just the attrs the dedup logic reads."""
     _fields = {
@@ -375,31 +381,37 @@ def test_phase3_member_id_to_target_id_map_reverses_target_membership():
 # =========================================================================
 
 
-def _minimal_system_dict() -> dict:
+def _minimal_system_dict(tmp_path: Path) -> dict:
     """Return a dict satisfying all required system_config fields.
 
-    Paths are placeholder strings — Pydantic only validates path-ness, not file
-    existence. Tests call ``_validate_per_member_system_configs`` directly, bypassing
-    ``_validate_system_paths`` (which would flag missing files).
+    Every declared input is MATERIALIZED under ``tmp_path`` via ``_touch``, because
+    ``cfgBaseModel._check_paths_exist`` validates existence on the YAML entry path
+    (it ran ``mode="before"`` and was inert on strings until ce2bcc57 armed it). A
+    placeholder string is therefore no longer a valid stand-in here, and declaring a
+    non-runnable ``existence`` intent would not help: the per-member YAMLs this dict
+    also backs are loaded by ``_validate_per_member_system_configs`` through
+    ``load_system_config``, a PREFLIGHT path that must stay strict. Materializing is
+    what satisfies both consumers; see ``test_config_validation._minimal_system_config_dict``
+    for the same pattern.
     """
     return {
         "system_directory": "/tmp/triton_swmm_test/system",
-        "watershed_gis_polygon": "external/watershed.geojson",
-        "DEM_fullres": "external/dem.tif",
-        "SWMM_hydraulics": "external/swmm_hydraulics.inp",
-        "SWMM_hydrology": "external/swmm_hydrology.inp",
-        "SWMM_full": "external/swmm_full.inp",
-        "landuse_lookup_file": "external/landuse_lookup.csv",
-        "landuse_raster": "external/landuse.tif",
+        "watershed_gis_polygon": str(_touch(tmp_path / "inputs" / "watershed.geojson")),
+        "DEM_fullres": str(_touch(tmp_path / "inputs" / "dem.tif")),
+        "SWMM_hydraulics": str(_touch(tmp_path / "inputs" / "swmm_hydraulics.inp")),
+        "SWMM_hydrology": str(_touch(tmp_path / "inputs" / "swmm_hydrology.inp")),
+        "SWMM_full": str(_touch(tmp_path / "inputs" / "swmm_full.inp")),
+        "landuse_lookup_file": str(_touch(tmp_path / "inputs" / "landuse_lookup.csv")),
+        "landuse_raster": str(_touch(tmp_path / "inputs" / "landuse.tif")),
         "landuse_description_colname": "landuse_description",
         "landuse_lookup_class_id_colname": "landuse_class_id",
         "landuse_lookup_mannings_colname": "mannings",
-        "subcatchment_raingage_mapping": "external/subcatchment_raingage_mapping.csv",
+        "subcatchment_raingage_mapping": str(_touch(tmp_path / "inputs" / "subcatchment_raingage_mapping.csv")),
         "subcatchment_raingage_mapping_gage_id_colname": "raingage_id",
         "TRITONSWMM_software_directory": "/tmp/triton_swmm_test/tritonswmm_software",
         "TRITONSWMM_git_URL": "https://code.ornl.gov/hydro/triton.git",
         "TRITONSWMM_branch_key": "15eb18a5d25afe5da295cb4b559a62669dbe5bc3",
-        "triton_swmm_configuration_template": "external/tritonswmm.cfg",
+        "triton_swmm_configuration_template": str(_touch(tmp_path / "inputs" / "tritonswmm.cfg")),
         "toggle_use_swmm_for_hydrology": True,
         "toggle_use_constant_mannings": False,
         "toggle_triton_model": True,
@@ -416,19 +428,27 @@ def _minimal_system_dict() -> dict:
 
 def _write_system_yaml(dest: Path, **overrides) -> Path:
     """Write a minimal system config YAML to ``dest`` with optional field overrides."""
-    base = _minimal_system_dict()
+    base = _minimal_system_dict(dest.parent)
     base.update(overrides)
     dest.write_text(yaml.safe_dump(base))
     return dest
 
 
-def _master_system_for_test(tmp_path: Path = None) -> object:
-    """Return a master cfg_system instance with toggles_triton+tritonswmm+swmm = True."""
-    # Use a one-shot tmp file; the helper only runs Pydantic validation, no I/O.
+def _master_system_for_test(tmp_path: Path) -> object:
+    """Return a master cfg_system instance with toggles_triton+tritonswmm+swmm = True.
+
+    ``tmp_path`` is REQUIRED (it had a vestigial ``= None`` default the body ignored):
+    ``_minimal_system_dict`` materializes the declared inputs under it, and a ``None``
+    would surface as a TypeError inside ``_touch`` rather than at the call site.
+    """
+    # Writes a one-shot YAML to the SYSTEM TEMP DIR (NamedTemporaryFile, unlinked in the
+    # finally below) -- what lands under tmp_path is the nine declared inputs that YAML
+    # names. Loads it through the STRICT loader on purpose: this helper's whole job is to
+    # prove a runnable master config validates.
     import tempfile
 
     with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as fh:
-        yaml.safe_dump(_minimal_system_dict(), fh)
+        yaml.safe_dump(_minimal_system_dict(tmp_path), fh)
         fpath = Path(fh.name)
     try:
         return load_system_config(fpath)
@@ -444,7 +464,7 @@ def _cfg_analysis_stub(csv_path: Path) -> SimpleNamespace:
 def test_phase4_validator_skips_when_sensitivity_analysis_off(tmp_path):
     """No CSV read, no errors when toggle_sensitivity_analysis=False."""
     result = ValidationResult(context="test")
-    cfg_system = _master_system_for_test()
+    cfg_system = _master_system_for_test(tmp_path)
     cfg_analysis = SimpleNamespace(toggle_sensitivity_analysis=False, sensitivity_analysis=tmp_path / "irrelevant.csv")
     _validate_per_member_system_configs(cfg_system, cfg_analysis, result)
     assert result.is_valid
@@ -456,7 +476,7 @@ def test_phase4_validator_skips_when_no_system_config_yaml_column(tmp_path):
     csv_path = tmp_path / "no_col.csv"
     csv_path.write_text("member_id,run_mode\n0,mpi\n1,openmp\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
+    _validate_per_member_system_configs(_master_system_for_test(tmp_path), _cfg_analysis_stub(csv_path), result)
     assert result.is_valid
 
 
@@ -465,7 +485,7 @@ def test_phase4_validator_flags_missing_yaml(tmp_path):
     csv_path = tmp_path / "missing.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{tmp_path / 'does_not_exist.yaml'}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
+    _validate_per_member_system_configs(_master_system_for_test(tmp_path), _cfg_analysis_stub(csv_path), result)
     assert not result.is_valid
     errors = [str(e) for e in result.errors]
     assert any("does not exist" in msg for msg in errors)
@@ -479,7 +499,7 @@ def test_phase4_validator_flags_invalid_yaml_via_pydantic(tmp_path):
     csv_path = tmp_path / "bad.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{bad_yaml}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
+    _validate_per_member_system_configs(_master_system_for_test(tmp_path), _cfg_analysis_stub(csv_path), result)
     assert not result.is_valid
     assert any("Failed to load" in str(e) for e in result.errors)
 
@@ -497,7 +517,7 @@ def test_phase4_validator_flags_model_toggle_mismatch(tmp_path):
     csv_path = tmp_path / "toggles.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{sub_yaml}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
+    _validate_per_member_system_configs(_master_system_for_test(tmp_path), _cfg_analysis_stub(csv_path), result)
     assert not result.is_valid
     assert any("model toggles" in str(e).lower() for e in result.errors)
 
@@ -508,7 +528,7 @@ def test_phase4_validator_passes_when_toggles_match_master(tmp_path):
     csv_path = tmp_path / "valid.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{sub_yaml}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
+    _validate_per_member_system_configs(_master_system_for_test(tmp_path), _cfg_analysis_stub(csv_path), result)
     assert result.is_valid, [str(e) for e in result.errors]
 
 
@@ -532,7 +552,7 @@ def test_phase4_validator_flags_canonical_yaml_divergence_post_dedup(tmp_path):
     csv_path = tmp_path / "dedup_divergence.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{yaml_a}\n1,{yaml_b}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
+    _validate_per_member_system_configs(_master_system_for_test(tmp_path), _cfg_analysis_stub(csv_path), result)
     assert not result.is_valid
     assert any("collapse to the same compile target" in str(e) for e in result.errors)
 
@@ -544,7 +564,7 @@ def test_phase4_validator_dedup_allows_identical_non_key_fields(tmp_path):
     csv_path = tmp_path / "dedup_ok.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{yaml_a}\n1,{yaml_b}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
+    _validate_per_member_system_configs(_master_system_for_test(tmp_path), _cfg_analysis_stub(csv_path), result)
     assert result.is_valid, [str(e) for e in result.errors]
 
 
@@ -559,9 +579,9 @@ def test_phase4_validator_two_resolutions_no_dedup_collision(tmp_path):
     yaml_10 = _write_system_yaml(tmp_path / "sys_10m.yaml", target_dem_resolution=10.0)
     yaml_20 = _write_system_yaml(tmp_path / "sys_20m.yaml", target_dem_resolution=20.0)
     csv_path = tmp_path / "two_res.csv"
-    csv_path.write_text("member_id,run_mode,system_config_yaml\n" f"0,mpi,{yaml_10}\n" f"1,openmp,{yaml_20}\n")
+    csv_path.write_text(f"member_id,run_mode,system_config_yaml\n0,mpi,{yaml_10}\n1,openmp,{yaml_20}\n")
     result = ValidationResult(context="test")
-    _validate_per_member_system_configs(_master_system_for_test(), _cfg_analysis_stub(csv_path), result)
+    _validate_per_member_system_configs(_master_system_for_test(tmp_path), _cfg_analysis_stub(csv_path), result)
     assert result.is_valid, [str(e) for e in result.errors]
 
 
@@ -571,7 +591,7 @@ def test_phase4_preflight_invokes_per_member_validator(tmp_path, monkeypatch):
     csv_path = tmp_path / "wired.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{yaml_bad}\n")
 
-    cfg_system = _master_system_for_test()
+    cfg_system = _master_system_for_test(tmp_path)
     cfg_analysis_stub = SimpleNamespace(
         toggle_sensitivity_analysis=True,
         sensitivity_analysis=csv_path,

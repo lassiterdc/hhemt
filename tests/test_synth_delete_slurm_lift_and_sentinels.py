@@ -124,9 +124,9 @@ def test_delete_scenario_runner_no_op_without_slurm_job_id(tmp_path, monkeypatch
     runner.main(["--event-id", "scen_a", "--analysis-dir", str(analysis_dir)])
 
     submitted_dir = analysis_dir / "_status" / "_submitted"
-    assert not submitted_dir.exists() or not any(
-        submitted_dir.iterdir()
-    ), "Local-run path should not write any submission sentinels"
+    assert not submitted_dir.exists() or not any(submitted_dir.iterdir()), (
+        "Local-run path should not write any submission sentinels"
+    )
 
 
 def test_delete_analysis_runner_writes_and_cleans_sentinel_on_success(tmp_path, slurm_env):

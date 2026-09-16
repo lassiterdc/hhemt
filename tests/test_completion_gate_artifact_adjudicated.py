@@ -89,10 +89,19 @@ def test_rpt_status_on_absent_and_empty_files_testifies_to_nothing(tmp_path):
 # --------------------------------------------------------------------------- Spec 14
 
 
-def _gate(tmp_path, *, recorded, rpt: Path | None, model_type="swmm", marker_text=""):
-    """Drive the REAL `_coupled_swmm_report_finalized` -- deliberately NOT stubbed."""
+def _gate(tmp_path, *, recorded, rpt: Path | None, model_type="swmm", marker_text="", perf=True):
+    """Drive the REAL `_coupled_swmm_report_finalized` -- deliberately NOT stubbed.
+
+    `perf` controls whether THIS scenario's own `out_triton/performance.txt` exists. It
+    defaults True so every pre-existing swmm case is unchanged in outcome: the swmm arm
+    returns before the artifact check, and `model_run_completed`'s divergence WARNING
+    fires only for tritonswmm, so no swmm case reads `performance_file`.
+    """
     log_file = tmp_path / f"model_{model_type}.log"
     log_file.write_text(marker_text)
+    perf_path = tmp_path / "performance.txt"
+    if perf:
+        perf_path.write_text("%Rank, Compute, MPI, IO, Resize, SWMM, Other, Simulation, Init, Total\n")
     fake_log = types.SimpleNamespace(simulation_completed=types.SimpleNamespace(get=lambda: recorded))
     fake_self = types.SimpleNamespace(
         _scenario=types.SimpleNamespace(
@@ -100,6 +109,10 @@ def _gate(tmp_path, *, recorded, rpt: Path | None, model_type="swmm", marker_tex
             scen_paths=types.SimpleNamespace(swmm_full_rpt_file=rpt),
         ),
         _analysis_level_model_logfile=lambda mt: log_file,
+        # The triton arm reads a per-scenario artifact in addition to the log marker.
+        # `*_a, **_k` because production passes model_type by KEYWORD at both call sites
+        # but a future positional call must not break the fake.
+        performance_file=lambda *_a, **_k: perf_path,
     )
     fake_self._coupled_swmm_report_finalized = lambda mt: TRITONSWMM_run._coupled_swmm_report_finalized(fake_self, mt)
     return TRITONSWMM_run.model_run_completed(fake_self, model_type)
@@ -122,7 +135,10 @@ def test_triton_true_field_with_no_completion_marker_is_NOT_complete(tmp_path):
     assert _gate(tmp_path, recorded=True, rpt=None, model_type="triton") is False
 
 
-def test_triton_true_field_with_completion_marker_is_complete(tmp_path):
+def test_triton_true_field_with_completion_marker_and_artifact_is_complete(tmp_path):
+    """`perf=True` is now EXPLICIT rather than incidental: the triton arm requires the
+    marker AND this scenario's own performance.txt, so the passing case must supply both.
+    Guards the valid population against a fix that rejected everything."""
     assert (
         _gate(
             tmp_path,
@@ -130,8 +146,34 @@ def test_triton_true_field_with_completion_marker_is_complete(tmp_path):
             rpt=None,
             model_type="triton",
             marker_text="... Simulation ends\n",
+            perf=True,
         )
         is True
+    )
+
+
+def test_triton_marker_without_this_scenarios_artifact_is_NOT_complete(tmp_path):
+    """THE defect-2 regression, at unit level and without a simulation.
+
+    The run log is keyed on `event_iloc` while the scenario is keyed on its stable slug,
+    so any non-append edit to `weather_events_to_simulate` renumbers the ordinals and a
+    newly added event inherits the marker the previous occupant of that row position left
+    behind. Pre-fix the triton arm re-read that very log and returned True, the runner
+    logged "already completed, skipping execution", emitted the completion flag for a sim
+    that never ran, and `process_triton` died one rung later on an absent performance/.
+
+    The assertion is on a RETURNED VALUE, per this module's header: a message assertion
+    would be green pre-fix by construction."""
+    assert (
+        _gate(
+            tmp_path,
+            recorded=True,
+            rpt=None,
+            model_type="triton",
+            marker_text="... Simulation ends\n",
+            perf=False,
+        )
+        is False
     )
 
 

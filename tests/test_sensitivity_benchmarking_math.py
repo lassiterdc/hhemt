@@ -574,14 +574,14 @@ class TestModelArmEncoding:
             for fig in (self._panel12_fig(arm), self._panel34_fig(arm)):
                 markers = self._marker_traces(fig)
                 assert markers, "expected at least one marker trace"
-                assert not any(
-                    str(t.marker.symbol).endswith("-open") for t in markers
-                ), f"arm-conditioned open-fill survived for model_arm={arm!r}"
+                assert not any(str(t.marker.symbol).endswith("-open") for t in markers), (
+                    f"arm-conditioned open-fill survived for model_arm={arm!r}"
+                )
                 lines = self._connector_lines(fig)
                 assert lines, "expected a connector line for the multi-point group"
-                assert all(
-                    t.line.dash == "solid" for t in lines
-                ), f"connector dash is not the constant single-arm style for {arm!r}"
+                assert all(t.line.dash == "solid" for t in lines), (
+                    f"connector dash is not the constant single-arm style for {arm!r}"
+                )
 
 
 def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=200.0):
@@ -667,9 +667,9 @@ def test_collect_rows_result_is_unchanged_when_the_ledger_csv_is_absent(tmp_path
     with_csv, _ = _collect_rows(_stub_analysis(tmp_path / "a"), "performance.Total")
     without_csv, _ = _collect_rows(_stub_analysis(tmp_path / "b", write_csv=False), "performance.Total")
     assert with_csv[0]["value"] == pytest.approx(200.0)
-    assert without_csv[0]["value"] == pytest.approx(
-        with_csv[0]["value"]
-    ), "the presence of scenario_status.csv must not influence any plotted value"
+    assert without_csv[0]["value"] == pytest.approx(with_csv[0]["value"]), (
+        "the presence of scenario_status.csv must not influence any plotted value"
+    )
 
 
 def test_collect_rows_reads_simulation_from_datatree_like_every_other_column(tmp_path):
@@ -942,9 +942,9 @@ def test_plotly_panel_labels_describe_the_column_each_panel_actually_plots(indep
     # --- The two groups must be INDEPENDENT: no top-row axis may match a bottom-row axis.
     bottom_refs = {_ref(3), _ref(4)}
     for row in (1, 2):
-        assert (
-            (fig.get_subplot(row, 1).xaxis.matches or _ref(row)) not in bottom_refs
-        ), f"row {row} is linked to a scaling-panel axis; the top pair would be forced onto the n_devices range"
+        assert (fig.get_subplot(row, 1).xaxis.matches or _ref(row)) not in bottom_refs, (
+            f"row {row} is linked to a scaling-panel axis; the top pair would be forced onto the n_devices range"
+        )
 
 
 def test_matplotlib_panels_form_two_independent_shared_groups_with_their_own_labels():
@@ -1113,9 +1113,9 @@ def test_a_gpu_token_shares_colour_and_symbol_with_cpu_mpi():
 
     for gv in ("gpu (a6000)", "gpu (a100-80)"):
         assert _colour_of(gv) == _colour_of("mpi"), f"{gv} does not share CPU-MPI's colour"
-        assert _decomposition_symbol(gv, **_DECOMP_KW[gv]) == _decomposition_symbol(
-            "mpi", **_DECOMP_KW["mpi"]
-        ), f"{gv} does not share CPU-MPI's symbol"
+        assert _decomposition_symbol(gv, **_DECOMP_KW[gv]) == _decomposition_symbol("mpi", **_DECOMP_KW["mpi"]), (
+            f"{gv} does not share CPU-MPI's symbol"
+        )
 
 
 def test_every_decomposition_is_absolutely_set_independent():
@@ -1132,9 +1132,9 @@ def test_every_decomposition_is_absolutely_set_independent():
     from hhemt.report_renderers.sensitivity_benchmarking import _decomposition_color
 
     params = set(inspect.signature(_decomposition_color).parameters)
-    assert not (
-        params & {"all_groups", "color_groups", "groups"}
-    ), f"_decomposition_color reacquired a group-set parameter: {sorted(params)}"
+    assert not (params & {"all_groups", "color_groups", "groups"}), (
+        f"_decomposition_color reacquired a group-set parameter: {sorted(params)}"
+    )
 
 
 def test_a_palette_too_short_for_the_declared_indices_raises():
@@ -1172,9 +1172,9 @@ def test_reaching_a_weak_line_slot_is_announced():
         warnings.simplefilter("always")
         rendered = {_colour_of(g, pal=tuple(pal)) for g in _REAL_MATRIX_GROUPS}
     assert rendered & _WEAK, f"fixture no longer reaches a weak slot; rendered {sorted(rendered)}"
-    assert any(
-        "poor LINE colour" in str(w.message) for w in caught
-    ), f"weak slot reached with no warning; warnings seen: {[str(w.message) for w in caught]}"
+    assert any("poor LINE colour" in str(w.message) for w in caught), (
+        f"weak slot reached with no warning; warnings seen: {[str(w.message) for w in caught]}"
+    )
 
 
 def test_colour_axis_and_column_axis_are_deliberately_different_axes():
@@ -1249,13 +1249,13 @@ def test_scaling_line_anchor_is_the_raw_minimum_not_the_replicate_average():
     speedup_pg, _eff_pg, speedup_all, _eff_all = _compute_scaling_series(_scaling_frame())
 
     line_serial = _xy(speedup_pg["serial"])
-    assert line_serial == [
-        (1, pytest.approx(100.0 / 105.0))
-    ], f"serial line must divide the RAW anchor (100.0) by the REPLICATE MEAN (105.0); got {line_serial}"
+    assert line_serial == [(1, pytest.approx(100.0 / 105.0))], (
+        f"serial line must divide the RAW anchor (100.0) by the REPLICATE MEAN (105.0); got {line_serial}"
+    )
     marker_ys = [y for _n, y, _m in speedup_all["serial"]]
-    assert max(marker_ys) == pytest.approx(
-        1.0
-    ), f"the fastest raw run at min-N must be exactly self-anchored; got {marker_ys}"
+    assert max(marker_ys) == pytest.approx(1.0), (
+        f"the fastest raw run at min-N must be exactly self-anchored; got {marker_ys}"
+    )
     assert max(marker_ys) <= 1.0 + 1e-12, "no marker may float above its own family reference"
 
 
@@ -1269,9 +1269,9 @@ def test_scaling_line_takes_the_per_n_minimum_over_replicate_averaged_configs():
     """
     speedup_pg, _eff_pg, _speedup_all, _eff_all = _compute_scaling_series(_scaling_frame())
 
-    assert _xy(speedup_pg["hybrid"]) == [
-        (4, pytest.approx(100.0 / 45.0))
-    ], "the line vertex must be the best AVERAGED config (45.0), not the luckiest raw run (40.0)"
+    assert _xy(speedup_pg["hybrid"]) == [(4, pytest.approx(100.0 / 45.0))], (
+        "the line vertex must be the best AVERAGED config (45.0), not the luckiest raw run (40.0)"
+    )
     gpu_ns = [n for n, _y in _xy(speedup_pg["gpu (a100-80)"])]
     assert gpu_ns == [1, 2], f"the line carries one vertex per device count; got x = {gpu_ns}"
 
@@ -1286,9 +1286,9 @@ def test_scaling_anchor_is_per_hardware_family_not_a_global_serial_anchor():
     speedup_pg, _eff_pg, _speedup_all, _eff_all = _compute_scaling_series(_scaling_frame())
 
     gpu_at_2 = dict(_xy(speedup_pg["gpu (a100-80)"]))[2]
-    assert gpu_at_2 == pytest.approx(
-        20.0 / 15.0
-    ), f"gpu must anchor on the gpu family's own 20.0, not the serial 100.0; got {gpu_at_2}"
+    assert gpu_at_2 == pytest.approx(20.0 / 15.0), (
+        f"gpu must anchor on the gpu family's own 20.0, not the serial 100.0; got {gpu_at_2}"
+    )
     assert gpu_at_2 != pytest.approx(100.0 / 15.0)
 
 
@@ -1346,9 +1346,9 @@ def test_scaling_falls_back_to_the_serial_anchor_when_no_family_resolves(monkeyp
     speedup_pg, strong_eff_pg, speedup_all, efficiency_all = _compute_scaling_series(_scaling_frame())
 
     gpu_marker_at_2 = [y for n, y, _m in speedup_all["gpu (a100-80)"] if n == 2]
-    assert gpu_marker_at_2 == [
-        pytest.approx(100.0 / 15.0)
-    ], f"the else arm anchors on the serial baseline (100.0); got {gpu_marker_at_2}"
+    assert gpu_marker_at_2 == [pytest.approx(100.0 / 15.0)], (
+        f"the else arm anchors on the serial baseline (100.0); got {gpu_marker_at_2}"
+    )
     assert dict(_xy(speedup_pg["gpu (a100-80)"]))[2] == pytest.approx(100.0 / 15.0)
     assert dict(_xy(strong_eff_pg["gpu (a100-80)"]))[2] == pytest.approx(100.0 / (2 * 15.0))
     assert isinstance(efficiency_all, dict)

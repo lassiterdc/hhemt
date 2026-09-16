@@ -22,7 +22,7 @@ def _write_hpc_yaml(path: Path, *, max_gpu: int = 8) -> Path:
     path.write_text(
         textwrap.dedent(
             f"""\
-            system_name: test_synth_cluster
+            hpc_name: test_synth_cluster
             partitions:
               gpu-a6000:
                 max_runtime: 4320
@@ -117,9 +117,9 @@ def test_coupling_guard_covers_ranks_only_the_fixed_rows_emit(tmp_path):
         _cfg(_write_hpc_yaml(tmp_path / "hpc.yaml"), n_rows=128)
     msg = str(excinfo.value)
     assert "3" in msg, f"the offending rank is not named: {msg}"
-    assert (
-        "the fixed gpu config row(s)" in msg
-    ), f"the message names no provenance for rank 3, so an operator who never typed a 3 cannot act on it: {msg}"
+    assert "the fixed gpu config row(s)" in msg, (
+        f"the message names no provenance for rank 3, so an operator who never typed a 3 cannot act on it: {msg}"
+    )
 
 
 def test_coupling_guard_checks_the_resolution_sweep_against_its_own_emitted_rank(tmp_path):
