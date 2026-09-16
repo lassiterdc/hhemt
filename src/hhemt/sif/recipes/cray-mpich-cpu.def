@@ -40,10 +40,10 @@
 #                                 -DKokkos_ARCH_AMD_GFX90A, -DTRITON_HIP_LAUNCHER,
 #                                 /opt/rocm on PATH and LD_LIBRARY_PATH, gpu_arch label.
 #
-# PINS ARE NOT LITERAL HERE. The TRITON URL and SHA below are the ORNL-upstream values
-# that every committed recipe carries; hpc/build_sifs_frontier.sh sed-derives them to the
-# campaign pin at build time and VERIFIES each substitution landed. Do not hand-edit them
-# to 21e666d6 — that would make the derivation a silent no-op and remove its check.
+# PINS ARE NOT LITERAL HERE. The TRITON URL and SHA below are Jinja placeholders that the
+# builder substitutes from the experiment's own system_config at build time. Do not hand-edit
+# them to any campaign sha — a literal would shadow the substitution and the recipe would stop
+# tracking the config that owns the pin.
 #
 # EXPECTED FIRST-BUILD FAILURES, in the order they would surface:
 #  1. MPICH ./configure. frontier-rocm.def builds this identically, so the layer itself is

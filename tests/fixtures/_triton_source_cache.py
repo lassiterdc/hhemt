@@ -45,36 +45,37 @@ from hhemt._filelock_compat import resolve_filelock
 
 #: THE TRITON SOURCE IDENTITY FOR THE SYNTHETIC-TEST TIER, AND IT IS A PAIR.
 #: A COMMIT ALONE IS NOT AN IDENTITY, measured rather than cautionary: 3a832f7d
-#: resolves on BOTH the ORNL upstream and this fork and names a DIFFERENT codebase on
+#: resolves on BOTH the ORNL upstream and the maintainer fork and names a DIFFERENT codebase on
 #: each, so a pin-only record is self-consistent while describing the wrong repository.
 #: `system.py:781-784` records the same trap on the production clone: both remotes are
 #: named `triton.git`, and `_verify_tritonswmm_pin` compares the COMMIT and never the
 #: REMOTE, so a clone from the wrong remote whose HEAD matches the pin verifies clean.
 #: Never record one without the other — record TRITON_SOURCE_DESCRIPTOR.
-TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
+TRITON_GIT_URL = "https://code.ornl.gov/hydro/triton.git"
 
-#: `main` on the fork. NOT AN ANCESTRY ADVANCE over the previous pin 5d2ad1e8, and the
-#: distinction is load-bearing: `git merge-base --is-ancestor 5d2ad1e8adf9 21e666d6`
-#: exits 1, because 5d2ad1e8 sits on the branch `instrumented/extbc-ghost-probe` while
-#: this sha sits on `main`, which carries the SAME ghost-ring fix CHERRY-PICKED onto
-#: 9db367dd (probes excluded) plus the RUN INFO GPU-device-name emission. Ancestry cannot
-#: express a cherry-pick any more than it can express a revert, so DO NOT reintroduce an
-#: is-ancestor assertion here — it would fail on a correct pin. `hhemt.model_defects`
-#: already records this sha as SHA_MAIN_GHOST_RING_AND_GPU and content-verifies the
-#: equivalence (src/ghost_ring.h blob-identical to 5d2ad1e8; src/triton.h
-#: whitespace-normalised identical once the probe blocks are stripped), and lists it in
-#: the `known_absent_in` set of ALL THREE registered defects — so this pin carries none.
-#: WHAT THE SAFETY ARGUMENT NOW RESTS ON. The previous pin's comment justified the move by
-#: strict advance ("the fetch only ADDS objects"). That argument does not apply here. The
-#: property still holds, by a different mechanism, MEASURED rather than argued: a fetch
-#: never deletes objects, and `refs/pins/{sha}` anchors survive `fetch --prune` under the
-#: `refs/remotes/origin/*` destination (two-arm probe: pin ref intact after a real
-#: repoint+prune; the canonical's own refs/pins count went 4 -> 5 across the live repair).
-#: So 5d2ad1e8 stays reachable for any borrower still on it.
+#: The `triton-swmm` BRANCH TIP on ORNL upstream, and NOT that repository's default HEAD —
+#: a plain clone does not land here, so the pin is what selects it. A CROSS-REMOTE MOVE, not
+#: an ancestry advance: the previous pin 21e666d6 is `main` on the maintainer fork and is
+#: ABSENT from ORNL history entirely, so `git merge-base --is-ancestor 21e666d6 a38338b0`
+#: cannot answer rather than answering no. DO NOT add an is-ancestor assertion across this
+#: boundary — the two repositories share a name and not a history. `hhemt.model_defects`
+#: records this sha as SHA_ORNL_GHOST_RING_AND_GPU: upstream implements the ghost ring INLINE
+#: in src/output.h (the fork's src/ghost_ring.h does not exist here), and the registry grades
+#: it one evidentiary step WEAKER than the fork's cherry-pick — an independent implementation
+#: of the same intent, attested by its parent commit's title and by ancestry, not by a blob
+#: comparison, which no single clone can perform.
+#: WHAT THE SAFETY ARGUMENT RESTS ON, and it is narrower than it was. The prior comment
+#: claimed the previous pin stays reachable TWO ways: as an ancestor of the new pin, and via
+#: its own `refs/pins/{sha}` anchor. Across a cross-remote move the FIRST leg is gone — the
+#: fetch is not a superset and 21e666d6 is not an ancestor of anything here. The property
+#: still holds on the SECOND leg alone: a fetch never deletes objects, and `refs/pins/{sha}`
+#: anchors survive `fetch --prune` under the `refs/remotes/origin/*` destination. The
+#: canonical self-heals across the remote change (`provision_*` re-points origin when it
+#: disagrees with TRITON_GIT_URL and refetches), so no manual removal is owed.
 #: THIS CONSTANT AND `test_case_builder.py`'s config write MUST MOVE TOGETHER: a
 #: provisioner pin that differs from the config pin raises ConfigurationError on every
 #: synth construction (`system.py::_verify_tritonswmm_pin`).
-TRITON_PIN = "21e666d6e0efc3383344813853386aaba1474785"
+TRITON_PIN = "a38338b09e62e57c936f51516bbdbe495d89a546"
 
 #: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
 #: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.
