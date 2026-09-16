@@ -826,9 +826,17 @@ class analysis_config(cfgBaseModel):
         None,
         description=(
             "Explicit on-disk `timestep_min` zarr chunk size for the per-scenario "
-            "spatial timeseries. When None (default), preserves the current "
-            "first-write-extent chunking behavior. Decouples read-locality from the "
-            "write append-batch size. Consumed by utils.return_dic_zarr_encodings."
+            "spatial timeseries. A READ-LOCALITY OVERRIDE AND NOTHING MORE: it replaces "
+            "the TIME component of the grid utils.resolve_chunk_grid derives, leaving the "
+            "spatial components derived, so no value here can re-introduce an "
+            "extent-dependent grid. When None (default) the derived time component is "
+            "used. This field is NOT what makes the chunk grid safe -- that is the "
+            "writer's once-per-scenario call to resolve_chunk_grid. The previous wording "
+            "said None 'preserves the current first-write-extent chunking behavior', "
+            "which was false and is recorded here because the claim travelled: with no "
+            "grid declared at all, zarr sized each store from its FULL shape, making a "
+            "chapter's spatial grid a function of its time extent. Consumed by "
+            "utils.return_dic_zarr_encodings and utils.resolve_chunk_grid."
         ),
     )
     allow_mixed_version_chapters: bool = Field(
@@ -839,10 +847,16 @@ class analysis_config(cfgBaseModel):
             "refuses loudly rather than publishing one unified store built by two "
             "processing builds. Set True only when you know nothing material changed "
             "between the builds; the run then proceeds and records BOTH builds in the "
-            "chapter set's provenance history. NOTE: under execution_environment='container' "
-            "the detector is INERT and nothing is refused -- the SIF build strips the "
-            "toolkit's .git, so every in-image build stamps the same 'unknown' sha and no "
-            "mismatch is observable. Consumed by "
+            "chapter set's provenance history. NOTE: the detector IS LIVE under "
+            "execution_environment='container'. The SIF build strips the toolkit's .git, so "
+            "an in-image git sha is unresolvable -- but processing_build_key then falls back "
+            "to the image's own org.hhemt.hhemt_sha label, read from "
+            "/.singularity.d/labels.json, which Apptainer materialises inside every running "
+            "container. So the identity resolves and the guard compares normally. This note "
+            "previously said the opposite; an operator acting on it would have set this flag "
+            "believing it disarmed nothing. The guard is what prevents a chapter set written "
+            "with one declared chunk grid from being extended by a build that declares "
+            "another, so leaving this False is load-bearing. Consumed by "
             "provenance.assert_chapters_match_running_build."
         ),
     )

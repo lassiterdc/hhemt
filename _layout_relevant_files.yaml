@@ -1768,3 +1768,42 @@ non_breaking_allowlist:
       EXPIRY CONDITION: covers an added parser with unchanged builders. Any edit to a
       builder's emitted string, to a flag family prefix, or to the `_status` directory name is
       NOT this class and must bump LAYOUT_VERSION with a migration.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 0856f1f79da775c53c43eeff74df7f83211d1d66f85032470d6c9f0c4a3a0e5a
+    justification: >-
+      Per-scenario write-path fixes: the chunk grid is now DECLARED once per scenario
+      from utils.resolve_chunk_grid rather than guessed per chapter by zarr; the two
+      TRITON export preflights are unified on a processable-emptiness predicate and a
+      dead already-written branch is removed; and the stale first_chunk guard and its
+      variable are deleted.
+      JUDGED NON-BREAKING, with the counter-argument recorded so the judgement is
+      auditable. FOR: the only on-disk difference in a COMPLETED analysis is WHICH
+      cells share a zarr chunk. Chunking is within-store encoding -- open_zarr is
+      indifferent to it, every reader returns identical values, no path, name, dtype,
+      dimension, coordinate or attribute changes, and no migration could meaningfully
+      rewrite a chunk grid (it would be a full rewrite of every store to no semantic
+      end). AGAINST: a chapter set written by a PRE-fix build and extended by a
+      POST-fix build would mix grids -- but assert_chapters_match_running_build
+      refuses exactly that, and the encoding change necessarily ships as a new build,
+      so the hazard is closed by an existing guard rather than by this judgement.
+      The two deleted predicates change raise MESSAGES only; grep over tests/ shows no
+      test asserts on the retired strings.
+      EXPIRY CONDITION: covers an encoding-only grid declaration plus two predicate
+      removals. Any change to a store PATH, a flag NAME, a dimension or coordinate, or
+      to the chapter-store naming scheme is NOT this class and must bump
+      LAYOUT_VERSION with a migration.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 501822e0bc2e66fdc87a246fa89eecdb8a7f850dc2b229893c8e16cea1418298
+    justification: >-
+      DOCSTRING-ONLY edits to two fields. process_timestep_chunk's description is
+      corrected (its "preserves the current first-write-extent chunking behavior"
+      clause was false, and the field becomes a read-locality override once the writer
+      always supplies a grid) and allow_mixed_version_chapters' description is
+      corrected (it told operators the build detector is INERT under container
+      execution, which is false -- processing_build_key falls back to the image's own
+      org.hhemt.hhemt_sha label). No field is added, removed, renamed, retyped or
+      given a new default; no validator changes; every config that loaded before loads
+      identically. This file is layout-relevant only via the src/hhemt/config/**/*.py
+      glob, and a description string reaches no on-disk artifact.
+      EXPIRY CONDITION: covers description text only. Any field addition, removal,
+      rename, retype or DEFAULT change is NOT this class.

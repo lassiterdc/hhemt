@@ -31,6 +31,7 @@ from hhemt.utils import (
     merge_chapters_to_unified,
     paths_to_strings,
     reap_unflagged_chapters,
+    resolve_chunk_grid,
     return_dic_zarr_encodings,
     unified_flag_for,
     verify_and_flag_chapter,
@@ -277,6 +278,20 @@ class TRITONSWMM_sim_post_processing:
             n_variables=n_variables,
             memory_budget_MiB=memory_budget_MiB,
         )
+        # THE ON-DISK CHUNK GRID IS RESOLVED ONCE, HERE, AND REUSED BY EVERY CHAPTER.
+        # Its inputs are the processed DEM's spatial extent and the stored dtype width,
+        # both constant across this scenario by construction -- so every chapter of this
+        # store declares the same grid, including the short final one and including a
+        # chapter a LATER invocation writes on the resume path. It is deliberately NOT
+        # derived from `chunk_size` or from any flush quantity above: those resolve from
+        # the process rule's memory allocation and are constant within one invocation
+        # only. See utils.resolve_chunk_grid for why the timestep count is not an input.
+        _chunk_grid = resolve_chunk_grid(
+            ny=len(rds_dem.y),
+            nx=len(rds_dem.x),
+            itemsize=4 if self._analysis.cfg_analysis.process_store_float32 else 8,
+            override_t=self._analysis.cfg_analysis.process_timestep_chunk,
+        )
         if chunk_size == 1:
             print(
                 f"[Chunked Processing] WARNING: load chunk floored to 1 timestep "
@@ -359,7 +374,6 @@ class TRITONSWMM_sim_post_processing:
 
         # Process in chunks; accumulate into batches to decouple append
         # granularity from the in-memory load-chunk size.
-        first_chunk = True
         pending_chunks: list = []
         pending_timesteps = 0
 
@@ -437,7 +451,7 @@ class TRITONSWMM_sim_post_processing:
                     ds_batch,
                     comp_level,
                     store_float32=self._analysis.cfg_analysis.process_store_float32,
-                    time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
+                    chunk_grid=_chunk_grid,
                 )
                 ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
                 ds_batch.attrs["output_creation_date"] = current_datetime_string()
@@ -449,7 +463,6 @@ class TRITONSWMM_sim_post_processing:
                         df_outputs, _ts, scenario_dir=self._scenario.scen_paths.sim_folder
                     )
                 _next_chapter += 1
-                first_chunk = False
                 del ds_batch
                 pending_chunks = []
                 pending_timesteps = 0
@@ -469,7 +482,7 @@ class TRITONSWMM_sim_post_processing:
                 ds_batch,
                 comp_level,
                 store_float32=self._analysis.cfg_analysis.process_store_float32,
-                time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
+                chunk_grid=_chunk_grid,
             )
             ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
             ds_batch.attrs["output_creation_date"] = current_datetime_string()
@@ -481,21 +494,8 @@ class TRITONSWMM_sim_post_processing:
                     df_outputs, _ts, scenario_dir=self._scenario.scen_paths.sim_folder
                 )
             _next_chapter += 1
-            first_chunk = False
             del ds_batch
             pending_chunks = []
-
-        # Guard (SE F-I-2): if no batch was ever written (first_chunk still
-        # True), every chunk was skipped — all source output files missing — so
-        # the zarr store was never created with mode="w". Consolidating a
-        # nonexistent store raises a cryptic error; raise a diagnosable signal
-        # instead.
-        if first_chunk:
-            raise ProcessingError(
-                f"write_timeseries_outputs: no valid timesteps to write for "
-                f"{fname_out.name} — every chunk was skipped (all source output "
-                f"files missing?). Zarr store not created; nothing to consolidate."
-            )
 
         merge_chapters_to_unified(_chapters, fname_out, scenario_dir=_scen_dir)
         if _freed_bytes:
@@ -890,6 +890,41 @@ class TRITONSWMM_sim_post_processing:
         log_field.set(True)
         return
 
+    def _triton_raw_frame_or_raise(self, fldr_out_triton, reporting_interval_s, *, model_label: str):
+        """The per-timestep raw-output frame, or a loud refusal naming which condition failed.
+
+        ONE PREFLIGHT, SHARED BY BOTH TRITON EXPORTS, and the sharing is the point. The
+        two arms previously grew two different preflights: the TRITON-only arm tested
+        DIRECTORY emptiness (`any(dir.iterdir())`), which is TRUE when the directory
+        holds only TRITON's `GR_*` ghost-ring side-files -- not processable output -- so
+        control fell through and a later step raised on genuinely absent data; the
+        coupled arm had no emptiness test at all. A predicate for "is there processable
+        output here" that is expressed anywhere but in the enumerator can drift from it,
+        which is the defect shape being removed, so this asks the ENUMERATOR.
+
+        Two conditions, two messages, because they are genuinely different faults: a
+        MISSING directory means the simulation did not write where it was told to, and
+        an EMPTY frame means the directory exists and holds nothing this toolkit can
+        process. The ragged-frame case is not handled here -- `return_fpath_wlevels`
+        already refuses it with a better message than this function could write.
+        """
+        if fldr_out_triton is None or not Path(fldr_out_triton).exists():
+            raise FileNotFoundError(
+                f"Raw TRITON outputs not found for {model_label} at {fldr_out_triton}. "
+                "Ensure the simulation completed and wrote outputs to the configured "
+                "output directory."
+            )
+        df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
+        if df_outputs.empty:
+            raise FileNotFoundError(
+                f"No processable TRITON output files (MH, H, QX, QY) found for {model_label} "
+                f"in {fldr_out_triton}. The directory exists but holds no file the frame "
+                "builder recognises -- TRITON's GR_* ghost-ring side-files alone produce "
+                "this state, as does a directory whose raw was already cleared. Ensure the "
+                "simulation completed successfully."
+            )
+        return df_outputs
+
     def _export_TRITONSWMM_TRITON_outputs(
         self,
         *,
@@ -922,24 +957,15 @@ class TRITONSWMM_sim_post_processing:
         raw_out_type = self._analysis.cfg_analysis.TRITON_raw_output_type
         fldr_out_triton = self._run.raw_triton_output_dir(model_type="tritonswmm")
 
-        if fldr_out_triton is None or not fldr_out_triton.exists():
-            raise FileNotFoundError(
-                f"Raw TRITON-SWMM outputs not found at {fldr_out_triton}. "
-                "Ensure the TRITON-SWMM coupled simulation completed and wrote outputs to "
-                f"the configured output directory."
-            )
         reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         rds_dem = self._system.processed_dem_rds
 
         start_time = time.time()
 
         # Get output files
-        df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
-        if df_outputs.empty:
-            raise FileNotFoundError(
-                f"No TRITON output files (H, QX, QY, MH) found in {fldr_out_triton}. "
-                "Ensure the TRITON-SWMM coupled simulation completed successfully."
-            )
+        df_outputs = self._triton_raw_frame_or_raise(
+            fldr_out_triton, reporting_interval_s, model_label="the TRITON-SWMM coupled model"
+        )
 
         self._streaming_chunked_zarr_write(
             df_outputs,
@@ -1009,34 +1035,15 @@ class TRITONSWMM_sim_post_processing:
             raise FileNotFoundError("out_triton path is None. Ensure TRITON-only model is enabled in system config.")
         fldr_out_triton = out_triton / raw_out_type
 
-        if not fldr_out_triton.exists() or not any(fldr_out_triton.iterdir()):
-            if self._already_written(fname_out):
-                if verbose:
-                    print(
-                        f"Raw TRITON-only outputs not found, but {fname_out.name} exists. Skipping reprocessing.",
-                        flush=True,
-                    )
-                if self._should_clear_raw_for_model(resolved_clear_raw, "triton"):
-                    self._clear_raw_outputs("triton")
-                return
-            raise FileNotFoundError(
-                "No TRITON outputs found to process for TRITON-only model. "
-                f"Expected files in: {fldr_out_triton} " + f" (raw type: {raw_out_type}). "
-                "Ensure the TRITON-only simulation completed and wrote outputs."
-            )
         reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         rds_dem = self._system.processed_dem_rds
 
         start_time = time.time()
 
         # Get output files
-        df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
-        if df_outputs.empty:
-            raise FileNotFoundError(
-                "No TRITON outputs found to process for TRITON-only model. "
-                f"Expected files in: {fldr_out_triton}. "
-                "Ensure the TRITON-only simulation completed and wrote outputs."
-            )
+        df_outputs = self._triton_raw_frame_or_raise(
+            fldr_out_triton, reporting_interval_s, model_label="the TRITON-only model"
+        )
 
         self._streaming_chunked_zarr_write(
             df_outputs,

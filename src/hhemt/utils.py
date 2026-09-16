@@ -449,13 +449,97 @@ def clear_raw_for_timesteps(df_outputs, timesteps, *, scenario_dir: Path) -> int
     return delete_and_account(paths, scope_dir=Path(scenario_dir), scope="scenario")
 
 
+#: Target on-disk chunk size for per-scenario spatial timeseries, in BYTES.
+#: 1.25 MiB, chosen to sit at the magnitude zarr's own auto-chunker selects for this
+#: data -- it picked (17, 135, 138) float32 = 1.21 MiB for a full chapter -- so
+#: declaring a grid changes WHICH cells share a chunk without changing I/O
+#: granularity. Raising it walks toward Blosc's 2,048 MiB max_buffer_size at fine
+#: DEM resolutions; lowering it multiplies object count on a parallel filesystem.
+CHUNK_BYTE_TARGET_BYTES: int = 1_310_720
+
+
+def _integer_cube_root(n: int) -> int:
+    """The exact integer floor of the cube root, by search. No floating point.
+
+    `round(n ** (1/3))` would do the same job in one line. It is rejected because
+    IEEE-754 does not require `pow` to be correctly rounded, so two machines can differ
+    by an ulp -- and a grid that differs between two nodes of one campaign is a
+    divergent chapter set the mixed-build guard CANNOT SEE, because that guard keys on
+    the TOOLKIT identity and the toolkit is identical. That is the same reason this
+    module owns the sizing rule rather than calling zarr's private `_guess_chunks`: the
+    derivation base must sit inside the boundary the guard can observe.
+    """
+    root = 1
+    while (root + 1) ** 3 <= n:
+        root += 1
+    return root
+
+
+def resolve_chunk_grid(
+    ny: int,
+    nx: int,
+    itemsize: int,
+    *,
+    byte_target: int = CHUNK_BYTE_TARGET_BYTES,
+    override_t: int | None = None,
+) -> tuple[int, int, int]:
+    """The (timestep_min, y, x) zarr chunk grid for a per-scenario spatial timeseries.
+
+    THE INPUT SET IS THE WHOLE POINT. Every argument is constant across a scenario BY
+    CONSTRUCTION -- `ny`/`nx` come from the processed DEM, `itemsize` from the stored
+    dtype -- so every chapter of one scenario receives the SAME grid, including the
+    short final one, and including a chapter written by a LATER invocation on the
+    resume path. A chunk larger than a short chapter's extent is accepted by zarr.
+
+    WHAT IS DELIBERATELY NOT AN INPUT, and why naming it matters more than the rule:
+    the scenario's timestep COUNT. It is scenario-constant as a concept and is NOT
+    constant in any expression reachable here -- `df_outputs` is a glob of the raw
+    output directory and `clear_raw_for_timesteps` deletes exactly what that glob
+    enumerates after every chapter flush, so a resumed invocation sees a shorter
+    frame. Deriving from it would make a resumed writer declare a grid the existing
+    chapters do not carry, which is the defect this function exists to remove.
+    Neither is the flush size an input, for the same reason: it resolves from the
+    process rule's SLURM memory allocation and is constant within one invocation only.
+
+    WHY THE TOOLKIT OWNS THIS RATHER THAN CALLING zarr's `_guess_chunks`. The
+    chapter-set build guard keys on the TOOLKIT identity in both execution modes --
+    the git sha natively, the `org.hhemt.hhemt_sha` image label in container -- so it
+    is structurally incapable of noticing a zarr version change. A zarr-private
+    derivation base would sit OUTSIDE the only mechanism protecting chapter-set
+    consistency: a zarr patch bump would change the declared grid, the guard would not
+    fire because the toolkit sha is unchanged, and the merge's uniformity assert would
+    then refuse every resume against pre-bump chapters. A rule versioned with the
+    toolkit is fully inside that boundary -- changing it changes the toolkit sha.
+
+    All three axes are sized. A time chunk over FULL-EXTENT spatial axes cannot reach
+    any sane byte target at fine DEMs, because with the spatial axes whole one
+    timestep is the floor: 1.13 MiB at 3.5 m, 11.43 MiB at 1.1 m, 112.87 MiB at
+    0.35 m.
+
+    `override_t` is `analysis_config.process_timestep_chunk`, which is a read-locality
+    knob and nothing else. It replaces the time component only; the spatial components
+    stay derived, so no user value can re-introduce an extent-dependent grid.
+    """
+    cells = max(1, byte_target // max(1, itemsize))
+    side = max(1, _integer_cube_root(cells))
+    y = min(int(ny), side)
+    x = min(int(nx), side)
+    t = max(1, cells // (y * x))
+    if override_t is not None:
+        t = max(1, int(override_t))
+    return (t, y, x)
+
+
 def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) -> None:
     """STATES 4/5/6: concatenate flagged chapters into the unified store.
 
-    A flagless unified store is a merge that was interrupted; it is deleted and
-    re-merged rather than trusted, because nothing distinguishes it from a complete
-    one. The chapters are still present -- the interlock holds them until the
-    unified flag lands, which is what makes re-merge possible at all.
+    THE PUBLISH IS ATOMIC. `_publish_store_crash_safe` builds under a temp name and
+    renames, so `fname_out` is either absent or complete and an interrupted merge
+    leaves a `.tmp` sibling rather than a plausible-looking partial store at the
+    published path. That is what makes "the directory exists" mean "the write
+    finished" for every reader, none of which consults the completion flag. The
+    chapters are still present throughout -- the interlock holds them until the
+    unified flag lands, which is what makes a re-merge possible at all.
 
     CONTIGUITY IS ASSERTED, not assumed. `completed_chapters` admits an interior
     hole: a flag whose store was later removed leaves a gap, and concatenating
@@ -467,11 +551,6 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
 
     final = Path(fname_out)
     flag = unified_flag_for(final)
-    if final.exists() and not flag.exists():
-        warnings.warn(f"Discarding un-flagged (interrupted) unified store {final}; re-merging.", stacklevel=2)
-        from hhemt.du_sentinels import delete_and_account
-
-        delete_and_account([final], scope_dir=scenario_dir, scope="scenario")
     parts = completed_chapters(chapters)
     if not parts:
         raise ProcessingError(
@@ -493,22 +572,74 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
         [xr.open_zarr(parts[k], consolidated=False) for k in sorted(parts)],
         dim="timestep_min",
     )
-    # `open_zarr` returns DASK-backed arrays chunked on each chapter's STORED zarr
-    # grid, not on the chapter extent -- so a 132-timestep chapter stored at chunk 17
-    # contributes (17 x7, 13) and the next chapter's chunks follow it, putting a SHORT
-    # chunk in the interior. Zarr permits a short FINAL chunk only, and the interior
-    # short chunk also straddles the inherited grid, which xarray >= 2026.4 refuses via
-    # validate_grid_chunks_alignment. Dropping `encoding['chunks']` alone does NOT fix
-    # this: it removes the target grid and leaves zarr to derive one from the same
-    # non-uniform dask chunks, which then fails the uniformity requirement instead.
-    # Making the concat-axis dask grid UNIFORM at the inherited length satisfies both
-    # and preserves the published store's chunking ON THE CONCAT AXIS. That scope is
-    # deliberate: this touches `timestep_min` only, and a NON-concat axis whose grid
-    # differs across chapters is NOT covered. `xr.concat` unifies a non-concat axis to
-    # the FINER grid while chapter 0's encoding survives, so the same refusal would
-    # fire if chapter 0 were the COARSER side. It cannot be, under this writer: chunk
-    # coarseness falls as a chapter's time extent grows, chapters flush at a threshold
-    # so only the LAST is short, and chapter 0 is therefore never strictly coarser.
+    # LOUD, NOT REPAIRED. With the grid declared once per scenario, a divergence
+    # arriving here means something upstream broke -- a partially-migrated chapter set,
+    # an operator-forced `allow_mixed_version_chapters`, a variable with different dims.
+    # `align_chunks=True` would rechunk it away and tell nobody, and `safe_chunks=False`
+    # is measured-corrupting (3.5-4.7% of cells silently to NaN, non-deterministically).
+    # A refusal naming the offending chapter and its grid is the correct instrument in a
+    # failure whose entire lesson is that silence is the danger. This FAILS CLOSED where
+    # a silent repair would succeed, and that is the intended trade.
+    # SCOPED TO THE NON-CONCAT AXES, and the scope is load-bearing in BOTH directions.
+    # The concat axis is legitimately repaired ten lines below by the _time_chunks
+    # unification, which this change RETAINS -- so asserting uniformity there would
+    # duplicate a live repair and contradict the passing test that pins it
+    # (test_merged_store_keeps_the_inherited_time_chunk_grid[measured-production-shape]
+    # merges chapters stored at time-chunk 17 and 3 and expects success). The non-concat
+    # axes are exactly what that repair does NOT cover -- the retired comment said so in
+    # its own words -- and are where the divergence that terminated a campaign lived.
+    #
+    # NO `chunks is not None` GUARD, and its absence is deliberate. `open_zarr` reports
+    # the STORED grid and a zarr store always has one: measured, a chapter written with
+    # NO declared encoding comes back carrying the grid zarr guessed for it, never None.
+    # A None-guard here would be a branch that cannot be entered, which is the defect
+    # class this round exists to remove.
+    _spatial: dict[str, set[tuple]] = {}
+    for _k in sorted(parts):
+        _chap = xr.open_zarr(parts[_k], consolidated=False)
+        try:
+            for _name, _var in _chap.data_vars.items():
+                _g = tuple(
+                    int(_c) for _c, _d in zip(_var.encoding["chunks"], _var.dims, strict=True) if _d != "timestep_min"
+                )
+                _spatial.setdefault(str(_name), set()).add(_g)
+        finally:
+            _chap.close()
+    _diverged = {_n: sorted(_g) for _n, _g in _spatial.items() if len(_g) > 1}
+    if _diverged:
+        raise ProcessingError(
+            operation="merge_chapters_to_unified",
+            filepath=str(chapters),
+            reason=(
+                f"chapter stores do not share one non-concat chunk grid: {_diverged}. Every "
+                "chapter of one store must declare the grid utils.resolve_chunk_grid returns "
+                "for this scenario, so a divergence here is an upstream fault, not something "
+                "to repair at the merge. Do NOT reach for safe_chunks=False -- it is measured "
+                "to write without raising while silently losing 3.5-4.7% of cells to NaN, "
+                "which in a flood-depth field is indistinguishable from dry ground. "
+                "Discard the chapter set with a force at stage='process' and re-run."
+            ),
+        )
+    # THE INVARIANT THIS RELIES ON, AND WHERE IT IS ENFORCED. Every chapter of one
+    # store declares the SAME chunk grid on ALL THREE axes, because the writer resolves
+    # it once per scenario from `utils.resolve_chunk_grid(ny, nx, itemsize)` -- inputs
+    # that are constant across a scenario BY CONSTRUCTION, not by habit. So the boundary
+    # union `xr.concat` forms across chapters is trivially uniform on every axis and
+    # needs no repair here. The assert below is what makes that a checked precondition
+    # rather than an assumption; the chunk unification that follows is retained as the
+    # mechanism that carries the declared grid onto the published store.
+    #
+    # WHAT THE PREVIOUS COMMENT GOT WRONG, recorded so it is not re-derived. It argued
+    # the non-concat-axis case away on two grounds, both falsified by measurement:
+    # `xr.concat` does NOT unify a non-concat axis to the finer grid (it forms the
+    # COMMON REFINEMENT, the union of both boundary sets, which is ragged and is what
+    # the writer refuses); and the refusal is INDIFFERENT to which chapter is coarser,
+    # because a boundary union of two non-nested grids is ragged in either direction.
+    # Measured: twelve chapters at (17,135,138) and one short chapter at (2,269,276) --
+    # INCOMPARABLE, neither strictly coarser. DO NOT re-derive safety here from which
+    # chapter is coarser, from a chapter's time extent, or from the flush threshold.
+    # The safety is that no divergence is created upstream, and the assert proves it.
+    #
     # Derive from data_vars ONLY -- coords carry their own grids and would send every
     # case down the fallback branch, collapsing the time axis to a single chunk.
     _time_chunks = {
@@ -523,7 +654,24 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
             _v.encoding.pop("chunks", None)
             _v.encoding.pop("preferred_chunks", None)
         ds = ds.chunk({"timestep_min": min(_time_chunks)})
-    ds.to_zarr(final, mode="w", consolidated=False)
+    # PUBLISH ATOMICALLY. `_publish_store_crash_safe` guarantees that `final` is either
+    # ABSENT or a COMPLETE store, never an incomplete one -- so "the directory exists"
+    # means "the write finished", which is what every reader of this store already
+    # assumes (`_open` gates on `.exists()`) and what nothing previously made true. A
+    # raise inside `to_zarr` used to leave a valid, openable zarr group carrying
+    # coordinates and zero data variables at the published path.
+    #
+    # THIS IS THE EXISTING PRIMITIVE, NOT A NEW ONE, and reaching for it rather than
+    # hand-rolling a temp-and-rename inherits a trap: its step-0 recover-and-clear
+    # cannot be optimised away, because omitting it breaks the rename on the SECOND
+    # recovery run -- which is why a hand-rolled version would pass its own tests. It
+    # is already the publisher for write_zarr and write_datatree_zarr.
+    #
+    # The single-writer caveat is the helper's own and is not repaired here: reprocess
+    # runs with --nolock and the orchestrator gate refuses on a live DRIVER rather than
+    # live WORKERS, so two publishers can still reach one store. That degrades to a loud
+    # rename error, which is strictly better than the silent interleave it replaces.
+    _publish_store_crash_safe(lambda _dest: ds.to_zarr(_dest, mode="w", consolidated=False), final)
     tmp = flag.with_suffix(flag.suffix + ".tmp")
     tmp.write_text("ok", encoding="utf-8")
     os.replace(tmp, flag)
@@ -922,7 +1070,12 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
 
 
 def return_dic_zarr_encodings(
-    ds: xr.Dataset, clevel: int = 5, *, store_float32: bool = False, time_chunk: int | None = None
+    ds: xr.Dataset,
+    clevel: int = 5,
+    *,
+    store_float32: bool = False,
+    time_chunk: int | None = None,
+    chunk_grid: tuple[int, int, int] | None = None,
 ) -> dict:
     """
     Create a dictionary of Zarr encodings for an xarray Dataset.
@@ -960,7 +1113,17 @@ def return_dic_zarr_encodings(
             enc = {"compressors": compressor}
             if store_float32 and dtype_kind == "f":
                 enc["dtype"] = "float32"
-            if time_chunk is not None and "timestep_min" in ds[var].dims:
+            if chunk_grid is not None and "timestep_min" in ds[var].dims:
+                # A DECLARED grid wins. The dims are matched BY NAME, never by
+                # position, so a variable whose axis order differs still receives the
+                # intended per-axis lengths; an axis the grid does not name keeps its
+                # full extent. Each length is clamped to the variable's own extent
+                # only where that is safe -- zarr accepts a chunk LARGER than the
+                # extent, and relying on that is what lets a short final chapter carry
+                # the same grid as its siblings.
+                _named = dict(zip(("timestep_min", "y", "x"), chunk_grid, strict=True))
+                enc["chunks"] = tuple(_named.get(d, s) for d, s in zip(ds[var].dims, ds[var].shape, strict=True))
+            elif time_chunk is not None and "timestep_min" in ds[var].dims:
                 ax = ds[var].dims.index("timestep_min")
                 chunks = list(ds[var].shape)
                 chunks[ax] = time_chunk
