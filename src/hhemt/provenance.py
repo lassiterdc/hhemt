@@ -266,12 +266,23 @@ def collect_plot_stamps(analysis_dir: Path) -> tuple[set[tuple[str, str]], int]:
     import json
     from pathlib import Path as _Path
 
+    from hhemt.utils import figure_exists_for  # lazy: matches this module's import style
+
     keys: set[tuple[str, str]] = set()
     n = 0
     plots = _Path(analysis_dir) / "plots"
     if not plots.exists():
         return keys, 0
     for sidecar in sorted(plots.rglob("*.manifest.json")):
+        # An ORPHAN sidecar -- one whose figure is gone -- is not evidence about the
+        # figures on disk, and this function's whole subject is the figures on disk.
+        # Skipped ABOVE the counter deliberately: counted-but-excluded would make the
+        # caller's "no figure carries a build stamp (N sidecar(s) found)" report a
+        # nonzero N for zero live figures. Nothing is quieted by this -- an all-orphan
+        # tree yields an empty key set, which `assert_plots_match_running_build` RAISES
+        # on rather than passing.
+        if not figure_exists_for(sidecar):
+            continue
         n += 1
         try:
             payload = json.loads(sidecar.read_text())
