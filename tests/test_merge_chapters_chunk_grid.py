@@ -136,3 +136,32 @@ def test_merge_refuses_a_spatially_divergent_chapter_set(tmp_path):
     # And the store must NOT have been published. Spec 13 makes the publish atomic, so
     # a refusal before it leaves nothing at the published path.
     assert not final.exists(), "a refused merge published a store"
+
+
+def test_merge_refuses_a_chapter_set_with_no_surviving_stores(tmp_path):
+    """A flagged chapter whose STORE is gone must produce a diagnosable refusal.
+
+    `completed_chapters` admits an index only `if store.exists()`, so a chapters directory
+    whose flags survive while their stores do not reduces to `parts == {}` -- the one
+    reachable route to `merge_chapters_to_unified`'s empty-set guard. Without that guard the
+    merge reaches `xr.concat([])` and fails cryptically on a store that was never built,
+    which is the failure mode this refusal replaced.
+
+    SUCCESSOR, NOT EQUIVALENT. This covers the behaviour the retired `first_chunk` tail-flush
+    guard protected -- a diagnosable error where the unified store would otherwise be absent
+    -- at the module the behaviour moved to. The WRITER-side trigger is permanently gone
+    because the writer no longer has a "store never created" state; see the reversal recorded
+    in test_missing_source_file_raises_rather_than_skipping.
+    """
+    chapters = tmp_path / "tseries.zarr.chapters"
+    chapters.mkdir(parents=True)
+    # A flag with NO store beside it. This is the state a cleared or reaped chapter leaves.
+    chapter_flag_for(chapters, 0).write_text("ok", encoding="utf-8")
+
+    final = tmp_path / "tseries.zarr"
+    with pytest.raises(ProcessingError) as excinfo:
+        merge_chapters_to_unified(chapters, final, scenario_dir=chapters.parent)
+
+    assert "no flagged chapter stores to merge" in str(excinfo.value)
+    # A refusal must publish nothing, exactly as the grid refusal above must.
+    assert not final.exists(), "a refused merge published a store"

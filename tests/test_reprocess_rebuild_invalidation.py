@@ -534,9 +534,17 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     # and nowhere else. Closes the one gap the distinct-target property leaves open --
     # a spurious write to a NEW target -- without constraining how many merge writes
     # there are, which is what re-coupled the merge tier in the rejected +1 form.
-    assert all(p.startswith(chapters_root) or p == str(fname_out) for p in targets), (
-        f"a write targeted neither a chapter nor the unified store: {targets}"
-    )
+    # DERIVED FROM fname_out, NAMING NO SUFFIX. The merge does not write {out}: it
+    # publishes through _publish_store_crash_safe, which writes {out}.tmp and os.replaces
+    # it into place, so the old `p == str(fname_out)` disjunct was UNSATISFIABLE -- it had
+    # encoded the pre-cdb445f7 direct-write mechanism. Hardcoding ".tmp" instead would
+    # repeat that one design later, which is the trap the comment above warns about, so
+    # this asserts WHERE writes went rather than what the temp is called.
+    _out_dir, _out_name = str(fname_out.parent), fname_out.name
+    assert all(
+        p.startswith(chapters_root) or (str(Path(p).parent) == _out_dir and Path(p).name.startswith(_out_name))
+        for p in targets
+    ), f"a write targeted neither a chapter nor this store's publish set: {targets}"
 
     # No data loss: every timestep present in the store.
     ds = xr.open_zarr(fname_out)
@@ -545,12 +553,45 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     finally:
         ds.close()
 
+    # WHAT SURVIVED, not merely where writes went. The File-1 predicate admits any path in
+    # {out}'s directory whose name begins with {out}'s name, so it is blind to a NEW durable
+    # sibling; this closes that. It names no suffix because the publish protocol's own
+    # contract is that its temporaries do not outlive it -- so an END-STATE assertion needs
+    # no knowledge of what they are called. Every {out}-prefixed artifact other than the
+    # store and its flag is a DEFECT when it survives: {out}.chapters (STATE 6 deletes it),
+    # {out}.tmp (consumed by os.replace), {out}.aside (removed at step 5), {out}.done.tmp
+    # (the unguarded replace failed). So this is the complete set the contract permits.
+    from hhemt.utils import unified_flag_for
 
-def test_write_timeseries_raises_when_no_valid_timesteps(tmp_path, monkeypatch):
-    """SE F-I-2 guard: if every chunk is skipped (all source files missing) the
-    zarr store is never created; the tail-flush guard must raise a diagnosable
-    ProcessingError instead of letting zarr.consolidate_metadata fail cryptically
-    on a nonexistent store."""
+    _residue = sorted(p.name for p in fname_out.parent.iterdir() if p.name.startswith(fname_out.name))
+    assert _residue == sorted([fname_out.name, unified_flag_for(fname_out).name]), (
+        f"the merge left an artifact beside the published store: {_residue}"
+    )
+
+
+def test_missing_source_file_raises_rather_than_skipping(tmp_path, monkeypatch):
+    """Delta-2a fail-closed guard: a source file listed by return_fpath_wlevels but absent
+    at read time must RAISE, never be skipped -- a skipped cell yields a chapter written and
+    FLAGGED complete with that variable missing at that timestep.
+
+    THE REVERSAL THIS TEST RECORDS. It was written for a DIFFERENT guard: a tail-flush check
+    that fired when no batch was ever written and raised "no valid timesteps to write". That
+    guard was deleted at cdb445f7 as collateral of the up-front chunk grid, and its removal
+    was CORRECT rather than an oversight -- its predicate (`first_chunk` still True) would now
+    fire FALSELY on a fully-covered resume, where every timestep is already covered, zero
+    chapters are written this invocation, and merging the pre-existing chapters is the right
+    outcome. The writer no longer has a "store never created" state, so that diagnostic is
+    PERMANENTLY GONE rather than relocated. The behaviour it protected -- a diagnosable error
+    where the unified store would otherwise be absent -- now lives at the merge, and is
+    covered by test_merge_refuses_a_chapter_set_with_no_surviving_stores, which is a
+    SUCCESSOR and not an equivalent.
+
+    THE FIXTURE IS UNCHANGED. It already reached this guard -- that is why the old assertion
+    saw this message -- so this test has silently been the ONLY end-to-end execution of the
+    Delta-2a branch all along. Its named sibling
+    test_c_missing_file_between_listing_and_read_raises_not_skips is a STRUCTURAL AST test
+    whose own docstring records that it declined end-to-end coverage because the harness was
+    too heavy. That harness is this one."""
     n_timesteps = 5
     ny = nx = 4
 
@@ -569,7 +610,13 @@ def test_write_timeseries_raises_when_no_valid_timesteps(tmp_path, monkeypatch):
     inst = _build_synthetic_post_processing(fname_out=fname_out, raw_dir=raw_dir, batch_timesteps=4, ny=ny, nx=nx)
     _patch_loaders(monkeypatch, df_outputs=df_outputs, ny=ny, nx=nx)
 
-    with pytest.raises(ProcessingError, match="no valid timesteps to write"):
+    # The message this fixture actually produces. The old string exists NOWHERE in
+    # src/hhemt/ (measured: 0 hits), so the assertion could only ever fail; this one names
+    # the guard the fixture reaches, which makes the test an executing regression for it.
+    # The substring is hardcoded because process_simulation.py:407 builds it as an inline
+    # literal with no importable constant -- the coupling is FORCED, and loosening it would
+    # leave the test unable to say WHICH guard fired, which is the one thing it pins.
+    with pytest.raises(ProcessingError, match="missing between listing and read"):
         inst._export_TRITONSWMM_TRITON_outputs(verbose=False)
     assert not fname_out.exists()
 
