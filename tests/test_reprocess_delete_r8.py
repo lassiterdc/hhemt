@@ -82,11 +82,25 @@ def test_delete_processed_runner_cleans_sentinel_on_exception(tmp_path, slurm_en
     analysis_dir = tmp_path / "analysis"
     _seed_scenario(analysis_dir, "evt_1")
 
-    with patch.object(runner, "fast_rmtree", side_effect=RuntimeError("boom")):
+    sentinel = analysis_dir / "_status" / "_submitted" / "delete_processed_evt_1.json"
+
+    def _assert_written_then_boom(*_a, **_k):
+        # The pre-assert lives INSIDE the side_effect, not before the `with` block: before
+        # the block `main()` has not run and the sentinel does not yet exist, so the
+        # assertion would be false at the only moment it could be written. Here it pins the
+        # full property -- WRITTEN, then cleaned by the `finally` -- rather than merely
+        # "absent at the end", which is also satisfied by a runner that never writes one.
+        assert sentinel.exists(), "the submission sentinel must exist when the deletion raises"
+        raise RuntimeError("boom")
+
+    # Patch the name the runner BINDS. `fast_rmtree` has zero occurrences in this runner
+    # (4d8baff4 routed every deletion through `delete_and_account`), so the old target
+    # raised AttributeError at patch time and the assertion below never ran. Never pass
+    # create=True: it would re-create the same silent pass on the next seam move.
+    with patch.object(runner, "delete_and_account", side_effect=_assert_written_then_boom):
         with pytest.raises(RuntimeError, match="boom"):
             runner.main(["--event-id", "evt_1", "--analysis-dir", str(analysis_dir)])
 
-    sentinel = analysis_dir / "_status" / "_submitted" / "delete_processed_evt_1.json"
     assert not sentinel.exists(), "sentinel must be cleaned by finally on exception"
 
 
@@ -196,11 +210,18 @@ def test_analysis_reprocess_runner_cleans_sentinel_on_exception(tmp_path, slurm_
     sub_dir = tmp_path / "members" / "member_3"
     _seed_analysis(sub_dir)
 
-    with patch.object(runner, "fast_rmtree", side_effect=RuntimeError("boom")):
+    sentinel = sub_dir / "_status" / "_submitted" / "delete_member_reprocess_3.json"
+
+    def _assert_written_then_boom(*_a, **_k):
+        # See the twin in test_delete_processed_runner_cleans_sentinel_on_exception for why
+        # this assertion belongs inside the side_effect rather than before the `with` block.
+        assert sentinel.exists(), "the submission sentinel must exist when the deletion raises"
+        raise RuntimeError("boom")
+
+    with patch.object(runner, "delete_and_account", side_effect=_assert_written_then_boom):
         with pytest.raises(RuntimeError, match="boom"):
             runner.main(["--member-id", "3", "--analysis-dir", str(sub_dir), "--delete-processed"])
 
-    sentinel = sub_dir / "_status" / "_submitted" / "delete_member_reprocess_3.json"
     assert not sentinel.exists()
 
 

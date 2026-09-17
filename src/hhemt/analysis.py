@@ -4578,13 +4578,12 @@ class TRITONSWMM_analysis:
             _targets = [report_html, report_zip]
             if plots_dir.exists():
                 _targets += [a for a in plots_dir.rglob("*") if a.is_file()]
-            if not dry_run:
-                du_sentinels.delete_and_account(_targets, scope_dir=analysis_dir, scope="analysis")
-            else:
-                # dry_run: the deletes are the mtime trigger the stipulation sanctions; the
-                # sentinel is deliberately NOT written on a dry run.
-                for _t in _targets:
-                    _t.unlink(missing_ok=True)  # EXEMPT-DU: dry-run-trigger
+            # dry_run: the deletes are the mtime trigger the stipulation sanctions; the
+            # sentinel is deliberately NOT written on a dry run. This site expressed that
+            # by hand and three siblings did not; the helper is now the single expression.
+            du_sentinels.delete_and_account_unless_dry_run(
+                _targets, scope_dir=analysis_dir, scope="analysis", dry_run=dry_run
+            )
 
         if start_with == "process":
             if regenerate_existing:
@@ -4615,7 +4614,9 @@ class TRITONSWMM_analysis:
             # "report shell only" path).
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
-            du_sentinels.delete_and_account([report_html, report_zip], scope_dir=analysis_dir, scope="analysis")
+            du_sentinels.delete_and_account_unless_dry_run(
+                [report_html, report_zip], scope_dir=analysis_dir, scope="analysis", dry_run=dry_run
+            )
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 

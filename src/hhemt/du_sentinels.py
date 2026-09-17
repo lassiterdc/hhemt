@@ -460,6 +460,38 @@ def delete_and_account(paths, *, scope_dir: Path, scope: Scope) -> int:
     return freed
 
 
+def delete_and_account_unless_dry_run(paths, *, scope_dir: Path, scope: Scope, dry_run: bool) -> int:
+    """Delete `paths`, and account them against `scope_dir`'s sentinel ONLY on a real run.
+
+    THE ONE PLACE THIS COMBINATION IS EXPRESSED. The reprocess-dry_run stipulation
+    SANCTIONS the deletion -- the report/plot artifacts are the mtime trigger that makes a
+    `--dry-run` preview meaningful at all -- and FORBIDS the sentinel write. Before the
+    deletion tool was unified, a caller expressed that by calling the deleter and omitting
+    the accounting call; the unified tool fuses them, so "delete without accounting" can no
+    longer be expressed by omission and must be expressed HERE instead. Three call sites
+    lost the distinction when they were converted and one kept it by hand; that asymmetry,
+    not a policy disagreement, is what this function exists to end.
+
+    Harm from the un-gated form is bounded and self-correcting -- `decrement_scope_sentinel`
+    is a no-op when the sentinel is absent, and the next aggregation re-derives the total --
+    but it is a live stipulation violation on a path a campaign uses, and a dry run that
+    mutates recorded state is not a dry run.
+
+    PRECONDITION on the dry-run arm: every path must be a FILE. `unlink` is used rather
+    than `fast_rmtree` because that is what the correct hand-written site already did and
+    because every current caller passes report artifacts and plot files. A directory here
+    raises rather than half-deleting, which is the direction to fail in.
+
+    Returns the bytes ACCOUNTED, so the dry-run arm returns 0 -- nothing was accounted. No
+    current caller reads the return value.
+    """
+    if not dry_run:
+        return delete_and_account(paths, scope_dir=scope_dir, scope=scope)
+    for p in paths:
+        Path(p).unlink(missing_ok=True)  # EXEMPT-DU: dry-run-trigger
+    return 0
+
+
 def _infer_scope(scope_dir: Path, analysis_dir: Path) -> Scope:
     # A member dir (parent name "members") is member scope even
     # when it equals analysis_dir — the per-sub consolidate/processing runners

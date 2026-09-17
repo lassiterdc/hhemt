@@ -1744,6 +1744,18 @@ non_breaking_allowlist:
       opt-in at the dispatch boundary.
       EXPIRY CONDITION: as the row above -- a change to this file's fingerprint payload, a
       _status flag name, or the member directory layout is NOT this class.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 8a33b501a2ab837f525698c981dca6566cfda600dc9339f936083a9f750ee333
+    justification: >-
+      five-masking-reds VMS (2026-09-16): behaviour-only edits in reprocess() -- the
+      report-artifact deletion at the consolidate/process arm and at the render arm now
+      route through du_sentinels.delete_and_account_unless_dry_run so the DU sentinel is
+      not re-stamped on a dry run (the reprocess-dry_run stipulation forbids the restamp
+      and sanctions the deletion), plus the function-local import of that helper and the
+      correction of a comment that asserted a gate the code had stopped providing. No
+      on-disk artifact is renamed, moved, added or removed; no log field, flag name, path
+      convention or zarr layout changes. The DELETIONS are byte-identical to before -- only
+      the sentinel write is now conditional.
   - path: src/hhemt/constants.py
     layout_signature: 8d4f0dc31bcbcd49ade193ac6cc87166b59135d787899209b579dd51a8d2bf23
     justification: >-
