@@ -1819,3 +1819,29 @@ non_breaking_allowlist:
       glob, and a description string reaches no on-disk artifact.
       EXPIRY CONDITION: covers description text only. Any field addition, removal,
       rename, retype or DEFAULT change is NOT this class.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 2decc1eba4d9279b17e40b719e5bb36093af1f512db756bb29e0c7346d6f481c
+    justification: >-
+      The ragged-frame refusal MOVES out of return_fpath_wlevels and into a new
+      module-level triton_raw_frame_or_raise, and the enumerator stops fabricating a
+      column for a variable that contributed zero files. This row SUPERSEDES the
+      description in the earlier rows for this module, which state that "the two TRITON
+      export preflights are unified on a processable-emptiness predicate" and that this
+      module carries "a fail-closed index-equality precondition in return_fpath_wlevels
+      (Component 1)". THAT SENTENCE IS NOW FALSE and this row is where a reader learns
+      so: after this change the enumerator refuses nothing, and the precondition is one
+      of FOUR conditions the consumer checks.
+      JUDGED NON-BREAKING for on-disk layout, with the counter-argument recorded. FOR:
+      no file name, directory name, flag name, log key or zarr group changes; the frame
+      is an in-memory pandas object that reaches disk only as the chapter store's
+      variable set. AGAINST, and it is the real one: a DROPPED column means a chapter
+      store with fewer data variables, which IS an on-disk difference. It is judged
+      non-breaking because the same change adds a consumer-side refusal that makes the
+      dropped-column state unreachable on the processing path -- a frame missing any of
+      CANONICAL_TRITON_VARS raises before the writer sees it -- so no analysis can
+      acquire a variable-incomplete chapter through this path. If that refusal is ever
+      relaxed, this judgement expires with it.
+      EXPIRY CONDITION: covers the refusal's LOCATION and the enumerator's drop. Any
+      change that permits a variable-incomplete frame to reach
+      _streaming_chunked_zarr_write is NOT this class and requires a LAYOUT_VERSION bump
+      with a migration.

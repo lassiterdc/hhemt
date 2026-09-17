@@ -890,41 +890,6 @@ class TRITONSWMM_sim_post_processing:
         log_field.set(True)
         return
 
-    def _triton_raw_frame_or_raise(self, fldr_out_triton, reporting_interval_s, *, model_label: str):
-        """The per-timestep raw-output frame, or a loud refusal naming which condition failed.
-
-        ONE PREFLIGHT, SHARED BY BOTH TRITON EXPORTS, and the sharing is the point. The
-        two arms previously grew two different preflights: the TRITON-only arm tested
-        DIRECTORY emptiness (`any(dir.iterdir())`), which is TRUE when the directory
-        holds only TRITON's `GR_*` ghost-ring side-files -- not processable output -- so
-        control fell through and a later step raised on genuinely absent data; the
-        coupled arm had no emptiness test at all. A predicate for "is there processable
-        output here" that is expressed anywhere but in the enumerator can drift from it,
-        which is the defect shape being removed, so this asks the ENUMERATOR.
-
-        Two conditions, two messages, because they are genuinely different faults: a
-        MISSING directory means the simulation did not write where it was told to, and
-        an EMPTY frame means the directory exists and holds nothing this toolkit can
-        process. The ragged-frame case is not handled here -- `return_fpath_wlevels`
-        already refuses it with a better message than this function could write.
-        """
-        if fldr_out_triton is None or not Path(fldr_out_triton).exists():
-            raise FileNotFoundError(
-                f"Raw TRITON outputs not found for {model_label} at {fldr_out_triton}. "
-                "Ensure the simulation completed and wrote outputs to the configured "
-                "output directory."
-            )
-        df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
-        if df_outputs.empty:
-            raise FileNotFoundError(
-                f"No processable TRITON output files (MH, H, QX, QY) found for {model_label} "
-                f"in {fldr_out_triton}. The directory exists but holds no file the frame "
-                "builder recognises -- TRITON's GR_* ghost-ring side-files alone produce "
-                "this state, as does a directory whose raw was already cleared. Ensure the "
-                "simulation completed successfully."
-            )
-        return df_outputs
-
     def _export_TRITONSWMM_TRITON_outputs(
         self,
         *,
@@ -963,7 +928,7 @@ class TRITONSWMM_sim_post_processing:
         start_time = time.time()
 
         # Get output files
-        df_outputs = self._triton_raw_frame_or_raise(
+        df_outputs = triton_raw_frame_or_raise(
             fldr_out_triton, reporting_interval_s, model_label="the TRITON-SWMM coupled model"
         )
 
@@ -1041,7 +1006,7 @@ class TRITONSWMM_sim_post_processing:
         start_time = time.time()
 
         # Get output files
-        df_outputs = self._triton_raw_frame_or_raise(
+        df_outputs = triton_raw_frame_or_raise(
             fldr_out_triton, reporting_interval_s, model_label="the TRITON-only model"
         )
 
@@ -2722,6 +2687,27 @@ def parse_performance_file(filepath):
     return df_ranks, s_average
 
 
+#: Raw-file glob PREFIX -> canonical variable name, in the order return_fpath_wlevels
+#: builds the four per-variable Series. This is the single definition of that mapping:
+#: `return_fpath_wlevels` iterates it to build the frame and `triton_raw_frame_or_raise`
+#: inverts it to name a short variable by its PREFIX in the ragged message, so the two
+#: cannot disagree about which name goes with which file.
+#: IT LIVES HERE AND NOT IN eda/raw_resume_identity.py, and the direction is the reason:
+#: that module imports FROM this one (`from hhemt.process_simulation import ...`), and this
+#: module imports nothing from `hhemt.eda` -- measured, 0 occurrences -- so defining it
+#: there and importing it here would invert the dependency and cycle.
+TRITON_RAW_VAR_BY_PREFIX: dict[str, str] = {
+    "MH": "max_wlevel_m",
+    "H": "wlevel_m",
+    "QX": "velocity_x_mps",
+    "QY": "velocity_y_mps",
+}
+
+#: The four canonical variable names, in frame-column order. The required set for the
+#: processing path: `triton_raw_frame_or_raise` refuses a frame missing any of them.
+CANONICAL_TRITON_VARS: tuple[str, ...] = tuple(TRITON_RAW_VAR_BY_PREFIX.values())
+
+
 def return_filelist_by_tstep(fldr_out_triton: Path, fpattern_prefix, min_per_tstep, varname):
     lst_f_out = list(fldr_out_triton.glob(f"{fpattern_prefix}*"))
     if len(lst_f_out) == 0:
@@ -2753,27 +2739,106 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
     ## retrive the reporting time interval from the cfg file
     min_per_tstep = reporting_interval_s / 60
     # associate filepaths to timesteps
-    s_outputs_mh = return_filelist_by_tstep(fldr_out_triton, "MH", min_per_tstep, "max_wlevel_m")
-    s_outputs_h = return_filelist_by_tstep(fldr_out_triton, "H", min_per_tstep, "wlevel_m")
-    s_outputs_qx = return_filelist_by_tstep(fldr_out_triton, "QX", min_per_tstep, "velocity_x_mps")
-    s_outputs_qy = return_filelist_by_tstep(fldr_out_triton, "QY", min_per_tstep, "velocity_y_mps")
-    lst_out = [s_outputs_mh, s_outputs_h, s_outputs_qx, s_outputs_qy]
-    # COMPONENT 1 -- FAIL-CLOSED AT CONSTRUCTION. The concat below is an OUTER join: it
-    # keeps the union of the four index sets and writes NaN where one variable lacks a
-    # timestep another has, and the consumer then dereferences that NaN as a Path. The
-    # ragged frame has TWO independent producers -- an interrupted clear_raw_for_timesteps
-    # (deletes MH first) and an interrupted solver write (writes MH last) -- so no cleanup-
-    # side fix closes the class; the ONLY complete guard is refusing the frame here, before
-    # any consumer, naming what is missing. No repair, no drop, no inner join, no warn-and-
-    # continue: a value guard in the consumer converts this loud failure into a silently
-    # incomplete FLAGGED chapter (verify_and_flag_chapter is per-variable blind).
-    _labels = ("MH", "H", "QX", "QY")
-    _index_sets = {lbl: set(s.index) for lbl, s in zip(_labels, lst_out, strict=True)}
-    _union = set().union(*_index_sets.values())
-    _missing = {lbl: sorted(_union - idx) for lbl, idx in _index_sets.items() if _union - idx}
+    lst_out = [
+        return_filelist_by_tstep(fldr_out_triton, _prefix, min_per_tstep, _var)
+        for _prefix, _var in TRITON_RAW_VAR_BY_PREFIX.items()
+    ]
+    # THIS FUNCTION DESCRIBES WHAT IT FOUND. IT REFUSES NOTHING AND IT INVENTS NOTHING.
+    # The refusal moved to `triton_raw_frame_or_raise` below, because it is a POLICY and
+    # not a property of enumeration: of the eight consumption points measured at aaefe392,
+    # SEVEN tolerate a partial frame by design (three in eda/raw_resume_identity.py, four
+    # in the private estate, all of which carry their own `isinstance`/`dropna`/membership
+    # guards) and exactly ONE wants the refusal. A fail-closed default here was a rule
+    # imposed on callers whose requirements this function cannot know, and it broke every
+    # one of the seven.
+    # DROPPING an empty Series rather than NAMING it is deliberate and was ruled on. A
+    # variable that contributed zero files yields a bare unnamed `pd.Series()` from
+    # `return_filelist_by_tstep`, and `pd.concat` then labels it POSITIONALLY -- an
+    # integer-named all-NaN column describing nothing the solver wrote, which also drops
+    # the `timestep_min` index name. Naming it instead would relabel the fabrication; the
+    # drop removes it, so an absent variable can produce no NaN cell at all and absence is
+    # visible to a consumer as a missing column. Measured consequence that decided it: an
+    # estate consumer's `"max_wlevel_m" not in df.columns` check keeps working under the
+    # drop and would have silently stopped firing under naming.
+    # The empty-frame return is load-bearing, not defensive: `pd.concat([])` raises
+    # ValueError, and `.empty` is the "no processable output" discriminator for BOTH
+    # `triton_raw_frame_or_raise` and `compare_triton_raw_timeseries`.
+    _present = [s for s in lst_out if len(s)]
+    if not _present:
+        return pd.DataFrame(index=pd.Index([], name="timestep_min", dtype=float))
+    return pd.concat(_present, axis=1)
+
+
+def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_label: str):
+    """The per-timestep raw-output frame, or a loud refusal naming which condition failed.
+
+    ONE PREFLIGHT, SHARED BY BOTH TRITON EXPORTS, and the sharing is the point. The two
+    arms previously grew two different preflights: the TRITON-only arm tested DIRECTORY
+    emptiness (`any(dir.iterdir())`), which is TRUE when the directory holds only TRITON's
+    `GR_*` ghost-ring side-files -- not processable output -- so control fell through and a
+    later step raised on genuinely absent data; the coupled arm had no emptiness test at
+    all. A predicate for "is there processable output here" that is expressed anywhere but
+    in the enumerator can drift from it, which is the defect shape being removed, so this
+    asks the ENUMERATOR: every condition below is a test on the frame the enumerator
+    returned, and nothing here re-globs the directory.
+
+    MODULE-LEVEL, not a method, and the body reads no instance state -- which is what lets
+    the regression test call it the same way it called the enumerator, as a plain function
+    rather than an unbound method against a stub `self`. A future edit adding a `self.`
+    read here would break that test from a distance; being a free function makes that
+    impossible rather than merely discouraged.
+
+    FOUR conditions, four messages, because they are four genuinely different faults and
+    the remedy differs for each. ORDER IS LOAD-BEARING: the emptiness arm must precede the
+    absent arm, or a `GR_*`-only directory is reported as "a variable is missing" and the
+    purpose-built ghost-ring explanation is lost.
+    """
+    if fldr_out_triton is None or not Path(fldr_out_triton).exists():
+        raise FileNotFoundError(
+            f"Raw TRITON outputs not found for {model_label} at {fldr_out_triton}. "
+            "Ensure the simulation completed and wrote outputs to the configured "
+            "output directory."
+        )
+    df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
+    if df_outputs.empty:
+        raise FileNotFoundError(
+            f"No processable TRITON output files (MH, H, QX, QY) found for {model_label} "
+            f"in {fldr_out_triton}. The directory exists but holds no file the frame "
+            "builder recognises -- TRITON's GR_* ghost-ring side-files alone produce "
+            "this state, as does a directory whose raw was already cleared. Ensure the "
+            "simulation completed successfully."
+        )
+    _absent = [_v for _v in CANONICAL_TRITON_VARS if _v not in df_outputs.columns]
+    if _absent:
+        raise ProcessingError(
+            "triton_raw_frame_or_raise (raw output frame missing a variable entirely)",
+            filepath=fldr_out_triton,
+            reason=(
+                f"{model_label} requires all four TRITON raw variables; this directory "
+                f"emitted NONE of: {_absent}. A variable absent at EVERY timestep is "
+                "usually a CONFIGURATION outcome rather than corruption -- TRITON writes "
+                "H/QX/QY only for the letters named in the cfg's print_option, and writes "
+                "MH only when max_value_print_option is non-empty, and the toolkit supplies "
+                "no default for either, so a cfg omitting max_value_print_option emits no "
+                "MH tree-wide. CHECK THE CFG FIRST: re-running an unchanged cfg reproduces "
+                "this state forever, which is why this message does not tell you to force a "
+                "re-run. Refused here because nothing downstream fails on it -- the chapter "
+                "writer iterates whatever columns it is given, verify_and_flag_chapter "
+                "checks only the timestep count, xr.concat fills a missing variable with "
+                "NaN, and the summary RECONSTRUCTS max_wlevel_m from wlevel_m -- so an "
+                "absent variable would be written, flagged complete and merged with no "
+                "error raised anywhere."
+            ),
+        )
+    _var_prefix = {_v: _p for _p, _v in TRITON_RAW_VAR_BY_PREFIX.items()}
+    _missing = {
+        _var_prefix[_c]: sorted(float(_t) for _t in df_outputs.index[df_outputs[_c].isna()])
+        for _c in df_outputs.columns
+        if df_outputs[_c].isna().any()
+    }
     if _missing:
         raise ProcessingError(
-            "return_fpath_wlevels (ragged raw output frame)",
+            "triton_raw_frame_or_raise (ragged raw output frame)",
             filepath=fldr_out_triton,
             reason=(
                 "the four per-variable timestep index sets are NOT equal; short variable(s) and "
@@ -2785,7 +2850,6 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
                 "the simulation via a force at stage='simulate' naming this model arm."
             ),
         )
-    df_outputs = pd.concat(lst_out, axis=1)
     return df_outputs
 
 

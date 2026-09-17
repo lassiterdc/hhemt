@@ -34,11 +34,14 @@ import yaml
 from hhemt.analysis_validation import _TRITON_REPLAY_MARKER
 from hhemt.eda.cross_sim_identity import compare_variable_exact
 from hhemt.member_identity import resolve_member_id_column, warn_missing_member_id_column
-from hhemt.process_simulation import load_triton_output_w_xarray, return_fpath_wlevels
+from hhemt.process_simulation import CANONICAL_TRITON_VARS, load_triton_output_w_xarray, return_fpath_wlevels
 
 #: TRITON raw per-timestep variables, in the order load_triton_output_w_xarray tags them
 #: (MH->max_wlevel_m, H->wlevel_m, QX->velocity_x_mps, QY->velocity_y_mps).
-TRITON_VARS: tuple[str, ...] = ("max_wlevel_m", "wlevel_m", "velocity_x_mps", "velocity_y_mps")
+#: ALIAS, not a second list. The definition is process_simulation.CANONICAL_TRITON_VARS,
+#: beside the enumerator that produces the columns these names index. Re-declaring the
+#: literal here would be a second source that a rename in the enumerator cannot reach.
+TRITON_VARS: tuple[str, ...] = CANONICAL_TRITON_VARS
 
 
 def _stub_index_dem(bin_dir: Path, raw_out_type: str = "bin") -> xr.DataArray:

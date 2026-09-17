@@ -488,7 +488,12 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     src_file.write_bytes(b"\x00")  # existence is all the loop checks; load is mocked
     fname_out = tmp_path / "out.zarr"
 
-    columns = ["H", "QX", "QY", "MH"]
+    # CANONICAL NAMES, not the raw glob prefixes. This frame stands in for
+    # return_fpath_wlevels' output via monkeypatch, and that output's columns are the
+    # canonical variable names. The prefix spelling was invisible only because
+    # load_triton_output_w_xarray is patched in the same helper, so nothing consumed the
+    # names semantically; triton_raw_frame_or_raise's required-set check does consume them.
+    columns = ["max_wlevel_m", "wlevel_m", "velocity_x_mps", "velocity_y_mps"]
     df_outputs = pd.DataFrame(
         {col: [src_file] * n_timesteps for col in columns},
         index=list(range(n_timesteps)),
@@ -554,7 +559,8 @@ def test_write_timeseries_raises_when_no_valid_timesteps(tmp_path, monkeypatch):
     missing_file = tmp_path / "does_not_exist.bin"  # never created on disk
     fname_out = tmp_path / "out.zarr"
 
-    columns = ["H", "QX", "QY", "MH"]
+    # CANONICAL NAMES, not the raw glob prefixes -- see the sibling stand-in above.
+    columns = ["max_wlevel_m", "wlevel_m", "velocity_x_mps", "velocity_y_mps"]
     df_outputs = pd.DataFrame(
         {col: [missing_file] * n_timesteps for col in columns},
         index=list(range(n_timesteps)),

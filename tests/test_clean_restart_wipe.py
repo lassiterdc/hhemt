@@ -59,6 +59,20 @@ def test_clean_restart_wipe_removes_only_named_subs_and_delegates_flag_delete(tm
         # omitting it is unrealistic, not a signal — the wipe legitimately reads it.
         analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir, simlog_directory=simlogs),
         _workflow_builder=_RecordingBuilder(),
+        # A SINGLE-MODEL RETURN, AND THE CHOICE IS THE TEST'S DISCRIMINATING POWER.
+        # `_clean_restart_wipe` builds ResolvedForceRerunSpec(models=tuple(
+        # self._get_enabled_model_types())), so this stub is what the assertion below
+        # pins the spec's models against. Returning all three models would be satisfied
+        # by a hardcoded triple and would assert almost nothing; a one-element tuple no
+        # plausible mutant produces is failed by a hardcode, by an empty tuple, and by a
+        # different source. Empty is the dangerous value and is why the assertion exists
+        # at all: _delete_flags_for_force_rerun filters with `_model is None or _model in
+        # spec.models`, and its stage="simulate" floor is entirely model-bearing prefixes,
+        # so models=() deletes ZERO completion flags -- the wipe would destroy this
+        # member's outputs and the next resume would SKIP it. ResolvedForceRerunSpec is a
+        # frozen dataclass with no __post_init__; the non-empty check lives on the PUBLIC
+        # ForceRerunSpec, which this construction path does not go through.
+        _get_enabled_model_types=lambda: ["triton"],
     )
 
     # Invoke the (new) capability's helper with the stub as ``self``.
@@ -102,3 +116,8 @@ def test_clean_restart_wipe_removes_only_named_subs_and_delegates_flag_delete(tm
     assert isinstance(recorded[0], ResolvedForceRerunSpec)
     assert recorded[0].scope == "member"
     assert recorded[0].tokens == ("1",)
+    # The MODEL axis, which nothing asserted before the model-axis change landed and which
+    # is the reason this test went red. This is a WIRING assertion: it pins that `models` is
+    # sourced from _get_enabled_model_types() rather than hardcoded or dropped. See the stub
+    # comment above for why the stub returns one model rather than three.
+    assert recorded[0].models == ("triton",)
