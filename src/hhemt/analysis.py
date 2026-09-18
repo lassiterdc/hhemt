@@ -3573,7 +3573,18 @@ class TRITONSWMM_analysis:
         system_log = self._system.log
         dem_done = system_log.dem_processed.get()
         mannings_done = self._system.cfg_system.toggle_use_constant_mannings or system_log.mannings_processed.get()
-        compiled = system_log.compilation_tritonswmm_cpu_successful.get()
+        # NOT APPLICABLE in container mode: setup_workflow.py skips both compiles because
+        # the SIF carries the binary, so this field's only writer (system.py, inside
+        # _compile_backend) is never reached and its value is not evidence about the build.
+        # The canonical statement of "an absent build artifact is not evidence of failure"
+        # lives at the PRODUCER, src/hhemt/system.py::compilation_cpu_successful (its
+        # ABSTENTION CHECK comment); this is a citation, not a restatement. NATIVE-mode
+        # None handling (a cleaned-up build tree is byte-identical to a never-built one)
+        # is an OPEN developer policy choice and is deliberately left byte-unchanged here.
+        if self.cfg_analysis.execution_environment == "container":
+            compiled = True
+        else:
+            compiled = system_log.compilation_tritonswmm_cpu_successful.get()
 
         setup_complete = dem_done and mannings_done and compiled
         setup_progress = 1.0 if setup_complete else 0.5 if (dem_done or compiled) else 0.0
@@ -3684,35 +3695,17 @@ class TRITONSWMM_analysis:
             details=consol_details,
         )
 
-        # Determine current phase and recommendation
-        if not setup_complete:
-            current = "setup"
-            rec_mode = "fresh"
-            rec_text = "Setup incomplete. Use 'fresh' mode to process system inputs."
-        elif not all_prepared:
-            current = "preparation"
-            rec_mode = "resume"
-            rec_text = f"Use 'resume' to create {len(not_prepared)} remaining scenarios."
-        elif not all_run:
-            current = "simulation"
-            rec_mode = "resume"
-            rec_text = f"Use 'resume' to run {len(not_run)} pending/failed simulations."
-        elif not proc_complete:
-            current = "processing"
-            rec_mode = "resume"
-            rec_text = "Use 'resume' to process simulation outputs."
-        elif not summaries_exist:
-            current = "consolidation"
-            rec_mode = "resume"
-            rec_text = "Use 'resume' to consolidate analysis summaries."
-        else:
-            current = "complete"
-            # 'fresh' is the only actionable mode for a complete analysis (resume has
-            # nothing left to do); it is a valid translate_mode() input, so
-            # analysis.run(mode=status.recommended_mode) works. 'n/a' is not a member
-            # of the documented {fresh, resume} run-mode set and is not run()-able.
-            rec_mode = "fresh"
-            rec_text = "All phases complete. Use 'fresh' to redo the analysis from scratch."
+        # Determine current phase and recommendation -- a pure function of the five
+        # booleans (extracted so it is unit-testable fixture-free; see _recommendation_ladder).
+        current, rec_mode, rec_text = _recommendation_ladder(
+            setup_complete=setup_complete,
+            all_prepared=all_prepared,
+            all_run=all_run,
+            proc_complete=proc_complete,
+            summaries_exist=summaries_exist,
+            n_not_prepared=len(not_prepared),
+            n_not_run=len(not_run),
+        )
 
         return WorkflowStatus(
             analysis_id=self.cfg_analysis.analysis_id,
@@ -6379,3 +6372,36 @@ class TRITONSWMM_analysis:
 
 
 # %%
+
+
+def _recommendation_ladder(
+    *,
+    setup_complete: bool,
+    all_prepared: bool,
+    all_run: bool,
+    proc_complete: bool,
+    summaries_exist: bool,
+    n_not_prepared: int = 0,
+    n_not_run: int = 0,
+) -> tuple[str, str, str]:
+    """The workflow-status recommendation ladder, as a PURE function of its five booleans.
+
+    Ordered: upstream incompleteness wins over downstream completion, so an operator holding
+    a stale consolidation marker over an unprepared scenario is told to RESUME, not to wipe.
+    ``current_phase`` is assigned by exactly one arm and IS the ladder's verdict. Extracted
+    from ``TRITONSWMM_analysis.get_workflow_status`` so the ordering is unit-testable with no
+    fixture, no compile and no shared cache.
+    """
+    if not setup_complete:
+        return "setup", "fresh", "Setup incomplete. Use 'fresh' mode to process system inputs."
+    if not all_prepared:
+        return "preparation", "resume", f"Use 'resume' to create {n_not_prepared} remaining scenarios."
+    if not all_run:
+        return "simulation", "resume", f"Use 'resume' to run {n_not_run} pending/failed simulations."
+    if not proc_complete:
+        return "processing", "resume", "Use 'resume' to process simulation outputs."
+    if not summaries_exist:
+        return "consolidation", "resume", "Use 'resume' to consolidate analysis summaries."
+    # 'fresh' is the only actionable mode for a complete analysis (resume has nothing left
+    # to do); it is a valid translate_mode() input, so analysis.run(mode=...) works.
+    return "complete", "fresh", "All phases complete. Use 'fresh' to redo the analysis from scratch."

@@ -83,7 +83,11 @@ def test_workflow_status_recommendations(synth_multi_sim_analysis_cached):
     status = analysis.get_workflow_status()
 
     # Verify recommendation logic consistency
-    if status.consolidation.complete:
+    # Arm 1 branches on `current_phase`, which IS the ladder's verdict (assigned by exactly
+    # one arm of _recommendation_ladder), so this test's partition and production's are the
+    # same BY CONSTRUCTION. Branching on `consolidation.complete` asserted an implication
+    # production does not implement: it is the LAST of five conjuncts.
+    if status.current_phase == "complete":
         # All done - 'fresh' is the only actionable run mode (resume has nothing
         # left); 'overwrite' is not a real translate_mode input.
         assert status.recommended_mode == "fresh"
