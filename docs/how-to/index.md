@@ -9,6 +9,8 @@ Task-oriented recipes for getting specific jobs done with the toolkit.
   YAMLs.
 - [Compile the solver](compiling-the-solver.md): build the TRITON-SWMM solver
   once per machine and GPU target, and know when to build it again.
+- [Building container images](building-container-images.md): create the Apptainer
+  images container mode runs in, with `hhemt build-sifs`.
 - [Running an experiment bundle](running-an-experiment-bundle.md): run a
   self-describing `experiment.yaml` bundle with `hhemt run-experiment`.
 - [In-flight operations](in-flight-operations.md): monitor, resume, and

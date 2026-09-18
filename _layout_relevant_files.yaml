@@ -2105,3 +2105,89 @@ non_breaking_allowlist:
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
     layout_signature: "271f4a3fdead57dbd094ba7ec432c59222034d5ec686ff1805c1cd0d7b0e13b5"
+  - path: src/hhemt/config/experiment_bundle.py
+    justification: >-
+      D127 CONFIG-REFERENCE POPULATION. `ExperimentConfig.toolkit_pin` moves from a bare
+      `toolkit_pin: ToolkitPin` declaration to a `Field(description=...)` form so the
+      generated configuration reference renders a populated Description cell for it.
+      ExperimentConfig becomes a generator root under D127's criterion -- every config a
+      human fills in -- with ContainerRef arriving free as a reachable child. The path is
+      reached by the `src/hhemt/config/**/*.py` glob, which is why check-b sees it.
+      NON-BREAKING, AND THE REQUIREDNESS CHECK IS THE LOAD-BEARING ONE. The diff is +3/-1
+      and rewrites ONE declaration in place: no field is added, removed, renamed or
+      reordered, so field COUNT and ORDER are unchanged by construction. Requiredness is
+      NOT provable from the diff and was read from the runtime model instead:
+      `ExperimentConfig.model_fields` reports 7 fields in the order (description,
+      system_config, analysis_config, hpc_system_config, inputs, toolkit_pin, container)
+      and `toolkit_pin` IS STILL REQUIRED. That is the flip the sibling hpc_system.py row
+      names as its keystone -- a `Field(...)` form preserves requiredness only if no
+      default is supplied, and field count, field order and every description clause all
+      stay green when it flips -- so it was checked directly rather than reasoned about.
+      NO MIGRATION IS POSSIBLE TO WRITE. A description is schema METADATA consumed by the
+      documentation renderer; it is absent from every serialized artifact, so a V0023
+      would have nothing to act on.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "3700d8d92b0839404bfd4f4bcbd1b17fe70da7a73f5a836600ac01ea504bd969"
+  - path: src/hhemt/config/sif_build.py
+    justification: >-
+      D127 CONFIG-REFERENCE POPULATION. Four `sif_build_config` fields -- cpus, mem_mb,
+      walltime_min and recipes_dir -- move from bare defaults with trailing `#` comments
+      into `Field(default, description=...)` forms, so the generated configuration
+      reference renders a populated Description cell for each. sif_build_config becomes a
+      generator root under D127's criterion. The path is reached by the
+      `src/hhemt/config/**/*.py` glob, which is why check-b sees it.
+      NON-BREAKING, AND EVERY DEFAULT WAS READ FROM THE RUNTIME MODEL RATHER THAN THE DIFF.
+      The diff is +13/-4 and rewrites four declarations in place: no field is added,
+      removed, renamed or reordered, so COUNT and ORDER are unchanged by construction.
+      `sif_build_config.model_fields` reports 7 fields in the order (sif_root, partition,
+      cpus, mem_mb, walltime_min, recipes_dir, toolkit_root); the four converted fields
+      carry defaults 16, 65536, 480 and None, BYTE-FOR-BYTE the values their bare
+      declarations carried at HEAD; and the REQUIRED set is ['sif_root', 'partition',
+      'toolkit_root'], which contains none of the four. So no converted field changed
+      requiredness and no default moved -- the two ways this conversion can silently alter
+      what an omitted key means.
+      THE `walltime_min` COMMENT IS PRESERVED, not discarded: the measured a6000 build time
+      and the retriable-timeout note survive as a trailing `#` beside the field, because
+      they are maintainer context rather than reader-facing description.
+      NO MIGRATION IS POSSIBLE TO WRITE. Descriptions are schema metadata absent from every
+      serialized artifact, and no default changed, so a V0023 would have nothing to act on.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "88ac22b95938ad4880e643e281494a6c5d28bc7522fb094a5a280c12e81b92af"
+  - path: src/hhemt/config/reprex_config.py
+    justification: >-
+      RETIRED-KEY HARD REFUSAL, extended to reprex_config. A `model_validator(mode=
+      "before")` is added that RAISES when a loaded mapping carries `sif_path`, naming the
+      rename to `sif_root` and the reason for it: an image is resolved by identity under a
+      DIRECTORY, never named by a path to one file. The path is reached by the
+      `src/hhemt/config/**/*.py` glob, which is why check-b sees it.
+      THIS IS A NEW GUARD, NOT A RESTORED ONE, AND THE RECORD SHOULD SAY SO. The symbol
+      `_refuse_retired_sif_path` appears in NO commit on any branch -- `git log --all -S`
+      over this path returns empty -- so any description of it as restoring lost behaviour
+      is wrong. What it does is EXTEND to this model the hard-refusal pattern its siblings
+      already carry: hpc_system.py:519-522 refuses the same retired key set on ContainerSpec
+      and ContainerRef, and this file's own comment says it is "matching the ContainerSpec
+      and ContainerRef siblings."
+      NON-BREAKING TO ON-DISK LAYOUT, and the distinction is stated rather than blurred.
+      The diff adds one import and one classmethod and touches NO field declaration, so
+      `reprex_config.model_fields` is unchanged at 6 fields in the order (default_account,
+      login_node, sif_root, scratch_dir, target_ensemble_partition,
+      target_setup_and_analysis_processing_partition) with REQUIRED ['default_account',
+      'sif_root', 'target_ensemble_partition'] -- verified at runtime. Nothing hhemt WRITES
+      changes: no path, filename, zarr group, log key, flag token or _version.json value
+      moves.
+      AGAINST, stated because it is real: this is a BEHAVIOURAL change on the READ side. A
+      user config still carrying the retired `sif_path` now raises at load where it
+      previously did not. That is the intended effect and the alternative is worse -- the
+      file's own comment records it: without the guard the reader gets "sif_root Field
+      required" beside "sif_path Extra inputs are not permitted" and has to infer the
+      rename. The refusal was verified to fire: `reprex_config.model_validate({"sif_path":
+      ...})` raises, and the message names the remedy.
+      WHY NOT A LAYOUT_VERSION BUMP. LAYOUT_VERSION governs the on-disk analysis tree. This
+      guard governs what an INPUT config may contain, and a V0023 cannot rewrite a user's
+      hand-authored config file -- that is precisely why the remedy is an error message
+      naming the rename rather than a silent migration.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "36e75a055b74d5c83273986cd814525cc3e32ac7555fc88aa35f5df4079dbbf3"

@@ -153,7 +153,9 @@ class ExperimentConfig(BaseModel):
         description="Cluster-name -> estate-relative hpc_system_config path.",
     )
     inputs: list[DatasetRef] = Field(default_factory=list, description="Input datasets.")
-    toolkit_pin: ToolkitPin
+    toolkit_pin: ToolkitPin = Field(
+        description="Which toolkit release this experiment is pinned to, so a third party can obtain it."
+    )
     container: ContainerRef | None = Field(default=None, description="None => native execution.")
 
     @model_validator(mode="after")

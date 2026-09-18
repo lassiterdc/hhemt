@@ -226,14 +226,31 @@ def _authored_prose() -> list[str]:
     return [line for line in _render().split("\n") if not line.startswith("|")]
 
 
-#: The three configs a user writes. Every other model this page tables is reached
-#: FROM one of these by following an annotated field type -- `### D99`. The
-#: population is therefore DERIVED, not listed: a new nested config joins the page
-#: by being referenced, and nothing here has to be remembered.
+#: Every config a HUMAN FILLS IN (`### D127`). That is the population CRITERION, and it
+#: partitions on who completes the CONTENT rather than on who creates the file or on
+#: whether a CLI flag names its path -- `reprex_config.yaml` is written by the toolkit
+#: into every emitted bundle and filled in by the reproducer, so it qualifies. Test a
+#: new config against that clause rather than arguing the case again.
+#:
+#: Membership is ENUMERATED below rather than derived from the criterion, because
+#: nothing machine-readable records who fills a config in. Two consequences, and both
+#: are deliberate: a newly qualifying config must be added here by hand, and
+#: `CaseManifest` is ABSENT as an OPEN SCOPING QUESTION -- a case-study contributor is
+#: a different reader from a run operator -- rather than as a criterion-based
+#: exclusion. Do not read its absence as settled.
+#:
+#: Every other model this page tables is reached FROM one of these by following an
+#: annotated field type -- `### D99`. The population BELOW the roots is therefore
+#: DERIVED, not listed: a nested config joins the page by being referenced, and
+#: nothing about it has to be remembered. `ContainerRef` arrives exactly that way, as
+#: a field of `ExperimentConfig`, and is deliberately NOT a root of its own.
 ENTRY_CONFIGS = (
     "hhemt.config.system:system_config",
     "hhemt.config.analysis:analysis_config",
     "hhemt.config.hpc_system:hpc_system_config",
+    "hhemt.config.sif_build:sif_build_config",
+    "hhemt.config.experiment_bundle:ExperimentConfig",
+    "hhemt.config.reprex_config:reprex_config",
 )
 
 
@@ -293,33 +310,64 @@ def _closure_models() -> list[type]:
 def _nested_section(already: tuple[type, ...]) -> str:
     """Every closure member the hand-written sections above do not already table.
 
-    Most of these are report style sub-models -- panel styles, figure defaults,
-    interactive backends. They are on this page because `### D99` selects the
-    population by REACHABILITY rather than by a hand-list, and a reader who never
-    writes a ``report:`` block will not meet them in practice. They are grouped
-    under one heading and labelled as nested blocks rather than interleaved with
-    the three configs a user writes, so the page's shape still distinguishes what
-    you author from what you may never touch.
+    SPLIT ON ROOT-NESS, NOT ON WHAT THE HAND-WRITTEN SECTIONS HAPPEN TO COVER.
+    `already` names only the models `_render` tables by hand, so every OTHER
+    `ENTRY_CONFIGS` root lands here too -- and a root is a file its reader fills
+    in, not a block nested inside one. Labelling it "nested" was true while
+    `ENTRY_CONFIGS` and `already` held the same three models and became false the
+    moment a root was added without a hand-written section, which is a state no
+    post-condition on the tuple can see. The membership test below reads
+    `ENTRY_CONFIGS` so the two cannot drift again.
+
+    The nested bucket is mostly report style sub-models -- panel styles, figure
+    defaults, interactive backends. They are on this page because `### D99` selects
+    the population by REACHABILITY rather than by a hand-list, and a reader who
+    never writes a ``report:`` block will not meet them in practice.
     """
+    import importlib
+
+    roots = set()
+    for spec in ENTRY_CONFIGS:
+        modname, _, attr = spec.partition(":")
+        roots.add(getattr(importlib.import_module(modname), attr))
     rest = [m for m in _closure_models() if m not in already]
-    out = [
+    own_file = [m for m in rest if m in roots]
+    nested = [m for m in rest if m not in roots]
+
+    out: list[str] = []
+    if own_file:
+        out += [
+            "## Other configs you fill in",
+            "",
+            "Each of these is a file of its own, named on a command line rather than",
+            "nested inside another config, and each is a config you fill in that no",
+            "section above introduces yet.",
+            "",
+        ]
+        for model in own_file:
+            out += [f"### {model.__name__}", "", f"From `{model.__module__}`.", "", _table(model), ""]
+
+    out += [
         "## Nested config blocks",
         "",
-        "Reached from the three configs above by a field's type. You write these as",
-        "nested blocks inside the configs above, never as files of their own, and many",
-        "of them are report styling you can leave at its defaults. They are tabled here",
-        "because this page's population is every config the three entry configs can",
-        "reach -- so nothing a config references can go undocumented.",
+        "Reached from a config above by a field's type. You write these as nested",
+        "blocks inside the configs above, never as files of their own, and many of",
+        "them are report styling you can leave at its defaults. They are tabled here",
+        "because this page's population is every config an entry config can reach --",
+        "so nothing a config references can go undocumented.",
         "",
     ]
-    for model in rest:
+    for model in nested:
         out += [f"### {model.__name__}", "", f"From `{model.__module__}`.", "", _table(model), ""]
     return "\n".join(out)
 
 
 def _render() -> str:
     from hhemt.config.analysis import analysis_config
+    from hhemt.config.experiment_bundle import ExperimentConfig
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
+    from hhemt.config.reprex_config import reprex_config
+    from hhemt.config.sif_build import sif_build_config
     from hhemt.config.system import system_config
 
     marker = _load_lint().GENERATED_MARKER
@@ -332,10 +380,11 @@ def _render() -> str:
         "",
         "# Configuration schema",
         "",
-        "Every field of every config reachable from the three you write -- the system,",
-        "analysis and HPC-system configs -- by following a field's type, derived from",
-        "the models at documentation build time. Nothing here is hand-maintained and",
-        "nothing is hand-selected: the population is that transitive closure, so a new",
+        "Every field of every config you fill in -- the system, analysis and HPC-system",
+        "configs, the SIF build config, the experiment descriptor and the reprex config",
+        "-- plus every config reachable from those by following a field's type, derived",
+        "from the models at documentation build time. Nothing here is hand-maintained",
+        "and nothing is hand-selected: the population is that transitive closure, so a",
         "nested config appears by being referenced rather than by being remembered.",
         "Config models no entry config reaches are not tabled here.",
         "",
@@ -374,7 +423,42 @@ def _render() -> str:
         "",
         _table(PartitionSpec),
         "",
-        _nested_section((system_config, analysis_config, hpc_system_config, PartitionSpec)),
+        "## SIF build config",
+        "",
+        "Describes the machine that BUILDS container images: where they are written,",
+        "which partition builds them, and which checkout is the toolkit being baked in.",
+        "You write this one only in container mode, and `hhemt build-sifs` names its",
+        "path on the command line.",
+        "",
+        _table(sif_build_config),
+        "",
+        "## Experiment descriptor",
+        "",
+        "The `experiment.yaml` at the root of an experiment bundle: it names the configs",
+        "the run uses, the datasets it consumes, and the toolkit release it is pinned to,",
+        "so a third party can obtain everything the run needed.",
+        "",
+        _table(ExperimentConfig),
+        "",
+        "## Reprex config",
+        "",
+        "The file a REPRODUCER fills in to run someone else's bundle on their own system:",
+        "their account, their partitions, and where their copy of the image lives. It ships",
+        "in the bundle as a template with the producer's values removed.",
+        "",
+        _table(reprex_config),
+        "",
+        _nested_section(
+            (
+                system_config,
+                analysis_config,
+                hpc_system_config,
+                PartitionSpec,
+                sif_build_config,
+                ExperimentConfig,
+                reprex_config,
+            )
+        ),
         "",
         _conditional_section(),
         "",

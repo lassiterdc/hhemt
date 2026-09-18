@@ -21,7 +21,7 @@ Pass it as `--hpc-system-config`. See
 
 | Command | What it does |
 |---|---|
-| `run` | Execute the workflow from a system + analysis config. The main entry point. `--dry-run` validates and prints the plan without executing. In native mode the solver must already be compiled; see [Compile the solver](../how-to/compiling-the-solver.md). |
+| `run` | Execute the workflow from a system + analysis config. The main entry point. `--dry-run` validates and prints the plan without executing. In native mode the solver must already be compiled; see [Compile the solver](../how-to/compiling-the-solver.md). In container mode, `--build-sifs` builds any missing image inside this run's driver before submitting; alongside it, `--sif-build-config` names the build venue and resources, `--force-sif-rebuild` rebuilds the planned identities even when present, and `--no-wait` builds and verifies without submitting the experiment. Those three do nothing on their own. See [Building container images](../how-to/building-container-images.md). |
 | `run-experiment` | Run a self-describing experiment bundle: a directory whose `experiment.yaml` names its own configs, inputs, and toolkit pin. See [Running an experiment bundle](../how-to/running-an-experiment-bundle.md). |
 | `reprocess` | Re-run the downstream stages (process → consolidate → render) against simulation outputs that already exist, without re-running the simulations. This is the command for "the results are fine but the report is wrong". |
 
@@ -140,7 +140,7 @@ fixture cache rather than a property of these flags: see
 
 The CLI uses structured exit codes, so a script can branch on the failure class
 rather than parsing stderr. Four verbs read every code from one shared map, so for
-those four the table is exact: `run`, `run-experiment`, `build-sif` and `ingest`.
+those four the table is exact: `run`, `run-experiment`, `build-sifs` and `ingest`.
 
 Four verbs predate that map and still exit `1` where the table says `3`, `4` or `5`:
 `reprocess`, `recompute-plan`, `check-invalidating-fixes` and `delete`. `delete`
