@@ -2016,6 +2016,85 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
+def check_log_recoveries(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Surface every quarantine-and-reconstruct that a log write() performed (M3).
+
+    A reconstruct means a log document did not parse, was MOVED to a `.unreadable`
+    sibling, and was rebuilt from the writing process's state -- so every field that
+    process did not set is now a default. That is repaired damage, and the developer's
+    standing rule is that it is never left silent: the check FAILS naming each document
+    and its quarantine path so the operator inspects the preserved bytes.
+
+    PATH-ONLY and DISCLOSED-DENOMINATOR, like check_data_availability: the model logs are
+    read straight off disk at `sims/{event_id}/log_{model}.json` (TRITONSWMM_scenario is
+    never instantiated), the analysis and system log documents are read the same way, and
+    the summary names examined / indeterminate counts so a vacuous pass is legible.
+    """
+    import json
+
+    from hhemt.scenario import compute_event_id_slug
+
+    details: list[dict] = []
+    examined = 0
+    indeterminate = 0
+
+    def _rows_for(doc_path: Path, label: str, member_id) -> None:
+        nonlocal examined, indeterminate
+        examined += 1
+        if not doc_path.exists():
+            indeterminate += 1
+            return
+        try:
+            payload = json.loads(doc_path.read_text())
+        except (OSError, ValueError):
+            indeterminate += 1
+            return
+        records = payload.get("recovered_from_unparseable") or []
+        for rec in records:
+            row = {
+                "scenario": label,
+                "scenario_dir": str(doc_path.parent),
+                "detail": (
+                    f"{doc_path.name}: did not parse ({rec.get('error')}); preserved at "
+                    f"{rec.get('quarantine')} and reconstructed at {rec.get('at')} by "
+                    f"{rec.get('writer')}"
+                ),
+            }
+            if member_id is not None:
+                row["sa_id"] = f"member_{member_id}"
+            details.append(row)
+
+    for member_id, sub in _iter_members_or_self(analysis):
+        try:
+            enabled = sub._get_enabled_model_types()
+            sim_dir = Path(sub.analysis_paths.simulation_directory)
+            analysis_log = Path(sub.analysis_paths.f_log)
+            system_log = Path(sub._system.log.logfile)
+        except Exception:  # noqa: BLE001 -- a sub we cannot address is indeterminate, not failed
+            continue
+        _rows_for(analysis_log, "analysis log", member_id)
+        _rows_for(system_log, "system log", member_id)
+        for event_iloc in sub.df_sims.index:
+            ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
+            event_id = compute_event_id_slug(ev)
+            for model in enabled:
+                _rows_for(sim_dir / event_id / f"log_{model}.json", event_id, member_id)
+
+    passed = not details
+    summary = (
+        f"{'No' if passed else len(details)} log document(s) were reconstructed after failing to "
+        f"parse. Examined {examined} log document(s); {indeterminate} indeterminate (absent or "
+        "unreadable)."
+    )
+    return CheckResult(
+        name="Log recoveries",
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+    )
+
+
 def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
@@ -2055,6 +2134,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             # mtime direction, so the re-run case is the silent one. That is what this
             # ordering protects against; the fresh case would report itself.
             check_provenance_completeness(analysis),  # ADR-15: per-stage version coverage
+            check_log_recoveries(analysis),  # M3: quarantine-and-reconstruct events on any log tier
         ]
         + _read_persisted_eda_verdicts(analysis)
     )
