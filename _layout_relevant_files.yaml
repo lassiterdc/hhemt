@@ -1884,13 +1884,17 @@ non_breaking_allowlist:
       Renaming or re-keying any existing log key, or moving the document (arm B,
       record-per-fact), is NOT this class and owes LAYOUT 23 with a V0023 module.
   - path: src/hhemt/scenario.py
-    layout_signature: 91626fb90691a5298e9090c3333a3f6ed64cf907c2a9bebb7e639021b1c4089f
+    layout_signature: bb04246a23eedf4ebf995fc1fd9077774e527da92a4e2c801e5f0a2445346c51
     justification: >-
       NON-BREAKING. get_log() opens `log_{model_type}.json` in one resolution (from_json
       inside try/except FileNotFoundError) instead of .exists()-then-from_json (M1, read
       pair). Changes HOW the document is found, never its name, its directory, or its
       contents; the absent branch constructs the same default it always did.
-      EXPIRY CONDITION: covers this read-pair edit only.
+      ALSO COVERED (same commit series, R12 rider S2): the prepare-scenario launcher
+      closure returns the runner subprocess return code instead of None -- an in-memory
+      return value consumed by run_prepare_scenarios_serially's failure message; no
+      on-disk artifact changes.
+      EXPIRY CONDITION: covers this read-pair edit and the closure return value only.
   - path: src/hhemt/process_simulation.py
     layout_signature: e7c354ce0cb3cab0ddc14b919852cf1f0bf6d60c2d1df64e21c6cdc8f3a24d59
     justification: >-

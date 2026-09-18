@@ -477,6 +477,20 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # is gated. See A6 verification in the Phase 2 plan doc.
         if start_from_scratch and not skip_run:
             self.system.process_system_level_inputs(verbose=False)
+        # R12 (2026-09-18): a cached (start_from_scratch=False) build ALSO seeds the
+        # system-level inputs. Before bc044e89 the wiping build above wrote the DEM
+        # into the shared root and every later cached reader found it; bc044e89
+        # redirected the wiping build to a private mkdtemp root without moving the
+        # readers' dependency, so the first session on any fresh shared root had no
+        # producer before tests/test_synth_01_singlesim.py::test_prepare_all_scenarios
+        # (red on seven fresh roots, 2026-08-25 .. 2026-09-18). The call is idempotent
+        # -- create_dem_for_TRITON / create_mannings_file_for_TRITON skip on an
+        # existing file after an integrity check and regenerate only a malformed one
+        # -- and the DEM write is atomic (mkstemp + Path.replace), so concurrent cached
+        # constructions on one cold root are last-writer-wins on a whole file. The
+        # skip_run gate is honoured exactly as on the wiping branch.
+        if not start_from_scratch and not skip_run:
+            self.system.process_system_level_inputs(verbose=False)
 
     def _write_configs(self, **kwargs):
         events_csv = self.system_directory / "weather_events_to_simulate.csv"

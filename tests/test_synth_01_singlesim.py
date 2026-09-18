@@ -15,9 +15,7 @@ pytestmark = [
 
 def test_load_system_and_analysis(synth_all_models_analysis):
     analysis = synth_all_models_analysis
-    tst_ut.assert_file_exists(
-        analysis.analysis_paths.simulation_directory, "simulation directory"
-    )
+    tst_ut.assert_file_exists(analysis.analysis_paths.simulation_directory, "simulation directory")
 
 
 def test_prepare_all_scenarios(synth_all_models_analysis_cached):
@@ -46,11 +44,7 @@ def test_run_sim(synth_all_models_analysis_cached):
             pytest.fail(
                 f"{len(failed_scenarios)} {model_type} simulation(s) failed to complete:\n"
                 + "\n".join(f"  - {d}" for d in failed_scenarios[:5])
-                + (
-                    f"\n  ... and {len(failed_scenarios) - 5} more"
-                    if len(failed_scenarios) > 5
-                    else ""
-                )
+                + (f"\n  ... and {len(failed_scenarios) - 5} more" if len(failed_scenarios) > 5 else "")
             )
 
 
@@ -63,17 +57,11 @@ def test_process_sim(synth_all_models_analysis_cached):
 
         for model_type in enabled_models:
             if model_type == "tritonswmm":
-                proc.write_timeseries_outputs(
-                    which="both", model_type=model_type, override_clear_raw="all"
-                )
+                proc.write_timeseries_outputs(which="both", model_type=model_type, override_clear_raw="all")
             elif model_type == "triton":
-                proc.write_timeseries_outputs(
-                    which="TRITON", model_type=model_type, override_clear_raw="all"
-                )
+                proc.write_timeseries_outputs(which="TRITON", model_type=model_type, override_clear_raw="all")
             elif model_type == "swmm":
-                proc.write_timeseries_outputs(
-                    which="SWMM", model_type=model_type, override_clear_raw="all"
-                )
+                proc.write_timeseries_outputs(which="SWMM", model_type=model_type, override_clear_raw="all")
 
     for event_iloc in analysis.df_sims.index:
         proc = analysis._retrieve_sim_run_processing_object(event_iloc)
@@ -105,10 +93,7 @@ def test_process_sim(synth_all_models_analysis_cached):
     tst_ut.assert_tritonswmm_compiled(analysis)
     tst_ut.assert_swmm_compiled(analysis)
 
-    success_clearing = (
-        analysis._all_raw_TRITON_outputs_cleared
-        and analysis._all_raw_SWMM_outputs_cleared
-    )
+    success_clearing = analysis._all_raw_TRITON_outputs_cleared and analysis._all_raw_SWMM_outputs_cleared
     if not success_clearing:
         analysis.print_logfile_for_scenario(0)
         pytest.fail("Clearing raw outputs failed.")
@@ -152,13 +137,9 @@ def test_swmm_cross_model_consistency(synth_all_models_analysis_cached):
         missing_links = swmm_link_ids - tritonswmm_link_ids
 
         if missing_nodes:
-            pytest.fail(
-                f"TRITON-SWMM node_ids missing {len(missing_nodes)} SWMM-only nodes."
-            )
+            pytest.fail(f"TRITON-SWMM node_ids missing {len(missing_nodes)} SWMM-only nodes.")
         if missing_links:
-            pytest.fail(
-                f"TRITON-SWMM link_ids missing {len(missing_links)} SWMM-only links."
-            )
+            pytest.fail(f"TRITON-SWMM link_ids missing {len(missing_links)} SWMM-only links.")
 
         # A coupled run's SWMM output carries 0 or 1 FEWER report periods than a
         # standalone run of the same window -- NEVER more, and never a gap in the
@@ -270,10 +251,12 @@ def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cach
     # System-level preprocessing produces the processed DEM
     # (`elevation_<res>m.dem`) that write_hydrograph_files and
     # return_df_of_nodes_grouped_by_DEM_gridcell read. run_prepare_scenarios_serially
-    # is scenario-level and does NOT produce it, so this call makes the guard
-    # self-sufficient when run in isolation (in-module, an earlier
-    # start_from_scratch=True test already built it). Idempotent: skips when the
-    # DEM exists and passes integrity (system.py::create_dem_for_TRITON).
+    # is scenario-level and does NOT produce it. Since the R12 fix the cached builder
+    # (tests/fixtures/test_case_builder.py, the `not start_from_scratch and not
+    # skip_run` branch) already seeds it on every construction; this call is kept as
+    # an idempotent restatement of the guard's own precondition so the test stands
+    # alone even if that seed is ever re-gated. Idempotent: skips when the DEM
+    # exists and passes integrity (system.py::create_dem_for_TRITON).
     analysis._system.process_system_level_inputs()
     analysis.run_prepare_scenarios_serially(
         overwrite_scenario_if_already_set_up=True,
@@ -288,17 +271,14 @@ def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cach
 
     # Reproduce write_hydrograph_files' outfall-skip partition via the SAME
     # function it calls: every node NOT in [OUTFALLS] is a hydrograph candidate.
-    df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
-        hydro_inp, dem_processed
-    )
+    df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(hydro_inp, dem_processed)
     non_outfall = [k for k in df_node_locs["node_key"] if k not in lst_outfalls]
 
     # Summed TOTAL_INFLOW per non-outfall node, from the same .out
     # write_hydrograph_files consumes.
     with Output(hydro_out) as out:
         inflow_sum = {
-            key: float(pd.Series(out.node_series(key, NodeAttribute.TOTAL_INFLOW)).sum())
-            for key in non_outfall
+            key: float(pd.Series(out.node_series(key, NodeAttribute.TOTAL_INFLOW)).sum()) for key in non_outfall
         }
 
     # write_hydrograph_files' second filter (`if d_inflow.sum() > 0`): only
@@ -318,8 +298,7 @@ def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cach
     # (2) the two BC-side interaction junctions carry no local runoff -> exactly
     #     0.0. A conduit would fold upstream runoff into them (non-zero).
     assert set(zero_nodes) == {"collector", "sewer_outflow"}, (
-        f"expected exactly {{collector, sewer_outflow}} to book zero TOTAL_INFLOW, "
-        f"got {sorted(zero_nodes)}"
+        f"expected exactly {{collector, sewer_outflow}} to book zero TOTAL_INFLOW, got {sorted(zero_nodes)}"
     )
 
     # (3) every runoff node books IDENTICAL local runoff (uniform subcatchments +

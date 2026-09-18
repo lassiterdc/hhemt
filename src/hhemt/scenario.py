@@ -1487,6 +1487,7 @@ class TRITONSWMM_scenario:
                         f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
                         flush=True,
                     )
+            return rc
 
         return launcher
 

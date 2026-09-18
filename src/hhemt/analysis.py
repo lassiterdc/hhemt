@@ -1908,16 +1908,30 @@ class TRITONSWMM_analysis:
             If True, rerun SWMM hydrology model even if outputs exist (default: False)
         verbose : bool, optional
             If True, print progress messages (default: False)
+
+        Raises
+        ------
+        RuntimeError
+            If any scenario's ``scenario_creation_complete`` is not True after all
+            launchers ran (the prepare subprocess failed); the message names each
+            such scenario directory and the collected subprocess return codes.
         """
         prepare_scenario_launchers = self.retrieve_prepare_scenario_launchers(
             overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             verbose=verbose,
         )
+        return_codes: list[int | None] = []
         for launcher in prepare_scenario_launchers:
-            launcher()
+            return_codes.append(launcher())
             self._update_log()  # update logs
         self._update_log()
+        if self._all_scenarios_created is not True:
+            not_created = self._scenarios_not_created
+            raise RuntimeError(
+                "Preparation failed for the following scenarios "
+                f"(prepare subprocess return codes {return_codes}):\n\t" + "\n\t".join(not_created)
+            )
         return
 
     def print_logfile_for_scenario(self, event_iloc):
