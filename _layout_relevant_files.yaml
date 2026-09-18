@@ -1845,3 +1845,15 @@ non_breaking_allowlist:
       change that permits a variable-incomplete frame to reach
       _streaming_chunked_zarr_write is NOT this class and requires a LAYOUT_VERSION bump
       with a migration.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 2aa71ea885f79cff4750f779c7c9744ff540e652d410541fb2d69ffbd5ef2503
+    justification: >-
+      NON-BREAKING. Adds a usability conjunct (path present AND store openable) to the
+      already-written gate at the three never-reclaimed SUMMARY exporters, in the
+      boolean BINDINGS for the SWMM arm; adds _summary_usable; adds a keyword-only
+      verify_present (no default) to _export_performance_summary with both wrappers
+      passing True; amends the three O3 placement comments the conjunct makes false.
+      Changes HOW a skip is decided, never WHAT is on disk -- no file, path, schema or
+      log-field changes. Closes the D1 collateral divergence (log True, artifact removed
+      by the engine's failure cleanup) that stranded the retry; concurred VMS
+      hhemt_2026-09-17_0950 SPECS 6-9.

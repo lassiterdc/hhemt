@@ -822,6 +822,7 @@ class TRITONSWMM_sim_post_processing:
             verbose=verbose,
             log_field=self.log.performance_summary_written,
             mode="tritonswmm_performance",
+            verify_present=True,
         )
         return
 
@@ -841,6 +842,7 @@ class TRITONSWMM_sim_post_processing:
             verbose=verbose,
             log_field=self.log.performance_summary_written,
             mode="triton_only_performance",
+            verify_present=True,
         )
         return
 
@@ -852,11 +854,22 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool,
         log_field,
         mode: str,
+        *,
+        verify_present: bool,
     ):
         start_time = time.time()
-        if self._already_written(fname_out):
+        # KEYWORD-ONLY WITH NO DEFAULT, deliberately: `fname_out` is a PARAMETER, so this
+        # function cannot self-identify its artifact class, and a default in EITHER
+        # direction relocates the hazard instead of closing it. Omission is a TypeError at
+        # the call site; the class decision is made where the class is known.
+        if self._already_written(fname_out) and (not verify_present or self._summary_usable(fname_out)):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # AMENDED with the usability conjunct on the `if` above: the skip pass is NO
+            # LONGER the only pass an already-latched scenario takes. A scenario latched in
+            # the log whose performance summary is absent now reads False above and takes
+            # the BUILD pass, where this marker is set truthfully. O3's reachability is
+            # PRESERVED.
             # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
             # terminator below it. Every other `.set()` for this marker sits BELOW an
             # `_already_written` branch, so on the skip pass -- the only pass an
@@ -1257,6 +1270,23 @@ class TRITONSWMM_sim_post_processing:
 
         return
 
+    def _summary_usable(self, f_out) -> bool:
+        """Gates 2+3 of the exit gate, applied at ENTRY: path present AND store OPENABLE.
+
+        A zarr store is a DIRECTORY, so ``Path.exists()`` is True for an empty one and for
+        a mid-stream-crashed write; only opening the store discriminates. Mirrors
+        ``process_timeseries_runner``'s reclaim gate (parts 2 and 3 of 3). Called ONLY on
+        the never-reclaimed SUMMARY classes; the reclaimable timeseries classes keep the
+        log-only gate, because their absence is the normal post-reclaim state.
+        """
+        try:
+            if f_out is None or not Path(f_out).exists():
+                return False
+            self._open(f_out).load()
+            return True
+        except Exception:  # noqa: BLE001 -- any failure to open disqualifies the skip
+            return False
+
     def _already_written(self, f_out) -> bool:
         """Checks the per-model log to determine whether the file was
         previously written successfully.
@@ -1618,7 +1648,7 @@ class TRITONSWMM_sim_post_processing:
 
         fname_out = self._validate_path(summary_path, path_name)
 
-        if self._already_written(fname_out):
+        if self._already_written(fname_out) and self._summary_usable(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
@@ -1628,6 +1658,10 @@ class TRITONSWMM_sim_post_processing:
             # unreachable. `is not None`, never bare truthiness: LogField defines no
             # __bool__, and O3's whole job is the None -> True transition a
             # value-based __bool__ would silently block.
+            # AMENDED with the usability conjunct on the `if` above: the skip pass is NO
+            # LONGER the only pass an already-latched scenario takes. A scenario latched in
+            # the log whose summary is absent now reads False above and takes the BUILD
+            # pass, where this marker is set truthfully. O3's reachability is PRESERVED.
             if self.log.TRITON_summary_written is not None:
                 self.log.TRITON_summary_written.set(True)
             return
@@ -1717,10 +1751,19 @@ class TRITONSWMM_sim_post_processing:
         f_out_nodes = self._validate_path(node_summary_path, node_path_name)
         f_out_links = self._validate_path(link_summary_path, link_path_name)
 
-        nodes_already_written = self._already_written(f_out_nodes)
-        links_already_written = self._already_written(f_out_links)
+        # The usability conjunct goes IN THE BINDINGS, never on the combined return below:
+        # the return form cannot see the partial state (nodes present, links absent) and
+        # would leave the O3 latch firing on an absent artifact.
+        nodes_already_written = self._already_written(f_out_nodes) and self._summary_usable(f_out_nodes)
+        links_already_written = self._already_written(f_out_links) and self._summary_usable(f_out_links)
 
         # O3 PLACEMENT CONSTRAINT: reconcile PER ARM and ABOVE every branch below.
+        # AMENDED with the usability conjunct at the bindings above: the skip pass is NO
+        # LONGER the only pass an already-latched scenario takes. An arm latched in the log
+        # whose artifact is absent now reads False above and takes the BUILD pass, where the
+        # marker is set truthfully (nodes/links build blocks below). O3's reachability is
+        # PRESERVED -- nothing reachable became unreachable; "already-latched" now means
+        # latched AND the artifact is really there.
         # The combined early return and the two `if not ..._already_written:` blocks
         # all sit lower, so a set placed in any of them is unreachable on the skip
         # pass -- which is the only pass an already-latched scenario ever takes again.
