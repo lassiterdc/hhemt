@@ -1010,8 +1010,9 @@ class TRITONSWMM_analysis:
             ``{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip``.
         container_defs : list of Path, or None
             One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis, because nothing in the config
-            names one. Ignored for a native analysis.
+            repeatable, for a container-mode analysis: the config names ONE recipe per
+            container reference and cannot express a multi-architecture SET. Ignored
+            for a native analysis.
 
         Returns
         -------
@@ -1048,8 +1049,9 @@ class TRITONSWMM_analysis:
         ----------
         container_defs : list of Path, or None
             One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis, because nothing in the config
-            names one. Ignored for a native analysis.
+            repeatable, for a container-mode analysis: the config names ONE recipe per
+            container reference and cannot express a multi-architecture SET. Ignored
+            for a native analysis.
 
         Returns
         -------
@@ -5093,9 +5095,37 @@ class TRITONSWMM_analysis:
             # comment on the layer above.
             self._delete_chapter_sets_for_force_rerun(spec, dry_run=dry_run)
 
+    def _clear_consolidate_completion_signals(self, status_dir: Path) -> None:
+        """Clear BOTH analysis-level consolidate completion signals, together.
+
+        V0018 established that the ``e_consolidate_*`` FLAG and the log field
+        ``datatree_consolidation_complete`` are ONE signal carried on two media, and
+        that clearing either alone leaves the consolidate gate shut;
+        ``tests/test_version_migration_V0018.py`` asserts exactly that on the
+        migration path. The scenario-set-change invalidator below cleared only the
+        flag, so ``consolidate_to_datatree``'s ``_log_complete`` conjunct still read
+        True, the four-term reuse conjunction still held, and an ADDED scenario never
+        reached the consolidated store while every Snakemake rule reported success.
+
+        The log clear is REDUNDANT under the widened consolidation fingerprint, which
+        now hashes the scenario-id set and therefore mismatches on any set change and
+        forces the rebuild on its own. It is retained as defence-in-depth: the
+        fingerprint closes the input-change route, this closes the
+        explicit-invalidation route, and the two fail independently. Do NOT remove it
+        as dead code on the strength of the fingerprint alone.
+
+        The two carriers are cleared in ONE definition so that a future caller cannot
+        clear one and forget the other. That generalization failure -- not merely its
+        instance at the caller below -- is what this method exists to close.
+        """
+        (status_dir / "e_consolidate_complete.flag").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+        (status_dir / "e_consolidate_complete.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+        if hasattr(self.log, "datatree_consolidation_complete"):
+            self.log.datatree_consolidation_complete.set(False)
+
     def _invalidate_consolidate_flag_on_scenario_set_change(self) -> None:
-        """Delete e_consolidate_complete.flag (and orphan per-event flags) when the
-        multi_sim scenario set changed since the last prepared run.
+        """Clear BOTH consolidate completion signals (and orphan per-event flags)
+        when the multi_sim scenario set changed since the last prepared run.
 
         Under the toolkit's --rerun-triggers mtime profile, a present
         e_consolidate_complete.flag prevents Snakemake from re-demanding an ADDED
@@ -5124,8 +5154,7 @@ class TRITONSWMM_analysis:
             return  # set unchanged — no invalidation needed
         # Set changed: drop the analysis-level consolidate flag so the added chain is
         # re-demanded; drop orphan per-event flags for removed events.
-        (status_dir / "e_consolidate_complete.flag").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
-        (status_dir / "e_consolidate_complete.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+        self._clear_consolidate_completion_signals(status_dir)
         removed = prepared_event_ids - config_event_ids
         for ev in removed:
             for stem in (

@@ -142,6 +142,11 @@ def test_a_failed_rebuild_leaves_the_prior_consolidated_store_intact(tmp_path, m
         cfg_analysis=types.SimpleNamespace(analysis_id="witness", toggle_consolidate_timeseries=False),
         _get_enabled_model_types=lambda: ["tritonswmm"],
         df_sims=pd.DataFrame(index=[0]),
+        # The consolidation fingerprint hashes the scenario-id SET (W1 Finding B), so the
+        # gate now reaches the same enumeration processing_analysis uses to build the
+        # tree's event_id coordinate. Without this the stand-in raises AttributeError and
+        # the test below reports a failure that has nothing to do with what it asserts.
+        _retrieve_weather_indexer_using_integer_index=lambda i: {"storm": f"evt{i}"},
     )
 
     class _Scenario:
@@ -200,3 +205,189 @@ def test_induce_incomplete_analysis_preserves_the_master_tree_by_default():
         "induce_incomplete_analysis must preserve the master tree unless a caller asks for "
         "its deletion; a destructive default erases the artifact a narrowing test observes"
     )
+
+
+@pytest.fixture
+def _pin_clean_build(monkeypatch):
+    """Force the build-stamp term of the consolidate reuse conjunction TRUE.
+
+    W1 FINDING B LIVES IN THIS MODULE FOR ONE REASON: the defect is a GATE decision, and
+    this module already drives the real `consolidate_to_datatree` against a duck-typed
+    stand-in with no fixture, no cached tree and no solver. Nothing below simulates
+    anything.
+
+    WHY EVERY ARM PINS A CLEAN BUILD. The reuse gate is a four-term conjunction and
+    `store_build_mismatch` is one of the terms. On a DIRTY checkout that term is False on
+    its own, the gate rebuilds for a reason that has nothing to do with the scenario set,
+    and a reproduction attempt reports the defect ABSENT. This fixture forces that term
+    true so the only thing under test is the scenario-set term. `consolidate_to_datatree`
+    imports `store_build_mismatch` function-locally, so the patch must land on the DEFINING
+    module rather than on `processing_analysis`.
+
+    MEASURED DISCRIMINATION, both directions, against the tree at 57ba4e02: pre-fix,
+    addition, removal AND substitution all EARLY-RETURN -- the defect -- and the control
+    early-returns too, so the control cannot mask them. Post-fix, addition, removal and
+    substitution REBUILD while the control still early-returns.
+    """
+    import hhemt.provenance as _prov
+
+    monkeypatch.setattr(_prov, "store_build_mismatch", lambda store, stamp: None)
+
+
+def _gate_analysis(root: Path, ilocs, stamped_fingerprint):
+    """A duck-typed analysis whose consolidated store is present and log-complete."""
+    store = _store(root / "analysis_datatree.zarr", "ORIGINAL")
+    log = types.SimpleNamespace(
+        datatree_consolidation_complete=_LogField(True),
+        consolidation_inputs_fingerprint=_LogField(stamped_fingerprint),
+        consolidation_build_stamp=_LogField("clean"),
+        consolidation_version=_LogField(None),
+        add_sim_processing_entry=lambda *a, **k: None,
+    )
+    return types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(analysis_datatree_zarr=store, analysis_dir=root),
+        log=log,
+        _refresh_log=lambda: None,
+        cfg_analysis=types.SimpleNamespace(analysis_id="w1", toggle_consolidate_timeseries=False),
+        _get_enabled_model_types=lambda: ["tritonswmm"],
+        df_sims=pd.DataFrame(index=list(ilocs)),
+        _retrieve_weather_indexer_using_integer_index=lambda i: {"storm": f"evt{i}"},
+    )
+
+
+def _fingerprint_for(root: Path, ilocs) -> str:
+    return TRITONSWMM_analysis_post_processing(_gate_analysis(root, ilocs, None))._consolidation_inputs_fingerprint()
+
+
+def _gate_verdict(root: Path, stamped_ilocs, live_ilocs, monkeypatch) -> str:
+    """EARLY-RETURN when the gate reuses the store, REBUILD when it does not."""
+
+    class _RebuildEntered(Exception):
+        pass
+
+    class _Boom:
+        def __init__(self, *args, **kwargs):
+            raise _RebuildEntered
+
+    monkeypatch.setattr(pa, "TRITONSWMM_scenario", _Boom)
+    analysis = _gate_analysis(root, live_ilocs, _fingerprint_for(root / "_fp", stamped_ilocs))
+    try:
+        TRITONSWMM_analysis_post_processing(analysis).consolidate_to_datatree()
+    except _RebuildEntered:
+        return "REBUILD"
+    return "EARLY-RETURN"
+
+
+def test_the_consolidation_fingerprint_is_symmetric_in_the_scenario_set(tmp_path):
+    """Addition, removal AND substitution must each move the fingerprint.
+
+    Substitution is the arm that rules out a scenario COUNT as the term: remove one and add
+    another and the count is identical, which is the exact defect class this closes.
+    """
+    base = _fingerprint_for(tmp_path / "base", [0])
+    assert _fingerprint_for(tmp_path / "add", [0, 1]) != base, "an ADDED scenario must move the fingerprint"
+    assert _fingerprint_for(tmp_path / "sub", [1]) != base, "a SUBSTITUTED scenario must move the fingerprint"
+    assert _fingerprint_for(tmp_path / "rm", [0]) == base, (
+        "an unchanged set must leave the fingerprint alone, or every run rebuilds"
+    )
+    two = _fingerprint_for(tmp_path / "two", [0, 1])
+    assert _fingerprint_for(tmp_path / "rm2", [0]) != two, "a REMOVED scenario must move the fingerprint"
+
+
+@pytest.mark.parametrize(
+    ("stamped", "live", "expected", "why"),
+    [
+        ([0], [0], "EARLY-RETURN", "an unchanged set must still reuse the store"),
+        ([0], [0, 1], "REBUILD", "an ADDED scenario must defeat the reuse gate"),
+        ([0, 1], [0], "REBUILD", "a REMOVED scenario must defeat the reuse gate"),
+        ([0], [1], "REBUILD", "a SUBSTITUTED scenario must defeat the reuse gate"),
+    ],
+)
+def test_a_changed_scenario_set_defeats_the_consolidate_reuse_gate(
+    tmp_path, monkeypatch, _pin_clean_build, stamped, live, expected, why
+):
+    """THE witness for Finding B, at the gate rather than at the edit.
+
+    The control arm is load-bearing: without it this passes against a gate that never
+    reuses anything, which is a different defect with the same green.
+    """
+    assert _gate_verdict(tmp_path / f"{stamped}-{live}", stamped, live, monkeypatch) == expected, why
+
+
+def _borrowed_analysis(tmp_path, ilocs, log):
+    """A stand-in carrying the two REAL methods under test, bound to itself."""
+    from hhemt.analysis import TRITONSWMM_analysis
+
+    class _A:
+        pass
+
+    a = _A()
+    a.analysis_paths = types.SimpleNamespace(analysis_dir=tmp_path)
+    a.df_sims = pd.DataFrame(index=list(ilocs))
+    a._retrieve_weather_indexer_using_integer_index = lambda i: {"storm": f"evt{i}"}
+    a.log = log
+    for name in (
+        "_invalidate_consolidate_flag_on_scenario_set_change",
+        "_clear_consolidate_completion_signals",
+    ):
+        fn = getattr(TRITONSWMM_analysis, name, None)
+        assert fn is not None, f"TRITONSWMM_analysis.{name} is absent -- the pairing has no single definition"
+        setattr(a, name, types.MethodType(fn, a))
+    return a
+
+
+@pytest.mark.parametrize(
+    ("prepared", "live", "kind"),
+    [(["storm.evt0"], [0, 1], "addition"), (["storm.evt0", "storm.evt1"], [0], "removal")],
+)
+def test_the_scenario_set_change_invalidator_clears_BOTH_completion_signals(tmp_path, prepared, live, kind):
+    """The DEFECT-site clause, and it is deliberately not drawn from the payload.
+
+    A post-condition that greps for the new helper's NAME can only ask whether the payload
+    landed; it cannot ask whether the payload was aimed at the right method. This asserts a
+    property of `_invalidate_consolidate_flag_on_scenario_set_change` itself -- the method
+    the diagnosis named -- so a fix installed anywhere else fails it.
+    """
+    status_dir = tmp_path / "_status"
+    status_dir.mkdir()
+    (status_dir / "e_consolidate_complete.flag").write_text("x", encoding="utf-8")
+    (status_dir / "e_consolidate_complete.flag.json").write_text("{}", encoding="utf-8")
+    for ev in prepared:
+        (status_dir / f"b_prepare_evt-{ev}_complete.flag").write_text("x", encoding="utf-8")
+
+    log = types.SimpleNamespace(datatree_consolidation_complete=_LogField(True))
+    analysis = _borrowed_analysis(tmp_path, live, log)
+    analysis._invalidate_consolidate_flag_on_scenario_set_change()
+
+    assert not (status_dir / "e_consolidate_complete.flag").exists(), f"the flag must be cleared on {kind}"
+    assert log.datatree_consolidation_complete.get() is not True, (
+        f"the LOG FIELD must be cleared on {kind} too -- a flag cleared without it leaves "
+        "consolidate_to_datatree's _log_complete conjunct True and the store is reused"
+    )
+
+
+def test_the_invalidator_is_not_reached_from_reprocess():
+    """Round 87's case, and it is why the fingerprint -- not the invalidator -- is the fix.
+
+    The invalidator is called from ONE place, inside `submit_workflow` under
+    `pickup_where_leftoff` (which defaults False). `reprocess()` never reaches it, so on
+    that route the scenario-set term in the fingerprint is the only defence. If this census
+    ever returns more callers, re-read Finding B before widening the invalidator instead.
+    """
+    import ast
+    import inspect
+
+    import hhemt.analysis as _analysis_module
+
+    src = Path(inspect.getfile(_analysis_module)).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    needle = "_invalidate_consolidate_flag_on_scenario_set_change("
+    callers = sorted(
+        fn.name
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.FunctionDef)
+        and fn.name != "_invalidate_consolidate_flag_on_scenario_set_change"
+        and needle in (ast.get_source_segment(src, fn) or "")
+    )
+    assert callers == ["submit_workflow"], callers
+    assert "reprocess" not in callers

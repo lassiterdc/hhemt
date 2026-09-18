@@ -834,7 +834,7 @@ class TRITONSWMM_sensitivity_analysis:
             # regenerate_existing arm; no-op otherwise.
             if start_with == "process" and regenerate_existing and not dry_run:
                 _unlink_dprocess_flags_for_regenerate(targets, status_dir)
-            # Report+plot deletion ALWAYS runs (toggle-independent) — the report
+            # Report deletion ALWAYS runs (toggle-independent) — the report
             # regenerates from the preserved zarr on the default path (FQ1 parity).
             _report_html = experiment_dir / "analysis_report.html"
             _report_zip = experiment_dir / "analysis_report.zip"
@@ -1201,8 +1201,9 @@ class TRITONSWMM_sensitivity_analysis:
             Target path for the bundle.
         container_defs : list of Path, or None
             One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis, because nothing in the config
-            names one. Ignored for a native analysis.
+            repeatable, for a container-mode analysis: the config names ONE recipe per
+            container reference and cannot express a multi-architecture SET. Ignored
+            for a native analysis.
 
         Returns
         -------
@@ -1232,8 +1233,9 @@ class TRITONSWMM_sensitivity_analysis:
         ----------
         container_defs : list of Path, or None
             One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis, because nothing in the config
-            names one. Ignored for a native analysis.
+            repeatable, for a container-mode analysis: the config names ONE recipe per
+            container reference and cannot express a multi-architecture SET. Ignored
+            for a native analysis.
 
         Returns
         -------
@@ -1256,7 +1258,9 @@ class TRITONSWMM_sensitivity_analysis:
 
         Opt-in only — NEVER invoked from run()/submit_workflow(), mirroring
         render_report()/bundle_report_data(). Deposits the master
-        sensitivity_datatree.zarr + master-rooted ro-crate sidecar; the license is
+        experiment_datatree.zarr, the master-rooted ro-crate sidecar, and the two
+        materialized configs (cfg_analysis.yaml, cfg_system.yaml) — see
+        publishing._deposit_set, which filters that list by existence. The license is
         read from the emitted crate. Returns {"target","data_doi","software_doi","record_url"}.
         """
         from hhemt.publishing import publish_analysis

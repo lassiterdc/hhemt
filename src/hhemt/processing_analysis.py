@@ -175,9 +175,19 @@ class TRITONSWMM_analysis_post_processing:
         WHAT LANDS in the tree. Do NOT add values that affect only bytes
         (``compression_level``) or provenance (git sha, timestamps) — those change on
         every run and would force a spurious rebuild every time.
+
+        ONE TERM HERE IS NOT A CONFIG VALUE, AND THAT IS DELIBERATE. ``scenario_ids``
+        hashes the SET of scenarios the tree is keyed by. Without it the guard is
+        asymmetric: adding a scenario leaves every config field unchanged, so a
+        complete-and-stamped tree is reused and the new scenario silently never lands.
+        A count would not close it either — remove one scenario and add another and the
+        count is identical. Do NOT remove this term as a contract violation; the
+        contract is about what gates WHAT LANDS, and the scenario set gates it directly.
         """
         import hashlib
         import json
+
+        from hhemt.scenario import compute_event_id_slug
 
         payload = {
             "consolidation_version": self.CONSOLIDATION_VERSION,
@@ -185,6 +195,10 @@ class TRITONSWMM_analysis_post_processing:
                 getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False)
             ),
             "enabled_model_types": sorted(self._analysis._get_enabled_model_types()),
+            "scenario_ids": sorted(
+                compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei))
+                for ei in self._analysis.df_sims.index
+            ),
         }
         return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 

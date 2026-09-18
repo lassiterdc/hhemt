@@ -2024,3 +2024,84 @@ non_breaking_allowlist:
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
     layout_signature: "e0e139220ae4e5449cf814254f292220a4fcbfcd55474c576a304be1fdab02e3"
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      W1 FINDING B -- the consolidation reuse gate becomes SCENARIO-SET SENSITIVE.
+      `_consolidation_inputs_fingerprint`'s payload gains a fourth term, `scenario_ids`,
+      holding the sorted event-id slugs of the scenarios the tree is keyed by, plus one
+      import and a docstring paragraph explaining why a term that is not a config value
+      belongs in a payload whose contract is config values. The path is listed in
+      layout_relevant.paths, which is why check-b sees it.
+      THE DEFECT IT CLOSES. The reuse gate is a four-term conjunction and no term was a
+      function of the scenario set, so adding a scenario left every config field unchanged,
+      a complete-and-stamped tree was reused, and the added scenario NEVER entered the store
+      or the report while every Snakemake rule reported green. On a REMOVAL the failure
+      inverts and the store retains a scenario the user deleted. A count would not close it:
+      remove one and add one and the count is identical, which is why the term is the SET.
+      NON-BREAKING, AND MEASURED RATHER THAN ASSERTED. What could change on-disk meaning was
+      compared BEFORE and AFTER by the coordinator: the persisted log KEY census is identical
+      at HEAD and in the working tree for `consolidation_inputs_fingerprint` (7 occurrences in
+      this file, 4 in log.py, 1 in provenance.py, 3 in sensitivity_analysis.py, 1 in V0018),
+      for `consolidation_build_stamp` and for `datatree_consolidation_complete`. No key is
+      added, removed or renamed; the stamped value stays a sha1 hexdigest under the same key;
+      no path, directory name, filename, zarr group, dtype, chunk, encoding or root-attr key
+      moves; no _status flag token changes. The store's WRITE path is byte-unchanged -- this
+      edit alters only WHEN a rebuild is triggered, never WHAT is written. The full diff of
+      this file is +14/-0 with exactly five executable lines: one import and the four-line
+      payload term.
+      AGAINST, stated rather than elided because this entry is the audit record. ONE-SHOT
+      REBUILD ON EVERY EXISTING ANALYSIS: every stored fingerprint was computed over the
+      three-term payload and cannot equal a four-term recomputation, so the next consolidation
+      rebuilds once instead of reusing. It is content-idempotent -- the rebuild runs the
+      unchanged write path and produces the same tree, with volatile provenance values
+      refreshed exactly as any rebuild refreshes them -- and it is the same bounded first-run
+      rerun class this file has accepted before at the M19 gate-3 row on this path.
+      THIS COST IS A NAMED DEVELOPER ITEM AND IS NOT BEING ABSORBED HERE. W1's concurred SHAPE
+      records it as the first of three items owed to the developer at the VMS gate, alongside
+      the separate-log-field variant that would dissolve it at the price of a log-schema change
+      plus a migration -- named there and explicitly NOT recommended. This row records the
+      consequence of the concurred design; it does not re-decide it, and it must not be read as
+      the developer having answered that item.
+      WHY NOT A LAYOUT_VERSION BUMP. LAYOUT_VERSION governs the on-disk analysis tree, and a
+      V0023 would have nothing to do: no old-shaped artifact to rename, no field to backfill,
+      no directory to move. A migration here could only re-stamp a fingerprint the running code
+      already re-derives on its own, which is the "no-op migration is not a backfill" position
+      this repo took at 2026-06-27_v0016 and restated at the M19 gate-3 row on this same path.
+      The analogy to that row was tested rather than inherited: both change WHEN the reuse gate
+      admits, both route the excluded case to the pre-existing rebuild branch rather than to a
+      new destructive path, and neither changes what the rebuild writes. Where this change goes
+      FURTHER is that it edits the fingerprint PAYLOAD itself, which that row explicitly left
+      untouched -- so the payload's format is stated here directly: same key, same sha1
+      hexdigest type, one additional hashed input, and no consumer reads the payload's
+      contents, only its equality.
+      CONCURRED three ways over disjoint substrates (claim-to-code, design, and a D68 third
+      party on assertion/test-architecture) before apply.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "d76e7a4b3f47e30081422d930946771f3a9e1db550141f9b8ec4bfdfe03f5970"
+  - path: src/hhemt/sensitivity_analysis.py
+    justification: >-
+      W1 FINDING C plus two carried staleness repairs -- DOCSTRINGS AND ONE COMMENT ONLY.
+      Two public docstrings drop the false universal "because nothing in the config names
+      one", which `ContainerRef.def_recipe` falsifies, and state the true reason instead:
+      the config names ONE recipe per container reference and cannot express a
+      multi-architecture SET. One `publish` docstring is corrected from
+      `sensitivity_datatree.zarr` to the real deposit set. One comment loses a stale
+      "+plot" now that figure deletion routes through the guarded helper. The path is
+      listed in layout_relevant.paths, which is why check-b sees it.
+      NON-BREAKING, AND THE DIFF IS THE WHOLE ARGUMENT. `git diff` over this path is
+      +10/-6 and EVERY added and removed line lies inside a `"""` docstring block or a
+      `#` comment -- zero executable lines, no field added, removed, renamed or retyped,
+      no default changed, no serialization touched, no log key moved. The three persisted
+      log keys this module reads (`consolidation_inputs_fingerprint`,
+      `consolidation_build_stamp`, `datatree_consolidation_complete`) have identical
+      occurrence counts at HEAD and in the working tree.
+      THE DESCRIBED BEHAVIOUR WAS ALREADY WHAT THE TEXT NOW SAYS; the text had gone stale
+      against it, which is the defect this workstream exists to repair. Two of the three
+      corrections were carried forward deliberately by the round that found them rather
+      than absorbed into a fix, and are landing here with the payload they belong to.
+      NO MIGRATION IS POSSIBLE TO WRITE. A docstring and a comment reach no on-disk
+      artifact, so a V0023 would have nothing to act on.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "271f4a3fdead57dbd094ba7ec432c59222034d5ec686ff1805c1cd0d7b0e13b5"
