@@ -165,3 +165,35 @@ def test_merge_refuses_a_chapter_set_with_no_surviving_stores(tmp_path):
     assert "no flagged chapter stores to merge" in str(excinfo.value)
     # A refusal must publish nothing, exactly as the grid refusal above must.
     assert not final.exists(), "a refused merge published a store"
+
+
+def test_flag_publish_reraises_and_leaves_no_temp(tmp_path, monkeypatch):
+    """A raising os.replace leaves NO temp AND propagates (the re-raise pins STATE 6)."""
+    import os as _os
+
+    import pytest
+
+    from hhemt.utils import _publish_flag_crash_safe
+
+    flag = tmp_path / "x.flag"
+
+    def _boom(*_a, **_k):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(_os, "replace", _boom)
+    with pytest.raises(OSError):
+        _publish_flag_crash_safe(flag)
+    assert not flag.with_suffix(flag.suffix + ".tmp").exists()
+    assert not flag.exists()
+
+
+def test_flag_publish_clears_stale_temp_never_promotes(tmp_path):
+    """A stale temp at entry is CLEARED, not promoted: the flag carries the helper's content."""
+    from hhemt.utils import _publish_flag_crash_safe
+
+    flag = tmp_path / "y.flag"
+    stale = flag.with_suffix(flag.suffix + ".tmp")
+    stale.write_text("STALE-GARBAGE", encoding="utf-8")
+    _publish_flag_crash_safe(flag)
+    assert flag.read_text(encoding="utf-8") == "ok"
+    assert not stale.exists()

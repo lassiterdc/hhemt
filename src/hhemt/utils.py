@@ -181,9 +181,30 @@ def fast_rmtree(
     return freed
 
 
+def _publish_flag_crash_safe(flag) -> None:
+    """Publish a completion FLAG crash-safely: CLEAR a stale temp, never PROMOTE it.
+
+    A flag's content is a constant, so a leftover temp carries no recoverable
+    information -- unlike ``_publish_store_crash_safe``, whose recovery publishes.
+    On ANY exception from the replace the temp is unlinked and the exception is
+    RE-RAISED: swallowing it would let control fall through to the caller's
+    post-flag deletions behind an absent flag.
+    """
+    tmp = flag.with_suffix(flag.suffix + ".tmp")
+    if tmp.exists():
+        tmp.unlink()  # EXEMPT-DU: transient-intermediate
+    tmp.write_text("ok", encoding="utf-8")
+    try:
+        os.replace(tmp, flag)
+    except Exception:
+        if tmp.exists():
+            tmp.unlink()  # EXEMPT-DU: transient-intermediate
+        raise
+
+
 def _recover_and_clear_publish_temps(final, aside, tmp) -> None:
     """Steps 0 and 1 of the crash-safe publish. Shared by the callable-wrapping
-    form below and by the inline form in process_simulation, so the .aside/.tmp
+    form below, so the .aside/.tmp
     preference has exactly ONE implementation -- two copies is how it gets undone.
 
     THE PREFERENCE IS ORDER-DERIVED, NOT PROVENANCE-DERIVED. Read this before
@@ -348,9 +369,7 @@ def verify_and_flag_chapter(store: Path, flag: Path, n_expected: int) -> None:
             )
     finally:
         ds.close()
-    tmp = flag.with_suffix(flag.suffix + ".tmp")
-    tmp.write_text("ok", encoding="utf-8")
-    os.replace(tmp, flag)
+    _publish_flag_crash_safe(flag)
     # RECORD THE PRODUCING BUILD, and only now. The chapter-set guard compares the
     # running build against this history, so the history must be the provenance of
     # the FLAGGED chapters -- not a log of every invocation that entered the writer.
@@ -672,9 +691,7 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
     # live WORKERS, so two publishers can still reach one store. That degrades to a loud
     # rename error, which is strictly better than the silent interleave it replaces.
     _publish_store_crash_safe(lambda _dest: ds.to_zarr(_dest, mode="w", consolidated=False), final)
-    tmp = flag.with_suffix(flag.suffix + ".tmp")
-    tmp.write_text("ok", encoding="utf-8")
-    os.replace(tmp, flag)
+    _publish_flag_crash_safe(flag)
     # STATE 6: chapters die ONLY now, after the unified flag.
     from hhemt.du_sentinels import delete_and_account
 
