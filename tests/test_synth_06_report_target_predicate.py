@@ -31,6 +31,7 @@ import pytest
 
 import tests.utils_for_testing as tst_ut
 from hhemt.exceptions import ConfigurationError
+from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
 
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
@@ -41,26 +42,10 @@ pytestmark = [
 ]
 
 # model_type -> the FULL consolidate-consumed per-enabled-mode summary attrs
-# (mirrors analysis.py::_reconcile_stale_process_flags_against_summaries::
-# _SUMMARY_ATTRS_BY_MODEL — the canonical set the report-target predicate and
-# consolidation's _retrieve_combined_output both key against). Used only to pick
-# a present summary to delete.
-_SUMMARY_ATTRS_BY_MODEL = {
-    "tritonswmm": (
-        "output_tritonswmm_triton_summary",
-        "output_tritonswmm_node_summary",
-        "output_tritonswmm_link_summary",
-        "output_tritonswmm_performance_summary",
-    ),
-    "triton": (
-        "output_triton_only_summary",
-        "output_triton_only_performance_summary",
-    ),
-    "swmm": (
-        "output_swmm_only_node_summary",
-        "output_swmm_only_link_summary",
-    ),
-}
+# (the canonical set lives in hhemt.summary_paths — one declaration, imported by
+# every consumer; the report-target predicate and consolidation's
+# _retrieve_combined_output key against the same table). Used only to pick a
+# present summary to delete.
 
 
 @pytest.mark.slow

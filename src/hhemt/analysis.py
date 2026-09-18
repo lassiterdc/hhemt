@@ -5153,24 +5153,8 @@ class TRITONSWMM_analysis:
             TRITONSWMM_scenario,
             compute_event_id_slug,
         )
+        from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
         from hhemt.workflow import ResolvedForceRerunSpec
-
-        _SUMMARY_ATTRS_BY_MODEL = {
-            "tritonswmm": (
-                "output_tritonswmm_triton_summary",
-                "output_tritonswmm_node_summary",
-                "output_tritonswmm_link_summary",
-                "output_tritonswmm_performance_summary",
-            ),
-            "triton": (
-                "output_triton_only_summary",
-                "output_triton_only_performance_summary",
-            ),
-            "swmm": (
-                "output_swmm_only_node_summary",
-                "output_swmm_only_link_summary",
-            ),
-        }
 
         def _summary_absent(scen, model_type: str) -> bool:
             for attr in _SUMMARY_ATTRS_BY_MODEL.get(model_type, ()):

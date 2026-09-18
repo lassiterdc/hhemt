@@ -600,18 +600,9 @@ def induce_incomplete_analysis(sensitivity, member_id, *, delete_master_tree=Fal
     measurement with nobody maintaining it.
     """
     from hhemt.scenario import TRITONSWMM_scenario
+    from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
     from hhemt.utils import fast_rmtree
 
-    _SUMMARY_ATTRS_BY_MODEL = {
-        "tritonswmm": (
-            "output_tritonswmm_triton_summary",
-            "output_tritonswmm_node_summary",
-            "output_tritonswmm_link_summary",
-            "output_tritonswmm_performance_summary",
-        ),
-        "triton": ("output_triton_only_summary", "output_triton_only_performance_summary"),
-        "swmm": ("output_swmm_only_node_summary", "output_swmm_only_link_summary"),
-    }
     sub = sensitivity.members[member_id]
     deleted = []
     enabled_models = sub._get_enabled_model_types()

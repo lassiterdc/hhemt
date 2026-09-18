@@ -23,6 +23,9 @@ from __future__ import annotations
 # report target on c_run produces an unsatisfiable target when the summary is
 # missing (the render_report failure this predicate closes). Stems mirror
 # scenario.ScenarioPaths' output_*_summary naming (scenario.py:148-224).
+# DELIBERATE INDEPENDENT COPY, do not lift: tests/test_synth_remove_after_processing.py:45
+# hand-maintains this membership as the guard's independent ground truth. Its own :40-44
+# comment states why, and its guards compare it against PRODUCTION _reclaim_attrs.
 _SUMMARY_STEMS_BY_MODEL: dict[str, tuple[str, ...]] = {
     "tritonswmm": (
         "TRITONSWMM_TRITON_summary",
@@ -37,6 +40,23 @@ _SUMMARY_STEMS_BY_MODEL: dict[str, tuple[str, ...]] = {
     "swmm": (
         "SWMM_only_node_summary",
         "SWMM_only_link_summary",
+    ),
+}
+
+_SUMMARY_ATTRS_BY_MODEL: dict[str, tuple[str, ...]] = {
+    "tritonswmm": (
+        "output_tritonswmm_triton_summary",
+        "output_tritonswmm_node_summary",
+        "output_tritonswmm_link_summary",
+        "output_tritonswmm_performance_summary",
+    ),
+    "triton": (
+        "output_triton_only_summary",
+        "output_triton_only_performance_summary",
+    ),
+    "swmm": (
+        "output_swmm_only_node_summary",
+        "output_swmm_only_link_summary",
     ),
 }
 

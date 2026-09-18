@@ -429,26 +429,11 @@ def main():
         # meaning from "the process stage ran" (the existing log-field checks
         # above) to "the summaries are present on disk", making the flag/summary
         # divergence class structurally unrepresentable: the flag can never exist
-        # while a summary is absent. The map is duplicated from
-        # analysis.py::_reconcile_stale_process_flags_against_summaries; DRYing
-        # _SUMMARY_ATTRS_BY_MODEL across its production-adjacent copies is a
-        # recorded follow-up, deliberately not folded into this fix.
-        _SUMMARY_ATTRS_BY_MODEL = {
-            "tritonswmm": (
-                "output_tritonswmm_triton_summary",
-                "output_tritonswmm_node_summary",
-                "output_tritonswmm_link_summary",
-                "output_tritonswmm_performance_summary",
-            ),
-            "triton": (
-                "output_triton_only_summary",
-                "output_triton_only_performance_summary",
-            ),
-            "swmm": (
-                "output_swmm_only_node_summary",
-                "output_swmm_only_link_summary",
-            ),
-        }
+        # while a summary is absent. The map is the single canonical
+        # declaration in hhemt.summary_paths, imported here and at every other
+        # consumer (the former per-site copies were lifted into it).
+        from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
+
         _missing_summaries = []
         for _attr in _SUMMARY_ATTRS_BY_MODEL.get(args.model_type, ()):
             _summary_path = getattr(scenario.scen_paths, _attr, None)
