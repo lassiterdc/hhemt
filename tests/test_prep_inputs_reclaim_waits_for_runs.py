@@ -27,6 +27,7 @@ NOT asserted on: a message assertion is green pre-fix by construction.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import types
 from pathlib import Path
@@ -63,7 +64,13 @@ def _probe(tmp_path: Path, *, unrun: tuple[str, ...]):
             extbc_tseries=extbc_dir / "tseries.txt",
             weather_timeseries=weather,
         ),
-        log=types.SimpleNamespace(prep_inputs_reclaimed=None),
+        # R13 (2026-09-18): `remove_after_processing` is wrapped by the module-level
+        # `_deferred_log_writes` decorator (process_simulation.py), whose wrapper enters
+        # `self.log.deferred_writes()` BEFORE the body runs. A no-op context manager
+        # satisfies that protocol and asserts NOTHING about write batching (pinned by
+        # tests/test_log_write_hardening.py); explicit rather than a MagicMock so the
+        # NEXT contract widening reds loudly here, as this one did.
+        log=types.SimpleNamespace(prep_inputs_reclaimed=None, deferred_writes=contextlib.nullcontext),
     )
     fake._reclaim_classes = _P._reclaim_classes
     fake._resolve_clear_raw = lambda *_a, **_k: "none"

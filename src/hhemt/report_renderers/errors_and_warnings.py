@@ -149,6 +149,13 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "regression detector for the window trim, since a simulation running past its "
         "forcing holds the coastal boundary frozen at the last tabulated value.",
     ),
+    "Log recoveries": (
+        "Log recovery records",
+        "No analysis, system, or per-model scenario log document carries a record of having "
+        "been rebuilt from a single process's state after failing to parse; every such "
+        "recovery is listed, with the quarantine path where the failed bytes were preserved, "
+        "because a rebuilt document carries defaults for every field its writer had not set.",
+    ),
 }
 
 #: The one cell an unregistered check name renders. NOT prose invented for a predicate

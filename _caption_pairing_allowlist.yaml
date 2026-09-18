@@ -253,7 +253,7 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: errors_and_warnings
     caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
-    renderer_sha256: 658acdcefd7ba3e3f9f0a27552306e9651051208b5f134e1d05da6c2fc171685
+    renderer_sha256: 5a52e2b55a36cb7b2238b06bb3a367427bb1b6f601643e077cfcb4df68e53748
     justification: >-
       docs-and-experiment-system merge. Caption re-read against a MEASURED diff
       rather than a read-through. The merge-authored delta to this renderer --
@@ -364,6 +364,18 @@ unpaired_allowlist:
       caption-edit-alone would clear the gate while leaving the one true defect in place.
       Recorded post-sweep, so the exemption expires on the next real change to this
       renderer rather than on arrival.
+    justification_2026_09_18: >-
+      RE-RECORDED at the R14 apply (2026-09-18). MEASURED delta to this renderer since the
+      digest above: `git diff --stat` -> 7 insertions, 0 deletions -- ONE _CHECK_VOCABULARY
+      entry keyed "Log recoveries" (display "Log recovery records" plus its description),
+      registering the check_log_recoveries producer that dad33653 landed without it. The
+      caption was RE-READ against that delta: it describes the pass/fail banner, the
+      omitted-count line and the four-section order (system-level, aggregate per-scenario,
+      resource-utilization, granular per-scenario); it enumerates NO check name and NO
+      vocabulary string, so no caption claim is reachable by a row-level display-name /
+      description pair inside the aggregate table. No section, column or unit moved. This
+      is a pairing discharge on a re-read, not a formatting exemption; the digest expires
+      on the next change to this renderer.
   - renderer: cross_experiment_disk_utilization
     caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst
     renderer_sha256: b698ad22092661e1f49fa70f4e0df587f056383716bcad95ddd2f9c71e509d2d

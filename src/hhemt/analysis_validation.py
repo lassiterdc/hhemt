@@ -2086,6 +2086,11 @@ def check_log_recoveries(analysis: TRITONSWMM_analysis) -> CheckResult:
         f"parse. Examined {examined} log document(s); {indeterminate} indeterminate (absent or "
         "unreadable)."
     )
+    # `level="aggregate"` routes this row to a Check table, so the exact-cover guard in
+    # tests/test_iter7_check_vocabulary.py OBLIGES the matching _CHECK_VOCABULARY entry in
+    # report_renderers/errors_and_warnings.py in the SAME change -- the obligation the
+    # provenance check states at its own site (R14, 2026-09-18, measured what landing a
+    # producer without it does).
     return CheckResult(
         name="Log recoveries",
         level="aggregate",
