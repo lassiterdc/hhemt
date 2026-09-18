@@ -841,7 +841,7 @@ def _emit_hpc_identity(analysis: TRITONSWMM_analysis, staging: Path) -> None:
     Allow-list-BY-CONSTRUCTION (D7): reach ONLY for the named compute-config-identity
     fields (``partitions`` map + ``gpu_allocation_flavor``) — the fields two experiments
     must agree on for an intercomparison to be meaningful — and NEVER emit any
-    USER-bucket scalar (default_account / login_node / container.sif_path). No
+    USER-bucket scalar (default_account / login_node / container.sif_root). No
     enumerate-and-null (that is fail-open against future schema drift). No-op when the
     analysis carries no hpc_system_config (local/native runs). Passes the zero-user-info
     gate trivially (it never writes a producer value). NOT the reprex template.

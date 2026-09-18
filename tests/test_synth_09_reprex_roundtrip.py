@@ -122,19 +122,20 @@ def test_reprex_roundtrip_native_problem_pairs_and_amendments(rendered_synth_sen
 
 def test_reprex_sif_digest_match_and_mismatch(rendered_synth_sensitivity, tmp_path: Path) -> None:
     """R14: when the crate references a SIF (container bundle), reprex does a mandatory
-    fail-closed sha256 digest match; PGP warns (sif_signature_ok is None) when apptainer
-    is absent. A digest mismatch raises ProcessingError before any validation."""
+    fail-closed sha256 digest match. The toolkit runs no signature check, so
+    sif_signature_ok is always None. A digest mismatch raises ProcessingError before
+    any validation."""
     sensitivity = rendered_synth_sensitivity.sensitivity
     bundle_dir = sensitivity.reprex_bundle(output_path=tmp_path / "reprex_container.zip")
     sif_path = _inject_sif(bundle_dir, sif_bytes=b"REFERENCE-SIF-BYTES")
 
     bundle = Bundle.from_directory(bundle_dir)
 
-    # Digest match: sif verified; PGP best-effort (None when apptainer unavailable).
+    # Digest match: sif verified; sif_signature_ok is always None (no signature check).
     ok = bundle.reprex(_reprex_cfg(sif_path), _target_profile())
     assert ok.sif_reference_present is True
     assert ok.sif_verified is True
-    assert ok.sif_signature_ok in (True, False, None)
+    assert ok.sif_signature_ok is None
 
     # Digest MISMATCH: a different-bytes SIF at the target path is fail-closed.
     wrong = bundle_dir / "wrong.sif"

@@ -92,8 +92,7 @@ and those values are correct for Rivanna as written.
 
 !!! tip "Start native, add containers later"
     Container mode is opt-in; `hhemt build-sifs` creates every image your experiment
-    needs under `sif_root`, addressed by identity. Get a native run working first, then
-    see `containers/README.md`.
+    needs under `sif_root`, addressed by identity. Get a native run working first.
 
 ## Verify two site caps before you rely on them
 

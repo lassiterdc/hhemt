@@ -143,7 +143,7 @@ class TRITON_SWMM_experiment:
                 HPC-specific config an external input by design — so ``from_doi``
                 acquires it and passes it here. REQUIRED for a container-mode
                 experiment (``execution_environment: container``): the ContainerSpec
-                that renders ``apptainer exec {sif_path}`` lives on it
+                that renders ``apptainer exec {sif}`` lives on it
                 (``config/hpc_system.py::ContainerSpec``). ``None`` (default) keeps
                 today's native behavior byte-identical.
         """
@@ -341,13 +341,14 @@ class TRITON_SWMM_experiment:
 
             On the container path ``from_doi`` writes a derived copy at
             ``{software_dir}/hpc_system_config.resolved.yaml`` whose
-            ``container.sif_path`` names the built or transferred SIF, and hands the
-            analysis that path. A derived file rather than an in-memory edit is
-            required: every downstream consumer re-loads the YAML from the path,
-            including ``run_simulation_runner.main``, so an in-memory repoint would
-            never reach the ``apptainer exec`` invocation in
+            ``container.sif_root`` names the directory this run resolves its images
+            under, and hands the analysis that path. A derived file rather than an
+            in-memory edit is required: every downstream consumer re-loads the YAML
+            from the path, including ``run_simulation_runner.main``, so an in-memory
+            repoint would never reach the ``apptainer exec`` invocation in
             ``run_simulation.prepare_simulation_command``. Your original config is
-            never modified.
+            never modified. How the images arrive under that root is the
+            ``sif_build_config_yaml`` entry below.
         validate : bool, default True
             Run preflight validation on the reconstituted experiment before returning,
             mirroring ``Toolkit.from_configs``. This is what makes a container-mode
@@ -429,8 +430,9 @@ class TRITON_SWMM_experiment:
         # ADR-6/ADR-9: the HPC config is the reproducer's, never bundle-carried.
         hpc_cfg_path = cls._resolve_hpc_system_config(hpc_system_config_yaml)
 
-        # ADR-19: build (or fall back to transfer) the SIF, then repoint container.sif_path
-        # at it via a DERIVED config copy. Container-mode only — a native bundle skips this
+        # ADR-21: resolve every carried image under the reproducer's container.sif_root,
+        # rebuilding any that is absent, then point a DERIVED config copy at that root.
+        # Container-mode only — a native bundle skips this
         # entirely and its behavior is byte-identical to today (R9).
         cfg_analysis_dict = read_yaml(analysis_config_path)
         if cfg_analysis_dict.get("execution_environment") == "container":

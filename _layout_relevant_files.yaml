@@ -1982,3 +1982,45 @@ non_breaking_allowlist:
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
     layout_signature: "bae58e14e767efb500d273c21bb5556298f22c4574e2db4a67e8bba08fe4bcaa"
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      Q2 RETIRED-FIELD CLAIMS. ContainerSpec's thirteen field descriptions move from
+      trailing `#` comments into `Field(description=...)`, so the generated config
+      reference renders a populated Description cell for each -- `sif_root` among them,
+      the only required-and-empty field in the rendered closure. The path is reached by
+      the `src/hhemt/config/**/*.py` glob, which is why check-b sees it at all.
+      NON-BREAKING, AND MEASURED RATHER THAN ASSERTED. The four properties that could
+      change on-disk meaning were each compared BEFORE and AFTER by the coordinator:
+      AST field COUNT 13 -> 13; AST field ORDER byte-identical as a tuple; runtime
+      `model_fields` 13 -> 13; and runtime REQUIRED fields ['sif_root'] -> ['sif_root'].
+      No field is added, removed, renamed or reordered, and no field changes
+      requiredness, so nothing already written to disk is renamed or reinterpreted.
+      THE REQUIREDNESS CHECK IS THE LOAD-BEARING ONE and it is why this row does not
+      rest on a diff read. Converting `sif_root: str` to a `Field(...)` form preserves
+      requiredness only if the Ellipsis is written; `Field(None, ...)` or
+      `Field(description=...)` alone silently makes it OPTIONAL while the field count,
+      the field order and every description clause all stay green. That flip was the
+      named keystone failure for this edit and it was checked directly.
+      NO MIGRATION IS POSSIBLE TO WRITE. Descriptions are schema METADATA consumed by
+      the documentation renderer; they are absent from every serialized artifact, so a
+      V0023 would have nothing to act on.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "591498ee27270879f257a09842f60184d2307064d948d42d5e48e6ada5acd62d"
+  - path: src/hhemt/log.py
+    justification: >-
+      Q2 RETIRED-FIELD CLAIMS. A single COMMENT line on the ADR-19 (ii-a) block is
+      rewritten: the sha256 it describes is captured against the image resolved under
+      `container.sif_root` rather than against the retired `container.sif_path`, which
+      the toolkit no longer has. The path is listed in layout_relevant.paths, which is
+      why check-b sees it.
+      NON-BREAKING, AND THE DIFF IS THE WHOLE ARGUMENT. `git diff` over this path is one
+      changed line and that line is a comment -- zero code lines, no field added,
+      removed, renamed or retyped, no default changed, no serialization touched. The
+      described BEHAVIOUR was already what the comment now says; the comment had gone
+      stale against it, which is the defect this workstream exists to repair.
+      NO MIGRATION IS POSSIBLE TO WRITE. A comment reaches no on-disk artifact, so a
+      V0023 would have nothing to act on.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+    layout_signature: "e0e139220ae4e5449cf814254f292220a4fcbfcd55474c576a304be1fdab02e3"

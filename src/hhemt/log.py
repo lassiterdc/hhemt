@@ -759,7 +759,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     triton_head_sha: LogField[str] = Field(default_factory=LogField)
 
     # ADR-19 (ii-a): the sha256 of the SIF this analysis RAN, captured at SETUP against
-    # the file at `container.sif_path` and carried to consolidation on this same log —
+    # the image resolved under `container.sif_root` and carried to consolidation on this same log —
     # the identical cross-job carrier `triton_head_sha` above uses, and for the identical
     # reason (setup and consolidation are different SLURM jobs on HPC).
     #

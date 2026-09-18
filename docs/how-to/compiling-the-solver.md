@@ -18,7 +18,8 @@ to run, once per machine and once per GPU target, and it is cached afterwards: a
 second call skips a backend whose build already succeeded.
 
 In container mode the solver ships inside the image and there is nothing to
-compile; that path is described with the container recipes in `containers/README.md`.
+compile; [`hhemt build-sifs`](../reference/cli.md#publishing-and-reproducing) creates
+the images your experiment needs.
 
 ## On a laptop or workstation
 

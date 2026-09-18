@@ -3,9 +3,9 @@
 ``Bundle.reprex(reprex_config, target_hpc_profile) -> ReprexResult``:
 
 1. Resolve + VERIFY the SIF **when the crate references one** (a container-run
-   bundle): mandatory sha256 digest match (fail-closed — a mismatch raises), plus a
-   best-effort ``apptainer verify`` PGP check (``sif_signature_ok`` is ``None`` when
-   the ``apptainer`` binary / producer key is unavailable). A NATIVE-run bundle
+   bundle): mandatory sha256 digest match (fail-closed — a mismatch raises). The
+   toolkit does not PGP-sign SIFs and runs no signature check, so
+   ``sif_signature_ok`` is always ``None``. A NATIVE-run bundle
    records no SIF entity in its crate; reprex then reports
    ``sif_reference_present=False`` and skips verification (a vacuous pass) — native
    runs are first-class (the primary sensitivity fixture is native).
@@ -79,7 +79,17 @@ class ReprexResult:
     # thread has now found three times; here it is closed by making the state representable
     # rather than by a comment asking the reader to remember.
     sif_verified: bool | None
-    sif_signature_ok: bool | None  # None => apptainer/key unavailable, or native
+    # ONE REACHABLE VALUE, and saying so is the whole content of this comment:
+    #   None  — ALWAYS. `_verify_sif` returns None on every success path and the
+    #           no-reference arm sets None too, so no execution reaches any other value.
+    #   True  — unreachable; no code path assigns it
+    #   False — unreachable; no code path assigns it
+    # The field is RETAINED at `bool | None` for schema stability -- a published table in
+    # docs/how-to/reprex-roundtrip.md names it -- not because a second value can occur.
+    # DIGEST verification is NOT what was retired, and the distinction is the point:
+    # `_verify_sif` re-hashes the image and raises on a mismatch, fail-closed. Only
+    # SIGNATURE checking is gone (ADR-2 as amended by ADR-21).
+    sif_signature_ok: bool | None
     runnable: bool  # True => no sensitivity row exceeds a target partition cap
     # The discriminator that makes `sif_reference_present=False` legible. Sourced from the
     # bundle's OWN manifest (`sif_manifests` is emitted iff the analysis was container-mode,

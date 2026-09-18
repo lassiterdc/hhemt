@@ -98,8 +98,8 @@ def resolve_hpc_system_config(
             message=(
                 f"No hpc_system_config for cluster {cluster!r} at {path}. On the cluster, set "
                 "$HHEMT_DEPLOYMENT_CONFIG to your compute-visible deployment-config checkout and "
-                "`git pull` it, then reconstruct the per-cluster config (fill default_account and "
-                "container.sif_path). Or set $HHEMT_HPC_SYSTEM_CONFIG, or pass --hpc-system-config."
+                "`git pull` it, then reconstruct the per-cluster config (fill default_account). "
+                "Or set $HHEMT_HPC_SYSTEM_CONFIG, or pass --hpc-system-config."
             ),
             config_path=path,
         )
@@ -283,7 +283,7 @@ def build_case_from_bundle(
 
     Preserves the landed fail-fast guards verbatim: a ``default_account`` that is unset
     or still a ``{your-...}`` placeholder raises; a missing or placeholder
-    ``container.sif_path`` raises when the bundle declares a container. Config
+    ``container.sif_root`` raises when the bundle declares a container. Config
     resolution is NON-MUTATING — it reads the deployment config, never edits a tracked file.
     """
     from hhemt.config.loaders import load_hpc_system_config
