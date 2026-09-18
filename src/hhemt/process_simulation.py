@@ -1,3 +1,4 @@
+import functools
 import gc
 import json
 import os
@@ -149,6 +150,28 @@ _RPT_TRUNCATION_MARKER = (
     "remains the coupled-run completion signal. Rebuilding the coupled SWMM summaries from "
     "raw is no longer possible; re-simulate instead.  ===\n"
 )
+
+
+def _deferred_log_writes(method):
+    """M4: run `method` inside `self.log.deferred_writes()` so every LogField.set() and
+    add_sim_processing_entry() it performs collapses into ONE read-modify-write at exit.
+
+    Each write is one rename of the log name, and exposure to the measured
+    lookup-vs-rename mechanism is linear in renames. Batching at the METHOD boundary
+    (not the whole runner pass) widens the crash window only to the method's own
+    artifacts, whose processing_log entries a retry re-derives by re-exporting them --
+    the same class of replay that a crash between an artifact write and its entry
+    write already produced. If the method switches self.log mid-way (a model-type
+    switch), writes to the NEW log are immediate; the deferral is bound to the log
+    object at entry.
+    """
+
+    @functools.wraps(method)
+    def _wrapped(self, *args, **kwargs):
+        with self.log.deferred_writes():
+            return method(self, *args, **kwargs)
+
+    return _wrapped
 
 
 class TRITONSWMM_sim_post_processing:
@@ -728,6 +751,7 @@ class TRITONSWMM_sim_post_processing:
         )
         return
 
+    @_deferred_log_writes
     def _export_performance_tseries(
         self,
         fname_out: Path,
@@ -846,6 +870,7 @@ class TRITONSWMM_sim_post_processing:
         )
         return
 
+    @_deferred_log_writes
     def _export_performance_summary(
         self,
         ds: xr.Dataset,
@@ -903,6 +928,7 @@ class TRITONSWMM_sim_post_processing:
         log_field.set(True)
         return
 
+    @_deferred_log_writes
     def _export_TRITONSWMM_TRITON_outputs(
         self,
         *,
@@ -977,6 +1003,7 @@ class TRITONSWMM_sim_post_processing:
             self._clear_raw_outputs("tritonswmm")
         return
 
+    @_deferred_log_writes
     def _export_TRITON_only_outputs(
         self,
         *,
@@ -1085,6 +1112,7 @@ class TRITONSWMM_sim_post_processing:
                 comp_level=comp_level,
             )
 
+    @_deferred_log_writes
     def _export_SWMM_outputs(
         self,
         model: Literal["swmm", "tritonswmm"],
@@ -1367,6 +1395,7 @@ class TRITONSWMM_sim_post_processing:
             self.log.SWMM_node_timeseries_written.set(swmm_nodes)
         return swmm_nodes
 
+    @_deferred_log_writes
     def _clear_raw_outputs(self, model_type: Literal["tritonswmm", "triton", "swmm"]) -> None:
         """Delete raw model outputs for the named model type.
 
@@ -1621,6 +1650,7 @@ class TRITONSWMM_sim_post_processing:
 
         return
 
+    @_deferred_log_writes
     def _export_TRITON_summary(
         self,
         model_type: Literal["triton", "tritonswmm"] = "tritonswmm",
@@ -1715,6 +1745,7 @@ class TRITONSWMM_sim_post_processing:
             self.log.TRITON_summary_written.set(True)
         return
 
+    @_deferred_log_writes
     def _export_SWMM_summaries(
         self,
         model_type: Literal["swmm", "tritonswmm"] = "tritonswmm",
@@ -2100,6 +2131,7 @@ class TRITONSWMM_sim_post_processing:
             print(f"[reclaim] truncated {rpt_path}: dropped {n_dropped} time-series line(s).", flush=True)
         return True
 
+    @_deferred_log_writes
     def remove_after_processing(
         self,
         *,
