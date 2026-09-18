@@ -255,9 +255,13 @@ class TRITONSWMM_system:
 
         # Initialize system log
         log_path = system_dir / "system_log.json"
-        if log_path.exists():
+        # ONE name resolution (M1, read side): EVERY runner constructs TRITONSWMM_system,
+        # so on the sensitivity path thousands of runners probe this name while N
+        # setup_target jobs rename it; a stale negative sent them down the create path
+        # and into the write refusal. Absent -> a fresh default, exactly as before.
+        try:
             self.log = TRITONSWMM_system_log.from_json(log_path)
-        else:
+        except FileNotFoundError:
             self.log = TRITONSWMM_system_log(logfile=log_path)
             self.log.write()
 

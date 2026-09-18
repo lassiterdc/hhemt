@@ -1857,3 +1857,46 @@ non_breaking_allowlist:
       log-field changes. Closes the D1 collateral divergence (log True, artifact removed
       by the engine's failure cleanup) that stranded the retry; concurred VMS
       hhemt_2026-09-17_0950 SPECS 6-9.
+  - path: src/hhemt/log.py
+    layout_signature: 8f5898e9cdca3a1d855f11e24538b3d25c57f89ade8a1fec695ecea26553695a
+    justification: >-
+      NON-BREAKING (arm A of the split-vs-harden workshop, [Q404]). Two ADDITIVE
+      Optional None-defaulted keys on the TRITONSWMM_log BASE class -- `last_writer`
+      (M8 writer stamp, a dict) and `recovered_from_unparseable` (M3 recovery records,
+      a list) -- so every tier carries them; the SAME change class as this file's five
+      earlier allowlisted additive fields. The rest changes HOW a document is written,
+      never WHAT is on disk: write() resolves the name once with O_RDWR|O_CREAT instead
+      of read_bytes + O_EXCL (M1), quarantines a non-parsing document by MOVE to a
+      `.unreadable` sibling and rebuilds the name in the same pass (M3), splits the
+      refusal operation strings (M5), corrects the false retry sentence (M6), and adds
+      a deferred_writes() context manager (M4). THE TWO-QUESTION TEST. (i) NEW code
+      meeting OLD data: a legacy document lacks both keys; pydantic defaults them None
+      and no consumer coalesces on them except the new check_log_recoveries, which
+      reads an absent key as no recovery. OLD code meeting NEW data: an old toolkit's
+      write() emits the "DROPS non-null on-disk field" WARNING for last_writer and
+      proceeds -- the forward direction no LAYOUT_VERSION bump can govern. (ii) Loud or
+      silent? Neither reader reinterprets existing state. Why a row and not a bump: a
+      migration acts on on-disk SHAPE, and this change adds keys with a default that
+      reproduces the pre-change reading of every existing document; V0023 would have an
+      empty upgrade body and two identical fixtures -- the V0011/V0016 no-op precedent
+      this file exists to avoid.
+      EXPIRY CONDITION: covers additive None-defaulted keys and write-path mechanics.
+      Renaming or re-keying any existing log key, or moving the document (arm B,
+      record-per-fact), is NOT this class and owes LAYOUT 23 with a V0023 module.
+  - path: src/hhemt/scenario.py
+    layout_signature: 91626fb90691a5298e9090c3333a3f6ed64cf907c2a9bebb7e639021b1c4089f
+    justification: >-
+      NON-BREAKING. get_log() opens `log_{model_type}.json` in one resolution (from_json
+      inside try/except FileNotFoundError) instead of .exists()-then-from_json (M1, read
+      pair). Changes HOW the document is found, never its name, its directory, or its
+      contents; the absent branch constructs the same default it always did.
+      EXPIRY CONDITION: covers this read-pair edit only.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: e7c354ce0cb3cab0ddc14b919852cf1f0bf6d60c2d1df64e21c6cdc8f3a24d59
+    justification: >-
+      NON-BREAKING. Nine exporter methods gain the `_deferred_log_writes` decorator so
+      their LogField.set()/add_sim_processing_entry() calls persist as one write at
+      method exit (M4). The set of keys and entries written is identical; only the number
+      of read-modify-write cycles per method changes. No file, path, schema or log-field
+      change.
+      EXPIRY CONDITION: covers the decorator application only.

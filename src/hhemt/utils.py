@@ -881,11 +881,28 @@ def write_json_exclusive(data: dict, file: Path):
     that already gave the wrong answer.
     """
     file.parent.mkdir(exist_ok=True, parents=True)
-    fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-    with os.fdopen(fd, "w") as f:
-        json.dump(data, f, indent=2, default=str)
-        f.flush()
-        os.fsync(f.fileno())
+    # ATOMIC exclusive create. The former open(O_EXCL)-then-stream-json.dump on the
+    # FINAL name left a partial, unparseable document under that name for the whole
+    # dump window -- permanently if the process died inside it -- which is the in-tree
+    # producer of the "exists but does not parse" state. Now the complete document is
+    # written and fsync'd under a private temp name, and os.link publishes it under
+    # `file` in ONE operation that fails with FileExistsError if the name exists.
+    # os.link is used rather than os.replace because replace is unconditional and
+    # cannot refuse an existing name; link keeps the exclusive semantics. The temp
+    # name is unlinked on every path.
+    pid = os.getpid()
+    tmp_path = file.with_suffix(file.suffix + f".{pid}.excl.tmp")
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.link(tmp_path, file)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
 
 
 def replace_substring_in_file(file_path, old_substring, new_substring, verbose=False):
