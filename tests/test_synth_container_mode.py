@@ -688,7 +688,6 @@ def test_native_absent_cpu_build_log_raises_configuration_not_compilation(
         raising=True,
     )
 
-    scen.log.scenario_creation_complete.set(False)
     tc.analysis.cfg_analysis.execution_environment = "native"
     with pytest.raises(ConfigurationError) as excinfo:
         scen.prepare_scenario(overwrite_scenario_if_already_set_up=True)
