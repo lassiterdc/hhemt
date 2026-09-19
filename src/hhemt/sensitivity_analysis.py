@@ -513,16 +513,24 @@ class TRITONSWMM_sensitivity_analysis:
         # Idempotent when Analysis.submit_workflow already applied it on the
         # dispatch path (matched flags would be absent by now).
         #
-        # THE IDEMPOTENCY ARGUMENT ABOVE HOLDS FOR FLAGS AND NOT FOR FIGURES, and the
-        # difference only became observable once the dispatch-path call was gated. At a
-        # render floor the pre-delete deletes NO flag (the floor's prefix tuple is empty)
-        # and instead deletes every figure under `plots/` except `plots/eda/`. On a dry
-        # run the gated first invocation now leaves those figures in place, so an
-        # ungated second invocation here finds them present and deletes them -- the
-        # symptom is unchanged and the fix at analysis.py:3578 does nothing on the
-        # sensitivity path, which is the path every sensitivity master takes. Measured
-        # over the modelled chain: gating only the first call leaves a dry run at
-        # 7 figures -> 2, identical to the unfixed behaviour.
+        # THE IDEMPOTENCY ARGUMENT ABOVE HOLDS FOR FLAGS AND NOT FOR FIGURES, and that
+        # is why this call threads `dry_run`. At a render floor the pre-delete deletes NO
+        # flag (the floor's prefix tuple is empty) and instead deletes every figure under
+        # `plots/` except `plots/eda/`.
+        #
+        # THE GUARD IS AT THE DESTRUCTIVE SITE, NOT HERE. workflow.py's
+        # `_delete_flags_for_force_rerun` carries `if stage == "render" and not dry_run:`
+        # around the figure deletion, so every caller that reports its own dry_run state
+        # accurately is covered and no second gate is needed at this call site. Threading
+        # it here is therefore load-bearing rather than defensive: drop the argument in a
+        # refactor and this path silently resumes deleting figures on a preview.
+        #
+        # THE HISTORY IS RECORDED HERE so the threading is not read as redundant. Until
+        # f8c47ec3 (2026-08-25) this call did not thread `dry_run`, and a dry run at a
+        # render floor destroyed the user's figures. Measured 2026-08-25 against that
+        # pre-f8c47ec3 state, not against any current behaviour: 7 figures -> 2 on a
+        # preview. D131 later ruled THAT the broad reading holds -- on a dry run ALL
+        # figures survive, not only `plots/eda/`.
         self.experiment._apply_force_rerun(overrides.force_rerun, dry_run=dry_run)
 
         # Driver-start orchestrator-liveness sentinel (Phase 2), keyed on the

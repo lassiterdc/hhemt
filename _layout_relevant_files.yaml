@@ -2316,3 +2316,34 @@ non_breaking_allowlist:
       COMPUTED AT step 5 of the merge sequence, over the FINAL resolved content. A hash
       taken earlier pins unresolved content and the failure is silent at authoring time.
       KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: "f29e0f1f9f10b7208fb708d856855e2f2f137e7c9424a07186ad6711e2d1d9ca"
+    justification: >-
+      COMMENT-ONLY REWRITE, and it is PROVABLY inert rather than argued to be. The
+      force-rerun pre-delete rationale at :516-525 was a present-tense description of a
+      defect that the SAME commit which wrote it had already fixed (f8c47ec3,
+      2026-08-25); it read as a live data-loss bug, and it misled the coordinator into
+      escalating a non-existent defect plus three specialist rounds on their first pass.
+      Rewritten to state the current contract in the present tense and the history in a
+      dated past-tense clause, with the measurement bound to the named pre-f8c47ec3
+      state.
+      DECIDING MEASUREMENT, not a line-count proxy: the file was parsed before and after
+      and the two abstract syntax trees are BYTE-IDENTICAL at 267,611 characters each.
+      Python discards comments at parse time, so an identical tree means the executing
+      program is unchanged. Docstrings — which look like prose but ARE runtime content —
+      count 69 before and 69 after, unchanged. The only token-stream differences are
+      blank-line positions, because the block is eight lines longer.
+      So no path, filename, zarr group, Snakemake rule, fingerprint payload,
+      _version.json field or figure stem can have moved: no executable statement changed.
+      RULED by the developer 2026-09-19 at a two-option gate that presented this against
+      bumping LAYOUT_VERSION to 23 with a migration and fixtures. The bump was declined
+      because a migration describes a change in on-disk arrangement and there is none
+      here, and because raising the number for inert edits erodes what the number means
+      to the next reader deciding whether their existing results are still valid.
+      AUTHORSHIP NOTE, recorded because it is why this went to a gate rather than being
+      self-certified: the coordinator orchestrated the change, and an allowlist row
+      asserts that a change is harmless to the very check that exists to catch that
+      assertion being wrong. The standing instruction that an agent never reviews its own
+      work is what sent this to the developer.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
