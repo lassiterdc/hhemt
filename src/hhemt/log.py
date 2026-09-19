@@ -1,5 +1,9 @@
+import datetime
 import json
 import logging
+import os
+import socket
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
@@ -8,9 +12,27 @@ from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_vali
 
 from hhemt._filelock_compat import resolve_filelock
 from hhemt.exceptions import ProcessingError
-from hhemt.utils import write_json, write_json_exclusive
+from hhemt.utils import write_json
 
 T = TypeVar("T")  # Generic type variable
+
+
+def _writer_stamp() -> dict:
+    """The M8 writer stamp: WHO is writing this log document right now.
+
+    Compared by write() on (hostname, restart_count) -- NOT on slurm_jobid, because a
+    SLURM-requeued job (JobRequeue=1) keeps its job id, so the zombie instance and the
+    legitimate requeued instance share it; they differ in hostname and in
+    SLURM_RESTART_COUNT, which SLURM exports only to a requeued instance. slurm_jobid,
+    pid and written_at are carried for the reader, never for the comparison.
+    """
+    return {
+        "slurm_jobid": os.environ.get("SLURM_JOB_ID"),
+        "hostname": socket.gethostname(),
+        "restart_count": int(os.environ.get("SLURM_RESTART_COUNT", "0") or 0),
+        "pid": os.getpid(),
+        "written_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+    }
 
 
 # ----------------------------
@@ -212,6 +234,18 @@ class TRITONSWMM_log(BaseModel):
     # baseline onto the latest disk state, so a concurrent writer's updates to
     # OTHER fields are never clobbered (lost-update prevention).
     _baseline: dict = PrivateAttr(default_factory=dict)
+    # M4: depth of nested deferred_writes() contexts and whether a write is owed at exit.
+    _defer_depth: int = PrivateAttr(default=0)
+    _write_pending: bool = PrivateAttr(default=False)
+    # M8: the stamp of the process that last wrote this document. ADDITIVE and
+    # None-defaulted so every pre-existing log deserialises unchanged (allowlist class,
+    # not a LAYOUT_VERSION bump). Assigned by write() on every write; ALWAYS-MINE --
+    # write() excludes it from the lost-update overlay, so it names the process that
+    # actually wrote last rather than whichever stamp was on disk.
+    last_writer: dict | None = None
+    # M3: one record per quarantine-and-reconstruct write() performed on this document,
+    # appended in order. None until the first recovery. Same additive class as above.
+    recovered_from_unparseable: list[dict] | None = None
 
     # ----------------------------
     # Parent injection
@@ -233,6 +267,28 @@ class TRITONSWMM_log(BaseModel):
     def as_dict(self):
         return self.model_dump(mode="json")
 
+    @contextmanager
+    def deferred_writes(self):
+        """M4: collapse every LogField.set()/clear(), LogFieldDict.set() and
+        Processing.update() inside the block into ONE read-modify-write at exit.
+
+        Exposure to the measured lookup-vs-rename mechanism is linear in the number
+        of renames of a log name; every write() is one rename. Nesting is supported
+        (depth-counted); the single write lands when the OUTERMOST context exits,
+        and only if something was set. The flush runs in `finally`, so state set
+        before an exception inside the block is persisted exactly as it would have
+        been under immediate writes; a ProcessingError raised BY that flush
+        propagates with the original exception as its __context__.
+        """
+        self._defer_depth += 1
+        try:
+            yield self
+        finally:
+            self._defer_depth -= 1
+            if self._defer_depth == 0 and self._write_pending:
+                self._write_pending = False
+                self.write()
+
     def write(self):
         """Persist this log with concurrency-safe, lost-update-free semantics.
 
@@ -244,6 +300,10 @@ class TRITONSWMM_log(BaseModel):
         to OTHER fields survive. write_json itself is atomic
         (temp + fsync + os.replace).
         """
+        if self._defer_depth > 0:
+            # M4: inside deferred_writes(); the outermost context exit performs one write.
+            self._write_pending = True
+            return
         lock_path = self.logfile.with_suffix(f"{self.logfile.suffix}.lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         # Bounded timeout: the merge is sub-second; a stale/dead lock holder must
@@ -251,69 +311,139 @@ class TRITONSWMM_log(BaseModel):
         # to a ProcessingError naming this log file.
         try:
             with resolve_filelock(str(lock_path), timeout=30):
-                # A read has THREE outcomes and this block must not collapse them
-                # to two. Only a read that ESTABLISHES the on-disk state may serve
-                # as the overlay baseline below; "I could not read it" is NOT
-                # "there is nothing there". Conflating those is what let a single
-                # transient read failure persist an information-free document over
-                # a populated log -- and because that document PARSES, every later
-                # reader propagated it faithfully, so the loss sustained itself
-                # through the healthy path and no read-side hardening could undo it.
-                # One read, one answer: the .exists()-then-open() pair is gone,
-                # because its two syscalls can disagree about one name.
-                disk: dict = {}
-                _disk_established = False
-                _raw: bytes | None = None
+                # M1: ONE name resolution. O_RDWR|O_CREAT asks the filesystem for the
+                # name's inode and creates it if -- and only if -- it is genuinely absent.
+                # A stale NEGATIVE lookup (this deployment has been measured answering
+                # inconsistently about a name inside another node's rename window) cannot
+                # produce ENOENT here: the create-capable open reaches the server, which
+                # returns the existing inode. The former read_bytes()-then-O_EXCL pair
+                # disagreed about one name from two syscalls and refused at the second;
+                # both refusal sites are deleted by this shape, not hardened. The lock
+                # (measured to EXCLUDE across nodes on WekaFS /scratch, job 20168015)
+                # brackets open, read, merge and the replace below in one critical
+                # section, so the inode read here is the inode the replace supersedes.
                 try:
-                    _raw = self.logfile.read_bytes()
-                except FileNotFoundError:
-                    # The name did not resolve. That is NOT proof of absence: this
-                    # deployment has been measured answering inconsistently about
-                    # this exact name. Absence is settled below by an EXCLUSIVE
-                    # create, which asks the filesystem instead of inferring from
-                    # a failed read.
-                    _raw = None
+                    _fd = os.open(self.logfile, os.O_RDWR | os.O_CREAT, 0o644)
                 except OSError as exc:
                     raise ProcessingError(
-                        "log write (read-modify-write)",
+                        "log write (open failed)",
                         filepath=self.logfile,
                         reason=(
-                            f"could not read {self.logfile} "
-                            f"({type(exc).__name__}: {exc}); refusing to write, because "
-                            "this instance's unchanged fields would be persisted over "
-                            "on-disk state it never read. Nothing is lost: this "
-                            "instance's state is still in memory and the workflow "
-                            "engine's own retries own transient failures."
+                            f"could not open {self.logfile} for read-modify-write "
+                            f"({type(exc).__name__}: {exc}); refusing to write, because this "
+                            "instance's unchanged fields would be persisted over on-disk "
+                            "state it never read. The document on disk is untouched. A retry "
+                            "is a NEW process that rebuilds every field from disk -- nothing "
+                            "in this process's memory reaches it, and under SLURM "
+                            "JobRequeue=1 the workflow engine's retries are not even the "
+                            "mechanism that re-runs a node-failed job."
                         ),
                     ) from exc
-                if _raw is not None:
+                try:
+                    with os.fdopen(_fd, "rb") as _fh:
+                        _raw: bytes = _fh.read()
+                except OSError as exc:
+                    raise ProcessingError(
+                        "log write (read failed)",
+                        filepath=self.logfile,
+                        reason=(
+                            f"opened but could not read {self.logfile} "
+                            f"({type(exc).__name__}: {exc}); refusing to write, because this "
+                            "instance's unchanged fields would be persisted over on-disk "
+                            "state it never read. The document on disk is untouched; a retry "
+                            "rebuilds from disk in a new process."
+                        ),
+                    ) from exc
+                disk: dict = {}
+                _disk_established = False
+                if len(_raw) == 0:
+                    # ABSENT, MINE ALONE. Either this open created the name, or a peer
+                    # died between its own create and its first write. Never routed to
+                    # the quarantine below: an empty document is not a corrupt one.
+                    pass
+                else:
+                    _parsed: object = None
+                    _parse_error: str | None = None
                     try:
-                        disk = json.loads(_raw)
-                        _disk_established = True
+                        _parsed = json.loads(_raw)
                     except json.JSONDecodeError as exc:
-                        # Preserve the bytes that ACTUALLY failed -- these, not a
-                        # SECOND read of the same path. The old code re-read here,
-                        # so under concurrency the quarantine captured a different
-                        # document than the one that failed, and the diagnostic lied
-                        # about the only thing it exists to record.
+                        _parse_error = str(exc)
+                    if _parse_error is None and not isinstance(_parsed, dict):
+                        _parse_error = f"top-level JSON value is {type(_parsed).__name__}, not an object"
+                    if _parse_error is None:
+                        disk = _parsed  # type: ignore[assignment]
+                        _disk_established = True
+                    else:
+                        # M3: QUARANTINE BY MOVE, then RECONSTRUCT in this same pass.
+                        # The bytes that ACTUALLY failed are the inode we just read, and
+                        # os.replace moves that inode -- no second read, no copy that could
+                        # differ from what failed. The name is then recreated below from
+                        # this instance's state, and the recovery is recorded on the
+                        # document itself so validate_analysis surfaces it.
                         _quarantine = self.logfile.with_suffix(f"{self.logfile.suffix}.unreadable")
+                        _n = 1
+                        while _quarantine.exists():
+                            _quarantine = self.logfile.with_suffix(f"{self.logfile.suffix}.unreadable.{_n}")
+                            _n += 1
                         try:
-                            _quarantine.write_bytes(_raw)
-                        except OSError:
-                            _quarantine = None
-                        raise ProcessingError(
-                            "log write (read-modify-write)",
-                            filepath=self.logfile,
-                            reason=(
-                                f"{self.logfile} exists but does not parse "
-                                f"({exc}); refusing to write, because this instance's "
-                                "unchanged fields would be persisted over state it "
-                                "never read. The bytes that failed are preserved at "
-                                f"{_quarantine if _quarantine is not None else '<preserve failed>'}"
-                                " -- inspect and repair that file, or remove the log "
-                                "to start a new one."
-                            ),
-                        ) from exc
+                            os.replace(self.logfile, _quarantine)
+                        except OSError as qexc:
+                            raise ProcessingError(
+                                "log write (quarantine failed)",
+                                filepath=self.logfile,
+                                reason=(
+                                    f"{self.logfile} exists but does not parse ({_parse_error}) "
+                                    f"and could not be moved to {_quarantine} "
+                                    f"({type(qexc).__name__}: {qexc}); refusing to write over "
+                                    "a document that has not been preserved."
+                                ),
+                            ) from qexc
+                        _record = {
+                            "quarantine": str(_quarantine),
+                            "bytes": len(_raw),
+                            "error": _parse_error,
+                            "at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+                            "writer": _writer_stamp(),
+                        }
+                        self.recovered_from_unparseable = [*(self.recovered_from_unparseable or []), _record]
+                        logging.getLogger(__name__).warning(
+                            "Log %s did not parse (%s); moved to %s and reconstructed from this "
+                            "process's state. Fields this process did not set are now defaults. "
+                            "Recorded on the document as recovered_from_unparseable.",
+                            self.logfile,
+                            _parse_error,
+                            _quarantine,
+                        )
+                # M8: the second-writer detector, evaluated BEFORE the overlay is built and
+                # BEFORE the baseline is reassigned below. self._baseline is what THIS
+                # process last synced with (loaded state at from_json/refresh, or its own
+                # last write), so a stamp on disk that differs from it means another
+                # process wrote this document in between. Compared on (hostname,
+                # restart_count): a SLURM-requeued instance keeps its job id. A baseline
+                # with NO stamp (a fresh-default object, or a legacy stampless document)
+                # is NOT exempt: a stamp on disk at write time can then only be a peer's.
+                _disk_stamp = disk.get("last_writer") if _disk_established else None
+                _base_stamp = self._baseline.get("last_writer")
+                if isinstance(_disk_stamp, dict):
+                    _disk_key = (_disk_stamp.get("hostname"), _disk_stamp.get("restart_count"))
+                    _base_key = (
+                        (_base_stamp.get("hostname"), _base_stamp.get("restart_count"))
+                        if isinstance(_base_stamp, dict)
+                        else None
+                    )
+                    if _base_key is None or _disk_key != _base_key:
+                        logging.getLogger(__name__).warning(
+                            "Log %s was written by ANOTHER process since this one last synced: "
+                            "on disk last_writer=%s; this process's baseline last_writer=%s. "
+                            "Two writers on one log within one rule execution is the "
+                            "signature of a second instance of this job (a SLURM requeue "
+                            "after NODE_FAIL keeps the job id; compare hostname and "
+                            "restart_count).",
+                            self.logfile,
+                            _disk_stamp,
+                            _base_stamp,
+                        )
+                self.last_writer = _writer_stamp()
                 mine = self.as_dict()
                 changed_keys = {k for k, v in mine.items() if v != self._baseline.get(k)}
                 # Overlay disk's value for every field I did NOT change, so a
@@ -322,7 +452,10 @@ class TRITONSWMM_log(BaseModel):
                 # `k in mine` (SE-F-I-1 Spec 2) drops undeclared keys so removed
                 # all_* fields are NOT resurrected on write — closes the
                 # resurrection vector for any future field removal.
-                overlay = {k: v for k, v in disk.items() if k not in changed_keys and k in mine}
+                # `last_writer` is ALWAYS-MINE: two writes by one process inside one
+                # second carry an identical stamp, which the changed-keys test reads as
+                # unchanged, and the overlay would then persist a foreign stamp as ours.
+                overlay = {k: v for k, v in disk.items() if k not in changed_keys and k in mine and k != "last_writer"}
                 merged = {**mine, **overlay}
                 # A write must never turn a NON-NULL on-disk value into null/absent
                 # for a field this instance did not deliberately change. The overlay
@@ -346,26 +479,11 @@ class TRITONSWMM_log(BaseModel):
                         len(_dropped),
                         ", ".join(_dropped),
                     )
-                if _disk_established:
-                    write_json(merged, self.logfile)
-                else:
-                    # The read said the name did not resolve, and `merged` is
-                    # therefore `mine` alone. Persisting that with `write_json`
-                    # would use `os.replace`, which cannot tell creating a log
-                    # from destroying one. Ask the filesystem instead.
-                    try:
-                        write_json_exclusive(merged, self.logfile)
-                    except FileExistsError as exc:
-                        raise ProcessingError(
-                            "log write (read-modify-write)",
-                            filepath=self.logfile,
-                            reason=(
-                                f"{self.logfile} could not be read but DOES exist: the "
-                                "read that reported it absent was wrong. Refusing to "
-                                "write, because this instance's unchanged fields would "
-                                "have replaced a log whose contents it never saw."
-                            ),
-                        ) from exc
+                # One publish path for all three states (established / absent-mine-alone /
+                # reconstructed): write_json's temp + fsync + os.replace onto the name. The
+                # exclusive-create branch is gone with the read that fed it -- the name's
+                # existence was settled by the single open above, under the lock.
+                write_json(merged, self.logfile)
                 self._baseline = merged
         except Timeout as exc:
             raise ProcessingError(
@@ -406,21 +524,48 @@ class TRITONSWMM_log(BaseModel):
 
     @classmethod
     def from_json(cls, path: Path | str):
+        """Load a log document. FileNotFoundError PROPAGATES -- the callers that own the
+        "absent -> defaults" decision (scenario.get_log, TRITONSWMM_system.__init__) catch
+        it, which is what lets them open without an .exists() probe that can disagree with
+        the open that follows it. A document that does not parse is rebuilt from defaults
+        here, as before, and the rebuilt instance carries the same recovery record the
+        write path emits (M3b) -- but the MOVE to a quarantine name happens ONLY in
+        write(), which holds the lock; a reader never moves what it cannot lock.
+        """
         path = Path(path)
-        try:
-            with path.open() as f:
-                data = json.load(f)
-        except json.JSONDecodeError:
-            logging.getLogger(__name__).warning(
-                "Log file %s was empty or corrupted; rebuilding log from defaults.",
-                path,
-            )
+        _read_error: str | None = None
+        _raw = path.read_bytes()  # FileNotFoundError propagates (see docstring)
+        if len(_raw.strip()) == 0:
+            # EMPTY (0 bytes or whitespace only) is ABSENT, not corrupt -- the state M1's
+            # O_CREAT leaves on every first open and a peer leaves between its create and
+            # its first write. Defaults, and NO recovery record: the write side records
+            # nothing for this state either (M3 is scoped to non-empty unparseable).
             data = None
+        else:
+            try:
+                data = json.loads(_raw)
+            except json.JSONDecodeError as exc:
+                logging.getLogger(__name__).warning(
+                    "Log file %s does not parse; rebuilding log from defaults.",
+                    path,
+                )
+                data = None
+                _read_error = str(exc)
 
         if data:
             log = cls.model_validate(data)
         else:
             log = cls(logfile=path)
+            if _read_error is not None:
+                log.recovered_from_unparseable = [
+                    {
+                        "quarantine": None,
+                        "bytes": None,
+                        "error": _read_error,
+                        "at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+                        "writer": _writer_stamp(),
+                    }
+                ]
 
         # Ensure future writes go back to the same file
         log.logfile = path

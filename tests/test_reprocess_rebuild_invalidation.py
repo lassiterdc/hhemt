@@ -488,7 +488,12 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     src_file.write_bytes(b"\x00")  # existence is all the loop checks; load is mocked
     fname_out = tmp_path / "out.zarr"
 
-    columns = ["H", "QX", "QY", "MH"]
+    # CANONICAL NAMES, not the raw glob prefixes. This frame stands in for
+    # return_fpath_wlevels' output via monkeypatch, and that output's columns are the
+    # canonical variable names. The prefix spelling was invisible only because
+    # load_triton_output_w_xarray is patched in the same helper, so nothing consumed the
+    # names semantically; triton_raw_frame_or_raise's required-set check does consume them.
+    columns = ["max_wlevel_m", "wlevel_m", "velocity_x_mps", "velocity_y_mps"]
     df_outputs = pd.DataFrame(
         {col: [src_file] * n_timesteps for col in columns},
         index=list(range(n_timesteps)),
@@ -529,9 +534,17 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     # and nowhere else. Closes the one gap the distinct-target property leaves open --
     # a spurious write to a NEW target -- without constraining how many merge writes
     # there are, which is what re-coupled the merge tier in the rejected +1 form.
-    assert all(p.startswith(chapters_root) or p == str(fname_out) for p in targets), (
-        f"a write targeted neither a chapter nor the unified store: {targets}"
-    )
+    # DERIVED FROM fname_out, NAMING NO SUFFIX. The merge does not write {out}: it
+    # publishes through _publish_store_crash_safe, which writes {out}.tmp and os.replaces
+    # it into place, so the old `p == str(fname_out)` disjunct was UNSATISFIABLE -- it had
+    # encoded the pre-cdb445f7 direct-write mechanism. Hardcoding ".tmp" instead would
+    # repeat that one design later, which is the trap the comment above warns about, so
+    # this asserts WHERE writes went rather than what the temp is called.
+    _out_dir, _out_name = str(fname_out.parent), fname_out.name
+    assert all(
+        p.startswith(chapters_root) or (str(Path(p).parent) == _out_dir and Path(p).name.startswith(_out_name))
+        for p in targets
+    ), f"a write targeted neither a chapter nor this store's publish set: {targets}"
 
     # No data loss: every timestep present in the store.
     ds = xr.open_zarr(fname_out)
@@ -540,12 +553,45 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     finally:
         ds.close()
 
+    # WHAT SURVIVED, not merely where writes went. The File-1 predicate admits any path in
+    # {out}'s directory whose name begins with {out}'s name, so it is blind to a NEW durable
+    # sibling; this closes that. It names no suffix because the publish protocol's own
+    # contract is that its temporaries do not outlive it -- so an END-STATE assertion needs
+    # no knowledge of what they are called. Every {out}-prefixed artifact other than the
+    # store and its flag is a DEFECT when it survives: {out}.chapters (STATE 6 deletes it),
+    # {out}.tmp (consumed by os.replace), {out}.aside (removed at step 5), {out}.done.tmp
+    # (the unguarded replace failed). So this is the complete set the contract permits.
+    from hhemt.utils import unified_flag_for
 
-def test_write_timeseries_raises_when_no_valid_timesteps(tmp_path, monkeypatch):
-    """SE F-I-2 guard: if every chunk is skipped (all source files missing) the
-    zarr store is never created; the tail-flush guard must raise a diagnosable
-    ProcessingError instead of letting zarr.consolidate_metadata fail cryptically
-    on a nonexistent store."""
+    _residue = sorted(p.name for p in fname_out.parent.iterdir() if p.name.startswith(fname_out.name))
+    assert _residue == sorted([fname_out.name, unified_flag_for(fname_out).name]), (
+        f"the merge left an artifact beside the published store: {_residue}"
+    )
+
+
+def test_missing_source_file_raises_rather_than_skipping(tmp_path, monkeypatch):
+    """Delta-2a fail-closed guard: a source file listed by return_fpath_wlevels but absent
+    at read time must RAISE, never be skipped -- a skipped cell yields a chapter written and
+    FLAGGED complete with that variable missing at that timestep.
+
+    THE REVERSAL THIS TEST RECORDS. It was written for a DIFFERENT guard: a tail-flush check
+    that fired when no batch was ever written and raised "no valid timesteps to write". That
+    guard was deleted at cdb445f7 as collateral of the up-front chunk grid, and its removal
+    was CORRECT rather than an oversight -- its predicate (`first_chunk` still True) would now
+    fire FALSELY on a fully-covered resume, where every timestep is already covered, zero
+    chapters are written this invocation, and merging the pre-existing chapters is the right
+    outcome. The writer no longer has a "store never created" state, so that diagnostic is
+    PERMANENTLY GONE rather than relocated. The behaviour it protected -- a diagnosable error
+    where the unified store would otherwise be absent -- now lives at the merge, and is
+    covered by test_merge_refuses_a_chapter_set_with_no_surviving_stores, which is a
+    SUCCESSOR and not an equivalent.
+
+    THE FIXTURE IS UNCHANGED. It already reached this guard -- that is why the old assertion
+    saw this message -- so this test has silently been the ONLY end-to-end execution of the
+    Delta-2a branch all along. Its named sibling
+    test_c_missing_file_between_listing_and_read_raises_not_skips is a STRUCTURAL AST test
+    whose own docstring records that it declined end-to-end coverage because the harness was
+    too heavy. That harness is this one."""
     n_timesteps = 5
     ny = nx = 4
 
@@ -554,7 +600,8 @@ def test_write_timeseries_raises_when_no_valid_timesteps(tmp_path, monkeypatch):
     missing_file = tmp_path / "does_not_exist.bin"  # never created on disk
     fname_out = tmp_path / "out.zarr"
 
-    columns = ["H", "QX", "QY", "MH"]
+    # CANONICAL NAMES, not the raw glob prefixes -- see the sibling stand-in above.
+    columns = ["max_wlevel_m", "wlevel_m", "velocity_x_mps", "velocity_y_mps"]
     df_outputs = pd.DataFrame(
         {col: [missing_file] * n_timesteps for col in columns},
         index=list(range(n_timesteps)),
@@ -563,7 +610,13 @@ def test_write_timeseries_raises_when_no_valid_timesteps(tmp_path, monkeypatch):
     inst = _build_synthetic_post_processing(fname_out=fname_out, raw_dir=raw_dir, batch_timesteps=4, ny=ny, nx=nx)
     _patch_loaders(monkeypatch, df_outputs=df_outputs, ny=ny, nx=nx)
 
-    with pytest.raises(ProcessingError, match="no valid timesteps to write"):
+    # The message this fixture actually produces. The old string exists NOWHERE in
+    # src/hhemt/ (measured: 0 hits), so the assertion could only ever fail; this one names
+    # the guard the fixture reaches, which makes the test an executing regression for it.
+    # The substring is hardcoded because process_simulation.py:407 builds it as an inline
+    # literal with no importable constant -- the coupling is FORCED, and loosening it would
+    # leave the test unable to say WHICH guard fired, which is the one thing it pins.
+    with pytest.raises(ProcessingError, match="missing between listing and read"):
         inst._export_TRITONSWMM_TRITON_outputs(verbose=False)
     assert not fname_out.exists()
 
@@ -761,4 +814,133 @@ def test_figure_deletion_under_plots_is_pinned_to_the_shared_helper():
     assert sorted(set(offenders)) == [], (
         "figure deletion under plots/ must route through utils.select_regenerable_figures; "
         f"these walk a plots dir and delete inside it: {sorted(set(offenders))}"
+    )
+
+
+def _seed_reprocess_figure_tree(tmp_path):
+    """Seed the minimum tree that separates every wrong resolution of the W1 figure hunk.
+
+    (e) W1 / D131 -- the dry-run figure guard at the reprocess deletion site. This helper
+    and the two nodes below are that section; the file's usual column-0 banner comment is
+    deliberately absent because this block is quoted verbatim into a planning scratch whose
+    porter treats a column-0 ``#`` as a heading and truncates there.
+
+    One unregenerable figure, one regenerable figure, a manifest sidecar for each, and the
+    report shell. Sidecar names are STEM-based because ``utils.sidecar_for`` is (``f.png``
+    -> ``f.manifest.json``); a suffix-appended name would be a file the writer never
+    creates and the sidecar assertions below would pass vacuously.
+    """
+    (tmp_path / "_status").mkdir()
+    (tmp_path / "plots" / "eda").mkdir(parents=True)
+    paths = SimpleNamespace(
+        eda_figure=tmp_path / "plots" / "eda" / "authored.html",
+        eda_sidecar=tmp_path / "plots" / "eda" / "authored.manifest.json",
+        regenerable_figure=tmp_path / "plots" / "flood_depth.png",
+        regenerable_sidecar=tmp_path / "plots" / "flood_depth.manifest.json",
+        report_shell=tmp_path / "analysis_report.html",
+        report_zip=tmp_path / "analysis_report.zip",
+    )
+    for p in vars(paths).values():
+        p.write_text("x", encoding="utf-8")
+    return paths
+
+
+def _drive_reprocess_invalidator(tmp_path, start_with, *, dry_run):
+    """Drive the real ``_invalidate_downstream_flags`` on a duck-typed stand-in.
+
+    No fixture, no cached tree, no compile and no solver: the site's whole dependency chain
+    is a filesystem walk (``utils.select_regenerable_figures`` imports one constant tuple
+    and ``rglob``s), so the compile-free stand-in this module already uses reaches it
+    unchanged.
+
+    THE TWO ARMS THAT REACH THE CLOSURE ARE ``process`` AND ``consolidate`` -- NOT
+    ``render``. ``_delete_report_and_plot_artifacts`` is called at the tail of the
+    ``process`` arm and at the tail of the ``consolidate`` arm. The ``render`` arm never
+    calls it: it deletes the report shell through its own inline call and leaves plots in
+    place deliberately ("the surgical report-shell-only path"). A parametrize that reached
+    for ``render`` would be asserting a different site's contract and would pass
+    regardless of what this site does.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+
+    paths = _seed_reprocess_figure_tree(tmp_path)
+    inst = object.__new__(TRITONSWMM_analysis)
+    inst.analysis_paths = SimpleNamespace(
+        analysis_dir=tmp_path,
+        analysis_datatree_zarr=None,  # no zarr -> the destructive delete is a no-op
+    )
+    inst._invalidate_downstream_flags(start_with, regenerate_existing=False, dry_run=dry_run)
+    return paths
+
+
+_REPROCESS_ARMS_REACHING_THE_FIGURE_SITE = ("process", "consolidate")  # see _drive_reprocess_invalidator
+
+
+@pytest.mark.parametrize("start_with", _REPROCESS_ARMS_REACHING_THE_FIGURE_SITE)
+def test_a_dry_run_reprocess_spares_every_figure_and_still_drops_the_report_shell(tmp_path, start_with):
+    """D131: on a dry run at this site ALL figures survive -- and the report shell does not.
+
+    THE RULING THIS PINS. The developer ruled the broad reading: "On a dry run, i think
+    plots should survive." So the dry-run arm spares ``plots/eda/`` AND the regenerable
+    figures alongside it. The narrower reading -- spare only the unregenerable subtrees and
+    delete regenerable figures as the Snakemake mtime trigger -- was put to the developer
+    and DECLINED, and the second assertion below is the only thing in this module that can
+    fail on it.
+
+    WHY THE REPORT-SHELL ASSERTION IS HERE AND MUST NOT BE READ AS OVER-CAUTION. The ruling
+    protects figures and says nothing about the report shell, whose unlink is the mtime
+    trigger the preview exists to produce. An implementation that "fixed" the dry-run path
+    by guarding the whole block satisfies every figure assertion in this module and
+    silently destroys the preview. Measured across the candidate resolutions: that
+    guard-everything shape fails THIS assertion and no other.
+    """
+    paths = _drive_reprocess_invalidator(tmp_path, start_with, dry_run=True)
+
+    assert paths.eda_figure.exists(), (
+        "a dry run deleted an authored plots/eda/ figure -- nothing regenerates that family, and D131 spares it"
+    )
+    assert paths.regenerable_figure.exists(), (
+        "a dry run deleted a REGENERABLE figure under plots/ -- D131 is the broad reading "
+        "and spares every figure, not only the unregenerable subtrees"
+    )
+    assert not paths.report_shell.exists(), (
+        "a dry run left the report shell in place -- the shell unlink is the sanctioned "
+        "mtime trigger that makes the preview meaningful, and guarding it is an "
+        "over-correction the figure assertions above cannot see"
+    )
+
+
+@pytest.mark.parametrize("start_with", _REPROCESS_ARMS_REACHING_THE_FIGURE_SITE)
+def test_a_real_run_reprocess_deletes_regenerable_figures_with_their_sidecars_and_spares_eda(tmp_path, start_with):
+    """The satisfying arm: the deletion still deletes, and the exemption is still narrow.
+
+    WITHOUT THIS NODE the dry-run node above passes against a site that deletes nothing at
+    all, and against one that spares figures on BOTH arms -- the literal over-read of the
+    ruling's four words, which would stop the render stage re-firing forever.
+
+    SIDECARS ARE PART OF THE PROPERTY, NOT A DETAIL. ``select_regenerable_figures`` appends
+    ``sidecar_for(figure)`` per selected figure precisely because the suffix-appending form
+    it replaced "produced a path the writer never creates, so every figure deletion
+    silently orphaned its sidecar". A figure deleted beside a surviving sidecar, and a
+    figure spared beside a deleted sidecar, are both half-states; the two sidecar
+    assertions below are the only ones that can fail on either.
+    """
+    paths = _drive_reprocess_invalidator(tmp_path, start_with, dry_run=False)
+
+    assert not paths.regenerable_figure.exists(), (
+        "a real run left a regenerable figure in place -- the deletion is what re-fires the "
+        "plot rules under --rerun-triggers mtime, and sparing it on both arms disables the "
+        "re-render this site exists to trigger"
+    )
+    assert not paths.regenerable_sidecar.exists(), (
+        "a regenerable figure was deleted and its manifest sidecar was orphaned -- "
+        "select_regenerable_figures appends sidecar_for(figure) for exactly this reason"
+    )
+    assert paths.eda_figure.exists(), (
+        "a real run deleted an authored plots/eda/ figure -- the unregenerable-subtree skip "
+        "is the half of W1's fix that is not about dry runs"
+    )
+    assert paths.eda_sidecar.exists(), (
+        "a real run deleted a plots/eda/ figure's sidecar while sparing the figure -- the "
+        "exemption must cover the pair or the surviving figure loses its provenance"
     )

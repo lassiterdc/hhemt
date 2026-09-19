@@ -203,12 +203,12 @@ def test_graceful_degradation_entry_beyond_checkpoint_count(tmp_path, monkeypatc
 @pytest.mark.parametrize(
     "bad_schedule",
     [
-        (),           # empty tuple -> use None to disable
-        (2, 2, 4),    # duplicates
-        (0, 2, 4),    # non-positive (zero)
-        (-1, 3),      # non-positive (negative)
-        (4, 2, 6),    # non-increasing (decrease)
-        (2, 2),       # non-strictly-increasing (equal adjacent)
+        (),  # empty tuple -> use None to disable
+        (2, 2, 4),  # duplicates
+        (0, 2, 4),  # non-positive (zero)
+        (-1, 3),  # non-positive (negative)
+        (4, 2, 6),  # non-increasing (decrease)
+        (2, 2),  # non-strictly-increasing (equal adjacent)
     ],
 )
 def test_field_validator_rejects_invalid_schedule(synth_multi_sim_analysis, bad_schedule):
@@ -220,13 +220,9 @@ def test_field_validator_rejects_invalid_schedule(synth_multi_sim_analysis, bad_
 
 def test_field_validator_accepts_valid_schedule_and_none(synth_multi_sim_analysis):
     valid_dump = synth_multi_sim_analysis.cfg_analysis.model_dump()
-    cfg = analysis_config.model_validate(
-        {**valid_dump, "resume_interruption_schedule": (36, 72, 108)}
-    )
+    cfg = analysis_config.model_validate({**valid_dump, "resume_interruption_schedule": (36, 72, 108)})
     assert cfg.resume_interruption_schedule == (36, 72, 108)
-    cfg_none = analysis_config.model_validate(
-        {**valid_dump, "resume_interruption_schedule": None}
-    )
+    cfg_none = analysis_config.model_validate({**valid_dump, "resume_interruption_schedule": None})
     assert cfg_none.resume_interruption_schedule is None
 
 
@@ -292,6 +288,65 @@ def _steps_on_disk(cfg_dir):
     return sorted(int(p.name.split("_")[-1].split(".")[0]) for p in cfg_dir.glob("*.cfg"))
 
 
+def _prune_fake_self(cfg_dir, analysis_dir):
+    """A `TRITONSWMM_run` stand-in for the prune/picker path, built on a REAL `ScenarioPaths`.
+
+    WHY A REAL DATACLASS. Both prune tests previously used a hand-mirrored `SimpleNamespace`
+    and both died when `prune_hotstart_cfgs_above_step` began reading `scen_paths.sim_folder`
+    -- a field the mirror did not carry. A real dataclass always has every declared field, so
+    that failure class is eliminated structurally rather than detected in one direction.
+
+    THE COST, AND IT IS THE MIRROR IMAGE OF THE BENEFIT -- READ THIS BEFORE ADDING A FIELD.
+    A hand-rolled mirror fails LOUDLY on a missing attribute; a real dataclass silently hands
+    production `None` for any field carrying a default. On THIS path that is the worst
+    available shape, not merely a lesser one: `_hotstart_cfg_dir` opens with
+    `if output_dir is None: return None`, and `prune_hotstart_cfgs_above_step` then hits
+    `if cfg_dir is None or not cfg_dir.exists(): return 0` -- so a `None` produces a SILENT
+    zero-removal and a GREEN test rather than a crash. The optional fields this path reads
+    today (`out_triton`, `out_tritonswmm`, `triton_cfg`, `triton_swmm_cfg`) are therefore
+    given explicit non-None values below. A field added to `ScenarioPaths` LATER and read by
+    this path will arrive as `None` and will not announce itself. No cheap structural check
+    closes that direction; a reader is the instrument, and this paragraph is what the reader
+    has to read.
+
+    The required values are tmp_path-rooted rather than junk so that a read of the wrong one
+    lands somewhere observable.
+    """
+    from hhemt.paths import ScenarioPaths
+
+    # out_dir is DERIVED from cfg_dir so the real `_hotstart_cfg_dir` (out_dir / "cfg") and
+    # the stub below cannot disagree; `_real_cfg_dir` names the directory "cfg" for exactly
+    # this reason. A hand-picked out_dir would let the picker and the prune read two
+    # different directories while every assertion still passed.
+    out_dir = cfg_dir.parent
+    scen_paths = ScenarioPaths(
+        scenario_prep_log=out_dir / "scenario_prep.json",
+        sim_folder=out_dir,
+        weather_timeseries=out_dir / "weather.nc",
+        dir_weather_datfiles=out_dir / "weather_datfiles",
+        swmm_hydro_inp=out_dir / "hydro.inp",
+        swmm_hydraulics_inp=out_dir / "hydraulics.inp",
+        swmm_hydraulics_rpt=out_dir / "hydraulics.rpt",
+        swmm_full_inp=out_dir / "full.inp",
+        swmm_full_rpt_file=out_dir / "full.rpt",
+        swmm_full_out_file=out_dir / "full.out",
+        extbc_tseries=out_dir / "extbc_tseries.csv",
+        extbc_loc=out_dir / "extbc_loc.csv",
+        hyg_timeseries=out_dir / "hyg_tseries.csv",
+        hyg_locs=out_dir / "hyg_locs.csv",
+        triton_swmm_cfg=out_dir / "base.cfg",
+        # Optional fields THIS PATH READS -- explicit, never left to default to None.
+        triton_cfg=out_dir / "base.cfg",
+        out_triton=out_dir,
+        out_tritonswmm=out_dir,
+    )
+    return types.SimpleNamespace(
+        _hotstart_cfg_dir=lambda mt: cfg_dir,
+        _scenario=types.SimpleNamespace(scen_paths=scen_paths),
+        _analysis=types.SimpleNamespace(analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir)),
+    )
+
+
 def test_prune_forces_picker_to_scheduled_step_despite_overshoot(tmp_path):
     """The kill lands late (poll granularity), so the dir holds schedule[k] + M cfgs.
     Pre-KR-a the picker returns schedule[k] + M; after the prune it returns exactly
@@ -308,20 +363,13 @@ def test_prune_forces_picker_to_scheduled_step_despite_overshoot(tmp_path):
     out_dir = cfg_dir.parent
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
-    fake_self = types.SimpleNamespace(
-        _hotstart_cfg_dir=lambda mt: cfg_dir,
-        _scenario=types.SimpleNamespace(
-            scen_paths=types.SimpleNamespace(
-                out_triton=out_dir,
-                out_tritonswmm=out_dir,
-                triton_cfg=out_dir / "base.cfg",
-                triton_swmm_cfg=out_dir / "base.cfg",
-            )
-        ),
-        _analysis=types.SimpleNamespace(
-            analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir)
-        ),
-    )
+    fake_self = _prune_fake_self(cfg_dir, analysis_dir)
+    # An AGREEMENT check between two independently-computed values, not a restatement of
+    # one: `out_dir` above and the helper's own internal derivation. It fires if the helper
+    # ever stops deriving out_dir from cfg_dir.parent -- e.g. `out_dir = cfg_dir`. Without
+    # it that divergence is caught only transitively, when the picker below raises on a
+    # directory that does not exist, with a message naming neither cause nor helper.
+    assert fake_self._scenario.scen_paths.out_triton == out_dir
 
     # Pre-fix behaviour: the picker takes the HIGHEST complete cfg -> the overshoot.
     picked_before = TRITONSWMM_run._retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation(
@@ -329,9 +377,7 @@ def test_prune_forces_picker_to_scheduled_step_despite_overshoot(tmp_path):
     )
     assert return_the_reporting_step_from_a_cfg(picked_before) == target_step + overshoot
 
-    n_removed = TRITONSWMM_run.prune_hotstart_cfgs_above_step(
-        fake_self, "triton", target_step=target_step
-    )
+    n_removed = TRITONSWMM_run.prune_hotstart_cfgs_above_step(fake_self, "triton", target_step=target_step)
     assert n_removed == overshoot
 
     picked_after = TRITONSWMM_run._retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation(
@@ -350,18 +396,40 @@ def test_prune_deletes_only_the_top_preserving_contiguity_from_one(tmp_path):
     cfg_dir = _real_cfg_dir(tmp_path, 9)
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
-    fake_self = types.SimpleNamespace(
-        _hotstart_cfg_dir=lambda mt: cfg_dir,
-        _analysis=types.SimpleNamespace(
-            analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir)
-        ),
-    )
+    fake_self = _prune_fake_self(cfg_dir, analysis_dir)
+
+    # Seed the SCENARIO-scope sentinel the prune's own accounting call targets. The seed
+    # path is load-bearing and is the one place this addition can fail quietly:
+    # `decrement_scope_sentinel` is a documented no-op when the sentinel is ABSENT, so a
+    # seed at any other path produces no decrement, no error, and a green test.
+    # `sim_folder` is `cfg_dir.parent` by the helper's construction, matching the
+    # `scope_dir=scenario_dir` the production call passes.
+    from hhemt.du_sentinels import compute_and_write_scope_sentinel, read_du_sentinel
+
+    sim_folder = cfg_dir.parent
+    compute_and_write_scope_sentinel(sim_folder, scope="scenario")
+    _du = sim_folder / "_status" / "_du.json"
+    before = read_du_sentinel(_du)
+    assert before is not None, "precondition: the scenario-scope sentinel was materialised"
 
     TRITONSWMM_run.prune_hotstart_cfgs_above_step(fake_self, "triton", target_step=4)
 
     steps = _steps_on_disk(cfg_dir)
     assert steps == [1, 2, 3, 4]
     assert len(steps) == max(steps)  # the identity the watcher's count predicate needs
+
+    # The accounting half. Routing (did this site call the tool?) is already CI-enforced on
+    # callee identity; SCOPE CORRECTNESS (did it name the sentinel that owns the deleted
+    # bytes?) is enforced by nothing -- the checker never reads the argument value. This
+    # assertion is the only instrument for that half. Assert the TOTAL, not the per-child
+    # breakdown: the breakdown key is `cfg`, an incidental fact about this fixture's
+    # directory name rather than about the behaviour.
+    after = read_du_sentinel(_du)
+    assert after is not None, "the prune must not remove the sentinel it decrements"
+    assert after["disk_utilization_bytes"] < before["disk_utilization_bytes"], (
+        "the prune's deletion must be accounted against the SCENARIO scope that owns the "
+        "cfg files; an unchanged total means the tool was handed the wrong scope_dir"
+    )
 
 
 def test_prune_is_a_noop_on_a_fresh_attempt_with_no_cfg_dir(tmp_path):
@@ -373,8 +441,6 @@ def test_prune_is_a_noop_on_a_fresh_attempt_with_no_cfg_dir(tmp_path):
     analysis_dir.mkdir()
     fake_self = types.SimpleNamespace(
         _hotstart_cfg_dir=lambda mt: tmp_path / "does_not_exist",
-        _analysis=types.SimpleNamespace(
-            analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir)
-        ),
+        _analysis=types.SimpleNamespace(analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir)),
     )
     assert TRITONSWMM_run.prune_hotstart_cfgs_above_step(fake_self, "triton", target_step=2) == 0

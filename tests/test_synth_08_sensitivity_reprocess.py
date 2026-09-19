@@ -246,7 +246,18 @@ def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensiti
     assert master_du.exists(), "precondition: master-scope _du.json materialized"
     master_du_mtime0 = master_du.stat().st_mtime_ns
 
-    result = member.reprocess(start_with="consolidate", execution_mode="local", dry_run=True, verbose=False)
+    # regenerate_existing=True is NOT incidental. At its default the zarr-deletion branch
+    # (`elif regenerate_existing and not dry_run:`) is unreachable on EITHER value of
+    # dry_run, so the two zarr assertions below would discriminate nothing about the flag
+    # this test is named for. Pinning the other conjunct True makes dry_run the sole
+    # discriminator: at dry_run=False this same call reaches the branch and deletes them.
+    result = member.reprocess(
+        start_with="consolidate",
+        execution_mode="local",
+        dry_run=True,
+        regenerate_existing=True,
+        verbose=False,
+    )
     assert result.get("success"), f"dry-run sensitivity reprocess failed: {result.get('message')!r}"
 
     assert master_zarr.exists(), "dry-run must NOT delete the master sensitivity_datatree.zarr"

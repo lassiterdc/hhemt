@@ -30,7 +30,7 @@ from hhemt.execution import (
     SlurmExecutor,
 )
 from hhemt.log import TRITONSWMM_analysis_log
-from hhemt.orchestration import resolve_execution_locus
+from hhemt.orchestration import RunMode, resolve_execution_locus
 from hhemt.paths import AnalysisPaths
 from hhemt.plot_analysis import TRITONSWMM_analysis_plotting
 from hhemt.plot_utils import print_json_file_tree
@@ -1916,16 +1916,30 @@ class TRITONSWMM_analysis:
             If True, rerun SWMM hydrology model even if outputs exist (default: False)
         verbose : bool, optional
             If True, print progress messages (default: False)
+
+        Raises
+        ------
+        RuntimeError
+            If any scenario's ``scenario_creation_complete`` is not True after all
+            launchers ran (the prepare subprocess failed); the message names each
+            such scenario directory and the collected subprocess return codes.
         """
         prepare_scenario_launchers = self.retrieve_prepare_scenario_launchers(
             overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             verbose=verbose,
         )
+        return_codes: list[int | None] = []
         for launcher in prepare_scenario_launchers:
-            launcher()
+            return_codes.append(launcher())
             self._update_log()  # update logs
         self._update_log()
+        if self._all_scenarios_created is not True:
+            not_created = self._scenarios_not_created
+            raise RuntimeError(
+                "Preparation failed for the following scenarios "
+                f"(prepare subprocess return codes {return_codes}):\n\t" + "\n\t".join(not_created)
+            )
         return
 
     def print_logfile_for_scenario(self, event_iloc):
@@ -3577,13 +3591,24 @@ class TRITONSWMM_analysis:
         --------
         run : High-level workflow execution method
         """
-        from .orchestration import PhaseStatus, RunMode, WorkflowStatus
+        from .orchestration import PhaseStatus, WorkflowStatus
 
         # Check setup phase
         system_log = self._system.log
         dem_done = system_log.dem_processed.get()
         mannings_done = self._system.cfg_system.toggle_use_constant_mannings or system_log.mannings_processed.get()
-        compiled = system_log.compilation_tritonswmm_cpu_successful.get()
+        # NOT APPLICABLE in container mode: setup_workflow.py skips both compiles because
+        # the SIF carries the binary, so this field's only writer (system.py, inside
+        # _compile_backend) is never reached and its value is not evidence about the build.
+        # The canonical statement of "an absent build artifact is not evidence of failure"
+        # lives at the PRODUCER, src/hhemt/system.py::compilation_cpu_successful (its
+        # ABSTENTION CHECK comment); this is a citation, not a restatement. NATIVE-mode
+        # None handling (a cleaned-up build tree is byte-identical to a never-built one)
+        # is an OPEN developer policy choice and is deliberately left byte-unchanged here.
+        if self.cfg_analysis.execution_environment == "container":
+            compiled = True
+        else:
+            compiled = system_log.compilation_tritonswmm_cpu_successful.get()
 
         setup_complete = dem_done and mannings_done and compiled
         setup_progress = 1.0 if setup_complete else 0.5 if (dem_done or compiled) else 0.0
@@ -3694,35 +3719,17 @@ class TRITONSWMM_analysis:
             details=consol_details,
         )
 
-        # Determine current phase and recommendation
-        if not setup_complete:
-            current = "setup"
-            rec_mode = RunMode.fresh
-            rec_text = "Setup incomplete. Use 'fresh' mode to process system inputs."
-        elif not all_prepared:
-            current = "preparation"
-            rec_mode = RunMode.resume
-            rec_text = f"Use 'resume' to create {len(not_prepared)} remaining scenarios."
-        elif not all_run:
-            current = "simulation"
-            rec_mode = RunMode.resume
-            rec_text = f"Use 'resume' to run {len(not_run)} pending/failed simulations."
-        elif not proc_complete:
-            current = "processing"
-            rec_mode = RunMode.resume
-            rec_text = "Use 'resume' to process simulation outputs."
-        elif not summaries_exist:
-            current = "consolidation"
-            rec_mode = RunMode.resume
-            rec_text = "Use 'resume' to consolidate analysis summaries."
-        else:
-            current = "complete"
-            # 'fresh' is the only actionable mode for a complete analysis (resume has
-            # nothing left to do); it is a valid translate_mode() input, so
-            # tk.run(mode=status.recommended_mode) works. 'n/a' is not a member of
-            # the RunMode set and is not run()-able.
-            rec_mode = RunMode.fresh
-            rec_text = "All phases complete. Use 'fresh' to redo the analysis from scratch."
+        # Determine current phase and recommendation -- a pure function of the five
+        # booleans (extracted so it is unit-testable fixture-free; see _recommendation_ladder).
+        current, rec_mode, rec_text = _recommendation_ladder(
+            setup_complete=setup_complete,
+            all_prepared=all_prepared,
+            all_run=all_run,
+            proc_complete=proc_complete,
+            summaries_exist=summaries_exist,
+            n_not_prepared=len(not_prepared),
+            n_not_run=len(not_run),
+        )
 
         return WorkflowStatus(
             analysis_id=self.cfg_analysis.analysis_id,
@@ -4606,22 +4613,22 @@ class TRITONSWMM_analysis:
             # defect, not a shortcut.
             _targets = [report_html, report_zip]
             if not dry_run:
-                # THE DRY-RUN FIGURE CLAUSE, and it is deliberately the ONLY expression on
-                # this axis at this site. `reprocess dry_run performs no destructive
-                # mutation` places render-stage figure deletion INSIDE the guard, on
-                # cost-and-irreversibility grounds (a measured 63-minute serial render that
-                # nothing on a dry-run path regenerates); the report shell is permitted
-                # OUTSIDE the guard by that same rule's render-stage corner. The rule was
-                # written against a function both branches have since refactored away from,
-                # so its binding at THIS site is with the developer for re-verification --
-                # and if it is answered the other way, this one condition is what moves.
+                # THE DRY-RUN FIGURE CLAUSE. `reprocess dry_run performs no destructive
+                # mutation` does not enumerate figures at THIS site -- its figure clause is
+                # scoped to the force-rerun path -- so the developer was asked and ruled:
+                # on a dry run, plots survive. ALL figures stay inside this guard, not only
+                # the unregenerable subtrees, on the same cost-and-irreversibility grounds
+                # the rule states for the other path (a measured 63-minute serial render
+                # that nothing on a dry-run path regenerates, against a preview yield the
+                # rule itself measures as zero at a render floor).
                 _targets += select_regenerable_figures(analysis_dir, plots_dir)
-                du_sentinels.delete_and_account(_targets, scope_dir=analysis_dir, scope="analysis")
-            else:
-                # dry_run: the report-shell unlink is the mtime trigger the stipulation
-                # sanctions OUTSIDE its guard; the sentinel is deliberately NOT written.
-                for _t in _targets:
-                    _t.unlink(missing_ok=True)  # EXEMPT-DU: dry-run-trigger
+            # The report shell stays OUTSIDE the guard -- it IS the mtime trigger the
+            # stipulation sanctions -- while the sentinel is never written on a dry run.
+            # The helper is the single expression of that combination; three sibling call
+            # sites receive it by auto-merge and this is the fourth.
+            du_sentinels.delete_and_account_unless_dry_run(
+                _targets, scope_dir=analysis_dir, scope="analysis", dry_run=dry_run
+            )
 
         if start_with == "process":
             if regenerate_existing:
@@ -4652,7 +4659,9 @@ class TRITONSWMM_analysis:
             # "report shell only" path).
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
-            du_sentinels.delete_and_account([report_html, report_zip], scope_dir=analysis_dir, scope="analysis")
+            du_sentinels.delete_and_account_unless_dry_run(
+                [report_html, report_zip], scope_dir=analysis_dir, scope="analysis", dry_run=dry_run
+            )
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 
@@ -5223,24 +5232,8 @@ class TRITONSWMM_analysis:
             TRITONSWMM_scenario,
             compute_event_id_slug,
         )
+        from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
         from hhemt.workflow import ResolvedForceRerunSpec
-
-        _SUMMARY_ATTRS_BY_MODEL = {
-            "tritonswmm": (
-                "output_tritonswmm_triton_summary",
-                "output_tritonswmm_node_summary",
-                "output_tritonswmm_link_summary",
-                "output_tritonswmm_performance_summary",
-            ),
-            "triton": (
-                "output_triton_only_summary",
-                "output_triton_only_performance_summary",
-            ),
-            "swmm": (
-                "output_swmm_only_node_summary",
-                "output_swmm_only_link_summary",
-            ),
-        }
 
         def _summary_absent(scen, model_type: str) -> bool:
             for attr in _SUMMARY_ATTRS_BY_MODEL.get(model_type, ()):
@@ -6442,3 +6435,36 @@ class TRITONSWMM_analysis:
 
 
 # %%
+
+
+def _recommendation_ladder(
+    *,
+    setup_complete: bool,
+    all_prepared: bool,
+    all_run: bool,
+    proc_complete: bool,
+    summaries_exist: bool,
+    n_not_prepared: int = 0,
+    n_not_run: int = 0,
+) -> tuple[str, RunMode, str]:
+    """The workflow-status recommendation ladder, as a PURE function of its five booleans.
+
+    Ordered: upstream incompleteness wins over downstream completion, so an operator holding
+    a stale consolidation marker over an unprepared scenario is told to RESUME, not to wipe.
+    ``current_phase`` is assigned by exactly one arm and IS the ladder's verdict. Extracted
+    from ``TRITONSWMM_analysis.get_workflow_status`` so the ordering is unit-testable with no
+    fixture, no compile and no shared cache.
+    """
+    if not setup_complete:
+        return "setup", RunMode.fresh, "Setup incomplete. Use 'fresh' mode to process system inputs."
+    if not all_prepared:
+        return "preparation", RunMode.resume, f"Use 'resume' to create {n_not_prepared} remaining scenarios."
+    if not all_run:
+        return "simulation", RunMode.resume, f"Use 'resume' to run {n_not_run} pending/failed simulations."
+    if not proc_complete:
+        return "processing", RunMode.resume, "Use 'resume' to process simulation outputs."
+    if not summaries_exist:
+        return "consolidation", RunMode.resume, "Use 'resume' to consolidate analysis summaries."
+    # 'fresh' is the only actionable mode for a complete analysis (resume has nothing left
+    # to do); it is a valid translate_mode() input, so analysis.run(mode=...) works.
+    return "complete", RunMode.fresh, "All phases complete. Use 'fresh' to redo the analysis from scratch."

@@ -134,3 +134,33 @@ def test_share_scratch_root_returns_to_slug_root_and_rearms_the_wipe(monkeypatch
         "fast_rmtree at test_case_builder.py:376-377 moved inside the isolation `if`, "
         "this is the assertion that tells you"
     )
+
+
+def test_cached_build_seeds_system_inputs_on_cold_root_and_skips_on_warm(tmp_path, monkeypatch):
+    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    name = "cold_root_seed_probe"
+
+    # Arm 1 -- cold root, cached build, run-side preprocessing NOT skipped: the
+    # builder must seed the processed DEM itself (R12: it did not, since bc044e89).
+    case = retrieve_synth_TRITON_SWMM_test_case(analysis_name=name, start_from_scratch=False, skip_run=False)
+    dem = case.analysis._system.sys_paths.dem_processed
+    assert dem.exists(), f"cached build on a cold root left the processed DEM absent: {dem}"
+
+    # Arm 2 -- warm root: a second cached build takes the integrity-check skip
+    # branch (system.py::create_dem_for_TRITON) and never rewrites the DEM.
+    mtime_ns = dem.stat().st_mtime_ns
+    retrieve_synth_TRITON_SWMM_test_case(analysis_name=name, start_from_scratch=False, skip_run=False)
+    assert dem.stat().st_mtime_ns == mtime_ns, "warm-root cached build rewrote the DEM instead of skipping"
+
+
+def test_skip_run_cached_build_leaves_system_inputs_absent(tmp_path, monkeypatch):
+    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+
+    # Arm 3 -- skip_run=True builders (the session-scoped *_builder fixtures) stay
+    # preprocessing-free under the cached branch exactly as under the wiping one.
+    case = retrieve_synth_TRITON_SWMM_test_case(analysis_name="skip_run_probe", start_from_scratch=False, skip_run=True)
+    assert not case.analysis._system.sys_paths.dem_processed.exists()

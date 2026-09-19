@@ -751,6 +751,7 @@ class TRITONSWMM_sensitivity_analysis:
         # invalidates the rendered report artifact.
         from hhemt.du_sentinels import (
             delete_and_account,
+            delete_and_account_unless_dry_run,
             sum_child_sentinels,
         )
 
@@ -838,7 +839,13 @@ class TRITONSWMM_sensitivity_analysis:
             # regenerates from the preserved zarr on the default path (FQ1 parity).
             _report_html = experiment_dir / "analysis_report.html"
             _report_zip = experiment_dir / "analysis_report.zip"
-            delete_and_account([_report_html, _report_zip], scope_dir=experiment_dir, scope="analysis")
+            # The DELETION runs on a dry run (it is the sanctioned mtime trigger); the
+            # SENTINEL WRITE does not. Before the deletion tool was unified this site
+            # carried `if not dry_run` around a separate restamp call; the conversion
+            # dropped the gate with the line it lived on.
+            delete_and_account_unless_dry_run(
+                [_report_html, _report_zip], scope_dir=experiment_dir, scope="analysis", dry_run=dry_run
+            )
             # DN-3: the report deletion is accounted by the tool call above; no
             # per-mutation ancestor restamp (clause 2) -- the FIX-3 gated restamp is gone.
             # Consolidated-zarr deletion + batched DU restamp are the EXPENSIVE
@@ -944,10 +951,13 @@ class TRITONSWMM_sensitivity_analysis:
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as absent.
             # The report-artifact unlink is the flag-equivalent trigger, so it
-            # runs even on dry_run (see D6); only the DU restamp is gated.
+            # runs even on dry_run (see D6); the DU restamp is gated, and the
+            # gate now lives in the helper rather than in an `if` at this site.
             _report_html = experiment_dir / "analysis_report.html"
             _report_zip = experiment_dir / "analysis_report.zip"
-            delete_and_account([_report_html, _report_zip], scope_dir=experiment_dir, scope="analysis")
+            delete_and_account_unless_dry_run(
+                [_report_html, _report_zip], scope_dir=experiment_dir, scope="analysis", dry_run=dry_run
+            )
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 

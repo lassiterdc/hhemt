@@ -532,10 +532,13 @@ class TRITONSWMM_scenario:
         """
         log_file = self.scen_paths.sim_folder / f"log_{model_type}.json"
 
-        # Load existing log if it exists, otherwise create new one
-        if log_file.exists():
+        # ONE name resolution (M1, read side): open the document; absent -> defaults.
+        # The former .exists()-then-from_json pair asked two syscalls about one name and
+        # a stale negative on the first handed callers a fresh default log that their
+        # next .set() would have written -- and from_json's own open() ENOENT was uncaught.
+        try:
             log = TRITONSWMM_model_log.from_json(log_file)
-        else:
+        except FileNotFoundError:
             log = TRITONSWMM_model_log(
                 event_iloc=self.event_iloc,
                 event_idx=self.weather_event_indexers,
@@ -1484,6 +1487,7 @@ class TRITONSWMM_scenario:
                         f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
                         flush=True,
                     )
+            return rc
 
         return launcher
 

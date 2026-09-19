@@ -163,8 +163,6 @@ def resolve(
     return DefectVerdict(did, "present", "default_present", "no fix is an ancestor of the producing sha")
 
 
-_TRITON_REPO = "https://github.com/lassiterdc/triton.git"
-
 #: Full shas, kept as module constants so a reader can grep one place for "which build".
 SHA_COUPLED_RESUME_FIX = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
 SHA_DEPTH_SCATTER_FIX = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"

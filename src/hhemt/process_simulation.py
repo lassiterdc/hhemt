@@ -1,3 +1,4 @@
+import functools
 import gc
 import json
 import os
@@ -149,6 +150,28 @@ _RPT_TRUNCATION_MARKER = (
     "remains the coupled-run completion signal. Rebuilding the coupled SWMM summaries from "
     "raw is no longer possible; re-simulate instead.  ===\n"
 )
+
+
+def _deferred_log_writes(method):
+    """M4: run `method` inside `self.log.deferred_writes()` so every LogField.set() and
+    add_sim_processing_entry() it performs collapses into ONE read-modify-write at exit.
+
+    Each write is one rename of the log name, and exposure to the measured
+    lookup-vs-rename mechanism is linear in renames. Batching at the METHOD boundary
+    (not the whole runner pass) widens the crash window only to the method's own
+    artifacts, whose processing_log entries a retry re-derives by re-exporting them --
+    the same class of replay that a crash between an artifact write and its entry
+    write already produced. If the method switches self.log mid-way (a model-type
+    switch), writes to the NEW log are immediate; the deferral is bound to the log
+    object at entry.
+    """
+
+    @functools.wraps(method)
+    def _wrapped(self, *args, **kwargs):
+        with self.log.deferred_writes():
+            return method(self, *args, **kwargs)
+
+    return _wrapped
 
 
 class TRITONSWMM_sim_post_processing:
@@ -728,6 +751,7 @@ class TRITONSWMM_sim_post_processing:
         )
         return
 
+    @_deferred_log_writes
     def _export_performance_tseries(
         self,
         fname_out: Path,
@@ -822,6 +846,7 @@ class TRITONSWMM_sim_post_processing:
             verbose=verbose,
             log_field=self.log.performance_summary_written,
             mode="tritonswmm_performance",
+            verify_present=True,
         )
         return
 
@@ -841,9 +866,11 @@ class TRITONSWMM_sim_post_processing:
             verbose=verbose,
             log_field=self.log.performance_summary_written,
             mode="triton_only_performance",
+            verify_present=True,
         )
         return
 
+    @_deferred_log_writes
     def _export_performance_summary(
         self,
         ds: xr.Dataset,
@@ -852,11 +879,22 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool,
         log_field,
         mode: str,
+        *,
+        verify_present: bool,
     ):
         start_time = time.time()
-        if self._already_written(fname_out):
+        # KEYWORD-ONLY WITH NO DEFAULT, deliberately: `fname_out` is a PARAMETER, so this
+        # function cannot self-identify its artifact class, and a default in EITHER
+        # direction relocates the hazard instead of closing it. Omission is a TypeError at
+        # the call site; the class decision is made where the class is known.
+        if self._already_written(fname_out) and (not verify_present or self._summary_usable(fname_out)):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # AMENDED with the usability conjunct on the `if` above: the skip pass is NO
+            # LONGER the only pass an already-latched scenario takes. A scenario latched in
+            # the log whose performance summary is absent now reads False above and takes
+            # the BUILD pass, where this marker is set truthfully. O3's reachability is
+            # PRESERVED.
             # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
             # terminator below it. Every other `.set()` for this marker sits BELOW an
             # `_already_written` branch, so on the skip pass -- the only pass an
@@ -890,41 +928,7 @@ class TRITONSWMM_sim_post_processing:
         log_field.set(True)
         return
 
-    def _triton_raw_frame_or_raise(self, fldr_out_triton, reporting_interval_s, *, model_label: str):
-        """The per-timestep raw-output frame, or a loud refusal naming which condition failed.
-
-        ONE PREFLIGHT, SHARED BY BOTH TRITON EXPORTS, and the sharing is the point. The
-        two arms previously grew two different preflights: the TRITON-only arm tested
-        DIRECTORY emptiness (`any(dir.iterdir())`), which is TRUE when the directory
-        holds only TRITON's `GR_*` ghost-ring side-files -- not processable output -- so
-        control fell through and a later step raised on genuinely absent data; the
-        coupled arm had no emptiness test at all. A predicate for "is there processable
-        output here" that is expressed anywhere but in the enumerator can drift from it,
-        which is the defect shape being removed, so this asks the ENUMERATOR.
-
-        Two conditions, two messages, because they are genuinely different faults: a
-        MISSING directory means the simulation did not write where it was told to, and
-        an EMPTY frame means the directory exists and holds nothing this toolkit can
-        process. The ragged-frame case is not handled here -- `return_fpath_wlevels`
-        already refuses it with a better message than this function could write.
-        """
-        if fldr_out_triton is None or not Path(fldr_out_triton).exists():
-            raise FileNotFoundError(
-                f"Raw TRITON outputs not found for {model_label} at {fldr_out_triton}. "
-                "Ensure the simulation completed and wrote outputs to the configured "
-                "output directory."
-            )
-        df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
-        if df_outputs.empty:
-            raise FileNotFoundError(
-                f"No processable TRITON output files (MH, H, QX, QY) found for {model_label} "
-                f"in {fldr_out_triton}. The directory exists but holds no file the frame "
-                "builder recognises -- TRITON's GR_* ghost-ring side-files alone produce "
-                "this state, as does a directory whose raw was already cleared. Ensure the "
-                "simulation completed successfully."
-            )
-        return df_outputs
-
+    @_deferred_log_writes
     def _export_TRITONSWMM_TRITON_outputs(
         self,
         *,
@@ -963,7 +967,7 @@ class TRITONSWMM_sim_post_processing:
         start_time = time.time()
 
         # Get output files
-        df_outputs = self._triton_raw_frame_or_raise(
+        df_outputs = triton_raw_frame_or_raise(
             fldr_out_triton, reporting_interval_s, model_label="the TRITON-SWMM coupled model"
         )
 
@@ -999,6 +1003,7 @@ class TRITONSWMM_sim_post_processing:
             self._clear_raw_outputs("tritonswmm")
         return
 
+    @_deferred_log_writes
     def _export_TRITON_only_outputs(
         self,
         *,
@@ -1041,7 +1046,7 @@ class TRITONSWMM_sim_post_processing:
         start_time = time.time()
 
         # Get output files
-        df_outputs = self._triton_raw_frame_or_raise(
+        df_outputs = triton_raw_frame_or_raise(
             fldr_out_triton, reporting_interval_s, model_label="the TRITON-only model"
         )
 
@@ -1107,6 +1112,7 @@ class TRITONSWMM_sim_post_processing:
                 comp_level=comp_level,
             )
 
+    @_deferred_log_writes
     def _export_SWMM_outputs(
         self,
         model: Literal["swmm", "tritonswmm"],
@@ -1292,6 +1298,23 @@ class TRITONSWMM_sim_post_processing:
 
         return
 
+    def _summary_usable(self, f_out) -> bool:
+        """Gates 2+3 of the exit gate, applied at ENTRY: path present AND store OPENABLE.
+
+        A zarr store is a DIRECTORY, so ``Path.exists()`` is True for an empty one and for
+        a mid-stream-crashed write; only opening the store discriminates. Mirrors
+        ``process_timeseries_runner``'s reclaim gate (parts 2 and 3 of 3). Called ONLY on
+        the never-reclaimed SUMMARY classes; the reclaimable timeseries classes keep the
+        log-only gate, because their absence is the normal post-reclaim state.
+        """
+        try:
+            if f_out is None or not Path(f_out).exists():
+                return False
+            self._open(f_out).load()
+            return True
+        except Exception:  # noqa: BLE001 -- any failure to open disqualifies the skip
+            return False
+
     def _already_written(self, f_out) -> bool:
         """Checks the per-model log to determine whether the file was
         previously written successfully.
@@ -1372,6 +1395,7 @@ class TRITONSWMM_sim_post_processing:
             self.log.SWMM_node_timeseries_written.set(swmm_nodes)
         return swmm_nodes
 
+    @_deferred_log_writes
     def _clear_raw_outputs(self, model_type: Literal["tritonswmm", "triton", "swmm"]) -> None:
         """Delete raw model outputs for the named model type.
 
@@ -1626,6 +1650,7 @@ class TRITONSWMM_sim_post_processing:
 
         return
 
+    @_deferred_log_writes
     def _export_TRITON_summary(
         self,
         model_type: Literal["triton", "tritonswmm"] = "tritonswmm",
@@ -1653,7 +1678,7 @@ class TRITONSWMM_sim_post_processing:
 
         fname_out = self._validate_path(summary_path, path_name)
 
-        if self._already_written(fname_out):
+        if self._already_written(fname_out) and self._summary_usable(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
@@ -1663,6 +1688,10 @@ class TRITONSWMM_sim_post_processing:
             # unreachable. `is not None`, never bare truthiness: LogField defines no
             # __bool__, and O3's whole job is the None -> True transition a
             # value-based __bool__ would silently block.
+            # AMENDED with the usability conjunct on the `if` above: the skip pass is NO
+            # LONGER the only pass an already-latched scenario takes. A scenario latched in
+            # the log whose summary is absent now reads False above and takes the BUILD
+            # pass, where this marker is set truthfully. O3's reachability is PRESERVED.
             if self.log.TRITON_summary_written is not None:
                 self.log.TRITON_summary_written.set(True)
             return
@@ -1716,6 +1745,7 @@ class TRITONSWMM_sim_post_processing:
             self.log.TRITON_summary_written.set(True)
         return
 
+    @_deferred_log_writes
     def _export_SWMM_summaries(
         self,
         model_type: Literal["swmm", "tritonswmm"] = "tritonswmm",
@@ -1752,10 +1782,19 @@ class TRITONSWMM_sim_post_processing:
         f_out_nodes = self._validate_path(node_summary_path, node_path_name)
         f_out_links = self._validate_path(link_summary_path, link_path_name)
 
-        nodes_already_written = self._already_written(f_out_nodes)
-        links_already_written = self._already_written(f_out_links)
+        # The usability conjunct goes IN THE BINDINGS, never on the combined return below:
+        # the return form cannot see the partial state (nodes present, links absent) and
+        # would leave the O3 latch firing on an absent artifact.
+        nodes_already_written = self._already_written(f_out_nodes) and self._summary_usable(f_out_nodes)
+        links_already_written = self._already_written(f_out_links) and self._summary_usable(f_out_links)
 
         # O3 PLACEMENT CONSTRAINT: reconcile PER ARM and ABOVE every branch below.
+        # AMENDED with the usability conjunct at the bindings above: the skip pass is NO
+        # LONGER the only pass an already-latched scenario takes. An arm latched in the log
+        # whose artifact is absent now reads False above and takes the BUILD pass, where the
+        # marker is set truthfully (nodes/links build blocks below). O3's reachability is
+        # PRESERVED -- nothing reachable became unreachable; "already-latched" now means
+        # latched AND the artifact is really there.
         # The combined early return and the two `if not ..._already_written:` blocks
         # all sit lower, so a set placed in any of them is unreachable on the skip
         # pass -- which is the only pass an already-latched scenario ever takes again.
@@ -2092,6 +2131,7 @@ class TRITONSWMM_sim_post_processing:
             print(f"[reclaim] truncated {rpt_path}: dropped {n_dropped} time-series line(s).", flush=True)
         return True
 
+    @_deferred_log_writes
     def remove_after_processing(
         self,
         *,
@@ -2722,6 +2762,27 @@ def parse_performance_file(filepath):
     return df_ranks, s_average
 
 
+#: Raw-file glob PREFIX -> canonical variable name, in the order return_fpath_wlevels
+#: builds the four per-variable Series. This is the single definition of that mapping:
+#: `return_fpath_wlevels` iterates it to build the frame and `triton_raw_frame_or_raise`
+#: inverts it to name a short variable by its PREFIX in the ragged message, so the two
+#: cannot disagree about which name goes with which file.
+#: IT LIVES HERE AND NOT IN eda/raw_resume_identity.py, and the direction is the reason:
+#: that module imports FROM this one (`from hhemt.process_simulation import ...`), and this
+#: module imports nothing from `hhemt.eda` -- measured, 0 occurrences -- so defining it
+#: there and importing it here would invert the dependency and cycle.
+TRITON_RAW_VAR_BY_PREFIX: dict[str, str] = {
+    "MH": "max_wlevel_m",
+    "H": "wlevel_m",
+    "QX": "velocity_x_mps",
+    "QY": "velocity_y_mps",
+}
+
+#: The four canonical variable names, in frame-column order. The required set for the
+#: processing path: `triton_raw_frame_or_raise` refuses a frame missing any of them.
+CANONICAL_TRITON_VARS: tuple[str, ...] = tuple(TRITON_RAW_VAR_BY_PREFIX.values())
+
+
 def return_filelist_by_tstep(fldr_out_triton: Path, fpattern_prefix, min_per_tstep, varname):
     lst_f_out = list(fldr_out_triton.glob(f"{fpattern_prefix}*"))
     if len(lst_f_out) == 0:
@@ -2753,27 +2814,106 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
     ## retrive the reporting time interval from the cfg file
     min_per_tstep = reporting_interval_s / 60
     # associate filepaths to timesteps
-    s_outputs_mh = return_filelist_by_tstep(fldr_out_triton, "MH", min_per_tstep, "max_wlevel_m")
-    s_outputs_h = return_filelist_by_tstep(fldr_out_triton, "H", min_per_tstep, "wlevel_m")
-    s_outputs_qx = return_filelist_by_tstep(fldr_out_triton, "QX", min_per_tstep, "velocity_x_mps")
-    s_outputs_qy = return_filelist_by_tstep(fldr_out_triton, "QY", min_per_tstep, "velocity_y_mps")
-    lst_out = [s_outputs_mh, s_outputs_h, s_outputs_qx, s_outputs_qy]
-    # COMPONENT 1 -- FAIL-CLOSED AT CONSTRUCTION. The concat below is an OUTER join: it
-    # keeps the union of the four index sets and writes NaN where one variable lacks a
-    # timestep another has, and the consumer then dereferences that NaN as a Path. The
-    # ragged frame has TWO independent producers -- an interrupted clear_raw_for_timesteps
-    # (deletes MH first) and an interrupted solver write (writes MH last) -- so no cleanup-
-    # side fix closes the class; the ONLY complete guard is refusing the frame here, before
-    # any consumer, naming what is missing. No repair, no drop, no inner join, no warn-and-
-    # continue: a value guard in the consumer converts this loud failure into a silently
-    # incomplete FLAGGED chapter (verify_and_flag_chapter is per-variable blind).
-    _labels = ("MH", "H", "QX", "QY")
-    _index_sets = {lbl: set(s.index) for lbl, s in zip(_labels, lst_out, strict=True)}
-    _union = set().union(*_index_sets.values())
-    _missing = {lbl: sorted(_union - idx) for lbl, idx in _index_sets.items() if _union - idx}
+    lst_out = [
+        return_filelist_by_tstep(fldr_out_triton, _prefix, min_per_tstep, _var)
+        for _prefix, _var in TRITON_RAW_VAR_BY_PREFIX.items()
+    ]
+    # THIS FUNCTION DESCRIBES WHAT IT FOUND. IT REFUSES NOTHING AND IT INVENTS NOTHING.
+    # The refusal moved to `triton_raw_frame_or_raise` below, because it is a POLICY and
+    # not a property of enumeration: of the eight consumption points measured at aaefe392,
+    # SEVEN tolerate a partial frame by design (three in eda/raw_resume_identity.py, four
+    # in the private estate, all of which carry their own `isinstance`/`dropna`/membership
+    # guards) and exactly ONE wants the refusal. A fail-closed default here was a rule
+    # imposed on callers whose requirements this function cannot know, and it broke every
+    # one of the seven.
+    # DROPPING an empty Series rather than NAMING it is deliberate and was ruled on. A
+    # variable that contributed zero files yields a bare unnamed `pd.Series()` from
+    # `return_filelist_by_tstep`, and `pd.concat` then labels it POSITIONALLY -- an
+    # integer-named all-NaN column describing nothing the solver wrote, which also drops
+    # the `timestep_min` index name. Naming it instead would relabel the fabrication; the
+    # drop removes it, so an absent variable can produce no NaN cell at all and absence is
+    # visible to a consumer as a missing column. Measured consequence that decided it: an
+    # estate consumer's `"max_wlevel_m" not in df.columns` check keeps working under the
+    # drop and would have silently stopped firing under naming.
+    # The empty-frame return is load-bearing, not defensive: `pd.concat([])` raises
+    # ValueError, and `.empty` is the "no processable output" discriminator for BOTH
+    # `triton_raw_frame_or_raise` and `compare_triton_raw_timeseries`.
+    _present = [s for s in lst_out if len(s)]
+    if not _present:
+        return pd.DataFrame(index=pd.Index([], name="timestep_min", dtype=float))
+    return pd.concat(_present, axis=1)
+
+
+def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_label: str):
+    """The per-timestep raw-output frame, or a loud refusal naming which condition failed.
+
+    ONE PREFLIGHT, SHARED BY BOTH TRITON EXPORTS, and the sharing is the point. The two
+    arms previously grew two different preflights: the TRITON-only arm tested DIRECTORY
+    emptiness (`any(dir.iterdir())`), which is TRUE when the directory holds only TRITON's
+    `GR_*` ghost-ring side-files -- not processable output -- so control fell through and a
+    later step raised on genuinely absent data; the coupled arm had no emptiness test at
+    all. A predicate for "is there processable output here" that is expressed anywhere but
+    in the enumerator can drift from it, which is the defect shape being removed, so this
+    asks the ENUMERATOR: every condition below is a test on the frame the enumerator
+    returned, and nothing here re-globs the directory.
+
+    MODULE-LEVEL, not a method, and the body reads no instance state -- which is what lets
+    the regression test call it the same way it called the enumerator, as a plain function
+    rather than an unbound method against a stub `self`. A future edit adding a `self.`
+    read here would break that test from a distance; being a free function makes that
+    impossible rather than merely discouraged.
+
+    FOUR conditions, four messages, because they are four genuinely different faults and
+    the remedy differs for each. ORDER IS LOAD-BEARING: the emptiness arm must precede the
+    absent arm, or a `GR_*`-only directory is reported as "a variable is missing" and the
+    purpose-built ghost-ring explanation is lost.
+    """
+    if fldr_out_triton is None or not Path(fldr_out_triton).exists():
+        raise FileNotFoundError(
+            f"Raw TRITON outputs not found for {model_label} at {fldr_out_triton}. "
+            "Ensure the simulation completed and wrote outputs to the configured "
+            "output directory."
+        )
+    df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
+    if df_outputs.empty:
+        raise FileNotFoundError(
+            f"No processable TRITON output files (MH, H, QX, QY) found for {model_label} "
+            f"in {fldr_out_triton}. The directory exists but holds no file the frame "
+            "builder recognises -- TRITON's GR_* ghost-ring side-files alone produce "
+            "this state, as does a directory whose raw was already cleared. Ensure the "
+            "simulation completed successfully."
+        )
+    _absent = [_v for _v in CANONICAL_TRITON_VARS if _v not in df_outputs.columns]
+    if _absent:
+        raise ProcessingError(
+            "triton_raw_frame_or_raise (raw output frame missing a variable entirely)",
+            filepath=fldr_out_triton,
+            reason=(
+                f"{model_label} requires all four TRITON raw variables; this directory "
+                f"emitted NONE of: {_absent}. A variable absent at EVERY timestep is "
+                "usually a CONFIGURATION outcome rather than corruption -- TRITON writes "
+                "H/QX/QY only for the letters named in the cfg's print_option, and writes "
+                "MH only when max_value_print_option is non-empty, and the toolkit supplies "
+                "no default for either, so a cfg omitting max_value_print_option emits no "
+                "MH tree-wide. CHECK THE CFG FIRST: re-running an unchanged cfg reproduces "
+                "this state forever, which is why this message does not tell you to force a "
+                "re-run. Refused here because nothing downstream fails on it -- the chapter "
+                "writer iterates whatever columns it is given, verify_and_flag_chapter "
+                "checks only the timestep count, xr.concat fills a missing variable with "
+                "NaN, and the summary RECONSTRUCTS max_wlevel_m from wlevel_m -- so an "
+                "absent variable would be written, flagged complete and merged with no "
+                "error raised anywhere."
+            ),
+        )
+    _var_prefix = {_v: _p for _p, _v in TRITON_RAW_VAR_BY_PREFIX.items()}
+    _missing = {
+        _var_prefix[_c]: sorted(float(_t) for _t in df_outputs.index[df_outputs[_c].isna()])
+        for _c in df_outputs.columns
+        if df_outputs[_c].isna().any()
+    }
     if _missing:
         raise ProcessingError(
-            "return_fpath_wlevels (ragged raw output frame)",
+            "triton_raw_frame_or_raise (ragged raw output frame)",
             filepath=fldr_out_triton,
             reason=(
                 "the four per-variable timestep index sets are NOT equal; short variable(s) and "
@@ -2785,7 +2925,6 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
                 "the simulation via a force at stage='simulate' naming this model arm."
             ),
         )
-    df_outputs = pd.concat(lst_out, axis=1)
     return df_outputs
 
 

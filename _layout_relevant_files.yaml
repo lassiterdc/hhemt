@@ -1800,6 +1800,18 @@ non_breaking_allowlist:
       opt-in at the dispatch boundary.
       EXPIRY CONDITION: as the row above -- a change to this file's fingerprint payload, a
       _status flag name, or the member directory layout is NOT this class.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 8a33b501a2ab837f525698c981dca6566cfda600dc9339f936083a9f750ee333
+    justification: >-
+      five-masking-reds VMS (2026-09-16): behaviour-only edits in reprocess() -- the
+      report-artifact deletion at the consolidate/process arm and at the render arm now
+      route through du_sentinels.delete_and_account_unless_dry_run so the DU sentinel is
+      not re-stamped on a dry run (the reprocess-dry_run stipulation forbids the restamp
+      and sanctions the deletion), plus the function-local import of that helper and the
+      correction of a comment that asserted a gate the code had stopped providing. No
+      on-disk artifact is renamed, moved, added or removed; no log field, flag name, path
+      convention or zarr layout changes. The DELETIONS are byte-identical to before -- only
+      the sentinel write is now conditional.
   - path: src/hhemt/constants.py
     layout_signature: 8d4f0dc31bcbcd49ade193ac6cc87166b59135d787899209b579dd51a8d2bf23
     justification: >-
@@ -2191,3 +2203,116 @@ non_breaking_allowlist:
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
     layout_signature: "36e75a055b74d5c83273986cd814525cc3e32ac7555fc88aa35f5df4079dbbf3"
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 2decc1eba4d9279b17e40b719e5bb36093af1f512db756bb29e0c7346d6f481c
+    justification: >-
+      The ragged-frame refusal MOVES out of return_fpath_wlevels and into a new
+      module-level triton_raw_frame_or_raise, and the enumerator stops fabricating a
+      column for a variable that contributed zero files. This row SUPERSEDES the
+      description in the earlier rows for this module, which state that "the two TRITON
+      export preflights are unified on a processable-emptiness predicate" and that this
+      module carries "a fail-closed index-equality precondition in return_fpath_wlevels
+      (Component 1)". THAT SENTENCE IS NOW FALSE and this row is where a reader learns
+      so: after this change the enumerator refuses nothing, and the precondition is one
+      of FOUR conditions the consumer checks.
+      JUDGED NON-BREAKING for on-disk layout, with the counter-argument recorded. FOR:
+      no file name, directory name, flag name, log key or zarr group changes; the frame
+      is an in-memory pandas object that reaches disk only as the chapter store's
+      variable set. AGAINST, and it is the real one: a DROPPED column means a chapter
+      store with fewer data variables, which IS an on-disk difference. It is judged
+      non-breaking because the same change adds a consumer-side refusal that makes the
+      dropped-column state unreachable on the processing path -- a frame missing any of
+      CANONICAL_TRITON_VARS raises before the writer sees it -- so no analysis can
+      acquire a variable-incomplete chapter through this path. If that refusal is ever
+      relaxed, this judgement expires with it.
+      EXPIRY CONDITION: covers the refusal's LOCATION and the enumerator's drop. Any
+      change that permits a variable-incomplete frame to reach
+      _streaming_chunked_zarr_write is NOT this class and requires a LAYOUT_VERSION bump
+      with a migration.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 2aa71ea885f79cff4750f779c7c9744ff540e652d410541fb2d69ffbd5ef2503
+    justification: >-
+      NON-BREAKING. Adds a usability conjunct (path present AND store openable) to the
+      already-written gate at the three never-reclaimed SUMMARY exporters, in the
+      boolean BINDINGS for the SWMM arm; adds _summary_usable; adds a keyword-only
+      verify_present (no default) to _export_performance_summary with both wrappers
+      passing True; amends the three O3 placement comments the conjunct makes false.
+      Changes HOW a skip is decided, never WHAT is on disk -- no file, path, schema or
+      log-field changes. Closes the D1 collateral divergence (log True, artifact removed
+      by the engine's failure cleanup) that stranded the retry; concurred VMS
+      hhemt_2026-09-17_0950 SPECS 6-9.
+  - path: src/hhemt/log.py
+    layout_signature: 8f5898e9cdca3a1d855f11e24538b3d25c57f89ade8a1fec695ecea26553695a
+    justification: >-
+      NON-BREAKING (arm A of the split-vs-harden workshop, [Q404]). Two ADDITIVE
+      Optional None-defaulted keys on the TRITONSWMM_log BASE class -- `last_writer`
+      (M8 writer stamp, a dict) and `recovered_from_unparseable` (M3 recovery records,
+      a list) -- so every tier carries them; the SAME change class as this file's five
+      earlier allowlisted additive fields. The rest changes HOW a document is written,
+      never WHAT is on disk: write() resolves the name once with O_RDWR|O_CREAT instead
+      of read_bytes + O_EXCL (M1), quarantines a non-parsing document by MOVE to a
+      `.unreadable` sibling and rebuilds the name in the same pass (M3), splits the
+      refusal operation strings (M5), corrects the false retry sentence (M6), and adds
+      a deferred_writes() context manager (M4). THE TWO-QUESTION TEST. (i) NEW code
+      meeting OLD data: a legacy document lacks both keys; pydantic defaults them None
+      and no consumer coalesces on them except the new check_log_recoveries, which
+      reads an absent key as no recovery. OLD code meeting NEW data: an old toolkit's
+      write() emits the "DROPS non-null on-disk field" WARNING for last_writer and
+      proceeds -- the forward direction no LAYOUT_VERSION bump can govern. (ii) Loud or
+      silent? Neither reader reinterprets existing state. Why a row and not a bump: a
+      migration acts on on-disk SHAPE, and this change adds keys with a default that
+      reproduces the pre-change reading of every existing document; V0023 would have an
+      empty upgrade body and two identical fixtures -- the V0011/V0016 no-op precedent
+      this file exists to avoid.
+      EXPIRY CONDITION: covers additive None-defaulted keys and write-path mechanics.
+      Renaming or re-keying any existing log key, or moving the document (arm B,
+      record-per-fact), is NOT this class and owes LAYOUT 23 with a V0023 module.
+  - path: src/hhemt/scenario.py
+    layout_signature: bb04246a23eedf4ebf995fc1fd9077774e527da92a4e2c801e5f0a2445346c51
+    justification: >-
+      NON-BREAKING. get_log() opens `log_{model_type}.json` in one resolution (from_json
+      inside try/except FileNotFoundError) instead of .exists()-then-from_json (M1, read
+      pair). Changes HOW the document is found, never its name, its directory, or its
+      contents; the absent branch constructs the same default it always did.
+      ALSO COVERED (same commit series, R12 rider S2): the prepare-scenario launcher
+      closure returns the runner subprocess return code instead of None -- an in-memory
+      return value consumed by run_prepare_scenarios_serially's failure message; no
+      on-disk artifact changes.
+      EXPIRY CONDITION: covers this read-pair edit and the closure return value only.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: e7c354ce0cb3cab0ddc14b919852cf1f0bf6d60c2d1df64e21c6cdc8f3a24d59
+    justification: >-
+      NON-BREAKING. Nine exporter methods gain the `_deferred_log_writes` decorator so
+      their LogField.set()/add_sim_processing_entry() calls persist as one write at
+      method exit (M4). The set of keys and entries written is identical; only the number
+      of read-modify-write cycles per method changes. No file, path, schema or log-field
+      change.
+      EXPIRY CONDITION: covers the decorator application only.
+  - path: src/hhemt/log.py
+    layout_signature: "de0d341c47d94daae259422dc61b6c1877099d2542f6a9516d66ef767e18cd82"
+    justification: >-
+      D131 MERGE RE-SIGNING. This path was modified on BOTH sides of the
+      sidequest-clearing-08-30 merge, so neither branch's stamped signature covers the
+      resolved content and check-b re-fires on the merge commit. Resolved content:
+      TAKEN FROM THE AUTO-MERGED CONTENT, which is the union of both sides' independent
+      changes to this path with no hand resolution.
+      NON-BREAKING. Both sides' changes to this path were individually adjudicated
+      non-breaking by their own allowlist rows when they landed, and the merge invents no
+      on-disk meaning -- it is where two already-adjudicated changes meet. This row
+      asserts the conjunction and nothing more.
+      COMPUTED AT step 5 of the merge sequence, over the FINAL resolved content, after
+      every code and documentation conflict was settled and after every post-condition
+      from every axis had been re-run. A hash taken earlier pins unresolved content and
+      the failure is silent at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: "77225ed20bbd86205a3f92e2e19f613d2344acce9d9853668d493020557bb175"
+    justification: >-
+      D131 MERGE RE-SIGNING. Identical class to the log.py row above and taken at the same
+      step: modified on BOTH sides, auto-merged with no hand resolution, so neither
+      branch's stamped signature covers the resolved content.
+      NON-BREAKING for the same reason and on the same conjunction.
+      COMPUTED AT step 5 of the merge sequence, over the FINAL resolved content. A hash
+      taken earlier pins unresolved content and the failure is silent at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path.

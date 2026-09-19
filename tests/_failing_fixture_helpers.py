@@ -215,8 +215,14 @@ def inject_compilation_failure(system, model_type: str) -> None:
     if not sys_log.exists():
         return
     key = {
-        "tritonswmm": "compilation_successful",
-        "triton": "compilation_triton_only_successful",
+        # LOG FIELDS ONLY. `compilation_successful` and
+        # `compilation_triton_only_successful` are PROPERTIES on TRITONSWMM_system
+        # (system.py:2310 and :1964), not declared log fields -- the canonical five are
+        # at log.py:728-736. Targeting a property wrote a top-level key nothing reads,
+        # which log.py's write() then DROPS as undeclared, while the property re-derived
+        # True from the build log: a silent no-op injection.
+        "tritonswmm": "compilation_tritonswmm_cpu_successful",
+        "triton": "compilation_triton_cpu_successful",
         "swmm": "compilation_swmm_successful",
     }[model_type]
     _mutate_log_field(sys_log, key, False)
@@ -280,7 +286,7 @@ def inject_multi_sim_failures_at_paths(paths: dict) -> None:
     # System log mutation (compilation flag)
     sys_log = system_dir / "system_log.json"
     if sys_log.exists():
-        _mutate_log_field(sys_log, "compilation_successful", False)
+        _mutate_log_field(sys_log, "compilation_tritonswmm_cpu_successful", False)
     # Delete the master DataTree (Option B's canonical artifact). Under
     # the legacy two-tier consolidation this helper deleted per-mode
     # flat zarrs; those no longer exist post-Option-B.

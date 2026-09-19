@@ -23,6 +23,7 @@ through a real two-allocation ``batch_job`` run (unrunnable in this worktree).
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -99,6 +100,14 @@ def _make_proc(
     log = SimpleNamespace(
         raw_TRITON_outputs_cleared=_LogStub(),
         raw_SWMM_outputs_cleared=_LogStub(),
+        # R13 (2026-09-18): `_clear_raw_outputs` is wrapped by the module-level
+        # `_deferred_log_writes` decorator (process_simulation.py), whose wrapper enters
+        # `self.log.deferred_writes()` BEFORE the body runs -- one more attribute the
+        # receiver must carry. A no-op context manager satisfies that protocol and
+        # asserts NOTHING about write batching (that is pinned by
+        # tests/test_log_write_hardening.py); it stays an explicit attribute rather than
+        # a MagicMock so the NEXT contract widening reds loudly here, as this one did.
+        deferred_writes=nullcontext,
     )
 
     proc = TRITONSWMM_sim_post_processing.__new__(TRITONSWMM_sim_post_processing)

@@ -91,8 +91,9 @@ outputs, consolidation, or report (for example after fixing a renderer), use
 re-processing begins:
 
 ```python
-# On a non-sensitivity analysis every recipe below except "render" deletes
-# plots/eda/, which nothing regenerates; re-run analysis.eda() afterwards.
+# On a non-sensitivity analysis the recipes below re-render the regenerable figures
+# under plots/ and SPARE plots/eda/, which nothing regenerates. A dry run spares
+# every figure, including the regenerable ones, and deletes only the report shell.
 
 # Re-render the report and the plots against the existing consolidated store.
 # An existing store is left as it is (see regenerate_existing below):
@@ -119,9 +120,10 @@ is even when `start_with` names them. An analysis whose simulations are all
 complete but that has never been consolidated is consolidated. `reprocess()`
 under `start_with="render"` never touches `plots/`, but under
 `start_with="consolidate"` or `"process"` it re-renders the plots too. On a
-non-sensitivity analysis that plot re-render works by deleting every file under
-`plots/`, `plots/eda/` included (the `"render"` floor above exempts it), and
-nothing regenerates those EDA figures. Pass `regenerate_existing=True` to
+non-sensitivity analysis that plot re-render works by deleting the regenerable
+figures under `plots/` and sparing `plots/eda/`, which nothing regenerates. On a
+dry run no figure is deleted at all. Only the report shell is, because it is the
+mtime trigger the preview depends on. Pass `regenerate_existing=True` to
 delete and rebuild the store and the processed outputs. Rebuilding the
 consolidated store is also what re-emits `ro-crate-metadata.json`, which
 [Publishing and fetching](publishing.md) requires.

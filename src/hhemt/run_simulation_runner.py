@@ -773,9 +773,11 @@ def main():
         # finalized-rpt gate — so a coupled sim that exited over a 0-byte/truncated
         # hydraulics.rpt records False and the SLURM retry resumes instead of the
         # completion gate falsely marking it done (poisoning the field it reads).
-        model_log.simulation_completed.set(scenario.run.model_run_completed(model_type))
-        model_log.sim_run_time_minutes.set(elapsed / 60.0)
-        model_log.write()
+        # M4: two sets and a redundant explicit write() were three read-modify-write
+        # cycles -- three renames of one name -- where one suffices.
+        with model_log.deferred_writes():
+            model_log.simulation_completed.set(scenario.run.model_run_completed(model_type))
+            model_log.sim_run_time_minutes.set(elapsed / 60.0)
 
         # Verify completion via log file check (no refresh needed - we'll check the log file directly)
         if not scenario.run.model_run_completed(model_type):

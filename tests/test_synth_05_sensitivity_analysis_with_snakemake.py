@@ -368,24 +368,9 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
         f"is exercising the wrong source copy: {_analysis_mod.__file__}"
     )
 
-    # model_type -> consolidate-consumed summary attrs (mirrors the production
-    # self-heal's D3 predicate in analysis.py).
-    _SUMMARY_ATTRS_BY_MODEL = {
-        "tritonswmm": (
-            "output_tritonswmm_triton_summary",
-            "output_tritonswmm_node_summary",
-            "output_tritonswmm_link_summary",
-            "output_tritonswmm_performance_summary",
-        ),
-        "triton": (
-            "output_triton_only_summary",
-            "output_triton_only_performance_summary",
-        ),
-        "swmm": (
-            "output_swmm_only_node_summary",
-            "output_swmm_only_link_summary",
-        ),
-    }
+    # model_type -> consolidate-consumed summary attrs (the canonical table in
+    # hhemt.summary_paths, shared with the production self-heal's D3 predicate).
+    from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
 
     analysis = synth_sensitivity_analysis
 
@@ -513,23 +498,7 @@ def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivit
     import xarray as xr
 
     from hhemt.scenario import TRITONSWMM_scenario
-
-    _SUMMARY_ATTRS_BY_MODEL = {
-        "tritonswmm": (
-            "output_tritonswmm_triton_summary",
-            "output_tritonswmm_node_summary",
-            "output_tritonswmm_link_summary",
-            "output_tritonswmm_performance_summary",
-        ),
-        "triton": (
-            "output_triton_only_summary",
-            "output_triton_only_performance_summary",
-        ),
-        "swmm": (
-            "output_swmm_only_node_summary",
-            "output_swmm_only_link_summary",
-        ),
-    }
+    from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
 
     analysis = synth_sensitivity_analysis
 
@@ -997,23 +966,7 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     from pathlib import Path
 
     from hhemt.scenario import TRITONSWMM_scenario
-
-    _SUMMARY_ATTRS_BY_MODEL = {
-        "tritonswmm": (
-            "output_tritonswmm_triton_summary",
-            "output_tritonswmm_node_summary",
-            "output_tritonswmm_link_summary",
-            "output_tritonswmm_performance_summary",
-        ),
-        "triton": (
-            "output_triton_only_summary",
-            "output_triton_only_performance_summary",
-        ),
-        "swmm": (
-            "output_swmm_only_node_summary",
-            "output_swmm_only_link_summary",
-        ),
-    }
+    from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
 
     analysis = synth_sensitivity_analysis
 
