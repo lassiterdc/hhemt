@@ -334,8 +334,8 @@ def main():
 
         # Call the write_timeseries_outputs method
         proc.write_timeseries_outputs(
-            which=args.which,  # type: ignore
-            model_type=args.model_type,  # type: ignore
+            which=args.which,
+            model_type=args.model_type,
             override_clear_raw=override_clear_raw,
             verbose=True,
             compression_level=args.compression_level,
@@ -381,8 +381,8 @@ def main():
         # create summaries from full timeseries
         logger.info(f"Creating summaries for scenario {args.event_iloc}")
         proc.write_summary_outputs(
-            which=args.which,  # type: ignore
-            model_type=args.model_type,  # type: ignore
+            which=args.which,
+            model_type=args.model_type,
             verbose=True,
             compression_level=args.compression_level,
         )
@@ -478,8 +478,8 @@ def main():
         # from raws that are still on disk. Placing it AFTER the flag would invert that --
         # a half-reclaimed tree carrying a "done" flag and no record of what was removed.
         proc.remove_after_processing(
-            model_type=args.model_type,  # type: ignore
-            which=args.which,  # type: ignore
+            model_type=args.model_type,
+            which=args.which,
             verbose=True,
         )
         model_log.write()

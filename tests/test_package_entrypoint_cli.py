@@ -60,42 +60,19 @@ def test_package_entrypoint_help_reaches_the_cli():
     assert "run" in res.stdout, res.stdout
 
 
-def test_package_entrypoint_does_not_import_the_gui_stack_for_a_cli_call():
-    """The GUI module must not be imported at all on an argv-bearing invocation.
+def test_the_zero_argument_invocation_reaches_the_cli_help():
+    """The zero-argument invocation must reach the CLI's help, not a GUI import.
 
-    Asserting only on exit code would pass if `tkinterdnd2` happened to be installed, which
-    would make this test environment-dependent rather than behavioural.
+    Pre-fix this exited 1 with ModuleNotFoundError: No module named 'tkinterdnd2'.
+    no_args_is_help=True on the Typer app makes the empty-argv case exit 2.
+    Both assertions hold in the pre-fix and post-fix worlds only by their SHAPE,
+    never by wording this change introduced.
     """
-    res = _run_module("--help", env_extra={"PYTHONWARNINGS": "ignore"})
-    assert res.returncode == 0, res.stdout + res.stderr
-    probe = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; import hhemt.__main__; "
-            "print('GUI_IMPORTED' if 'hhemt.gui' in sys.modules else 'GUI_NOT_IMPORTED')",
-        ],
-        capture_output=True,
-        text=True,
-        env={**__import__("os").environ, "PYTHONPATH": str(_SRC)},
-        cwd=str(_REPO_ROOT),
-        timeout=120,
-    )
-    assert "GUI_NOT_IMPORTED" in probe.stdout, probe.stdout + probe.stderr
-
-
-def test_the_gui_entrypoint_is_still_wired():
-    """Differently-positioned satisfying input: the GUI path must be UNCHANGED.
-
-    The fix moves an import; it must not remove the capability. This asserts the call site
-    still exists and still resolves, without launching a window.
-    """
-    src = (_SRC / "hhemt" / "__main__.py").read_text(encoding="utf-8")
-    assert "launch_gui()" in src, "the GUI call site was removed, not just its import"
-    assert "from .gui import launch_gui" in src, "the GUI import was dropped entirely"
-    # And it is INSIDE the argv guard, not at module level.
-    head = src.split("if __name__", 1)[0]
-    assert "from .gui import launch_gui" not in head, "the gui import is still module-level"
+    res = _run_module()
+    combined = res.stdout + res.stderr
+    assert "ModuleNotFoundError" not in combined, combined
+    assert res.returncode == 2, combined
+    assert "Usage" in combined, combined
 
 
 @pytest.mark.parametrize("args", [("--help",), ("run", "--help")])

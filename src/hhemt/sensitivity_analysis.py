@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 import xarray as xr
-import yaml  # type: ignore
+import yaml
 
 import hhemt.analysis as anlysis
 from hhemt import orchestrator_sentinels as _osent
@@ -2649,7 +2649,7 @@ class TRITONSWMM_sensitivity_analysis:
                 }
             )
             analysis_id = f"{self.member_prefix}{member_id}"
-            cfg_snstvty_analysis.analysis_id = analysis_id  # type: ignore
+            cfg_snstvty_analysis.analysis_id = analysis_id
             analysis_directory = self.members_dir / str(cfg_snstvty_analysis.analysis_id)
             analysis_directory.mkdir(parents=True, exist_ok=True)
             cfg_snstvty_analysis.toggle_sensitivity_analysis = False

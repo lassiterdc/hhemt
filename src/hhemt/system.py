@@ -387,7 +387,7 @@ class TRITONSWMM_system:
         unique_values = np.unique(arr[~np.isnan(arr)])
         no_data_value = rds_lu.rio.nodata
         # create dataframe from landuse vals in the landuse raster
-        df_lu_vals = pd.Series(index=unique_values, name="placeholder").to_frame()  # type: ignore
+        df_lu_vals = pd.Series(index=unique_values, name="placeholder").to_frame()
         df_lu_vals.index.name = landuse_colname
         # join the landuse values present in the raster with the lookup table
         df_lu_vals = df_lu_vals.join(df_lu_lookup.set_index(landuse_colname), how="left")
@@ -409,7 +409,7 @@ class TRITONSWMM_system:
         target_resolution = self.cfg_system.target_dem_resolution
 
         rds_dem = rxr.open_rasterio(dem_unprocessed)
-        # crs = rds_dem.rio.crs  # type: ignore
+        # crs = rds_dem.rio.crs
         # og_dem_res_xy, og_dem_avg_gridsize = compute_grid_resolution(rds_dem)
         if (rds_dem.data < -100).sum() > 0:  # type: ignore
             sys.exit(
@@ -2425,9 +2425,7 @@ def spatial_resampling(xds_to_resample, xds_target, missingfillval=-9999):
     # resample
     ## https://corteva.github.io/rioxarray/stable/rioxarray.html#rioxarray.raster_dataset.RasterDataset.reproject_match
     ## (https://rasterio.readthedocs.io/en/stable/api/rasterio.enums.html#rasterio.enums.Resampling)
-    xds_to_resampled = xds_to_resample.rio.reproject_match(  # type: ignore
-        xds_target, resampling=Resampling.average
-    )
+    xds_to_resampled = xds_to_resample.rio.reproject_match(xds_target, resampling=Resampling.average)
     # fill missing values with prespecified val (this should just corresponds to areas
     # where one dataset has pieces outside the other)
     xds_to_resampled = xr.where(xds_to_resampled >= 3.403e37, x=missingfillval, y=xds_to_resampled)
@@ -2447,7 +2445,7 @@ def coarsen_georaster(rds, target_resolution, xllcorner=None, yllcorner=None, nr
     target_res = og_avg_gridsize * res_multiplier
 
     if xllcorner is not None and yllcorner is not None and nrows is not None and ncols is not None:
-        # left, bottom, right, top = rds.rio.bounds()  # type: ignore
+        # left, bottom, right, top = rds.rio.bounds()
         # ncols = int(np.ceil((right - xllcorner) / target_resolution))
         # nrows = int(np.ceil((top - yllcorner) / target_resolution))
         transform = from_origin(
@@ -2456,16 +2454,14 @@ def coarsen_georaster(rds, target_resolution, xllcorner=None, yllcorner=None, nr
             target_resolution,
             target_resolution,
         )
-        rds_coarse = rds.rio.reproject(  # type: ignore
+        rds_coarse = rds.rio.reproject(
             crs,
             transform=transform,
             shape=(nrows, ncols),
             resampling=Resampling.average,
         )
     else:
-        rds_coarse = rds.rio.reproject(  # type: ignore
-            crs, resolution=target_res, resampling=Resampling.average
-        )  # aggregate cells
+        rds_coarse = rds.rio.reproject(crs, resolution=target_res, resampling=Resampling.average)  # aggregate cells
     _, coarse_avg_gridsize = compute_grid_resolution(rds_coarse)
     assert np.isclose(coarse_avg_gridsize, target_resolution)
 

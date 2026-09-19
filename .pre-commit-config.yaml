@@ -240,3 +240,59 @@ repos:
         language: system
         pass_filenames: false
         files: ^environment(-lock)?\.yaml$
+
+  # ty type-checker gate (### D133 adoption; ### D143 environment pin).
+  # The predicate is the COMPLEMENT of what currently fires, scoped per path --
+  # see scripts/generate_ty_overrides.py for why per-path rather than corpus-wide.
+  # --error-on-warning is NOT optional: without it a rule renamed upstream makes the
+  # gate exit 0 while arming nothing (measured: an unknown rule name yields
+  # `warning[unknown-rule]` and exit 0).
+  - repo: local
+    hooks:
+      - id: ty-check
+        name: ty type check (narrow tier -- rules at zero under BOTH stacks)
+        # D144 clause 2: the pip stack may not fail a build, and a bare hook resolves
+        # the pip tier (pyproject's ${HHEMT_TY_ENV:-.venv}). A full-scope gate here is
+        # therefore red BY CONSTRUCTION: the overrides table is generated under conda,
+        # so it cannot carry an entry for a diagnostic that exists only under pip.
+        # Measured: exactly ONE such (file,rule) pair exists --
+        # swmm_runoff_modeling.py / unresolved-attribute, the np.trapz portability
+        # probe, which is CORRECT under both numpy majors. Do not "fix" that line.
+        #
+        # These 8 rules fire zero times under BOTH raw tiers, so this hook cannot
+        # produce a tier-specific finding. It reds only on a NEW violation, which is
+        # a genuine regression in either tier. The authoritative full-scope gate is
+        # type-gate.yml, which resolves the certified conda stack.
+        entry: >-
+          uv run --locked ty check --ignore all
+          --error call-non-callable
+          --error invalid-raise
+          --error invalid-exception-caught
+          --error invalid-super-argument
+          --error subclass-of-final-class
+          --error instance-layout-conflict
+          --error invalid-await
+          --error invalid-type-form
+          --error-on-warning
+        language: system
+        pass_filenames: false
+        always_run: true
+      # Broad tier, mirroring `ruff check --exit-zero --statistics` in test.yml: the
+      # full population, reported and never blocking. This is where a developer sees
+      # the pip tier's findings without them failing the commit.
+      - id: ty-report
+        name: ty type check (broad, reporting only)
+        entry: uv run --locked ty check --exit-zero --output-format concise
+        language: system
+        pass_filenames: false
+        always_run: true
+      # Asserts the overrides table is IN FORCE, not merely present. The gate above
+      # is green BECAUSE of that table, so a table that silently stops applying
+      # would leave the gate green while arming nothing -- a fail-open that no
+      # exit-code check can see.
+      - id: ty-overrides-in-force
+        name: ty overrides table is in force (two-arm canary)
+        entry: uv run --locked python scripts/check_ty_overrides_in_force.py
+        language: system
+        pass_filenames: false
+        always_run: true

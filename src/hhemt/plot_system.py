@@ -32,8 +32,8 @@ class TRITONSWMM_system_plotting:
         rds_dem_fullres_for_plotting = self._process_dem_for_plotting(
             rds_dem_unprocessed, dem_outside_watershed_height, dem_building_height
         )
-        vmin = rds_dem_fullres_for_plotting.min()  # type: ignore
-        vmax = rds_dem_fullres_for_plotting.max()  # type: ignore
+        vmin = rds_dem_fullres_for_plotting.min()
+        vmax = rds_dem_fullres_for_plotting.max()
         if ax is None:
             fig, ax = plt.subplots(1, 2, figsize=(5, 4), layout="constrained")
         ax2 = plot_continuous_raster(
@@ -52,15 +52,15 @@ class TRITONSWMM_system_plotting:
 
     def processed_mannings(self, ax=None):
         rds_mannings = self._system.mannings_rds
-        vmin = rds_mannings.min()  # type: ignore
-        vmax = rds_mannings.max()  # type: ignore
+        vmin = rds_mannings.min()
+        vmax = rds_mannings.max()
         watershed_shapefile = self.cfg_system.watershed_gis_polygon
         res = self.cfg_system.target_dem_resolution
         ax_title = f"Mannings ({res}m)"
         if ax is None:
             fig, ax = plt.subplots(1, 2, figsize=(5, 4), layout="constrained")
         ax2 = plot_continuous_raster(
-            rds_mannings,  # type: ignore
+            rds_mannings,
             cbar_lab="mannings",
             cmap="viridis",
             watershed_shapefile=watershed_shapefile,

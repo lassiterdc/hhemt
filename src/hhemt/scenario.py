@@ -1160,7 +1160,7 @@ class TRITONSWMM_scenario:
         """
         # Halt if scenario already complete
         if self.log.scenario_creation_complete.get() and not overwrite_scenario_if_already_set_up:
-            print(  # type: ignore
+            print(
                 "Simulation already successfully created. "
                 "If you wish to overwrite it, re-run with overwrite_scenario_if_already_set_up=True.",
                 flush=True,
@@ -1566,7 +1566,7 @@ def find_lowest_inv(node_to_keep, nodes):
     ranks_inv = rankdata(lst_invs, method="min")
     # subset the nodes that have the lowest elevation
     node_to_keep = node_to_keep[ranks_inv == min(ranks_inv)]
-    node_to_keep = list(np.unique(node_to_keep))  # type: ignore
+    node_to_keep = list(np.unique(node_to_keep))
     return node_to_keep
 
 

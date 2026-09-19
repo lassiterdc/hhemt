@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
-import yaml  # type: ignore
+import yaml
 
 from hhemt.config.analysis import ClearRawValue
 from hhemt.config.hpc_system import (
@@ -8952,10 +8952,8 @@ onerror:
 
         # Build the rule all with all dependencies
         consolidation_flags = []
-        for member_id in self.sensitivity_analysis.members.keys():  # type: ignore
-            consolidation_flags.append(
-                f"_status/e_consolidate_member-{member_id}_complete.flag"  # type: ignore
-            )
+        for member_id in self.sensitivity_analysis.members.keys():
+            consolidation_flags.append(f"_status/e_consolidate_member-{member_id}_complete.flag")
 
         # Phase 3: per-target setup flags. Listed explicitly in rule_all_inputs so
         # the DAG planner can reach setup_target rules even for members whose
@@ -9129,7 +9127,7 @@ onerror:
         # mtime trigger re-runs only that member_id's rule chain.
         status_dir = self.experiment.analysis_paths.analysis_dir / "_status"
         status_dir.mkdir(parents=True, exist_ok=True)
-        for member_id, analysis in self.sensitivity_analysis.members.items():  # type: ignore
+        for member_id, analysis in self.sensitivity_analysis.members.items():
             fingerprint_path = status_dir / f"member-{member_id}_inputs.json"
             self.sensitivity_analysis._write_member_id_fingerprint(analysis, fingerprint_path)
         if len(self.sensitivity_analysis.independent_vars) == 0:
@@ -9140,7 +9138,7 @@ onerror:
 
         # Generate simulation rules for each member
         analysis_flags = []
-        for member_id, analysis in self.sensitivity_analysis.members.items():  # type: ignore
+        for member_id, analysis in self.sensitivity_analysis.members.items():
             # Extract resource requirements from member config
             n_mpi = analysis.cfg_analysis.n_mpi_procs or 1
             n_omp = analysis.cfg_analysis.n_omp_threads or 1
@@ -9358,7 +9356,7 @@ onerror:
 
             # Consolidate outputs after all sims have been run. Sanitize for
             # use as a Snakemake rule identifier.
-            prefix = self.sensitivity_analysis.member_prefix  # type: ignore
+            prefix = self.sensitivity_analysis.member_prefix
             consolidate_inputs = [f'"{flag}"' for flag in analysis_sim_flags]
             consolidate_inputs.append(f'"_status/member-{member_id}_inputs.json"')
             snakefile_content += f'''rule consolidate_{prefix}{member_id_rule}:

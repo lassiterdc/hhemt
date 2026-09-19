@@ -67,7 +67,7 @@ class LogField(Generic[T]):
 
     def set(self, new_value: T):
         if self._expected_type:
-            new_value = self._expected_type(new_value)  # type: ignore
+            new_value = self._expected_type(new_value)
 
         self.value = new_value
         self._log.write()
@@ -100,7 +100,7 @@ class LogField(Generic[T]):
             return self.value
 
         try:
-            return self._expected_type(self.value)  # type: ignore
+            return self._expected_type(self.value)
         except Exception as err:
             # `from err`, NOT `from None`, and the choice is deliberate. The message names
             # WHAT was attempted (value -> type); the inner exception is the only thing that
@@ -144,13 +144,13 @@ class LogFieldDict(Generic[T]):
     def set(self, new_dict: dict[Any, Any]):
         for k, v in new_dict.items():
             if self._expected_type:
-                v = self._expected_type(v)  # type: ignore
+                v = self._expected_type(v)
             self.value[k] = v
         self._log.write()
 
     def get(self) -> dict[Any, T]:
         if self._expected_type:
-            return {k: self._expected_type(v) for k, v in self.value.items()}  # type: ignore
+            return {k: self._expected_type(v) for k, v in self.value.items()}
         return self.value
 
     def as_dict(self):

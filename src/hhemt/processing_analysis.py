@@ -435,7 +435,7 @@ class TRITONSWMM_analysis_post_processing:
             )
         return xr.open_datatree(path, engine="zarr", chunks="auto", consolidated=False)
 
-    def _retrieve_combined_timeseries(self, ts_mode: str) -> xr.Dataset:  # type: ignore
+    def _retrieve_combined_timeseries(self, ts_mode: str) -> xr.Dataset:
         """Load per-scenario TIMESERIES zarrs and concatenate them along event_iloc.
 
         Mirrors _retrieve_combined_output but reads the timeseries scenario-path attr
@@ -468,9 +468,9 @@ class TRITONSWMM_analysis_post_processing:
             compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei))
             for ei in self._analysis.df_sims.index
         ]
-        return ds_ts.assign_coords(event_id=("event_iloc", event_ids))  # type: ignore
+        return ds_ts.assign_coords(event_id=("event_iloc", event_ids))
 
-    def _retrieve_combined_output(self, mode: str) -> xr.Dataset:  # type: ignore
+    def _retrieve_combined_output(self, mode: str) -> xr.Dataset:
         """
         Load pre-created summary files for each scenario and concatenate them.
 
@@ -580,7 +580,7 @@ class TRITONSWMM_analysis_post_processing:
             for ei in self._analysis.df_sims.index
         ]
         ds_combined_outputs = ds_combined_outputs.assign_coords(event_id=("event_iloc", event_ids))
-        return ds_combined_outputs  # type: ignore
+        return ds_combined_outputs
 
     def _chunk_for_writing(
         self,

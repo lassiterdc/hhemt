@@ -50,6 +50,14 @@ jobs:
         ruff check --select=E9,F63,F7,F82
         # exit-zero treats all errors as warnings
         ruff check --exit-zero --statistics
+    - name: Type-check report (non-blocking)
+      run: |
+        # Broad tier, mirroring `ruff check --exit-zero --statistics` above: the FULL
+        # unfiltered population, reported and never blocking. This is where the 437
+        # live diagnostics and the 84 dead suppressions remain visible; the narrow
+        # gate above cannot see them by construction.
+        TY_PYTHON="$(python -c 'import sys; print(sys.prefix)')"
+        ty check --python "$TY_PYTHON" --exit-zero --output-format concise
     - name: Run tests
       run: |
         pytest

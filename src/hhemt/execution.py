@@ -313,10 +313,8 @@ class SlurmExecutor:
         cpus_per_sim = mpi_ranks * omp_threads
         gpus_per_sim = self.analysis.cfg_analysis.n_gpus or 0
 
-        if n_nodes_per_sim > num_nodes:  # type: ignore
-            raise RuntimeError(
-                f"Each simulation requires {n_nodes_per_sim} node(s), but job only has {num_nodes}."  # type: ignore
-            )
+        if n_nodes_per_sim > num_nodes:
+            raise RuntimeError(f"Each simulation requires {n_nodes_per_sim} node(s), but job only has {num_nodes}.")
 
         if cpus_per_sim > total_cpus:
             raise RuntimeError(f"Each simulation requires {cpus_per_sim} CPUs, but job only has {total_cpus}.")

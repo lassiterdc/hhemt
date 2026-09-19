@@ -304,9 +304,7 @@ class ScenarioInputGenerator:
         # weather axis can still open a >= 24 h gap here, and the uniformity assertion
         # in _weather_step_seconds fires from the post-write window-agreement guard,
         # AFTER this writer has already run. Do not narrow this back to .dt.seconds.
-        tseries_diff_hrs = (
-            pd.Series(df_water_levels.index).diff().dt.total_seconds() / 60 / 60  # type: ignore
-        )
+        tseries_diff_hrs = pd.Series(df_water_levels.index).diff().dt.total_seconds() / 60 / 60
         tseries_diff_hrs.loc[0] = 0
 
         df_water_levels["time_hr"] = tseries_diff_hrs.cumsum().values
@@ -325,13 +323,13 @@ class ScenarioInputGenerator:
         self.scenario.log.extbc_tseries_created.set(True)
         # write external boundary condition location file
         rds_dem = rxr.open_rasterio(dem_processed)
-        gdf_bc = gpd.read_file(storm_tide_boundary_line_gis)  # type: ignore
+        gdf_bc = gpd.read_file(storm_tide_boundary_line_gis)
         str_line1 = "% BC Type, X1, Y1, X2, Y2, BC"
         gdf_row = gdf_bc.loc[0, :]
         vertices = extract_vertex_coordinates(gdf_row.geometry)
         lst_x = []
         lst_y = []
-        for vertex in vertices:  # type: ignore
+        for vertex in vertices:
             lst_x.append(vertex[0])
             lst_y.append(vertex[1])
         # find x and ys at edge of DEM representing the boundary condition

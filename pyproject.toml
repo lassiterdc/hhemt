@@ -97,6 +97,17 @@ dependencies = [
     # writes a co-located ro-crate-metadata.json sidecar (ADR-5/6/7). Pinned for
     # byte-deterministic serialization; its footprint does not touch the pydantic pin.
     "rocrate==0.15.0",
+    # Ten module-level imports that were declared nowhere until D142 (see environment.yaml).
+    "xarray>=2024.10",
+    "pandas",
+    "numpy",
+    "packaging",
+    "rasterio",
+    "psutil",
+    "nbformat",
+    "affine",
+    "platformdirs",
+    "pydantic-core",
 ]
 requires-python = ">= 3.11, < 3.13"
 
@@ -182,6 +193,43 @@ select = [
 [tool.uv]
 package = true
 
+[tool.ty.environment]
+  # Two tiers, per ### D144. UNSET -> .venv, the REPORTING stack (numpy 2.x / pandas 3.x),
+  # which may not fail a build. Set HHEMT_TY_ENV to the certified conda prefix to GATE
+  # on the stack environment.yaml describes (python 3.11 / numpy 1.26.4 / pandas 2.3.3).
+  # Measured: ty expands ${VAR} and ${VAR:-default} here, and errors out when a bare
+  # ${VAR} is unset rather than falling back silently.
+  #
+  # The named variable is NOT the ambient $VIRTUAL_ENV: this line's purpose is to stop a
+  # stale VIRTUAL_ENV inherited from a shell activated in another tree from choosing the
+  # target, which is the defect ### D143 was issued against.
+  #
+  # Do NOT "fix" swmm_runoff_modeling.py's np.trapz probe. Under the RULED conda target
+  # it produces no diagnostic at all (grep -c trapz over the full set returns 0); it is
+  # reported only under the pip tier, where it is a false positive and the repair would
+  # break the numpy 1.x support ### D144 confirms is still current.
+python = "${HHEMT_TY_ENV:-.venv}"
+
+[tool.ty.src]
+  # The in-force canaries are deliberately dirty and must NOT redden the main gate.
+  # This filters DISCOVERY only: `ty check tools/ty_canary` still reaches them, which is
+  # how scripts/check_ty_overrides_in_force.py works -- verified, because the opposite
+  # behaviour was equally plausible. NEVER pass --force-exclude to that check: it turns
+  # this into a hard block and the check then prints "All checks passed!" at exit 0,
+  # which IS the fail-open signature it exists to detect.
+exclude = ["tools/ty_canary"]
+
+[[tool.ty.overrides]]
+  # HAND-WRITTEN AND PERMANENT -- deliberately above the generated region, so neither a
+  # regeneration nor a generator scope decision can remove it. Pairs with
+  # tools/ty_canary/canary_armed.py, which the generator EXCLUDES (see CANARY_DIR).
+  # Delete this block and the in-force check reports 2 diagnostics and fails loudly --
+  # verified by injection.
+include = ["tools/ty_canary/canary_covered.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+
 [tool.setuptools.package-data]
 hhemt = [
     "examples/*.yaml",
@@ -221,3 +269,1137 @@ filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
     "ignore::DeprecationWarning:pkg_resources",
 ]
+
+# === GENERATED ty overrides -- do not hand-edit; see scripts/generate_ty_overrides.py ===
+# NOTHING may be added below the END marker, for two distinct reasons.
+# (1) Regeneration rebuilds this file as everything-above-MARKER plus a fresh
+#     table, so an appended [tool.x] block is SILENTLY DESTROYED.
+# (2) A bare key appended at end-of-file has no enclosing table header, so
+#     TOML puts it inside the LAST [tool.ty.overrides.rules] table and it
+#     becomes a type-checker suppression. That happens at PARSE time, before
+#     any regeneration. No sentinel prevents it: a comment does not close a
+#     TOML table. Put new configuration ABOVE the MARKER line.
+
+[[tool.ty.overrides]]
+include = ["conftest.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["hooks/config_reference.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["hooks/eda_kind_table.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["hooks/marker_governance_table.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+no-matching-overload = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/check_caption_pairing.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+not-subscriptable = "ignore"
+unresolved-attribute = "ignore"
+unsupported-operator = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/check_delivered_report_js.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/check_docs_content.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-parameter-default = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/check_du_sentinel_sites.py"]
+
+[tool.ty.overrides.rules]
+invalid-method-override = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/check_layout_version.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/check_private_estate_in_messages.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/check_vocabulary_residue.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/experiments/container_validation.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/experiments/synth_compute_config.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/local_src.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/profile_harness/profile_routine_tests.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["scripts/verify_byte_identity.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/_filelock_compat.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/_worktree_guard.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/analysis.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-return-type = "ignore"
+unresolved-attribute = "ignore"
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/analysis_validation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+not-subscriptable = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/bundle/__init__.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+unresolved-reference = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/bundle/_combine.py"]
+
+[tool.ty.overrides.rules]
+invalid-return-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/bundle/_combine_merge.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/bundle/_emit.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+invalid-return-type = "ignore"
+missing-argument = "ignore"
+unknown-argument = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/bundle/_path_policy.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/cf_conventions.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/cli.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/config/base.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/config/loaders.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/config/report.py"]
+
+[tool.ty.overrides.rules]
+not-iterable = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/config/viz_vocabulary.py"]
+
+[tool.ty.overrides.rules]
+invalid-return-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/eda/_config_diff.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+no-matching-overload = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/eda/_context.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/eda/_dem_resolution_plots.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/eda/cross_sim_identity.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/experiments.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/globus_transfer.py"]
+
+[tool.ty.overrides.rules]
+deprecated = "ignore"
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/log.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/metadata.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/orchestration.py"]
+
+[tool.ty.overrides.rules]
+invalid-return-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/prepare_scenario_runner.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/process_simulation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-return-type = "ignore"
+unresolved-attribute = "ignore"
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/processing_analysis.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/provenance.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/publishing.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/recompute.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/cross_experiment_disk_utilization.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/cross_experiment_intercomparison.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/disk_utilization.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/metadata.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/per_analysis_summary.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+not-subscriptable = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/per_sim_conduit_flow.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+no-matching-overload = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/per_sim_event_page.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/per_sim_peak_flood_depth.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+missing-argument = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/sensitivity_benchmarking.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/system_overview.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/report_renderers/workflow_performance.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/run_simulation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+unsupported-operator = "ignore"
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/run_simulation_runner.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/scenario.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+unresolved-attribute = "ignore"
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/scenario_inputs.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/sensitivity_analysis.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/setup_workflow.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/sif/identity.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/sif/plan.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/sif/preflight.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/sif/snakefile_generator.py"]
+
+[tool.ty.overrides.rules]
+invalid-parameter-default = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/slurm_store.py"]
+
+[tool.ty.overrides.rules]
+invalid-return-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/suite/_runner.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+unsupported-operator = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/suite/aggregate.py"]
+
+[tool.ty.overrides.rules]
+no-matching-overload = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/swmm_output_parser.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+redundant-cast = "ignore"
+unresolved-attribute = "ignore"
+unresolved-reference = "ignore"
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/swmm_runoff_modeling.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/synthetic_experiment.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/synthetic_model/_build.py"]
+
+[tool.ty.overrides.rules]
+not-subscriptable = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/system.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+missing-argument = "ignore"
+unresolved-attribute = "ignore"
+unsupported-operator = "ignore"
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/utils.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/validation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/version_migration/context.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+not-subscriptable = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/version_migration/registry.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/hhemt/workflow.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+no-matching-overload = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/fixtures/_triton_source_cache.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/fixtures/synthetic_model/test_generator_smoke.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/fixtures/test_case_builder.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_analysis_log_lazy.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_bundle.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unknown-argument = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_bundle_exclude_config.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_case_manifest.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+unsupported-operator = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_check_autodoc_coverage.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_check_du_sentinel_sites_vocabulary.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_check_layout_version.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_check_published_surface.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_chunking.py"]
+
+[tool.ty.overrides.rules]
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_citation_gate.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+unresolved-import = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_clean_restart_wipe.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_clear_raw_restamp_cardinality.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_cli_05_run_experiment.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_clone_helper_symlink_safety.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_combine_colocation.py"]
+
+[tool.ty.overrides.rules]
+not-subscriptable = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_completion_gate_artifact_adjudicated.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_config_analysis_report_field.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_config_validation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_consolidation_store_preservation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_coupled_resume_validity.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_doi_roundtrip_e2e.py"]
+
+[tool.ty.overrides.rules]
+unsupported-operator = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_du_dry_run_gate.py"]
+
+[tool.ty.overrides.rules]
+not-subscriptable = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_du_sentinels_unit.py"]
+
+[tool.ty.overrides.rules]
+not-subscriptable = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_eda_cross_sim_identity.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_execution_locus_resolver.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_experiments_from_doi.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+unsupported-operator = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_hpc_system_config.py"]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_in_rule_processing_snakefile.py"]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_invalidating_fixes_registry.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_iter6_version_provenance_differential.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_iter7_check_vocabulary.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_kr_b_resume_reporting_tsteps.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_load_mode.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-import = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_metadata.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_optional_path_existence_at_load.py"]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_per_member_system_configs.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_prep_inputs_reclaim_waits_for_runs.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_provenance_discipline.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_publishing.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_queued_rekey_and_cancel_set.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_recompute_resolver.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_reporting_set_cosourcing.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_reprex_taxonomy.py"]
+
+[tool.ty.overrides.rules]
+invalid-method-override = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_reprocess_rebuild_invalidation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_run_dir_reaper.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_run_simulation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_sensitivity_benchmarking_math.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+not-subscriptable = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_setup_target_resources.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_sif_identity.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_sif_no_experiment_input.py"]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_slurm_efficiency_reduction.py"]
+
+[tool.ty.overrides.rules]
+no-matching-overload = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_slurm_job_recovery.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_suite_cli_seam.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_summary_completeness_gate.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_swmm_output_parser_refactoring.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_swmm_threads_implementation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_00_compile_models.py"]
+
+[tool.ty.overrides.rules]
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_00_write_raster.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_04_multisim_with_snakemake.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_07_validation_report.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_09_from_doi_run_proof.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unsupported-operator = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_compute_sensitivity_eda.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_config_diff_grouping_fungibility.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_container_mode.py"]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_delete_slurm_lift_and_sentinels.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_dem_resolution_kernel.py"]
+
+[tool.ty.overrides.rules]
+unsupported-operator = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_du_sentinel_consumers.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_du_sentinel_mtime_preservation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_eda_notebook.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_eda_plotting.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_eda_sensitivity_renderers.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_event_window_contract.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_forcing_extent_derivation.py"]
+
+[tool.ty.overrides.rules]
+unsupported-operator = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_metadata_renderer.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_reclaim_capture_and_arms.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_remove_after_processing.py"]
+
+[tool.ty.overrides.rules]
+missing-argument = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_resume_schedule.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_sensitivity_csv_row_rerun.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_timeseries_consolidation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+no-matching-overload = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_system_compile_flag_abstention.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_validation.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_version_migration_V0022_direction.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_version_migration_primitives.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_version_provenance_stamp.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_wipe_guard.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_workflow_retry_policy.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_workflow_snakefile_byte_identity.py"]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/utils_for_testing.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+# === END GENERATED ty overrides -- nothing may be added below this line ===

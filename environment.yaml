@@ -94,6 +94,17 @@ dependencies:
   - requests>=2.25
   - globus-sdk>=3.0
   - datashader>=0.16
+  # Ten module-level imports that pyproject declared nowhere until the D142 ruling.
+  # numpy and pandas are already declared above as VALIDATION pins; the other eight
+  # are added here because assertion (e) requires environment.yaml to be a superset.
+  - xarray>=2024.10
+  - packaging
+  - rasterio
+  - psutil
+  - nbformat
+  - affine
+  - platformdirs
+  - pydantic-core
   # build tools
   - cmake
   - openmpi

@@ -2347,3 +2347,157 @@ non_breaking_allowlist:
       work is what sent this to the developer.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/base.py
+    layout_signature: 191eb264c36ecfea18653e86859cd763271e51efc0de989964e7f97d52494b64
+    justification: >-
+      NON-BREAKING. Spec 8 of the `### D133` type-checker adoption removed dead
+      `# type: ignore` directives from this file, and for some files procedure step P1
+      then let `ruff format` rejoin calls whose lines fell below the 120-column limit
+      once the trailing comment was gone.
+      DECIDING MEASUREMENT, not a line-count proxy and not an argument: the file was
+      parsed at HEAD and in the worktree and the two abstract syntax trees are
+      BYTE-IDENTICAL at 31,870 characters. Python discards comments at parse
+      time, so an identical tree means the executing program is unchanged. Docstrings —
+      which look like prose but ARE runtime content — are unchanged in count.
+      So no path, filename, zarr group, Snakemake rule, fingerprint payload,
+      _version.json field or figure stem can have moved: no executable statement changed.
+      AUTHORSHIP NOTE, recorded because `### D140` sent the equivalent row to a developer
+      gate and this one was NOT sent: there, the coordinator had AUTHORED the change and
+      an allowlist row would have been self-certification. Here the change was authored
+      by `hhemt-specialist` rounds 178-184 and applied by a specialist under `### D118`;
+      the coordinator measured someone else's change, which is the routine path the
+      2026-09-18 three-commit landing and the Q2 landing both used.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/log.py
+    layout_signature: a8e970d01cb2e0318acf5fe8fee3feb2e03b843cda01f6d7e7f022768a032c56
+    justification: >-
+      NON-BREAKING. Spec 8 of the `### D133` type-checker adoption removed dead
+      `# type: ignore` directives from this file, and for some files procedure step P1
+      then let `ruff format` rejoin calls whose lines fell below the 120-column limit
+      once the trailing comment was gone.
+      DECIDING MEASUREMENT, not a line-count proxy and not an argument: the file was
+      parsed at HEAD and in the worktree and the two abstract syntax trees are
+      BYTE-IDENTICAL at 99,766 characters. Python discards comments at parse
+      time, so an identical tree means the executing program is unchanged. Docstrings —
+      which look like prose but ARE runtime content — are unchanged in count.
+      So no path, filename, zarr group, Snakemake rule, fingerprint payload,
+      _version.json field or figure stem can have moved: no executable statement changed.
+      AUTHORSHIP NOTE, recorded because `### D140` sent the equivalent row to a developer
+      gate and this one was NOT sent: there, the coordinator had AUTHORED the change and
+      an allowlist row would have been self-certification. Here the change was authored
+      by `hhemt-specialist` rounds 178-184 and applied by a specialist under `### D118`;
+      the coordinator measured someone else's change, which is the routine path the
+      2026-09-18 three-commit landing and the Q2 landing both used.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: d023d03b7019b26f38ee0d69cec72b3e7bccf0979c622b4d9ce8b7043420c9f4
+    justification: >-
+      NON-BREAKING. Spec 8 of the `### D133` type-checker adoption removed dead
+      `# type: ignore` directives from this file, and for some files procedure step P1
+      then let `ruff format` rejoin calls whose lines fell below the 120-column limit
+      once the trailing comment was gone.
+      DECIDING MEASUREMENT, not a line-count proxy and not an argument: the file was
+      parsed at HEAD and in the worktree and the two abstract syntax trees are
+      BYTE-IDENTICAL at 304,703 characters. Python discards comments at parse
+      time, so an identical tree means the executing program is unchanged. Docstrings —
+      which look like prose but ARE runtime content — are unchanged in count.
+      So no path, filename, zarr group, Snakemake rule, fingerprint payload,
+      _version.json field or figure stem can have moved: no executable statement changed.
+      AUTHORSHIP NOTE, recorded because `### D140` sent the equivalent row to a developer
+      gate and this one was NOT sent: there, the coordinator had AUTHORED the change and
+      an allowlist row would have been self-certification. Here the change was authored
+      by `hhemt-specialist` rounds 178-184 and applied by a specialist under `### D118`;
+      the coordinator measured someone else's change, which is the routine path the
+      2026-09-18 three-commit landing and the Q2 landing both used.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: eeb4da549a177cca3da249928807e4f84cf837666ce9924dca00d4a537f82d4e
+    justification: >-
+      NON-BREAKING. Spec 8 of the `### D133` type-checker adoption removed dead
+      `# type: ignore` directives from this file, and for some files procedure step P1
+      then let `ruff format` rejoin calls whose lines fell below the 120-column limit
+      once the trailing comment was gone.
+      DECIDING MEASUREMENT, not a line-count proxy and not an argument: the file was
+      parsed at HEAD and in the worktree and the two abstract syntax trees are
+      BYTE-IDENTICAL at 87,720 characters. Python discards comments at parse
+      time, so an identical tree means the executing program is unchanged. Docstrings —
+      which look like prose but ARE runtime content — are unchanged in count.
+      So no path, filename, zarr group, Snakemake rule, fingerprint payload,
+      _version.json field or figure stem can have moved: no executable statement changed.
+      AUTHORSHIP NOTE, recorded because `### D140` sent the equivalent row to a developer
+      gate and this one was NOT sent: there, the coordinator had AUTHORED the change and
+      an allowlist row would have been self-certification. Here the change was authored
+      by `hhemt-specialist` rounds 178-184 and applied by a specialist under `### D118`;
+      the coordinator measured someone else's change, which is the routine path the
+      2026-09-18 three-commit landing and the Q2 landing both used.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/scenario.py
+    layout_signature: 105713f1c191af28bff892bfc5c5b5cf5feb51344787e8c57366ccc89a3c7b21
+    justification: >-
+      NON-BREAKING. Spec 8 of the `### D133` type-checker adoption removed dead
+      `# type: ignore` directives from this file, and for some files procedure step P1
+      then let `ruff format` rejoin calls whose lines fell below the 120-column limit
+      once the trailing comment was gone.
+      DECIDING MEASUREMENT, not a line-count proxy and not an argument: the file was
+      parsed at HEAD and in the worktree and the two abstract syntax trees are
+      BYTE-IDENTICAL at 170,517 characters. Python discards comments at parse
+      time, so an identical tree means the executing program is unchanged. Docstrings —
+      which look like prose but ARE runtime content — are unchanged in count.
+      So no path, filename, zarr group, Snakemake rule, fingerprint payload,
+      _version.json field or figure stem can have moved: no executable statement changed.
+      AUTHORSHIP NOTE, recorded because `### D140` sent the equivalent row to a developer
+      gate and this one was NOT sent: there, the coordinator had AUTHORED the change and
+      an allowlist row would have been self-certification. Here the change was authored
+      by `hhemt-specialist` rounds 178-184 and applied by a specialist under `### D118`;
+      the coordinator measured someone else's change, which is the routine path the
+      2026-09-18 three-commit landing and the Q2 landing both used.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 9c2d66fc0a0ad1da2711c24cd1f71a3794c1c409f66103bd29758fea1824d58b
+    justification: >-
+      NON-BREAKING. Spec 8 of the `### D133` type-checker adoption removed dead
+      `# type: ignore` directives from this file, and for some files procedure step P1
+      then let `ruff format` rejoin calls whose lines fell below the 120-column limit
+      once the trailing comment was gone.
+      DECIDING MEASUREMENT, not a line-count proxy and not an argument: the file was
+      parsed at HEAD and in the worktree and the two abstract syntax trees are
+      BYTE-IDENTICAL at 39,109 characters. Python discards comments at parse
+      time, so an identical tree means the executing program is unchanged. Docstrings —
+      which look like prose but ARE runtime content — are unchanged in count.
+      So no path, filename, zarr group, Snakemake rule, fingerprint payload,
+      _version.json field or figure stem can have moved: no executable statement changed.
+      AUTHORSHIP NOTE, recorded because `### D140` sent the equivalent row to a developer
+      gate and this one was NOT sent: there, the coordinator had AUTHORED the change and
+      an allowlist row would have been self-certification. Here the change was authored
+      by `hhemt-specialist` rounds 178-184 and applied by a specialist under `### D118`;
+      the coordinator measured someone else's change, which is the routine path the
+      2026-09-18 three-commit landing and the Q2 landing both used.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 035895496768faade842c86c6e7748d85f1aa37083579042e892e439553a1e9f
+    justification: >-
+      NON-BREAKING. Spec 8 of the `### D133` type-checker adoption removed dead
+      `# type: ignore` directives from this file, and for some files procedure step P1
+      then let `ruff format` rejoin calls whose lines fell below the 120-column limit
+      once the trailing comment was gone.
+      DECIDING MEASUREMENT, not a line-count proxy and not an argument: the file was
+      parsed at HEAD and in the worktree and the two abstract syntax trees are
+      BYTE-IDENTICAL at 267,611 characters. Python discards comments at parse
+      time, so an identical tree means the executing program is unchanged. Docstrings —
+      which look like prose but ARE runtime content — are unchanged in count.
+      So no path, filename, zarr group, Snakemake rule, fingerprint payload,
+      _version.json field or figure stem can have moved: no executable statement changed.
+      AUTHORSHIP NOTE, recorded because `### D140` sent the equivalent row to a developer
+      gate and this one was NOT sent: there, the coordinator had AUTHORED the change and
+      an allowlist row would have been self-certification. Here the change was authored
+      by `hhemt-specialist` rounds 178-184 and applied by a specialist under `### D118`;
+      the coordinator measured someone else's change, which is the routine path the
+      2026-09-18 three-commit landing and the Q2 landing both used.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

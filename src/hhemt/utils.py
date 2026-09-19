@@ -1041,56 +1041,56 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
         # Machine name
         match = re.search(r"Machine\s*:\s*(.+)", content)
         if match:
-            result["machine"] = match.group(1).strip()  # type: ignore
+            result["machine"] = match.group(1).strip()
 
         # CPU model
         match = re.search(r"^CPU\s*:\s*(.+)$", content, re.M)
         if match:
-            result["cpu"] = match.group(1).strip()  # type: ignore
+            result["cpu"] = match.group(1).strip()
 
         match = re.search(r"^GPU\s*:\s*(.+)$", content, re.M)
         if match:
-            result["gpu"] = match.group(1).strip()  # type: ignore
+            result["gpu"] = match.group(1).strip()
 
         # nTasks
         match = re.search(r"nTasks\s*:\s*(\d+)", content)
         if match:
-            result["nTasks"] = int(match.group(1))  # type: ignore
+            result["nTasks"] = int(match.group(1))
 
         # OMP threads per task
         match = re.search(r"OMP threads per task\s*:\s*(\d+)", content)
         if match:
-            result["omp_threads_per_task"] = int(match.group(1))  # type: ignore
+            result["omp_threads_per_task"] = int(match.group(1))
 
         # GPUs per task (handle "0 (CPU-only)" case)
         match = re.search(r"GPUs per task\s*:\s*(\d+)", content)
         if match:
-            result["gpus_per_task"] = int(match.group(1))  # type: ignore
+            result["gpus_per_task"] = int(match.group(1))
 
         # GPU backend
         match = re.search(r"GPU backend\s*:\s*(\S+)", content)
         if match:
-            result["gpu_backend"] = match.group(1).strip()  # type: ignore
+            result["gpu_backend"] = match.group(1).strip()
 
         # Total GPUs
         match = re.search(r"Total GPUs\s*:\s*(\d+)", content)
         if match:
-            result["total_gpus"] = int(match.group(1))  # type: ignore
+            result["total_gpus"] = int(match.group(1))
 
         # TRITON git version
         match = re.search(r"TRITON_GIT_VERSION\s*:\s*(.+)", content)
         if match:
-            result["triton_git_version"] = match.group(1).strip()  # type: ignore
+            result["triton_git_version"] = match.group(1).strip()
 
         # Build type
         match = re.search(r"Build type\s*:\s*(.+)", content)
         if match:
-            result["build_type"] = match.group(1).strip()  # type: ignore
+            result["build_type"] = match.group(1).strip()
 
         # Wall time
         match = re.search(r"TRITON total wall time \[s\]\s*:\s*([\d.]+)", content)
         if match:
-            result["wall_time_s"] = float(match.group(1))  # type: ignore
+            result["wall_time_s"] = float(match.group(1))
 
         return result
 
@@ -1141,7 +1141,7 @@ def return_dic_zarr_encodings(
     )
 
     # Handle data variables
-    for var in ds.data_vars:  # type: ignore
+    for var in ds.data_vars:
         dtype_kind = ds[var].dtype.kind
         if dtype_kind in {"i", "u", "f"}:  # int / unsigned int / float
             enc = {"compressors": compressor}
@@ -1166,12 +1166,12 @@ def return_dic_zarr_encodings(
         # Optionally handle other types if needed
 
     # Handle coordinate encoding
-    for coord in ds.coords:  # type: ignore
-        dtype_kind = ds[coord].dtype.kind  # type: ignore
+    for coord in ds.coords:
+        dtype_kind = ds[coord].dtype.kind
         if dtype_kind == "U":  # Unicode string coordinates
             max_len_arr = ds[coord].str.len().max()
             max_len = int(max_len_arr.compute() if hasattr(max_len_arr.data, "compute") else max_len_arr.values)
-            encoding[coord] = {"dtype": f"<U{max_len}"}  # type: ignore
+            encoding[coord] = {"dtype": f"<U{max_len}"}
 
     return encoding
 

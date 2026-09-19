@@ -726,7 +726,7 @@ class TRITONSWMM_run:
         df_cfgs["file_line_length"] = -1
         for step, cfg in df_cfgs.iloc[::-1].iterrows():
             file_as_list = read_text_file_as_list_of_strings(cfg["f_cfg"])
-            df_cfgs.loc[step, "file_line_length"] = len(file_as_list)  # type: ignore
+            df_cfgs.loc[step, "file_line_length"] = len(file_as_list)
 
         typical_length = df_cfgs["file_line_length"][df_cfgs["file_line_length"] > 0].mode().iloc[0]
         latest_complete = df_cfgs[df_cfgs["file_line_length"] == typical_length]

@@ -559,7 +559,7 @@ class TRITONSWMM_sim_post_processing:
                 raise RuntimeError(
                     f"SWMM simulation not completed. Check model log files in {self._scenario.scen_paths.logs_dir}"
                 )
-        print(f"Processing run results for scenario {scen.event_iloc}", flush=True)  # type: ignore
+        print(f"Processing run results for scenario {scen.event_iloc}", flush=True)
 
         # Performance time series processing: model_type determines which performance files to process
         # Performance files only exist for TRITON models (not SWMM-only)
@@ -595,7 +595,7 @@ class TRITONSWMM_sim_post_processing:
             print(
                 f"Processed TRITON outputs for scenario {scen.event_iloc}",
                 flush=True,
-            )  # type: ignore
+            )
         # SWMM outputs processing: model_type determines which SWMM outputs to process
         if (which == "both") or (which == "SWMM"):
             if model_type == "tritonswmm":
@@ -608,7 +608,7 @@ class TRITONSWMM_sim_post_processing:
                 print(
                     f"Processed TRITON-SWMM SWMM outputs for scenario {scen.event_iloc}",
                     flush=True,
-                )  # type: ignore
+                )
             elif model_type == "swmm":
                 self._export_SWMM_outputs(
                     model="swmm",
@@ -619,7 +619,7 @@ class TRITONSWMM_sim_post_processing:
                 print(
                     f"Processed SWMM-only outputs for scenario {scen.event_iloc}",
                     flush=True,
-                )  # type: ignore
+                )
 
         return
 
@@ -1176,7 +1176,7 @@ class TRITONSWMM_sim_post_processing:
                 print(f"{f_out_nodes.name} already written. Not overwriting.")
         else:
             elapsed_s = time.time() - start_time
-            self._write_output(ds_nodes, f_out_nodes, comp_level, verbose, mode=node_mode)  # type: ignore
+            self._write_output(ds_nodes, f_out_nodes, comp_level, verbose, mode=node_mode)
             self.log.add_sim_processing_entry(f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True)
         # WRITE LINKS
         if links_already_written:
@@ -1184,7 +1184,7 @@ class TRITONSWMM_sim_post_processing:
                 print(f"{f_out_links.name} already written. Not overwriting.")
         else:
             elapsed_s = time.time() - start_time
-            self._write_output(ds_links, f_out_links, comp_level, verbose, mode=link_mode)  # type: ignore
+            self._write_output(ds_links, f_out_links, comp_level, verbose, mode=link_mode)
             self.log.add_sim_processing_entry(
                 f_out_links,
                 get_file_size_MiB(f_out_links),
