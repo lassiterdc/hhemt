@@ -405,7 +405,25 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: fdc3d9a124ce777d2f95240c6f443035e0aba6cb700b0031fee184e8959f45f1
+    renderer_sha256: 9a275ff424a835c0a3edde4ef525870bcea95faa6d938fe99a869a0cf2dcb214
+    justification_2026_09_19: >-
+      W7 Finding C. Caption RE-READ IN FULL against the diff, which is the discharge this
+      guard asks for -- it checks PAIRING, not agreement, so the obligation is that
+      someone looked, and someone did.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than only with the conclusion: the caption describes three RENDERED OUTPUT
+      sections -- the provenance summary, data availability, and the reproduction guide --
+      and the change touches none of them. It lifts the inline tuple in
+      `_resolve_consolidated_tree` to a module constant `_DECLARED_TREE_PATH_ATTRS` with
+      IDENTICAL contents in IDENTICAL order, reads that constant instead of the literal,
+      and adds a field-contract assertion in the test suite. No rendered section, no
+      source list and no value shown on the page can move, because the resolver returns
+      the same path for the same inputs -- verified by the coordinator, P1 1->0 and
+      P2 0->1 over the same two names, with the three `test_metadata_*` nodes passing 3/3.
+      The guard nonetheless fired CORRECTLY: `metadata.py`'s sha moved, and a reader who
+      had not opened the caption could not have known the scope was disjoint.
+      Digest re-recorded after the change, so the exemption expires on the next change to
+      this renderer -- which is the property that makes these rows safe.
     justification_2026_09_07: >-
       load-mode VMS commit. Caption RE-READ IN FULL against the diff, and its scope is
       DISJOINT from the change. The change renames `_is_toolkit_owned` to

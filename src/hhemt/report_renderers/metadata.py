@@ -533,6 +533,22 @@ def _provenance_software(app: dict, src: dict) -> str:
     return "<h4>2. Software</h4>\n" + _kv_table(rows)
 
 
+#: The `AnalysisPaths` attribute names `_resolve_consolidated_tree` looks up REFLECTIVELY,
+#: in RESOLUTION PRIORITY order -- the sensitivity-master name FIRST, which is the INVERSE
+#: of their declaration order on `AnalysisPaths`. Named rather than inline so a test can
+#: import it and assert both that every entry is still a real field AND that the first
+#: entry is still the sensitivity name. That guard is not optional hygiene: `getattr(...,
+#: None)` below carries a DEFAULT, so a renamed or split field yields None, is dropped by
+#: the `is not None` filter, and the ROOT_TREE_NAMES fallback answers anyway. Measured in
+#: one configuration -- a declared path EQUAL to the analysis-dir fallback -- the renamed
+#: call returns the IDENTICAL path the healthy call returns. Where the declared path
+#: instead points at a RELOCATED store, or where nothing sits at the fallback, the renamed
+#: call returns a DIFFERENT path or None. So the failure is masked in the first case and
+#: wrong in the others, and in none of them does anything raise. It cannot be detected
+#: after the rename that arms it, so this guard has value only while added BEFORE one.
+_DECLARED_TREE_PATH_ATTRS = ("sensitivity_datatree_zarr", "analysis_datatree_zarr")
+
+
 def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis | None) -> Path | None:
     """Locate the consolidated DataTree store, by existence, HPC- and bundle-alike.
 
@@ -543,7 +559,7 @@ def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis
     """
     candidates: list[Path] = []
     paths = getattr(analysis, "analysis_paths", None) if analysis is not None else None
-    for attr in ("sensitivity_datatree_zarr", "analysis_datatree_zarr"):
+    for attr in _DECLARED_TREE_PATH_ATTRS:
         declared = getattr(paths, attr, None) if paths is not None else None
         if declared is not None:
             candidates.append(Path(declared))
