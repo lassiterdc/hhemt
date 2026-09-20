@@ -745,8 +745,12 @@ class analysis_config(cfgBaseModel):
         description="TRITON processed output type, zarr or nc.",
         json_schema_extra=field_meta(
             options={
-                "zarr": "Chunked Zarr store. Default and preferred -- supports lazy and partial reads.",
-                "nc": "One NetCDF file per scenario. Use when a downstream consumer requires NetCDF.",
+                "zarr": "Chunked Zarr store. Default and preferred -- supports lazy and partial reads, "
+                "and the only value accepted when toggle_triton_model or toggle_tritonswmm_model is on.",
+                "nc": "One NetCDF file per scenario. Supported for the per-scenario summaries and the "
+                "SWMM node/link timeseries only. REFUSED at preflight when toggle_triton_model or "
+                "toggle_tritonswmm_model is enabled, because the gridded TRITON exporter writes a zarr "
+                "store to the '.nc'-named path; temporary, pending the NetCDF follow-up.",
             }
         ),
     )

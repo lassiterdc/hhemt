@@ -283,6 +283,15 @@ class TRITONSWMM_sim_post_processing:
         TRITON-SWMM (model_type='tritonswmm') and TRITON-only (model_type='triton')
         timeseries paths. The two prior loops differed only in the model_type
         passed to latest_sim_date(); everything else was byte-identical."""
+        # BACK HALF OF A TEMPORARY-REFUSAL MARKER PAIR. This writer emits a ZARR STORE to
+        # whatever path it is handed, and the path it is handed carries the
+        # target_processed_output_type extension -- so under 'nc' it produces a zarr store
+        # named '*.nc' that the reader then opens with h5netcdf and raises on. Because of
+        # that, validation._validate_gridded_output_type refuses
+        # target_processed_output_type='nc' at preflight whenever this writer is
+        # reachable. A converting tail added at or below this function is the condition
+        # that retires that refusal: delete the helper and its preflight_validate call in
+        # the same change, and delete this comment with them.
         # Phase 1.2: Chunked processing - calculate optimal chunk size
         from hhemt.utils import estimate_timesteps_per_chunk
 

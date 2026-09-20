@@ -2501,3 +2501,43 @@ non_breaking_allowlist:
       2026-09-18 three-commit landing and the Q2 landing both used.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 77c1038da297915c3bd4baf37064a591fe91ca7f294d7d9906c843d5eafbd445
+    justification: >-
+      NON-BREAKING. Spec 4 of W2's Finding-B set added the BACK HALF of a bidirectional
+      temporary-refusal marker pair to this file, so the agent who removes the `nc` preflight
+      refusal when the NetCDF follow-up lands finds both halves rather than one.
+      DECIDING MEASUREMENT, not a line-count proxy and not an argument: the file was parsed at
+      HEAD and in the worktree and the two abstract syntax trees are BYTE-IDENTICAL at 304,703
+      characters. Python discards comments at parse time, so an identical tree means the
+      executing program is unchanged. Docstrings -- which look like prose but ARE runtime
+      content -- are identical, and the def/class count is 68 on both sides. So no path,
+      filename, zarr group, Snakemake rule, fingerprint payload, _version.json field or figure
+      stem can have moved: no executable statement changed.
+      AUTHORSHIP NOTE, on the distinction this repo already drew: `### D140` sent an equivalent
+      row to a developer gate because the coordinator had AUTHORED that change and the row would
+      have been self-certification. Here the change was authored by `hhemt-specialist` round 191
+      and applied by a specialist under `### D118`; the coordinator measured someone else's
+      change, which is the routine path.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 9959a1e6b572b02c07ab3919f258e00f98d1c7c1162b1cae258b45077dbfcecf
+    justification: >-
+      NON-BREAKING. Spec 3 of W2's Finding-B set rewrote the `options` description strings for
+      `target_processed_output_type` inside `json_schema_extra`, so the published glossary stops
+      advertising `nc` for the gridded TRITON timeseries and says it is REFUSED at preflight,
+      pending the NetCDF follow-up.
+      DECIDING MEASUREMENT, and it is structural rather than textual: the module was parsed at
+      HEAD and in the worktree and every annotated class-level field is IDENTICAL in name, order
+      and annotation -- 77 fields on both sides -- with both class names and their order
+      unchanged. Separately, all 8 changed lines carry a string literal and ZERO changed lines
+      are free of one, so nothing outside a description string moved. A field's DESCRIPTION is
+      not part of the on-disk layout: no field was added, removed, renamed, retyped, reordered,
+      or made required or optional, so no config key, path, filename or persisted structure can
+      have moved.
+      AUTHORSHIP NOTE: as above -- authored by `hhemt-specialist` round 191, applied by a
+      specialist under `### D118`, measured by the coordinator, which is the routine path and
+      not the self-certification `### D140` refused.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
