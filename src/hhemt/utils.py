@@ -36,6 +36,17 @@ ROOT_TREE_NAMES = (
     "analysis_datatree.zarr",
 )
 EXPERIMENT_TREE_NAME = ROOT_TREE_NAMES[0]
+#: The REGULAR arm's producer-written name. `analysis.py` binds it unconditionally, so a
+#: regular analysis re-creates it on every consolidation whose skip gate does not hold --
+#: `fname_out.exists()` is a conjunct of that gate, so an absent path forces a rebuild.
+#: THE CONSEQUENCE IS A KNOWN EXPIRY AND IT BELONGS HERE RATHER THAN IN A PLAN: the V0023
+#: migration resolves a two-store tree ONCE, and the next consolidation re-creates this
+#: name beside the unified one, restoring the state the migration just repaired. Only the
+#: arm-aware PRODUCER binding in `analysis.py` ends that cycle, and that change is HANDED
+#: OVER to the workstream owning that file -- it is deliberately not made here. Until it
+#: lands, the resolution below is what keeps the returned store correct, and the warning
+#: is what tells an operator the migration is available to them.
+REGULAR_TREE_NAME = ROOT_TREE_NAMES[2]
 
 
 def resolve_experiment_tree(root: str | Path) -> Path:
@@ -47,6 +58,32 @@ def resolve_experiment_tree(root: str | Path) -> Path:
     its `.exists()` shape and reports against the canonical name instead of a retired one.
     """
     root = Path(root)
+    present = [n for n in ROOT_TREE_NAMES if (root / n).exists()]
+    if present == [EXPERIMENT_TREE_NAME, REGULAR_TREE_NAME]:
+        # THE REGULAR TWO-STORE STATE. V0021 renamed this analysis's store to the unified
+        # name and CONSUMED the retired path; anything now at the retired path was written
+        # AFTER that, by the producer. So the unified name here is the migration-time
+        # snapshot and the retired name is current -- the opposite of the priority order
+        # above, which is correct for every other subset. Returning the producer-written
+        # store is the better of two contract violations, not a satisfaction of the
+        # contract: neither store satisfies "the experiment-level aggregate", because the
+        # migrated one is experiment-shaped and stale while this one is current and FLAT.
+        # That is why the warning is required rather than optional -- the return value
+        # cannot say "no store here is what you asked for", and the warning is also the
+        # only thing that tells an operator the repairing migration exists.
+        #
+        # Deduplication is FREE and deliberately not coded: the default warning filter
+        # keys on the message text, and `root` is interpolated, so one process warns once
+        # per distinct tree however many of this function's callers run.
+        warnings.warn(
+            f"{root} carries both {EXPERIMENT_TREE_NAME} and {REGULAR_TREE_NAME}. "
+            f"Neither is the experiment-level aggregate this resolver promises: the "
+            f"former is the migration-time snapshot, the latter is current but flat. "
+            f"Returning the current one. Run the layout migration to resolve the tree.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return root / REGULAR_TREE_NAME
     for name in ROOT_TREE_NAMES:
         cand = root / name
         if cand.exists():
