@@ -40,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def validate_resource_usage(analysis, logger=None):
+def validate_resource_usage(analysis, logger=None, *, df_status=None):
     """
     Validate that actual resource usage matches expected configuration.
 
@@ -71,7 +71,8 @@ def validate_resource_usage(analysis, logger=None):
     else:
         print("Validating actual vs expected resource usage...")
 
-    df_status = analysis.df_status
+    if df_status is None:
+        df_status = analysis.df_status
 
     # Skip validation if no log.out files were found (all actual values are None)
     if df_status["actual_nTasks"].isna().all():
@@ -512,8 +513,22 @@ def main() -> int:
             logger.info("All simulations completed successfully")
 
         # Validate resource usage (skipped for member)
+        # ONE snapshot, built here and threaded to both consumers. It is built INSIDE
+        # this branch rather than above it so the member path -- which skips resource
+        # validation -- gains no build it did not already have; on that path the value
+        # stays None and the assembly resolves its own, exactly as before.
+        #
+        # The log line below is LOAD-BEARING, not decoration. validate_resource_usage
+        # logs its own phase banner and THEN builds, so moving the build to this caller
+        # would otherwise collapse the only timed phase this rule has ever had to ~0 and
+        # bury the walk in an unlogged gap -- in the change that exists to make the rule
+        # finish. Bounding the build here keeps it measurable and in fact separates it
+        # from the comparison loop, which the single banner never did.
+        _df_status = None
         if not analysis.cfg_analysis.is_experiment_member:
-            validate_resource_usage(analysis, logger)
+            logger.info("Building analysis status table (whole-population walk)...")
+            _df_status = analysis.df_status
+            validate_resource_usage(analysis, logger, df_status=_df_status)
 
         # Check if all timeseries were processed. The all_*_timeseries_processed log fields are computed
         # over the full sensitivity definition just like all_sims_run, so under --allow-incomplete the
@@ -652,6 +667,7 @@ def main() -> int:
                 analysis.process.consolidate_to_datatree(
                     verbose=True,
                     compression_level=args.compression_level,
+                    df_status=_df_status,
                 )
                 logger.info("DataTree consolidation completed successfully")
                 # D6 — when this is a per-member consolidate (--member-id is passed
@@ -693,21 +709,15 @@ def main() -> int:
                 return 1
 
         logger.info("Consolidation workflow completed successfully")
-        # Option D (Class-Y resolution, renderer_io_provenance_audit): persist the
-        # whole-tree ValidationReport as a single read-model artifact
-        # ({analysis_dir}/validation_report.json) so errors_and_warnings.render() (and
-        # the bundle re-render) reads ONE file instead of re-inspecting the tree at
-        # render time. Runs at every analysis-level consolidation (sensitivity-master,
-        # regular, and per-member); the per-scenario --event-id path returned early above,
-        # so no scenario-level report is written. Non-fatal: a persist failure must
-        # never block an otherwise-successful consolidation.
-        try:
-            from hhemt.analysis_validation import persist_validation_report
-
-            persist_validation_report(analysis)
-            logger.info("Persisted validation_report.json read-model artifact")
-        except Exception as e:
-            logger.warning(f"validation_report.json persist failed (non-fatal): {e}")
+        # The whole-tree ValidationReport read-model ({analysis_dir}/validation_report.json)
+        # is NOT persisted here. It was, and the artifact that produced was KNOWN-WRONG at
+        # the moment it was written: `check_scenario_status_csv` looks for
+        # scenario_status.csv, which `rule export_scenario_status` has not yet produced, so
+        # the report baked a false "missing" failure on every fresh run -- which is why that
+        # rule re-persists, and says so at its own call site. That rule DECLARES the artifact
+        # as an output and is the only reader's producer, so writing it here bought four
+        # uncached whole-population df_status builds inside a walltime-capped rule for a file
+        # nothing read before it was overwritten.
         _emit_runner_flag(args)
         return 0
 

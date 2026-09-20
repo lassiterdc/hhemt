@@ -454,6 +454,25 @@ class analysis_config(cfgBaseModel):
             "knob (those are in-runner byte/count budgets, not SLURM allocations)."
         ),
     )
+
+    hpc_runtime_min_for_analysis_output_consolidation: int = Field(
+        default=30,
+        gt=0,
+        description=(
+            "Time allocation (in minutes) for the analysis-level `consolidate` SLURM "
+            "rule — the one whose MEMORY is set by "
+            "hpc_mem_allocation_for_analysis_output_consolidation_mb. Default 30 "
+            "reproduces the value that rule carried as a hardcoded literal, so an "
+            "analysis config that omits this field is unchanged. Raise it when the "
+            "consolidation fan-in is large: the rule's cost is dominated by "
+            "whole-population walks whose length scales with the number of "
+            "scenarios, not by the size of any one of them, which is why this is a "
+            "plain number rather than a value derived from the memory allocation. "
+            "NOT hpc_runtime_min_for_setup (a DIFFERENT rule — DEM processing and "
+            "compilation) and NOT hpc_runtime_min_for_sim_output_processing (the "
+            "per-scenario processing rule)."
+        ),
+    )
     hpc_max_wait_for_inflight_min: int = Field(
         10080,
         ge=60,

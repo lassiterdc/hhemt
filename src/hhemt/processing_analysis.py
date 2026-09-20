@@ -192,6 +192,8 @@ class TRITONSWMM_analysis_post_processing:
         self,
         compression_level: int = 5,
         verbose: bool = False,
+        *,
+        df_status=None,
     ) -> Path:
         """Assemble per-scenario summaries directly into a hierarchical DataTree zarr.
 
@@ -329,7 +331,7 @@ class TRITONSWMM_analysis_post_processing:
         apply_producing_stamp(tree, _sha_vals, _semver_vals)
 
         _stamp_triton_provenance(tree, self._analysis)
-        _stamp_coupled_resume_evidence(tree, self._analysis)
+        _stamp_coupled_resume_evidence(tree, self._analysis, df_status=df_status)
 
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
 
@@ -760,7 +762,7 @@ def _parse_replay_t(text: str, marker: str) -> "float | None":
         return None
 
 
-def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
+def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis, *, df_status=None) -> None:
     """Stamp per-sub coupled-resume replay evidence onto the consolidated ROOT.
 
     Captured at CONSOLIDATION time (logs still live, pre-R7-purge) as a PLAIN root attr
@@ -784,7 +786,7 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
     try:
         import pandas as pd
 
-        df = getattr(analysis, "df_status", None)
+        df = df_status if df_status is not None else getattr(analysis, "df_status", None)
         if df is None or not {"model_type", "n_resumes", "event_iloc"}.issubset(getattr(df, "columns", [])):
             return
         n_res = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)

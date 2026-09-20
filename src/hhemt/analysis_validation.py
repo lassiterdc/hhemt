@@ -409,12 +409,12 @@ def check_scenario_status_csv(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-def check_resource_usage(analysis: TRITONSWMM_analysis) -> CheckResult:
+def check_resource_usage(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
     """Resource: actual MPI/OMP/GPU/backend match intended config per scenario."""
     from hhemt.consolidate_workflow import validate_resource_usage
 
     try:
-        passed, issues = validate_resource_usage(analysis, logger=None)
+        passed, issues = validate_resource_usage(analysis, logger=None, df_status=df_status)
     except Exception as e:
         return CheckResult(
             name="Resource usage matches config",
@@ -848,7 +848,7 @@ def check_provenance_completeness(analysis) -> CheckResult:
     )
 
 
-def check_known_resume_defects(analysis: TRITONSWMM_analysis) -> CheckResult:
+def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
     """Registry-verdict counterpart to ``check_coupled_resume_validity``.
 
     SEPARATE from that check deliberately, and the separation is measured rather than
@@ -876,10 +876,13 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis) -> CheckResult:
     from hhemt.model_defects import REGISTRY, resolve
 
     _name = "Known resume defects"
-    try:
-        df = analysis.df_status
-    except Exception:
-        df = None
+    if df_status is not None:
+        df = df_status
+    else:
+        try:
+            df = analysis.df_status
+        except Exception:
+            df = None
     if df is None or not {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
         return CheckResult(
             name=_name,
@@ -938,7 +941,7 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
+def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
     """Warn when a COMPLETED coupled analysis's resumed data is invalid.
 
     Two independent invalidity paths, both keyed on a coupled model that resumed:
@@ -1001,10 +1004,16 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     # `_any_resumed` is the SELECTION half of the version x selection cross, so the record
     # has to be loaded before the predicate rather than after it. Moved, never duplicated:
     # a second `analysis.df_status` read would be a second chance to disagree with the first.
-    try:
-        df = analysis.df_status
-    except Exception:
-        df = None
+    # The same reasoning now reaches ACROSS checks: `validate_analysis` resolves ONE
+    # snapshot and hands it to every check that needs it, so the four checks that used
+    # to read the property independently cannot disagree with each other either.
+    if df_status is not None:
+        df = df_status
+    else:
+        try:
+            df = analysis.df_status
+        except Exception:
+            df = None
     if df is None or not {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
         # [Q130], second application. This branch previously returned passed=True with no
         # applicable flag -- a PASS asserting "no invalidity found" from a record it could
@@ -1433,7 +1442,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-def check_resume_schedule_honored(analysis: TRITONSWMM_analysis) -> CheckResult:
+def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
     """Warn when a resumed sim's REALIZED resume did not honor the CONFIGURED schedule.
 
     DISJOINT from ``check_coupled_resume_validity`` (which tests whether the coupled
@@ -1521,10 +1530,13 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis) -> CheckResult:
 
     # --- Arm B: PURE-TRITON — n_resumes == len(schedule) (arm asymmetry: no replay_t) ---
     if triton_on:
-        try:
-            df = analysis.df_status
-        except Exception:
-            df = None
+        if df_status is not None:
+            df = df_status
+        else:
+            try:
+                df = analysis.df_status
+            except Exception:
+                df = None
         if df is not None and {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
             n_res = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
             triton_resumed = df[(df["model_type"] == "triton") & (n_res >= 1)]
@@ -2100,7 +2112,7 @@ def check_log_recoveries(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
+def validate_analysis(analysis: TRITONSWMM_analysis, *, df_status=None) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
     Order matches the existing `assert_analysis_workflow_completed_successfully`
@@ -2108,7 +2120,20 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
 
     Persisted EDA verdicts (``{analysis_dir}/eda/*.verdict.json``, ADR-9) are
     appended after the core checks so the renderer surfaces them by ``level``.
+
+    ``df_status`` is an OPTIONAL pre-built status table. It is not a cache: it is
+    resolved once here and handed to the four checks that each used to rebuild it,
+    so one invocation performs one build instead of four. Omitting it reproduces
+    the previous behaviour exactly for every caller, because the resolve below is
+    the same property read those checks performed individually. A single snapshot
+    is also the CONSISTENT reading -- four independent reads of one unchanging tree
+    can only ever agree or disagree, and agreement is what the checks assume.
     """
+    if df_status is None:
+        try:
+            df_status = analysis.df_status
+        except Exception:
+            df_status = None
     return ValidationReport(
         checks=[
             check_system_setup(analysis),
@@ -2117,11 +2142,17 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_timeseries_processed(analysis),
             check_analysis_summaries_created(analysis),
             check_scenario_status_csv(analysis),
-            check_resource_usage(analysis),
+            check_resource_usage(analysis, df_status=df_status),
             check_invalidating_fixes(analysis),  # ADR-17 registry surface
-            check_coupled_resume_validity(analysis),  # post-fix retroactive coupled-resume invalidity warning
-            check_known_resume_defects(analysis),  # registry-verdict counterpart (build-level, no log evidence)
-            check_resume_schedule_honored(analysis),  # Phase 5: replay_t / n_resumes vs configured schedule
+            check_coupled_resume_validity(
+                analysis, df_status=df_status
+            ),  # post-fix retroactive coupled-resume invalidity warning
+            check_known_resume_defects(
+                analysis, df_status=df_status
+            ),  # registry-verdict counterpart (build-level, no log evidence)
+            check_resume_schedule_honored(
+                analysis, df_status=df_status
+            ),  # Phase 5: replay_t / n_resumes vs configured schedule
             check_eda_calc_ran(analysis),  # F4: enumerated EDA figures vs present eda/*.verdict.json
             check_data_availability(analysis),  # reclaim disclosure: which artifact classes were reclaimed
             check_forcing_tail_influence(analysis),  # regression detector: maxima set after the forcing ended
@@ -2162,7 +2193,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
 _VALIDATION_REPORT_FILENAME = "validation_report.json"
 
 
-def persist_validation_report(analysis: TRITONSWMM_analysis) -> Path:
+def persist_validation_report(analysis: TRITONSWMM_analysis, *, df_status=None) -> Path:
     """Run validate_analysis and persist it to {analysis_dir}/validation_report.json.
 
     Called once at consolidation. Overwrites on each consolidate (idempotent, like
@@ -2175,7 +2206,7 @@ def persist_validation_report(analysis: TRITONSWMM_analysis) -> Path:
     from dataclasses import asdict
 
     analysis_dir = Path(analysis.analysis_paths.analysis_dir)
-    report = validate_analysis(analysis)
+    report = validate_analysis(analysis, df_status=df_status)
     out = analysis_dir / _VALIDATION_REPORT_FILENAME
     payload = {"checks": [asdict(c) for c in report.checks]}
     tmp = out.with_suffix(".json.tmp")

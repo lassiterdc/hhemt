@@ -315,7 +315,7 @@ def write_workflow_summary_md(analysis) -> Path:
     return summary_path
 
 
-def export_scenario_status_to_csv(analysis, output_path: Path | None = None) -> Path:
+def export_scenario_status_to_csv(analysis, output_path: Path | None = None, *, df_status=None) -> Path:
     """
     Export the scenario status DataFrame to a CSV file.
 
@@ -347,7 +347,8 @@ def export_scenario_status_to_csv(analysis, output_path: Path | None = None) -> 
     # Ensure parent directory exists
     output_path_final.parent.mkdir(parents=True, exist_ok=True)
 
-    df_status = analysis.df_status
+    if df_status is None:
+        df_status = analysis.df_status
 
     # Write to CSV
     df_status.to_csv(output_path_final, index=False)
@@ -429,7 +430,11 @@ def main():
         if args.verbose:
             print("Exporting scenario status...", flush=True)
 
-        csv_path = export_scenario_status_to_csv(analysis, args.output_path)
+        # ONE snapshot for the whole rule: the CSV write and the validation-report
+        # persist below both consume it, so this rule performs one whole-population
+        # build rather than one per consumer.
+        _df_status = analysis.df_status
+        csv_path = export_scenario_status_to_csv(analysis, args.output_path, df_status=_df_status)
         logger.info(f"Scenario status exported to: {csv_path}")
 
         # F3: re-persist validation_report.json now that scenario_status.csv exists, so the
@@ -441,7 +446,7 @@ def main():
         try:
             from hhemt.analysis_validation import persist_validation_report
 
-            persist_validation_report(analysis)
+            persist_validation_report(analysis, df_status=_df_status)
             logger.info("Re-persisted validation_report.json (post-CSV) so the CSV-created check passes")
         except Exception:
             # Traceback, not a one-line repr: this rule DECLARES validation_report.json as an
@@ -522,34 +527,6 @@ def main():
             print("Writing workflow summary...", flush=True)
 
         write_workflow_summary_md(analysis)
-
-        # Re-persist validation_report.json now that scenario_status.csv EXISTS.
-        # consolidate_workflow.py also persists it, but that call runs at
-        # consolidation and this rule takes `_status/e_consolidate_complete.flag`
-        # as input — so the consolidation-time report is written STRICTLY BEFORE
-        # the CSV and its `scenario_status.csv created` check reports "missing"
-        # on every fresh run by construction, while the file demonstrably exists
-        # (Rivanna run 17102207: report 17:52, CSV 17:53). That is a false
-        # negative in a machine-readable artifact whose whole purpose is to be
-        # trusted without re-inspecting the tree.
-        #
-        # This re-persist is ordering-correct rather than merely later: the plot
-        # rules declare scenario_status.csv as input, so they run after THIS rule,
-        # which keeps the refreshed report ahead of every renderer that consumes
-        # it (Gotcha 53 / Option D: errors_and_warnings reads the persisted
-        # read-model, never re-inspecting the tree at render time).
-        #
-        # Non-fatal, matching the consolidate-side call: a persist failure must
-        # never block an otherwise-successful status export.
-        try:
-            from hhemt.analysis_validation import persist_validation_report
-
-            persist_validation_report(analysis)
-            logger.info("Re-persisted validation_report.json (post-CSV, ordering-correct)")
-        except Exception:
-            # See the sibling handler above: the enclosing rule declares this artifact, so the
-            # traceback is the only thing the swallow was still costing.
-            logger.exception("validation_report.json re-persist failed (rule will fail on the declared output)")
 
         logger.info("Status export completed successfully")
         if args.verbose:

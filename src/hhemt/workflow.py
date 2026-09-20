@@ -3211,7 +3211,7 @@ rule consolidate_scenario:
         # Consolidation resources
         consolidate_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-            runtime_min=30,
+            runtime_min=self.cfg_analysis.hpc_runtime_min_for_analysis_output_consolidation,
             mem_mb=self.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
             nodes=1,
             tasks=1,
@@ -9377,7 +9377,7 @@ onerror:
 {
             self._base_builder._build_resource_block(
                 partition=self.experiment.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=30,
+                runtime_min=analysis.cfg_analysis.hpc_runtime_min_for_analysis_output_consolidation,
                 mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
                 nodes=1,
                 tasks=1,
@@ -9998,7 +9998,7 @@ onerror:
 {
             self._base_builder._build_resource_block(
                 partition=self.experiment.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=30,
+                runtime_min=self.experiment.cfg_analysis.hpc_runtime_min_for_analysis_output_consolidation,
                 mem_mb=self.experiment.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
                 nodes=1,
                 tasks=1,

@@ -1231,9 +1231,9 @@ class TRITONSWMM_analysis:
         # ADR-14: HTML is a best-effort nbconvert export of the notebook (the source
         # of truth); a kernel/exec failure degrades to None, never fails the loop.
         report_path = export_eda_html(notebook_path, root=root)
-        # The persisted validation read-model (validation_report.json) is written at
-        # CONSOLIDATION and again by export_scenario_status — both strictly BEFORE any
-        # eda() invocation — so check_eda_calc_ran is baked as a FAILURE on every master
+        # The persisted validation read-model (validation_report.json) is written by
+        # export_scenario_status, strictly BEFORE any eda() invocation — so
+        # check_eda_calc_ran is baked as a FAILURE on every master
         # whose reporting set enumerates EDA figures. Re-persist here, symmetric with the
         # v9/F3 export_scenario_status re-persist that exists for the same reason
         # (scenario_status.csv did not exist at consolidation time). Non-fatal: a persist

@@ -1904,3 +1904,59 @@ non_breaking_allowlist:
       of read-modify-write cycles per method changes. No file, path, schema or log-field
       change.
       EXPIRY CONDITION: covers the decorator application only.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 2ea7e7071185cc9493dbede08eea7840bb1ca78e4b23aa485ac1964708eb62e3
+    justification: >-
+      NON-BREAKING. M19 gate 3 (S16) adds ONE field, hpc_runtime_min_for_analysis_output_consolidation
+      (int, gt=0, default=30), retiring the hardcoded `runtime_min=30` literal the analysis-level
+      consolidate rule carried at three emission sites in workflow.py. Same class as the
+      process_in_sim_rule row (8d3bd0d3) and the weather_event_label_column row above it.
+      INPUT-config schema only, and the default is what makes it non-breaking: 30 is exactly the
+      literal it replaces, so a config that omits the field emits a byte-identical Snakefile. No
+      field is removed, renamed, retyped or given a new default. Nothing on the analysis tree
+      changes -- no _version.json field, no figure stem, no zarr group, variable, dtype, attr or
+      chunk, no log field, no _status flag name. The consolidation reuse fingerprint is not
+      perturbed either: _consolidation_inputs_fingerprint hashes consolidation_version,
+      toggle_consolidate_timeseries and enabled_model_types, never the whole config, so no existing
+      consolidated tree is invalidated by the field's presence.
+      NOT covered by the 501822e0 row above, which scopes itself to description text and excludes
+      field additions by its own expiry condition; this row is the required separate adjudication.
+      EXPIRY CONDITION: covers this ONE additive optional field with a behaviour-preserving default.
+      Any field removal, rename, retype, default change, or an addition whose default changes emitted
+      output is NOT this class.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 6e5d43cf76939ee268f0cc0be8623c5dbe730bdcc72c2aee04ddc87744153b23
+    justification: >-
+      NON-BREAKING. One _FIELD_BUCKET entry --
+      hpc_runtime_min_for_analysis_output_consolidation -> "hpc", beside its two siblings
+      hpc_runtime_min_for_setup and hpc_runtime_min_for_sim_output_processing, which are both "hpc".
+      Exactly the class of the process_in_sim_rule row (a861c584) and the hhemt_sha row (db666259):
+      a new analysis_config field leaves the ADR-10 taxonomy non-total, and
+      tests/test_reprex_taxonomy.py::test_field_bucket_is_total goes red naming the unbucketed field
+      until the entry lands. Verified rather than asserted: the test failed with
+      {'unbucketed': {'hpc_runtime_min_for_analysis_output_consolidation'}} before this entry and
+      the module's 37 tests pass after it, and tests/test_synth_metadata_renderer.py is 58 passed.
+      Static lookup table only; no on-disk layout, figure stem, zarr, log or path change.
+      EXPIRY CONDITION: covers this ONE added table entry. A bucket VALUE change on an existing
+      field, a removal, or a change to the classifier's own logic is NOT this class.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 775af2a773bfd1d54addfd56fc59935b6f7b0206977dae563886a437b1d10758
+    justification: >-
+      NON-BREAKING. M19 gate 3 (S10/S11): consolidate_to_datatree and
+      _stamp_coupled_resume_evidence each gain a keyword-only `df_status=None`, and the latter's
+      first read becomes `df = df_status if df_status is not None else getattr(analysis,
+      "df_status", None)`. The consolidation runner builds the status table once and threads it,
+      instead of the stamp function rebuilding it -- the object's PROVENANCE changes, its CONTENT
+      does not. The stamped root attr is therefore identical, and that is established on the
+      columns rather than asserted about the frame: the function reads only model_type, n_resumes,
+      event_iloc and the member-id column, and none of the four can move between the caller's build
+      and this read. The window does contain a mutator -- the scenario-scoped reclaim fallback,
+      which deletes files, re-stamps DU sentinels and truncates the coupled and standalone rpt
+      files -- so the columns that CAN differ across it are disk_utilization_bytes and, via
+      rpt_status, run_completed. Neither is read here. n_resumes is written only by the resume
+      commit site in run_simulation.py and no simulation runs inside this rule, so it is invariant
+      by construction. No path, filename, zarr group, variable, dtype, attr, chunk, encoding or
+      _version.json value differs; no artifact is created, renamed or removed.
+      EXPIRY CONDITION: covers this pass-through threading only. Any change to WHICH columns
+      _stamp_coupled_resume_evidence reads, to the value it stamps, or to the attr's name or type
+      is NOT this class.
