@@ -308,13 +308,12 @@ def test_s15_dirty_arm_names_every_stage_it_ranges_over(monkeypatch):
         plots={"hhemt_sha": "a" * 40, "hhemt_version": "v0.1.0+A", "hhemt_dirty": "true"},
         consolidate={"hhemt_sha": "a" * 40, "hhemt_version": "v0.1.0+A", "hhemt_dirty": "unknown"},
         report=None,
-        bundle=None,
     )
     monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: stamps)
     res = av.check_provenance_completeness(object())
     assert res.passed is False
     assert res.level == "aggregate"
-    for stage in ("plots", "consolidate", "report", "bundle"):
+    for stage in ("plots", "consolidate", "report"):
         # Word boundary, not `in`: the terminal arm's own prose carries "reports", so a
         # bare substring test passes on a message that never names the `report` stage.
         assert re.search(rf"\b{stage}\b", res.summary), f"the summary must name {stage}; the arm ranges over it"
@@ -336,10 +335,87 @@ def test_s16_stage_carriers_are_pairwise_distinct_paths():
     from hhemt import analysis_validation as av
 
     src = inspect.getsource(av._collect_stage_stamps)
-    for carrier in ("bundle_manifest.json", "combined_bundle_manifest.json", "report_manifest.json"):
-        assert carrier == carrier and src.count(f'"{carrier}"') >= 1, f"{carrier} no longer read"
+    # `bundle_manifest.json` and `combined_bundle_manifest.json` were removed with the
+    # `bundle`/`combine` rows: neither had a reachable subject, because nothing ever runs
+    # this collector against a bundle root. `consolidate_manifest.json` replaces the
+    # shared tree-attr read that made `consolidate` publish the PROCESSING build.
+    for carrier in ("report_manifest.json", "consolidate_manifest.json"):
+        assert src.count(f'"{carrier}"') >= 1, f"{carrier} no longer read"
+    # The property this test NAMES, now asserted rather than approximated: no two stages
+    # are assigned from one read. The shared `out["consolidate"] = got` / `out["processing"]
+    # = got` pair was the violation stated in this docstring and present in the code it
+    # guarded, and a substring count could never have seen it.
+    assert 'out["consolidate"] = got' not in src, "consolidate must not share processing's read"
     assert '"plots"' in src and "hhemt_producing_sha" in src, (
         "the plots and consolidate carriers must remain separate reads"
+    )
+
+
+def test_prov1c_disagreement_keys_on_sha_not_version(monkeypatch):
+    """The build-disagreement branch discriminates on the field that survives a container.
+
+    INVARIANT: two captured stages produced by DIFFERENT toolkit commits must make the
+    branch fire, and two produced by the SAME commit must not -- whatever their version
+    strings say. `hhemt_version` resolves through `git describe` and degrades to the bare
+    static pin inside an image, which has no git; `hhemt_sha` resolves through
+    `running_identity()` and survives.
+
+    ARM 1, the VIOLATING input: two stages at distinct real shas sharing an identical bare
+    pin. This is the configuration an all-container campaign with a mid-run toolkit change
+    produces, and it is the one the delivered dataset's container stages would have hit had
+    both arms been containerized. Against a version-keyed comparison `builds` is size 1 and
+    the branch does not fire -- a silent pass. It must fire.
+
+    ARM 2, the SATISFYING input, positioned DIFFERENTLY from arm 1 rather than as its
+    negation: one shared sha with DIVERGING version strings. A comparison that still keys
+    on version fires here and must not. Arm 1 alone is satisfied by any assertion strict
+    enough to fire; arm 2 is what catches an implementation that quietly kept comparing
+    versions, and neither arm can see what the other catches.
+
+    ARM 3, beyond what the rule demands: two stages both carrying the `"unknown"` sentinel.
+    `_SENTINEL_SHAS`'s own comment records that "unknown" is TRUTHY and that two different
+    builds both resolving it compare EQUAL, so an unexcluded sentinel reads as agreement.
+    """
+    from hhemt import analysis_validation as av
+    from hhemt.analysis_validation import _PROVENANCE_STAGES
+
+    _pin = "0.1.0"  # the bare static pin: what `git describe` degrades to inside an image
+
+    def _at(sha, version=_pin):
+        return {"hhemt_sha": sha, "hhemt_version": version, "hhemt_dirty": "false"}
+
+    # Every arm builds its FULL stage map from `_PROVENANCE_STAGES` rather than overriding
+    # two entries of a shared base. The base carries its own sha AND its own version, so a
+    # partial override leaves non-overridden stages contributing values neither arm
+    # intends -- which is what made the first draft of ARM 2 assert the opposite of the
+    # truth and ARM 1 pass for the wrong reason. Deriving from the tuple also keeps the
+    # property `_stage_stamps` documents: a new stage cannot silently shrink what is compared.
+
+    # ARM 1 -- distinct shas, ONE shared version. Must FIRE post-fix and NOT fire pre-fix.
+    violating = {s: _at("a" * 40) for s in _PROVENANCE_STAGES}
+    violating["consolidate"] = _at("b" * 40)
+    monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: violating)
+    res = av.check_provenance_completeness(object())
+    assert res.passed is False, "distinct shas at one version string must be a disagreement"
+    assert "a" * 40 in res.summary and "b" * 40 in res.summary, (
+        "the summary must name the values the verdict was computed from"
+    )
+
+    # ARM 2 -- ONE shared sha, diverging versions. Must NOT fire post-fix; fires pre-fix.
+    satisfying = {s: _at("a" * 40) for s in _PROVENANCE_STAGES}
+    satisfying["consolidate"] = _at("a" * 40, "0.1.0+715.gdeadbeef")
+    monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: satisfying)
+    res2 = av.check_provenance_completeness(object())
+    assert "disagree on the hhemt build" not in res2.summary, (
+        "one producing commit is one producer; a version-string difference is not a disagreement"
+    )
+
+    # ARM 3 -- every stage sentinel. Absent is never equal, so this is not agreement.
+    sentinel = {s: _at("unknown") for s in _PROVENANCE_STAGES}
+    monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: sentinel)
+    res3 = av.check_provenance_completeness(object())
+    assert "excluded as unresolved" in res3.summary, (
+        "a sentinel sha is an absence wearing a value and must be excluded, not compared"
     )
 
 

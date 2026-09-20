@@ -1960,3 +1960,38 @@ non_breaking_allowlist:
       EXPIRY CONDITION: covers this pass-through threading only. Any change to WHICH columns
       _stamp_coupled_resume_evidence reads, to the value it stamps, or to the attr's name or type
       is NOT this class.
+
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 43be1f897eeab9aff8d0b00241e4edf064273b0cead2ff921982c9060ddf455b
+    justification: >-
+      NON-BREAKING. The consolidate rung already minted the CONSOLIDATION build for the
+      build gate and discarded it for provenance; this change mints it ONCE and writes it
+      twice -- unchanged to log.consolidation_build_stamp, and additionally to a NEW
+      analysis-root artifact consolidate_manifest.json. Nothing existing is renamed,
+      retyped, moved or removed: the log field keeps the same key, the same scalar type and
+      the same value, so every existing reader of it is byte-unaffected. The new artifact is
+      GRACEFUL-ABSENT by construction on both sides -- its writer swallows every exception
+      and its only reader (analysis_validation._collect_stage_stamps) falls through to the
+      pre-existing scalar when the file is missing, which is the branch every tree written
+      before this change takes. No path, filename, zarr group, variable, dtype, attr, chunk,
+      encoding or _version.json value differs, and no analysis on disk needs rewriting: the
+      same ground on which validation_report.json was allowlisted rather than migrated.
+      EXPIRY CONDITION: covers the addition of this graceful-absent root artifact only. Any
+      change that makes a reader REQUIRE consolidate_manifest.json, that alters the log
+      field's key or type, or that renames the artifact is NOT this class.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 5176ccf5eefd83e6c140066016496aac24156285fa1c38cb83e538c70f42fd4b
+    justification: >-
+      NON-BREAKING, and two independent changes share this row because both are behaviour
+      inside methods rather than on-disk shape. (1) The master consolidation seam gains the
+      same one-mint-two-writes treatment as the member tier in processing_analysis.py, with
+      the identical graceful-absent argument: the log field is unchanged in key, type and
+      value, and consolidate_manifest.json is a new artifact whose absence its only reader
+      already handles. (2) render_report gains a call to the shared provenance helper
+      stamp_report_stage above its format gate, which writes report_manifest.json -- an
+      artifact this codebase ALREADY writes from the multisim twin, so the file name, shape
+      and location are pre-existing and this twin merely stops being the one that never
+      wrote it. No path, zarr group, variable, dtype, attr, chunk, encoding or _version.json
+      value differs, and no analysis on disk needs rewriting.
+      EXPIRY CONDITION: covers these two additions only. Any change to the report manifest's
+      name or payload shape, or that makes a reader REQUIRE either artifact, is NOT this class.

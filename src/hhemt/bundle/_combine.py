@@ -58,6 +58,7 @@ from hhemt.bundle._combine_merge import _experiment_id, merge_experiment_trees
 from hhemt.bundle._compatibility import CompatibilityReport, check_bundle_compatibility
 from hhemt.bundle._emit import _get_toolkit_git_sha
 from hhemt.exceptions import ConfigurationError
+from hhemt.provenance import producing_stamp
 from hhemt.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
     BUNDLE_SCHEMA_VERSION,
@@ -572,6 +573,10 @@ def _write_combined_bundle_manifest(
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
         "combined": True,
         "toolkit_git_sha": git_sha,
+        # The three-field stamp, matching the single-bundle sibling. `toolkit_git_sha`
+        # above is NOT this stamp under another name: it is one field where the stamp is
+        # three, and it carries no version and no dirty flag.
+        **producing_stamp(),
         "experiment_ids": list(experiment_ids),
         "child_crates": list(child_crates),
         # Lineage stamp (CR4-deterministic; no wall-clock): per-child {experiment_id, role, identity}

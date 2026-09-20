@@ -621,12 +621,42 @@ def _read_triton_provenance(analysis: TRITONSWMM_analysis) -> str | None:
     return str(sha) if sha is not None else None
 
 
-#: The stage denominator, and the ONLY place it is defined. `setup` leads because it is
-#: the rung that compiles TRITON and standalone SWMM, so it is where the non-hhemt version
-#: axes are captured; omitting it made the coverage ratio unable to report on the very
-#: stage the version-provenance contract is mostly about. Any caller stating a COUNT must
-#: derive it from len() of this tuple -- a literal count in prose goes stale silently, and
-#: did (the docstring below said "six" while this tuple held seven).
+def _legacy_consolidate_stamp(analysis) -> dict | None:
+    """The pre-carrier consolidation stamp, read from the analysis log. Graceful-absent.
+
+    Returns a stamp dict carrying `hhemt_sha` ALONE, or None when the field is unset.
+    This is the scalar `consolidation_build_stamp` the build gate already owns, READ
+    here and never widened or retyped -- retyping an existing on-disk key is a breaking
+    read of every existing log and a real migration, not an allowlist row.
+
+    A sha-only return is a PARTIAL capture of the right stage, which the non-inference
+    contract permits, and is categorically different from a complete record of a
+    NEIGHBOURING stage, which it forbids. The caller labels it; this function does not
+    decide how it renders.
+    """
+    try:
+        analysis._refresh_log()
+    except Exception:
+        pass
+    try:
+        sha = str(analysis.log.consolidation_build_stamp.get() or "").strip()
+    except Exception:
+        return None
+    return {"hhemt_sha": sha} if sha else None
+
+
+#: The stage denominator, and the ONLY place it is defined. MEMBERSHIP TEST, applied to any
+#: stage proposed for this tuple: a stage belongs iff the analysis's own delivered set is the
+#: only place that stage's RECORD can live. It is a test about where the RECORD lives, not
+#: about where the WORK ran -- `setup` runs against a shared system directory and is IN,
+#: because its record has no other delivered home. `bundle` and `combine` FAIL it: each
+#: produces an independently distributable artifact carrying its own complete manifest, and a
+#: reader holding that artifact reads the stamp from the artifact. REVISION TRIGGER: if a
+#: bundle-side or combined-bundle-side compute phase ever produces its own validation report,
+#: those rows become applicable at that subject and this narrowing must be revisited.
+#: Any caller stating a COUNT must derive it from len() of this tuple -- a literal count in
+#: prose goes stale silently, and did (the docstring below said "six" while this tuple held
+#: seven).
 _PROVENANCE_STAGES = (
     "setup",
     "sim",
@@ -634,8 +664,6 @@ _PROVENANCE_STAGES = (
     "consolidate",
     "plots",
     "report",
-    "bundle",
-    "combine",
 )
 
 
@@ -698,9 +726,23 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
     for name in ROOT_TREE_NAMES:
         got = _from_tree_attrs(adir / name)
         if got:
-            out["consolidate"] = got
             out["processing"] = got
             break
+
+    # `consolidate` reads its OWN carrier, never `processing`'s. Order: the full-triple
+    # carrier Specs 7/8 write, then the pre-existing scalar for trees written before it.
+    _consolidate = _from_json(adir / "consolidate_manifest.json")
+    if _consolidate is None:
+        _legacy = _legacy_consolidate_stamp(analysis)
+        if _legacy:
+            # PARTIAL CAPTURE, never an absence. A record carrying the scalar sha and not
+            # its siblings is a weaker MEASUREMENT of the right stage, which the contract
+            # permits; a complete record of a NEIGHBOURING stage is a fabrication, which it
+            # forbids. Reading this as absent would make the delivered dataset's correction
+            # an 88-minute re-consolidation instead of a render-only reprocess.
+            _legacy["provenance_source"] = "legacy_scalar"
+            _consolidate = _legacy
+    out["consolidate"] = _consolidate
 
     # plots: any figure sidecar. The stamp is per-figure and uniform within a render,
     # so the first readable sidecar is representative; a genuinely mixed render is a
@@ -713,18 +755,17 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
                 out["plots"] = got
                 break
 
-    for stage, rel in (
-        ("bundle", "bundle_manifest.json"),
-        ("combine", "combined_bundle_manifest.json"),
-        ("report", "report_manifest.json"),
-    ):
-        out[stage] = _from_json(adir / rel)
+    out["report"] = _from_json(adir / "report_manifest.json")
 
-    # `sim` has no capture site yet -- left as None deliberately. When that site lands it
-    # wires here; until then the check reports it uncaptured, which is the true statement
-    # about every analysis produced so far. `report` LANDED with the ADR-15 widening
-    # (analysis.py render_report tail) and is read above; `bundle` moved from uncaptured
-    # to captured in the same change, at the WRITER rather than the reader.
+    # `sim` and `setup` have no capture site yet -- both left as None deliberately, and
+    # both are WIREABLE rather than absent by design: `sim` mints at the per-(model, event)
+    # run-finalization site and rides the per-scenario processing writer up as a second
+    # coordinate; `setup` mints at the compile rung. Neither may land before the minter
+    # repair, or its carrier is written by the unrepaired resolver and cannot be corrected
+    # afterwards. `report` is read above. `bundle` and `combine` were REMOVED from the
+    # denominator: neither had a reachable subject, because nothing runs this collector
+    # against a bundle root -- `persist_validation_report` has two call sites and both are
+    # analysis-side.
     return out
 
 
@@ -756,7 +797,30 @@ def check_provenance_completeness(analysis) -> CheckResult:
     # same reason. An == "true" test silently files both with the clean stages, so the
     # partition is stated explicitly here and disclosed in every arm that makes a claim.
     undetermined = sorted(s for s, v in stages.items() if v and v.get("hhemt_dirty") not in ("true", "false"))
-    builds = {v.get("hhemt_version") for v in stages.values() if v and v.get("hhemt_version")}
+    # Key on the sha, CONFORMING to `store_build_mismatch` -- this subsystem's existing
+    # build comparison, which keys on `hhemt_sha` with its sentinel arms preceding the
+    # equality test. `_SENTINEL_SHAS` is CONSUMED, not restated: it already carries the
+    # rule ("absences wearing a value, and absent is never equal") and already has one
+    # owner and one consumer.
+    #
+    # GATE-3 NOTE, for an implementer who reaches `store_build_mismatch`'s docstring and
+    # reads it as authority to decline this change. That docstring says this function's
+    # graceful-absent posture "is correct for a REPORT and wrong for a GATE", and the
+    # property it contrasts is FAIL-CLOSED. This function ADOPTS `_SENTINEL_SHAS` and the
+    # absences-wearing-a-value comparison rule; it does NOT adopt absent-is-a-mismatch.
+    # Excluding a sentinel while accounting it as not-captured IS the graceful-absent
+    # posture applied correctly, not a departure from it.
+    from hhemt.provenance import _SENTINEL_SHAS
+
+    _comparable = [
+        str(v.get("hhemt_sha") or "").strip()
+        for v in stages.values()
+        if v and str(v.get("hhemt_sha") or "").strip() not in _SENTINEL_SHAS
+    ]
+    builds = set(_comparable)
+    n_contributing = len(_comparable)
+    n_excluded = len(captured) - n_contributing
+    n_legacy = sum(1 for v in stages.values() if v and v.get("provenance_source") == "legacy_scalar")
 
     # `details`, not `detail`, and an explicit `level`. Both were wrong on all four
     # returns, so EVERY path raised TypeError and the function could not execute -- which
@@ -811,7 +875,10 @@ def check_provenance_completeness(analysis) -> CheckResult:
             passed=False,
             summary=(
                 f"{len(captured)}/{len(stages)} stages stamped, and they disagree on the hhemt "
-                f"build ({', '.join(sorted(builds))}). Not captured: {len(missing)} "
+                f"build. Compared on hhemt_sha over {n_contributing} contributing stage(s) "
+                f"({n_excluded} excluded as unresolved, {n_legacy} read from a legacy "
+                f"scalar carrier and therefore a PARTIAL capture): "
+                f"{', '.join(sorted(builds))}. Not captured: {len(missing)} "
                 f"({', '.join(missing) or 'none'}); dirty-state undetermined: "
                 f"{len(undetermined)} ({', '.join(undetermined) or 'none'}); no value is "
                 f"inferred for either group. At least one stage was produced by different "
@@ -837,7 +904,10 @@ def check_provenance_completeness(analysis) -> CheckResult:
         level="aggregate",
         passed=True,
         summary=(
-            f"all {len(stages)} stages stamped at one hhemt build, with no uncommitted "
+            f"all {len(stages)} stages stamped at one hhemt build, compared on hhemt_sha "
+            f"over {n_contributing} contributing stage(s) ({n_excluded} excluded as "
+            f"unresolved, {n_legacy} a legacy PARTIAL capture) -- a single contributing "
+            f"stage establishes no agreement; with no uncommitted "
             f"tracked changes recorded; dirty-state undetermined for {len(undetermined)} "
             f"({', '.join(undetermined) or 'none'}), and no value is inferred for those. "
             f"This reports what the toolkit-source stamps show. It does not establish that "

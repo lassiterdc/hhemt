@@ -352,9 +352,12 @@ class TRITONSWMM_analysis_post_processing:
         # deliberately -- these two are the same mechanism and drifting them apart is what
         # produced the non-convergent gate this replaces.
         if hasattr(self._analysis.log, "consolidation_build_stamp"):
+            from hhemt.provenance import _write_consolidate_manifest
             from hhemt.provenance import producing_stamp as _producing_stamp
 
-            self._analysis.log.consolidation_build_stamp.set(str(_producing_stamp().get("hhemt_sha") or ""))
+            _stamp = _producing_stamp()
+            self._analysis.log.consolidation_build_stamp.set(str(_stamp.get("hhemt_sha") or ""))
+            _write_consolidate_manifest(self._analysis.analysis_paths.analysis_dir, _stamp)
         elapsed_s = time.time() - start_time
         self._analysis.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 

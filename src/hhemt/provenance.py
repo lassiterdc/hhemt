@@ -86,10 +86,47 @@ def _describe_version() -> str:
         tag, n, gsha = out.rsplit("-", 2)
         return f"{tag.lstrip('v')}+{n}.{gsha}"
     except Exception:
+        # git is unavailable -- the IMAGE shape, where the recipe removed it. The bare pin
+        # is not identifying (it has not moved in hundreds of commits), so compose one from
+        # the sha the identity authority already holds. This is a FORMAT composition over a
+        # value already resolved, not a git lookup: `cross_experiment_compatibility.
+        # _derive_version_from_sha` looks like the right helper and is not, because it
+        # shells git against the local object DB and returns None in exactly this shape.
         try:
-            return importlib.metadata.version("hhemt")
+            from hhemt.validation import running_identity
+
+            _sha = running_identity().sha
+        except Exception:
+            _sha = ""
+        try:
+            _pin = importlib.metadata.version("hhemt")
         except Exception:
             return "0+unknown"
+        return f"{_pin}+g{_sha[:12]}" if _sha else _pin
+
+
+def _identity_dirty() -> str:
+    """The dirty flag, resolved through the ONE identity source rather than by shelling git.
+
+    `_is_dirty` below returns False on ANY exception, so a tree where git cannot run reads
+    CLEAN -- an affirmative claim of cleanliness produced by a command that did not run.
+    In the `image` and `archive` shapes that False is accidentally correct, because those
+    shapes are exact commits; in the `refuse` shape (a wheel, a bare copy, a checkout whose
+    git fails for a reason other than absence) it is a fabrication.
+
+    `running_identity()` either ANSWERS or REFUSES. Its `dirty` is measured for a checkout
+    and False by construction for an image or an archive. A refusal returns the literal
+    "unknown" -- the same sentinel `_from_tree_attrs` already emits for this state, pinned
+    here rather than left free because `check_provenance_completeness` buckets any
+    non-"true"/"false" string as undetermined, so the value chosen decides the rendered cell.
+    """
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.validation import running_identity
+
+    try:
+        return "true" if running_identity().dirty else "false"
+    except ConfigurationError:
+        return "unknown"
 
 
 def _is_dirty() -> bool:
@@ -153,7 +190,7 @@ def producing_stamp() -> dict[str, str]:
     return {
         "hhemt_sha": _toolkit_git_sha(),
         "hhemt_version": _describe_version(),
-        "hhemt_dirty": "true" if _is_dirty() else "false",
+        "hhemt_dirty": _identity_dirty(),
     }
 
 
@@ -162,6 +199,64 @@ def producing_stamp() -> dict[str, str]:
 #: one of the consolidated-tree names: this artifact is orthogonal to the zarr layout and
 #: must not acquire a dependency on a filename that is a live rename candidate.
 _HISTORY_FILENAME = "provenance_history.json"
+
+
+def stamp_report_stage(analysis_dir: Path, report_path: Path) -> None:
+    """Capture the REPORT stage's producing stamp. Called by BOTH render_report twins.
+
+    Called AFTER the render has demonstrably succeeded and BEFORE the format-gated early
+    return, so the capture fires on every requested format. The ordering property the
+    previous end-of-method placement protected is PRESERVED and is about the report FILE
+    existing, not about its format: a stamp written at method entry would survive a failed
+    render and claim a report that was never produced, and both twins hold the rendered
+    file in hand before the format gate.
+
+    `report_path` is the FORMAT-AGNOSTIC output, never an html-only binding -- recording a
+    path that does not exist for a zip is the defect one rung down from the one this fixes.
+
+    Best-effort and never raises: a provenance write must not fail a completed render.
+    """
+    import json as _json
+
+    try:
+        (Path(analysis_dir) / "report_manifest.json").write_text(
+            _json.dumps({"report_path": str(report_path), **producing_stamp()}, indent=2),
+            encoding="utf-8",
+        )
+        # Appends, never overwrites: the manifest above holds only the LATEST build, and
+        # this is what keeps an earlier one. De-duplicated, so a re-render at an unchanged
+        # build appends nothing and rewrites nothing.
+        append_stage_provenance(Path(analysis_dir), "report")
+    except Exception as _e:  # never fail a completed render on a provenance write
+        print(f"[render_report] report_manifest.json stamp failed (non-fatal): {_e}", flush=True)
+
+
+def _write_consolidate_manifest(analysis_dir: Path, stamp: dict) -> None:
+    """Write the CONSOLIDATE stage's own full-triple carrier. Called from BOTH seams.
+
+    Lives here rather than in either consolidation module because it is called from two
+    of them -- `processing_analysis` at the member tier and `sensitivity_analysis` at the
+    master tier -- and a helper called from two modules belongs in a third. Both callers
+    already import from this module at the call site.
+
+    `stamp` is passed in rather than minted here: the caller mints ONCE and writes twice,
+    so the gate field and this carrier can never disagree. Minting a second time here
+    would be two sites a later edit can separate, which is the failure this chain is about.
+
+    Compare-and-write, so an idempotent re-consolidation preserves mtime and does not
+    perturb the analysis-scope DU own-files walk. Best-effort and never raises.
+    """
+    import json as _json
+
+    try:
+        target = Path(analysis_dir) / "consolidate_manifest.json"
+        payload = _json.dumps({k: stamp[k] for k in sorted(stamp)}, indent=2) + "\n"
+        if target.exists() and target.read_text(encoding="utf-8") == payload:
+            return  # byte-identical: preserve mtime
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(payload, encoding="utf-8")
+    except Exception as _e:  # never fail a consolidation that succeeded
+        print(f"[consolidate] consolidate_manifest.json stamp failed (non-fatal): {_e}", flush=True)
 
 
 def append_stage_provenance(analysis_dir: Path, stage: str) -> bool:
@@ -340,6 +435,9 @@ _DECLARE_STALE_BUILD_ENV = "HHEMT_DECLARE_STALE_BUILD"
 #: falsy-check misses it and two different builds both resolving "unknown" compare
 #: EQUAL. These are absences wearing a value, and absent is never equal.
 _SENTINEL_SHAS = frozenset({"", "unknown", "0+unknown"})
+#: CONSUMERS: `store_build_mismatch` below, and `analysis_validation.check_provenance_
+#: completeness`, which imports this set across the module boundary rather than restating
+#: it. The rule travels with the set; a second literal list would drift from this one.
 
 
 def store_build_mismatch(store: Path, stored: str | None) -> str | None:

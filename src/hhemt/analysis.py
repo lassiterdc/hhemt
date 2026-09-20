@@ -3466,6 +3466,9 @@ class TRITONSWMM_analysis:
                 )
         except Exception:
             pass
+        from hhemt.provenance import stamp_report_stage
+
+        stamp_report_stage(self.analysis_paths.analysis_dir, out)
         if format != "html":
             return out
         out_html = out
@@ -3482,29 +3485,6 @@ class TRITONSWMM_analysis:
                 )
         except Exception:
             pass
-        # ADR-15 widening — the REPORT-stage capture site, the missing operand.
-        # Written at the END, after the report file exists: a stamp written at entry
-        # would survive a failed render and claim a report that was never produced.
-        # Mirrors the PLOTS-stage site (_figure_emission._write_manifest) field-for-field
-        # via the same single minter, so the two are comparable by construction.
-        try:
-            import json as _json
-
-            from hhemt.provenance import append_stage_provenance, producing_stamp
-
-            (self.analysis_paths.analysis_dir / "report_manifest.json").write_text(
-                _json.dumps({"report_path": str(out_html), **producing_stamp()}, indent=2),
-                encoding="utf-8",
-            )
-            # Contract property 3. The manifest above is OVERWRITTEN by every render and so
-            # holds only the LATEST build; this append is what keeps the earlier one, which
-            # is the whole point of "a re-render must not replace the version that produced
-            # the science with the one that drew the figure". De-duplicated, so re-rendering
-            # at an unchanged build appends nothing and rewrites nothing.
-            append_stage_provenance(self.analysis_paths.analysis_dir, "report")
-        except Exception as _e:  # never fail a completed render on a provenance write
-            print(f"[render_report] report_manifest.json stamp failed (non-fatal): {_e}", flush=True)
-
         return out_html
 
     @property

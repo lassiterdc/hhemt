@@ -1061,6 +1061,8 @@ class TRITONSWMM_sensitivity_analysis:
         import subprocess
         import sys
 
+        from hhemt.provenance import stamp_report_stage
+
         from .exceptions import WorkflowError
         from .workflow import _assert_snakefile_package_current
 
@@ -1164,6 +1166,7 @@ class TRITONSWMM_sensitivity_analysis:
                 )
         except Exception:
             pass
+        stamp_report_stage(self.analysis_paths.analysis_dir, out)
         if format != "html":
             return out
         out_html = out
@@ -1764,9 +1767,12 @@ class TRITONSWMM_sensitivity_analysis:
         # CONSOLIDATION build that wrote this master store, so the build gate above
         # compares two values minted by the same stage and therefore converges.
         if hasattr(self.experiment.log, "consolidation_build_stamp"):
+            from hhemt.provenance import _write_consolidate_manifest
             from hhemt.provenance import producing_stamp as _producing_stamp
 
-            self.experiment.log.consolidation_build_stamp.set(str(_producing_stamp().get("hhemt_sha") or ""))
+            _stamp = _producing_stamp()
+            self.experiment.log.consolidation_build_stamp.set(str(_stamp.get("hhemt_sha") or ""))
+            _write_consolidate_manifest(self.experiment.analysis_paths.analysis_dir, _stamp)
 
         if verbose:
             print(f"Wrote sensitivity DataTree zarr to {fname_out}")
