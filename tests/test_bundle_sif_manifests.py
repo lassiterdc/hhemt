@@ -234,12 +234,32 @@ def test_carried_solver_pin_disagreeing_with_config_refuses(tmp_path):
 
 def test_explicit_null_swmm_tag_is_not_a_false_refusal(tmp_path):
     """ARM (d) negative control, and the differently-positioned satisfying input: both Frontier
-    arms set `SWMM_tag_key: null`, which `derive_identity` stores as the string 'None'. Comparing
-    the raw value would make those two experiments permanently unbundleable."""
+    arms set `SWMM_tag_key: null`, which the identity now carries as a real None rather than as
+    the string 'None'. Both operands are sourced the same way, so absence compares equal to
+    absence and those two experiments stay bundleable."""
     stub = _stub(tmp_path, swmm_tag=None)
-    written = _write_image(stub.cfg_hpc_system.container.sif_root, swmm_tag="None")
+    written = _write_image(stub.cfg_hpc_system.container.sif_root, swmm_tag=None)
 
     assert _emit._emit_sif_manifests(stub) == [written]
+
+
+def test_pre_fix_string_none_manifest_is_refused_against_a_null_pin(tmp_path):
+    """The forward-incompatibility cost, ASSERTED rather than left silent.
+
+    A manifest written by a PRE-fix toolkit serialized an absent pin as the string 'None'. The
+    expected operand is now the config value itself, so such a manifest no longer matches a
+    null-pin config. No such manifest can exist in production -- a pre-fix null-pin build died
+    in the recipe's `git clone --branch None` under `set -eu` before any manifest was written --
+    so this pins the contract rather than a live state, and it is RED pre-fix because the old
+    code compared 'None' against str(None) and found them equal.
+    """
+    stub = _stub(tmp_path, swmm_tag=None)
+    _write_image(stub.cfg_hpc_system.container.sif_root, swmm_tag="None")
+
+    with pytest.raises(ConfigurationError) as exc:
+        _emit._emit_sif_manifests(stub)
+
+    assert "swmm_tag" in str(exc.value)
 
 
 def test_the_refusal_precedes_the_prune_and_the_staging_walk(tmp_path, monkeypatch):

@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import re
 
+from hhemt.config.system import system_config
 from hhemt.sif.identity import SifIdentity
+
+#: The tag the RECIPE clones when the experiment declares no standalone pin. This is a BUILD
+#: input and never an identity claim: `SifIdentity.swmm_tag` stays None, so a declared-versus-
+#: measured comparison can still tell "declared nothing" from "declared v5.2.4". Read off the
+#: config field's own default so the default lives in exactly one place.
+_DEFAULT_SWMM_TAG: str = system_config.model_fields["SWMM_tag_key"].default
 
 _VAR = re.compile(r"{{\s*(\w+)\s*}}")  # Apptainer's template variable form (reader.go at v1.4.5)
 _CUDA_SM = re.compile(r"(\d+)$")  # Kokkos_ARCH_AMPERE86 -> 86
@@ -17,7 +24,7 @@ def build_arg_values(ident: SifIdentity) -> dict[str, str]:
         "TRITON_URL": ident.triton_url,
         "TRITON_SHA": ident.triton_sha,
         "HHEMT_SHA": ident.hhemt_sha,
-        "SWMM_TAG": ident.swmm_tag,
+        "SWMM_TAG": ident.swmm_tag if ident.swmm_tag is not None else _DEFAULT_SWMM_TAG,
         "LBL_IDENTITY": ident.key,
         "LBL_FAMILY": ident.family,
         "LBL_ACCEL": ident.accel,

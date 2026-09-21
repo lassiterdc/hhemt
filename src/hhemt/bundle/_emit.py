@@ -1217,7 +1217,7 @@ def _emit_sif_manifests(analysis: TRITONSWMM_analysis) -> list[dict]:
     for field_name, carried, expected in (
         ("mpi_family", ident.get("mpi_family"), mpi),
         ("accel", ident.get("accel"), accel),
-        ("swmm_tag", ident.get("swmm_tag"), str(cfg_system.SWMM_tag_key)),
+        ("swmm_tag", ident.get("swmm_tag"), cfg_system.SWMM_tag_key),
         (
             "triton_sha",
             ident.get("triton_sha"),
