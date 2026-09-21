@@ -3,6 +3,11 @@
 Pure unit: every case builds its tree under tmp_path (`git archive` of this repo, a `file://`
 clone, or a bare `src/` copy) and runs the function in a SUBPROCESS whose PYTHONPATH is that
 tree, so the shape the function sees is the tree's own. No solver is compiled or executed.
+
+FOUR ARMS ARE IN-PROCESS AND THE SENTENCE ABOVE DOES NOT REACH THEM: `test_j2` and
+`test_k` construct directly, and the dirty-branch pair at the foot of this file patches
+`hhemt.analysis.running_identity` in this process. Both idioms are deliberate; what was
+wrong was a docstring claiming the subprocess rule is universal.
 """
 
 from __future__ import annotations
@@ -220,3 +225,76 @@ def test_k_image_identity_label_mismatch_refuses(tmp_path, monkeypatch):
             is_main_orchestrator=False,
             hpc_system_config_yaml=a.hpc_system_config_yaml,
         )
+
+
+#: --- the constructor's dirty branch -------------------------------------------------
+#: IN-PROCESS, like test_j2 and test_k above and unlike a-i: these patch the seam rather
+#: than building a tree, because the branch under test reads a value the seam supplies.
+
+
+def test_l_constructor_refuses_a_dirty_tree(tmp_path, monkeypatch):
+    """The dirty branch has no other arm: `grep` for its message across `tests/` returns
+    zero, so `test_g` proves `running_identity` REPORTS dirty and nothing proved the
+    constructor REFUSES on it.
+
+    A REAL sha, never a sentinel. The sha comparison at `analysis.py:431` fires BEFORE the
+    dirty check at `:441`, so a wrong sha diverts to the wrong branch and this arm silently
+    becomes a duplicate of `test_j2` -- passing, for the wrong reason, forever.
+
+    VACUOUS ON A DIRTY TREE, which is why `test_l2` exists: on a checkout with modified
+    tracked files the real guard raises for the real reason and this assertion cannot tell
+    that from the patch having taken. `test_l2` is the half that can."""
+    from hhemt import analysis as an
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.validation import RunningIdentity
+    from tests.fixtures.test_case_catalog import Local_TestCases
+
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    real = an.running_identity()
+    # PATCH BEFORE RETRIEVAL. `retrieve_synth_multi_sim_test_case` CONSTRUCTS an Analysis,
+    # so on a dirty tree it raises before either arm reaches its assertion -- which would
+    # make the control unrunnable in the one tree state it exists for. `real.sha` is the
+    # value the guard at analysis.py:431 compares against, and it is obtainable here
+    # because the synth case composes `hhemt_sha` from this same tree.
+    monkeypatch.setattr(an, "running_identity", lambda: RunningIdentity(sha=real.sha, shape=real.shape, dirty=False))
+    a = Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=True).analysis
+    monkeypatch.setattr(an, "running_identity", lambda: RunningIdentity(sha=real.sha, shape=real.shape, dirty=True))
+    with pytest.raises(ConfigurationError, match="dirty tree is an unspecified version"):
+        TRITONSWMM_analysis(
+            analysis_config_yaml=a.analysis_config_yaml,
+            system=a._system,
+            skip_log_update=True,
+            is_main_orchestrator=False,
+        )
+
+
+def test_l2_constructor_accepts_the_same_tree_when_not_dirty(tmp_path, monkeypatch):
+    """THE CONTROL, and the half that carries the pair's evidential weight. Identical to
+    `test_l` in every variable but one -- `dirty=False` -- so a pass here proves the
+    substitution TOOK, which `test_l`'s raise alone cannot: on a dirty tree `test_l` passes
+    whether or not the patch reached `analysis.py:430`.
+
+    It also pins the seam itself. If `analysis.py` ever calls `validation.running_identity`
+    fully-qualified instead of through its own module binding at `:54`, this arm reds and
+    `test_l` does not."""
+    from hhemt import analysis as an
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.validation import RunningIdentity
+    from tests.fixtures.test_case_catalog import Local_TestCases
+
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    real = an.running_identity()
+    # PATCH BEFORE RETRIEVAL. `retrieve_synth_multi_sim_test_case` CONSTRUCTS an Analysis,
+    # so on a dirty tree it raises before either arm reaches its assertion -- which would
+    # make the control unrunnable in the one tree state it exists for. `real.sha` is the
+    # value the guard at analysis.py:431 compares against, and it is obtainable here
+    # because the synth case composes `hhemt_sha` from this same tree.
+    monkeypatch.setattr(an, "running_identity", lambda: RunningIdentity(sha=real.sha, shape=real.shape, dirty=False))
+    a = Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=True).analysis
+    TRITONSWMM_analysis(
+        analysis_config_yaml=a.analysis_config_yaml,
+        system=a._system,
+        skip_log_update=True,
+        is_main_orchestrator=False,
+    )
