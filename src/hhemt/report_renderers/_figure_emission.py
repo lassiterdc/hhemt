@@ -110,6 +110,44 @@ def _relativize(source_paths, analysis_dir) -> list[str]:
     return [os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths]
 
 
+#: Sidecar key naming the subset of ``source_paths_relative`` a renderer read for
+#: METADATA ONLY -- a zarr store opened with ``chunks=None`` for its root attrs and
+#: group names, never a chunk. A PARALLEL field, never a marker on the path entry:
+#: every reader of ``source_paths_relative`` (the bundle harvest, the renderer-IO
+#: audit's ``_declared_set_from_manifest``, both regeneration Snakefile generators,
+#: the caption RSTs) keeps reading the path list unchanged, and the audit keeps
+#: treating the store as a directory PREFIX. Only ``harvest_metadata_only_sources``
+#: reads this key. ABSENT (never empty) when a figure qualifies nothing, so every
+#: other sidecar stays byte-identical to what it was before the key existed.
+MANIFEST_METADATA_ONLY_KEY = "source_paths_metadata_only"
+
+
+def _relativize_metadata_only(metadata_only_sources, source_paths, analysis_dir) -> list[str]:
+    """Relativize the metadata-only qualifier; REFUSE one naming an undeclared path.
+
+    A qualifier NARROWS a declaration and is never a declaration of its own: the
+    renderer-IO audit reads only ``source_paths_relative``, so a path qualified here
+    but absent from ``source_paths`` would pass the harvest silently while the audit
+    reported the renderer's read as undeclared. Comparison is on resolved paths, the
+    same identity ``harvest_source_paths`` uses.
+    """
+    qualified = list(metadata_only_sources)
+    if not qualified:
+        return []
+    declared = {Path(p).resolve() for p in source_paths}
+    undeclared = [str(p) for p in qualified if Path(p).resolve() not in declared]
+    if undeclared:
+        raise ProcessingError(
+            operation="provenance: metadata-only qualifier names an undeclared source",
+            filepath=Path(undeclared[0]),
+            reason=(
+                f"metadata_only_sources {undeclared} are not in source_paths. The qualifier "
+                "narrows a declaration; add the path to source_paths as well."
+            ),
+        )
+    return _relativize(qualified, analysis_dir)
+
+
 #: Per-sim figure dimensions. ONE pair of numbers, consumed by BOTH `update_layout` and
 #: `write_image`. Before this, the layout declared no width/height at all while the SVG
 #: export hardcoded 1400x600, so every paper-fraction coordinate in the figure was
@@ -301,6 +339,7 @@ def emit_plot_with_sources(
     bbox_inches_tight: bool = True,
     emit_preview: bool = True,
     preview_figure: Any | None = None,
+    metadata_only_sources: Iterable[Path] = (),
 ) -> Path:
     """Save fig to output_path with source paths embedded as figure metadata.
 
@@ -353,6 +392,13 @@ def emit_plot_with_sources(
         payload is embedded under `manifest["artists"]` (top-level — system-
         defined, distinct from caller-supplied `renderer_data`). The PNG
         `tEXt` chunks and all other manifest schema fields are unchanged.
+    metadata_only_sources : Iterable[Path], optional
+        The subset of `source_paths` this renderer read for METADATA ONLY (a zarr
+        store opened with ``chunks=None``: root attrs and group names, never a
+        chunk). Recorded under the sidecar key ``source_paths_metadata_only`` so the
+        bundle harvest carries that store SHALLOWLY -- its zarr metadata documents
+        without chunk files -- unless another figure declares it in full. Must be a
+        subset of `source_paths`: the renderer-IO audit reads only `source_paths`.
 
     Returns
     -------
@@ -398,9 +444,11 @@ def emit_plot_with_sources(
             manifest_data=manifest_data,
             provenance=provenance,
             preview_figure=preview_figure,
+            metadata_only_sources=metadata_only_sources,
         )
     # Fall-through: matplotlib Figure branch (existing behavior unchanged below).
     rel_sources = _relativize(source_paths, analysis_dir)
+    rel_metadata_only = _relativize_metadata_only(metadata_only_sources, source_paths, analysis_dir)
     # PNG accepts arbitrary tEXt keys; SVG metadata is restricted to the
     # Dublin Core element set (matplotlib backend_svg validates against it
     # and ValueErrors on unknown keys). "Source" is in Dublin Core; "Software"
@@ -459,6 +507,8 @@ def emit_plot_with_sources(
         "source_paths_relative": rel_sources,
         "emitted_at_utc": datetime.now(UTC).isoformat(),
     }
+    if rel_metadata_only:
+        manifest_payload[MANIFEST_METADATA_ONLY_KEY] = rel_metadata_only
     if manifest_data:
         manifest_payload["renderer_data"] = manifest_data
     if provenance is not None:
@@ -569,6 +619,7 @@ def _emit_html_with_sources(
     manifest_data: dict[str, Any] | None,
     provenance: ProvenanceLog | None,
     preview_figure: Any | None = None,
+    metadata_only_sources: Iterable[Path] = (),
 ) -> Path:
     """HTML-branch counterpart to :func:`emit_plot_with_sources`.
 
@@ -589,6 +640,7 @@ def _emit_html_with_sources(
     consumers see a uniform key set across branches.
     """
     rel_sources = _relativize(source_paths, analysis_dir)
+    rel_metadata_only = _relativize_metadata_only(metadata_only_sources, source_paths, analysis_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html_text, encoding="utf-8")
     # Optional Plotly preview raster (gated upstream by
@@ -612,6 +664,8 @@ def _emit_html_with_sources(
         "figure_size_inches": None,
         "preview_size_bytes": None,
     }
+    if rel_metadata_only:
+        manifest_payload[MANIFEST_METADATA_ONLY_KEY] = rel_metadata_only
     if manifest_data is not None:
         manifest_payload["renderer_data"] = manifest_data
     if provenance is not None:
@@ -829,11 +883,29 @@ def harvest_source_paths(plots_dir: Path, analysis_dir: Path) -> dict[str, list[
     analysis_dir as before.
 
     Downstream consumers (the bundle-emit step) union and deduplicate paths
-    across all keys before bundle copy, so figure-stem keying is sufficient
+    across all keys before archiving (``_emit._harvest_sources`` walks each
+    resolved path once), so figure-stem keying is sufficient
     even when multiple per-sim subdirectories emit the same bare filename
     (e.g., ``peak_flood_depth.manifest.json``).
     """
     sources_by_renderer: dict[str, list[Path]] = {}
+    for figure_stem, declared, _qualified in _iter_manifest_declarations(plots_dir, analysis_dir):
+        sources_by_renderer.setdefault(figure_stem, []).extend(declared)
+    return {name: list(dict.fromkeys(paths)) for name, paths in sources_by_renderer.items()}
+
+
+def _iter_manifest_declarations(plots_dir: Path, analysis_dir: Path):
+    """Yield ``(figure_stem, declared_paths, metadata_only_paths)`` per sidecar under ``plots_dir``.
+
+    The ONE resolver of a sidecar's paths: ``declared_paths`` is the ordered union of
+    ``source_paths_relative`` and the artists' ``channels[].ref.source_path`` entries,
+    ``metadata_only_paths`` the resolved set under ``MANIFEST_METADATA_ONLY_KEY`` (empty
+    when the key is absent). Both are resolved against the EMIT-TIME analysis dir --
+    the member dir for a ``plots/sensitivity/per_sim/member-{N}/`` sidecar, the master
+    otherwise -- exactly as ``harvest_source_paths`` always did. Root-agnostic: the
+    member re-rooting keys on the path's FIRST part being ``sensitivity``, which an
+    ``eda/`` root never is.
+    """
     plots_root = plots_dir.resolve()
     master_root = analysis_dir.resolve()
     for manifest_path in sorted(plots_dir.rglob("*.manifest.json")):
@@ -864,5 +936,32 @@ def harvest_source_paths(plots_dir: Path, analysis_dir: Path) -> dict[str, list[
                     if not p.is_absolute():
                         p = (emit_analysis_dir / p).resolve()
                     paths.append(p)
-        sources_by_renderer.setdefault(figure_stem, []).extend(paths)
-    return {name: list(dict.fromkeys(paths)) for name, paths in sources_by_renderer.items()}
+        qualified = {(emit_analysis_dir / Path(rp)).resolve() for rp in manifest.get(MANIFEST_METADATA_ONLY_KEY, [])}
+        yield figure_stem, paths, qualified
+
+
+def harvest_metadata_only_sources(roots: Iterable[Path], analysis_dir: Path) -> frozenset[Path]:
+    """Stores the bundle may carry SHALLOWLY: qualified metadata-only by some sidecar
+    under ``roots`` and declared in FULL by none.
+
+    ANY FULL DECLARATION WINS. A per-sim or benchmarking figure that reads DATA from a
+    store declares it un-qualified; if the metadata page qualifies the same store, the
+    data reader's declaration keeps the full carry, byte-identical to today. The
+    subtraction runs over EVERY root at once (``plots/`` and ``eda/``), because a
+    full declaration in one root must defeat a qualifier in another. The identity is
+    the resolved path, the same one ``_emit._harvest_sources`` walks.
+
+    Why this matters for a reader of the bundle: a zarr store carried without its
+    chunk files re-opens cleanly and reads every array as its FILL VALUE (measured:
+    ``xr.open_datatree(chunks=None)`` on a metadata-only copy returns identical attrs and
+    groups, and a ``.values`` read returns NaN rather than raising), so a consumer that
+    reads data from a store carried shallowly is silently wrong. The bundle manifest
+    records the shallow set under ``metadata_only_stores`` for exactly that reader.
+    """
+    qualified_anywhere: set[Path] = set()
+    full_anywhere: set[Path] = set()
+    for root in roots:
+        for _stem, declared, qualified in _iter_manifest_declarations(root, analysis_dir):
+            qualified_anywhere |= qualified
+            full_anywhere |= set(declared) - qualified
+    return frozenset(qualified_anywhere - full_anywhere)

@@ -8,7 +8,7 @@ TRITONSWMM_sensitivity_analysis.bundle_report_data()):
 
 Helpers (private to this module):
 
-  _harvest_and_copy_sources(...)
+  _harvest_sources(...)
   _rewrite_paths_to_relative(...)
   _write_bundle_manifest(...)
   _emit_bundle_zip(...)
@@ -43,6 +43,7 @@ from hhemt.bundle._path_policy import (
     rebase_bundle_relative_paths,
 )
 from hhemt.report_renderers._figure_emission import (
+    harvest_metadata_only_sources,
     harvest_source_paths,
 )
 from hhemt.version_migration.constants import (
@@ -112,7 +113,7 @@ def _prune_undeclared_figures(analysis_dir: Path, plots_dir: Path) -> list[str]:
     """Delete figures whose stem no plot rule declares, with their manifest sidecars.
 
     Returns the analysis-relative paths removed, for carriage in the bundle manifest. A
-    warning would not do: this file records at _harvest_and_copy_sources:195-199 that a
+    warning would not do: this file records in _harvest_sources' F4 comment that a
     warnings.warn inside a Snakemake rule log "is lost by the time anyone reads the bundle",
     which is why declared_sources_absent is threaded into the manifest instead. A prune whose
     audit trail is lost is a silent deletion.
@@ -305,6 +306,19 @@ def emit_bundle(
         a URL-bearing ``File`` part into the crate instead. Omit it, the default, and
         the bundle is self-contained: every config-declared input is carried.
     """
+    # ARGUMENT validation, so it precedes every read of the tree: a caller passing a retired
+    # parameter is told before a single stat.
+    if container_defs:
+        from hhemt.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            field="container_defs",
+            message=(
+                "container_defs was RETIRED (SIF quest, 2026-09): recipes are package data under "
+                "hhemt/sif/recipes and a bundle carries the resolved images' .manifest.json set instead."
+            ),
+            config_path=None,
+        )
     analysis_dir = analysis.analysis_paths.analysis_dir
     plots_dir = analysis_dir / BUNDLE_PLOTS_SUBDIR
     # Shipping-time staleness gate. Placed before the harvest so a stale tree is refused
@@ -317,6 +331,20 @@ def emit_bundle(
             f"Bundle emission requires a completed render_report(). "
             f"Run analysis.render_report() on HPC first."
         )
+
+    # SIF quest (ADR-21): a container-mode bundle carries the PRODUCER MANIFEST of the image the
+    # SIMULATIONS RAN IN -- the CARRIED identity source from_doi consumes. Recipes are package
+    # data, so no .def and no source tree are carried. Native bundles compute nothing here and
+    # their manifest is byte-identical to before.
+    #
+    # PLACED HERE, ABOVE THE PRUNE, and the prune is the reason rather than the staging walk:
+    # _prune_undeclared_figures DELETES orphan figures and their sidecars from the LIVE analysis
+    # tree before anything is staged. Wasted staging I/O is recoverable; that deletion is not.
+    # This gate reads no staged byte -- only the configs, the system log and sif_root -- so it
+    # belongs beside the staleness gate above, with the other shipping-time refusals.
+    sif_manifests = None
+    if analysis.cfg_analysis.execution_environment == "container":
+        sif_manifests = _emit_sif_manifests(analysis)
 
     # PRUNE BEFORE HARVEST. The harvest globs plots/**/*.manifest.json and
     # _copy_supporting_files copytrees the whole plots_dir, so a figure whose rule no longer
@@ -370,7 +398,18 @@ def emit_bundle(
         exclude_config = BundleExcludeConfig.model_validate(yaml.safe_load(Path(exclude_config).read_text()) or {})
 
     with _staging_dir(output_path.parent) as staging:
-        declared_sources_absent = _harvest_and_copy_sources(sources_by_renderer, analysis_dir, staging)
+        # PLAN, never copy: harvested sources are byte-identical to their originals and
+        # the zip normalizes every timestamp and mode, so materializing them under
+        # render_bundle/ (the same small-file-create-bound mount as the analysis) bought
+        # nothing. `_emit_bundle_zip` streams them from `streamed` at the end; only the
+        # GENERATED files below (configs, crate, runnable set, manifest, baseline, plots/)
+        # land in `staging`. The shallow set is computed over BOTH harvest roots at once
+        # because a full declaration under one root must defeat a qualifier under the
+        # other (harvest_metadata_only_sources).
+        metadata_only = harvest_metadata_only_sources((plots_dir, analysis_dir / "eda"), analysis_dir)
+        streamed, declared_sources_absent, metadata_only_stores = _harvest_sources(
+            sources_by_renderer, analysis_dir, metadata_only=metadata_only
+        )
         _copy_bundle_baseline(analysis_dir, staging)
         _copy_reference_outputs(analysis, staging)
         aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
@@ -379,26 +418,6 @@ def emit_bundle(
         _emit_hpc_identity(analysis, staging)
         input_deposits = _copy_declared_inputs(analysis, staging, exclude_config)
         _emit_runnable_template_set(staging)
-
-        # SIF quest (ADR-21): a container-mode bundle carries the PRODUCER MANIFEST of every image the
-        # matrix resolves to — the CARRIED identity source from_doi/reprex consume. Recipes are package
-        # data, so no .def and no source tree are carried; the consumer's own checkout at the carried
-        # hhemt_sha rebuilds the identical image through the same transaction. Native bundles carry
-        # nothing here and their manifest is byte-identical to before.
-        if container_defs:
-            from hhemt.exceptions import ConfigurationError
-
-            raise ConfigurationError(
-                field="container_defs",
-                message=(
-                    "container_defs was RETIRED (SIF quest, 2026-09): recipes are package data under "
-                    "hhemt/sif/recipes and a bundle carries the resolved images' .manifest.json set instead."
-                ),
-                config_path=None,
-            )
-        sif_manifests = None
-        if analysis.cfg_analysis.execution_environment == "container":
-            sif_manifests = _emit_sif_manifests(analysis)
 
         _upgrade_crate_to_workflow_run_crate(staging)
         _annotate_crate_excluded_inputs(staging, input_deposits)
@@ -413,19 +432,32 @@ def emit_bundle(
             declared_sources_absent=declared_sources_absent,
             pruned_orphan_figures=pruned_orphan_figures,
             crate_license_finding=_crate_license_finding(analysis, staging),
+            metadata_only_stores=metadata_only_stores,
         )
-        _emit_bundle_zip(staging, output_path)
+        _emit_bundle_zip(staging, output_path, streamed=streamed)
 
     return output_path
 
 
-def _harvest_and_copy_sources(
+def _harvest_sources(
     sources_by_renderer: dict[str, list[Path]],
     analysis_dir: Path,
-    staging: Path,
-) -> None:
-    """Copy each declared source path into the staging dir, preserving
-    its relative position under analysis_dir.
+    *,
+    metadata_only: frozenset[Path] = frozenset(),
+) -> tuple[dict[str, Path], list[str], list[str]]:
+    """PLAN the archive entries for every declared source path -- copy nothing.
+
+    Returns ``(entries, declared_absent, metadata_only_stores)``. ``entries`` maps each
+    archive name (POSIX, relative to the bundle root, preserving the source's position
+    under ``analysis_dir``; ``external/{name}`` for a source outside it) to the ON-DISK
+    file ``_emit_bundle_zip`` streams from. Each resolved path is walked ONCE however
+    many figures declare it: the retired copy loop re-``copytree``'d a directory once
+    per declaring figure, and ``harvest_source_paths`` dedupes only within a key.
+    A directory whose resolved path is in ``metadata_only`` contributes only its zarr
+    metadata documents (``_zarr_metadata_filenames``); its bundle-root-relative path is
+    returned in ``metadata_only_stores`` so the manifest can name it. Measured on the
+    delivered 3,798-event campaign: the consolidated tree alone was 326,747 chunk files
+    against a few hundred metadata documents.
 
     A declared source that does not exist on disk is SKIPPED (with a warning),
     not fatal. ADR-6 D3 lets renderers declare an expected source unconditionally
@@ -443,10 +475,19 @@ def _harvest_and_copy_sources(
     # carries the record of it. Without this the only trace is a warnings.warn on stderr
     # inside a Snakemake rule log, which is lost by the time anyone reads the bundle.
     declared_absent: list[str] = []
+    entries: dict[str, Path] = {}
+    shallow_stores: list[str] = []
+    seen: set[Path] = set()
+    analysis_root = analysis_dir.resolve()
+    metadata_names = _zarr_metadata_filenames() if metadata_only else frozenset()
     for paths in sources_by_renderer.values():
         for src in paths:
+            resolved = src.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
             try:
-                rel = src.resolve().relative_to(analysis_dir.resolve())
+                rel = resolved.relative_to(analysis_root)
             except ValueError:
                 rel = Path("external") / src.name
             if not src.exists():
@@ -460,13 +501,33 @@ def _harvest_and_copy_sources(
                     stacklevel=2,
                 )
                 continue
-            dest = staging / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
             if src.is_dir():
-                shutil.copytree(src, dest, dirs_exist_ok=True)
+                shallow = resolved in metadata_only
+                if shallow:
+                    shallow_stores.append(rel.as_posix())
+                for member in sorted(src.rglob("*")):
+                    if not member.is_file() or (shallow and member.name not in metadata_names):
+                        continue
+                    entries.setdefault((rel / member.relative_to(src)).as_posix(), member)
             else:
-                shutil.copy2(src, dest)
-    return sorted(set(declared_absent))
+                entries.setdefault(rel.as_posix(), src)
+    return entries, sorted(set(declared_absent)), sorted(shallow_stores)
+
+
+def _zarr_metadata_filenames() -> frozenset[str]:
+    """The filenames that are zarr METADATA documents, sourced from zarr's own constants.
+
+    Not a hand list: a v3 store's sole document is ``zarr.json`` (the consolidated trees
+    are v3 -- V0022), a v2 store's are ``.zarray``/``.zgroup``/``.zattrs`` plus the
+    consolidated ``.zmetadata``; a list written from memory of one format carries
+    nothing of the other. Function-local import so a zarr rename breaks ``hhemt
+    bundle`` loudly here rather than every toolkit import at a module top. Lives
+    bundle-side, not in a renderer: the renderer says only "metadata-only"; which
+    files that means is the harvester's knowledge.
+    """
+    from zarr.core.common import ZARR_JSON, ZARRAY_JSON, ZATTRS_JSON, ZGROUP_JSON, ZMETADATA_V2_JSON
+
+    return frozenset({ZARR_JSON, ZARRAY_JSON, ZGROUP_JSON, ZATTRS_JSON, ZMETADATA_V2_JSON})
 
 
 def _copy_bundle_baseline(analysis_dir: Path, staging: Path) -> None:
@@ -676,8 +737,8 @@ def _rewrite_absolute_to_relative(
 
     Resolution order: ``analysis_root`` first, then ``system_root``, then
     ``external/{filename}`` fallback. Mirrors the
-    ``_harvest_and_copy_sources`` fallback at the file-copy layer so the
-    cfg and the staging-dir layout agree on where the file lives.
+    ``_harvest_sources`` fallback at the archive-entry layer so the
+    cfg and the archive layout agree on where the file lives.
     Non-string values are passed through unchanged.
     """
     if not isinstance(value, str):
@@ -803,16 +864,19 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
     # (Path(src.name)) for out-of-tree CSVs, which disagreed with the cfg rewrite's
     # external/{name} — reconciled by routing every declared input through the one
     # policy-driven copy path.
-    # Carry ONLY the DU sentinel, not the whole _status/ tree. Measured on a real
-    # Norfolk emit: _status/ is 1,568 members of which exactly ONE (_du.json) has a
-    # consume-side reader -- report_renderers/disk_utilization.py, which resolves
+    # This site carries ONLY the DU sentinel, never the _status/ tree: the one consumer
+    # of _du.json is report_renderers/disk_utilization.py, which resolves
     # {analysis_dir}/_status/_du.json against the BUNDLE ROOT at regenerate time (and
-    # cross_experiment_disk_utilization.py reads the same file per child crate). The
-    # other 1,567 are completion flags and run-state sentinels whose payloads carry the
-    # producer's hostname, pid, SLURM jobids and wall-clock times, and which nothing
-    # consume-side reads: bundle/snakefile_generator._status_flags_for returns () and its
-    # docstring already asserts 'the bundle does not carry the flag files'. Copying the
-    # FILE rather than the TREE makes that standing assertion true.
+    # cross_experiment_disk_utilization.py reads the same file per child crate). The bare
+    # `.flag` completion markers are never carried -- bundle/snakefile_generator
+    # ._status_flags_for returns () on that basis. The `*.flag.json` payload sidecars and
+    # `_status/_job_index.json` DO reach a bundle, but through the manifest HARVEST, not
+    # this copy: report_renderers/workflow_performance.py reads them at regenerate time
+    # and therefore declares every one it opens (Gotcha 53), and _harvest_sources streams
+    # exactly the declared set -- 22,794 sidecars on a 3,798-event campaign. Their
+    # payloads carry `written_at` and `slurm_job_id` (status_flags.write_status_flag);
+    # replacing that per-file declaration with a scrubbed read-model is a routed
+    # follow-up, not something this copy controls.
     status_dir = analysis_dir / BUNDLE_STATUS_SUBDIR
     du_sentinel = status_dir / "_du.json"
     if du_sentinel.exists():
@@ -878,8 +942,10 @@ def _copy_declared_inputs(
     Driven by the same ``_PATH_FIELD_POLICY`` table the rewrite consumes (one
     policy-driven copy path — never a second source list, so
     ``test_all_path_fields_have_policy``'s bidirectional guard already covers it).
-    Overlaps with ``_harvest_and_copy_sources`` (a renderer-declared input that is also a
-    cfg field) are idempotent overwrites. A declared-but-absent input is SKIPPED here;
+    Overlaps with ``_harvest_sources`` (a renderer-declared input that is also a
+    cfg field) resolve to this staged copy at the archive (``_emit_bundle_zip``: staging
+    wins an archive-name collision; both are the same bytes). A declared-but-absent input
+    is SKIPPED here;
     ``from_doi``'s fail-closed materialize gate raises on it at ingest.
 
     ADR-20 (as amended 2026-07-14) — the governed opt-out. When ``exclude_config`` names a
@@ -974,9 +1040,14 @@ def _copy_declared_inputs(
                 dest = staging / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 if src.is_dir():
-                    shutil.copytree(src, dest, dirs_exist_ok=True)
+                    # copyfile, not copy2: _emit_bundle_zip stamps a fixed date_time and
+                    # 0o644 on every entry, so the mtime/mode/xattr copystat would preserve
+                    # are overwritten by construction -- and each copystat is three extra
+                    # metadata syscalls per file on the small-file create path that bounds
+                    # this emit. copytree still copystats each DIRECTORY once (stdlib tail).
+                    shutil.copytree(src, dest, dirs_exist_ok=True, copy_function=shutil.copyfile)
                 else:
-                    shutil.copy2(src, dest)
+                    shutil.copyfile(src, dest)
 
     return deposits
 
@@ -1059,13 +1130,27 @@ def _emit_runnable_template_set(staging: Path) -> None:
 
 
 def _emit_sif_manifests(analysis: TRITONSWMM_analysis) -> list[dict]:
-    """The CARRIED identity source (ADR-21): for every partition the matrix requires, recompute the
-    identity, resolve the image under ``container.sif_root``, and return its producer
-    ``.manifest.json`` (parsed). Emit runs on the producer's git checkout, so recompute is total.
-    Raises ConfigurationError when an image or its manifest is absent — a bundle must not name an
-    image the producer never built."""
+    """The CARRIED identity source (ADR-21): the producer ``.manifest.json`` of the image the
+    SIMULATIONS RAN IN, resolved by the digest SETUP RECORDED (``system_log.sif_sha256``) rather
+    than by an identity recomputed from the running toolkit -- the same digest-keyed lookup
+    ``_reprex.py::_verify_sif`` performs on the consume side, so both ends of the round trip name
+    one image by construction.
+
+    The premise is narrower than the one it replaces, and that is the whole fix. Setup and the
+    simulations are ONE workflow run at ONE toolkit version, so the digest setup recorded names
+    what RAN. The emit is a separate act later on whatever checkout the operator drives, which is
+    where "emit runs on the producer's git checkout, so recompute is total" failed: a toolkit
+    advanced mid-campaign moves ``hhemt_sha`` -- the one identity input no config pins -- and the
+    emit then demands an image nothing ever ran.
+
+    Fails closed in four states, none of which names a recomputed identity and none of which
+    names ``hhemt build-sifs``: a rebuild produces a different blob with a different digest, so it
+    is not the remedy for any of them.
+    """
+    from hhemt.config.hpc_system import resolve_gpu_target
     from hhemt.exceptions import ConfigurationError
-    from hhemt.sif.identity import manifest_path, resolve_sif
+    from hhemt.sif.identity import derive_family, find_by_sha256
+    from hhemt.sif.pins import resolve_full_sha
 
     cfg_hpc = analysis.cfg_hpc_system
     cspec = getattr(cfg_hpc, "container", None)
@@ -1073,26 +1158,110 @@ def _emit_sif_manifests(analysis: TRITONSWMM_analysis) -> list[dict]:
         raise ConfigurationError(
             field="container", message="container-mode bundle with no container: block", config_path=None
         )
-    out: list[dict] = []
-    seen: set[str] = set()
-    for part in sorted(_matrix_required_partitions(analysis.cfg_analysis, cfg_hpc)):
-        ident = analysis._sif_identity_for(part)
-        if ident.key in seen:
-            continue
-        seen.add(ident.key)
-        sif = resolve_sif(cspec.sif_root, ident)
-        man = manifest_path(sif)
-        if not (sif.is_file() and man.is_file()):
+    cfg_system = analysis._system.cfg_system
+    log = analysis._system.log
+    # Setup and emit are different processes (different SLURM jobs on HPC), so the in-memory log
+    # is not the one setup wrote. Same reason provenance._sif_spec_from_system_log refreshes.
+    log.refresh()
+    log_path = getattr(log, "logfile", "the system log")
+    digest = log.sif_sha256.get()
+
+    # (a) Nothing recorded. The capture in setup_workflow's container branch is ITSELF
+    # identity-keyed -- resolve_sif(..., analysis._sif_identity_for(target_partition)) -- and
+    # gated on the resolved path being a file, so a naive "re-run setup" at a NEWER toolkit
+    # resolves a path holding no image, skips the capture silently, and lands back here. Both
+    # remedies below carry the precondition that makes them work.
+    if not digest:
+        raise ConfigurationError(
+            field="container.sif_root",
+            message=(
+                f"cannot bundle: no SIF digest is recorded in {log_path}. A container-mode bundle "
+                "carries the image the simulations RAN IN, and this analysis recorded none -- the "
+                "setup ran before the digest capture existed, the image was a sandbox directory "
+                "(no single blob to hash), or the digest read failed. REMEDY, and its precondition "
+                "is load-bearing because the capture resolves the image by the RUNNING toolkit's "
+                "identity: either (1) check out the toolkit commit the image was built at and "
+                "re-run the setup rule there, or (2) build an image at the running commit and "
+                "re-run the setup rule. Re-running setup at a toolkit whose identity resolves to "
+                "no image on disk records nothing, and this refusal recurs unchanged."
+            ),
+            config_path=None,
+        )
+
+    # (b) Recorded, but the image it names is not here. The remedy wording mirrors
+    # _reprex.py::_verify_sif's so a producer reading this and a reproducer reading that are told
+    # the same thing: obtain the reference image, do not rebuild one.
+    found = find_by_sha256(cspec.sif_root, str(digest))
+    if found is None:
+        raise ConfigurationError(
+            field="container.sif_root",
+            message=(
+                f"cannot bundle: the digest recorded in {log_path} is {digest}, but no manifest "
+                f"under {cspec.sif_root} records that sha256. The image the simulations ran in is "
+                "not at its identity path (or sif_root moved). Restore that image and its "
+                ".manifest.json to sif_root. A rebuild does NOT recover it -- it produces a "
+                "different blob with a different digest."
+            ),
+            config_path=None,
+        )
+    _sif_path, manifest = found
+    ident = manifest.get("identity") or {}
+
+    # (d) The carried identity must be one THIS analysis could have used. Checked BEFORE the
+    # coverage arm so that by the time (c) runs, mpi/accel provably agree and (c) reduces to the
+    # gpu_hardware question it is actually about. Unconditional, with no best-effort branch: this
+    # function returns list[dict] and has no channel to disclose a skip, so a skipped check reads
+    # downstream exactly like a passed one. triton_sha costs no git call in container mode --
+    # sif.pins.resolve_full_sha returns a 40-hex ref as-is.
+    mpi, accel = derive_family(cspec)
+    for field_name, carried, expected in (
+        ("mpi_family", ident.get("mpi_family"), mpi),
+        ("accel", ident.get("accel"), accel),
+        ("swmm_tag", ident.get("swmm_tag"), str(cfg_system.SWMM_tag_key)),
+        (
+            "triton_sha",
+            ident.get("triton_sha"),
+            resolve_full_sha(cfg_system.TRITONSWMM_software_directory, str(cfg_system.TRITONSWMM_branch_key)),
+        ),
+    ):
+        if carried != expected:
             raise ConfigurationError(
                 field="container.sif_root",
                 message=(
-                    f"cannot bundle: identity {ident.key} ({ident.stem}) has no image+manifest under "
-                    f"{cspec.sif_root}; run hhemt build-sifs first."
+                    f"cannot bundle: the image recorded for this analysis ({digest}, from "
+                    f"{log_path}) carries {field_name}={carried!r}, but this analysis's config "
+                    f"declares {expected!r}. CAUSE: one system_directory holds one system log, and "
+                    "analysis_dir defaults to system_directory/ANALYSIS_ID, so several analyses "
+                    "under one system_directory SHARE this digest slot and the last setup to run "
+                    "wins. Two sensitivity build targets can also differ in solver pin while "
+                    "presenting the same (mpi_family, accel, gpu_hardware) tuple, because that "
+                    "tuple is the dedup key and the pin is not part of it. Give this analysis its "
+                    "own system_directory, or re-run its setup so the recorded digest is its own."
                 ),
                 config_path=None,
             )
-        out.append(json.loads(man.read_text()))
-    return out
+
+    # (c) One recorded digest is ONE image. It serves the matrix iff every partition the matrix
+    # requires resolves to the identity the carried image has. Partition COUNT is not the test:
+    # under a CPU container spec the partition contributes nothing to the identity at all
+    # (derive_identity discards it), so a cpu-spec matrix over any number of partitions is
+    # single-image by construction.
+    for part in sorted(_matrix_required_partitions(analysis.cfg_analysis, cfg_hpc)):
+        hw = resolve_gpu_target(cfg_hpc, part)[0] if accel != "cpu" else None
+        if hw != ident.get("gpu_hardware"):
+            raise ConfigurationError(
+                field="container.sif_root",
+                message=(
+                    f"cannot bundle: partition {part!r} requires an image for "
+                    f"({mpi}, {accel}, {hw or 'cpu'}), but the image recorded for this analysis "
+                    f"({digest}, from {log_path}) is for ({ident.get('mpi_family')}, "
+                    f"{ident.get('accel')}, {ident.get('gpu_hardware') or 'cpu'}). The system log "
+                    "records ONE SIF digest, so a matrix needing more than one image cannot be "
+                    "bundled from it. Split the matrix by hardware and bundle each arm."
+                ),
+                config_path=None,
+            )
+    return [manifest]
 
 
 def _matrix_required_partitions(cfg_analysis, cfg_hpc) -> set[str]:
@@ -1303,6 +1472,7 @@ def _write_bundle_manifest(
     declared_sources_absent: list[str] | None = None,
     pruned_orphan_figures: list[str] | None = None,
     crate_license_finding: str | None = None,
+    metadata_only_stores: list[str] | None = None,
 ) -> None:
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
@@ -1353,36 +1523,63 @@ def _write_bundle_manifest(
         # (not empty) for a native bundle, so a native manifest is byte-identical to before —
         # same rule as input_deposit. BUNDLE_SCHEMA_VERSION bumped 5 -> 6 for the container shape.
         manifest["sif_manifests"] = sif_manifests
+    if metadata_only_stores:
+        # Stores carried SHALLOWLY (zarr metadata documents only, no chunk files) because
+        # every figure that declared them read only their metadata. A reader that opens
+        # one of these for DATA gets fill values, not an error (measured: NaN, no raise),
+        # so the manifest names them. Absent (not empty) when no store is shallow, so a
+        # full-carry manifest is byte-identical to what it was before this key existed.
+        manifest["metadata_only_stores"] = metadata_only_stores
     (staging / BUNDLE_MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2))
 
 
-def _emit_bundle_zip(staging: Path, output_path: Path) -> None:
-    # Emit a deterministic uncompressed zip from staging.
+def _emit_bundle_zip(staging: Path, output_path: Path, *, streamed: dict[str, Path] | None = None) -> None:
+    # Emit a deterministic uncompressed zip from staging PLUS the streamed plan.
+    #
+    # `streamed` maps archive name -> on-disk source for the harvested sources, which
+    # are never copied into staging (they are byte-identical to their originals and
+    # the zip normalizes every timestamp and mode). Staging wins an archive-name
+    # collision: the only collision class is a cfg-declared input that a renderer also
+    # declared (`_copy_declared_inputs` carries it into staging), and both are the same
+    # bytes, so first-wins is a dedupe, not a choice.
     #
     # Determinism is achieved via two mechanisms applied jointly:
-    # (1) sorted file ordering (rglob output is sorted so the same
-    #     staging tree always produces the same archive entry order);
+    # (1) sorted entry ordering by PATH PARTS (`a.split("/")`), which is the ordering
+    #     `sorted(staging.rglob("*"))` produced before the streamed plan existed --
+    #     PurePath sorts by its parts, not by the joined string -- so an archive with
+    #     no streamed entries is byte-identical to the previous emitter's (measured);
     # (2) fixed date_time on every ZipInfo entry — the value
     #     (1980, 1, 1, 0, 0, 0) is the zipfile module's minimum
     #     valid date, eliminating mtime variability from real
     #     filesystem timestamps.
+    # Where the bytes are READ from is not a determinism input; ordering and stamping are.
     #
     # Compression: ZIP_STORED (uncompressed at the file-byte level).
     # Same rationale as the prior tar format: zarr is the bulk of
     # bundle size and is internally chunked-compressed; external zip
     # compression adds CPU cost without size win.
+    #
+    # Bytes are STREAMED through zf.open(info, "w") rather than read whole: with
+    # info.file_size set from stat() first, this is exactly what ZipFile.writestr does
+    # internally (it sets zinfo.file_size = len(data) and calls open(zinfo, "w")), so the
+    # archive is byte-identical to the writestr form while never holding a file in memory.
     fixed_date_time = (1980, 1, 1, 0, 0, 0)
+    entries: dict[str, Path] = {
+        entry.relative_to(staging).as_posix(): entry for entry in sorted(staging.rglob("*")) if not entry.is_dir()
+    }
+    for arcname, src in (streamed or {}).items():
+        entries.setdefault(arcname, src)
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_STORED) as zf:
-        for entry in sorted(staging.rglob("*")):
-            if entry.is_dir():
-                # Skip directory entries; zipfile reconstructs directory
-                # structure from file paths at extraction time.
-                continue
-            arcname = entry.relative_to(staging)
-            info = zipfile.ZipInfo(filename=str(arcname), date_time=fixed_date_time)
+        # Directory entries are skipped by construction (files only above); zipfile
+        # reconstructs directory structure from file paths at extraction time.
+        for arcname in sorted(entries, key=lambda a: a.split("/")):
+            src = entries[arcname]
+            info = zipfile.ZipInfo(filename=arcname, date_time=fixed_date_time)
             info.compress_type = zipfile.ZIP_STORED
             info.external_attr = 0o644 << 16  # rw-r--r-- file mode
-            zf.writestr(info, entry.read_bytes())
+            info.file_size = src.stat().st_size
+            with src.open("rb") as fh, zf.open(info, "w") as dest:
+                shutil.copyfileobj(fh, dest, 1 << 20)
 
 
 def _toolkit_source_dir() -> Path:

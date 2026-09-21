@@ -5,13 +5,14 @@ orchestration guards and the deterministic emit (crate + manifest + read-model)
 from the not-yet-landed ``combined`` ReportingSet render wiring.
 """
 
+import json
 from pathlib import Path
 
 import pytest
 
 from hhemt.bundle import _combine as CB
 from hhemt.bundle._emit import _emit_bundle_zip
-from hhemt.exceptions import ConfigurationError
+from hhemt.exceptions import ConfigurationError, ProcessingError
 from hhemt.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
     BUNDLE_SCHEMA_VERSION,
@@ -120,3 +121,63 @@ def test_combined_emit_deterministic(tmp_path, monkeypatch):
     z1 = _archive_bytes(out1, tmp_path / "c1.zip")
     z2 = _archive_bytes(out2, tmp_path / "c2.zip")
     assert z1 == z2
+
+
+def _child_with_root_tree(parent: Path, *, shallow: list[str] | None) -> Path:
+    """A child bundle root carrying a real (tiny) root tree plus a manifest.
+
+    Every arm below builds the SAME on-disk tree and varies only the manifest's
+    ``metadata_only_stores`` value -- whether the key is present, and WHICH store it names.
+    Varying WHICH store is named is the load-bearing half: an arm set that only ever pairs a
+    naming list against an empty one cannot tell the correct predicate apart from a bare
+    ``if shallow_stores:``, because across that space the two are extensionally identical.
+    """
+    import xarray as xr
+
+    from hhemt.utils import resolve_experiment_tree
+
+    root = parent / "child"
+    root.mkdir(parents=True)
+    store = resolve_experiment_tree(root)
+    xr.Dataset({"max_wlevel_m": ("a", [1.0, 2.0])}).to_zarr(store)
+    manifest: dict = {"bundle_schema_version": BUNDLE_SCHEMA_VERSION}
+    if shallow is not None:
+        manifest["metadata_only_stores"] = shallow
+    (root / BUNDLE_MANIFEST_FILENAME).write_text(json.dumps(manifest))
+    return root
+
+
+def test_intercomparison_refuses_a_metadata_only_child_store(tmp_path):
+    """A shallow-carried child store must ABORT the combine, not read as fill values.
+
+    The bundle emit carries a store SHALLOWLY (zarr metadata documents, no chunk files) when
+    every figure that declared it read only its metadata. Such a store re-opens cleanly and
+    returns FILL VALUES for every data read, so an unguarded combine writes
+    ``identical: True, max_abs_diff: 0.0`` for every pair with no error and no warning.
+    Refusal is the only honest outcome: SKIPPING yields an empty pair list, which the roll-up
+    renders as "no pairs" -- the same false-clean shape the guard exists to prevent.
+    """
+    root = _child_with_root_tree(tmp_path / "a", shallow=["experiment_datatree.zarr"])
+    with pytest.raises(ProcessingError) as exc:
+        CB._load_intercomparison_subs(root)
+    assert "metadata-only" in str(exc.value)
+
+
+def test_intercomparison_loads_a_fully_carried_child_store(tmp_path):
+    """Satisfying inputs: the same tree loads unless the manifest names the ROOT TREE itself.
+
+    The last two arms are what keep the predicate NARROW, and they are not interchangeable.
+    ``eda/b4b_clean_identity.zarr`` is the real-world case the narrow placement exists for --
+    a figure qualified an EDA artifact while the root tree was carried in full -- and it is
+    what a later reader will look for. ``members/member_0/experiment_datatree.zarr`` shares the
+    root tree's BASENAME while differing in path, and it is the only arm that separates a
+    full-relative-path match from a basename or substring match.
+    """
+    assert CB._load_intercomparison_subs(_child_with_root_tree(tmp_path / "b", shallow=[])) == ({}, {})
+    assert CB._load_intercomparison_subs(_child_with_root_tree(tmp_path / "c", shallow=None)) == ({}, {})
+    assert CB._load_intercomparison_subs(
+        _child_with_root_tree(tmp_path / "d", shallow=["eda/b4b_clean_identity.zarr"])
+    ) == ({}, {})
+    assert CB._load_intercomparison_subs(
+        _child_with_root_tree(tmp_path / "e", shallow=["members/member_0/experiment_datatree.zarr"])
+    ) == ({}, {})

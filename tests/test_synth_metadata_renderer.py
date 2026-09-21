@@ -262,6 +262,27 @@ def test_provenance_declares_the_sidecar_and_nothing_undeclared(tmp_path):
     assert manifest["plot_id"] == "metadata"
 
 
+def test_consolidated_tree_is_declared_metadata_only(tmp_path):
+    """The page opens the consolidated tree for attrs + group names only, so it declares the
+    store in `source_paths_relative` (audit PREFIX) AND qualifies it under
+    `source_paths_metadata_only` (shallow bundle carry). Pre-fix: the qualifier key is
+    absent from the sidecar and the lookup raises KeyError. The store is a real zarr v3
+    tree written by xarray, not a directory with a marker file, so `_resolve_consolidated_tree`
+    finds it by the same existence test it uses on a completed analysis.
+    """
+    import xarray as xr
+
+    from hhemt.report_renderers._figure_emission import MANIFEST_METADATA_ONLY_KEY
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    store = analysis_dir / "experiment_datatree.zarr"
+    xr.DataTree.from_dict({"/": xr.Dataset(attrs={"hhemt_producing_sha": "abc"})}).to_zarr(store, consolidated=False)
+    _, manifest, _ = _render(tmp_path, doc=_full_crate())
+    assert "experiment_datatree.zarr" in manifest["source_paths_relative"]
+    assert manifest[MANIFEST_METADATA_ONLY_KEY] == ["experiment_datatree.zarr"]
+
+
 def test_volatile_fields_never_reach_the_rendered_page(tmp_path):
     """R3: the crafted sidecar's startTime + agent(hostname) must not surface.
 

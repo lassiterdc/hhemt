@@ -1,6 +1,6 @@
 """Every bundle-harvest source declaration must name a store that EXISTS.
 
-`_harvest_and_copy_sources` skips a declared-but-absent source with a warning and a
+`_harvest_sources` skips a declared-but-absent source with a warning and a
 non-fatal `continue`, and the manifest harvest is the ONLY path into a render bundle
 (`grep -c datatree src/hhemt/bundle/_emit.py` returns 0). So a declaration naming a
 retired store silently drops that store from every bundle -- and a contract census

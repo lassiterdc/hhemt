@@ -25,7 +25,7 @@ class PathPolicy(StrEnum):
     If the source file is outside ``analysis_dir`` (e.g., DEM, weather
     timeseries, SWMM templates that live elsewhere on HPC), the value
     is set to ``external/{filename}`` mirroring the
-    ``_harvest_and_copy_sources`` fallback. No fail-fast — input files
+    ``_harvest_sources`` fallback. No fail-fast — input files
     routinely live outside ``analysis_dir``.
     """
 

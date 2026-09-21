@@ -57,7 +57,7 @@ from typing import Literal
 from hhemt.bundle._combine_merge import _experiment_id, merge_experiment_trees
 from hhemt.bundle._compatibility import CompatibilityReport, check_bundle_compatibility
 from hhemt.bundle._emit import _get_toolkit_git_sha
-from hhemt.exceptions import ConfigurationError
+from hhemt.exceptions import ConfigurationError, ProcessingError
 from hhemt.provenance import producing_stamp
 from hhemt.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
@@ -426,6 +426,31 @@ def _load_intercomparison_subs(root: Path) -> dict:
     collapsed: dict = {}
     if not store.exists():
         return out, collapsed
+    # A child store carried SHALLOWLY (zarr metadata documents only, no chunk files) re-opens
+    # cleanly and returns FILL VALUES for every data read -- measured, no raise. This function
+    # reads max_wlevel_m/max_flow_cms out of the store below, so a shallow child would yield
+    # `identical: True, max_abs_diff: 0.0` on every pair with no error and no warning. REFUSE
+    # rather than skip: a skipped child yields an EMPTY pair list, which the roll-up renders as
+    # "no pairs" -- the same false-clean shape the refusal exists to prevent.
+    child_manifest = root / BUNDLE_MANIFEST_FILENAME
+    if child_manifest.exists():
+        try:
+            shallow_stores = json.loads(child_manifest.read_text()).get("metadata_only_stores", [])
+        except (OSError, ValueError):
+            shallow_stores = []
+        if store.relative_to(root).as_posix() in shallow_stores:
+            raise ProcessingError(
+                operation="combine: child store carried metadata-only",
+                filepath=store,
+                reason=(
+                    f"{root.name} names this store in its {BUNDLE_MANIFEST_FILENAME} "
+                    "'metadata_only_stores' list, so the bundle carries its zarr metadata "
+                    "documents without any chunk files; reading it for data returns fill "
+                    "values rather than raising. Re-emit the child from a tree whose reporting "
+                    "set declares the store in full, or run the combine against the producer's "
+                    "full analysis directory."
+                ),
+            )
     dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
     for g in sorted(dt.groups):
         if g.count("/") != 1 or not g.startswith("/member_"):

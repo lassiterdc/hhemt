@@ -70,8 +70,11 @@ def render(
     # (1) Run timeline -- projected from the per-rule `_status/*.flag.json` sidecars.
     # Globbing is audit-invisible (os.scandir), but the per-file read_text() is NOT, so
     # every sidecar actually OPENED is declared here per the declared-subset-of-actual
-    # invariant (Gotcha 53). `_status/` is already copytree'd into the render bundle, so
-    # this adds manifest rows and no payload bytes.
+    # invariant (Gotcha 53). The declaration IS the carry: `_copy_supporting_files`
+    # copies ONLY `_status/_du.json` (never the tree), so every sidecar declared here is
+    # a payload file the bundle harvest streams -- 22,794 on a 3,798-event campaign.
+    # Persisting a scrubbed timeline read-model and declaring THAT instead is a routed
+    # follow-up; until it lands, this declaration is what carries the timeline.
     with prov.artist(
         axes_id="html_section",
         kind="table",
@@ -98,7 +101,7 @@ def render(
     # read_text() on the glob match itself raises IsADirectoryError, and declaring the
     # DIRECTORY would raise in _validate_source_path (directory-as-source rejected unless
     # zarr). Declaring the whole union is also what carries it into the render bundle:
-    # `_harvest_and_copy_sources` copies exactly the declared set and
+    # `_harvest_sources` streams exactly the declared set into the archive and
     # `_copy_supporting_files` never touches logs/, so bundle carriage follows
     # declaration and needs no bundle-side change.
     eff_dir = analysis_dir.joinpath(*_SLURM_EFF_RELDIR)
@@ -196,9 +199,7 @@ def render(
     # degenerate branch (no status sidecars, no efficiency CSV, or a CSV with no job
     # rows) yields a banner and NO fragment, so a page with nothing to show contributes
     # no Tabulator assets at all -- which is what keeps the absent-SLURM page small.
-    fragments = [
-        tbl.fragment for tbl in (timeline, slurm) if tbl is not None and tbl.fragment is not None
-    ]
+    fragments = [tbl.fragment for tbl in (timeline, slurm) if tbl is not None and tbl.fragment is not None]
     html = _wrap_html_doc(
         analysis_id,
         _resolve_inline_css(report_cfg),

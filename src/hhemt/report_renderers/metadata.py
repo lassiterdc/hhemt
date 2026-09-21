@@ -644,8 +644,8 @@ def _read_status_flag_payloads(analysis_dir: Path) -> tuple[list[dict], list[Pat
     (ADR-6 Gate-A / the declared-subset-of-actual invariant). Globbing is
     audit-invisible (os.scandir), but `read_text()` is not.
 
-    `_status/` is already copytree'd into every bundle by `_copy_supporting_files`,
-    so declaring these adds manifest rows, never payload bytes.
+    `_copy_supporting_files` copies ONLY `_status/_du.json` into a bundle, never the
+    tree, so each sidecar declared from this list is a payload file the harvest carries.
     """
     status_dir = analysis_dir / _STATUS_RELDIR
     if not status_dir.is_dir():
@@ -3644,6 +3644,7 @@ def render(
     # even when absent. `_validate_source_path` accepts non-existent paths, so the
     # info-icon still names the source the page would have read.
     source_paths: list[Path] = [sidecar_path]
+    metadata_only_sources: list[Path] = []
 
     prov = ProvenanceLog()
     with prov.artist(
@@ -3670,6 +3671,13 @@ def render(
         tree_path = _resolve_consolidated_tree(analysis_dir, analysis)
         if tree_path is not None:
             source_paths.append(tree_path)
+            # METADATA-ONLY: both opens of this store (`_read_producing_shas`,
+            # `_consolidated_group_paths`) are `chunks=None, consolidated=False` and read
+            # root attrs + group names, never a chunk. Qualifying it lets the bundle
+            # harvest carry the store's zarr metadata documents without its chunk files
+            # (326,747 of them on a 3,798-event campaign) unless another figure
+            # declares the store in full. The audit still sees the full-store PREFIX.
+            metadata_only_sources.append(tree_path)
             artist.add_channel(
                 "producing_stamp",
                 ProvenanceRef(source_path=str(tree_path.relative_to(analysis_dir))),
@@ -3734,4 +3742,5 @@ def render(
             "validation_report_present": validation_report_path.exists(),
         },
         provenance=prov,
+        metadata_only_sources=metadata_only_sources,
     )

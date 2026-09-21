@@ -459,8 +459,10 @@ def main():
             )
 
         # Write workflow summary markdown
-        # Persist the jobid -> rule index into _status/, which is copytree'd into every
-        # render bundle. Harvested from the SLURM executor's own per-job log tree, which is
+        # Persist the jobid -> rule index into _status/. It reaches a render bundle only
+        # because report_renderers/workflow_performance.py declares it as a source (the
+        # bundle copies _status/_du.json alone, never the tree). Harvested from the SLURM
+        # executor's own per-job log tree, which is
         # the ONLY retroactive record of jobs whose flag sidecar a later submission
         # overwrote (measured: 511 such allocations on the delivered experiment). Merged
         # into any existing index rather than replacing it, because the plugin prunes its

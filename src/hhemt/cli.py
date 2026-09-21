@@ -2197,13 +2197,20 @@ def bundle_command(
     """Emit a portable render bundle for local renderer iteration.
 
     Walks *.manifest.json provenance sidecars under {analysis_dir}/plots/
-    and copies the union of declared source paths into a self-contained
+    and streams the union of declared source paths into a self-contained
     zip with relative-path configs and the HPC-baseline
     analysis_report.{html,zip} under bundle_baseline/.
 
     Requires render_report() to have been invoked at least once on the
     target analysis (so manifest sidecars exist). Raises FileNotFoundError
     if no manifests are found.
+
+    Sizing: this command has no toolkit walltime -- it is not a workflow rule. Its
+    runtime scales with the NUMBER of files the figures declared (every file under a
+    fully-declared zarr store counts), not with bytes; a store a figure read for
+    metadata only is carried without its chunk files. Run it in a login-node tmux
+    session rather than under an sbatch with a guessed time limit; if you must submit
+    it, size the limit from the declared-file count, not from the analysis size.
     """
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.system import TRITONSWMM_system

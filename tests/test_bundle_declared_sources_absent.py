@@ -1,6 +1,6 @@
 """F4b: a renderer-declared source that is absent at harvest time is RECORDED, not lost.
 
-`_harvest_and_copy_sources` skips a declared-but-absent source and warns — ADR-6 D3 permits
+`_harvest_sources` skips a declared-but-absent source and warns — ADR-6 D3 permits
 renderers to declare an expected source unconditionally (e.g. `disk_utilization` declares
 `_status/_du.json`, absent by design on a sensitivity master), so hard-raising would break
 correct bundles. The skip is right; the evidence disappearing is not. Before F4b the only
@@ -14,29 +14,30 @@ import json
 import warnings
 from pathlib import Path
 
-from hhemt.bundle._emit import _harvest_and_copy_sources, _write_bundle_manifest
+from hhemt.bundle._emit import _harvest_sources, _write_bundle_manifest
 
 
-def test_harvest_records_the_absent_source_and_still_copies_the_present_one(tmp_path):
-    """Emission must SUCCEED (non-fatal) while returning the absent path."""
+def test_harvest_records_the_absent_source_and_still_plans_the_present_one(tmp_path):
+    """Emission must SUCCEED (non-fatal) while returning the absent path.
+
+    The harvest PLANS archive entries (it no longer copies into staging), so the present
+    source shows up as a planned entry and the absent one as a recorded relpath with no entry.
+    """
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "eda").mkdir(parents=True)
     present = analysis_dir / "eda" / "present.zarr"
     present.write_text("x", encoding="utf-8")
     absent = analysis_dir / "eda" / "b4b_clean_identity.zarr"  # never created
 
-    staging = tmp_path / "staging"
-    staging.mkdir()
-
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        declared_absent = _harvest_and_copy_sources(
-            {"eda_compute_sensitivity": [present, absent]}, analysis_dir, staging
+        entries, declared_absent, shallow = _harvest_sources(
+            {"eda_compute_sensitivity": [present, absent]}, analysis_dir
         )
 
     assert declared_absent == ["eda/b4b_clean_identity.zarr"], "exactly the absent source"
-    assert (staging / "eda" / "present.zarr").exists(), "the present source must still be copied"
-    assert not (staging / "eda" / "b4b_clean_identity.zarr").exists()
+    assert entries == {"eda/present.zarr": present}, "the present source must still be planned"
+    assert shallow == []
 
 
 def test_harvest_returns_empty_when_every_declared_source_resolves(tmp_path):
@@ -50,10 +51,7 @@ def test_harvest_returns_empty_when_every_declared_source_resolves(tmp_path):
     a = analysis_dir / "eda" / "a.zarr"
     a.write_text("x", encoding="utf-8")
 
-    staging = tmp_path / "staging"
-    staging.mkdir()
-
-    assert _harvest_and_copy_sources({"r": [a]}, analysis_dir, staging) == []
+    assert _harvest_sources({"r": [a]}, analysis_dir)[1] == []
 
 
 def test_manifest_carries_declared_sources_absent_only_when_non_empty(tmp_path):

@@ -67,7 +67,7 @@ def render_eda_plots(
         # eda_cross_sim_identity for config_diff_maps (its calc member is
         # check_cross_sim_identity). LOUD ON SURPRISE: warn before skipping so a future
         # kind/stem drift surfaces instead of silently emptying the report (mirrors the
-        # _harvest_and_copy_sources skip-with-warning precedent, Gotcha 50).
+        # _harvest_sources skip-with-warning precedent, Gotcha 50).
         backing_stem = _RENDERER_BACKING_ARTIFACT.get(kind, kind)
         artifact = root / "eda" / f"{backing_stem}.zarr"
         # The b4b kinds are ALWAYS enumerated by the b4b ReportingSet (workflow.py /

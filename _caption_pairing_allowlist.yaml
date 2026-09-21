@@ -405,7 +405,42 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: fdc3d9a124ce777d2f95240c6f443035e0aba6cb700b0031fee184e8959f45f1
+    renderer_sha256: 148af25817c017760dc4b61cac3115535d503d1c89c7a50b313b929cb33446f7
+    justification_2026_09_21: >-
+      Grouped bundle-emit commit (INEF-4's 27 specs + EMIT-1's 5). Caption RE-READ IN FULL
+      against the diff, and its scope is DISJOINT from the change. The change is two hunks.
+      P2-5 introduces a `metadata_only_sources` list, appends the consolidated tree to it,
+      and threads it to the terminal `emit_plot_with_sources` call, so the bundle harvest
+      may carry that store's zarr metadata documents without its 326,747 chunk files unless
+      another figure declares the store in full. P5-2 corrects `_read_status_flag_payloads`'s
+      docstring, which claimed `_status/` is already copytree'd into every bundle; it is not
+      -- `_copy_supporting_files` copies only `_status/_du.json`.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than have to reconstruct it. The caption describes three DISPLAYED sections plus
+      a Sources block, and each is measurably untouched. (1) `source_paths` is unchanged --
+      `tree_path` is still appended to it and no entry is removed, and `metadata_only_sources`
+      is a PARALLEL list consumed only by the harvest -- so the interpolated
+      `source_paths_rst` block renders identically and the caption's Sources promise still
+      holds. (2) None of the three sections' inputs moves: Provenance summary still reads the
+      co-located `ro-crate-metadata.json`; Data availability still reads the `Data
+      availability` check in `validation_report.json`; the Reproduction guide is still
+      config-SCHEMA introspection with no `analysis` argument. (3) The P5-2 hunk is a
+      docstring whose whole subject is BUNDLE CARRIAGE, which the caption never raises.
+      THE ONE THING A REVIEWER SHOULD PROBE, named rather than left implicit: qualifying the
+      consolidated store changes what a BUNDLE carries for a source the caption's Sources
+      block names, so "the caption is untouched" is not self-evident. It holds because the
+      caption makes no carriage or completeness claim about its sources, and because the
+      renderer-IO audit still sees the full-store PREFIX, so the page renders identically
+      in place and from a bundle for everything the caption describes.
+      ALSO CHECKED, because it rides the same commit and would have been the real defect:
+      the Provenance-summary bullet's "container environment and its SIF digest" is NOT
+      affected by EMIT-1's digest-keying of `_emit_sif_manifests`. That change is in
+      `bundle/_emit.py` and governs the BUNDLE's sif-manifest set; this page reads the SIF
+      sha256 out of `ro-crate-metadata.json`, which no spec in either set touches.
+      This is a PAIRING discharge on a re-read, not a formatting exemption: the change is
+      semantic (a new carriage channel), and the re-read found the caption's scope disjoint
+      from it. Digest recorded after the grouped apply, so the exemption expires on the next
+      change to this renderer.
     justification_2026_09_07: >-
       load-mode VMS commit. Caption RE-READ IN FULL against the diff, and its scope is
       DISJOINT from the change. The change renames `_is_toolkit_owned` to
@@ -660,3 +695,40 @@ unpaired_allowlist:
       sources; none of that is reachable by reordering an import. Digest recorded
       AFTER the ruff-format pass riding this same commit, so the exemption expires
       on the next real change to this renderer rather than on arrival.
+
+  - renderer: workflow_performance
+    caption: src/hhemt/report_templates/captions/workflow_performance.rst
+    renderer_sha256: cca1e829a4dae74906bb1a9d6f90ef6161b96d38e498ff792699b9455fb9a4c1
+    justification_2026_09_21: >-
+      Grouped bundle-emit commit (INEF-4's 27 specs + EMIT-1's 5). Caption RE-READ IN FULL
+      against the diff. COMMENT-AND-FORMAT ONLY -- discharged by measurement, not by
+      judgement. The change is three hunks. P5-1's first block rewrites the
+      `_status/*.flag.json` comment, whose prior text claimed `_status/` is already
+      copytree'd into the render bundle so the declaration "adds manifest rows and no
+      payload bytes"; that was false, `_copy_supporting_files` copies only
+      `_status/_du.json`, and the corrected text records that the declaration IS the carry
+      (22,794 sidecars on a 3,798-event campaign) and names the scrubbed-read-model
+      follow-up. P5-1's second block renames `_harvest_and_copy_sources` to
+      `_harvest_sources` inside a comment and restates it as streaming rather than copying.
+      P5-1's third block is a pure `ruff format` reflow of the `fragments` list
+      comprehension onto one line, a finding that pre-existed this commit on this file.
+      THE MEASUREMENT THAT DISCHARGES IT: the module's AST is IDENTICAL before and after
+      (`ast.dump(ast.parse(...))` over the HEAD blob and the working file compare equal,
+      17,524 characters each). Not merely equivalent -- identical. So no emitted string,
+      no column, no source declaration and no branch can have moved, and nothing the
+      caption describes is reachable by this change.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning.
+      Its two bullets describe the Run timeline's source (the per-rule `_status/*.flag.json`
+      sidecars, appended one file at a time, covering setup through consolidation) and the
+      SLURM-efficiency union (`slurm_efficiency_report_*.csv` across all submissions,
+      finalized at teardown AFTER this page renders and therefore expected absent on the
+      producing run). Both remain exactly true: the declared set is unchanged, and what was
+      corrected is only the COMMENT explaining what that declaration costs a bundle.
+      THE ONE THING A REVIEWER SHOULD PROBE: the corrected comment now discloses that this
+      declaration carries 22,794 payload files into a bundle. Had the caption promised a
+      small page or a cheap bundle, that disclosure would make it misleading. It does not --
+      the caption makes no size, cost or carriage claim anywhere, and bundle carriage is a
+      subject it never raises.
+      First exemption for this pair; there was no prior entry. Digest recorded after the
+      grouped apply INCLUDING the ruff-format reflow riding it, so the exemption expires on
+      the next real change to this renderer rather than on arrival.
