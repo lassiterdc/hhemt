@@ -405,7 +405,29 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 9a275ff424a835c0a3edde4ef525870bcea95faa6d938fe99a869a0cf2dcb214
+    renderer_sha256: 483c6eae370b2d83afaabafacc3be8986d4c3569ceb87c13c3e0b4f4aa377f36
+    justification_2026_09_21: >-
+      `### D132` apply, the fifteen-spec arm-classification set. Caption RE-READ IN FULL
+      against the diff, which is the discharge this guard asks for -- it checks PAIRING,
+      not agreement, so the obligation is that someone looked, and someone did.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than only with the conclusion: the change is confined to
+      `_resolve_consolidated_tree`'s new `analysis is None` branch, which recovers the ARM
+      from the root's own `cfg_analysis.yaml` and prepends the arm-correct store to the
+      candidate list, falling through to the unchanged name walk when no config is present.
+      It therefore changes WHICH ROOT STORE is resolved on a bundle or reconstituted path,
+      from the migration-time store to the arm-correct one. The caption asserts what the
+      three rendered sections CONTAIN and WHERE each is SOURCED -- the `ro-crate-metadata.json`
+      provenance sidecar, the `Data availability` check in `validation_report.json`, and the
+      configuration fields grouped supply/amend/keep. It makes NO claim about root-store
+      resolution, about which of two stores is read, or about any value whose identity the
+      resolver decides. The change makes the provenance panel MORE correct on exactly the
+      path where it could previously be stamped from a stale store while plots rendered from
+      the current one; nothing the caption says about content or source moves.
+      The guard fired CORRECTLY: `metadata.py`'s sha moved, and a reader who had not opened
+      the caption could not have known the scope was disjoint. Digest verified independently
+      with `sha256sum` rather than taken from the guard's message, and re-recorded, so the
+      exemption expires on the next change to this renderer.
     justification_2026_09_19: >-
       W7 Finding C. Caption RE-READ IN FULL against the diff, which is the discharge this
       guard asks for -- it checks PAIRING, not agreement, so the obligation is that

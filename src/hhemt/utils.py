@@ -39,27 +39,83 @@ EXPERIMENT_TREE_NAME = ROOT_TREE_NAMES[0]
 #: The REGULAR arm's producer-written name. `analysis.py` binds it unconditionally, so a
 #: regular analysis re-creates it on every consolidation whose skip gate does not hold --
 #: `fname_out.exists()` is a conjunct of that gate, so an absent path forces a rebuild.
-#: THE CONSEQUENCE IS A KNOWN EXPIRY AND IT BELONGS HERE RATHER THAN IN A PLAN: the V0023
-#: migration resolves a two-store tree ONCE, and the next consolidation re-creates this
-#: name beside the unified one, restoring the state the migration just repaired. Only the
-#: arm-aware PRODUCER binding in `analysis.py` ends that cycle, and that change is HANDED
-#: OVER to the workstream owning that file -- it is deliberately not made here. Until it
-#: lands, the resolution below is what keeps the returned store correct, and the warning
-#: is what tells an operator the migration is available to them.
+#: A ROOT CARRYING BOTH NAMES IS REACHED BY TWO ROUTES AND THEY ARE NOT THE SAME DEFECT.
+#: On the REGULAR arm, V0021 demoted this analysis's store under a member node and the
+#: producer then re-created the flat one: the retired name is the LIVE artifact and the
+#: unified one is a stale derived view of it. On the OTHER route, V0021's `elif` selected
+#: a sensitivity master's store and left a regular one stranded beside it: there the
+#: retired name is an orphan with no writer and no reader.
+#: `V0023__retire_stranded_regular_store` retires the SECOND case only, and refuses rather
+#: than guessing where its arm signals disagree. IT DOES NOT CLOSE THE FIRST, and no
+#: migration does -- a retirement there would move the producer's working store aside. An
+#: arm-aware producer binding does not close it either: on the regular arm that branch
+#: binds the name the unconditional binding already gives it. So the resolution below is
+#: what keeps the returned store correct on the regular arm, and it is not a placeholder
+#: for a repair that is coming.
 REGULAR_TREE_NAME = ROOT_TREE_NAMES[2]
 
 
-def resolve_experiment_tree(root: str | Path) -> Path:
+def arm_from_config_dir(root) -> bool | None:
+    """The ARM (`toggle_sensitivity_analysis`) recovered from a root's own config, or None.
+
+    THE ARM IS THE BASIS OF ROOT-STORE RESOLUTION and the resolvers below hold no analysis
+    object. A root ships `cfg_analysis.yaml` when it is a BUNDLE (copied at emit) or when a
+    producer has written one -- `eda()`, `publish()`, and, once `### D132` applies, either
+    consolidation writer. Presence is therefore CONDITIONAL rather than population-keyed:
+    this returns None on a root that has none, and a caller that gets None keeps its prior
+    behaviour rather than acquiring a default. None means UNKNOWN and is never coerced to
+    False -- a missing config and a regular analysis are different states and a bool would
+    merge them.
+    """
+    import yaml
+
+    cfg = Path(root) / "cfg_analysis.yaml"
+    if not cfg.is_file():
+        return None
+    try:
+        loaded = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return None
+    value = loaded.get("toggle_sensitivity_analysis")
+    return bool(value) if isinstance(value, bool) else None
+
+
+def resolve_experiment_tree(root: str | Path, *, arm: bool | str | None = None) -> Path:
     """Resolve an experiment's ROOT consolidated store by EXISTENCE.
 
     Returns the first existing candidate in ``ROOT_TREE_NAMES`` priority order -- see
     that tuple's note on why the order is not interchangeable. When NONE exists the
     unified name is returned rather than None, so a caller's own absent-tree branch keeps
     its `.exists()` shape and reports against the canonical name instead of a retired one.
+
+    ``arm`` is the OPTIONAL supplied arm and it changes the answer on exactly ONE subset:
+    the two-store ``(experiment, analysis)`` pair, where the two routes disagree about
+    which store is current and the name order alone cannot say. Absent it the body is
+    byte-identical to its prior form, including the warning. Accepts BOTH vocabularies in
+    use -- ``True``/``False`` and ``"sensitivity"``/``"regular"`` -- and RAISES on anything
+    else, because a silent mismatch between them would compare ``False != "regular"`` and
+    report a corroborated call as uncorroborated.
     """
     root = Path(root)
+    if arm is None:
+        _arm: bool | None = None
+    elif isinstance(arm, bool):
+        _arm = arm
+    elif arm in ("sensitivity", "regular"):
+        _arm = arm == "sensitivity"
+    else:
+        raise ValueError(
+            f"resolve_experiment_tree: arm must be True/False, 'sensitivity'/'regular' or None; got {arm!r}"
+        )
     present = [n for n in ROOT_TREE_NAMES if (root / n).exists()]
     if present == [EXPERIMENT_TREE_NAME, REGULAR_TREE_NAME]:
+        if _arm is True:
+            # SUPPLIED SENSITIVITY ARM. On this arm the retired-name store cannot be this
+            # analysis's output -- nothing writes it at a master root -- so it is residue
+            # and the unified name is current. That is the OPPOSITE of the branch below,
+            # whose reasoning holds only on the regular arm, and it is why a name order
+            # alone cannot answer this subset.
+            return root / EXPERIMENT_TREE_NAME
         # THE REGULAR TWO-STORE STATE. V0021 renamed this analysis's store to the unified
         # name and CONSUMED the retired path; anything now at the retired path was written
         # AFTER that, by the producer. So the unified name here is the migration-time
@@ -89,6 +145,138 @@ def resolve_experiment_tree(root: str | Path) -> Path:
         if cand.exists():
             return cand
     return root / EXPERIMENT_TREE_NAME
+
+
+#: The member-node name vocabularies, BOTH of them, inside a root consolidated store.
+#: `member_` is the current form: `V0021._resolve_member_group` returns the literal
+#: `member_0` for the regular arm's demoted one-member wrap, and
+#: `sensitivity_analysis.build_sensitivity_datatree` names each master node
+#: `f"{self.member_prefix}{member_id}"` with `member_prefix = "member_"`. `sa_` is the
+#: RETIRED form and it is still live on disk: `V0019__member_vocabulary` renames the
+#: on-disk container and flag tokens but states in its own
+#: `WHAT THIS MIGRATION DELIBERATELY DOES NOT REWRITE` section that "The consolidated
+#: `sensitivity_datatree.zarr` node names are NOT renamed here", so a master that has not
+#: re-consolidated since V0019 still carries `sa_*` nodes at layout 22. This is not a
+#: speculative widening -- `V0022` already enumerates both at `:194-195` and reads member
+#: groups by exactly this test in `_member_group_prefixes`.
+MEMBER_NODE_PREFIXES = ("sa_", "member_")
+
+
+def _member_node_count(store: Path) -> int:
+    """Count MEMBER nodes in a root consolidated store BY NAME, never by child count.
+
+    A bare child count is wrong on both arms and wrong for the same reason: a
+    `parameters` group is written UNCONDITIONALLY beside the members --
+    `MigrationContext._apply_zarr_unify_to_experiment_tree` writes it on the regular arm
+    and `build_sensitivity_datatree` sets `tree_dict["parameters"]` on the sensitivity
+    arm -- so every in-population store carries one group more than it has members.
+    Measured on the committed `tests/fixtures/legacy_layouts/v22` store, which holds ONE
+    member: a bare directory count returns 2, and a `zarr.json`-gated count returns 2 as
+    well, because `parameters` is a real zarr group. Counting by vocabulary returns 1.
+
+    NO `zarr.json` CONJUNCT, and the divergence from `V0023._member_group_count` is
+    DELIBERATE rather than an oversight. This function matches the only member-group
+    reader already landed in this repository, `V0022._member_group_prefixes`, which tests
+    `is_dir()` and the prefix and nothing else. A `zarr.json` conjunct changes the answer
+    on exactly one population -- a member directory that carries no group node, which is
+    the BROKEN hierarchy `_apply_zarr_unify_to_experiment_tree`'s own docstring describes
+    a bare directory move as producing -- and the two readers are right to differ there:
+    `V0023` MOVES a store and must refuse on a malformed tree, while this function
+    RETURNS a classification and would otherwise report less than the evidence supports.
+    """
+    if not store.is_dir():
+        return 0
+    return sum(1 for p in store.iterdir() if p.is_dir() and p.name.startswith(MEMBER_NODE_PREFIXES))
+
+
+def _normalize_arm(arm: bool | str | None) -> bool | None:
+    """Normalize a supplied arm to the `bool | None` form `arm_from_config_dir` returns.
+
+    `"sensitivity"`/`"regular"` is the form the cell enumeration asserts on; the `bool`
+    form is accepted so a caller holding `toggle_sensitivity_analysis` can pass it
+    through untranslated. Anything else RAISES rather than defaulting: a silently
+    ignored arm downgrades a corroborated answer to an uncorroborated one with no signal.
+    """
+    if arm is None or isinstance(arm, bool):
+        return arm
+    if arm == "sensitivity":
+        return True
+    if arm == "regular":
+        return False
+    raise ValueError(f"arm must be None, a bool, 'regular' or 'sensitivity'; got {arm!r}")
+
+
+def classify_analysis_arm(root: str | Path, *, arm: bool | str | None = None) -> tuple[str, str]:
+    """Classify a two-store analysis root by ARM, and disclose the arm's PROVENANCE.
+
+    THE BASIS IS THE ARM -- not a name ordering, and not the in-store generation stamp.
+    The instrument is a THREE-SIGNAL CONJUNCTION: the `members/` container at the
+    analysis root, the member-node cardinality inside the unified store, and the arm,
+    supplied by a caller that holds one and otherwise recovered from the root's own
+    `cfg_analysis.yaml` by `arm_from_config_dir`.
+
+    THE ARM IS AN OPTIONAL PARAMETER, DISCOVERED ONLY AS A FALLBACK. A site holding the
+    arm MUST supply it. Requiring it everywhere is unsatisfiable: `_child_model`
+    (`report_renderers/cross_experiment_disk_utilization.py`) is typed `(child: Path)`
+    and resolves a child root where no analysis object exists.
+
+    NO ON-ROOT DEFAULT IS TAKEN WHEN THE ARM IS ABSENT. An absent signal leaves the
+    conjunction two-membered and ANNOUNCED (`DEGRADED_NO_ARM`); a defaulted one would
+    make it three-membered and silent.
+
+    AN ABSENT ARM IS NOT AN UNNECESSARY ONE. Where the two structural signals decide the
+    root between them the arm is never read and the provenance is `not-needed`. Checking
+    for an absent arm BEFORE that branch reports a degradation that did not occur.
+
+    THE RETURN IS A PAIR, because disclosure is not detection: a classifier returning the
+    classification alone is right on most roots and still unusable, since no caller can
+    separate an answer resting on a corroborated arm from one resting on an
+    uncorroborated file.
+
+    Returns ``(classification, provenance)``. Classification is one of ``route1``,
+    ``route2``, ``INCONSISTENT``, ``UNDECIDED``, ``ARM_REVERTED``, ``ARM_DISAGREEMENT``,
+    ``DEGRADED_NO_ARM``, ``OUT_OF_POPULATION``; provenance is one of ``not-needed``,
+    ``absent``, ``supplied``, ``on-disk-UNCORROBORATED``, ``corroborated``,
+    ``supplied-vs-on-disk-DISAGREE``. This function READS ONLY: it moves nothing,
+    writes nothing, and raises only on an unrecognized `arm` value.
+    """
+    root = Path(root)
+    supplied = _normalize_arm(arm)
+
+    # POPULATION GATE -- exactly the two-store subset `resolve_experiment_tree` warns on.
+    if [n for n in ROOT_TREE_NAMES if (root / n).exists()] != [
+        EXPERIMENT_TREE_NAME,
+        REGULAR_TREE_NAME,
+    ]:
+        return ("OUT_OF_POPULATION", "not-needed")
+
+    has_members = (root / "members").is_dir()
+    member_nodes = _member_node_count(root / EXPERIMENT_TREE_NAME)
+
+    # THE ARM-NOT-NEEDED BRANCH IS FIRST, and its position is the whole of its content.
+    if not has_members:
+        if member_nodes > 1:
+            return ("INCONSISTENT", "not-needed")
+        return ("route1", "not-needed")
+
+    on_disk = arm_from_config_dir(root)
+    if supplied is None and on_disk is None:
+        return ("DEGRADED_NO_ARM", "absent")
+    if supplied is None:
+        effective, provenance = on_disk, "on-disk-UNCORROBORATED"
+    elif on_disk is None:
+        effective, provenance = supplied, "supplied"
+    elif supplied != on_disk:
+        return ("ARM_DISAGREEMENT", "supplied-vs-on-disk-DISAGREE")
+    else:
+        effective, provenance = supplied, "corroborated"
+
+    if effective is False:
+        # The container is a SENSITIVITY artifact; a regular arm beside it is reversion.
+        return ("ARM_REVERTED", provenance)
+    if member_nodes > 1:
+        return ("route2", provenance)
+    return ("UNDECIDED", provenance)
 
 
 class BatchJobSubmissionError(Exception):

@@ -565,6 +565,25 @@ def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis
             candidates.append(Path(declared))
     from hhemt.utils import ROOT_TREE_NAMES
 
+    if analysis is None:
+        # NO ANALYSIS OBJECT: the declared-attribute loop above contributed nothing, so what
+        # follows would be a pure name walk -- which returns the MIGRATION-TIME store on a
+        # regular two-store root. Recover the ARM from the root's own cfg_analysis.yaml,
+        # which a BUNDLE always ships and which a producer writes at eda(), publish() and
+        # (once `### D132` applies) either consolidation writer.
+        # GUARDED ON `analysis is None`, NOT on `paths is None`: the latter is a SUPERSET
+        # that also catches an analysis object exposing no analysis_paths, and on that state
+        # a supplied arm exists and must win -- consulting the tree there would invert the
+        # clause's supplied-before-discovered order.
+        # arm_from_config_dir returns None when no config is present, and the walk below is
+        # then reached unchanged.
+        from hhemt.utils import EXPERIMENT_TREE_NAME, REGULAR_TREE_NAME, arm_from_config_dir
+
+        _arm = arm_from_config_dir(analysis_dir)
+        if _arm is True:
+            candidates.append(analysis_dir / EXPERIMENT_TREE_NAME)
+        elif _arm is False:
+            candidates.append(analysis_dir / REGULAR_TREE_NAME)
     candidates.extend(analysis_dir / name for name in ROOT_TREE_NAMES)
     return next((c for c in candidates if c.exists()), None)
 

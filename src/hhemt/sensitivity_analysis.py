@@ -1776,6 +1776,23 @@ class TRITONSWMM_sensitivity_analysis:
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
         write_rocrate_sidecar(self.experiment.analysis_paths.analysis_dir, graph_json=_graph_json)
 
+        # ARM REFRESH AT THE WRITE BOUNDARY (D132 clause f) -- the master-arm twin of the
+        # refresh in processing_analysis.consolidate_to_datatree, and required rather than
+        # symmetric: a directory ADVANCED from regular to sensitivity that consolidates and
+        # STOPS leaves cfg_analysis.yaml asserting the prior regular arm while this master
+        # store is the current one. Covering only the regular writer closes one direction of
+        # a defect that has two.
+        # UNCONDITIONAL, idempotent, and reading nothing -- see the companion site for why a
+        # divergence test cannot be trusted here. Perturbs no scheduling: this file is a
+        # declared input of NO emitted Snakemake rule, and the mtime-preserving rewrite
+        # primitive is migration-only.
+        # DOES NOT close the file-only residual.
+        import yaml as _yaml
+
+        (self.experiment.analysis_paths.analysis_dir / "cfg_analysis.yaml").write_text(
+            _yaml.safe_dump(self.experiment.cfg_analysis.model_dump(mode="json"))
+        )
+
         self.experiment._refresh_log()
         if hasattr(self.experiment.log, "sensitivity_datatree_consolidation_complete"):
             self.experiment.log.sensitivity_datatree_consolidation_complete.set(True)

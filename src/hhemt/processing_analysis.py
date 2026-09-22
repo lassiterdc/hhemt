@@ -351,6 +351,24 @@ class TRITONSWMM_analysis_post_processing:
 
         write_rocrate_sidecar(self._analysis.analysis_paths.analysis_dir, graph_json=_graph_json)
 
+        # ARM REFRESH AT THE WRITE BOUNDARY (D132 clause f). Until now eda() and publish()
+        # were the ONLY sites rewriting this file, so a run that CONSOLIDATED AND STOPPED
+        # left cfg_analysis.yaml asserting the PRIOR arm while the newest store beside it
+        # was the current arm's. Written here, at the boundary that just wrote the store,
+        # the file describes the store it sits next to.
+        # UNCONDITIONAL and idempotent: no read of the on-disk arm is performed, because a
+        # divergence test would have to parse and trust the value this write replaces, and
+        # would decline to fire on a malformed file -- the state most in need of repair.
+        # Perturbs no scheduling: this file is a declared input of NO emitted Snakemake
+        # rule, and the mtime-preserving rewrite primitive is migration-only.
+        # DOES NOT close the file-only residual: an archived tree, a bundle emitted from an
+        # already-stale root, and a migration still cannot detect arm reversion.
+        import yaml as _yaml
+
+        (self._analysis.analysis_paths.analysis_dir / "cfg_analysis.yaml").write_text(
+            _yaml.safe_dump(self._analysis.cfg_analysis.model_dump(mode="json"))
+        )
+
         self._analysis._refresh_log()
         if hasattr(self._analysis.log, "datatree_consolidation_complete"):
             self._analysis.log.datatree_consolidation_complete.set(True)

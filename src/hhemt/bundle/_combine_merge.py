@@ -53,7 +53,19 @@ def _resolve_root_tree(bundle_root: Path) -> Path:
     bundle carrying neither raises (mirrors the prior single-name behavior; the
     ``test_merge_missing_tree_raises`` contract still holds).
     """
-    for name in _ROOT_TREE_NAMES:
+    # ARM-ORDERED (D132). A bundle ships its cfg_analysis.yaml, so the arm is recoverable
+    # here; the name tuple below is the fallback when it is not. Ordering by the arm is what
+    # makes this correct on BOTH routes -- the fixed tuple is right on the stranding route and
+    # wrong on the producer route, and the two are byte-identical on disk.
+    from hhemt.utils import arm_from_config_dir
+
+    _arm = arm_from_config_dir(bundle_root)
+    _ordered: tuple[str, ...] = _ROOT_TREE_NAMES
+    if _arm is False:
+        _ordered = (CONSOLIDATED_TREE_NAME, EXPERIMENT_TREE_NAME, SENSITIVITY_TREE_NAME)
+    elif _arm is True:
+        _ordered = (EXPERIMENT_TREE_NAME, SENSITIVITY_TREE_NAME, CONSOLIDATED_TREE_NAME)
+    for name in _ordered:
         store = bundle_root / name
         if store.exists():
             return store

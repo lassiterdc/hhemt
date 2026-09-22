@@ -383,7 +383,16 @@ class TRITONSWMM_analysis:
             analysis_paths_kwargs["output_swmm_only_link_summary"] = analysis_dir / f"SWMM_only_links.{ext}"
 
         # Hierarchical DataTree consolidation (Phase 2)
-        analysis_paths_kwargs["analysis_datatree_zarr"] = analysis_dir / "analysis_datatree.zarr"
+        # ARM-SCOPED (D132), and the claim is SMALL by ruling. This is the REGULAR arm's root
+        # store. A sensitivity MASTER never writes it -- the master-reader census closed EMPTY
+        # at 14 of 14 -- so leaving it UNBOUND makes that a property of the binding rather than
+        # of the call graph, enforced by the ValueError guards already present at
+        # processing_analysis.py's writer and at _retrieve_combined_output.
+        # NOT A NAME REPAIR: the regular arm's bound path is unchanged, so route 1 is
+        # byte-identical and this closes NEITHER route. Repointing the name would instead make
+        # every root-group renderer raise AssertionError.
+        if not cfg_analysis.toggle_sensitivity_analysis:
+            analysis_paths_kwargs["analysis_datatree_zarr"] = analysis_dir / "analysis_datatree.zarr"
 
         # Sensitivity-level DataTree zarr (Phase 3) — aggregates members.
         if cfg_analysis.toggle_sensitivity_analysis:
