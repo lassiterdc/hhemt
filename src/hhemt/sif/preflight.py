@@ -94,12 +94,19 @@ def validate_container_images(cfg_analysis, cfg_hpc_system, cfg_system, result, 
             )
             continue
         labels = m.get("labels") or {}
-        for lbl, want in (
+        checks = [
             (IDENTITY_LABEL, ident.key),
             (TRITON_SHA_LABEL, ident.triton_sha),
             (HHEMT_SHA_LABEL, ident.hhemt_sha),
-            (SWMM_VERSION_LABEL, ident.swmm_tag),
-        ):
+        ]
+        # DECLARED-versus-MEASURED, so it is checked only when there IS a declaration. An
+        # experiment declaring no standalone pin carries swmm_tag=None while %post still
+        # measures a real tag off the clone, so an unconditional compare would refuse a
+        # correct image. This restores the truthiness gate the pre-5f40b0e9 validation.py
+        # check carried (`if _swmm_pin:`), at the site the check moved to.
+        if ident.swmm_tag is not None:
+            checks.append((SWMM_VERSION_LABEL, ident.swmm_tag))
+        for lbl, want in checks:
             if labels.get(lbl) != want:
                 result.add_error(
                     field="container.sif_root",

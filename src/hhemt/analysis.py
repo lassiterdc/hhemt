@@ -5678,7 +5678,10 @@ class TRITONSWMM_analysis:
             "actual_nTasks",
             "actual_omp_threads",
             "actual_gpus",
-            "actual_total_gpus",
+            "actual_total_gpus",  # NOT measured: TRITON log.out "Total GPUs" == MPI size (kept for CSV/golden parity)
+            "actual_distinct_gpus",  # MEASURED in-step by hhemt.gpu_bind_guard (None = not measured)
+            # pass|short_step|shared_device|not_evaluated|watchdog_bind_error|*_by_signature|None
+            "gpu_binding_verdict",
             "actual_gpu_backend",
             "actual_build_type",
             "actual_cpu",
@@ -5857,6 +5860,37 @@ class TRITONSWMM_analysis:
                     # partition selector implies. None on a log predating the emission.
                     row["actual_cpu"] = log_data["cpu"]
                     row["actual_gpu"] = log_data["gpu"]
+                    # MEASURED GPU binding (hhemt.gpu_bind_guard artifact), never TRITON's header:
+                    # actual_total_gpus above is TRITON's MPI size restated (output.h "assuming 1
+                    # GPU per task"), so it cannot see a short or shared step.
+                    from hhemt.gpu_bind_guard import classify_from_signature, read_gpu_bind_artifact
+
+                    _gb = read_gpu_bind_artifact(scen.scen_paths.sim_folder, model_type)
+                    if _gb is not None:
+                        row["actual_distinct_gpus"] = _gb.get("distinct_devices")
+                        row["gpu_binding_verdict"] = _gb.get("verdict")
+                    elif row["run_mode"] == "gpu" and (row["n_gpus"] or 0) >= 2:
+                        # Pre-guard row: retroactive classifier on the SLURM short-step signature.
+                        # Applicable only when the RECORDED launch form (the runner log's Command:
+                        # line, beside the model log) is the per_task form (--gpus-per-task=1);
+                        # the older single:1 form has a different signature and classifies None.
+                        from hhemt.gpu_bind_guard import find_runner_command_line
+
+                        _model_log = model_logfile_for(self, event_iloc, model_type)
+                        _cmd_line = find_runner_command_line(
+                            _model_log.parent,
+                            model_type=model_type,
+                            analysis_id=self.cfg_analysis.analysis_id,
+                            event_id=scen.event_id,
+                        )
+                        _per_task = bool(_cmd_line) and "--gpus-per-task=1" in _cmd_line
+                        row["actual_distinct_gpus"] = None
+                        row["gpu_binding_verdict"] = classify_from_signature(
+                            _model_log, launch_form_is_per_task=_per_task
+                        )
+                    else:
+                        row["actual_distinct_gpus"] = None
+                        row["gpu_binding_verdict"] = None
                 elif model_type == "triton":
                     log_out_path = (scen.scen_paths.out_triton or scen.scen_paths.sim_folder) / "log.out"
                     log_data = parse_triton_log_file(log_out_path)
@@ -5868,6 +5902,37 @@ class TRITONSWMM_analysis:
                     row["actual_build_type"] = log_data["build_type"]
                     row["actual_cpu"] = log_data["cpu"]
                     row["actual_gpu"] = log_data["gpu"]
+                    # MEASURED GPU binding (hhemt.gpu_bind_guard artifact), never TRITON's header:
+                    # actual_total_gpus above is TRITON's MPI size restated (output.h "assuming 1
+                    # GPU per task"), so it cannot see a short or shared step.
+                    from hhemt.gpu_bind_guard import classify_from_signature, read_gpu_bind_artifact
+
+                    _gb = read_gpu_bind_artifact(scen.scen_paths.sim_folder, model_type)
+                    if _gb is not None:
+                        row["actual_distinct_gpus"] = _gb.get("distinct_devices")
+                        row["gpu_binding_verdict"] = _gb.get("verdict")
+                    elif row["run_mode"] == "gpu" and (row["n_gpus"] or 0) >= 2:
+                        # Pre-guard row: retroactive classifier on the SLURM short-step signature.
+                        # Applicable only when the RECORDED launch form (the runner log's Command:
+                        # line, beside the model log) is the per_task form (--gpus-per-task=1);
+                        # the older single:1 form has a different signature and classifies None.
+                        from hhemt.gpu_bind_guard import find_runner_command_line
+
+                        _model_log = model_logfile_for(self, event_iloc, model_type)
+                        _cmd_line = find_runner_command_line(
+                            _model_log.parent,
+                            model_type=model_type,
+                            analysis_id=self.cfg_analysis.analysis_id,
+                            event_id=scen.event_id,
+                        )
+                        _per_task = bool(_cmd_line) and "--gpus-per-task=1" in _cmd_line
+                        row["actual_distinct_gpus"] = None
+                        row["gpu_binding_verdict"] = classify_from_signature(
+                            _model_log, launch_form_is_per_task=_per_task
+                        )
+                    else:
+                        row["actual_distinct_gpus"] = None
+                        row["gpu_binding_verdict"] = None
                 else:  # swmm
                     swmm_report_data = retrieve_swmm_performance_stats_from_rpt(scen.scen_paths.swmm_full_rpt_file)
                     row["actual_nTasks"] = 1
@@ -5875,6 +5940,8 @@ class TRITONSWMM_analysis:
                     row["actual_gpus"] = None
                     row["actual_total_gpus"] = None
                     row["actual_gpu_backend"] = "none"
+                    row["actual_distinct_gpus"] = None
+                    row["gpu_binding_verdict"] = None
                     row["actual_build_type"] = "SWMM"
                     # SWMM writes no TRITON RUN INFO block, so device identity is not
                     # observed here. None says "not measured"; it does not say "no GPU"

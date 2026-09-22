@@ -1992,6 +1992,19 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # stable alive set. Per sentinel-system-v2 Phase 2 (Spec C — guard
             # call-site fan-out).
             self._reconcile_inflight_submissions()
+        # Provenance: the executor/jobstep versions this submission runs under. The GPU
+        # inner-srun form (SLURM Ticket 24862 workaround) was validated against 2.1.0/0.4.0.
+        try:
+            from importlib.metadata import version as _pkg_version
+
+            print(
+                "[Workflow] snakemake-executor-plugin-slurm="
+                f"{_pkg_version('snakemake-executor-plugin-slurm')} "
+                f"jobstep={_pkg_version('snakemake-executor-plugin-slurm-jobstep')}",
+                flush=True,
+            )
+        except Exception as _exc:  # never block a submit on a metadata read
+            print(f"[Workflow] executor plugin versions unavailable: {_exc}", flush=True)
 
     def _get_config_args(
         self,
@@ -2306,18 +2319,23 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # flips the jobstep to its no-srun branch (jobstep __init__.py:97 — command
         # runs ONCE). set_gres_string still emits --gres=gpu:hw:N. Net sbatch:
         # `--gres=gpu:hw:N --ntasks=N` with NO --ntasks-per-gpu poison var. Per-rank
-        # GPU binding is re-established by run_simulation.py's inner gres srun
-        # (--ntasks-per-gpu=1 -> tres_bind=single:1), unchanged and proven (P1-b).
+        # GPU binding is re-established by run_simulation.py's inner gres srun. Since
+        # 19ef9fa4 that srun is `--ntasks=N --gpus-per-task=1` (tres_bind per_task:1)
+        # with NO --overlap (SLURM Ticket 24862, 2026-09-21) and the hhemt.gpu_bind_guard
+        # wrapper; the older `--ntasks-per-gpu=1 -> single:1` form (P1-b) survives only
+        # on the single-GPU / 1_job_many_srun_tasks branch.
         #
         # Single-GPU gres (gpus_total==1), Frontier gpus-mode, and CPU jobs are
         # IMMUNE and keep their existing emission byte-identically.
         gres_multi_gpu = gpus_total >= 2 and gpu_alloc_mode == "gres"
         # --exclusive (whole-node hold) is correct ONLY when the sim wants every GPU
         # on the node. For a strict subset (2 <= n_gpus < gpus_per_node) we allocate
-        # exactly n_gpus GPUs + cpus_per_task=1 (no carve), which binds correctly on
-        # both UVA gpu-a6000 and gpu-a100-80 (empirically confirmed 2026-06-10 — see
-        # knowledge doc single_vs_per_task_gres_binding_on_shared_affinity_topology.md
-        # Appendix B.10). gpus_total >= gpus_per_node_config also covers multi-node
+        # exactly n_gpus GPUs + cpus_per_task=1 (no carve). NOTE (2026-09-21): the
+        # partial-node grant does NOT by itself guarantee N bound GPUs -- §B.10's PASSes
+        # measured placements (SLURM Ticket 24862 makes an --overlap step short on a
+        # mixed-locality grant; member 40 ran 4 ranks on 2 GPUs). Binding is now
+        # guaranteed by the inner srun (no --overlap) + hhemt.gpu_bind_guard, not by
+        # this grant. gpus_total >= gpus_per_node_config also covers multi-node
         # full-GPU sims (e.g. n_gpus=16 on 8-GPU nodes).
         full_node_gpu = gres_multi_gpu and gpus_per_node_config >= 1 and gpus_total >= gpus_per_node_config
 

@@ -8,14 +8,24 @@ These tests verify:
 - GPU preflight raises RuntimeError on detectable under-allocation
 """
 
+import atexit
 import contextlib
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from hhemt.run_simulation import TRITONSWMM_run
+
+# Every _make_run() gets a REAL temp sim_folder (the GPU-binding guard writes
+# {sim_folder}/_status/_gpu_bind/ at emission on the batch_job form); a MagicMock sim_folder
+# would otherwise mkdir a relative `MagicMock/...` path in the CWD. Drained at process exit
+# (process-scoped: covers every importer of _make_run and every xdist worker).
+_TMP_SIM_FOLDERS: list[str] = []
+atexit.register(lambda: [shutil.rmtree(p, ignore_errors=True) for p in _TMP_SIM_FOLDERS])
 
 
 def _make_run(
@@ -77,6 +87,9 @@ def _make_run(
     scenario.model_run_completed.return_value = False
     scenario.scen_paths.sim_tritonswmm_executable = Path("/fake/TRITONSWMM")
     scenario.scen_paths.triton_swmm_cfg = Path("/fake/TRITONSWMM.cfg")
+    _tmp = tempfile.mkdtemp(prefix="hhemt-srun-test-")
+    _TMP_SIM_FOLDERS.append(_tmp)
+    scenario.scen_paths.sim_folder = Path(_tmp) / "sim"
 
     run = TRITONSWMM_run.__new__(TRITONSWMM_run)
     run._scenario = scenario
@@ -155,7 +168,7 @@ def test_gres_mode_gpu_srun_omits_explicit_ntasks():
     run = _make_run("gpu", n_gpus=2, n_omp_threads=1, in_slurm=True, gpu_alloc_mode="gres")
     full_cmd = _get_launch_cmd(run)
     assert "--ntasks-per-gpu=1" in full_cmd
-    assert "--ntasks=" not in full_cmd          # the regression guard (no explicit clamp)
+    assert "--ntasks=" not in full_cmd  # the regression guard (no explicit clamp)
     assert "--overlap" in full_cmd and "--kill-on-bad-exit=1" in full_cmd
 
 

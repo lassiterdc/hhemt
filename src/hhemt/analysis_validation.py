@@ -387,6 +387,8 @@ def check_scenario_status_csv(analysis: TRITONSWMM_analysis) -> CheckResult:
         "actual_omp_threads",
         "actual_gpus",
         "actual_total_gpus",
+        "actual_distinct_gpus",
+        "gpu_binding_verdict",
         "actual_gpu_backend",
         "actual_build_type",
         "perf_Total",
@@ -424,10 +426,25 @@ def check_resource_usage(analysis: TRITONSWMM_analysis, *, df_status=None) -> Ch
             details=[],
         )
 
+    # Disclosed denominator (Gotcha 71(d)): separate FAIL rows from the two info classes the
+    # GPU-binding arm emits (not measured / classified by negative signature), so a pass on
+    # an unmeasured campaign is legible as such in the report, not read as a measured pass.
+    n_fail = len([i for i in issues if i.get("severity") != "info"])
+    n_unmeasured = len(
+        [i for i in issues if i.get("severity") == "info" and str(i.get("actual", "")).startswith("not")]
+    )
+    n_signature = len(
+        [
+            i
+            for i in issues
+            if i.get("severity") == "info" and str(i.get("actual", "")).startswith("pass_by_negative_signature")
+        ]
+    )
+    _disclosure = f" (GPU binding: {n_unmeasured} row(s) not measured, {n_signature} classified by negative signature)"
     summary = (
-        "All scenarios used expected compute resources"
+        "All scenarios used expected compute resources" + _disclosure
         if passed
-        else f"Resource mismatches in {len(issues)} scenario(s)"
+        else f"Resource mismatches in {n_fail} scenario(s)" + _disclosure
     )
     return CheckResult(
         name="Resource usage matches config",

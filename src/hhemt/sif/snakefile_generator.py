@@ -7,7 +7,8 @@ import shutil
 import time
 from pathlib import Path
 
-from hhemt.sif.identity import manifest_path, resolve_sif
+from hhemt.exceptions import ConfigurationError
+from hhemt.sif.identity import SifIdentity, manifest_path, resolve_sif
 from hhemt.sif.plan import SifBuildPlan, live_sentinels
 
 
@@ -46,9 +47,40 @@ def reconcile_sif_root(
     return acts
 
 
+def _refuse_stem_collisions(plan: SifBuildPlan) -> None:
+    """Refuse a plan whose entries resolve to ONE image path.
+
+    `stem` is family + hardware + triton[:8] + hhemt[:8] and omits several identity fields,
+    while `key` covers all of them -- so two identities differing only in an omitted field
+    share a file. `write_sif_snakefile` would then emit two rules with one `output:` and
+    Snakemake aborts at DAG build with an AmbiguousRuleException naming two opaque hex keys
+    and a filename, mentioning neither the field nor the experiments. Refuse here, naming both.
+    """
+    by_stem: dict[str, list[str]] = {}
+    for key, ident in plan.entries.items():
+        by_stem.setdefault(ident.stem, []).append(key)
+    collided = {stem: keys for stem, keys in by_stem.items() if len(keys) > 1}
+    if not collided:
+        return
+    lines: list[str] = []
+    for stem, keys in sorted(collided.items()):
+        dumps = {k: plan.entries[k].model_dump() for k in keys}
+        differing = sorted(f for f in SifIdentity.model_fields if len({repr(d[f]) for d in dumps.values()}) > 1)
+        covers = {k: plan.covers.get(k, []) for k in sorted(keys)}
+        lines.append(f"{stem}.sif <- keys {sorted(keys)} differing in {differing}; covers {covers}")
+    raise ConfigurationError(
+        field="build-sifs",
+        message=(
+            "refusing to plan: two planned identities resolve to ONE image path, so Snakemake would "
+            "abort at DAG build naming only hex keys:\n  - " + "\n  - ".join(lines)
+        ),
+    )
+
+
 def write_sif_snakefile(plan: SifBuildPlan, *, sif_root: Path, build_host, sif_build_cfg) -> Path:
     root = Path(sif_root)
     (root / "_build").mkdir(parents=True, exist_ok=True)
+    _refuse_stem_collisions(plan)
     rules, targets = [], []
     for key, ident in plan.entries.items():
         if key in plan.already_built:

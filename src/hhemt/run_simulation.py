@@ -1,5 +1,6 @@
 # %%
 import logging
+import math
 import os
 import subprocess
 import time
@@ -1438,10 +1439,12 @@ class TRITONSWMM_run:
                     f"--cpus-per-task={n_omp_threads} "
                     # "--exclusive "
                     "--cpu-bind=cores "
-                    "--overlap "  # Required in batch_job mode: allows srun step to share
-                    # the parent job's allocation rather than requesting exclusive sub-step
-                    # resources. Without this, srun blocks waiting for resources that are
-                    # already consumed by the batch script process, causing hangs/timeouts.
+                    "--overlap "  # KEPT on the CPU form this round, UNMEASURED. The historical
+                    # claim ("without this, srun blocks waiting for resources already consumed
+                    # by the batch script process") was REFUTED for the GPU form on the executor's
+                    # jobstep `mpi` path (UVA job 20348451, 2026-09-21: no-overlap step rc=0 in
+                    # seconds), where the rule shell IS the batch step and nothing else holds
+                    # the cores. Dropping it here needs its own probe (CPU flag set).
                     "--kill-on-bad-exit=1 "  # If any task exits non-zero (e.g. partial PMI
                     # launch failure where only remote-node tasks fail), srun sends SIGKILL to
                     # all surviving tasks immediately rather than waiting for them to exit
@@ -1505,14 +1508,17 @@ class TRITONSWMM_run:
                 #   allocations (gres.c:_handle_ntasks_per_tres_step).
                 #
                 # - "gres" mode (UVA): --ntasks-per-gpu=1
-                #   Same flag family as the Snakemake executor's sbatch
-                #   --ntasks-per-gpu=1 (submit_string.py:79-91). This is the
-                #   SOLE task-count driver for the gres branch: the gres srun
-                #   below carries NO explicit --ntasks, so --ntasks-per-gpu=1
-                #   is load-bearing — it expands to one task per inherited GPU
-                #   (triggers tres_bind=gres/gpu:single:1). --gpus-per-task
-                #   MUST NOT be used here — it conflicts with the inherited
-                #   SLURM_NTASKS_PER_GPU (fatal in SLURM).
+                #   SINGLE-GPU and 1_job_many_srun_tasks ONLY (the `else` branch below).
+                #   There the parent carries --ntasks-per-gpu=1, the srun carries NO
+                #   explicit --ntasks, and --gpus-per-task would conflict with the
+                #   inherited SLURM_NTASKS_PER_GPU (fatal in SLURM).
+                #
+                # - "gres" mode (UVA), MULTI-GPU under the Snakemake slurm executor
+                #   (the `elif n_gpus >= 2 and multi_sim_run_method != "1_job_many_srun_tasks"`
+                #   branch, since 19ef9fa4): --ntasks=N --gpus-per-task=1 (tres_bind
+                #   per_task:1), NO --overlap (SLURM Ticket 24862), and the
+                #   hhemt.gpu_bind_guard wrapper. This is the branch every UVA
+                #   multi-GPU benchmarking member takes.
                 #
                 # See: completed/2026-02-28_gpu-mpi-scaling-machine-file-override.md
                 #      bugs/2026-03-01_fix_gpu_srun_flag_conflict.md
@@ -1524,12 +1530,22 @@ class TRITONSWMM_run:
                     if (_cfg_hpc is not None and _cfg_hpc.gpu_allocation_flavor is not None)
                     else "gpus"
                 )
+                guard_prefix = ""  # set only on the guarded (UVA gres multi-GPU) branch below
+                # Backend for the guard's device query; None-safe (native single-SIF/CPU rows).
+                from hhemt.config.hpc_system import resolve_gpu_target as _rgt
+
+                _row_backend = (
+                    _rgt(_cfg_hpc, self._analysis.cfg_analysis.hpc_ensemble_partition)[1]
+                    if _cfg_hpc is not None
+                    else None
+                )
                 if gpu_alloc_mode == "gpus":
                     gpu_bind_flag = "--gpus-per-task=1 "
                     # Frontier: --gpus-per-task=1 honors --ntasks=N exactly; the
                     # whole-node parent would otherwise over-expand --ntasks-per-gpu
                     # to the full node GPU count, so clamp with explicit --ntasks.
                     ntasks_flag = f"--ntasks={n_gpus} "
+                    overlap_flag = "--overlap "  # unchanged this round (not probed on Frontier)
                 elif n_gpus >= 2 and multi_sim_run_method != "1_job_many_srun_tasks":
                     # UVA gres mode, MULTI-GPU (n_gpus>=2, single- OR multi-node) under
                     # the Snakemake slurm executor (per-rule jobstep). The per-rule sbatch
@@ -1552,6 +1568,35 @@ class TRITONSWMM_run:
                     # parent carries --ntasks-per-gpu).
                     gpu_bind_flag = "--gpus-per-task=1 "
                     ntasks_flag = f"--ntasks={n_gpus} "
+                    # NO --overlap on the MEASURED batch_job form of this branch. SLURM Ticket
+                    # 24862 (present in 25.05.x, fixed 26.05.3): an --overlap step does not
+                    # subtract Pass-1 GPU picks before Pass 2, so on a mixed-locality
+                    # partial-node grant the step holds fewer GPUs than the job (member 40:
+                    # 2 of 4). Measured on UVA gpu-a6000 job 20348451: --overlap -> 3/4 GPUs
+                    # + "Not enough gres to bind"; no --overlap -> 4/4, rc=0 in seconds (no
+                    # hang: under the executor's jobstep `mpi` branch the rule shell IS the
+                    # batch step, nothing else holds the cores). Re-measured with the guard:
+                    # 20350116. The local-in-allocation form of this same branch
+                    # (multi_sim_run_method == "local" inside a SLURM allocation, several sims
+                    # as concurrent steps) is UNPROBED and keeps --overlap byte-identically:
+                    # there a non-overlap step CAN block on a sibling step's resources.
+                    overlap_flag = "" if multi_sim_run_method == "batch_job" else "--overlap "
+                    # L1/L2 GPU-binding guard (hhemt.gpu_bind_guard): per-task wrapper between
+                    # srun and the solver launch. Config via HHEMT_GB_* in `env` (exported below,
+                    # inherited by the step's tasks). Records land under the scenario's _status/.
+                    # The WHOLE block rides the SAME measured form as the --overlap drop (A1): the
+                    # local-in-allocation form of this branch stays byte-identical in launch
+                    # string, filesystem AND env (no script write, no HHEMT_GB_* export).
+                    if multi_sim_run_method == "batch_job":
+                        from hhemt.gpu_bind_guard import record_dir_for, write_guard_script
+
+                        _gb_dir = record_dir_for(self._scenario.scen_paths.sim_folder, model_type)
+                        _gb_script = write_guard_script(_gb_dir.parent / f"{model_type}.sh")
+                        env["HHEMT_GB_EXPECTED_PER_NODE"] = str(math.ceil(n_gpus / max(1, n_nodes_per_sim)))
+                        env["HHEMT_GB_NTASKS"] = str(n_gpus)
+                        env["HHEMT_GB_RECORD_DIR"] = str(_gb_dir)
+                        env["HHEMT_GB_BACKEND"] = "rocm" if (_row_backend or "").upper() == "HIP" else "cuda"
+                        guard_prefix = f"bash {_gb_script} "
                 else:
                     gpu_bind_flag = "--ntasks-per-gpu=1 "
                     # UVA gres mode, SINGLE-NODE (and 1_job_many_srun_tasks): the parent
@@ -1562,6 +1607,7 @@ class TRITONSWMM_run:
                     # ("More processors requested than permitted"). Empirically confirmed
                     # on UVA gpu-a6000 (2026-05-23).
                     ntasks_flag = ""
+                    overlap_flag = "--overlap "  # unchanged this round (parent carries --ntasks-per-gpu)
                 launch_cmd_str = (
                     f"srun "
                     f"-N {n_nodes_per_sim} "
@@ -1569,10 +1615,10 @@ class TRITONSWMM_run:
                     f"--cpus-per-task={n_omp_threads} "
                     f"{gpu_bind_flag}"
                     "--cpu-bind=cores "
-                    "--overlap "  # See note above on --overlap in batch_job mode.
+                    f"{overlap_flag}"  # branch-conditional; see the gres multi-GPU branch above.
                     "--kill-on-bad-exit=1 "  # See note above on --kill-on-bad-exit=1.
                     f"{_mpi_flag}"
-                    f"{exe} {cfg}"
+                    f"{guard_prefix}{exe} {cfg}"
                 )
             else:
                 launch_cmd_str = f"{exe} {cfg}"

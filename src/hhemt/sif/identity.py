@@ -60,7 +60,7 @@ class SifIdentity(BaseModel):
     kokkos_arch: str | None  # the Kokkos_ARCH_* cmake token, e.g. Kokkos_ARCH_AMPERE86
     triton_url: str
     triton_sha: str  # 40-hex, resolved
-    swmm_tag: str
+    swmm_tag: str | None  # the DECLARED standalone pin; None when the experiment declares none
     hhemt_sha: str  # 40-hex; the RUNNING toolkit (recomputed) or the CARRIED value
     base_digest: str  # the family recipe's `From: ...@sha256:` reference
     recipe_sha256: str  # sha256 of the family recipe text
@@ -163,7 +163,7 @@ def derive_identity(
         kokkos_arch=kokkos_arch_for(hw, backend),
         triton_url=str(cfg_system.TRITONSWMM_git_URL),
         triton_sha=resolve_full_sha(cfg_system.TRITONSWMM_software_directory, str(cfg_system.TRITONSWMM_branch_key)),
-        swmm_tag=str(cfg_system.SWMM_tag_key),
+        swmm_tag=cfg_system.SWMM_tag_key,
         hhemt_sha=str(running_sha),
         base_digest=base_digest,
         recipe_sha256=hashlib.sha256(recipe_text.encode()).hexdigest(),
