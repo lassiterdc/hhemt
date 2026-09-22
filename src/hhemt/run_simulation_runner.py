@@ -35,6 +35,14 @@ import sys
 import traceback
 from pathlib import Path
 
+from hhemt.gpu_bind_guard import (
+    FAILING_VERDICTS,
+    artifact_path_for,
+    consolidate_records,
+    record_dir_for,
+    reset_record_dir,
+    wait_with_bind_watchdog,
+)
 from hhemt.log_utils import log_workflow_context
 from hhemt.status_flags import emit_runner_flag as _emit_runner_flag
 
@@ -634,6 +642,9 @@ def main():
 
         start_time = time.time()
         model_logfile.parent.mkdir(parents=True, exist_ok=True)
+        _watchdog_fired = False
+        _gb_dir = record_dir_for(scenario.scen_paths.sim_folder, model_type)
+        reset_record_dir(_gb_dir)  # stale per-task records from a prior attempt must not fold in
         with open(model_logfile, "w") as lf:
             proc = subprocess.Popen(
                 cmd,
@@ -683,7 +694,12 @@ def main():
                     proc, model_type=model_type, n_checkpoints=_schedule[_n_done]
                 )
             else:
-                _rc = proc.wait()  # Return code checked via status below
+                # L3 GPU-binding watchdog (hhemt.gpu_bind_guard): a plain wait outside the
+                # first window; inside it, a SLURM "Not enough gres to bind" line in the model
+                # log SIGTERMs the group (same path as the deterministic kill) and fails the
+                # attempt. Inert on CPU rows (the signature cannot appear) and a no-op when the
+                # L1 wrapper already refused the launch. Return code checked via status below.
+                _rc, _watchdog_fired = wait_with_bind_watchdog(proc, model_logfile, window_s=120.0)
 
         # Update simulation log with results
         end_time = time.time()
@@ -779,6 +795,36 @@ def main():
             model_log.simulation_completed.set(scenario.run.model_run_completed(model_type))
             model_log.sim_run_time_minutes.set(elapsed / 60.0)
 
+        # GPU-binding verdict (L1/L2 records + L3 flag) -> per-scenario artifact read by df_status.
+        # A FAILING verdict is the Shape 2.2 "retry FRESH" trigger: set the B-iii force marker so
+        # the next attempt's prepare_simulation_command prunes config_NNNN.cfg to step 0 and the
+        # existing consume (right after Popen) clears it. Second and only other writer of that
+        # marker besides _apply_force_rerun (analysis.py). ONLY when a guard was emitted for this
+        # launch (HHEMT_GB_RECORD_DIR in the env prepare_simulation_command returned -- the UVA gres
+        # multi-GPU batch_job form), or the L3 watchdog fired (form-agnostic: the SLURM short-step
+        # signature is decisive whatever the launch form): every other form (CPU/swmm, single-GPU,
+        # Frontier gpus-mode, 1_job_many_srun_tasks, local-in-allocation) writes no artifact, so
+        # df_status reads None -> "not measured", never a spurious not_evaluated.
+        if ("HHEMT_GB_RECORD_DIR" in env or _watchdog_fired) and model_type != "swmm":
+            _gb = consolidate_records(
+                _gb_dir,
+                expected_per_node=int(
+                    os.environ.get("HHEMT_GB_EXPECTED_PER_NODE", 0) or env.get("HHEMT_GB_EXPECTED_PER_NODE", 0)
+                ),
+                ntasks=int(env.get("HHEMT_GB_NTASKS", analysis.cfg_analysis.n_gpus or 0)),
+                artifact_path=artifact_path_for(scenario.scen_paths.sim_folder, model_type),
+                attempt_rc=int(_rc),
+                watchdog_fired=bool(_watchdog_fired),
+                launch_form="per_task" if "--gpus-per-task=1" in " ".join(cmd) else "single",
+            )
+            if _gb["verdict"] in FAILING_VERDICTS:
+                logger.error(
+                    f"[{event_iloc}] GPU-binding guard verdict={_gb['verdict']} "
+                    f"(step_gpus_on_node={_gb['step_gpus_on_node']}, distinct={_gb['distinct_devices']}, "
+                    f"expected={_gb['expected_gpus_per_node']}); this attempt is INVALID and the next "
+                    "attempt will start FRESH (force_rerun_pending set)."
+                )
+                scenario.get_log(model_type).force_rerun_pending.set(True)
         # Verify completion via log file check (no refresh needed - we'll check the log file directly)
         if not scenario.run.model_run_completed(model_type):
             logger.error(f"[{event_iloc}] Simulation did not complete successfully")

@@ -91,6 +91,8 @@ def validate_resource_usage(analysis, logger=None, *, df_status=None):
     # For regular analysis, use the analysis config
     mismatches = []
     issues_flat: list[dict] = []  # structured per-mismatch records for downstream renderers
+    unmeasured_gpu_rows = 0  # GPU rows with no binding measurement (disclosed in the summary; never a pass)
+    examined_gpu_rows = 0
 
     for _idx, row in df_status.iterrows():
         if not row["run_completed"]:
@@ -121,6 +123,8 @@ def validate_resource_usage(analysis, logger=None, *, df_status=None):
         # never compared), so a backend-agnostic sentinel is behavior-preserving and
         # needs no cfg_hpc_system/partition dependency.
         expected_gpu_backend = "gpu" if run_mode == "gpu" else "none"
+        if run_mode == "gpu":
+            examined_gpu_rows += 1
 
         # Check nTasks
         if pd.notna(row["actual_nTasks"]) and row["actual_nTasks"] != expected_nTasks:
@@ -152,16 +156,56 @@ def validate_resource_usage(analysis, logger=None, *, df_status=None):
 
         # Check GPUs (for GPU mode)
         if run_mode == "gpu":
-            if pd.notna(row["actual_total_gpus"]) and row["actual_total_gpus"] < expected_gpus:
-                issues.append(f"  - Total GPUs: expected >={expected_gpus}, actual {row['actual_total_gpus']}")
+            # MEASURED binding (hhemt.gpu_bind_guard), NOT TRITON's "Total GPUs" (== MPI size,
+            # tautological against nTasks -- it PASSED the 2026-09-21 member-40 3+1 mis-bind).
+            _verdict = row.get("gpu_binding_verdict")
+            _distinct = row.get("actual_distinct_gpus")
+            _failing = {"short_step", "shared_device", "watchdog_bind_error", "short_step_by_signature"}
+            if _verdict in _failing or (pd.notna(_distinct) and int(_distinct) < expected_gpus):
+                _actual = f"{_verdict}" + (f" (distinct={int(_distinct)})" if pd.notna(_distinct) else "")
+                issues.append(f"  - GPU binding: expected {expected_gpus} distinct GPUs, actual {_actual}")
                 issues_flat.append(
                     {
                         "scenario_dir": str(scenario_dir),
                         "scenario": Path(str(scenario_dir)).name,
-                        "resource": "Total GPUs",
-                        "expected": f">={int(expected_gpus)}",
-                        "actual": int(row["actual_total_gpus"]),
-                        "detail": f"Total GPUs: expected >={expected_gpus}, actual {row['actual_total_gpus']}",
+                        "resource": "GPU binding",
+                        "expected": f"{int(expected_gpus)} distinct GPUs",
+                        "actual": _actual,
+                        "detail": f"GPU binding: expected {expected_gpus} distinct GPUs, actual {_actual}",
+                    }
+                )
+            elif (pd.isna(_verdict) or _verdict == "not_evaluated") and expected_gpus >= 2:
+                # Absence is NOT a pass: surface as an informational row and count it.
+                unmeasured_gpu_rows += 1
+                issues_flat.append(
+                    {
+                        "scenario_dir": str(scenario_dir),
+                        "scenario": Path(str(scenario_dir)).name,
+                        "resource": "GPU binding",
+                        "expected": f"{int(expected_gpus)} distinct GPUs",
+                        "actual": "not measured" if pd.isna(_verdict) else "not_evaluated (L2 wait expired)",
+                        "detail": (
+                            "GPU binding not measured for this row (attempt predates the binding guard, "
+                            "or L2 could not evaluate); not a pass."
+                        ),
+                        "severity": "info",
+                    }
+                )
+            elif _verdict == "pass_by_negative_signature":
+                # Inferred, not measured (Diagnosis claim 17): disclose it so the summary can
+                # separate measured passes from signature-classified ones (C-S10 iii).
+                issues_flat.append(
+                    {
+                        "scenario_dir": str(scenario_dir),
+                        "scenario": Path(str(scenario_dir)).name,
+                        "resource": "GPU binding",
+                        "expected": f"{int(expected_gpus)} distinct GPUs",
+                        "actual": "pass_by_negative_signature (last exec; pre-guard row)",
+                        "detail": (
+                            "GPU binding classified from the absence of the SLURM short-step signature in the "
+                            "last execution's model log; not an in-step measurement."
+                        ),
+                        "severity": "info",
                     }
                 )
 
@@ -214,6 +258,8 @@ def validate_resource_usage(analysis, logger=None, *, df_status=None):
             "  2. Machine files overrode configuration (use TRITON_IGNORE_MACHINE_FILES)\n"
             "  3. Compilation used different backend than runtime configuration\n"
             "  4. Environment variables affected runtime behavior\n"
+            "  5. SLURM Ticket 24862 (25.05.x): an --overlap GPU step received fewer GPUs than the job\n"
+            f"GPU rows examined: {examined_gpu_rows}; without a binding measurement: {unmeasured_gpu_rows}\n"
             f"{'=' * 70}"
         )
         if logger:
@@ -222,12 +268,19 @@ def validate_resource_usage(analysis, logger=None, *, df_status=None):
             print(f"WARNING: {summary}")
         return False, issues_flat  # Validation failed
     else:
-        msg = "✓ All scenarios used expected compute resources"
+        msg = (
+            f"✓ All scenarios used expected compute resources (GPU rows examined: {examined_gpu_rows}; "
+            f"without a binding measurement: {unmeasured_gpu_rows})"
+        )
         if logger:
             logger.info(msg)
         else:
             print(msg)
-        return True, []  # Validation passed
+        # Validation passed. issues_flat carries ONLY severity="info" rows here (every FAIL append is
+        # paired with a `mismatches` append, and non-empty `mismatches` takes the branch above), so the
+        # caller (analysis_validation.check_resource_usage) can disclose the unmeasured / by-signature
+        # counts in its summary without reading `passed` off the list length.
+        return True, issues_flat
 
 
 def reclaim_unconsolidated_scenarios(analysis, enabled_models, scoped, analysis_dir) -> dict[str, dict[str, bool]]:
