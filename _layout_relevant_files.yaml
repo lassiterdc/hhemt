@@ -1995,3 +1995,22 @@ non_breaking_allowlist:
       value differs, and no analysis on disk needs rewriting.
       EXPIRY CONDITION: covers these two additions only. Any change to the report manifest's
       name or payload shape, or that makes a reader REQUIRE either artifact, is NOT this class.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: d4ac840300c6b5d958e1bc91c3629ca3a532b9674740b98f0b8d7aece8e2e7ce
+    justification: >-
+      NON-BREAKING. The B4 arm-2 widening (M19 gate-3, two-party concurred): a keyword-only
+      `fname_out=None` on `triton_raw_frame_or_raise`, the two production call sites passing
+      it, and one widened branch inside that function. It writes NO file and renames nothing;
+      no store name, log field, flag grammar or schema is touched. Its entire effect is WHICH
+      EXIT the preflight takes for a state that already exists on disk -- a raw directory whose
+      rasters were cleared per chapter and whose flagged chapter set is complete now RETURNS an
+      empty frame where it previously raised, so the caller reaches a merge that was already
+      unconditional. An older toolkit meeting a tree this change touched finds exactly what it
+      found before, because nothing new is written.
+      EVIDENCE: tests/test_triton_raw_frame_arm2_widening.py (added in the same commit) is a
+      seven-case differential -- 3 failed / 4 passed against this tree PRE-fix and 7 passed
+      POST-fix, with the four arms-unchanged cases green in BOTH states so a regression that
+      silenced a sibling arm cannot pass unnoticed.
+      EXPIRY CONDITION: covers this signature change and this one branch only. Any edit that
+      makes the admitted path WRITE something, or that changes the chapter/flag naming the
+      predicate reads, is NOT this class and must bump LAYOUT_VERSION.

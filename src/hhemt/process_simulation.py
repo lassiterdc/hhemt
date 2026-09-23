@@ -968,7 +968,7 @@ class TRITONSWMM_sim_post_processing:
 
         # Get output files
         df_outputs = triton_raw_frame_or_raise(
-            fldr_out_triton, reporting_interval_s, model_label="the TRITON-SWMM coupled model"
+            fldr_out_triton, reporting_interval_s, model_label="the TRITON-SWMM coupled model", fname_out=fname_out
         )
 
         self._streaming_chunked_zarr_write(
@@ -1047,7 +1047,7 @@ class TRITONSWMM_sim_post_processing:
 
         # Get output files
         df_outputs = triton_raw_frame_or_raise(
-            fldr_out_triton, reporting_interval_s, model_label="the TRITON-only model"
+            fldr_out_triton, reporting_interval_s, model_label="the TRITON-only model", fname_out=fname_out
         )
 
         self._streaming_chunked_zarr_write(
@@ -2844,7 +2844,7 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
     return pd.concat(_present, axis=1)
 
 
-def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_label: str):
+def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_label: str, fname_out=None):
     """The per-timestep raw-output frame, or a loud refusal naming which condition failed.
 
     ONE PREFLIGHT, SHARED BY BOTH TRITON EXPORTS, and the sharing is the point. The two
@@ -2876,6 +2876,33 @@ def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_la
         )
     df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
     if df_outputs.empty:
+        # ARM 2, WIDENED. An empty frame has two causes that need opposite remedies:
+        # nothing was ever produced, or the raw was CONSUMED by the chapter writer and
+        # cleared per chapter. The second is recoverable and the chapters hold the data,
+        # so admit it -- but ONLY on the merge's own precondition, reused rather than
+        # restated: a non-empty flagged set whose index is contiguous from 0
+        # (utils.merge_chapters_to_unified, which asserts both conjuncts in this order).
+        # THE `_parts` GUARD ON THE SECOND RAISE IS LOAD-BEARING: an EMPTY chapters
+        # directory is the genuinely-empty fault, not an incomplete-chapter fault, and
+        # its remedy is not a rebuild-from-raw. Without the guard it would report
+        # "index set [] is not contiguous from 0" and send an operator to rebuild from
+        # raw that is already gone.
+        if fname_out is not None and not unified_flag_for(fname_out).exists():
+            _parts = completed_chapters(chapters_dir_for(fname_out))
+            if _parts and sorted(_parts) == list(range(len(_parts))):
+                return df_outputs
+            if _parts:
+                raise ProcessingError(
+                    "triton_raw_frame_or_raise (raw consumed, chapters incomplete)",
+                    filepath=fldr_out_triton,
+                    reason=(
+                        f"the raw directory holds no processable file for {model_label} and its "
+                        f"chapter set is not usable: index set {sorted(_parts)} is not contiguous "
+                        "from 0, so merge_chapters_to_unified would refuse it. Re-run processing "
+                        "with override_force_rerun to rebuild the chapter set from raw, which "
+                        "requires the raw outputs to still exist."
+                    ),
+                )
         raise FileNotFoundError(
             f"No processable TRITON output files (MH, H, QX, QY) found for {model_label} "
             f"in {fldr_out_triton}. The directory exists but holds no file the frame "
