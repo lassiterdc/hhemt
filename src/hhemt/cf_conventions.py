@@ -190,9 +190,13 @@ _CF_PERFORMANCE_VARIABLES: dict[str, dict[str, str | None]] = {
         #
         # This is also the one column that is nonzero on rank 0 only, because its bracket
         # sits inside the solver's `if (rank == 0)` guard. Under this artifact's
-        # `max(dim="Rank")` that yields the rank-0 value, which IS the serial-solve cost.
-        # The solver's own per-file Average row is NOT -- it is rank0/N -- and hhemt drops
-        # that row before this reduction.
+        # `max(dim="Rank")` that yields rank 0's own value EXACTLY rather than a maximum
+        # over a spread -- and, per the paragraph above, that value is the whole bracket,
+        # never the solve alone. Do not restate it as "the serial-solve cost": that is the
+        # precise attribution the paragraph above exists to prevent, and this comment said
+        # it here until 2026-09-25 while this same entry's `long_name` disclaimed it.
+        # The solver's own per-file Average row does not carry the rank-0 value at all --
+        # that row is rank0/N -- and hhemt drops it before this reduction.
         "long_name": "Rank-0 serial SWMM solve, its remaps, and the exchange-log append",
         "units": "s",
         "cell_methods": None,

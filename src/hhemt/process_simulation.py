@@ -930,8 +930,11 @@ class TRITONSWMM_sim_post_processing:
             "own halo exchange; the two are siblings at different levels and must "
             "not be summed. 'SWMM_STEP' is nonzero on rank 0 only (its bracket sits "
             "inside the solver's rank-0 guard), so for that one column max(Rank) is "
-            "the exact rank-0 serial-solve cost rather than an upper bound — a "
-            "property of the current coupling architecture, not of the quantity. "
+            "exact rather than an upper bound — but NOT purely the solve: the bracket "
+            "also spans its local/global remaps and the per-timestep append to the "
+            "exchange-replay side-file. The rank-0-onlyness, the remaps and the "
+            "included write are all properties of the current coupling architecture, "
+            "not of the quantity. "
             "A column absent from an older member is absent here, not zero."
         )
         self._write_output(ds, fname_out, compression_level, verbose, mode=mode)

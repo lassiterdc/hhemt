@@ -2065,3 +2065,55 @@ non_breaking_allowlist:
       rather than edited in place so the prior row's ground stays readable. Re-stamp on
       any further non-breaking edit; a change to an artifact's path, name or variable
       set is NOT this class and must bump LAYOUT_VERSION.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 031626f03b4150aeee6b4117885f09eddbec7970d11af1d9ed3bf771def2aefc
+    justification: >-
+      WP-2A follow-up. Corrects one clause of the `notes` attr string that
+      `_export_performance_summary` writes onto every performance summary. The prior
+      row's third claim shipped as "max(Rank) is the exact rank-0 serial-solve cost";
+      that reads SWMM_STEP as PURELY the solve, which it is not. Verified at the solver
+      source rather than inferred: `triton-custom` @ `solver-work/replay-precision-
+      accounting`, `src/triton.h:2531-2539`, where the `st.start(SWMM_STEP)` /
+      `st.stop(SWMM_STEP)` bracket spans `local_to_global`, `log_exchange_step` (a
+      buffered append to the durable exchange-replay side-file), `swmm_step`, and
+      `global_to_local`. The clause now says max(Rank) is exact rather than an upper
+      bound BUT names the remaps and the per-timestep append, matching the `long_name`
+      that `cf_conventions.py` already carried for this column. "Serial-solve cost" is
+      the exact attribution the solver's own `constants.h:170-179` define comment
+      exists to prevent, so the surface a data reader consults was the one telling them
+      the wrong thing.
+      JUDGED NON-BREAKING, on the same ground as the row above and for the same reason.
+      The edit changes the VALUE of one string-valued dataset attr on newly-written
+      artifacts. No path, name, dtype, dim, variable set or numeric value changes; no
+      file is added or removed. No code path in src/, tests/ or scripts/ reads
+      `attrs["notes"]` as a quantity, so an older toolkit meeting a tree written by this
+      one, and this toolkit meeting an older tree, both behave identically.
+      CHANGE-SCOPED via layout_signature, re-stamping 8a103899 -> 031626f0. APPENDED
+      rather than edited in place so the prior row's ground stays readable. Re-stamp on
+      any further non-breaking edit; a change to an artifact's path, name or variable
+      set is NOT this class and must bump LAYOUT_VERSION.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: dd089f38676813e61b14e53dc7acf6d61db753137638a3e200d8b5b36f494253
+    justification: >-
+      WP-2A follow-up, COMMENT-ONLY. The SWMM_STEP entry's explanatory comment was
+      internally self-contradicting: its first paragraph says the bracket is "NOT purely
+      the solve" and names the exchange-log append, and its second paragraph then called
+      the rank-0 value "the serial-solve cost" -- the precise phrase the first paragraph
+      and the entry's own `long_name` disclaim. That restatement is what a maintainer
+      reconciling this file against `process_simulation.py`'s `notes` would have read as
+      endorsing the wrong surface. The second paragraph now states the contrast it was
+      actually drawing (max(Rank) selects rank 0's value EXACTLY rather than maximizing
+      over a spread; the solver's Average row is rank0/N and hhemt drops it) without
+      re-asserting the disclaimed attribution, and names the prohibition explicitly so
+      the next editor does not reintroduce it.
+      JUDGED NON-BREAKING, and more narrowly than the row above: this edit changes only
+      Python COMMENT text. No emitted attr value changes -- `long_name`, `units`,
+      `standard_name` and `cell_methods` are byte-identical to the prior row's content --
+      so artifacts written before and after this commit are indistinguishable. It is
+      allowlisted at all only because Check B keys on the FILE's sha256, which a comment
+      edit moves.
+      CHANGE-SCOPED via layout_signature, re-stamping fdb15283 -> dd089f38. APPENDED
+      rather than edited in place so the prior row's ground stays readable. Re-stamp on
+      any further non-breaking edit; a change to a variable NAME, a dim, or the emitted
+      variable set of any CF-stamped artifact is NOT this class and must bump
+      LAYOUT_VERSION.
