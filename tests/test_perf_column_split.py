@@ -16,9 +16,11 @@ fixture below is that case, and it is the regression test for it.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import xarray as xr
 
 from hhemt.analysis import PERF_VARS, PERF_VARS_ORDERED, _perf_row_from_dataset
+from hhemt.cf_conventions import _CF_PERFORMANCE_VARIABLES, _auto_long_name, apply_cf_attributes
 
 # The column set TRITON emitted BEFORE the SWMM-timer split, verbatim from the pre-split
 # header literal that `tests/test_synth_03_perf_tseries_diff.py` and
@@ -169,3 +171,58 @@ def test_each_swmm_child_sits_adjacent_to_its_parent_in_the_display_order():
     """
     idx = PERF_VARS_ORDERED.index("SWMM")
     assert PERF_VARS_ORDERED[idx : idx + 1 + len(SWMM_CHILDREN)] == ["SWMM", *SWMM_CHILDREN]
+
+
+# --------------------------------------------------------------------------------------
+# CF attributes on the performance artifacts.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["tritonswmm_performance", "triton_only_performance"])
+def test_every_performance_column_carries_cf_long_name_and_units(mode):
+    """All thirteen, not just the four new ones.
+
+    An uncovered variable falls through to `_auto_long_name`, which renders `IO` as "Io"
+    and supplies no `units`. Covering only the split columns would leave the artifact's
+    four newest variables with real CF attrs beside nine auto-humanized placeholders.
+    """
+    ds = apply_cf_attributes(_summary_ds(POST_SPLIT_VARS), mode)
+
+    for name in POST_SPLIT_VARS:
+        attrs = ds[name].attrs
+        assert attrs.get("units") == "s", f"{name} carries no CF units"
+        assert attrs.get("long_name"), f"{name} carries no long_name"
+        assert attrs["long_name"] != _auto_long_name(name), (
+            f"{name} fell through to the auto-humanized fallback rather than a declared long_name"
+        )
+
+
+@pytest.mark.parametrize("mode", ["tritonswmm_performance", "triton_only_performance"])
+def test_performance_columns_declare_no_cell_methods(mode):
+    """The omission is load-bearing, so it is asserted rather than left to inspection.
+
+    Both performance artifacts share one mode string: `_export_performance_tseries` writes
+    the per-(timestep_min, Rank) series and `_export_performance_summary` writes
+    `ds.sum(dim="timestep_min").max(dim="Rank")` of it, and both reach `apply_cf_attributes`
+    through `_write_output` with that same mode. A `cell_methods` accurate for the summary
+    would therefore be stamped onto the tseries, which has collapsed neither dim.
+    """
+    ds = apply_cf_attributes(_summary_ds(POST_SPLIT_VARS), mode)
+
+    for name in POST_SPLIT_VARS:
+        assert "cell_methods" not in ds[name].attrs, (
+            f"{name} declares cell_methods, which would mislabel the per-timestep series that shares this mode string"
+        )
+
+
+def test_performance_cf_entries_are_scoped_to_the_performance_modes():
+    """`Total` / `MPI` / `IO` / `Other` are generic names; they must not stamp other modes."""
+    ds = apply_cf_attributes(_summary_ds(POST_SPLIT_VARS), "tritonswmm_triton")
+
+    for name in POST_SPLIT_VARS:
+        assert "units" not in ds[name].attrs, f"{name} picked up a performance CF entry outside a performance mode"
+
+
+def test_cf_coverage_tracks_perf_vars_exactly():
+    """The CF block and the mint list must not drift apart in either direction."""
+    assert sorted(_CF_PERFORMANCE_VARIABLES) == sorted(PERF_VARS)

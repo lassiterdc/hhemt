@@ -2014,3 +2014,31 @@ non_breaking_allowlist:
       EXPIRY CONDITION: covers this signature change and this one branch only. Any edit that
       makes the admitted path WRITE something, or that changes the chapter/flag naming the
       predicate reads, is NOT this class and must bump LAYOUT_VERSION.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: fdb15283c87f441f5d49f0afa371b6f7ef306893f606b9d917182dfa3cd06116
+    justification: >-
+      WP-2A. Declares CF long_name + units for TRITON's thirteen performance-timer
+      columns, scoped to the two performance modes (tritonswmm_performance /
+      triton_only_performance), so the four new SWMM_* split columns and the nine
+      pre-existing ones are described consistently rather than falling through to
+      _auto_long_name, which renders IO as "Io" and supplies no units at all.
+      JUDGED NON-BREAKING, and the ground is narrow enough to state exactly. The edit
+      adds VARIABLE ATTRS to newly-written performance artifacts. It changes no path,
+      no name, no dtype, no dim, no variable set and no value; it adds no file and
+      removes none. An analysis written by an earlier toolkit is read unchanged -- the
+      attrs are absent there, and every hhemt consumer of these artifacts reads values
+      (analysis._perf_row_from_dataset, sensitivity_benchmarking, synthetic_experiment)
+      and none reads long_name or units. Conversely an older toolkit meeting a tree
+      written by this one sees two extra attrs it ignores.
+      NO MIGRATION IS OWED, and the V0004 precedent is cited for its SHAPE rather than
+      as a requirement: V0004 backfilled CF attrs into existing stores because the CF
+      layer was being introduced and consolidated outputs were asserted to CARRY it.
+      No such assertion exists for the performance artifacts -- they are per-scenario
+      summaries, not consolidated-tree nodes, and the stipulation that governs CF
+      coverage ("Consolidated analysis outputs carry CF-1.13 attributes") does not
+      reach them. A backfill would therefore rewrite completed stores to satisfy no
+      contract.
+      CHANGE-SCOPED via layout_signature. This exemption covers ONLY the current file
+      content; re-stamp on any further non-breaking edit. A change that alters a
+      variable NAME, a dim, or the emitted variable set of any CF-stamped artifact is
+      NOT this class and must bump LAYOUT_VERSION instead.

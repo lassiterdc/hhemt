@@ -110,10 +110,134 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
 }
 
 
+# TRITON's performance-timer columns, as emitted by `output.h::write_times`.
+#
+# MODE-SCOPED, NOT GLOBAL, and deliberately. These names -- `Total`, `MPI`, `IO`, `Other`
+# -- are generic enough to collide with a variable of a different quantity in some other
+# mode, and `_CF_VARIABLE_MAP` is consulted for every mode. Scoping them to the two
+# performance modes means they can only stamp the artifact they describe.
+#
+# NO `cell_methods`, and that omission is load-bearing. Both performance artifacts share
+# one mode string: `_export_performance_tseries` writes the per-(timestep_min, Rank)
+# series and `_export_performance_summary` writes `ds.sum(dim="timestep_min").max(dim=
+# "Rank")` of it, and BOTH pass `mode="tritonswmm_performance"` / `"triton_only_
+# performance"` through `_write_output`. A `cell_methods` accurate for the summary
+# ("timestep_min: sum Rank: maximum") would therefore be stamped onto the tseries, which
+# has collapsed neither dim -- mislabelling it. `long_name` and `units` are true of both,
+# so only those are declared here. The summary's reduction semantics are already carried
+# by the dataset-level `notes` attr that `_export_performance_summary` writes.
+#
+# ALL THIRTEEN COLUMNS, not just the four new ones. Uncovered variables fall through to
+# `_auto_long_name`, which renders `IO` as "Io" and `SWMM` as "Swmm" and supplies no
+# `units` at all. Describing only the split columns would leave an artifact whose four
+# newest variables carry real CF attrs while its nine oldest carry auto-humanized
+# placeholders -- an inconsistency a reader would reasonably read as a difference in kind.
+_CF_PERFORMANCE_VARIABLES: dict[str, dict[str, str | None]] = {
+    "Compute": {
+        "standard_name": None,
+        "long_name": "Cumulative compute-kernel time, slowest rank",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "MPI": {
+        "standard_name": None,
+        # Verbatim from the solver's own header comment at `output.h::write_times`:
+        # "SWMM_MPI is distinct from the pre-existing MPI column, which times TRITON's
+        # own halo exchange rather than the coupling's gather/scatter." The two are
+        # siblings at different levels of the hierarchy and must never be summed.
+        "long_name": "Cumulative MPI time for TRITON's own halo exchange, slowest rank",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "IO": {
+        "standard_name": None,
+        "long_name": "Cumulative output-writing time, slowest rank",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "Resize": {
+        "standard_name": None,
+        "long_name": "Cumulative domain resize and rebalance time, slowest rank",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "SWMM": {
+        "standard_name": None,
+        "long_name": "Cumulative TRITON-SWMM coupling time, slowest rank",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "SWMM_XFER": {
+        "standard_name": None,
+        "long_name": "Coupling host-device transfers and exchange kernel, slowest rank",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "SWMM_MPI": {
+        "standard_name": None,
+        "long_name": "Coupling MPI gather and scatter, slowest rank",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "SWMM_STEP": {
+        "standard_name": None,
+        # NOT purely the solve, and the column name does not say so. Per the solver's
+        # `SWMM_STEP` define comment, the bracket also spans the `log_exchange_step`
+        # append to the exchange-replay side-file -- one buffered write per timestep --
+        # charged here deliberately because the append is inseparable from the step it
+        # records. A reader comparing this against a standalone SWMM solve would
+        # otherwise attribute the difference to the coupling.
+        #
+        # This is also the one column that is nonzero on rank 0 only, because its bracket
+        # sits inside the solver's `if (rank == 0)` guard. Under this artifact's
+        # `max(dim="Rank")` that yields the rank-0 value, which IS the serial-solve cost.
+        # The solver's own per-file Average row is NOT -- it is rank0/N -- and hhemt drops
+        # that row before this reduction.
+        "long_name": "Rank-0 serial SWMM solve, its remaps, and the exchange-log append",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "SWMM_OTHER": {
+        "standard_name": None,
+        # Derived, not measured: SWMM - (XFER + MPI + STEP). It is what makes the coupling
+        # level close exactly, as `Other` does for Simulation and `Init` does for Total.
+        "long_name": "Coupling residual, derived so the SWMM level closes",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "Other": {
+        "standard_name": None,
+        "long_name": "Simulation residual, derived so the simulation level closes",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "Simulation": {
+        "standard_name": None,
+        "long_name": "Simulation-phase wallclock",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "Init": {
+        "standard_name": None,
+        "long_name": "Initialization residual, derived as Total minus Simulation",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "Total": {
+        "standard_name": None,
+        "long_name": "Total run wallclock",
+        "units": "s",
+        "cell_methods": None,
+    },
+}
+
+
 # Conduit velocity shares the scalar-speed standard_name with TRITON's max speed,
 # but uses `time:` rather than `timestep_min:` in cell_methods. When applied to
 # the SWMM link mode, this overrides the base entry above.
 _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
+    "tritonswmm_performance": _CF_PERFORMANCE_VARIABLES,
+    "triton_only_performance": _CF_PERFORMANCE_VARIABLES,
     "tritonswmm_swmm_link": {
         "max_velocity_mps": {
             "standard_name": "sea_water_speed",
