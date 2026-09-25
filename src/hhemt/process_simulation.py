@@ -920,7 +920,19 @@ class TRITONSWMM_sim_post_processing:
             "they are therefore NOT the final-allocation-only figure that the SLURM "
             "Elapsed field reports. Category columns ('Compute','MPI','IO','SWMM',"
             "'Resize','Other') are upper bounds on the per-category contribution "
-            "to wallclock — slowest-rank category cost, NOT per-rank means."
+            "to wallclock — slowest-rank category cost, NOT per-rank means. "
+            "'SWMM' decomposes into 'SWMM_XFER' + 'SWMM_MPI' + 'SWMM_STEP' + "
+            "'SWMM_OTHER', which close the level exactly on each emitted PER-RANK "
+            "row; that identity does NOT survive this reduction, because max() is "
+            "applied PER VARIABLE and each column's max may come from a different "
+            "rank. 'SWMM_MPI' is the coupling's gather/scatter and is part of "
+            "'SWMM', NOT part of the top-level 'MPI' column, which times TRITON's "
+            "own halo exchange; the two are siblings at different levels and must "
+            "not be summed. 'SWMM_STEP' is nonzero on rank 0 only (its bracket sits "
+            "inside the solver's rank-0 guard), so for that one column max(Rank) is "
+            "the exact rank-0 serial-solve cost rather than an upper bound — a "
+            "property of the current coupling architecture, not of the quantity. "
+            "A column absent from an older member is absent here, not zero."
         )
         self._write_output(ds, fname_out, compression_level, verbose, mode=mode)
         elapsed_s = time.time() - start_time

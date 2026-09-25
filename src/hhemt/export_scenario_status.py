@@ -8,8 +8,11 @@ debugging by identifying which scenarios failed and why.
 The exported CSV includes performance breakdown columns (perf_Total, perf_Compute,
 perf_SWMM, perf_MPI, etc.) drawn from the processed performance summary dataset.
 These columns are populated only for rows where output processing completed; they
-are NaN for SWMM model type rows (no TRITON performance dataset) and for any scenario
-where processing did not finish.
+are NaN for SWMM model type rows (no TRITON performance dataset), for any scenario
+where processing did not finish, and for any column the producing solver did not
+emit for that member (the column set is a versioned contract with TRITON's
+performance.txt header, and one analysis tree can hold members written by more than
+one solver version — see `analysis._perf_row_from_dataset`).
 
 Additionally writes a workflow_summary.md file with get_workflow_status() output
 and optionally includes HPC partition information for debugging resource allocation issues.

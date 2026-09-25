@@ -2042,3 +2042,26 @@ non_breaking_allowlist:
       content; re-stamp on any further non-breaking edit. A change that alters a
       variable NAME, a dim, or the emitted variable set of any CF-stamped artifact is
       NOT this class and must bump LAYOUT_VERSION instead.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 8a1038990579396add2fc1201ff7e08ac20403c57bd7f3253be022b445971027
+    justification: >-
+      WP-2A. Extends the `notes` attr string that `_export_performance_summary` writes
+      onto every performance summary, so it describes the four new SWMM_* split columns
+      rather than enumerating only the six pre-split category columns. Three claims are
+      added because each is one a reader of this artifact can otherwise only get wrong:
+      that the children close the SWMM level on the emitted PER-RANK rows but NOT after
+      this reduction (max() is applied per variable, so each column's max may come from
+      a different rank); that SWMM_MPI belongs to SWMM and not to the top-level MPI
+      column; and that SWMM_STEP is rank-0-only, so max(Rank) is exact for that one
+      column as a property of the current coupling architecture rather than of the
+      quantity.
+      JUDGED NON-BREAKING. The edit changes the VALUE of one string-valued dataset attr
+      on newly-written artifacts. No path, name, dtype, dim, variable set or numeric
+      value changes; no file is added or removed. The attr is prose for a human reader
+      and no code path in src/, tests/ or scripts/ reads `attrs["notes"]` as a
+      quantity, so an older toolkit meeting a tree written by this one, and this
+      toolkit meeting an older tree, both behave identically.
+      CHANGE-SCOPED via layout_signature, re-stamping d4ac8403 -> 8a103899. APPENDED
+      rather than edited in place so the prior row's ground stays readable. Re-stamp on
+      any further non-breaking edit; a change to an artifact's path, name or variable
+      set is NOT this class and must bump LAYOUT_VERSION.
