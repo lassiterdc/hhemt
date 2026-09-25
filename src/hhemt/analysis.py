@@ -67,14 +67,31 @@ if TYPE_CHECKING:
     from .system import TRITONSWMM_system
     from .workflow import ResolvedForceRerunSpec  # noqa: F401
 
-# All variable names present in TRITON performance.txt files.
+# Every variable name TRITON's performance.txt header CAN carry, in emitted order.
 # Used to build all-None dicts for model types with no performance dataset (SWMM).
+#
+# MEMBERSHIP IS *PRESENT-IF-EMITTED*, NEVER *REQUIRED-ON-EVERY-MEMBER*. The list is a
+# versioned contract with the solver's header literal, and hhemt reads trees written by
+# more than one solver version, so a name here may be absent from any given member's
+# summary. `_perf_row_from_dataset` below is what makes that absence a `None` rather than
+# a `KeyError`; do not index a summary dataset by this list without it.
+#
+# The four `SWMM_*` names are the decomposition of the `SWMM` parent added by the solver's
+# SWMM-timer split. `SWMM_XFER` / `SWMM_MPI` / `SWMM_STEP` are measured brackets nested
+# inside the (unchanged) `SWMM` bracket; `SWMM_OTHER` is the derived residual that closes
+# the level, exactly as `Other` closes Simulation and `Init` closes Total. The solver
+# enforces `XFER + MPI + STEP + OTHER == SWMM` on every emitted PER-RANK row -- the
+# Average row is outside that identity, and hhemt's summary drops it.
 PERF_VARS: list[str] = [
     "Compute",
     "MPI",
     "IO",
     "Resize",
     "SWMM",
+    "SWMM_XFER",
+    "SWMM_MPI",
+    "SWMM_STEP",
+    "SWMM_OTHER",
     "Other",
     "Simulation",
     "Init",
@@ -83,10 +100,19 @@ PERF_VARS: list[str] = [
 
 # Display order for perf_* columns in df_status / scenario_status.csv.
 # Total is first for quick scanning; breakdown follows in descending importance.
+#
+# The four SWMM children sit immediately after their `SWMM` parent rather than beside the
+# similarly-named top-level columns. That placement carries a claim a reader otherwise has
+# to guess: `SWMM_MPI` is the COUPLING's own MPI_Gatherv/MPI_Scatterv cost and is part of
+# `SWMM`, not part of the top-level `MPI` column, and the two must not be summed.
 PERF_VARS_ORDERED: list[str] = [
     "Total",
     "Compute",
     "SWMM",
+    "SWMM_XFER",
+    "SWMM_MPI",
+    "SWMM_STEP",
+    "SWMM_OTHER",
     "MPI",
     "Simulation",
     "IO",
@@ -94,6 +120,32 @@ PERF_VARS_ORDERED: list[str] = [
     "Other",
     "Init",
 ]
+
+
+def _perf_row_from_dataset(ds) -> dict[str, float | None]:
+    """Build the ``perf_*`` row for one member from its performance summary dataset.
+
+    GUARDED READ, and the guard is the whole point of this helper. ``PERF_VARS`` is a
+    hardcoded list, not a read of ``ds.data_vars``, so any name it carries that the
+    producing solver did not emit is a missing key. The guard maps that case to ``None``
+    -- the same value ``_get_performance_summary_row``'s ``null_row`` already uses for a
+    SWMM member and for a not-yet-written summary -- instead of raising ``KeyError``
+    inside the unguarded ``df_status`` row loop, which would fail the whole status frame
+    for the analysis rather than blanking one cell.
+
+    The case this exists for is a MIXED CORPUS: a member produced before a solver-side
+    column addition carries the older, shorter column set, and the toolkit is a library
+    pointed at arbitrary trees, so "every member is post-change" is not a property any
+    hhemt version can check. ``analysis_validation.py``'s ``scenario_status.csv`` check
+    is a column-PRESENCE check over a ``required`` list, so a ``None`` value passes it
+    and nothing downstream needs a paired edit.
+
+    Membership in ``PERF_VARS`` is therefore *present-if-emitted*, never
+    *required-on-every-member*. A future edit that replaces this with a bare
+    ``{f"perf_{v}": float(ds[v].values.item()) for v in PERF_VARS}`` re-opens the
+    ``KeyError`` on every older member and does so silently on a homogeneous test corpus.
+    """
+    return {f"perf_{v}": (float(ds[v].values.item()) if v in ds.data_vars else None) for v in PERF_VARS}
 
 
 __all__ = ["TRITONSWMM_analysis"]
@@ -5593,8 +5645,10 @@ class TRITONSWMM_analysis:
         Extract per-category timing totals from the performance summary dataset for one scenario.
 
         Returns a dict keyed by ``perf_<VarName>`` for all variables in PERF_VARS.
-        Values are ``None`` for SWMM rows (no TRITON performance dataset) and for
-        TRITON/TRITONSWMM rows where the performance summary has not been written yet.
+        Values are ``None`` for SWMM rows (no TRITON performance dataset), for
+        TRITON/TRITONSWMM rows where the performance summary has not been written yet,
+        and -- per ``_perf_row_from_dataset`` -- for any PERF_VARS name the producing
+        solver did not emit for this member.
 
         Parameters
         ----------
@@ -5626,7 +5680,7 @@ class TRITONSWMM_analysis:
             ds = proc.TRITONSWMM_performance_summary
         else:  # triton
             ds = proc.TRITON_only_performance_summary
-        return {f"perf_{v}": float(ds[v].values.item()) for v in PERF_VARS}
+        return _perf_row_from_dataset(ds)
 
     @staticmethod
     def _reorder_df_status_columns(df: pd.DataFrame) -> pd.DataFrame:
