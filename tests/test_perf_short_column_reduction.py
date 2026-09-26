@@ -29,16 +29,38 @@ allocations ran different rank counts, because `to_xarray` pads the rank axis an
 padding is a reshape artefact rather than a data defect. That is the single failure in the
 over-broad arm.
 
-A RAGGED RANK COUNT IS A BEHAVIOUR CHANGE THIS FIX MAKES BEYOND THE SHORT-COLUMN DEFECT,
-and it is named here rather than left to be discovered. On a member whose allocations ran
-different rank counts, the pre-fix reduction reports the largest per-rank sum among ALL
-ranks including one that existed for only part of the run -- it treats that rank's absence
-as zero cost. Under the shipped form such a rank sums to NaN and drops out of the max, so
-the reported figure becomes the slowest rank that spanned the WHOLE run. Measured on the
-fixture below: 104 pre-fix, 88 shipped. 88 is the defensible wallclock and 104 is not, but
-the number on the artifact does change for that shape, which is why the ragged-rank test
+A RAGGED RANK COUNT IS WHERE THE TWO FORMS CAN DIVERGE, AND THE FIXTURE BELOW THAT
+EXHIBITS THE DIVERGENCE IS SYNTHETIC. On a member whose allocations ran different rank
+counts, the pre-fix reduction reports the largest per-rank sum among ALL ranks including
+one that existed for only part of the run -- it treats that rank's absence as zero cost.
+Under the shipped form such a rank sums to NaN and drops out of the max, so the reported
+figure becomes the slowest rank that spanned the WHOLE run. On the ragged fixture below
+that is 104 pre-fix and 88 shipped, and 88 is the defensible wallclock.
+
+DO NOT READ 104 -> 88 AS A CHANGE TO ANY DEPOSITED NUMBER. A later review constructed four
+ragged-rank shapes and drove the production `_aggregate_perf_summary` against real
+`performance{N}.txt` files. The divergence reproduces on ONE of them -- the fixture below,
+which changes the rank count with NEITHER a timer reset NOR a `resume_reporting_tsteps`
+ledger entry (`resume_steps=[]`). That combination is not producible by the pipeline: a
+rank-count change requires a new allocation, a new allocation restarts the process, and
+that restarts TRITON's cumulative timer and appends the realized step to the ledger.
+Reproduced independently, reading both reductions off one `_aggregate_perf_tseries` call:
+
+    shape                                                      pre-fix   shipped
+    2 -> 4 ranks, NO reset, resume_steps=[]  (the fixture)       104.0      88.0
+    2 -> 4 ranks, reset at 4, resume_steps=[4]                    88.0      88.0
+    4 -> 2 ranks, reset at 4, resume_steps=[4]                    88.0      88.0
+    2 -> 3 -> 1 ranks, no reset                                   60.0      60.0
+
+The coherent form of the same rank change agrees in BOTH directions of rank count. So no
+coherent member's artifact number moves under this fix, and an auditor should not go
+hunting for affected members.
+
+THE FIXTURE IS STILL LEGITIMATE AND ITS ASSERTIONS ARE NOT WEAKENED BY ANY OF THE ABOVE.
+It is a synthetic PROBE of a code path, and it is the only assertion in this file that
+separates the shipped form from the over-broad one -- which is why the ragged-rank test
 fails under the pre-fix arm as well as the over-broad one and passes only under the
-shipped one.
+shipped one. What is synthetic is the INPUT, not the discrimination.
 """
 
 from __future__ import annotations
