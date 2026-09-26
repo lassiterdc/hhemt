@@ -2150,3 +2150,63 @@ non_breaking_allowlist:
       rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to
       an artifact's path, name, dim or variable set is NOT this class and must bump
       LAYOUT_VERSION.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 65724d6f008bf0881c8085eb0fd05956e1a219184e402a080a7d1b89fa261da4
+    justification: >-
+      WP-2C site 1. The coupled-timer column split means one simulation member can span a
+      solver rebuild, so its own performance{N}.txt checkpoints disagree about which
+      columns exist. The pandas concat in _aggregate_perf_tseries OUTER-joins and
+      NaN-fills, after which "never emitted" and "emitted as NaN" are indistinguishable.
+      The guard detects that immediately before the join and records the finding as a
+      DIMENSIONED event_iloc COORDINATE, perf_column_set_across_allocations, assigned in
+      _export_performance_tseries immediately after expand_dims.
+      JUDGED NON-BREAKING, and the ground is that this is an ADDITIVE per-event_iloc string
+      COORDINATE on newly-produced stores, which is the SAME shape and the SAME write
+      moment as the ADR-15 producing-sha stamp. No path, filename, DATA VARIABLE, dim,
+      dtype, chunk or numeric value changes; no file is added or removed; every existing
+      by-name read resolves unchanged.
+      THE PRIOR ROW'S EXCLUSION CLAUSE IS NOT ENGAGED, stated rather than assumed because
+      it is the clause a reader will reach for. That clause excludes "a change to a
+      variable NAME, a dim, or the emitted variable set of any CF-stamped artifact". This
+      changes none of the three: it adds a COORDINATE, not a data variable, so the emitted
+      variable set is byte-identical; it renames nothing; it adds no dim.
+      BOTH DIRECTIONS. A NEW toolkit meeting an OLD store is covered by construction: the
+      member concat normalizes an absent coord to an explicit not-measured sentinel,
+      exactly as it already does for the ADR-15 producing-sha coords two lines above. An
+      OLD toolkit meeting a NEW store carries an extra coordinate it does not read; every
+      question it knows how to ask is answered unchanged.
+      NO MIGRATION CAN HAVE ANYTHING TO DO, which is the ground for the allowlist rather
+      than a bump. The only honest backfill value for a historical store is the sentinel
+      the reader already supplies, because the raw performance{N}.txt inputs a truthful
+      value would be recomputed from are routinely reclaimed by clear_raw. That is the
+      same ground V0016 and V0017 record for their own no-op bodies -- V0017 being the
+      exact precedent, an additive per-event_iloc string coordinate whose migration body
+      does nothing.
+      CHANGE-SCOPED via layout_signature, re-stamping the prior row for this path.
+      APPENDED rather than edited in place so the prior rows' ground stays readable.
+      Re-stamp on any further non-breaking edit; a change to a variable NAME, a dim, or the
+      emitted DATA-VARIABLE set is NOT this class and must bump LAYOUT_VERSION.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 6eeda41be8d464b5c338851748cefb1c393fbd7c20485ed84b99f1bf0f1bd93a
+    justification: >-
+      WP-2C site 2. The member concat in _retrieve_combined_output takes no join= and
+      therefore OUTER-joins, NaN-filling any variable a member never emitted. The guard
+      detects variable-set heterogeneity across the members immediately before that join
+      and records a per-member finding as a DIMENSIONED event_iloc COORDINATE,
+      variable_set_across_members. The same block normalizes an absent site-1 coord to the
+      explicit not-measured sentinel, mirroring the ADR-15 producing-sha normalization
+      already performed at the identical point for the identical reason.
+      JUDGED NON-BREAKING on the same ground as the site-1 row above: an ADDITIVE
+      per-event_iloc string COORDINATE, no data variable, dim, dtype, path or value
+      touched, and every existing by-name read resolving unchanged. The prior row's
+      exclusion clause is not engaged for the same reason.
+      RECORDS AND CONTINUES rather than raising, and that is what makes the addition safe
+      as well as useful. All three callers of consolidate_to_datatree were surveyed: on a
+      raise the finding reaches a runtime log and NO tree is written, so raising would
+      destroy the only artifact able to carry the finding. Because the guard records, a
+      false positive costs one coordinate string rather than a failed consolidation, which
+      is why the detection is not narrowed to the performance modes.
+      CHANGE-SCOPED via layout_signature, re-stamping cd9ed3c0 (WP-2B) to the post-edit
+      sha256. APPENDED rather than edited in place so WP-2B's ground stays readable.
+      Re-stamp on any further non-breaking edit; a change to an artifact's path, name, dim
+      or DATA-VARIABLE set is NOT this class and must bump LAYOUT_VERSION.

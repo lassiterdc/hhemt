@@ -806,6 +806,15 @@ class TRITONSWMM_sim_post_processing:
         event_iloc = self._scenario.event_iloc
         ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
         ds = ds.expand_dims("event_iloc")
+        # THE SITE-1 RECORD. Assigned HERE, in the caller, and not at the detection site:
+        # `event_iloc` does not exist until the two lines above, so a coord written inside
+        # `_aggregate_perf_tseries` would be SCALAR by construction -- the one shape
+        # measured to fail under every reading of the across-member concat. Immediately
+        # after expand_dims is the first moment the dimensioned form is available, and it
+        # is before `_write_output`, so the record reaches disk on the per-scenario store
+        # and from there rides the summary reduction (which reduces over timestep_min and
+        # Rank, leaving an event_iloc coord intact) into the consolidated tree.
+        ds = stamp_perf_column_set(ds)
 
         self._write_output(ds, fname_out, comp_level, verbose, mode=mode)
 
@@ -2420,6 +2429,116 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
     }
 
 
+#: Name of the per-``event_iloc`` COORDINATE carrying the across-ALLOCATIONS
+#: column-set finding. The shape is settled rather than chosen: a per-member
+#: ``attrs`` stamp is DELETED by ``processing_analysis.py``'s
+#: ``combine_attrs="drop_conflicts"`` join precisely when the members disagree --
+#: which is the case being detected -- and a SCALAR coord is wrong under every
+#: available reading of the concat defaults. The dimensioned ``event_iloc`` coord is
+#: the toolkit's own idiom (``processing_analysis.py:560``/``:562``, the ADR-15
+#: producing-sha stamp) and is the ONE shape that survives BOTH joins a site-1 record
+#: must cross: the pandas concat here, and the later ``xr.concat`` across members.
+PERF_COLUMN_SET_COORD: str = "perf_column_set_across_allocations"
+
+#: TRANSPORT ONLY, never the record. ``event_iloc`` does not exist inside
+#: ``_aggregate_perf_tseries`` -- it is assigned by the caller at
+#: ``_export_performance_tseries`` -- so a coord written here would be SCALAR by
+#: construction. The aggregator therefore carries its one statement out on the
+#: returned Dataset's ``attrs``, which is safe on exactly that hop because no combine
+#: runs between the aggregator's return and the caller's ``expand_dims``. The caller
+#: POPS it onto the coord, so exactly one carrier reaches disk.
+_PERF_COLUMN_SET_ATTR: str = "_hhemt_perf_column_set_finding"
+
+#: Sentinel written when an artifact predates this guard. NEVER backfilled onto a
+#: historical store: the raw ``performance{N}.txt`` inputs a truthful value would have
+#: to be recomputed from are routinely reclaimed by ``clear_raw``, so a backfill could
+#: only fabricate a verdict. Same ground V0016/V0017 record for their own no-op bodies.
+NAME_SET_UNKNOWN: str = "unknown (produced before the column-set guard shipped)"
+
+
+def diagnose_name_set_heterogeneity(
+    labels: Sequence[str],
+    name_sets: Sequence[object],
+) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+    """Diagnose column/variable-set heterogeneity across the objects about to be joined.
+
+    Returns ``(union, short)``: ``union`` is every name seen across all objects, sorted;
+    ``short`` maps each label whose object LACKS at least one union member to the sorted
+    names it lacks. A homogeneous population yields an empty ``short``.
+
+    This is the primitive both join sites share, and it is deliberately pure -- it takes
+    name sets rather than frames or Datasets -- so the detection can be exercised without
+    a pipeline. It is immune to what defeats the arithmetic identity check: NAMES survive
+    ``sum`` and ``max``, which reduce over dims rather than over variables, whereas
+    ``SWMM_XFER + SWMM_MPI + SWMM_STEP + SWMM_OTHER == SWMM`` holds only on an emitted
+    PER-RANK row and is destroyed by the slowest-rank reduction (it overshoots on every
+    multi-rank member, so it fires where nothing is wrong and points the wrong way).
+    """
+    sets = [frozenset(ns) for ns in name_sets]  # type: ignore[arg-type]
+    union: frozenset[str] = frozenset().union(*sets) if sets else frozenset()
+    short = {label: tuple(sorted(union - s)) for label, s in zip(labels, sets, strict=True) if union - s}
+    return tuple(sorted(union)), short
+
+
+def format_missing_names(names: Sequence[str], *, max_named: int = 8) -> str:
+    """Render a missing-name list bounded in length.
+
+    The finding is written into a stored coordinate value, so an unbounded enumeration
+    over a 144-checkpoint member would put kilobytes of filenames into every consolidated
+    tree. Bounded, and the overflow is COUNTED rather than dropped silently.
+    """
+    names = list(names)
+    if len(names) <= max_named:
+        return ", ".join(names)
+    return ", ".join(names[:max_named]) + f", +{len(names) - max_named} more"
+
+
+def describe_allocation_column_sets(labels: Sequence[str], column_sets: Sequence[object]) -> str:
+    """The site-1 finding: one statement about this member's own allocation set.
+
+    Says WHAT is missing, WHERE, and WHAT IT COSTS a downstream reader, because the
+    acceptance condition is that the finding reach a reader of the PUBLISHED artifacts --
+    and a reader of a consolidated tree has neither the source nor the runtime log.
+    """
+    union, short = diagnose_name_set_heterogeneity(labels, column_sets)
+    n = len(labels)
+    if not short:
+        return f"uniform: all {n} performance{{N}}.txt file(s) carry the same {len(union)} column(s)"
+    first_short = next(lbl for lbl in labels if lbl in short)
+    missing_any = sorted({m for ms in short.values() for m in ms})
+    return (
+        f"HETEROGENEOUS across allocations: {len(short)} of {n} performance{{N}}.txt file(s) "
+        f"lack column(s) {format_missing_names(missing_any)} (first: {first_short}). "
+        "Those columns are NaN-filled for the reporting steps the short files cover, so "
+        "every downstream sum over them is SHORT by the omitted steps while Total / "
+        "Simulation / Init remain correct. Most likely this simulation resumed across a "
+        "solver rebuild that changed the emitted timer set."
+    )
+
+
+def stamp_perf_column_set(ds: xr.Dataset) -> xr.Dataset:
+    """Move the transported site-1 finding onto the dimensioned ``event_iloc`` coord.
+
+    MUST be called only AFTER ``expand_dims("event_iloc")``: the whole point of the shape
+    is that the coord is dimensioned, and stamping before the dim exists produces the
+    SCALAR coord the design prohibits. Extracted as a free function so the shape clause of
+    the construction check can be evaluated on the stamped object directly, without
+    standing up a ``TRITONSWMM_sim_post_processing``.
+    """
+    if "event_iloc" not in ds.dims:
+        raise ProcessingError(
+            "stamp performance column-set record",
+            filepath=None,
+            reason=(
+                "stamp_perf_column_set was called on a Dataset with no 'event_iloc' DIM. "
+                "The record must be a DIMENSIONED event_iloc coordinate; a scalar coord "
+                "does not survive the across-member concat. Call this after expand_dims."
+            ),
+        )
+    finding = str(ds.attrs.pop(_PERF_COLUMN_SET_ATTR, NAME_SET_UNKNOWN))
+    return ds.assign_coords({PERF_COLUMN_SET_COORD: ("event_iloc", [finding])})
+
+
 def _aggregate_perf_tseries(
     raw_perf_dir: Path,
     min_per_tstep: float = 1.0,
@@ -2463,6 +2582,11 @@ def _aggregate_perf_tseries(
     # correction silently.
     tstep_ilocs_seen: set[int] = set()
     dfs = []
+    # Parallel to `dfs` and appended at the same site, so the detection below can NAME
+    # which checkpoint files are short rather than only counting them. A finding that
+    # says "some file is missing a column" costs the reader the search the guard exists
+    # to save.
+    df_labels: list[str] = []
     perfs_with_negatives: list[str] = []
     empty_perfs: list[str] = []
     malformed_perfs: list[tuple[str, str]] = []
@@ -2507,6 +2631,7 @@ def _aggregate_perf_tseries(
         df_ranks["timestep_min"] = tstep_iloc * min_per_tstep
         df_ranks = df_ranks.set_index(["timestep_min", "Rank"])
         dfs.append(df_ranks)
+        df_labels.append(f.name)
         if (df_ranks < 0).any().any():
             perfs_with_negatives.append(str(f))
             dfs_with_negatives.append(df_ranks)
@@ -2575,6 +2700,30 @@ def _aggregate_perf_tseries(
                 "aggregate."
             ),
         )
+
+    # COLUMN-SET HETEROGENEITY DETECTION -- SITE 1, immediately before the join.
+    #
+    # WHY HERE AND NOWHERE ELSE: `dfs` is still a LIST of frames each carrying its own
+    # header. One line below, `pd.concat` performs its default OUTER join and NaN-fills
+    # any column a frame lacks, and from that moment the distinction between "this
+    # allocation never emitted the column" and "this allocation emitted it as NaN" does
+    # not exist in the data. This is the last frame in which the question is answerable.
+    #
+    # WHY NOT THE ARITHMETIC IDENTITY: `SWMM_XFER + SWMM_MPI + SWMM_STEP + SWMM_OTHER ==
+    # SWMM` closes only on an emitted PER-RANK row. `_export_performance_summary` reduces
+    # with `.sum(dim="timestep_min").max(dim="Rank")`, and `max` applies PER VARIABLE, so
+    # post-reduction the children OVERSHOOT their parent on every multi-rank member --
+    # the identity fires where nothing is wrong, and in the mixed case it points the
+    # other way. Names survive both reductions; the identity does not. The identity is
+    # NOT the detector.
+    #
+    # DELIVER, DO NOT STOP. This records and continues. The condition describes data
+    # already on disk rather than an operator error caught before cost, and the columns
+    # that ARE short are the SWMM decomposition, never Total / Simulation / Init -- so
+    # refusing here would make the consolidated tree unbuildable for exactly the corpus
+    # whose headline figure is intact. Raising would also cost the member its d_process
+    # flag, the same cost the malformed-checkpoint branch above declines to pay.
+    _column_set_finding = describe_allocation_column_sets(df_labels, [df.columns for df in dfs])
 
     full = pd.concat(dfs).sort_index()
     # Per-rank diff (BUGFIX V0008): keep within each rank's checkpoint sequence.
@@ -2649,7 +2798,13 @@ def _aggregate_perf_tseries(
             UserWarning,
             stacklevel=2,
         )
-    return deltas.to_xarray()
+    _ds_out = deltas.to_xarray()
+    # TRANSPORT, not the record -- see `_PERF_COLUMN_SET_ATTR`. The caller pops this onto
+    # the dimensioned event_iloc coord as soon as that dim exists. Attrs survive
+    # everywhere EXCEPT a combine, and there is no combine between this return and that
+    # stamp, which is the whole (and only) hop this carrier has to be safe on.
+    _ds_out.attrs[_PERF_COLUMN_SET_ATTR] = _column_set_finding
+    return _ds_out
 
 
 def _aggregate_perf_summary(

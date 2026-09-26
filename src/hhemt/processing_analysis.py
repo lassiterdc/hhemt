@@ -21,6 +21,61 @@ if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
 
 
+#: Name of the per-``event_iloc`` COORDINATE carrying the across-MEMBERS variable-set
+#: finding, stamped immediately before the member concat below. Same settled shape as the
+#: site-1 record and the ADR-15 producing-sha stamp at ``:560``/``:562``: a DIMENSIONED
+#: ``event_iloc`` coord. A per-member ``attrs`` stamp is the natural-looking alternative
+#: and it is exactly wrong -- the concat's ``combine_attrs="drop_conflicts"`` deletes any
+#: attr whose value DISAGREES across members, which is precisely the condition being
+#: recorded, so the record would vanish in the only case it exists for.
+VARIABLE_SET_COORD: str = "variable_set_across_members"
+
+
+def describe_member_variable_sets(
+    labels: list[str],
+    variable_sets: list[object],
+    *,
+    mode: str,
+) -> list[str]:
+    """Per-member finding strings for the objects about to be joined at the member concat.
+
+    One string per member, positionally aligned with ``labels``. A SHORT member names what
+    IT lacks; a COMPLETE member in a mixed population says so and reports the population
+    count, so a reader who opens ANY member learns whether the population was mixed rather
+    than only a reader who happens to open a short one. A homogeneous population yields the
+    same uniform string on every member.
+    """
+    from hhemt.process_simulation import (  # function-local: keeps the import graph acyclic
+        diagnose_name_set_heterogeneity,
+        format_missing_names,
+    )
+
+    union, short = diagnose_name_set_heterogeneity(labels, variable_sets)
+    n = len(labels)
+    if not short:
+        return [f"uniform: all {n} member(s) carry the same {len(union)} variable(s) for mode {mode!r}"] * n
+    missing_any = sorted({m for ms in short.values() for m in ms})
+    out: list[str] = []
+    for label in labels:
+        if label in short:
+            out.append(
+                f"HETEROGENEOUS: this member (event_iloc {label}) LACKS variable(s) "
+                f"{format_missing_names(short[label])} for mode {mode!r}; {len(short)} of {n} "
+                "member(s) are short of the analysis-wide union. The join fills those "
+                "variables with NaN for this member, so any cross-member statistic over "
+                "them is computed on a subset of the members. Most likely these members "
+                "were produced by different solver builds emitting different column sets."
+            )
+        else:
+            out.append(
+                f"HETEROGENEOUS: this member (event_iloc {label}) carries the full variable "
+                f"set for mode {mode!r}, but {len(short)} of {n} member(s) are short of it "
+                f"(missing across the analysis: {format_missing_names(missing_any)}). "
+                "Cross-member statistics over those variables are computed on a subset."
+            )
+    return out
+
+
 class TRITONSWMM_analysis_post_processing:
     # Maps consolidation mode to: (scenario_path_attr, analysis_path_attr, spatial_coords)
     _MODE_CONFIG = {
@@ -561,6 +616,54 @@ class TRITONSWMM_analysis_post_processing:
             if "hhemt_producing_version" not in ds.coords:
                 ds = ds.assign_coords(hhemt_producing_version=("event_iloc", ["unknown"]))
             lst_ds.append(ds)
+
+        # Site-1 record normalization, mirroring :559-562 exactly and for the same reason.
+        # A summary written before the column-set guard shipped carries no site-1 coord,
+        # and a population mixing stamped and unstamped members must concat cleanly. The
+        # sentinel exists ONLY in the in-memory concatenated tree -- it is never written
+        # back to the legacy flat summary, so no verdict is fabricated for a member whose
+        # raw performance{N}.txt inputs are gone.
+        from hhemt.process_simulation import (  # function-local: keeps the import graph acyclic
+            NAME_SET_UNKNOWN,
+            PERF_COLUMN_SET_COORD,
+        )
+
+        if any(PERF_COLUMN_SET_COORD in d.coords for d in lst_ds):
+            lst_ds = [
+                d
+                if PERF_COLUMN_SET_COORD in d.coords
+                else d.assign_coords({PERF_COLUMN_SET_COORD: ("event_iloc", [NAME_SET_UNKNOWN])})
+                for d in lst_ds
+            ]
+
+        # VARIABLE-SET HETEROGENEITY DETECTION -- SITE 2, immediately before the join.
+        #
+        # WHY HERE: `lst_ds` is still a LIST of Datasets each carrying its own variable
+        # set. The concat one line below takes no `join=` and therefore defaults to
+        # `join="outer"` -- it does NOT raise, it NaN-fills -- and after it runs, a
+        # variable a member never emitted is indistinguishable from one it emitted as
+        # NaN. This is the last frame in which the question is answerable.
+        #
+        # DELIVER, DO NOT STOP, and the reason is measured rather than preferred. All
+        # three callers of `consolidate_to_datatree` were surveyed: `analysis.py` does not
+        # catch; `sensitivity_analysis.py` catches only (FileNotFoundError, ValueError) and
+        # routes a caught one to a print; `consolidate_workflow.py` catches Exception and
+        # routes it to `logger.error` plus a non-zero return. So on the raise path the
+        # finding reaches a RUNTIME LOG and no tree is written -- and a runtime log is
+        # excluded in terms from the published surfaces this record has to reach. Raising
+        # here would therefore destroy the artifact that is the only thing able to carry
+        # the finding. The record is made on the non-raise path.
+        #
+        # NOT SCOPED TO THE PERFORMANCE MODES. The property is the same at every mode this
+        # method serves, the detection costs one pass over already-open metadata, and the
+        # consequence of a false positive is one extra coordinate string rather than a
+        # failure -- an asymmetry that is only available because this records instead of
+        # raising.
+        _labels = [str(ei) for ei in self._analysis.df_sims.index]
+        _findings = describe_member_variable_sets(_labels, [set(d.data_vars) for d in lst_ds], mode=mode)
+        lst_ds = [
+            d.assign_coords({VARIABLE_SET_COORD: ("event_iloc", [f])}) for d, f in zip(lst_ds, _findings, strict=True)
+        ]
 
         ds_combined_outputs = xr.concat(lst_ds, dim="event_iloc", combine_attrs="drop_conflicts")
 
