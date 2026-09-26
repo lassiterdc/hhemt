@@ -2150,3 +2150,48 @@ non_breaking_allowlist:
       rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to
       an artifact's path, name, dim or variable set is NOT this class and must bump
       LAYOUT_VERSION.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 17bf3efac2c0c380b3bcc3ce7bedcf74e87c90bc21e13f8be075aa6555c76a39
+    justification: >-
+      WP-2C remediation item 2: the short-column reduction, and the notes sentence that
+      contradicted it. This row covers ONLY that edit. The WP-2C COORDINATE ADDITION is NOT
+      covered here and is not covered by any allowlist row -- its disposition is the
+      LAYOUT_VERSION 22->23 bump and V0023__column_set_heterogeneity_coords, landed
+      immediately before this change, and the two WP-2C rows that previously claimed this
+      path were removed in that commit because their ground was overruled. Nothing here
+      re-asserts it.
+      WHAT CHANGED. The summary reduction now runs the TIME sum with skipna=False, so a
+      column emitted for only some of a member's allocations reduces to NaN rather than to
+      a finite, understated number. The identical change is applied to the duplicated
+      reduction in _aggregate_perf_summary, which V0008 and V0018 call -- leaving that arm
+      alone would have re-written an understated number onto a tree those migrations exist
+      to repair. The notes attr stamped on the same artifact is rewritten to describe both
+      absence cases, because it previously asserted "absent here, not zero", which is true
+      only of a WHOLLY absent column and false of the partly-present one the guard exists
+      to record.
+      JUDGED NON-BREAKING, and the ground is DIFFERENT from the overruled one rather than a
+      restatement of it. This edit adds NO on-disk surface: no coordinate, no data variable,
+      no dim, no dtype, no path, no filename. It changes a VALUE on newly-produced stores
+      (a short column now reads NaN) and the PROSE of an existing attr. The prior rows'
+      exclusion clause -- "a change to a variable NAME, a dim, or the emitted variable set"
+      -- is not engaged on any of the three.
+      ONE BEHAVIOUR CHANGE BEYOND THE NAMED DEFECT, recorded so it is not discovered later.
+      On a member whose allocations ran different rank counts, a rank present in only some
+      allocations now sums to NaN and drops out of the max, so the reported figure becomes
+      the slowest rank that spanned the WHOLE run instead of the largest per-rank sum among
+      all ranks. Measured on the regression fixture: 104 before, 88 after. 88 is the
+      defensible wallclock; the number on the artifact does change for that shape.
+      BOTH DIRECTIONS. A NEW toolkit meeting an OLD store reads the store's stored values
+      unchanged -- this edit governs WRITE time only and backfills nothing. An OLD toolkit
+      meeting a NEW store reads NaN where it previously read an understated float; NaN is a
+      value it already handles, and the one consumer that raises on a non-finite read is
+      restricted by _WALLCLOCK_SAFE_COLS to Total / Simulation / Init, which cannot be
+      short.
+      NO MIGRATION IS OWED, and this is the same ground V0023 records for its own empty
+      body rather than a competing one: a truthful historical value would have to be
+      recomputed from the raw performance{N}.txt checkpoints, which clear_raw routinely
+      reclaims. Regenerating a store through V0018 picks the corrected value up.
+      CHANGE-SCOPED via layout_signature. APPENDED rather than edited in place so the prior
+      rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to a
+      variable NAME, a dim, or the emitted DATA-VARIABLE set is NOT this class and must bump
+      LAYOUT_VERSION.

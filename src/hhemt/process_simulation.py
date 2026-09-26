@@ -915,7 +915,37 @@ class TRITONSWMM_sim_post_processing:
                 log_field.set(True)
             return
 
-        ds = ds.sum(dim="timestep_min").max(dim="Rank")
+        # `skipna=False` ON THE TIME SUM IS THE WHOLE OF THE FIX, and its ASYMMETRY with the
+        # Rank max is load-bearing rather than an oversight.
+        #
+        # WHAT IT REPAIRS. `_aggregate_perf_tseries`'s `pd.concat` OUTER-joins and NaN-fills
+        # any column an allocation never emitted, so a member that spanned a solver rebuild
+        # carries a column present for only SOME of its reporting steps. Under xarray's
+        # default `skipna=True` that column does not reduce to NaN -- it reduces to a FINITE,
+        # UNDERSTATED number, which is then written to the summary store, published to the
+        # consolidated tree, and read back as an ordinary float. The one consumer that raises
+        # on a non-finite read (`report_renderers/sensitivity_benchmarking.py`) therefore
+        # cannot fire on it at any width of `_WALLCLOCK_SAFE_COLS`, because the value arrives
+        # finite. Measured on a member emitting SWMM_STEP for 2 of 4 reporting steps: 2.0
+        # under the default, NaN under this form, against a truthful Total of 4.0 in both.
+        #
+        # WHY NOT ALSO ON THE RANK MAX, which is the symmetric-looking form and is WRONG.
+        # `deltas.to_xarray()` pads the rank axis when the allocations did not all run the
+        # same rank count -- ranks present in one allocation and absent from another become
+        # NaN for the timesteps they did not exist in, which is a reshape artefact and not a
+        # data defect. Measured on a 2-rank then 4-rank member: `skipna=False` on BOTH
+        # reductions turns the HEADLINE `Total` into NaN, which the non-finite raise above
+        # would then convert into a hard render failure on a sound member. With the max left
+        # at its default, that same case reduces `Total` to 4.0 (correct, from the ranks that
+        # ran throughout) while a genuinely short COLUMN is NaN at EVERY rank -- the outer
+        # join adds the column to the whole allocation frame, so all ranks are short together
+        # -- and an all-NaN slice maxes to NaN with no warning. The discrimination this needs
+        # therefore comes from the time axis alone.
+        #
+        # A WHOLLY-ABSENT COLUMN STAYS DISTINGUISHABLE and is not touched by this: it has no
+        # entry in `ds` at all, so it is absent from the summary rather than NaN in it. The
+        # two cases must not collapse into one another, and under this form they do not.
+        ds = ds.sum(dim="timestep_min", skipna=False).max(dim="Rank")
         ds.attrs["units"] = "seconds"
         ds.attrs["notes"] = (
             "Per-column slowest-rank cumulative cost. 'Total' / 'Simulation' / 'Init' "
@@ -944,7 +974,14 @@ class TRITONSWMM_sim_post_processing:
             "exchange-replay side-file. The rank-0-onlyness, the remaps and the "
             "included write are all properties of the current coupling architecture, "
             "not of the quantity. "
-            "A column absent from an older member is absent here, not zero."
+            "Absence is reported two different ways and they mean different things. A "
+            "column this member never emitted AT ALL has no entry in this dataset -- it is "
+            "absent here, not zero. A column this member emitted for only SOME of its "
+            "reporting steps -- which is what a member spanning a solver rebuild across its "
+            "own allocations produces -- reads NaN here, never a partial sum: the time "
+            "reduction runs with skipna=False precisely so a partly-emitted column cannot "
+            "present as a finite, understated total. Which case applies is recorded per "
+            "member on the perf_column_set_across_allocations coordinate."
         )
         self._write_output(ds, fname_out, compression_level, verbose, mode=mode)
         elapsed_s = time.time() - start_time
@@ -2832,7 +2869,15 @@ def _aggregate_perf_summary(
     pass ``[]`` only when they positively know the sim never resumed.
     """
     ds = _aggregate_perf_tseries(raw_perf_dir, min_per_tstep=min_per_tstep, resume_steps=resume_steps)
-    return ds.sum(dim="timestep_min").max(dim="Rank")
+    # KEPT IN STEP WITH `_export_performance_summary`'s inline reduction DELIBERATELY. The
+    # two are duplicated rather than one calling the other (the `superlinear-speedup-fixes`
+    # Phase 2 wiring named in this docstring never landed), so a `skipna` change applied to
+    # only one of them leaves the OTHER understating -- and this is the arm the V0008 and
+    # V0018 migrations call, so the untouched arm would re-write an understated number onto
+    # a tree those migrations exist to repair. The full rationale for the asymmetry between
+    # the two reductions is at the inline site; it is not restated here so the two cannot
+    # drift as prose.
+    return ds.sum(dim="timestep_min", skipna=False).max(dim="Rank")
 
 
 def parse_performance_file(filepath):
