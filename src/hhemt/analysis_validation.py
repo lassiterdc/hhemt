@@ -1090,6 +1090,25 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
             details=[],
         )
     coupled = bool(getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False))
+    # `== "present"` COLLAPSES `"absent"` AND `"indeterminate"`, AND THE COLLAPSE IS A
+    # RULING, NOT AN OVERSIGHT. `resolve` is three-valued (`model_defects.resolve` returns
+    # `present` / `absent` / `indeterminate`), and the sibling check directly below --
+    # `check_coupled_resume_validity` -- routes its own `"indeterminate"` to a distinct
+    # INDETERMINATE early return. The two adjacent checks therefore treat the SAME
+    # three-valued input differently ON PURPOSE.
+    #
+    # The ground is the developer's, 2026-09-26, verbatim: "reporting no known defects is
+    # fine, because that phrase already implies what it needs to apply, we dont need a
+    # third category." This check's passing summary says "a build carrying no KNOWN resume
+    # defect" -- the word `known` already carries the hedge that a separate INDETERMINATE
+    # arm would spell out, so the third category would restate in a verdict what the
+    # sentence already says. `check_coupled_resume_validity` has no such hedge available
+    # (its arms make positive claims about a specific member's data), which is why the
+    # divergence is correct rather than an inconsistency to repair.
+    #
+    # So: do NOT "fix" this by adding an indeterminate arm, and do NOT widen the predicate
+    # to `!= "absent"` -- that would convert an unresolvable registry lookup into a
+    # reported defect, which is the opposite error.
     present = [
         d
         for d in REGISTRY
