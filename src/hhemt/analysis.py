@@ -34,7 +34,11 @@ from hhemt.orchestration import resolve_execution_locus
 from hhemt.paths import AnalysisPaths
 from hhemt.plot_analysis import TRITONSWMM_analysis_plotting
 from hhemt.plot_utils import print_json_file_tree
-from hhemt.process_simulation import TRITONSWMM_sim_post_processing
+from hhemt.process_simulation import (
+    PERF_COLUMN_SET_COORD,
+    TRITONSWMM_sim_post_processing,
+    column_set_verdict,
+)
 from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing
 from hhemt.resource_management import ResourceManager
 from hhemt.scenario import TRITONSWMM_scenario
@@ -144,8 +148,44 @@ def _perf_row_from_dataset(ds) -> dict[str, float | None]:
     *required-on-every-member*. A future edit that replaces this with a bare
     ``{f"perf_{v}": float(ds[v].values.item()) for v in PERF_VARS}`` re-opens the
     ``KeyError`` on every older member and does so silently on a homogeneous test corpus.
+
+    The sibling ``_column_set_cell`` carries the column-set verdict and is deliberately
+    NOT folded in here -- this row is exactly the ``PERF_VARS`` float set, and that is a
+    pinned contract rather than an accident.
     """
     return {f"perf_{v}": (float(ds[v].values.item()) if v in ds.data_vars else None) for v in PERF_VARS}
+
+
+def _column_set_cell(ds) -> dict[str, str | None]:
+    """Build the column-set verdict cell for one member from its summary dataset.
+
+    DELIBERATELY NOT FOLDED INTO ``_perf_row_from_dataset``, and the separation is a
+    contract rather than a style choice. That helper's rows are pinned by
+    ``tests/test_perf_column_split.py`` as EXACTLY the ``PERF_VARS`` key set with float or
+    ``None`` values (``set(row) == {f"perf_{v}" for v in PERF_VARS}`` and
+    ``all(isinstance(v, float) ...)``). Those assertions are correct about what that helper
+    is for -- it converts emitted TIMINGS -- and this cell is neither a timing nor keyed on
+    ``PERF_VARS``. Widening the helper would have required weakening three passing
+    assertions to admit a value they are right to reject.
+
+    GUARDED READ, same shape and same reason as the ``PERF_VARS`` guard one function up. The
+    coordinate rides the summary reduction (which reduces over ``timestep_min`` and
+    ``Rank``, leaving the ``event_iloc`` coord intact), but a member consolidated before the
+    coordinate shipped does not carry it, and the toolkit is a library pointed at arbitrary
+    trees. Membership is tested before the subscript; an absent coord yields ``None``.
+    ``NAME_SET_UNKNOWN`` is NOT substituted -- nothing backfills a per-scenario summary store
+    written before the guard, so this read meets a genuinely absent coord and must say so
+    rather than assert a stamp no artifact holds.
+
+    The value is routed through ``column_set_verdict`` rather than taken raw, and that is
+    load-bearing rather than cosmetic: the raw uniform string embeds the member's CHECKPOINT
+    count, so two members agreeing perfectly on their column set carry different strings and
+    the appendix's constant-column suppression stops hiding the column on a homogeneous
+    analysis. The full rationale is on ``column_set_verdict`` itself and is not restated here
+    so the two cannot drift as prose.
+    """
+    raw = str(ds[PERF_COLUMN_SET_COORD].values.item()) if PERF_COLUMN_SET_COORD in ds.coords else None
+    return {PERF_COLUMN_SET_COORD: column_set_verdict(raw)}
 
 
 __all__ = ["TRITONSWMM_analysis"]
@@ -5640,7 +5680,7 @@ class TRITONSWMM_analysis:
         self,
         event_iloc: int,
         model_type: Literal["triton", "tritonswmm", "swmm"],
-    ) -> dict[str, float | None]:
+    ) -> dict[str, float | str | None]:
         """
         Extract per-category timing totals from the performance summary dataset for one scenario.
 
@@ -5659,10 +5699,17 @@ class TRITONSWMM_analysis:
 
         Returns
         -------
-        dict[str, float | None]
-            Keyed by ``perf_<VarName>`` for each variable in PERF_VARS.
+        dict[str, float | str | None]
+            Keyed by ``perf_<VarName>`` for each variable in PERF_VARS, plus
+            ``perf_column_set_across_allocations`` carrying this member's column-set
+            verdict (``None`` when the member predates the coordinate).
         """
-        null_row: dict[str, float | None] = {f"perf_{v}": None for v in PERF_VARS}
+        # The column-set cell joins `null_row` so EVERY row carries the key -- a SWMM row
+        # and a not-yet-processed row have no finding to report, and omitting the key here
+        # would let pandas synthesize the column from the rows that DO carry it, making its
+        # presence depend on which members happen to be processed.
+        null_row: dict[str, float | str | None] = {f"perf_{v}": None for v in PERF_VARS}
+        null_row[PERF_COLUMN_SET_COORD] = None
 
         if model_type == "swmm":
             return null_row
@@ -5680,7 +5727,7 @@ class TRITONSWMM_analysis:
             ds = proc.TRITONSWMM_performance_summary
         else:  # triton
             ds = proc.TRITON_only_performance_summary
-        return _perf_row_from_dataset(ds)
+        return {**_perf_row_from_dataset(ds), **_column_set_cell(ds)}
 
     @staticmethod
     def _reorder_df_status_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -5719,7 +5766,12 @@ class TRITONSWMM_analysis:
             "resume_reporting_tsteps",
             "scenario_directory",
         ]
-        fixed_perf = [f"perf_{v}" for v in PERF_VARS_ORDERED]
+        # The column-set verdict is APPENDED to the perf group rather than left to fall
+        # through to `dynamic_cols`, which places unlisted columns between identity and
+        # performance -- the slot reserved for weather/setup and sensitivity params. It is
+        # metadata ABOUT the perf columns, so it belongs beside them and after them, not
+        # among the experiment's independent variables.
+        fixed_perf = [f"perf_{v}" for v in PERF_VARS_ORDERED] + [PERF_COLUMN_SET_COORD]
         fixed_resources = [
             "run_mode",
             "n_mpi_procs",

@@ -2258,3 +2258,34 @@ non_breaking_allowlist:
       rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to a
       variable NAME, a dim, or the emitted DATA-VARIABLE set is NOT this class and must bump
       LAYOUT_VERSION.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 844d7d8fca310a4b48f1d37e6091ebd0bad361379d06daf644ebe6630d135c29
+    justification: >-
+      ADDITIVE READ-SIDE HELPER PLUS A SHARED LITERAL. Two additions and one substitution:
+      the module constant _UNIFORM_FINDING_PREFIX, the pure function column_set_verdict,
+      and describe_allocation_column_sets' uniform branch now interpolating that constant
+      instead of repeating the same nine characters inline.
+      THE EMITTED STRING IS BYTE-IDENTICAL, and that is measured rather than argued:
+      describe_allocation_column_sets(['performance0.txt','performance1.txt'], [cols,cols])
+      returns exactly "uniform: all 2 performance{N}.txt file(s) carry the same 3
+      column(s)", the same bytes the pre-change f-string produced. The constant exists so
+      the ONE consumer that must recognize the uniform case cannot drift from the ONE site
+      that writes it; it does not change what is written.
+      column_set_verdict WRITES NOTHING. It is a pure str-to-str map consumed only by
+      analysis.py's df_status row builder, to collapse the uniform finding's embedded
+      CHECKPOINT count so a homogeneous analysis's rendered appendix does not display a
+      column that varies with how many performance{N}.txt files each member happened to
+      leave on disk. The stored coordinate keeps the full sentence, count included.
+      NOTHING ON DISK MOVES. No coordinate, data variable, dim, dtype, attr, path or
+      filename is added, removed or renamed, and no value written to any store changes.
+      The prior rows' exclusion clause -- "a change to a variable NAME, a dim, or the
+      emitted DATA-VARIABLE set" -- is not engaged.
+      BOTH DIRECTIONS. A NEW toolkit meeting an OLD store reads whatever string that store
+      carries and maps it for display only; a member with no coordinate at all yields None
+      rather than raising. An OLD toolkit meeting a NEW store sees a coordinate whose bytes
+      are unchanged from what it already wrote.
+      NO MIGRATION IS OWED: no stored byte differs in either direction.
+      CHANGE-SCOPED via layout_signature. APPENDED rather than edited in place so the prior
+      rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to a
+      variable NAME, a dim, or the emitted DATA-VARIABLE set is NOT this class and must bump
+      LAYOUT_VERSION.

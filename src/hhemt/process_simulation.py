@@ -2530,6 +2530,13 @@ def format_missing_names(names: Sequence[str], *, max_named: int = 8) -> str:
     return ", ".join(names[:max_named]) + f", +{len(names) - max_named} more"
 
 
+#: Opening of the no-heterogeneity finding. Shared by the PRODUCER below and by
+#: ``column_set_verdict``, deliberately, so the one consumer that has to recognize the
+#: uniform case cannot drift from the one site that writes it. Changing the wording here
+#: changes both at once; changing it in only one of them is not expressible.
+_UNIFORM_FINDING_PREFIX: str = "uniform: "
+
+
 def describe_allocation_column_sets(labels: Sequence[str], column_sets: Sequence[object]) -> str:
     """The site-1 finding: one statement about this member's own allocation set.
 
@@ -2540,7 +2547,7 @@ def describe_allocation_column_sets(labels: Sequence[str], column_sets: Sequence
     union, short = diagnose_name_set_heterogeneity(labels, column_sets)
     n = len(labels)
     if not short:
-        return f"uniform: all {n} performance{{N}}.txt file(s) carry the same {len(union)} column(s)"
+        return f"{_UNIFORM_FINDING_PREFIX}all {n} performance{{N}}.txt file(s) carry the same {len(union)} column(s)"
     first_short = next(lbl for lbl in labels if lbl in short)
     missing_any = sorted({m for ms in short.values() for m in ms})
     return (
@@ -2551,6 +2558,50 @@ def describe_allocation_column_sets(labels: Sequence[str], column_sets: Sequence
         "Simulation / Init remain correct. Most likely this simulation resumed across a "
         "solver rebuild that changed the emitted timer set."
     )
+
+
+#: The single value every no-heterogeneity member reduces to on a PANDAS surface. It is a
+#: constant by construction, which is the whole reason it exists -- see ``column_set_verdict``.
+UNIFORM_COLUMN_SET_VERDICT: str = "uniform across allocations"
+
+
+def column_set_verdict(finding: str | None) -> str | None:
+    """Reduce a stored column-set finding to a value that varies ONLY with the outcome.
+
+    WHY THIS EXISTS, because the mapping looks redundant until you know. The stored finding
+    is a SENTENCE, and its uniform form embeds ``len(labels)`` -- and ``labels`` is
+    ``df_labels``, appended once per PARSED ``performance{N}.txt`` CHECKPOINT file, not once
+    per allocation (three branches in that loop ``continue`` before the append: a 0-byte
+    file from a kill, a malformed file from a concurrent-writer interleave, and a
+    non-matching filename). So two members that agree PERFECTLY on their column set carry
+    DIFFERENT stored strings whenever they ran different numbers of reporting steps, or
+    whenever one of them lost a checkpoint. Measured: an identical 3-column set over 1 label
+    versus 2 labels yields "uniform: all 1 ..." and "uniform: all 2 ...".
+
+    That defeats the ONLY mechanism keeping this out of a homogeneous analysis's rendered
+    appendix. ``report_renderers/scenario_status_appendix.py`` hides a column whose
+    ``nunique(dropna=False)`` is 1; on the raw strings it is 2, so the column renders on an
+    analysis with no heterogeneity anywhere -- which the developer ruled out explicitly.
+    Mapping through here collapses every uniform member to one constant, so the hide
+    predicate does what the ruling needs WITHOUT the renderer learning anything about this
+    column.
+
+    WHAT IS DELIBERATELY NOT COLLAPSED. The heterogeneous finding passes through VERBATIM:
+    it is the statement a reader needs, it names which files are short and what it costs
+    them, and flattening it to a flag would strand that reader with a boolean and no route
+    to the full text. ``NAME_SET_UNKNOWN`` also passes through unchanged -- it is already a
+    constant, so it cannot reintroduce the count variance, and it is a DIFFERENT claim from
+    "uniform" (we did not measure, versus we measured and nothing was short) that must not
+    be laundered into one. An absent finding maps to ``None``, never to a sentinel: a member
+    consolidated before the coordinate shipped carries no stamp at all, and inventing one
+    here would assert a record no artifact holds.
+
+    THE ZARR IS NOT TOUCHED BY ANY OF THIS. The stored coordinate keeps the full sentence,
+    count included; this function governs only what a pandas column carries.
+    """
+    if finding is None:
+        return None
+    return UNIFORM_COLUMN_SET_VERDICT if finding.startswith(_UNIFORM_FINDING_PREFIX) else finding
 
 
 def stamp_perf_column_set(ds: xr.Dataset) -> xr.Dataset:
