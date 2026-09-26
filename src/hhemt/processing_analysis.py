@@ -30,6 +30,38 @@ if TYPE_CHECKING:
 #: recorded, so the record would vanish in the only case it exists for.
 VARIABLE_SET_COORD: str = "variable_set_across_members"
 
+#: The two ``_MODE_CONFIG`` modes whose variable set is the TRITON coupled-timer column
+#: set, and therefore the only two at which a differing variable set can be attributed to
+#: a differing solver build.
+#:
+#: THIS IS NOT A DETECTION ALLOWLIST and must not become one. The heterogeneity DETECTION
+#: is deliberately general across all eight modes -- the join NaN-fills identically at
+#: every one of them, and because the guard records rather than raises, a false positive
+#: costs one coordinate string. What is NOT general is the CAUSAL attribution: at
+#: ``swmm_only_node``, ``tritonswmm_swmm_link`` or ``tritonswmm_triton`` a differing
+#: variable set has nothing to do with solver builds or timer columns, so a confident
+#: solver-build sentence there is a wrong explanation stamped onto a published artifact in
+#: the voice of a diagnostic. This tuple selects a CLAUSE OF PROSE and nothing else, which
+#: is why a two-name mirror list is acceptable here where a detection allowlist would not
+#: be. ``test_the_performance_mode_names_are_real_mode_config_keys`` fails if either name
+#: stops being a live mode, which is the drift this mirror could otherwise suffer silently.
+_PERFORMANCE_MODES: frozenset[str] = frozenset({"tritonswmm_performance", "triton_only_performance"})
+
+
+def _heterogeneity_cause(mode: str) -> str:
+    """The cause sentence for a short-member finding, licensed by the mode.
+
+    Returned rather than interpolated inline so the performance and non-performance
+    wordings sit beside each other and neither can be edited without seeing the other.
+    """
+    if mode in _PERFORMANCE_MODES:
+        return "Most likely these members were produced by different solver builds emitting different column sets."
+    return (
+        "The cause is mode-specific and is not diagnosed here -- for this mode the live "
+        "candidates are differing model configuration between the members or a differing "
+        "parse of a member's model outputs, NOT a differing solver build."
+    )
+
 
 def describe_member_variable_sets(
     labels: list[str],
@@ -63,8 +95,7 @@ def describe_member_variable_sets(
                 f"{format_missing_names(short[label])} for mode {mode!r}; {len(short)} of {n} "
                 "member(s) are short of the analysis-wide union. The join fills those "
                 "variables with NaN for this member, so any cross-member statistic over "
-                "them is computed on a subset of the members. Most likely these members "
-                "were produced by different solver builds emitting different column sets."
+                f"them is computed on a subset of the members. {_heterogeneity_cause(mode)}"
             )
         else:
             out.append(

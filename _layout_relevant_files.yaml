@@ -2195,3 +2195,45 @@ non_breaking_allowlist:
       rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to a
       variable NAME, a dim, or the emitted DATA-VARIABLE set is NOT this class and must bump
       LAYOUT_VERSION.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: ff47bf7ca74a314da9eb22f4062b78e75c132c7ad4e0023f223390a83f4e6c80
+    justification: >-
+      WP-2C remediation item 3: the short-member finding's CAUSAL sentence is now
+      conditioned on the mode. This row covers ONLY that edit. The WP-2C COORDINATE
+      ADDITION is NOT covered here -- its disposition is the LAYOUT_VERSION 22->23 bump and
+      V0023__column_set_heterogeneity_coords, and the WP-2C row that previously claimed this
+      path was removed in that commit because its ground was overruled.
+      WHAT CHANGED. describe_member_variable_sets is invoked at all eight _MODE_CONFIG
+      modes, and its short-member branch ended with "Most likely these members were produced
+      by different solver builds emitting different column sets". That claim is licensed by
+      the TRITON coupled-timer column split and therefore by exactly two modes; at the other
+      six a differing variable set comes from differing model configuration or a differing
+      parse. The guard was stamping a confident causal attribution it had no basis for onto
+      a published artifact, in the voice of a diagnostic. The sentence is now selected by
+      _heterogeneity_cause(mode).
+      THE DETECTION IS UNCHANGED AND STAYS GENERAL. Narrowing the detection to the
+      performance modes was the rejected option -- it would discard a real and correct
+      detection at six modes and introduce exactly the mode allowlist that drifts. Only the
+      CLAUSE is conditioned, and a test pins that the detection still fires at every mode.
+      JUDGED NON-BREAKING. This is a PROSE change to the value of an existing coordinate.
+      No coordinate, data variable, dim, dtype, path or filename is added, removed or
+      renamed; the emitted variable set is byte-identical. The prior rows' exclusion clause
+      -- "a change to a variable NAME, a dim, or the emitted variable set" -- is not
+      engaged on any of the three.
+      THE TWO-NAME MIRROR LIST IS GUARDED. _PERFORMANCE_MODES hand-mirrors two _MODE_CONFIG
+      keys, which is the drifting-mirror shape this codebase has been bitten by. It is
+      acceptable here only because it selects a clause of prose rather than gating
+      detection, and because test_the_performance_mode_names_are_real_mode_config_keys fails
+      loudly if either name stops naming a live mode, instead of the mirror silently
+      degrading to "no mode is a performance mode".
+      BOTH DIRECTIONS. A NEW toolkit meeting an OLD store reads the stored string unchanged;
+      nothing is backfilled. An OLD toolkit meeting a NEW store reads a coordinate string
+      whose wording differs at six modes -- no consumer parses this string, it is a record
+      for a human reader.
+      NO MIGRATION IS OWED: the wording of a historical finding is what that toolkit
+      actually concluded at the time, and rewriting it would falsify the record rather than
+      repair it.
+      CHANGE-SCOPED via layout_signature. APPENDED rather than edited in place so the prior
+      rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to an
+      artifact's path, name, dim or DATA-VARIABLE set is NOT this class and must bump
+      LAYOUT_VERSION.
