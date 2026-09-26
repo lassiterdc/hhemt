@@ -220,6 +220,40 @@ SHA_ORNL_GHOST_RING_AND_GPU = "a38338b09e62e57c936f51516bbdbe495d89a546"
 SHA_PRE_COUPLED_RESUME = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"
 SHA_PRE_DEPTH_SCATTER = "b3820a448f304b3f732f4b6fac5564adf86ac333"
 
+#: The SOLVER-WORK CAMPAIGN BRANCH TIP: `solver-work/replay-precision-accounting` on the fork,
+#: the build that introduces the full-precision SWMM state SNAPSHOT as a second resume
+#: mechanism. It is recorded here because the read path has no clone and would otherwise return
+#: INDETERMINATE for it -- and an INDETERMINATE replay verdict does two bad things at once
+#: (`check_coupled_resume_validity` early-returns "resume validity NOT verified" before any
+#: marker arm runs, and `check_known_resume_defects` selects on `status == "present"`, so
+#: INDETERMINATE reads as ABSENT and returns an affirmative clean bill).
+#:
+#: ALL THREE registry defects resolve ABSENT at this sha, and the third one is the interesting
+#: case because TWO natural probes classify it WRONG. Measured 2026-09-25 against the clone at
+#: `HHEMT_TRITON_CLONE` with HEAD = 658a7a37:
+#:
+#:   * `merge-base --is-ancestor 3a832f7d 658a7a37` -> rc 0   (coupled-resume fix: ancestor)
+#:   * `merge-base --is-ancestor 9db367dd 658a7a37` -> rc 0   (depth-scatter fix: ancestor)
+#:   * `merge-base --is-ancestor 5d2ad1e8 658a7a37` -> rc 1   (ghost-ring fix: NOT an ancestor)
+#:   * `git ls-tree 658a7a37 -- src/ghost_ring.h`   -> 0 entries (control needle src/triton.h -> 1)
+#:
+#: Read alone, the last two say the ghost-ring defect is PRESENT. Both are artifacts of asking
+#: the fork's question of an ORNL-descended tree, which is the trap this module's docstring
+#: already names for the a38338b0 entry -- "ORNL implements the ring inline and that path does
+#: not exist upstream", so a `src/ghost_ring.h` probe is vacuous against it. The deciding
+#: commands are the UPSTREAM ancestry and the SYMBOLS:
+#:
+#:   * `merge-base --is-ancestor 0cf5faff 658a7a37` -> rc 0  (ORNL's ghost-ring fix commit)
+#:   * `merge-base --is-ancestor a38338b0 658a7a37` -> rc 0  (the sha already in the sets below)
+#:   * `git grep -c "write_output_ghost_ring\|read_output_ghost_ring" 658a7a37 -- src/output.h
+#:      src/triton.h` -> output.h 5, triton.h 1, and the resume-path call site is wired at
+#:      `src/triton.h`'s `if (arglist.checkpoint_id > 0) { out.read_output_ghost_ring(...) }`.
+#:
+#: So this sha inherits a38338b0's absence verdict by ORDINARY CACHED ANCESTRY, and it is
+#: recorded at the same evidentiary strength as that entry -- no stronger. Whatever would
+#: falsify a38338b0 (see its constant's comment) falsifies this one.
+SHA_SOLVER_WORK_REPLAY_PRECISION = "658a7a37032a95842e1662fe330190da24ffd4e8"
+
 REGISTRY: tuple[ModelDefect, ...] = (
     ModelDefect(
         defect_id="TRITON-COUPLED-RESUME-REPLAY",
@@ -234,6 +268,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_GHOST_RING_AND_GPU,
                 # 3a832f7d is an ANCESTOR of a38338b0 -- cached ancestry, the ordinary basis.
                 SHA_ORNL_GHOST_RING_AND_GPU,
+                # 3a832f7d is an ANCESTOR of 658a7a37 -- measured rc 0, same ordinary basis.
+                SHA_SOLVER_WORK_REPLAY_PRECISION,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -251,6 +287,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_EXTBC_GHOST_RING_FIX,
                 SHA_MAIN_GHOST_RING_AND_GPU,
                 SHA_ORNL_GHOST_RING_AND_GPU,
+                # 9db367dd is an ANCESTOR of 658a7a37 -- measured rc 0; it is that branch's base.
+                SHA_SOLVER_WORK_REPLAY_PRECISION,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}),
@@ -265,7 +303,15 @@ REGISTRY: tuple[ModelDefect, ...] = (
             # a38338b0's TREE carries an INDEPENDENT upstream implementation of this fix, landed at
             # its parent 0cf5faff; ancestry cannot reach it from 5d2ad1e8, which is on the other
             # remote. See the constant's comment for the basis and for what would falsify it.
-            {SHA_EXTBC_GHOST_RING_FIX, SHA_MAIN_GHOST_RING_AND_GPU, SHA_ORNL_GHOST_RING_AND_GPU}
+            # 658a7a37 descends from a38338b0 (rc 0), so it inherits that entry's verdict by
+            # ordinary cached ancestry -- NOT from 5d2ad1e8, which is not its ancestor. See the
+            # SHA_SOLVER_WORK_REPLAY_PRECISION comment for the two probes that classify it wrong.
+            {
+                SHA_EXTBC_GHOST_RING_FIX,
+                SHA_MAIN_GHOST_RING_AND_GPU,
+                SHA_ORNL_GHOST_RING_AND_GPU,
+                SHA_SOLVER_WORK_REPLAY_PRECISION,
+            }
         ),
         also_present_in=frozenset(
             {SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER, SHA_DEPTH_SCATTER_FIX}

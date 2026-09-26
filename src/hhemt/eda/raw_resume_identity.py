@@ -12,7 +12,8 @@ free function):
   * TRITON raw raster decode             -> process_simulation.load_triton_output_w_xarray
   * exact b4b kernel                     -> eda.cross_sim_identity.compare_variable_exact
   * coupled-SWMM parse                   -> swmm_output_parser.retrieve_SWMM_outputs_as_datasets
-  * resume-boundary marker literal       -> analysis_validation._TRITON_REPLAY_MARKER
+  * resume-boundary marker literals      -> analysis_validation._TRITON_REPLAY_MARKER
+                                           + _TRITON_SNAPSHOT_RESTORE_MARKER
   * binary-per-timestep heatmap          -> eda._config_diff._heatmap
 
 Read-only w.r.t. the analysis tree: takes plain directory Paths, never instantiates
@@ -31,7 +32,7 @@ import numpy as np
 import xarray as xr
 import yaml
 
-from hhemt.analysis_validation import _TRITON_REPLAY_MARKER
+from hhemt.analysis_validation import _TRITON_REPLAY_MARKER, _TRITON_SNAPSHOT_RESTORE_MARKER
 from hhemt.eda.cross_sim_identity import compare_variable_exact
 from hhemt.member_identity import resolve_member_id_column, warn_missing_member_id_column
 from hhemt.process_simulation import CANONICAL_TRITON_VARS, load_triton_output_w_xarray, return_fpath_wlevels
@@ -178,21 +179,35 @@ def _ds_all_identical(dc: xr.Dataset, dr: xr.Dataset) -> bool:
 
 
 def parse_resume_timestep(model_log: Path) -> float | None:
-    """Extract the resume-boundary ``t=`` from the LAST _TRITON_REPLAY_MARKER in a tritonswmm
-    model log (Gotcha 71: the log is last-exec-only; for this n_resumes==1 experiment the last
-    marker IS the only resume boundary). Returns the float (TRITON sim-time units) or None when
-    the log is unreadable or carries no marker (-> no vline; never a false verdict)."""
+    """Extract the resume-boundary ``t=`` from the LAST resume marker in a tritonswmm model log.
+
+    EITHER marker answers: TRITON restores the coupled SWMM state from a full-precision
+    SNAPSHOT (``_TRITON_SNAPSHOT_RESTORE_MARKER``) or by REPLAYING the exchange history
+    (``_TRITON_REPLAY_MARKER``), and both carry the identical ``...to t=`` shape precisely so
+    one parse serves both. Keying on the replay literal alone -- which this did -- returns
+    None on every snapshot-restored sim, so the b4b figure silently loses its resume vline
+    on exactly the runs the fast path produces. Silent degradation rather than a wrong
+    verdict, but the fix is the same two literals.
+
+    Gotcha 71: the log is last-exec-only; for this n_resumes==1 experiment the last marker IS
+    the only resume boundary. The two markers are mutually exclusive within one exec (see
+    ``_TRITON_SNAPSHOT_RESTORE_MARKER``), so "the last of either" is unambiguous. Returns the
+    float (TRITON sim-time units) or None when the log is unreadable or carries neither marker
+    (-> no vline; never a false verdict).
+    """
     try:
         text = model_log.read_text()
     except OSError:
         return None
-    if _TRITON_REPLAY_MARKER not in text:
-        return None
-    tok = text.rsplit(_TRITON_REPLAY_MARKER, 1)[1].strip().split()[0].rstrip(".,;")
-    try:
-        return float(tok)
-    except ValueError:
-        return None
+    for marker in (_TRITON_SNAPSHOT_RESTORE_MARKER, _TRITON_REPLAY_MARKER):
+        if marker not in text:
+            continue
+        tok = text.rsplit(marker, 1)[1].strip().split()[0].rstrip(".,;")
+        try:
+            return float(tok)
+        except ValueError:
+            return None
+    return None
 
 
 def resume_boundaries_from_schedule(schedule: Sequence[int] | None, reporting_interval_s: float | None) -> list[float]:

@@ -2117,3 +2117,36 @@ non_breaking_allowlist:
       any further non-breaking edit; a change to a variable NAME, a dim, or the emitted
       variable set of any CF-stamped artifact is NOT this class and must bump
       LAYOUT_VERSION.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: cd9ed3c09ae9095833705f1edff33b553e2bb1565611e6e5f20a61cb37a0b424
+    justification: >-
+      WP-2B. TRITON now has TWO resume mechanisms -- a full-precision SWMM state SNAPSHOT
+      (the fast path) and the pre-existing exchange-history REPLAY (the fallback) -- so
+      `_stamp_coupled_resume_evidence` records WHICH MECHANISM restored the coupled state
+      instead of a replay boolean. The per-sim payload of the
+      `coupled_resume_replay_evidence` root attr gains `stamp_schema: 2`,
+      `resume_mechanism`, `resume_t`, `resume_matches_schedule` and
+      `restored_from_snapshot`, and RETAINS `replayed` / `replay_t` /
+      `expected_replay_t` / `replay_matches_schedule` unchanged.
+      JUDGED NON-BREAKING, and the ground is that the changed value is a JSON string inside
+      ONE string-valued root attr. That attr is a PLAIN root attr, deliberately not an
+      `_EMBEDDED_PROV_KEYS` member (see the function's own docstring), so it perturbs no
+      byte-identity golden. No path, filename, variable, dim, dtype, chunk or numeric value
+      changes; no file is added or removed; the attr NAME is unchanged; no migration can
+      have anything to do.
+      BOTH DIRECTIONS, stated rather than asserted. A NEW toolkit meeting an OLD tree is
+      covered by construction: `analysis_validation.resume_mechanism_from_stamp` detects a
+      v1 record by the ABSENCE of `resume_mechanism` and reads `replayed` instead,
+      reporting INDETERMINATE rather than a defect for `replayed: false` because a v1
+      stamp never measured the snapshot marker. An OLD toolkit meeting a NEW tree reads
+      `replayed`, which is still present and still truthfully names whether the REPLAY
+      marker fired -- so every question the old reader knows how to ask is answered
+      correctly. It will nonetheless mis-verdict a SNAPSHOT-restored sim, and that is
+      recorded here rather than glossed: the cause is that the old toolkit has never heard
+      of the second mechanism, so it would reach the same wrong verdict reading the raw
+      TRITON log. No on-disk schema can repair a reader that does not know the mechanism
+      exists, which is why this is a toolkit-version fact and not a layout break.
+      CHANGE-SCOPED via layout_signature. APPENDED rather than edited in place so the prior
+      rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to
+      an artifact's path, name, dim or variable set is NOT this class and must bump
+      LAYOUT_VERSION.

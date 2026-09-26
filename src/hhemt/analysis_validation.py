@@ -590,6 +590,93 @@ _TRITON_COMPLETION_MARKER = "Simulation ends"
 _TRITON_CHECKPOINT_READ_MARKER = "Checkpoint files read"
 _TRITON_CHECKPOINT_ATTEMPT_MARKER = "Reading checkpoint files"
 
+#: The SECOND resume mechanism. TRITON now restores the coupled SWMM state from a
+#: full-precision per-checkpoint snapshot and SKIPS the replay entirely; the replay is
+#: retained only as the fallback for a checkpoint written before snapshots existed
+#: (``triton.h``: ``if (!try_restore_state_snapshot(...)) replay_exchange_history(...)``).
+#: Emitted at ``swmm_triton.h:963`` @ ``658a7a37``, DELIBERATELY in the same ``...to t=``
+#: shape as the replay marker above so ONE matcher discriminates both and the existing
+#: numeric parse (``_parse_replay_t`` / ``eda/raw_resume_identity.parse_resume_timestep``)
+#: works on either unchanged.
+#:
+#: THE TWO MARKERS ARE MUTUALLY EXCLUSIVE WITHIN ONE EXEC, by construction rather than by
+#: convention: the restore marker is printed only on ``try_restore_state_snapshot``'s
+#: success path (the statement immediately precedes its ``return true``), and the replay
+#: runs only when that call returned false. The refusal path prints a DIFFERENT line
+#: (``SWMM state snapshot not used (...)``) that is not this literal. Because the model log
+#: is opened ``"w"`` per exec it holds exactly one resume attempt, so at most one of the two
+#: can appear.
+_TRITON_SNAPSHOT_RESTORE_MARKER = "SWMM state restored from snapshot to t="
+
+#: How a resumed coupled sim restored its SWMM state. FOUR values, and the fourth is the
+#: point of the type: ``"none"`` is the DEFECT (a resumed, completed exec restored by
+#: NEITHER mechanism -> SWMM re-initialized from t=0), while ``"indeterminate"`` is the
+#: ABSENCE OF AN ANSWER and is never a defect claim. A bare boolean cannot hold both, which
+#: is exactly how ``if not _ev.get("replayed"):`` turned "I do not know" into "this run is
+#: invalid" once a second mechanism existed.
+ResumeMechanism = Literal["snapshot", "replay", "none", "indeterminate"]
+
+
+def resume_mechanism_from_log(text: str) -> ResumeMechanism:
+    """Which mechanism restored the coupled SWMM state, read from ONE TRITON log's text.
+
+    Returns ``"snapshot"``, ``"replay"``, or ``"none"``. Never ``"indeterminate"``: the
+    caller has the log text in hand, so the question is answerable by construction -- the
+    scope and completion gates that decide whether the question APPLIES are the caller's,
+    not this function's.
+
+    The snapshot is tested first. The two literals cannot co-occur in one exec (see
+    ``_TRITON_SNAPSHOT_RESTORE_MARKER``), so the order is documentation rather than
+    precedence; it mirrors the solver's own try-snapshot-then-replay ordering so a reader
+    comparing the two files sees the same sequence.
+    """
+    if _TRITON_SNAPSHOT_RESTORE_MARKER in text:
+        return "snapshot"
+    if _TRITON_REPLAY_MARKER in text:
+        return "replay"
+    return "none"
+
+
+def resume_mechanism_from_stamp(record) -> ResumeMechanism:
+    """Which mechanism restored the coupled SWMM state, read from ONE durable stamp record.
+
+    THIS FUNCTION EXISTS TO MAKE THE UNSAFE READ UNWRITABLE, not merely unwritten. Every
+    consumer of ``coupled_resume_replay_evidence`` routes through it, and it returns a
+    non-empty STRING on every path -- so there is no falsy value for a caller to write
+    ``if not ...`` against, and a caller must state WHICH mechanism it means by equality.
+    The hazard is the same class this file already repaired for the depth-scatter arm (``is
+    False``, not ``not``, because ``not None`` is ``True``): an absent key reads ``None``,
+    and a bare-truthiness test converts that unknown into a positive invalidity claim.
+
+    SCHEMA HANDLING (v1 -> v2). A stamp written before this package carries no
+    ``resume_mechanism`` key, because the toolkit that wrote it looked for the replay
+    marker and NOTHING ELSE. So on a v1 record:
+
+      * ``replayed is True``  -> ``"replay"``. A positive marker observation, and the
+        marker means the same thing it always did.
+      * ``replayed is False`` -> ``"indeterminate"``, NOT ``"none"``. The v1 stamp never
+        looked for a snapshot marker, so an absent replay marker cannot distinguish "no
+        restore happened" (the defect) from "the snapshot restored it" (correct and fast).
+        Reporting ``"none"`` here would be precisely the fails-open move this package
+        closes, applied to the historical corpus instead of the live one.
+
+    Demoting those rows to INDETERMINATE costs a true positive on a pre-snapshot tree whose
+    live log has ALSO been purged -- the stamp is only ever read as the log's fallback in
+    ``check_coupled_resume_validity``, so a tree with its logs intact is unaffected. The
+    signal is recoverable at zero cost by re-consolidating, which re-stamps at v2 with the
+    full answer, and the INDETERMINATE detail says so.
+    """
+    if not isinstance(record, dict):
+        return "indeterminate"
+    mech = record.get("resume_mechanism")
+    if mech in ("snapshot", "replay", "none"):
+        return mech  # v2 stamp: the producer answered the question directly.
+    # v1 stamp (or a corrupt/unknown value): fall back to the replay boolean, conservatively.
+    replayed = record.get("replayed")
+    if replayed is True:
+        return "replay"
+    return "indeterminate"
+
 
 def _read_triton_provenance(analysis: TRITONSWMM_analysis) -> str | None:
     """Graceful-absent read of the consolidated tree's ``triton_producing_sha`` root attr.
@@ -1355,16 +1442,28 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
                 # (positive if replayed, a real warn if not); only a sub with no log AND no stamp
                 # stays INDETERMINATE.
                 _ev = _tree_ev.get(str(_sa) if _sa is not None else scen_dir)
+                # `resumed` / `completed` keep bare truthiness DELIBERATELY: they are SCOPE
+                # gates, so an absent key falls THROUGH to the indeterminate counter below --
+                # the safe direction. The fails-OPEN direction was only ever on the mechanism
+                # read, which now goes through `resume_mechanism_from_stamp`.
                 if _ev and _ev.get("resumed") and _ev.get("completed"):
+                    _mech = resume_mechanism_from_stamp(_ev)
+                    if _mech == "indeterminate":
+                        # A v1 stamp whose `replayed` is False. The stamping toolkit never
+                        # looked for a snapshot marker, so this is unknown, not defective.
+                        indeterminate += 1
+                        continue
                     examined += 1
-                    if not _ev.get("replayed"):
+                    if _mech == "none":
                         details.append(
                             {
                                 "scenario": scen_dir,
                                 "detail": (
-                                    "resumed coupled sim; durable replay-evidence stamp shows the "
-                                    "replay did NOT engage (log purged; tree-stamped at "
-                                    "consolidation). Summaries likely truncated."
+                                    "resumed coupled sim; the durable resume-evidence stamp shows "
+                                    "the coupled state was restored by NEITHER mechanism — no "
+                                    "snapshot restore and no exchange replay (log purged; "
+                                    "tree-stamped at consolidation). SWMM re-initialized from t=0, "
+                                    "so summaries are truncated."
                                 ),
                             }
                         )
@@ -1389,23 +1488,28 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
             if _TRITON_COMPLETION_MARKER not in text:
                 indeterminate += 1
                 continue  # INDETERMINATE — last exec did not run to t=end
-            # (3) REPLAY TEST — the question applies and is answerable; answer it.
+            # (3) MECHANISM TEST — the question applies and is answerable; answer it.
+            # KEYED ON THE MECHANISM, NOT ON A REPLAY BOOLEAN. TRITON now has TWO ways to
+            # restore the coupled state, and a snapshot restore is the CORRECT, fast path.
+            # The bare `_TRITON_REPLAY_MARKER not in text` this replaced would have reported
+            # every snapshot-restored sim as the pre-fix truncation defect.
             examined += 1
-            if _TRITON_REPLAY_MARKER not in text:
+            if resume_mechanism_from_log(text) == "none":
                 details.append(
                     {
                         "scenario": scen_dir,
                         "detail": (
                             f"resumed (n_resumes={int(row.get('n_resumes') or 0)}) at the "
                             "pinned coupled-resume-fix TRITON: this sim's last execution read "
-                            "its hotstart checkpoints and ran to t=end, but the exchange-replay "
-                            "marker is ABSENT from its TRITON log — the replay never engaged, so "
-                            "SWMM re-initialized from t=0 and this sim's max-flow/depth "
-                            "summaries are truncated exactly as under pre-fix TRITON. Cause: "
-                            "rank 0's row-strip owned no SWMM node (TRITON's engage guard is "
-                            "rank-0-local, triton.h:435), or the exchange-replay side-file was "
-                            "purged. Re-run from a clean start, or re-run at a rank count whose "
-                            "rank-0 strip contains at least one manhole."
+                            "its hotstart checkpoints and ran to t=end, but NEITHER resume "
+                            "marker is present in its TRITON log — no snapshot restore and no "
+                            "exchange replay — so the coupled state was never restored, SWMM "
+                            "re-initialized from t=0, and this sim's max-flow/depth summaries "
+                            "are truncated exactly as under pre-fix TRITON. Cause: rank 0's "
+                            "row-strip owned no SWMM node (TRITON's engage guard is rank-0-local, "
+                            "triton.h:435), or both the snapshot and the exchange-replay "
+                            "side-file were purged. Re-run from a clean start, or re-run at a "
+                            "rank count whose rank-0 strip contains at least one manhole."
                         ),
                     }
                 )
@@ -1540,11 +1644,14 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
     only when the marker is ABSENT. Two arms, disclosed as an asymmetry:
 
     (A) COUPLED (tritonswmm): reads the durable ``coupled_resume_replay_evidence`` stamp
-        (``processing_analysis._stamp_coupled_resume_evidence``), which now carries
-        ``replay_matches_schedule`` = ``replay_t >= schedule[-1] * reporting_interval_s``
-        (coupled-only, unit-matched). ``False`` -> the replay engaged but landed BEFORE
-        the last scheduled boundary (schedule truncated / not honored); ``None`` (no
-        replay_t or no configured schedule) -> INDETERMINATE, never a warn.
+        (``processing_analysis._stamp_coupled_resume_evidence``), which carries
+        ``resume_matches_schedule`` = ``resume_t >= schedule[-1] * reporting_interval_s``
+        (coupled-only, unit-matched), where ``resume_t`` comes from WHICHEVER resume
+        marker fired — snapshot restore or exchange replay. ``False`` -> the resume
+        engaged but landed BEFORE the last scheduled boundary (schedule truncated / not
+        honored); ``None`` (no positioned resume time or no configured schedule) ->
+        INDETERMINATE, never a warn. A v1 stamp carries only ``replay_matches_schedule``
+        and is read through that key as a fallback.
     (B) PURE-TRITON (triton): emits NO replay marker, so ``replay_t`` is structurally
         unavailable; its schedule is instead verified by ``n_resumes == len(schedule)``
         from ``df_status``. A mismatch -> warn. This arm ASYMMETRY is disclosed in every
@@ -1596,21 +1703,34 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
         except Exception:  # noqa: BLE001 — durable-stamp read is best-effort; absence -> Arm A N/A
             _ev = {}
         for key, rec in sorted(_ev.items()):
-            matches = rec.get("replay_matches_schedule")
+            # MECHANISM-KEYED, v1-COMPATIBLE. A v2 stamp carries `resume_matches_schedule`,
+            # computed off whichever marker fired, so a SNAPSHOT-restored sim is verified
+            # against its schedule instead of going silently indeterminate — before this
+            # package the only positioned value was `replay_t`, which a snapshot restore never
+            # produces, so every snapshot resume would have fallen to the `is None` arm. A v1
+            # stamp carries only `replay_matches_schedule`; falling back to it keeps every
+            # historical tree readable and reports exactly what that tree measured.
+            matches = rec.get("resume_matches_schedule")
+            if matches is None:
+                matches = rec.get("replay_matches_schedule")
             if matches is None:
                 indeterminate += 1
-                continue  # no replay_t or no configured schedule -> cannot verify position
+                continue  # no positioned resume time or no configured schedule -> cannot verify
             examined += 1
             if matches is False:
+                _mech = resume_mechanism_from_stamp(rec)
+                _t = rec.get("resume_t")
+                if _t is None:
+                    _t = rec.get("replay_t")
                 details.append(
                     {
                         "scenario": key,
                         "detail": (
-                            f"coupled resume replayed to t={rec.get('replay_t')}s but the last "
-                            f"configured boundary is t={rec.get('expected_replay_t')}s "
+                            f"coupled resume ({_mech}) restored the coupled state to t={_t}s but "
+                            f"the last configured boundary is t={rec.get('expected_replay_t')}s "
                             "(schedule[-1] * TRITON_reporting_timestep_s); the realized resume did "
                             "not reach the last scheduled interruption, so the coupled state was "
-                            "replayed short and later summaries may be truncated."
+                            "restored short and later summaries may be truncated."
                         ),
                     }
                 )

@@ -769,7 +769,7 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis, *, df_status=N
     """Stamp per-sub coupled-resume replay evidence onto the consolidated ROOT.
 
     Captured at CONSOLIDATION time (logs still live, pre-R7-purge) as a PLAIN root attr
-    ``coupled_resume_replay_evidence`` = JSON ``{sub_id: {resumed, completed, replayed}}`` over
+    ``coupled_resume_replay_evidence`` = JSON ``{sub_id: {resumed, completed, resume_mechanism, ...}}`` over
     each tritonswmm resume-candidate sim. Makes R9's acceptance evidence DURABLE (survives the
     ``"w"``-mode last-exec log being cleared/purged) and bundle-portable, so a downstream combine
     / reprex consumer can assert genuine replay without the raw logs. Mirrors
@@ -782,7 +782,9 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis, *, df_status=N
         _TRITON_CHECKPOINT_READ_MARKER,
         _TRITON_COMPLETION_MARKER,
         _TRITON_REPLAY_MARKER,
+        _TRITON_SNAPSHOT_RESTORE_MARKER,
         _iter_members_or_self,
+        resume_mechanism_from_log,
     )
     from hhemt.run_simulation import model_logfile_for
 
@@ -809,28 +811,59 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis, *, df_status=N
             except Exception:  # noqa: BLE001 — log unreadable at consolidation: skip this sub, best-effort
                 continue
             key = str(_sa) if _sa is not None else str(row.get("scenario_directory", ""))
+            # WHICH MECHANISM, not a replay boolean. TRITON restores the coupled SWMM state
+            # either from a full-precision per-checkpoint SNAPSHOT (the fast path) or by
+            # REPLAYING the recorded exchange history (the fallback, retained for checkpoints
+            # written before snapshots existed). Both are correct; only "neither" is the
+            # truncation defect. This stamp is the LOAD-BEARING half of the resume-validity
+            # machinery -- it has no registry gate and always runs -- so whatever it records
+            # here is the most any downstream consumer can ever know once the "w"-mode log is
+            # purged. Recording a replay boolean would have made every snapshot-restored sim
+            # indistinguishable from the defect.
+            _mech = resume_mechanism_from_log(text)
             _replay_t = _parse_replay_t(text, _TRITON_REPLAY_MARKER)
+            _snapshot_t = _parse_replay_t(text, _TRITON_SNAPSHOT_RESTORE_MARKER)
+            # The positioned resume time, from WHICHEVER marker fired. Both markers carry the
+            # identical "...to t=" shape, so one parser serves both.
+            _resume_t = _snapshot_t if _mech == "snapshot" else _replay_t
             # Schedule VERIFICATION (Phase 5). The resume schedule is now CONFIGURED, so the
-            # parsed replay_t is a check against it, not the sole source of truth. Units differ:
-            # replay_t is TRITON sim-time SECONDS while schedule entries are checkpoint INDICES,
+            # parsed resume time is a check against it, not the sole source of truth. Units differ:
+            # resume_t is TRITON sim-time SECONDS while schedule entries are checkpoint INDICES,
             # so the last requested boundary in seconds is schedule[-1] * TRITON_reporting_timestep_s.
             # The realized kill is a lower-bounded lag of the request, so the honored predicate is
-            # replay_t >= that product. COUPLED-ONLY: a pure-TRITON arm emits no replay marker, so
-            # replay_t is None and the comparison is None here (its schedule verification rests on
+            # resume_t >= that product. COUPLED-ONLY: a pure-TRITON arm emits neither marker, so
+            # resume_t is None and the comparison is None here (its schedule verification rests on
             # df_status n_resumes == len(schedule); see
             # analysis_validation.check_resume_schedule_honored).
             _c = getattr(sub, "cfg_analysis", None)
             _sched = getattr(_c, "resume_interruption_schedule", None)
             _interval = getattr(_c, "TRITON_reporting_timestep_s", None)
             _expected_t = float(_sched[-1]) * float(_interval) if _sched and _interval is not None else None
-            _matches = (_replay_t >= _expected_t) if (_replay_t is not None and _expected_t is not None) else None
+            _matches = (_resume_t >= _expected_t) if (_resume_t is not None and _expected_t is not None) else None
+            _replay_matches = (
+                (_replay_t >= _expected_t) if (_replay_t is not None and _expected_t is not None) else None
+            )
             evidence[key] = {
+                # v2 discriminator. Its ABSENCE is what tells a reader a record is v1 --
+                # written by a toolkit that looked for the replay marker and nothing else --
+                # so `resume_mechanism_from_stamp` can report INDETERMINATE for a v1
+                # `replayed: false` instead of asserting the defect it never measured.
+                "stamp_schema": 2,
                 "resumed": _TRITON_CHECKPOINT_READ_MARKER in text,
                 "completed": _TRITON_COMPLETION_MARKER in text,
-                "replayed": _TRITON_REPLAY_MARKER in text,
+                "resume_mechanism": _mech,
+                "resume_t": _resume_t,
+                "resume_matches_schedule": _matches,
+                # RETAINED, and truthful in both worlds: each names ONE marker and says
+                # whether that marker fired. They are kept so a v1-shaped reader anywhere
+                # (a bundle consumer, a downstream notebook) keeps getting a correct answer
+                # to the question it asks. The v1 READING of `replayed: false` as "defective"
+                # is what is retired, not the field.
+                "replayed": _mech == "replay",
+                "restored_from_snapshot": _mech == "snapshot",
                 "replay_t": _replay_t,
                 "expected_replay_t": _expected_t,
-                "replay_matches_schedule": _matches,
+                "replay_matches_schedule": _replay_matches,
             }
         if evidence:
             tree.attrs["coupled_resume_replay_evidence"] = json.dumps(evidence, sort_keys=True)
