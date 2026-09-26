@@ -6,32 +6,54 @@ WHAT THIS PINS AND WHY IT IS NOT OBVIOUS. The stored
 allocation. So two members that agree perfectly on their column set carry DIFFERENT stored
 strings whenever they ran different numbers of reporting steps, or whenever one lost a
 checkpoint to a kill or a malformed-parse skip. Surfacing the raw string in `df_status`
-would therefore make `nunique(dropna=False)` equal 2 on an analysis with no heterogeneity
-anywhere, and the appendix's constant-column suppression -- the only thing keeping this
-column off a homogeneous analysis -- would stop firing.
+would therefore leave each uniform member carrying a DIFFERENT string on an analysis with
+no heterogeneity anywhere, and the appendix would render the column there.
+
+WHICH MECHANISM STOPS THAT IS NOT WHAT IT WAS. Before `bcbc097f` the hide pass was a single
+`nunique(dropna=False) > 1` test, and the collapse was the only thing standing between the
+raw strings and the rendered column. It is now a three-branch dispatcher,
+`scenario_status_appendix._keep_column`, whose SEMANTIC branch reads this column's VALUES --
+a cardinality test is provably unable to decide it, because a lone uniform member (must
+hide) and a lone heterogeneous member (must show) both hold exactly one distinct value. The
+collapse is still load-bearing and must not be removed as newly redundant: without it each
+uniform member carries one distinct string PER CHECKPOINT COUNT and the branch's
+set-membership test recognizes none of them, so the column renders. Measured at `bcbc097f`
+by driving `describe_allocation_column_sets` into the real `_build_tabulator_html` across
+the real `to_csv`/`read_csv` boundary -- renders True with the collapse removed, False with
+it in place.
 
 `column_set_verdict` is the collapse that fixes it, and the test that matters here is
 `test_the_appendix_hides_the_column_when_members_differ_only_in_checkpoint_count`: it is
 the exact case that would be reintroduced by a later edit routing the raw coordinate
 through instead.
 
-MEASURED TWO-ARM DIFFERENTIAL, pasted rather than predicted. The invariant is "the column
-renders exactly when members disagree about their COLUMN SET, never when they merely
-disagree about their checkpoint count". Arm (a), violating input -- `column_set_verdict`
-edited to return the RAW stored string: `6 failed, 8 passed`, and the failure that matters
-is
+MEASURED TWO-ARM DIFFERENTIAL, pasted rather than predicted -- AND RE-MEASURED AT
+`bcbc097f`, because this file grew by ten node ids in that commit and a pasted count over a
+test file is invalidated by any change to its node set, INCLUDING an append-only one. The
+invariant is "the column renders exactly when members disagree about their COLUMN SET, never
+when they merely disagree about their checkpoint count". Arm (a), violating input --
+`column_set_verdict` edited to return the RAW stored string: `9 failed, 15 passed` at
+`bcbc097f` (the retired figure `6 failed, 8 passed` was measured over the pre-`bcbc097f`
+14-node file), and the failure that matters is
 
     AssertionError: A homogeneous analysis rendered the column-set column. Either the
     mapping stopped collapsing the uniform findings, or hide_constant_columns stopped
     defaulting True.
 
 `test_the_appendix_shows_the_column_when_a_member_is_genuinely_heterogeneous` is among the
-seven that still PASS under that arm, which is the point: the suite discriminates on the
+fifteen that still PASS under that arm, which is the point: the suite discriminates on the
 collapse rather than on the column merely existing, so a mapping that hid the column
 outright would not satisfy it. Arm (b), a differently-positioned SATISFYING input -- three
 members at checkpoint counts 1, 2 and 5 rather than the two the hide test uses, and an
 all-historical analysis carrying no coordinate at all: no finding in either, the column
 stays hidden.
+
+A SECOND DIFFERENTIAL, added at `bcbc097f`, and it is the one that pins the REPAIR rather
+than the collapse. With `_keep_column` reverted to the pre-repair `nunique(dropna=False) > 1`
+(resume-health exemption retained), this file reports `5 failed, 19 passed` -- and all 14
+pre-`bcbc097f` node ids pass, so the old pin set was fully satisfiable by the predicate that
+was wrong. The five discriminating failures split THREE show-direction and TWO hide-
+direction, which is what makes the set two-sided rather than merely larger.
 
 THE ZARR IS OUT OF SCOPE HERE. Nothing in this file asserts on the stored coordinate; the
 stamp, its string form and its carriage into the consolidated tree are accepted work and

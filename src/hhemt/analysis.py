@@ -179,10 +179,11 @@ def _column_set_cell(ds) -> dict[str, str | None]:
 
     The value is routed through ``column_set_verdict`` rather than taken raw, and that is
     load-bearing rather than cosmetic: the raw uniform string embeds the member's CHECKPOINT
-    count, so two members agreeing perfectly on their column set carry different strings and
-    the appendix's constant-column suppression stops hiding the column on a homogeneous
-    analysis. The full rationale is on ``column_set_verdict`` itself and is not restated here
-    so the two cannot drift as prose.
+    count, so two members agreeing perfectly on their column set carry different strings, and
+    ``scenario_status_appendix._keep_column``'s semantic branch -- which recognizes this
+    column's two QUIET verdicts BY NAME -- then recognizes neither of them, so the appendix
+    stops hiding the column on a homogeneous analysis. The full rationale is on
+    ``column_set_verdict`` itself and is not restated here so the two cannot drift as prose.
     """
     raw = str(ds[PERF_COLUMN_SET_COORD].values.item()) if PERF_COLUMN_SET_COORD in ds.coords else None
     return {PERF_COLUMN_SET_COORD: column_set_verdict(raw)}
