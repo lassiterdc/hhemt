@@ -2852,8 +2852,12 @@ def _aggregate_perf_summary(
 ) -> xr.Dataset:
     """Reduce per-rank deltas to a slowest-rank wallclock summary.
 
-    Computes ``_aggregate_perf_tseries(...).sum(dim='timestep_min').max(dim='Rank')`` —
-    the ``max(Rank)`` reduction is the slowest-rank cumulative per Hager-Wellein 2011 ch.5
+    Computes ``_aggregate_perf_tseries(...).sum(dim='timestep_min', skipna=False)
+    .max(dim='Rank')`` — the ``skipna=False`` is not incidental: it is what makes a
+    column that only SOME allocations emitted reduce to NaN rather than to a finite,
+    understated number. The max is deliberately left at its default; the asymmetry is
+    argued in full at the inline reduction in ``_export_performance_summary``. The
+    ``max(Rank)`` reduction is the slowest-rank cumulative per Hager-Wellein 2011 ch.5
     convention. Module-level so the V0008 migration and the regression test share one
     source of truth with the corrected aggregator.
 

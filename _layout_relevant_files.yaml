@@ -2237,3 +2237,24 @@ non_breaking_allowlist:
       rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to an
       artifact's path, name, dim or DATA-VARIABLE set is NOT this class and must bump
       LAYOUT_VERSION.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: e119589b3cdbeb090526316db9df60e2327952b473aada42add0d3319e2e3142
+    justification: >-
+      DOCSTRING ONLY. _aggregate_perf_summary's own docstring quoted the reduction it
+      performs as ``.sum(dim='timestep_min').max(dim='Rank')``, omitting the
+      ``skipna=False`` that the preceding commit made the whole semantic content of the
+      function. The quotation is now correct and names why the asymmetry with the rank max
+      is deliberate.
+      NOTHING EXECUTABLE CHANGED. The edit touches lines inside a triple-quoted string
+      literal and no other line of the file; the emitted variable set, every dim, every
+      dtype, every path and every filename are byte-identical, and no coordinate or data
+      variable is added, removed or renamed. The prior rows' exclusion clause -- "a change
+      to a variable NAME, a dim, or the emitted DATA-VARIABLE set" -- is not engaged.
+      BOTH DIRECTIONS ARE VACUOUS. A docstring is not read by any toolkit version at
+      runtime, so a NEW toolkit meeting an OLD store and an OLD toolkit meeting a NEW store
+      both behave exactly as before this commit.
+      NO MIGRATION IS OWED: no store carries a docstring.
+      CHANGE-SCOPED via layout_signature. APPENDED rather than edited in place so the prior
+      rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to a
+      variable NAME, a dim, or the emitted DATA-VARIABLE set is NOT this class and must bump
+      LAYOUT_VERSION.
