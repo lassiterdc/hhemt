@@ -2578,13 +2578,32 @@ def column_set_verdict(finding: str | None) -> str | None:
     whenever one of them lost a checkpoint. Measured: an identical 3-column set over 1 label
     versus 2 labels yields "uniform: all 1 ..." and "uniform: all 2 ...".
 
-    That defeats the ONLY mechanism keeping this out of a homogeneous analysis's rendered
-    appendix. ``report_renderers/scenario_status_appendix.py`` hides a column whose
-    ``nunique(dropna=False)`` is 1; on the raw strings it is 2, so the column renders on an
-    analysis with no heterogeneity anywhere -- which the developer ruled out explicitly.
-    Mapping through here collapses every uniform member to one constant, so the hide
-    predicate does what the ruling needs WITHOUT the renderer learning anything about this
-    column.
+    That defeats a mechanism keeping this out of a homogeneous analysis's rendered
+    appendix. ``report_renderers/scenario_status_appendix.py`` hid a column whose
+    ``nunique(dropna=False)`` was 1; on the raw strings it is 2, so the column rendered on
+    an analysis with no heterogeneity anywhere -- which the developer ruled out explicitly.
+    Mapping through here collapses every uniform member to one constant.
+
+    THE COLLAPSE IS NECESSARY AND IS NOT SUFFICIENT, and this paragraph previously claimed
+    it was sufficient -- that the hide predicate would then do what the ruling needs
+    "without the renderer learning anything about this column". That is FALSE and is
+    retired here rather than deleted, because the reasoning that produced it is the
+    reasoning a future reader will repeat. A cardinality test reads only HOW MANY distinct
+    values a column holds. A one-member analysis whose sole member is uniform must HIDE the
+    column, and a one-member analysis whose sole member is heterogeneous must SHOW it, and
+    both hold exactly one distinct value. No cardinality-only predicate is correct on both,
+    so NO change to what this function returns can carry the ruling by itself -- remapping
+    the null, ignoring nulls, or collapsing the verdicts differently all change WHICH
+    values appear and none of them changes that count. The whole value-domain family is
+    excluded as a family.
+
+    SO THE RENDERER IS COLUMN-AWARE, BY NECESSITY.
+    ``report_renderers/scenario_status_appendix.py::_keep_column`` reads this column's
+    VALUES: it recognizes ``UNIFORM_COLUMN_SET_VERDICT`` and ``NAME_SET_UNKNOWN`` by name
+    and shows the column only when some member carries neither. The collapse below still
+    earns its place and must not be removed as newly redundant -- without it the uniform
+    members carry one distinct string PER CHECKPOINT COUNT, and the renderer's
+    set-membership test would recognize none of them.
 
     WHAT IS DELIBERATELY NOT COLLAPSED. The heterogeneous finding passes through VERBATIM:
     it is the statement a reader needs, it names which files are short and what it costs

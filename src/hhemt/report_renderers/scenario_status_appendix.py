@@ -14,6 +14,11 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from hhemt.process_simulation import (
+    NAME_SET_UNKNOWN,
+    PERF_COLUMN_SET_COORD,
+    UNIFORM_COLUMN_SET_VERDICT,
+)
 from hhemt.report_plot_ids import EVENT_LABEL_COLUMN
 from hhemt.report_renderers._tabulator_defaults import (
     build_columns_spec,
@@ -139,17 +144,12 @@ def _build_tabulator_html(
 
     tab_cfg = report_cfg.scenario_status_appendix.interactive
 
-    # Drop constant columns (single unique value, including all-NaN) to cut
-    # clutter in single-model / single-event analyses. nunique(dropna=False) <= 1
-    # catches both all-equal and all-NaN columns. (v8/b4: the resume-health fields
-    # n_resumes + run_completed are EXEMPT from this hiding — an all-zero n_resumes
-    # column stays visible so the reader always sees the resume posture; this reverses
-    # the earlier P2 auto-hide co-design.)
+    # Hide columns that carry nothing for a reader. The rule is NOT uniform across
+    # columns -- three of them apply, and `_keep_column` is the single place that
+    # dispatches between them. Read its docstring before changing anything here; one
+    # branch exists because a cardinality test is PROVABLY unable to decide its column.
     if report_cfg.scenario_status_appendix.hide_constant_columns:
-        nunique = df.apply(lambda s: s.nunique(dropna=False))
-        # b4: exempt the resume-health fields so a single-arm (all-clean or uniform-resume)
-        # sweep still surfaces n_resumes + run_completed. All OTHER constant columns stay hidden.
-        df = df[[c for c in df.columns if nunique[c] > 1 or c in _RESUME_HEALTH_FIELDS]]
+        df = df[[c for c in df.columns if _keep_column(c, df[c])]]
 
     # iter 9.4 — Compute column_groups FIRST, then reorder df columns to
     # match the group order so the table's left-to-right column display
@@ -269,6 +269,54 @@ _STATUS_FIELDS = frozenset({"scenario_setup", "run_completed"})
 # runs. Kept visible even when constant (a single-arm sweep has a constant n_resumes) so
 # the reader always sees the resume posture. Order: n_resumes first, then run_completed.
 _RESUME_HEALTH_FIELDS: tuple[str, ...] = ("n_resumes", "run_completed")
+
+#: The columns whose visibility is decided by READING their values rather than by
+#: counting how many distinct ones they hold. See ``_keep_column`` branch 2.
+_SEMANTIC_VISIBILITY_COLUMNS: frozenset[str] = frozenset({PERF_COLUMN_SET_COORD})
+
+#: The two column-set verdicts that report "nothing here for a reader": a measured
+#: no-heterogeneity result, and a member whose column set was never measured. Any OTHER
+#: non-null verdict IS the heterogeneity sentence, which is the thing worth rendering.
+#: Both names are IMPORTED from the module that writes them rather than restated here, so
+#: a reworded verdict cannot leave this predicate silently matching nothing.
+_COLUMN_SET_QUIET_VERDICTS: frozenset[str] = frozenset({UNIFORM_COLUMN_SET_VERDICT, NAME_SET_UNKNOWN})
+
+
+def _keep_column(name: str, series: pd.Series) -> bool:
+    """Decide whether one column survives the hide pass. Three branches, first match wins.
+
+    1. ALWAYS SHOW -- ``_RESUME_HEALTH_FIELDS``. A single-arm sweep has a constant
+       ``n_resumes``, and the reader still needs to see the resume posture (v8/b4).
+    2. SEMANTIC -- ``_SEMANTIC_VISIBILITY_COLUMNS``. Show iff some member actually has
+       something to report: a non-null verdict that is neither quiet verdict.
+    3. GENERIC -- every other column keeps the cardinality test. A column whose values
+       are all identical (all-NaN included) is clutter in a single-model / single-event
+       analysis.
+
+    WHY BRANCH 2 EXISTS, because it reads as an ad-hoc exception beside branch 1 and is a
+    different kind of thing. A cardinality test is a function of HOW MANY distinct values
+    a column holds and of nothing else, so it necessarily returns the same answer for any
+    two populations with the same count. ``perf_column_set_across_allocations`` has two
+    ONE-member shapes that collide there and require OPPOSITE outcomes: a lone uniform
+    member (HIDE -- no heterogeneity exists anywhere in the analysis, which the developer
+    ruled out of this column explicitly) and a lone heterogeneous member (SHOW -- that is
+    the entire reason the column was added). Both are cardinality 1. So no
+    cardinality-only predicate is correct on both, and this column's rule is value-reading
+    BY NECESSITY rather than by convenience. The collision is not confined to one member:
+    it recurs at cardinality 2 in both directions -- a uniform member beside a legacy
+    (null) one must hide, a uniform member beside a heterogeneous one must show.
+
+    DO NOT "SIMPLIFY" THIS BACK into branch 3 by changing what
+    ``process_simulation.column_set_verdict`` returns. Remapping the null, ignoring
+    nulls, or collapsing the verdicts differently all change WHICH values appear; none of
+    them can change how many DISTINCT values a one-member analysis has, which is one
+    either way. The whole value-domain family is excluded, not merely untried.
+    """
+    if name in _RESUME_HEALTH_FIELDS:
+        return True
+    if name in _SEMANTIC_VISIBILITY_COLUMNS:
+        return any(value not in _COLUMN_SET_QUIET_VERDICTS for value in series.dropna())
+    return series.nunique(dropna=False) > 1
 
 
 def _build_column_groups(

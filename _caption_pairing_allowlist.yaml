@@ -732,3 +732,29 @@ unpaired_allowlist:
       First exemption for this pair; there was no prior entry. Digest recorded after the
       grouped apply INCLUDING the ruff-format reflow riding it, so the exemption expires on
       the next real change to this renderer rather than on arrival.
+  - renderer: scenario_status_appendix
+    caption: src/hhemt/report_templates/captions/scenario_status_appendix.rst
+    renderer_sha256: 8c430d0a846e9241f586427b56f5c45cd17fdd06ee670efd8b74aeb52797bcf8
+    justification: >-
+      SUPERSEDES the formatting-only entry recorded at 3d7c2682, whose discharge does
+      NOT carry over -- this is a semantic change to the renderer, and it was re-read
+      rather than measured away.
+      THE RE-READ WAS PERFORMED AND HAS A FINDING: none. The renderer change replaces
+      the column-hide predicate's inline cardinality lambda with a named `_keep_column`
+      dispatching three branches, so that one column -- perf_column_set_across_allocations
+      -- is now decided by reading its VALUES instead of counting how many distinct ones
+      the column holds. It therefore changes WHICH COLUMNS APPEAR in the rendered table
+      for that one column, in both directions (it now hides on a single-solver analysis
+      carrying legacy members, and shows when every member reports the same
+      heterogeneity).
+      THE CAPTION MAKES NO CLAIM ABOUT COLUMN VISIBILITY. Its four content clauses are:
+      the analysis_id, that each ROW is one scenario x model_type combination, the four
+      row-level quantities (exit status, runtime, continuity error, per-row notes), and
+      the provenance of the CSV (export_scenario_status.py at workflow close). Every one
+      is a statement about rows or about the source; none enumerates, bounds, or
+      otherwise describes the column set. No clause is falsified, weakened, or left
+      ambiguous by a change to which columns survive the hide pass, so there is no
+      caption edit to make and inventing one would add a claim the caption did not
+      previously carry.
+      Digest recorded at the post-change renderer content, so this exemption expires on
+      the NEXT change to the renderer and the re-read is owed again then.

@@ -2289,3 +2289,29 @@ non_breaking_allowlist:
       rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to a
       variable NAME, a dim, or the emitted DATA-VARIABLE set is NOT this class and must bump
       LAYOUT_VERSION.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 4bf660fdc51327ef0be4e10c90c6ff9d3494dd8fcc997b2649366c8e5f2218ca
+    justification: >-
+      DOCSTRING ONLY. The sole change to this file is prose inside
+      column_set_verdict's docstring, retiring a clause that had become FALSE. No
+      statement, expression, constant, signature, or emitted string is touched --
+      `git diff` over this file is confined to the docstring body, and the function's
+      behavior is unchanged in every input class (None, the uniform prefix, the
+      heterogeneous sentence, NAME_SET_UNKNOWN).
+      WHY THE CLAUSE WAS FALSE. It asserted that collapsing every uniform member to one
+      constant lets the appendix's hide predicate satisfy the developer's ruling
+      "without the renderer learning anything about this column". The collapse is
+      NECESSARY but NOT SUFFICIENT: a cardinality test reads only how many DISTINCT
+      values a column holds, and a one-member uniform analysis (must hide) and a
+      one-member heterogeneous analysis (must show) both hold exactly one. No
+      cardinality-only predicate is correct on both, so the renderer's rule for this
+      column is value-reading by necessity. The companion change is in
+      report_renderers/scenario_status_appendix.py, which is reached by NEITHER the
+      paths list NOR either glob and therefore owes nothing here.
+      NOTHING ON DISK MOVES. No coordinate, data variable, dim, dtype, attr, path or
+      filename is added, removed or renamed, and no byte written to any store differs
+      in either direction. NO MIGRATION IS OWED.
+      CHANGE-SCOPED via layout_signature, and APPENDED rather than edited in place so
+      the prior rows' ground stays readable. Re-stamp on the next non-breaking edit; a
+      change to a variable NAME, a dim, or the emitted DATA-VARIABLE set is NOT this
+      class and must bump LAYOUT_VERSION.
