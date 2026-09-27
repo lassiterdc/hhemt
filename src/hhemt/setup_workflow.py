@@ -43,6 +43,136 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Compile-tier messaging -- ONE expression of the convention for all SIX sites.
+#
+# Since d98802556 (D84 phases 1+2) NO generated Snakefile emits --compile-triton-swmm,
+# --compile-triton-only or --compile-swmm: the setup rule ASSERTS the tier instead of
+# building it. So no message below may tell the reader to pass a compile flag to the
+# WORKFLOW -- that names a remedy no caller on the generated path can supply. Each names
+# the caller's DIRECT invocation instead. Re-emitting the flag from a generated rule is
+# forbidden: it reinstates the shared-_software compile race d98802556 removed (parallel
+# setup rules compiling into one tree behind a lock that does not exclude across nodes).
+#
+# The three model arms carry this convention in two ROLES and both route here:
+#   refused=False   the skip notice. FIRST statement of each `elif _native_compile:` arm,
+#                   so it fires on EVERY native run INCLUDING successful ones -- which is
+#                   why it is one line and carries no command block.
+#   refused=True    the refusal. Nested under `if toggle_X_model and not
+#                   compilation_X_successful:` and followed by `return 1`, so it fires
+#                   only when the run is about to fail -- which is where the full remedy
+#                   belongs and where a reader will actually act on it.
+#
+# `compile_and_preprocess_all_targets` is deliberately NOT named as the remedy: it
+# compiles off `target.system` and carries a build_dir_gpu=None hazard on the GPU path,
+# so naming it would re-commit the defect this message exists to fix. setup_workflow's
+# own main() does the four-kwarg, partition-resolved construction correctly on every
+# model arm, on both CPU and GPU, today.
+# ---------------------------------------------------------------------------
+_COMPILE_TARGETS: dict[str, tuple[str, str]] = {
+    "tritonswmm": ("TRITON-SWMM (coupled model)", "--compile-triton-swmm"),
+    "triton_only": ("TRITON-only", "--compile-triton-only"),
+    "swmm": ("standalone SWMM", "--compile-swmm"),
+}
+
+
+def _compile_tier_message(
+    model_key: str,
+    *,
+    refused: bool,
+    gpu_target: bool = False,
+    hpc_config_present: bool = False,
+) -> str:
+    """Render the compile-tier message for one model arm in one of its two roles.
+
+    Parameters
+    ----------
+    model_key
+        Key into ``_COMPILE_TARGETS`` -- ``"tritonswmm"``, ``"triton_only"`` or ``"swmm"``.
+        That mapping is the single place the model's display label and its direct-invocation
+        compile flag are paired.
+    refused
+        ``False`` renders the one-line skip notice that fires on every native run;
+        ``True`` renders the refusal, which carries the direct-invocation command block.
+    gpu_target
+        Whether the DIRECT invocation needs ``--target-partition``, which is genuinely
+        GPU-only. **Read only when ``refused=True``.** When true the command block names
+        ``--target-partition`` (and, via the disjunction below, ``--hpc-system-config``),
+        because both are ``required=False`` and ``resolve_gpu_target`` returns ``(None, None)``
+        SILENTLY when either is absent -- so a GPU user following a message that named only
+        the two required configs would get a CPU-only build and land back in this same
+        refusal with no indication why.
+
+        Every caller passes ``bool(system.gpu_compilation_backend)``, INCLUDING the
+        ``"swmm"`` arm, and that is deliberate rather than an oversight to tidy up. The
+        question this flag answers is not "does THIS model have a GPU build" (standalone SWMM
+        has none) but "does this INVOCATION need those flags to get past the GPU preflight
+        guard". Under an analysis with ``n_gpus > 0`` that guard raises ``ConfigurationError``
+        for ANY direct ``setup_workflow`` invocation missing them -- a ``--compile-swmm`` one
+        included -- so hardcoding ``False`` for SWMM would hand a GPU-analysis operator a
+        command that cannot run.
+    hpc_config_present
+        Whether the invocation that is printing this refusal itself received
+        ``--hpc-system-config``. **Read only when ``refused=True``.** Every caller passes
+        ``args.hpc_system_config is not None``.
+
+        This is a SEPARATE parameter from ``gpu_target`` because ``--hpc-system-config`` carries
+        TWO payloads and only one of them is GPU-conditioned:
+
+        1. ``resolve_gpu_target(cfg_hpc, partition)`` -- the GPU payload. Correctly GPU-gated.
+        2. ``resolve_additional_modules(cfg_hpc)`` -- the cluster's ``module load`` set
+           (``setup_workflow`` main() at the ``additional_modules = ...`` binding). NOT
+           GPU-conditioned: ``additional_modules`` is a CLUSTER-level ``hpc_system_config``
+           field, so the resolve depends only on whether the config was supplied at all.
+           It returns ``None`` with no config, which makes ``system.additional_modules`` falsy
+           and makes all three compile paths skip their ``module load`` emission outright --
+           ``system.py`` ``_compile_backend_locked`` (reached from ``compile_TRITON_SWMM`` via
+           ``_compile_backend``), ``_compile_triton_only_backend_locked`` (from
+           ``compile_TRITON_only`` via ``_compile_triton_only_backend``) and
+           ``_compile_SWMM_locked`` (from ``compile_SWMM`` directly), each guarded
+           ``if self.additional_modules:``.
+
+        MEASURED, on a profile this repository ships rather than a hypothetical:
+        ``test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml`` declares
+        ``additional_modules: ['gcc/12.4.0']`` at cluster level and a ``standard`` partition
+        with no ``gpu_compilation_backend``. A CPU analysis on that partition takes the
+        ``gpu_target=False`` branch while the generated setup rule DID pass
+        ``--hpc-system-config`` (``workflow.py::_get_config_args`` emits it whenever the
+        analysis carries one). Gating this flag on ``gpu_target`` therefore printed a remedy
+        that compiles with no ``module load gcc/12.4.0`` on the cluster whose libstdc++ and
+        MPI resolution that module stack determines -- the same "remedy the reader cannot act
+        on" defect this message exists to remove, relocated rather than fixed.
+
+        The flag is emitted on ``gpu_target or hpc_config_present``. The disjunction is
+        deliberate and is NOT redundancy to tidy away: ``gpu_target`` is truthy only when a
+        backend resolved, which is only possible with a config supplied, so on every reachable
+        path it implies ``hpc_config_present`` -- but keeping it means a caller that supplies
+        either signal gets a correct command, and on a printed remedy the fail-OPEN direction
+        (naming a flag the reader has) is harmless while the fail-CLOSED one is the defect.
+    """
+    model_label, compile_flag = _COMPILE_TARGETS[model_key]
+    if not refused:
+        return (
+            f"Not compiling {model_label} in this rule: the build is the caller's "
+            "responsibility and is performed before workflow submission (this rule asserts "
+            "that a build exists, it does not produce one)."
+        )
+    command_lines = [
+        "    python -m hhemt.setup_workflow \\",
+        "        --system-config {system.yaml} \\",
+        "        --analysis-config {analysis.yaml} \\",
+    ]
+    if gpu_target or hpc_config_present:
+        command_lines.append("        --hpc-system-config {hpc_system.yaml} \\")
+    if gpu_target:
+        command_lines.append("        --target-partition {partition} \\")
+    command_lines.append(f"        {compile_flag}")
+    return (
+        f"{model_label} is enabled in the system config but no successful build was found. "
+        "This rule asserts that a build exists; it does not produce one, and no generated "
+        "workflow requests a compile. Build it as the caller, before resubmitting:\n" + "\n".join(command_lines)
+    )
+
 
 def main() -> int:
     """Main entry point for workflow setup."""
@@ -500,10 +630,17 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         elif _native_compile:
-            logger.info("Skipping TRITON-SWMM compilation (--compile-triton-swmm not specified)")
+            logger.info(_compile_tier_message("tritonswmm", refused=False))
             # Verify compilation if model is enabled
             if system.cfg_system.toggle_tritonswmm_model and not system.compilation_successful:
-                logger.error("TRITON-SWMM is enabled but not compiled and --compile-triton-swmm not specified")
+                logger.error(
+                    _compile_tier_message(
+                        "tritonswmm",
+                        refused=True,
+                        gpu_target=bool(system.gpu_compilation_backend),
+                        hpc_config_present=args.hpc_system_config is not None,
+                    )
+                )
                 return 1
 
         # Phase 1c: Compile TRITON-only (no SWMM coupling)
@@ -535,10 +672,17 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         elif _native_compile:
-            logger.info("Skipping TRITON-only compilation (--compile-triton-only not specified)")
+            logger.info(_compile_tier_message("triton_only", refused=False))
             # Verify compilation if model is enabled
             if system.cfg_system.toggle_triton_model and not system.compilation_triton_only_successful:
-                logger.error("TRITON-only is enabled but not compiled and --compile-triton-only not specified")
+                logger.error(
+                    _compile_tier_message(
+                        "triton_only",
+                        refused=True,
+                        gpu_target=bool(system.gpu_compilation_backend),
+                        hpc_config_present=args.hpc_system_config is not None,
+                    )
+                )
                 return 1
 
         # Phase 1d: Compile standalone SWMM
@@ -560,10 +704,17 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         elif _native_compile:
-            logger.info("Skipping SWMM compilation (--compile-swmm not specified)")
+            logger.info(_compile_tier_message("swmm", refused=False))
             # Verify compilation if model is enabled
             if system.cfg_system.toggle_swmm_model and not system.compilation_swmm_successful:
-                logger.error("SWMM is enabled but not compiled and --compile-swmm not specified")
+                logger.error(
+                    _compile_tier_message(
+                        "swmm",
+                        refused=True,
+                        gpu_target=bool(system.gpu_compilation_backend),
+                        hpc_config_present=args.hpc_system_config is not None,
+                    )
+                )
                 return 1
 
         logger.info("Setup workflow completed successfully")
