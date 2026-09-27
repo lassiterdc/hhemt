@@ -456,7 +456,14 @@ class TRITONSWMM_sensitivity_analysis:
             reported by ``TRITONSWMM_analysis.run()``, which lists ``"setup"`` when this
             or ``process_system_level_inputs`` is True.
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            Forwarded to the generated setup rule's ``hhemt.setup_workflow``
+            invocation as ``--recompile-if-already-done``, where it has no reachable
+            consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
+            sits behind an ``args.compile_*`` gate that no emitted rule sets
+            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
+            ``compile_SWMM`` each read it — but only when called directly, never
+            through this workflow.
         prepare_scenarios : bool
             If True, prepare scenarios before running
         overwrite_scenario_if_already_set_up : bool

@@ -3854,17 +3854,25 @@ class TRITONSWMM_analysis:
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, request the setup phase. It does not compile, because no emitted
-            setup rule carries a ``--compile-*`` flag and the rule asserts the solver
-            tier rather than building it. The remaining effect depends on the path this
-            facade dispatches to: on a non-sensitivity analysis this and
+            Does NOT compile: no emitted setup rule carries a ``--compile-*`` flag, so
+            the rule asserts the solver tier rather than building it. What it does do
+            depends on which path this facade dispatches to, and on one of them it does
+            nothing at all: on a non-sensitivity analysis this and
             ``process_system_level_inputs`` together decide whether the setup rule
             invokes ``python -m hhemt.setup_workflow`` or only touches its completion
             flag; with ``toggle_sensitivity_analysis`` True it is inert on the generated
-            workflow. On both paths it contributes to the ``phases_completed`` roll-up
-            reported by ``run()``.
+            workflow, whose setup rule is emitted per target regardless. On both paths
+            ``run()`` lists ``"setup"`` in its ``phases_completed`` roll-up when this or
+            ``process_system_level_inputs`` is True.
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            Forwarded to the generated setup rule's ``hhemt.setup_workflow``
+            invocation as ``--recompile-if-already-done``, where it has no reachable
+            consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
+            sits behind an ``args.compile_*`` gate that no emitted rule sets
+            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
+            ``compile_SWMM`` each read it — but only when called directly, never
+            through this workflow.
         prepare_scenarios : bool
             If True, each simulation will prepare its scenario before running
         overwrite_scenario_if_already_set_up : bool

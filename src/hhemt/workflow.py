@@ -3080,7 +3080,14 @@ rule consolidate_scenario:
             ``--compile-*`` flag, so the rule ASSERTS the solver tier rather than
             building it (ASSERT-NOT-BUILD, D84).
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            Forwarded to the generated setup rule's ``hhemt.setup_workflow``
+            invocation as ``--recompile-if-already-done``, where it has no reachable
+            consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
+            sits behind an ``args.compile_*`` gate that no emitted rule sets
+            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
+            ``compile_SWMM`` each read it — but only when called directly, never
+            through this workflow.
         prepare_scenarios : bool
             If True, each simulation will prepare its scenario before running
         overwrite_scenario_if_already_set_up : bool
@@ -6644,7 +6651,14 @@ exit $snakemake_status
             ``--compile-*`` flag, so the rule ASSERTS the solver tier rather than
             building it (ASSERT-NOT-BUILD, D84).
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            Forwarded to the generated setup rule's ``hhemt.setup_workflow``
+            invocation as ``--recompile-if-already-done``, where it has no reachable
+            consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
+            sits behind an ``args.compile_*`` gate that no emitted rule sets
+            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
+            ``compile_SWMM`` each read it — but only when called directly, never
+            through this workflow.
         prepare_scenarios : bool
             If True, each simulation will prepare its scenario before running
         overwrite_scenario_if_already_set_up : bool
@@ -8618,7 +8632,9 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
     - Generates flattened master Snakefile with all simulation rules
     - Handles dynamic resource allocation per member
     - Supports multiple consolidation levels (per-member + master)
-    - Delegates workflow submission to base SnakemakeWorkflowBuilder
+    - Owns master-Snakefile generation and submission orchestration; delegates only the
+      launch mechanics (dry-run validation, tmux / single-job / local / detached-SLURM
+      invocation) to the composed SnakemakeWorkflowBuilder
 
     Parameters
     ----------
@@ -8775,7 +8791,14 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         compile_TRITON_SWMM : bool
             If True, compile TRITON-SWMM in master setup rule
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            Forwarded to the generated setup rule's ``hhemt.setup_workflow``
+            invocation as ``--recompile-if-already-done``, where it has no reachable
+            consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
+            sits behind an ``args.compile_*`` gate that no emitted rule sets
+            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
+            ``compile_SWMM`` each read it — but only when called directly, never
+            through this workflow.
         prepare_scenarios : bool
             If True, prepare scenarios before running
         overwrite_scenario_if_already_set_up : bool
@@ -10471,7 +10494,14 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             reported by ``TRITONSWMM_analysis.run()``, which lists ``"setup"`` when this
             or ``process_system_level_inputs`` is True.
         recompile_if_already_done_successfully : bool
-            If True, recompile even if already compiled successfully
+            Forwarded to the generated setup rule's ``hhemt.setup_workflow``
+            invocation as ``--recompile-if-already-done``, where it has no reachable
+            consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
+            sits behind an ``args.compile_*`` gate that no emitted rule sets
+            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
+            ``compile_SWMM`` each read it — but only when called directly, never
+            through this workflow.
         prepare_scenarios : bool
             If True, prepare scenarios before running
         overwrite_scenario_if_already_set_up : bool

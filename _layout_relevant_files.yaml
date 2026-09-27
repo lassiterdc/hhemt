@@ -2336,3 +2336,39 @@ non_breaking_allowlist:
       EXPIRY CONDITION: covers this docstring-text correction only. Any change to a method
       SIGNATURE, a parameter NAME, a log field, an emitted path, or the on-disk shape this
       class writes is NOT this class and must bump LAYOUT_VERSION.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 77079f0f3828fe0eb6dfe43d8aa2e6a8a9b6b14bf5a6be474efe8783f7a27b9c
+    justification: >-
+      NON-BREAKING, and the same narrowest change class as the row immediately above: the
+      ENTIRE diff is one numpydoc parameter description inside the `submit_workflow`
+      docstring -- the `recompile_if_already_done_successfully` entry, one line removed and
+      eight added. ZERO executable lines differ; `git diff` over this file returns no change
+      outside that description block.
+      Developer-scoped follow-on item 7 corrects a SECOND false-docstring class the approved
+      shape never enumerated, and it is the INVERSE mechanism of item 6's. Item 6 fixed a
+      consumer with no producer; this parameter is a PRODUCER WITH NO REACHABLE CONSUMER --
+      workflow.py emits `--recompile-if-already-done` into the setup rule at :3175 and
+      :9114, setup_workflow.py parses it, and each of that module's three pass-downs to
+      TRITONSWMM_system (:616, :658, :693) sits inside a block gated on an `args.compile_*`
+      flag that commit d98802556 removed every emitter for -- measured: `grep -rn` for each
+      of the three `--compile-*` flags over src/ returns only setup_workflow.py's own
+      argparse declarations, usage docstring and message table, i.e. ZERO emitters.
+      The class is NINE occurrences of the literal "If True, recompile even if already
+      compiled successfully", of which SIX are false (the workflow facades) and THREE are
+      TRUE and deliberately UNTOUCHED (system.py's compile_TRITON_SWMM /
+      compile_TRITON_only / compile_SWMM, each of which genuinely reads the parameter -- see
+      system.py:2069's already-compiled short-circuit). This file holds one of the two false
+      sites that RENDER on docs/reference/api.md, which is why the item is release-relevant.
+      The replacement text deliberately does NOT say the parameter is dead: a text asserting
+      that would contradict a green test (tests/test_per_member_system_configs.py:275 pins
+      the live call signature) and would be the same defect class, in the opposite
+      direction, as the understatement it replaces.
+      NOTHING ON DISK MOVES. No path, zarr group, coordinate, data variable, dim, dtype,
+      attr, chunk, encoding, log-field key or type, or _version.json value differs, and no
+      analysis on disk needs rewriting. A docstring is not on-disk analysis shape and is
+      read by no consumer of an analysis tree. NO MIGRATION IS OWED.
+      CHANGE-SCOPED via layout_signature, and APPENDED rather than edited in place so the
+      prior rows' ground stays readable. Re-stamp on the next non-breaking edit.
+      EXPIRY CONDITION: covers this docstring-text correction only. Any change to a method
+      SIGNATURE, a parameter NAME, a log field, an emitted path, or the on-disk shape this
+      class writes is NOT this class and must bump LAYOUT_VERSION.
