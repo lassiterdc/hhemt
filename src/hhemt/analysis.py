@@ -3854,7 +3854,15 @@ class TRITONSWMM_analysis:
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM in Phase 1
+            If True, request the setup phase. It does not compile, because no emitted
+            setup rule carries a ``--compile-*`` flag and the rule asserts the solver
+            tier rather than building it. The remaining effect depends on the path this
+            facade dispatches to: on a non-sensitivity analysis this and
+            ``process_system_level_inputs`` together decide whether the setup rule
+            invokes ``python -m hhemt.setup_workflow`` or only touches its completion
+            flag; with ``toggle_sensitivity_analysis`` True it is inert on the generated
+            workflow. On both paths it contributes to the ``phases_completed`` roll-up
+            reported by ``run()``.
         recompile_if_already_done_successfully : bool
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool

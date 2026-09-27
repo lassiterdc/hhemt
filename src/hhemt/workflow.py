@@ -3073,7 +3073,12 @@ rule consolidate_scenario:
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM in Phase 1
+            If True, the generated setup rule invokes ``python -m hhemt.setup_workflow``
+            (system-input preprocessing plus the solver-tier verify arms); when this and
+            ``process_system_level_inputs`` are both False the rule only touches its
+            completion flag. It does NOT compile: no emitted setup rule carries a
+            ``--compile-*`` flag, so the rule ASSERTS the solver tier rather than
+            building it (ASSERT-NOT-BUILD, D84).
         recompile_if_already_done_successfully : bool
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool
@@ -6632,7 +6637,12 @@ exit $snakemake_status
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM in Phase 1
+            If True, the generated setup rule invokes ``python -m hhemt.setup_workflow``
+            (system-input preprocessing plus the solver-tier verify arms); when this and
+            ``process_system_level_inputs`` are both False the rule only touches its
+            completion flag. It does NOT compile: no emitted setup rule carries a
+            ``--compile-*`` flag, so the rule ASSERTS the solver tier rather than
+            building it (ASSERT-NOT-BUILD, D84).
         recompile_if_already_done_successfully : bool
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool
@@ -10453,7 +10463,13 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM
+            Accepted for signature parity and inert on the generated workflow: the
+            master Snakefile generator carries no read of it, so it changes no emitted
+            rule. It does not compile, because no emitted setup rule carries a
+            ``--compile-*`` flag and the rule asserts the solver tier rather than
+            building it. Its one surviving effect is the ``phases_completed`` roll-up
+            reported by ``TRITONSWMM_analysis.run()``, which lists ``"setup"`` when this
+            or ``process_system_level_inputs`` is True.
         recompile_if_already_done_successfully : bool
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool

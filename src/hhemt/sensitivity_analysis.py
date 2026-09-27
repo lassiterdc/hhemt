@@ -448,7 +448,13 @@ class TRITONSWMM_sensitivity_analysis:
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM
+            Accepted for signature parity and inert on the generated workflow: the
+            master Snakefile generator carries no read of it, so it changes no emitted
+            rule. It does not compile, because no emitted setup rule carries a
+            ``--compile-*`` flag and the rule asserts the solver tier rather than
+            building it. Its one surviving effect is the ``phases_completed`` roll-up
+            reported by ``TRITONSWMM_analysis.run()``, which lists ``"setup"`` when this
+            or ``process_system_level_inputs`` is True.
         recompile_if_already_done_successfully : bool
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool

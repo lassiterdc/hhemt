@@ -2315,3 +2315,24 @@ non_breaking_allowlist:
       the prior rows' ground stays readable. Re-stamp on the next non-breaking edit; a
       change to a variable NAME, a dim, or the emitted DATA-VARIABLE set is NOT this
       class and must bump LAYOUT_VERSION.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 6d540e56103a26d32a4fb60d3a00b035b50d26da4c320e9f6d9ab00a22375aea
+    justification: >-
+      NON-BREAKING, and the narrowest change class this file can carry: the ENTIRE diff is
+      one numpydoc parameter description inside the `submit_workflow` docstring -- the
+      `compile_TRITON_SWMM` entry, one line removed and seven added. ZERO executable lines
+      differ; `git diff` over this file returns no change outside that description block.
+      Approved shape item 6 (sha256
+      9376cc9032eb867916806cba8a689e7d2fd90e322ae5bbdc796d41f7d322ef3a) corrects six
+      docstrings that stated an effect commit d98802556 removed; this file holds one of the
+      two that RENDER on docs/reference/api.md, which is why the item is release-blocking
+      for the publication and why the text had to change at all.
+      NOTHING ON DISK MOVES. No path, zarr group, coordinate, data variable, dim, dtype,
+      attr, chunk, encoding, log-field key or type, or _version.json value differs, and no
+      analysis on disk needs rewriting. A docstring is not on-disk analysis shape and is
+      read by no consumer of an analysis tree. NO MIGRATION IS OWED.
+      CHANGE-SCOPED via layout_signature, and APPENDED rather than edited in place so the
+      prior rows' ground stays readable. Re-stamp on the next non-breaking edit.
+      EXPIRY CONDITION: covers this docstring-text correction only. Any change to a method
+      SIGNATURE, a parameter NAME, a log field, an emitted path, or the on-disk shape this
+      class writes is NOT this class and must bump LAYOUT_VERSION.
