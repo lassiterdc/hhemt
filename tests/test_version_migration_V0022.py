@@ -303,20 +303,35 @@ def test_the_promoted_tree_declares_its_new_layout_in_the_crate(third_state: Pat
 
 
 def test_the_ladder_actually_reaches_V0022_on_a_third_state_tree(third_state: Path) -> None:
-    """THE ONLY ARM THAT ENTERS THE REGISTRY. Every other arm calls `V0022.upgrade`
-    directly, so `version_from`, `version_to` and the filename pattern are outside their
-    reach: measured, `version_from = 20` and `version_to = 23` each leave all twelve
-    other arms green while making the migration unreachable from a v21 tree.
+    """THE ONLY ARM IN THIS MODULE THAT ENTERS THE REGISTRY. Every other arm calls
+    `V0022.upgrade` directly, so `version_from`, `version_to` and the filename pattern are
+    outside their reach: measured, `version_from = 20` and `version_to = 23` each leave all
+    twelve other arms green while making the migration unreachable from a v21 tree.
 
     `tests/test_version_migration_registry.py` cannot supply this cover -- every one of
     its arms monkeypatches `registry._versions_dir` onto a tmp_path, so it validates the
-    registry ALGORITHM and never the shipped registry CONTENT."""
+    registry ALGORITHM and never the shipped registry CONTENT.
+
+    THE `target=22` IS EXPLICIT AND THE OBJECTION TO IT IS RELOCATED, NOT DROPPED. This
+    arm previously passed no `target=`, and the comment here recorded why: `run_migration`
+    resolves `target = LAYOUT_VERSION if target is None else target`, so passing the number
+    by hand bypasses the constant entirely -- measured, an unbumped LAYOUT_VERSION left all
+    twenty arms green under the explicit form. That objection is sound and the property it
+    protects is real. It now lives in
+    `tests/test_version_migration_ladder.py::test_the_shipped_ladder_walks_v0_to_layout_version_under_the_default_target`,
+    which walks the DEFAULT target from the v0 fixture over the SHIPPED registry and
+    additionally asserts `max(version_to) == LAYOUT_VERSION` -- a check this arm never
+    made, and the only one that catches a module shipped above an unbumped ceiling.
+    Deleting or weakening that arm re-opens this one's gap; the two are a pair.
+
+    What stays here is V0022-LOCAL and is not affected by any future bump: reachability
+    from a v21 tree THROUGH the registry, the stamped version, the promoted probe, and the
+    retained superseded store. Pinning to 22 forfeits nothing observable -- measured, V0023
+    plans ZERO ops on a `third_state` tree, so the default and explicit forms transform
+    this fixture identically today; all that changes is that the next bump no longer reds
+    an arm whose subject is V0022."""
     (third_state / "_version.json").unlink(missing_ok=True)
-    # NO explicit `target=`. `run_migration` resolves `target = LAYOUT_VERSION if target
-    # is None else target`, so passing 22 by hand bypasses the constant entirely --
-    # measured, an unbumped LAYOUT_VERSION left all twenty arms green under the explicit
-    # form. The default form is what a production `hhemt migrate` actually runs.
-    result = runner.run_migration(third_state, apply=True)
+    result = runner.run_migration(third_state, target=22, apply=True)
     assert result.migrations_applied == ["V0022__promote_producer_written_experiment_tree"]
     assert json.loads((third_state / "_version.json").read_text())["layout_version"] == 22
     assert _probe(third_state / UNIFIED) == "PRODUCER_WRITTEN_NEWER"
