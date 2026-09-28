@@ -176,6 +176,28 @@ def _migration_member_prefixes_by_serial(versions_dir: Path | None = None) -> di
     return out
 
 
+def _vocabulary_agrees(runtime: set[str], by_serial: dict[int, set[str]]) -> bool:
+    """True when EVERY operand serial declares exactly the runtime alphabet.
+
+    EXTRACTED SO THE COMPARISON IS TESTABLE, which a chained `==` in an assert body is not.
+    Measured: rewriting the previous inline `runtime == by_serial[22] == by_serial[23]` to
+    `runtime == set().union(*by_serial.values())` left the whole suite GREEN at 49 nodes, so the
+    union hazard the reader's per-module return exists to prevent was blocked by an EXPRESSION
+    and pinned by nothing. A node that restates the comparison inline cannot close that -- it
+    pins Python's chained-equality semantics, which no rewrite can change, rather than the
+    comparison this suite actually uses. Only a named predicate both the assertion and a test
+    call makes the rewrite observable; see `test_the_agreement_predicate_is_not_satisfied_by_a_union`.
+
+    `all(...)` rather than a hand-written chain, and the difference is not stylistic. Over the
+    two-operand space the two are behaviourally IDENTICAL -- enumerated exhaustively, 512
+    assignments of three sets drawn from the powerset of a three-element universe, zero
+    disagreements. They diverge the moment `_MIGRATION_OPERANDS` gains a third serial: a chain
+    written for two operands silently keeps reading two, while this form picks the third up with
+    no edit here at all.
+    """
+    return all(runtime == declared for declared in by_serial.values())
+
+
 def _versions_modules_declaring_a_member_vocabulary(versions_dir: Path) -> set[str]:
     """Every `versions/` module declaring a member prefix in a MODULE-LEVEL constant.
 
@@ -527,7 +549,7 @@ def test_the_classifier_alphabet_matches_the_migrations():
     """
     by_serial = _migration_member_prefixes_by_serial()
     runtime = set(MEMBER_NODE_PREFIXES)
-    assert runtime == by_serial[22] == by_serial[23], (
+    assert _vocabulary_agrees(runtime, by_serial), (
         f"member vocabulary disagrees across its declaring sites: runtime={sorted(runtime)}, "
         f"V0022={sorted(by_serial[22])}, V0023={sorted(by_serial[23])}"
     )
@@ -686,3 +708,139 @@ def test_a_member_node_without_zarr_json_still_counts(tmp_path):
     )
     assert not (root / EXPERIMENT / "member_0" / "zarr.json").exists()
     assert classify_analysis_arm(root) == ("route1", "not-needed")
+
+
+def test_the_agreement_predicate_is_not_satisfied_by_a_union():
+    """THE UNION HAZARD, PINNED -- and the pin drives the shipped predicate rather than restating it.
+
+    `_migration_member_prefixes_by_serial` returns one set per serial precisely so a
+    single-module DROP cannot hide inside a union: the union of `{sa_, member_}` from V0022 with
+    `{sa_}` from a degraded V0023 is still `{sa_, member_}`. Before this node the property was
+    carried by the comparison's shape alone -- measured, rewriting it to the union form left all
+    49 nodes green, so the guarantee was unenforced.
+
+    Both directions are asserted here, because an assertion that only rejects proves nothing
+    about what it accepts: the degraded input must be REJECTED and an agreeing input ACCEPTED.
+    The union expression is computed inline and asserted EQUAL to the runtime alphabet, so the
+    node states on its own face why the hazard is invisible to a union rather than asking a
+    reader to take it on trust.
+    """
+    runtime = {"sa_", "member_"}
+    degraded = {22: {"sa_", "member_"}, 23: {"sa_"}}
+
+    assert set().union(*degraded.values()) == runtime, (
+        "precondition of this node: the union form must be BLIND to this drift, otherwise the "
+        "node is not exercising the hazard it names"
+    )
+    assert not _vocabulary_agrees(runtime, degraded), (
+        "the agreement predicate must reject a single-module DROP that the union admits; if this "
+        "passes, the comparison has been rewritten to a union and the per-module return is inert"
+    )
+    assert _vocabulary_agrees(runtime, {22: {"sa_", "member_"}, 23: {"sa_", "member_"}}), (
+        "and it must accept genuine agreement, or it is an assertion that rejects everything"
+    )
+
+
+def _load_migration_module(versions_dir: Path, serial: int):
+    """Import an operand migration module by serial, through the same uniqueness guard.
+
+    Routed through `_resolve_unique_migration_module` deliberately rather than by a direct path:
+    if serial 23 ever becomes contested, this node fails with that guard's named diagnosis rather
+    than with an opaque import error against one arbitrarily-chosen claimant.
+
+    ADDS NO IMPORT SURFACE. Measured: importing `hhemt.utils`, which this module already does at
+    module scope, pulls 47 solver-binding modules into `sys.modules` (pyswmm, swmm.toolkit,
+    swmmio) before any node runs. Loading V0023 pulls the same 47 and nothing further, so the
+    count of solver-binding modules is identical with and without this node. Loading a binding is
+    not a solver compile and not a solver execution, and nothing here instantiates a simulation.
+    """
+    import importlib.util
+
+    path = _resolve_unique_migration_module(versions_dir, serial)
+    spec = importlib.util.spec_from_file_location(f"_v{serial:04d}_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_member_group_count_requires_a_marker_and_a_member_name(tmp_path):
+    """CONDITION 1 -- the migration-side counter's two independent conjuncts, pinned.
+
+    `V0023._member_group_count` gates on three syntactic terms:
+    `child.is_dir() and _is_group_node(child) and child.name.startswith(_MEMBER_PREFIXES)`.
+    Before this node the function had NO executable coverage at all: the v22->v23 golden pair
+    returns from `upgrade()` before any classification unless the tree carries BOTH root store
+    names, and the v22 fixture carries only the experiment tree, so the pair reaches this counter
+    ZERO times. The only fixture carrying both names is `v0023_unit_test`, referenced by 0 test
+    files. So these three arms are the whole of this function's coverage.
+
+    THE FRAME IS SEQUENTIAL: ONE store, built up ACROSS the arms. That is load-bearing, because
+    the frame space has THREE members and the same arm has a different correct expectation in
+    each --
+
+        parameters ONLY (standalone)             baseline 0
+        UNMARKED member + marked parameters      baseline 0
+        MARKED member THEN parameters (here)     baseline 1
+
+    -- so a payload lifted from a standalone frame asserting 0 at A2, or this frame's payload
+    asserting 0, fails in a way that reads as a product defect rather than as a frame mismatch.
+    Each arm therefore states its expected value inline and the frame is named here.
+
+    WHAT THE THREE ARMS ESTABLISH, scoped precisely. They are complete over the
+    KILLABLE SINGLE-CONJUNCT-DELETION mutants, which is what the `is_dir()` equivalence
+    establishes and all it establishes: deleting `is_dir()` changes no observable behaviour, because
+    `_is_group_node` is `any((child / marker).is_file() ...)` and a non-directory child can never
+    satisfy it, so that conjunct is logically implied in the baseline and cannot be pinned by any
+    arm. The operative invariant is therefore the two behaviourally independent conjuncts: THE
+    COUNTER REQUIRES A GROUP MARKER AND A MEMBER NAME. It is NOT a completeness claim over every
+    killable mutant of this predicate, and the residual below is the counterexample to the wider
+    reading.
+
+    WHAT THE SEQUENTIAL FRAME BUYS, and what it costs, because a frame chosen without both is an
+    assumed equivalence rather than a priced decision. The two frames are NON-NESTED and neither
+    dominates. Measured against a memoizing mutant -- a cache keyed on the store path, a plausible
+    optimisation edit -- the sequential arms give 0/0/0 against an expected 0/1/1 and CATCH it,
+    because all three arms call one path; the standalone arms give 0/1/0, exactly their
+    expectation, and MISS it. Measured against a saturating mutant -- the prefix gate deleted plus
+    a `min(1, ...)` cap -- the standalone A2 gives 1 against a baseline 0 and CATCHES it, while
+    these sequential arms give 0/1/1 and MISS it. The saturating cap is the disclosed residual:
+    accepted, because a cap is not in the plausible edit set for a counter whose callers compare
+    it against 1, and because the prefix-narrowing mutants that ARE plausible are caught at A1 or
+    by the vocabulary gate's three-way agreement.
+
+    NOT A GOLDEN FIXTURE, and that is a requirement rather than a convenience. The unmarked
+    member-named directory INSIDE the store is what the unify primitive's own docstring describes
+    a bare directory move as producing -- a broken hierarchy -- and a golden `vN` fixture is a
+    RECORD of a tree shape that existed. Fabricating one would make the glob-discovered
+    `test_pair_round_trip[v(22, 23)]` assert a shape the pipeline never produced, which is the
+    defeat `scripts/vocabulary_freeze.yaml` already documents for a different fixture: "Sweeping
+    it makes the test assert a tree shape that never existed, and pass."
+    """
+    v23 = _load_migration_module(_versions_dir(), 23)
+    store = tmp_path / EXPERIMENT
+    store.mkdir()
+    (store / "zarr.json").write_text("{}")
+
+    # A0 -- a member-named directory that is NOT a group node. The marker conjunct rejects it.
+    member = store / "member_9"
+    member.mkdir()
+    assert v23._member_group_count(store) == 0, (
+        "a member-named directory carrying no group marker must NOT count: the migration MOVES a "
+        "store on this cardinality and must refuse on a malformed tree"
+    )
+
+    # A1 -- the same directory, now a group node. Both conjuncts hold.
+    (member / "zarr.json").write_text("{}")
+    assert v23._member_group_count(store) == 1, "a member-named group node must count exactly once"
+
+    # A2 -- a group-marked child OUTSIDE the member vocabulary. The prefix conjunct rejects it,
+    # so the count is UNCHANGED from A1. `parameters` is the documented exclusion class: the
+    # demotion primitive writes it unconditionally, which is why counting every child returns 2
+    # on a one-member store.
+    parameters = store / "parameters"
+    parameters.mkdir()
+    (parameters / "zarr.json").write_text("{}")
+    assert v23._member_group_count(store) == 1, (
+        "a group-marked child outside the member vocabulary must not be counted; without this arm "
+        "the prefix conjunct is unpinned and deleting it leaves A0 and A1 green"
+    )
