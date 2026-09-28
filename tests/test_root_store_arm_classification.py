@@ -64,27 +64,144 @@ def _member_nodes(root: Path) -> int:
     return len([p for p in store.iterdir() if p.is_dir() and p.name.startswith(MEMBER_NODE_PREFIXES)])
 
 
-def _migration_member_prefixes() -> set[str]:
-    """Read the migration's declared member-node spellings by AST, never by import.
+#: The OPERAND SET of the cross-module agreement check: migration serial -> the module-level
+#: constant names that serial declares the member vocabulary in. HAND-MAINTAINED, and that is
+#: the correct state rather than a shortcut -- see `_migration_member_prefixes_by_serial`'s
+#: docstring under THE OPERAND SET IS HAND-MAINTAINED for why a self-EXTENDING reader would be
+#: wrong, and `test_the_operand_set_is_complete_over_the_versions_tree` for what arms it.
+#:
+#: TWO SITES CARRY THE SAME VOCABULARY AND ARE DELIBERATELY NOT OPERANDS.
+#:   * `scripts/vocabulary_freeze.yaml` pins the literal source text
+#:     `_RETIRED_MEMBER_PREFIX = "sa_"` and is enforced at pre-commit. It is an excluded
+#:     TEXTUAL site: it pins SYNTAX rather than VALUE, so it cannot be an operand of a set
+#:     equality without comparing a value set against a source string. It is also
+#:     DIRECTIONAL -- measured, it fails on rewriting V0022's two scalars as a tuple and
+#:     passes on rewriting V0023's tuple as scalars -- so it blocks one normalization
+#:     direction only. What blocks BOTH is `check_layout_version` Check B, because
+#:     `versions/*.py` is layout-relevant, V0023 is absent from the resolved
+#:     non_breaking_allowlist, and V0022's entry is change-scoped by a content hash.
+#:   * `V0019__member_vocabulary.py` is an excluded EXECUTABLE site. It performed the
+#:     `sa_` -> `member_` rename, declares `version_from = 18`, and carries its prefixes only
+#:     as INLINE literals (zero module-level constants of this class), so an Assign-keyed
+#:     reader cannot see them at all. It MUST NOT become an operand: its alphabet is closed at
+#:     the v18 era, so coupling it to the live runtime constant would manufacture a false red.
+_MIGRATION_OPERANDS: dict[int, tuple[str, ...]] = {
+    22: ("_RETIRED_MEMBER_PREFIX", "_CURRENT_MEMBER_PREFIX"),
+    23: ("_MEMBER_PREFIXES",),
+}
+
+
+def _versions_dir() -> Path:
+    """The real migration `versions/` directory, resolved from this file's repo root."""
+    return Path(__file__).resolve().parent.parent / "src/hhemt/version_migration/versions"
+
+
+def _resolve_unique_migration_module(versions_dir: Path, serial: int) -> Path:
+    """Resolve serial -> module path by GLOB, asserting exactly one match.
+
+    NEVER a hardcoded filename, and the reason is a measured blind spot rather than style.
+    Two divergent branches currently bind serial 23 to DIFFERENT modules at the same
+    `LAYOUT_VERSION`, and their merge is clean: both change `constants.py` to identical text
+    and the two modules are ADDs of different names, so nothing in the merge signals the
+    collision. `check_layout_version.check_a` cannot see it either -- its `head_v == base_v`
+    arm returns pass BEFORE the module probe is reached, and both probes are existence-only.
+    A hardcoded filename is GREEN AND SILENT on that tree; this glob is RED and names the
+    contested serial, which makes it the earliest artifact able to report the condition.
+
+    `versions_dir` is a PARAMETER so the non-unique branch is reachable from a test. A guard
+    green on arrival with no reachable red is indistinguishable on the page from a guard with
+    no power -- see `test_the_uniqueness_guard_reds_on_a_contested_serial`.
+    """
+    hits = sorted(versions_dir.glob(f"V{serial:04d}__*.py"))
+    assert len(hits) == 1, (
+        f"migration serial {serial} resolves to {len(hits)} modules, expected exactly 1: "
+        f"{[p.name for p in hits]}. Two modules claiming one serial is a contested serial, "
+        f"not a missing migration."
+    )
+    return hits[0]
+
+
+def _migration_member_prefixes_by_serial(versions_dir: Path | None = None) -> dict[int, set[str]]:
+    """Read each operand migration's declared member-node spellings by AST, never by import.
 
     An AST read needs no package on `sys.path` and cannot be defeated by an import chain,
     which a `spec_from_file_location` load of a migration module can be. The values are
     module-level string literals, so a literal read is exact rather than approximate.
+
+    PER-MODULE RETURNS, NEVER A FLATTENED UNION. A union cannot see a single-module DROP: the
+    union of `{sa_, member_}` from V0022 with `{sa_}` from a degraded V0023 is still
+    `{sa_, member_}`, so the check would pass on a module that had silently narrowed. Returning
+    one set per serial is what makes this a drift detector rather than a tautology -- see
+    `test_the_reader_returns_per_module_sets_never_a_union`.
+
+    SHAPE-AGNOSTIC BY `literal_eval`, not by node-type dispatch. V0022 declares two SCALARS and
+    V0023 one TUPLE, and normalizing a bare `str` to a one-tuple absorbs both without
+    enumerating shapes -- so a third shape a future migration might use does not need a new
+    branch here. The two shapes MUST NOT be unified at the source: V0022's assignment text is
+    frozen at pre-commit, and either module is blocked from edit by Check B.
+
+    RAISES ON AN ABSENT CONSTANT rather than returning a short set, per serial. A short set
+    would silently weaken the equality it feeds -- see
+    `test_the_reader_raises_when_a_named_constant_is_absent`.
+
+    THE OPERAND SET IS HAND-MAINTAINED at `_MIGRATION_OPERANDS`, and that is correct rather
+    than provisional. A reader that DISCOVERED and ADOPTED every `versions/` module declaring a
+    member vocabulary would pick up era-closed alphabets like V0019's and manufacture false
+    reds. Re-establish the set's completeness in one command -- an `ast` scan over
+    `versions/V*.py` for module-level `Assign` constants whose literal contains a member prefix
+    -- which is exactly what `test_the_operand_set_is_complete_over_the_versions_tree` runs on
+    every invocation, so the completeness is ARMED and not merely recorded.
     """
     import ast
 
-    repo = Path(__file__).resolve().parent.parent
-    path = repo / "src/hhemt/version_migration/versions/V0022__promote_producer_written_experiment_tree.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    wanted = {"_RETIRED_MEMBER_PREFIX", "_CURRENT_MEMBER_PREFIX"}
-    found = {}
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            target = node.targets[0]
-            if isinstance(target, ast.Name) and target.id in wanted:
-                found[target.id] = ast.literal_eval(node.value)
-    assert wanted <= found.keys(), f"migration no longer declares {sorted(wanted - found.keys())}"
-    return set(found.values())
+    versions_dir = _versions_dir() if versions_dir is None else versions_dir
+    out: dict[int, set[str]] = {}
+    for serial, wanted_names in _MIGRATION_OPERANDS.items():
+        path = _resolve_unique_migration_module(versions_dir, serial)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        wanted = set(wanted_names)
+        found: dict[str, tuple[str, ...]] = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target = node.targets[0]
+                if isinstance(target, ast.Name) and target.id in wanted:
+                    value = ast.literal_eval(node.value)
+                    found[target.id] = (value,) if isinstance(value, str) else tuple(value)
+        missing = wanted - found.keys()
+        assert not missing, (
+            f"{path.name} no longer declares {sorted(missing)}; a short set would weaken the "
+            f"agreement check silently rather than failing it."
+        )
+        out[serial] = {prefix for values in found.values() for prefix in values}
+    return out
+
+
+def _versions_modules_declaring_a_member_vocabulary(versions_dir: Path) -> set[str]:
+    """Every `versions/` module declaring a member prefix in a MODULE-LEVEL constant.
+
+    The predicate is exactly the one `_migration_member_prefixes_by_serial` can read: a
+    module-level `ast.Assign` with a single `Name` target whose literal-evaluable value
+    contains a string holding a member prefix. Inline occurrences are deliberately OUT of this
+    population -- V0019 carries eleven of them and zero constants, which is why it is invisible
+    here and why that is the correct outcome rather than a gap.
+    """
+    import ast
+
+    out: set[str] = set()
+    for path in sorted(versions_dir.glob("V*.py")):
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
+                continue
+            if not isinstance(node.targets[0], ast.Name):
+                continue
+            try:
+                value = ast.literal_eval(node.value)
+            except (ValueError, SyntaxError):
+                continue
+            flat = [value] if isinstance(value, str) else list(value) if isinstance(value, (tuple, list)) else []
+            if any(isinstance(s, str) and s.startswith(MEMBER_NODE_PREFIXES) for s in flat):
+                out.add(path.name)
+    return out
 
 
 def _analysis_root(
@@ -378,8 +495,170 @@ def test_the_classifier_alphabet_matches_the_migrations():
     where "why the classifier's population legitimately excludes what the migration's
     includes" gets written down. A test nobody has to touch is a justification nobody has
     to give.
+
+    THREE-WAY, and the third operand is what the widening buys. Under the two-way form a
+    V0023-ONLY drift -- its tuple gaining or dropping a prefix while the runtime constant and
+    V0022 stay equal -- is GREEN, because nothing read V0023 at all. Measured: both such drifts
+    are green two-way and red three-way, and chunk 1A.2's node cannot see either of them
+    because it asserts counts on a store and never reads a vocabulary.
+
+    THE ADMISSIBLE REMEDY SET ON A RED, which is the part a maintainer needs and which the
+    assertion cannot state for itself. Exactly two edits are admissible: edit THIS assertion
+    carrying the written justification the docstring above demands, or edit the RUNTIME constant
+    `hhemt.utils.MEMBER_NODE_PREFIXES`. **Editing a landed `versions/` module is NOT admissible**
+    -- and the ground is SEMANTIC rather than the cost of the gate that would stop you.
+
+    THE LOAD-BEARING MEASUREMENT IS THE CONSUMPTION COUNT, named so a later party re-testing
+    this ground does not re-test three figures at equal cost. V0023 declares `version_from = 22`,
+    and its `_MEMBER_PREFIXES` has EXACTLY ONE consumption site -- in `_member_group_count`,
+    reached from one caller that passes the INPUT store, and that call precedes the migration's
+    only write. That single figure is what closes the question: one read-only consumption on a
+    v22-era input is the whole of the argument. The migration's mutating-call count corroborates
+    the read-only half and decides nothing on its own, so it is not the figure to re-run.
+
+    So the tuple is the alphabet a v22-era store can CONTAIN, no new v22-era tree will ever be
+    created, and that alphabet is CLOSED BY HISTORY.
+    A price argument would not bind here -- a session already bumping `LAYOUT_VERSION` for an
+    unrelated reason pays nothing marginal for such an edit, and routine bumps are how two
+    branches arrived at serial 23 -- which is why the ground is stated as history and not cost.
+    The one legitimate edit to that module is a fix to what it was always wrong about: if its
+    tuple misstates v22-era history, that is a migration-side defect priced as one, and it is
+    not a remedy for this red.
     """
-    assert set(MEMBER_NODE_PREFIXES) == _migration_member_prefixes()
+    by_serial = _migration_member_prefixes_by_serial()
+    runtime = set(MEMBER_NODE_PREFIXES)
+    assert runtime == by_serial[22] == by_serial[23], (
+        f"member vocabulary disagrees across its declaring sites: runtime={sorted(runtime)}, "
+        f"V0022={sorted(by_serial[22])}, V0023={sorted(by_serial[23])}"
+    )
+
+
+def _write_operand_modules(versions_dir: Path, *, v22_body: str, v23_body: str) -> None:
+    """Write a minimal two-claimant-free `versions/` directory carrying both operand serials."""
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    (versions_dir / "V0022__promote_producer_written_experiment_tree.py").write_text(v22_body)
+    (versions_dir / "V0023__retire_stranded_regular_store.py").write_text(v23_body)
+
+
+_V22_BODY = '_RETIRED_MEMBER_PREFIX = "sa_"\n_CURRENT_MEMBER_PREFIX = "member_"\n'
+_V23_BODY = '_MEMBER_PREFIXES = ("sa_", "member_")\n'
+
+
+def test_the_uniqueness_guard_reds_on_a_contested_serial(tmp_path):
+    """THE GUARD'S RED PATH, exercised -- this is what makes the glob a guard rather than a shape.
+
+    On the real tree serial 23 resolves to exactly one module, so the assertion is GREEN ON
+    ARRIVAL and no node that reads the real directory can ever observe it fail. That is
+    indistinguishable on the page from a guard with no power, and it is the condition under
+    which a typo in the glob -- an unpadded `V{n}__`, a `V23__`, a missing `__` -- matches one
+    or zero and the guard silently never fires on the very merge it exists to name.
+
+    The two-claimant directory is not hypothetical: it is what a clean merge of the two
+    divergent branches currently binding serial 23 produces.
+    """
+    versions = tmp_path / "versions"
+    _write_operand_modules(versions, v22_body=_V22_BODY, v23_body=_V23_BODY)
+    (versions / "V0023__column_set_heterogeneity_coords.py").write_text("")
+
+    with pytest.raises(AssertionError) as excinfo:
+        _resolve_unique_migration_module(versions, 23)
+
+    message = str(excinfo.value)
+    assert "resolves to 2 modules" in message
+    assert "V0023__column_set_heterogeneity_coords.py" in message
+    assert "V0023__retire_stranded_regular_store.py" in message
+    assert "contested serial" in message, (
+        "the message must name the CONDITION, because a hardcoded-path failure reports the same "
+        "state as a missing migration and sends the reader to the wrong diagnosis"
+    )
+
+
+def test_the_uniqueness_guard_reds_on_an_absent_serial(tmp_path):
+    """The other non-unique arm. Zero matches is as much a guard failure as two."""
+    versions = tmp_path / "versions"
+    versions.mkdir()
+    with pytest.raises(AssertionError) as excinfo:
+        _resolve_unique_migration_module(versions, 23)
+    assert "resolves to 0 modules" in str(excinfo.value)
+
+
+def test_the_uniqueness_guard_passes_on_a_single_match(tmp_path):
+    """THE SATISFYING ARM, and it is not redundant with the real tree.
+
+    A guard that raised unconditionally would satisfy both red arms above, so a positive control
+    is what separates a working guard from an over-firing one. This control also occupies a
+    DIFFERENT satisfying position than the real tree: a directory carrying only serial 23.
+    """
+    versions = tmp_path / "versions"
+    versions.mkdir()
+    (versions / "V0023__retire_stranded_regular_store.py").write_text("")
+    assert _resolve_unique_migration_module(versions, 23).name == "V0023__retire_stranded_regular_store.py"
+
+
+def test_the_reader_raises_when_a_named_constant_is_absent(tmp_path):
+    """A MISSING DECLARATION RAISES rather than yielding a short set.
+
+    A short set would silently weaken the three-way equality it feeds: the equality would then
+    compare the runtime alphabet against whatever survived, and pass. The raise is what keeps an
+    absent declaration a failure rather than a narrowing.
+    """
+    versions = tmp_path / "versions"
+    _write_operand_modules(versions, v22_body='_RETIRED_MEMBER_PREFIX = "sa_"\n', v23_body=_V23_BODY)
+    with pytest.raises(AssertionError) as excinfo:
+        _migration_member_prefixes_by_serial(versions)
+    assert "_CURRENT_MEMBER_PREFIX" in str(excinfo.value)
+
+
+def test_the_reader_returns_per_module_sets_never_a_union(tmp_path):
+    """THE UNION-BLIND DROP, constructed -- this is why the return is keyed by serial.
+
+    V0023's tuple is degraded to `("sa_",)` while V0022 keeps both. A FLATTENED UNION over the
+    two modules is still `{sa_, member_}`, so a union-shaped reader compares equal to the
+    runtime alphabet and reports agreement on a module that has silently narrowed. Per-module
+    sets make the same tree disagree.
+    """
+    versions = tmp_path / "versions"
+    _write_operand_modules(versions, v22_body=_V22_BODY, v23_body='_MEMBER_PREFIXES = ("sa_",)\n')
+
+    by_serial = _migration_member_prefixes_by_serial(versions)
+    assert by_serial[22] == {"sa_", "member_"}
+    assert by_serial[23] == {"sa_"}
+
+    union = by_serial[22] | by_serial[23]
+    assert union == {"sa_", "member_"}, "the union form is blind here, which is the point"
+    assert by_serial[22] != by_serial[23], "and the per-module form is not"
+
+
+def test_the_operand_set_is_complete_over_the_versions_tree():
+    """THE OPERAND SET IS ARMED, not merely recorded -- and it scans to RED, never to ADOPT.
+
+    `_MIGRATION_OPERANDS` is hand-maintained at two serials. Nothing otherwise fires on the day
+    a third migration declares a member vocabulary in a module-level constant, which would leave
+    it unread by the agreement check -- the same reachability gap that check exists to close, one
+    module later. This node arms that condition.
+
+    A SCAN AND A SELF-EXTENDING READER ARE DIFFERENT DESIGNS, and only the second is wrong. A
+    reader that ADOPTED discovered modules would pull in era-closed alphabets and manufacture
+    false reds; this node adopts nothing -- it goes RED and hands the decision to a human, which
+    is the correct disposition for a new declaration.
+
+    Measured before arming it, so the red is a real signal rather than a standing failure:
+    V0019 declares ELEVEN member-prefix literals and ZERO module-level constants, so it is
+    invisible to this predicate; and the other branch's V0023 likewise declares zero, so this
+    node stays green across the merge that makes serial 23 contested. It is therefore DISJOINT
+    from the uniqueness guard -- that guard detects a contested SERIAL, this detects a new
+    DECLARATION.
+    """
+    versions = _versions_dir()
+    declaring = _versions_modules_declaring_a_member_vocabulary(versions)
+    operands = {_resolve_unique_migration_module(versions, serial).name for serial in _MIGRATION_OPERANDS}
+    assert declaring == operands, (
+        f"the hand-maintained operand set is no longer complete over versions/: "
+        f"declaring={sorted(declaring)}, operands={sorted(operands)}. A module declaring a "
+        f"member vocabulary that is not an operand is unread by the agreement check. Decide "
+        f"whether it is a live alphabet (add its serial to _MIGRATION_OPERANDS) or era-closed "
+        f"(record the exclusion beside V0019's), and do not widen the reader to adopt it."
+    )
 
 
 def test_a_member_node_without_zarr_json_still_counts(tmp_path):
