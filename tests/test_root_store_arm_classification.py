@@ -194,6 +194,19 @@ def _vocabulary_agrees(runtime: set[str], by_serial: dict[int, set[str]]) -> boo
     disagreements. They diverge the moment `_MIGRATION_OPERANDS` gains a third serial: a chain
     written for two operands silently keeps reading two, while this form picks the third up with
     no edit here at all.
+
+    ONE CASE WHERE `all()` IS WEAKER THAN THE RETIRED CHAIN, disclosed rather than left for a
+    reader to find. On an EMPTY `by_serial` this returns True, because `all()` over an empty
+    iterable is vacuously true, where the retired `runtime == by_serial[22] == by_serial[23]`
+    raised `KeyError` and so failed CLOSED. The 512-assignment enumeration above cannot reach it:
+    that enumeration draws sets over a POPULATED two-operand space, so the empty case is outside
+    its domain. **It is nevertheless not a disarming path, and that is measured rather than
+    assumed.** An empty `by_serial` is reachable only by emptying `_MIGRATION_OPERANDS`, and that
+    edit reds three other nodes first -- `test_the_reader_raises_when_a_named_constant_is_absent`,
+    `test_the_reader_returns_per_module_sets_never_a_union`, and
+    `test_the_operand_set_is_complete_over_the_versions_tree` -- against a control of 51 passed on
+    the same harness unmodified. Two of those three assert §8a-mandated properties rather than the
+    optional completeness scan, so the empty case stays caught however that option had been taken.
     """
     return all(runtime == declared for declared in by_serial.values())
 
@@ -551,7 +564,7 @@ def test_the_classifier_alphabet_matches_the_migrations():
     runtime = set(MEMBER_NODE_PREFIXES)
     assert _vocabulary_agrees(runtime, by_serial), (
         f"member vocabulary disagrees across its declaring sites: runtime={sorted(runtime)}, "
-        f"V0022={sorted(by_serial[22])}, V0023={sorted(by_serial[23])}"
+        f"by_serial={ {s: sorted(v) for s, v in sorted(by_serial.items())} }"
     )
 
 
@@ -738,6 +751,23 @@ def test_the_agreement_predicate_is_not_satisfied_by_a_union():
     )
     assert _vocabulary_agrees(runtime, {22: {"sa_", "member_"}, 23: {"sa_", "member_"}}), (
         "and it must accept genuine agreement, or it is an assertion that rejects everything"
+    )
+
+    # A GAIN must be rejected too, and this arm is not a restatement of the drop arm. Measured over
+    # eight rewrites of the predicate scored on three inputs: `intersection` and `all(runtime <=
+    # declared)` both keep every OTHER assertion in this node GREEN while ceasing to reject a
+    # V0023-only WIDENING, which the design's own drift table requires to red. The subset form is
+    # the one to worry about rather than an exotic edit: this file states 200 lines above that "A
+    # classifier declaring a NARROWER alphabet than the migration is the divergence at issue", so a
+    # maintainer who reads that sentence and "corrects" the predicate to a containment test has a
+    # textual invitation to exactly the rewrite this arm exists to catch.
+    widened = {22: {"sa_", "member_"}, 23: {"sa_", "member_", "grp_"}}
+    assert set().union(*widened.values()) != runtime, (
+        "precondition: a GAIN is visible to the union form, so this arm is not a restatement of the drop arm"
+    )
+    assert not _vocabulary_agrees(runtime, widened), (
+        "the agreement predicate must reject a single-module GAIN as well as a DROP; a predicate "
+        "that admits a superset has stopped being an equality across the declaring sites"
     )
 
 
