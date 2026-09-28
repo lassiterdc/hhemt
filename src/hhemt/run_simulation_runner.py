@@ -35,6 +35,7 @@ import sys
 import traceback
 from pathlib import Path
 
+from hhemt import resume_events
 from hhemt.gpu_bind_guard import (
     FAILING_VERDICTS,
     artifact_path_for,
@@ -762,6 +763,27 @@ def main():
                 )
         except OSError as _wl_err:
             logger.warning(f"[{event_iloc}] wall-time ledger append failed (non-fatal): {_wl_err}")
+
+        # WP-2D: durable resume-event record. The model log this exec just wrote is opened
+        # "w" on EVERY exec, so the next one destroys its resume evidence -- measured at 60
+        # of 90 events (67%) on the solver-replay-precision-accounting experiment. Harvest
+        # the four-field line NOW, while it still exists, and append it to the per-sim
+        # _resume_events ledger, which nothing re-creates per exec. Sibling of the
+        # _walltime append above in path, shape and failure posture; the harvest and append
+        # live in hhemt.resume_events so a reader can import them without importing this
+        # runner (whose module body calls logging.basicConfig).
+        try:
+            _re_events = resume_events.harvest_resume_events(model_logfile.read_text())
+            _re_outcome = resume_events.append_resume_events(
+                resume_events.ledger_path_for(model_logfile),
+                _re_events,
+                attempt=int(_n_done),
+                slurm_jobid=os.environ.get("SLURM_JOB_ID"),
+            )
+            logger.info(f"[{event_iloc}] resume-event ledger: {_re_outcome} ({len(_re_events)} event(s))")
+        except OSError as _re_err:
+            # Reading the model log is the only raising step left; the append never raises.
+            logger.warning(f"[{event_iloc}] resume-event ledger append failed (non-fatal): {_re_err}")
 
         # Check simulation status via log file
         status = (
