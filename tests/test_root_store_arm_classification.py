@@ -756,15 +756,46 @@ def test_the_agreement_predicate_is_not_satisfied_by_a_union():
     # A GAIN must be rejected too, and this arm is not a restatement of the drop arm. Measured over
     # eight rewrites of the predicate scored on three inputs: `intersection` and `all(runtime <=
     # declared)` both keep every OTHER assertion in this node GREEN while ceasing to reject a
-    # V0023-only WIDENING, which the design's own drift table requires to red. The subset form is
+    # single-module WIDENING, which the design's own drift table requires to red. The subset form is
     # the one to worry about rather than an exotic edit: this file states 200 lines above that "A
     # classifier declaring a NARROWER alphabet than the migration is the divergence at issue", so a
     # maintainer who reads that sentence and "corrects" the predicate to a containment test has a
     # textual invitation to exactly the rewrite this arm exists to catch.
-    widened = {22: {"sa_", "member_"}, 23: {"sa_", "member_", "grp_"}}
+    #
+    # THE GAIN DEGRADES SERIAL 22, AND WHICH SERIAL IS LOAD-BEARING -- do not "tidy" this to widen
+    # 23 instead. With 23 widened, all THREE of this node's inputs place serial 22 at the agreeing
+    # value, so a predicate rewritten to `return runtime == by_serial[23]` sees exactly what a
+    # correct reader sees on every input presented and drops serial 22 out of the gate entirely.
+    # Measured in the real suite: that rewrite is GREEN on all 51 nodes with 23 widened, and RED
+    # with 22 widened. Widening 22 costs nothing -- scored over eight rewrites of the predicate,
+    # the 22-widened input reds every incorrect form the 23-widened one reds AND the 23-only reader
+    # besides, so it is a strict improvement rather than a trade.
+    #
+    # NO PER-INPUT VALIDATION SEES THIS, and that is the axis the claim is true on: each of the three
+    # inputs is individually correct against the landed predicate -- degraded rejected, agreeing
+    # accepted, either gain rejected -- because the hole is a RELATION across them rather than a
+    # property of any one. A PER-SERIAL coverage assertion over the input SET does see it, and that
+    # is the axis to reach for: "every operand serial appears at a value != runtime in at least one
+    # input" FAILS naming serial 22 under the 23-widened literal, PASSES under this one, references
+    # no predicate so it cannot false-red a correct form, and would FAIL naming a third serial the
+    # day one lands -- where this hand-chosen literal must instead be re-reasoned by whoever adds it.
+    # Arming that assertion belongs to the delegated operand-set question rather than to this
+    # comment, and it is deliberately NOT landed here.
+    widened = {22: {"sa_", "member_", "grp_"}, 23: {"sa_", "member_"}}
     assert set().union(*widened.values()) != runtime, (
         "precondition: a GAIN is visible to the union form, so this arm is not a restatement of the drop arm"
     )
+    assert set.intersection(*widened.values()) == runtime, (
+        "precondition: the INTERSECTION form is BLIND to this drift, which is the rewrite this arm "
+        "kills; a both-module gain keeps the union precondition green while disarming the arm"
+    )
+    # BOTH preconditions are required and neither is redundant, which is worth stating because two
+    # guards on one literal invite deleting one. They exclude DIFFERENT classes, enumerated over all
+    # 64 substitutions of `widened` drawn from the powerset of {sa_, member_, grp_}: the union form
+    # alone admits 55, of which 53 lose this arm's power over `intersection`; the intersection form
+    # alone admits 3, one of which is the all-agree input that would RED the landed predicate and so
+    # is a false red the union guard excludes. Together they admit exactly 2, both of which kill
+    # `intersection` and the subset form, and neither of which reds the landed form.
     assert not _vocabulary_agrees(runtime, widened), (
         "the agreement predicate must reject a single-module GAIN as well as a DROP; a predicate "
         "that admits a superset has stopped being an equality across the declaring sites"
