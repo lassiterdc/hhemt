@@ -1035,6 +1035,16 @@ def test_affected_pin_with_resumed_sims_still_selects(monkeypatch):
 
 _SNAPSHOT = "[..] SWMM state restored from snapshot to t=3600 s (12 steps skipped); resuming live segment\n"
 _SHA_CAMPAIGN_TIP = "658a7a37032a95842e1662fe330190da24ffd4e8"
+#: The SAME branch one commit later, after WP-1C. Spelled as a LITERAL rather than imported
+#: from `model_defects`, so the assertion below discriminates on the registry's BEHAVIOUR
+#: rather than on the presence of a constant: importing the name would turn a regression that
+#: DROPS the sha from the sets into an ImportError at collection, and a regression that drops
+#: it from ONE set into a silent pass.
+_SHA_WP1C_TIP = "01e95a76ba4b7015d13b20423eb0e72ec1fb495c"
+#: A sha the registry has never heard of. Its INDETERMINATE verdict is the control arm: it is
+#: what every unregistered tip resolves to, and it is what the two assertions below would
+#: return if the registry entry under test were widened instead of extended.
+_SHA_UNREGISTERED = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
 
 def test_resume_mechanism_from_log_discriminates_both_markers():
@@ -1250,3 +1260,56 @@ def test_campaign_branch_tip_resolves_absent_on_every_registered_defect():
         assert v.status == "absent", f"{did} resolved {v.status} ({v.detail}) at the campaign branch tip"
         assert v.rule == "known_absent_set"
     assert "TRITON-RESUME-EXTBC-GHOST-RING" in verdicts
+
+
+def test_wp1c_branch_tip_resolves_absent_on_every_registered_defect():
+    """Sub-item (a) RE-APPLIED at the tip WP-1C advanced the branch to.
+
+    The remedy the design routed is PER-SHA by construction -- an explicit set entry -- so
+    it lapses the moment the branch tip moves, and `WP-1C` moved it. Measured against the
+    pre-fix registry, `01e95a76` resolved `indeterminate` / `ancestry_unresolvable` on all
+    three defects, which re-opened BOTH consequences the `658a7a37` entry was added to
+    close: `check_coupled_resume_validity` early-returns "resume validity NOT verified"
+    before any marker arm runs, and `check_known_resume_defects` -- selecting on
+    `status == "present"` -- reads INDETERMINATE as ABSENT and returns an affirmative
+    clean bill.
+
+    The ghost-ring row is again the one worth pinning, and for the identical reason: the
+    two natural probes (`merge-base --is-ancestor 5d2ad1e8 01e95a7` -> rc 1,
+    `ls-tree 01e95a7 -- src/ghost_ring.h` -> 0 entries) both say PRESENT. The verdict rests
+    on descent from ORNL's `a38338b0`, re-measured rc 0 rather than inherited from the
+    parent tip's row.
+    """
+    from hhemt.model_defects import REGISTRY, resolve
+
+    verdicts = {d.defect_id: resolve(d, _SHA_WP1C_TIP) for d in REGISTRY}
+    assert verdicts, "registry is empty"
+    for did, v in verdicts.items():
+        assert v.status == "absent", f"{did} resolved {v.status} ({v.detail}) at the WP-1C branch tip"
+        assert v.rule == "known_absent_set", (did, v)
+    assert "TRITON-RESUME-EXTBC-GHOST-RING" in verdicts
+
+
+def test_registering_a_tip_extends_the_sets_rather_than_widening_the_predicate():
+    """The paired guard: the fix must ADD one sha, not soften the rule.
+
+    Two ways to make the assertion above green are indistinguishable from its own output --
+    listing `01e95a76` explicitly (correct), or relaxing `resolve` so an unresolvable
+    ancestry stops reporting INDETERMINATE (catastrophic: it would certify every future
+    unregistered build as clean). This arm separates them by asserting on an input the fix
+    must NOT have touched.
+
+    The pre-fix sha arm is the mirror: a registry edit that accidentally reached the
+    `also_present_in` sets would turn a build that genuinely carries all three defects into
+    a clean bill, which is the failure direction with real data behind it.
+    """
+    from hhemt.model_defects import REGISTRY, resolve
+
+    for d in REGISTRY:
+        v = resolve(d, _SHA_UNREGISTERED)
+        assert v.status == "indeterminate", (d.defect_id, v)
+        assert v.rule == "ancestry_unresolvable", (d.defect_id, v)
+
+    for d in REGISTRY:
+        v = resolve(d, _SHA_PRE_REPLAY)
+        assert v.status == "present", (d.defect_id, v)

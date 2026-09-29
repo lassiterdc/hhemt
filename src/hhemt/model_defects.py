@@ -254,6 +254,41 @@ SHA_PRE_DEPTH_SCATTER = "b3820a448f304b3f732f4b6fac5564adf86ac333"
 #: falsify a38338b0 (see its constant's comment) falsifies this one.
 SHA_SOLVER_WORK_REPLAY_PRECISION = "658a7a37032a95842e1662fe330190da24ffd4e8"
 
+#: The SAME branch, ADVANCED: `solver-work/replay-precision-accounting` tip after WP-1C landed
+#: `feat: preserve and append the SWMM output series across a resume`. It is a DESCENDANT of the
+#: constant above and its ONLY descendant as of this writing (`git log --oneline 658a7a37..01e95a7`
+#: -> one commit), so it is registered for the ordinary reason a moved tip must be: the read path
+#: has no clone, `resolve` falls through to `ancestry_unresolvable`, and an unregistered tip
+#: re-opens BOTH consequences the constant above was added to close.
+#:
+#: MEASURED, not inherited. A descendant does NOT automatically carry an ancestor's verdict here
+#: -- explicit sets outrank ancestry precisely because a set is the only form that can express a
+#: REVERT (module docstring) -- so every probe was re-run rather than argued from the parent's
+#: row. Measured 2026-09-28 against a fork clone (`HHEMT_TRITON_CLONE`), HEAD = 01e95a7:
+#:
+#:   * `merge-base --is-ancestor 658a7a37 01e95a7` -> rc 0   (the parent tip: ancestor)
+#:   * `merge-base --is-ancestor 3a832f7d 01e95a7` -> rc 0   (coupled-resume fix: ancestor)
+#:   * `merge-base --is-ancestor 9db367dd 01e95a7` -> rc 0   (depth-scatter fix: ancestor)
+#:   * `merge-base --is-ancestor 5d2ad1e8 01e95a7` -> rc 1   (ghost-ring fix: NOT an ancestor)
+#:   * `git ls-tree 01e95a7 -- src/ghost_ring.h`   -> 0 entries (control needle src/triton.h -> 1)
+#:
+#: The last two are the SAME two-probe trap the parent's comment documents, and they mislead here
+#: for the same reason: they ask the fork's question of an ORNL-descended tree. The deciding
+#: commands agree with the parent's, value for value:
+#:
+#:   * `merge-base --is-ancestor 0cf5faff 01e95a7` -> rc 0  (ORNL's ghost-ring fix commit)
+#:   * `merge-base --is-ancestor a38338b0 01e95a7` -> rc 0  (the sha already in the sets below)
+#:   * `git grep -c "write_output_ghost_ring\|read_output_ghost_ring" 01e95a7 -- src/output.h
+#:      src/triton.h` -> output.h 5, triton.h 1 (identical to the parent's counts).
+#:
+#: And the delta itself touches no ghost-ring path: `git diff --name-only 658a7a37 01e95a7` lists
+#: `src/swmm_triton.h`, `src/triton.h`, three `external/swmm/src/solver/` files and six `test/`
+#: files -- no `src/output.h`, so the symbol counts above could not have moved.
+#:
+#: Evidentiary strength is the parent's, no stronger: this sha inherits a38338b0's absence verdict
+#: by ordinary cached ancestry, and whatever falsifies a38338b0 falsifies this one too.
+SHA_WP1C_SWMM_OUTPUT_APPEND = "01e95a76ba4b7015d13b20423eb0e72ec1fb495c"
+
 REGISTRY: tuple[ModelDefect, ...] = (
     ModelDefect(
         defect_id="TRITON-COUPLED-RESUME-REPLAY",
@@ -270,6 +305,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_ORNL_GHOST_RING_AND_GPU,
                 # 3a832f7d is an ANCESTOR of 658a7a37 -- measured rc 0, same ordinary basis.
                 SHA_SOLVER_WORK_REPLAY_PRECISION,
+                # 3a832f7d is an ANCESTOR of 01e95a76 -- re-measured rc 0, not inherited.
+                SHA_WP1C_SWMM_OUTPUT_APPEND,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -289,6 +326,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_ORNL_GHOST_RING_AND_GPU,
                 # 9db367dd is an ANCESTOR of 658a7a37 -- measured rc 0; it is that branch's base.
                 SHA_SOLVER_WORK_REPLAY_PRECISION,
+                # 9db367dd is an ANCESTOR of 01e95a76 -- re-measured rc 0, not inherited.
+                SHA_WP1C_SWMM_OUTPUT_APPEND,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}),
@@ -311,6 +350,11 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_GHOST_RING_AND_GPU,
                 SHA_ORNL_GHOST_RING_AND_GPU,
                 SHA_SOLVER_WORK_REPLAY_PRECISION,
+                # 01e95a76 descends from a38338b0 (re-measured rc 0) and its delta from 658a7a37
+                # touches no ghost-ring path, so it inherits the SAME upstream-implementation
+                # verdict on the SAME basis -- and it is listed explicitly because the read path
+                # has no clone to derive that from.
+                SHA_WP1C_SWMM_OUTPUT_APPEND,
             }
         ),
         also_present_in=frozenset(
