@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from rocrate.model.contextentity import ContextEntity
 from rocrate.rocrate import ROCrate
 
-from hhemt.cf_conventions import _CF_VARIABLE_MAP
+from hhemt.cf_conventions import _CF_PERFORMANCE_VARIABLES, _CF_VARIABLE_MAP
 
 if TYPE_CHECKING:  # type-only edge — no runtime metadata->config coupling / import cycle
     from hhemt.config.invalidating_fixes import InvalidatingFix
@@ -278,10 +278,15 @@ def build_analysis_crate(
     # measured 2026-07-21 on a real sensitivity crate, 18 advertised / 11 absent from the
     # zarr. Passing emitted_vars=None preserves the legacy whole-map behavior for callers
     # that cannot see the dataset; every in-tree caller passes the real set.
+    # The union is scoped to the GATED branch only. Advertising performance names on
+    # the emitted_vars=None path would re-open the 2026-07-21 over-claim defect, since
+    # variableMeasured is a claim about the DEPOSITED store and a non-performance store
+    # contains none of the thirteen.
+    _advertisable = {**_CF_VARIABLE_MAP, **_CF_PERFORMANCE_VARIABLES}
     _advertised = (
         _CF_VARIABLE_MAP.items()
         if emitted_vars is None
-        else [(v, a) for v, a in _CF_VARIABLE_MAP.items() if v in emitted_vars]
+        else [(v, a) for v, a in _advertisable.items() if v in emitted_vars]
     )
     var_refs = []  # CF crosswalk -> variableMeasured PropertyValues
     for var, attrs in _advertised:

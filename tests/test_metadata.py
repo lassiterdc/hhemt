@@ -185,3 +185,64 @@ def test_variable_measured_advertises_only_emitted_variables():
     assert absent, "fixture precondition: the map must carry a variable outside `real`"
     for var in absent:
         assert var not in gated, f"{var!r} is absent from the deposited store but is advertised as present"
+
+
+def test_performance_names_reach_variable_measured_on_the_gated_path_only():
+    """The performance CF map is advertisable on the GATED path and on that path ONLY.
+
+    `_CF_PERFORMANCE_VARIABLES` is mode-scoped in `cf_conventions` precisely because its
+    keys (`Total`, `MPI`, `IO`, `Other`) are generic enough to name a different quantity
+    under another mode, so it is deliberately NOT merged into `_CF_VARIABLE_MAP`. The
+    consequence before this guard was that none of the thirteen could ever reach
+    `variableMeasured`, however plainly the deposited store contained them.
+
+    The union is scoped to the gated branch because `variableMeasured` is a claim about
+    the DEPOSITED store: on the `emitted_vars is None` path there is no store to consult,
+    and advertising thirteen performance names there would re-open the 2026-07-21
+    over-claim defect the sibling test above guards. Both halves are asserted here —
+    the gated path MUST carry them, the legacy path MUST NOT — because a union written
+    at the shared expression satisfies the first and silently breaks the second.
+    """
+    from hhemt.cf_conventions import _CF_PERFORMANCE_VARIABLES, _CF_VARIABLE_MAP
+
+    assert not (set(_CF_PERFORMANCE_VARIABLES) & set(_CF_VARIABLE_MAP)), (
+        "fixture precondition: the two maps must be disjoint, so the union shadows no entry"
+    )
+
+    # Gated path, a store holding ONLY performance columns: every one is advertised.
+    perf_only = _advertised_var_names(_build(emitted_vars=set(_CF_PERFORMANCE_VARIABLES)))
+    assert perf_only == set(_CF_PERFORMANCE_VARIABLES), (
+        f"gated path must advertise every emitted performance column; got {sorted(perf_only)}"
+    )
+
+    # Gated path, a mixed store: the advertisement is the union restricted to the store.
+    both = set(_CF_VARIABLE_MAP) | set(_CF_PERFORMANCE_VARIABLES)
+    assert _advertised_var_names(_build(emitted_vars=both)) == both
+
+    # Legacy path: unchanged, and a performance name must NOT appear on it.
+    legacy = _advertised_var_names(_build())
+    assert legacy == set(_CF_VARIABLE_MAP), f"emitted_vars=None must stay at the CF variable map; got {sorted(legacy)}"
+    assert not (legacy & set(_CF_PERFORMANCE_VARIABLES)), (
+        "a performance name reached the legacy whole-map path — the union was written at "
+        "the SHARED expression rather than in the gated branch"
+    )
+
+
+def test_advertised_performance_names_have_no_provenance_descriptor_yet():
+    """Pins the INTERIM state this commit creates, so the pair's second half is visible.
+
+    The advertisement union lands ahead of its `_QUANTITY_PROVENANCE_BY_MODE` overlay,
+    so in the interim the thirteen performance names are advertised with no descriptor
+    and the report's data-dictionary renders an em-dash in its three provenance columns.
+    The data-dictionary paragraph states exactly that; this test is what makes the
+    paragraph falsifiable, and it is the test that must be UPDATED — not deleted — when
+    the overlay lands.
+    """
+    from hhemt.cf_conventions import _CF_PERFORMANCE_VARIABLES, quantity_provenance
+
+    described = sorted(v for v in _CF_PERFORMANCE_VARIABLES if quantity_provenance(v))
+    assert described == [], (
+        f"{described} now carry a provenance descriptor. The overlay has landed: update "
+        "the data-dictionary paragraph in report_renderers/metadata.py, which still tells "
+        "the reader these columns render an em-dash."
+    )

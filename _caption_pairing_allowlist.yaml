@@ -405,7 +405,34 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 148af25817c017760dc4b61cac3115535d503d1c89c7a50b313b929cb33446f7
+    renderer_sha256: 87d3c0fda726bf041314d4db27e9d5f8c6738f77d8c66b1d4d58828a6b0f595a
+    justification_2026_09_29: >-
+      WP-3C chunk 1 (the advertisement half). Caption RE-READ IN FULL against the diff.
+      The change is ONE hunk in this renderer: the data-dictionary paragraph inside
+      `_provenance_outputs`. It rewrites two false sentences -- one pre-existing, one
+      newly falsified by the sibling `metadata.py` edit -- and makes the paragraph true
+      of the interim window before the `_QUANTITY_PROVENANCE_BY_MODE` overlay lands.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than reconstruct it. The caption describes three DISPLAYED sections plus a
+      Sources block. (1) Only the Provenance-summary bullet reaches this hunk at all, via
+      "the consolidated outputs with their CF variable dictionary". That phrase names the
+      dictionary's PRESENCE, not its membership, its descriptor coverage, or its
+      `cell_methods`; the sibling edit widens membership on the gated path (13 performance
+      names now reach `variableMeasured`) and the paragraph edit corrects claims about
+      coverage, so each is a property the caption declines to assert. (2) Data availability
+      and the Reproduction guide are byte-untouched -- the hunk is confined to one
+      `parts.append` of a `<p class='note'>` string. (3) `source_paths` is unchanged, so
+      the interpolated `source_paths_rst` block renders identically and the caption's
+      Sources promise still holds.
+      THE ONE THING A REVIEWER SHOULD PROBE, named rather than left implicit: the page now
+      tells the reader that thirteen advertised columns render an em-dash in the three
+      provenance columns and stamp no `cell_methods`. That is an INTERIM statement, true at
+      this commit and false once the overlay and WP-3B land, and it is deliberately pinned
+      by `tests/test_metadata.py::test_advertised_performance_names_have_no_provenance_descriptor_yet`,
+      whose failure message instructs the next builder to update this paragraph. The caption
+      makes no claim about descriptor coverage, so it needs no interim qualifier of its own.
+      This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
+      after the edit, so the exemption expires on the next change to this renderer.
     justification_2026_09_21: >-
       Grouped bundle-emit commit (INEF-4's 27 specs + EMIT-1's 5). Caption RE-READ IN FULL
       against the diff, and its scope is DISJOINT from the change. The change is two hunks.

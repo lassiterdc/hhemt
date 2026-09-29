@@ -1238,15 +1238,18 @@ def _provenance_outputs(
         )
     if var_rows:
         parts.append(
-            "<p class='note'><strong>Data dictionary.</strong> One row per variable in the "
-            "consolidated store. <em>Spatial representation</em> is the geometry each value "
+            "<p class='note'><strong>Data dictionary.</strong> One row per variable this "
+            "crate advertises. <em>Spatial representation</em> is the geometry each value "
             "describes (grid cell, point/node, line/conduit, or a whole-domain scalar); "
             "<em>Source variables</em> are the raw model outputs the value was computed from; "
-            "<em>Operation</em> is the computation applied to them. These three are derived "
-            "from the toolkit's own quantity-provenance table rather than restated by hand, so "
-            "they cannot drift from the variable set without failing a test. The CF "
-            "<code>cell_methods</code> string remains stamped on the data itself, where a "
-            "CF-aware reader will find it.</p>"
+            "<em>Operation</em> is the computation applied to them. These three are read from "
+            "the toolkit's own quantity-provenance table rather than restated by hand. That "
+            "table's drift guard compares the table against the CF variable map only, so a "
+            "variable advertised from outside that map — today, the thirteen performance "
+            "columns — carries no descriptor and renders an em-dash in all three. The CF "
+            "<code>cell_methods</code> string, where one is declared, remains stamped on the "
+            "data itself; the performance variables declare none, so for those rows there is "
+            "no <code>cell_methods</code> for a CF-aware reader to find.</p>"
         )
         parts.append(
             _grid_table(
