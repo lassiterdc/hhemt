@@ -289,6 +289,21 @@ SHA_SOLVER_WORK_REPLAY_PRECISION = "658a7a37032a95842e1662fe330190da24ffd4e8"
 #: by ordinary cached ancestry, and whatever falsifies a38338b0 falsifies this one too.
 SHA_WP1C_SWMM_OUTPUT_APPEND = "01e95a76ba4b7015d13b20423eb0e72ec1fb495c"
 
+#: The SAME branch, ADVANCED AGAIN: `solver-work/replay-precision-accounting` tip after the WP-1C
+#: linkage repair `fix: give output_end C linkage at its C++ call site` (fea07ee) and its
+#: characterization test. It is registered for the SAME ordinary reason the constant above was:
+#: the read path has no clone, `resolve` falls through to `ancestry_unresolvable`, and an
+#: UNREGISTERED TIP RE-OPENS BOTH CONSEQUENCES. It is the pin the synthetic tier builds as of the
+#: 2026-09-29 repin of `tests/fixtures/_triton_source_cache.py::TRITON_PIN`, which is what made
+#: registering it owed -- 01e95a76 alone does NOT LINK without fea07ee, so the tier cannot pin there.
+#: Re-measured against THIS sha rather than inherited (each `merge-base --is-ancestor X e53c2fa`):
+#:   * a38338b0 -> rc 0    * 0cf5faff -> rc 0    * 3a832f7d -> rc 0    * 9db367dd -> rc 0
+#: Submodule gitlinks are UNCHANGED across the move (`git ls-tree {pin} external/kokkos
+#: external/yaml-cpp` -> dc1bf738 and a83cd315 at BOTH 658a7a37 and e53c2fa, measured), so the
+#: borrow's `submodule.alternateLocation=superproject` path needs no submodule-side network work.
+#: Evidentiary strength is the parent's, no stronger: whatever falsifies a38338b0 falsifies this.
+SHA_WP1C_LINKAGE_REPAIR_AND_TEST = "e53c2fa01a64583fb57bc58082245fd687882b8f"
+
 REGISTRY: tuple[ModelDefect, ...] = (
     ModelDefect(
         defect_id="TRITON-COUPLED-RESUME-REPLAY",
@@ -307,6 +322,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_SOLVER_WORK_REPLAY_PRECISION,
                 # 3a832f7d is an ANCESTOR of 01e95a76 -- re-measured rc 0, not inherited.
                 SHA_WP1C_SWMM_OUTPUT_APPEND,
+                # e53c2fa descends from 01e95a76; re-measured rc 0 against this sha, not inherited.
+                SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -328,6 +345,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_SOLVER_WORK_REPLAY_PRECISION,
                 # 9db367dd is an ANCESTOR of 01e95a76 -- re-measured rc 0, not inherited.
                 SHA_WP1C_SWMM_OUTPUT_APPEND,
+                # e53c2fa descends from 01e95a76; re-measured rc 0 against this sha, not inherited.
+                SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}),
@@ -355,6 +374,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # verdict on the SAME basis -- and it is listed explicitly because the read path
                 # has no clone to derive that from.
                 SHA_WP1C_SWMM_OUTPUT_APPEND,
+                # e53c2fa descends from 01e95a76; re-measured rc 0 against this sha, not inherited.
+                SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
             }
         ),
         also_present_in=frozenset(

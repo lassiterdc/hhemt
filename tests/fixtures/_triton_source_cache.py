@@ -83,9 +83,28 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: `git ls-tree {pin} external/kokkos external/yaml-cpp` returns dc1bf738 and a83cd315 at BOTH
 #: a38338b0 and 658a7a37 (measured). A move that changed either would need the canonical's
 #: submodule stores refreshed before any borrow could resolve the new gitlink.
-#: `hhemt.model_defects` ALREADY registers this sha as SHA_SOLVER_WORK_REPLAY_PRECISION and
-#: resolves ALL THREE registry defects ABSENT at it, so this repin owes the registry no new
-#: entry. Two natural probes classify its ghost-ring row WRONG — `is-ancestor 5d2ad1e8` -> rc 1
+#: SUPERSEDED 2026-09-29 BY THE MOVE TO e53c2fa, AND THE SENTENCE THIS REPLACES IS NOW FALSE.
+#: It read: `hhemt.model_defects` ALREADY registers this sha ... so this repin owes the
+#: registry no new entry. That was TRUE of the move TO 658a7a37 and is FALSE of the move to
+#: e53c2fa, which was NOT registered. A per-sha registry keyed on a moving branch tip lapses
+#: on EVERY solver commit, and the lapse is NON-FAILING in both consumers -- one returns
+#: applicable=False and the other an affirmative PASS -- so a lapsed registry and a genuinely
+#: clean build are INDISTINGUISHABLE at the exit code. The move therefore DID owe an entry,
+#: and `model_defects.SHA_WP1C_LINKAGE_REPAIR_AND_TEST` is it, carrying re-measured ancestry
+#: for all four fix commits. THE RULE, so the next mover does not re-derive it: MOVING THIS
+#: PIN OWES model_defects A REGISTERED CONSTANT FOR THE NEW SHA, every time.
+#: Why the tier cannot pin at 01e95a76 (WP-1C itself), which IS registered: 01e95a76 does not
+#: LINK without fea07ee, so the buildable tip is e53c2fa.
+#: Measured 2026-09-29 against the INCOMING pin, not inherited:
+#:   * `git merge-base --is-ancestor a38338b0 e53c2fa` -> rc 0
+#:   * `git merge-base --is-ancestor 0cf5faff e53c2fa` -> rc 0
+#:   * `git merge-base --is-ancestor 3a832f7d e53c2fa` -> rc 0
+#:   * `git merge-base --is-ancestor 9db367dd e53c2fa` -> rc 0
+#:   * `git merge-base --is-ancestor 658a7a37 e53c2fa` -> rc 0 (forward-only; adds exactly
+#:     01e95a7, fea07ee, e53c2fa)
+#:   * `git ls-tree {pin} external/kokkos external/yaml-cpp` -> dc1bf738 a83cd315 at BOTH
+#: The prior entry's caveat still applies: two natural probes classify its ghost-ring row
+#: WRONG — `is-ancestor 5d2ad1e8` -> rc 1
 #: and `ls-tree src/ghost_ring.h` -> 0 entries — because both ask the FORK's question of an
 #: ORNL-descended tree. See that constant's comment for the deciding commands.
 #: THIS CONSTANT AND `test_case_builder.py`'s config write MUST MOVE TOGETHER: a
@@ -93,7 +112,7 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: synth construction (`system.py::_verify_tritonswmm_pin`). `test_case_builder.py:41-42`
 #: IMPORTS both constants rather than restating them, so that coupling is satisfied by
 #: construction and this is ONE edit, not two.
-TRITON_PIN = "658a7a37032a95842e1662fe330190da24ffd4e8"
+TRITON_PIN = "e53c2fa01a64583fb57bc58082245fd687882b8f"
 
 #: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
 #: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.
