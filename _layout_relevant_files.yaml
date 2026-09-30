@@ -2372,3 +2372,45 @@ non_breaking_allowlist:
       EXPIRY CONDITION: covers this docstring-text correction only. Any change to a method
       SIGNATURE, a parameter NAME, a log field, an emitted path, or the on-disk shape this
       class writes is NOT this class and must bump LAYOUT_VERSION.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: c31b7406a443832d20d964c8015a3bb1a624481f776e53a9b96a7c1ddd635563
+    justification: >-
+      SEQUENCING ONLY, AND THIS ROW IS NOT THE NON-BREAKING CLASS THE SIXTEEN ROWS ABOVE IT
+      ARE. Read that first, because every prior row for this path asserts "nothing on disk
+      moves" and this one CANNOT: WP-3A adds the rank-COHERENT and `min` families plus
+      `coherent_rank` and `n_ranks` to the performance summary, so the on-disk artifact SHAPE
+      changes and a LAYOUT_VERSION bump IS owed. The bump is not omitted -- it is WP-3E, a
+      23 -> 24 no-op V0024 stamp migration plus v24/ fixtures as `cp -r v23/`, and it lands
+      LAST by developer ruling because one bump covers WP-3A, WP-3B and WP-3C's provenance
+      half in a single stamp. Check B is wired at pre-commit as `check-b HEAD`, so a
+      layout-relevant edit committed AHEAD of its bump is refused at commit time; this row is
+      what lets the covered edits land in their own commits first. It is a scheduling device
+      with an expiry, never a claim that no migration is owed.
+      WHY THE CHANGE IS NEVERTHELESS SAFE TO LAND AHEAD OF THE STAMP. It is additive on
+      NEWLY-PRODUCED artifacts only. No existing name is renamed, relocated, retyped or
+      revalued -- `tests/test_perf_rank_coherent_family.py::test_no_published_variable_name_
+      or_value_moves` pins every pre-existing variable to the value the verbatim pre-change
+      reduction produces, and `Total_coherent` equals `Total` identically rather than
+      approximately. Every one of the summary's consumers is NAME-keyed rather than an
+      enumeration of `ds.data_vars` (`analysis.PERF_VARS` is a hardcoded list read through the
+      guarded `_perf_row_from_dataset`), so an artifact that predates this change is read
+      exactly as before and the new names are simply not reached. Nothing on disk needs
+      transforming, which is precisely the condition V0011 / V0016 / V0023 were written for
+      and is why V0024's body is a no-op rather than a backfill.
+      WHY IT CANNOT WAIT FOR THE STAMP. The coherent family is a re-reduction of the per-rank
+      `*_perf_tseries` store, which is absent from the consolidated tier entirely and is
+      deletable at the per-scenario tier by configured policy -- `remove_after_processing`
+      names "timeseries" as the class that drops it, and "all" selects it too. Every member
+      processed before this lands whose timeseries is later reclaimed is permanently
+      unbackfillable, which is the one cost in this design that is UNRECOVERABLE rather than
+      merely deferred.
+      CHANGE-SCOPED via layout_signature, and APPENDED rather than edited in place so the
+      prior rows' ground stays readable. The signature was derived from the file's post-edit
+      content by two independent implementations that agreed; a row omitting the field would
+      have INHERITED the stale signature and kept failing.
+      EXPIRY CONDITION, and it differs from every row above. This row covers the WP-3A
+      reduction edit at exactly this content and nothing else. It is superseded the moment
+      WP-3E stamps LAYOUT_VERSION 24; WP-3E should annotate it as spent rather than leave a
+      reader to infer that this path's shape changes are a non-breaking class. Any FURTHER
+      change to this file's emitted variable set, dtypes, coordinates, paths or log fields is
+      NOT this class and must ride its own bump.

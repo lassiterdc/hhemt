@@ -945,7 +945,73 @@ class TRITONSWMM_sim_post_processing:
         # A WHOLLY-ABSENT COLUMN STAYS DISTINGUISHABLE and is not touched by this: it has no
         # entry in `ds` at all, so it is absent from the summary rather than NaN in it. The
         # two cases must not collapse into one another, and under this form they do not.
-        ds = ds.sum(dim="timestep_min", skipna=False).max(dim="Rank")
+        _summed = ds.sum(dim="timestep_min", skipna=False)
+        ds = _summed.max(dim="Rank")
+
+        # THE RANK-COHERENT AND MIN FAMILIES, plus the two scalars that name the selection.
+        # DUPLICATED, DELIBERATELY, in the module-level `_aggregate_perf_summary` -- see the
+        # note at that site for why the two are not one call. The full rationale lives HERE
+        # and is not restated there, so the two cannot drift as prose.
+        #
+        # WHAT THEY REPAIR. `max` is applied PER VARIABLE, so a sum of per-column maxima is
+        # not the cost of ANY single rank. Measured over the 52-store non-fixture corpus, the
+        # published children overshoot their own `Simulation` parent by 17.17 % to 40.80 % of
+        # `Total`, because no one rank attains the maximum of every child. The coherent family
+        # reads every column at the ONE rank that attains `max(Total)`, so on that row the
+        # children close the level. The published names are untouched and NO PUBLISHED FIGURE
+        # MOVES: `Total` at `argmax(Total)` IS `max(Total)` identically, not approximately, and
+        # measured on the 40.80 % member both read 3.521. `min` is the cheapest sufficient
+        # dispersion statistic -- with `max` and `min` present the imbalance ratio, the spread
+        # and a bound on the coherent value are all derivable, whereas a `mean(Rank)` would
+        # answer none of those and would re-admit the quantity V0008 exists to have removed.
+        #
+        # WHY THESE ARE STORED AND NOT COMPUTED ON READ. They are a re-reduction of the
+        # per-rank `*_perf_tseries` store, which is absent from the consolidated tier entirely
+        # and is deletable at the per-scenario tier by configured policy -- `remove_after_
+        # processing` names "timeseries" as the class that drops it, and "all" selects it too.
+        # That reclaim fires only AFTER this summary is verified present, so writing the family
+        # here is the last moment at which it is recoverable at all.
+        #
+        # WHY THE SELECTOR STAYS AT THE DEFAULT `skipna`, which is the opposite of the
+        # symmetric-LOOKING form. The `skipna=False` above is on the TIME SUM, not on the rank
+        # reduction, and the block above argues that asymmetry. Forcing `skipna=False` onto this
+        # selector is MEASURED WRONG: on a partial-NaN rank axis it returns the index of a NaN
+        # rank (measured 1 against a correct 2), which would read the WHOLE coherent row at a
+        # rank the selector did not choose and publish it as coherent. The default is what makes
+        # this selector symmetric with the `max` it sits beside.
+        #
+        # WHY THE ALL-NaN CASE IS GUARDED RATHER THAN LEFT TO RAISE. `argmax` raises
+        # `ValueError: All-NaN slice encountered` exactly where the sibling `max` degrades to
+        # NaN, so an unguarded selector would convert an architecturally-permitted input -- a
+        # genuinely short COLUMN, NaN at every rank, which the block above measures as real --
+        # into a hard failure in a production export path. `_selectable` is False only in that
+        # case; masking on it degrades the whole family to the same graceful NaN `max` produces,
+        # and it also discards the arbitrary rank `fillna` picks, so no column is ever read at a
+        # rank that was not chosen. `coherent_rank` is float rather than integer precisely so
+        # that degradation is representable: a NaN there says "no rank was selectable", where an
+        # integer sentinel would assert a selection that did not happen.
+        #
+        # WHY THE SELECTION IS A MASK-AND-REDUCE RATHER THAN `isel(Rank=...)`. Vectorized `isel`
+        # with a lazy indexer raises `IndexError: vindex does not support indexing with dask
+        # objects` on the zarr-backed input THIS site receives, while the numpy-backed input the
+        # module-level sibling receives accepts it -- so `isel` would work at one of the two
+        # duplicated sites and fail at the other, which is exactly the drift the duplication
+        # already risks. The mask form is identical on both and stays lazy.
+        #
+        # THE ANCHOR GUARD. `Total` is the selector's anchor, so with it absent there is no
+        # coherent rank to name. The family is then SKIPPED, not faked -- the same "absence is
+        # absence, never zero" convention the paragraph above states for a wholly-absent column.
+        if "Total" in _summed.data_vars:
+            _rank_pos = xr.DataArray(np.arange(_summed.sizes["Rank"]), dims="Rank")
+            _selectable = _summed["Total"].notnull().any(dim="Rank")
+            _chosen = _rank_pos == _summed["Total"].fillna(-np.inf).argmax(dim="Rank")
+            _coherent = _summed.where(_chosen).max(dim="Rank")
+            for _name in _summed.data_vars:
+                ds[f"{_name}_coherent"] = _coherent[_name].where(_selectable)
+                ds[f"{_name}_min"] = _summed[_name].min(dim="Rank")
+            ds["coherent_rank"] = _summed["Rank"].where(_chosen).max(dim="Rank").where(_selectable)
+            ds["n_ranks"] = xr.full_like(_selectable, _summed.sizes["Rank"], dtype="int64")
+
         ds.attrs["units"] = "seconds"
         ds.attrs["notes"] = (
             "Per-column slowest-rank cumulative cost. 'Total' / 'Simulation' / 'Init' "
@@ -964,7 +1030,18 @@ class TRITONSWMM_sim_post_processing:
             "'SWMM_OTHER', which close the level exactly on each emitted PER-RANK "
             "row; that identity does NOT survive this reduction, because max() is "
             "applied PER VARIABLE and each column's max may come from a different "
-            "rank. 'SWMM_MPI' is the coupling's gather/scatter and is part of "
+            "rank. That is what the rank-COHERENT family beside these columns is for: "
+            "every '<Col>_coherent' is that column read at the SINGLE rank attaining "
+            "max(Total), named on 'coherent_rank', so on that one row the children DO "
+            "close their level. 'Total_coherent' equals 'Total' identically rather than "
+            "approximately, so no figure keyed on the published names moves. '<Col>_min' "
+            "is the same column's minimum over ranks, which with the max present makes the "
+            "imbalance ratio and the spread derivable. 'n_ranks' is the LENGTH of this "
+            "member's rank axis, which for a member whose allocations ran different rank "
+            "counts is the UNION across them and therefore exceeds any single allocation's "
+            "count. A 'coherent_rank' of NaN means no rank was selectable because Total was "
+            "short at every rank, and the whole coherent family is NaN with it. "
+            "'SWMM_MPI' is the coupling's gather/scatter and is part of "
             "'SWMM', NOT part of the top-level 'MPI' column, which times TRITON's "
             "own halo exchange; the two are siblings at different levels and must "
             "not be summed. 'SWMM_STEP' is nonzero on rank 0 only (its bracket sits "
@@ -2951,7 +3028,31 @@ def _aggregate_perf_summary(
     # a tree those migrations exist to repair. The full rationale for the asymmetry between
     # the two reductions is at the inline site; it is not restated here so the two cannot
     # drift as prose.
-    return ds.sum(dim="timestep_min", skipna=False).max(dim="Rank")
+    _summed = ds.sum(dim="timestep_min", skipna=False)
+    _out = _summed.max(dim="Rank")
+
+    # THE RANK-COHERENT AND MIN FAMILIES, DUPLICATED FROM `_export_performance_summary` FOR
+    # THE SAME REASON THE REDUCTION ABOVE IS. The full rationale -- why the selector stays at
+    # the default `skipna`, why the all-NaN case is guarded rather than left to raise, why the
+    # selection is a mask-and-reduce rather than `isel`, and why `coherent_rank` is float -- is
+    # stated ONCE at the inline site and is deliberately not restated here, so the two cannot
+    # drift as prose. What they MUST not drift as is CODE: the block below is byte-identical to
+    # the inline one modulo indentation and the target name, and
+    # `tests/test_perf_rank_coherent_family.py::test_both_reduction_sites_agree_on_one_input`
+    # drives both sites over one input and asserts identical output, so a one-sided edit is a
+    # red test rather than an invisible divergence.
+    if "Total" in _summed.data_vars:
+        _rank_pos = xr.DataArray(np.arange(_summed.sizes["Rank"]), dims="Rank")
+        _selectable = _summed["Total"].notnull().any(dim="Rank")
+        _chosen = _rank_pos == _summed["Total"].fillna(-np.inf).argmax(dim="Rank")
+        _coherent = _summed.where(_chosen).max(dim="Rank")
+        for _name in _summed.data_vars:
+            _out[f"{_name}_coherent"] = _coherent[_name].where(_selectable)
+            _out[f"{_name}_min"] = _summed[_name].min(dim="Rank")
+        _out["coherent_rank"] = _summed["Rank"].where(_chosen).max(dim="Rank").where(_selectable)
+        _out["n_ranks"] = xr.full_like(_selectable, _summed.sizes["Rank"], dtype="int64")
+
+    return _out
 
 
 def parse_performance_file(filepath):
