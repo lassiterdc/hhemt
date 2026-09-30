@@ -16,16 +16,26 @@ THE THREE NaN CLASSES ARE TESTED SEPARATELY AND THAT SEPARATION IS THE POINT. Th
 is ``argmax``, which RAISES where the sibling ``max`` degrades, and the two neighbouring
 wrong forms fail in opposite directions:
 
-    input class    selector form          result
-    no NaN         default (shipped)      the rank attaining max(Total)          correct
-    partial NaN    default (shipped)      the highest VALID rank                 correct
-    partial NaN    skipna=False           the NaN rank                           WRONG
-    all NaN        default, unguarded     ValueError: All-NaN slice encountered  WRONG
-    all NaN        default, guarded       NaN, matching the sibling max          correct
+    input class    selector form                          result
+    no NaN         default (shipped)                      the rank attaining max(Total)   ok
+    partial NaN    default (shipped)                      the highest VALID rank          ok
+    partial NaN    skipna=False, NO sentinel fill          the NaN rank                 WRONG
+    all NaN        default, sentinel fill but NO mask      ValueError: All-NaN slice    WRONG
+    all NaN        default, sentinel fill AND mask         NaN, matching sibling max       ok
 
-The two WRONG rows are pinned as controls in this file, not merely described: a guard that
-never fires and a selector whose default is never exercised are both satisfiable by a
-no-op, and only the controls separate the shipped form from them.
+The two WRONG rows are pinned as controls here, not merely described: a guard that never
+fires and a selector whose default is never exercised are both satisfiable by a no-op, and
+only the controls separate the shipped form from them.
+
+ONE MEASURED SUBTLETY, recorded so a later reader does not "tighten" the shipped form into a
+defect. The third row needs `skipna=False` AND the removal of the `-inf` sentinel fill,
+because the fill removes every NaN BEFORE the selector runs -- measured, on a rank axis
+[0.25, nan, 0.5] the filled array carries no NaN at all and both selector forms return index
+2, while the raw array returns 2 at the default and 1 under `skipna=False`. So in the shipped
+form the selector's `skipna` setting is INERT: the trap is structurally unreachable rather
+than merely avoided by a kwarg choice. Flipping that one kwarg alone therefore leaves this
+file green, and that is correct behaviour, not a gap. Removing the fill is what re-arms it,
+and the partial-NaN test above goes red on that combined edit -- verified.
 
 THE TWO-SITES TEST IS THE LOAD-BEARING ONE. The reduction is DUPLICATED at
 ``_export_performance_summary`` (inline, instance method) and ``_aggregate_perf_summary``
@@ -48,42 +58,32 @@ import xarray as xr
 _BASE_COLS = ("Compute", "MPI", "IO", "Resize", "SWMM", "Other", "Simulation", "Init", "Total")
 
 
-def _summed_over_ranks(total, compute):
-    """A time-summed per-rank frame in the shape both reduction sites receive.
+def _tseries_summing_to(total, compute, *, nan_ranks=()):
+    """A per-rank TIMESERIES whose time-sum lands the requested per-rank pattern.
 
-    Built directly rather than through ``_aggregate_perf_tseries`` because the NaN classes
-    below are properties of the RANK axis after the time sum, and routing them through the
-    file parser would make the fixture, not the reduction, decide which NaNs appear.
+    The reduction under test sums over ``timestep_min`` with ``skipna=False`` FIRST, so a
+    NaN class on the rank axis is produced by placing a NaN at one timestep of the ranks that
+    should go short -- which is exactly the shape ``deltas.to_xarray()`` produces when a
+    member's allocations ran different rank counts, or when a column is genuinely short.
+    Building the input at the TIMESERIES tier rather than post-sum is what lets these tests
+    drive the PRODUCTION reduction instead of a transcription of it.
     """
+    n_rank = len(total)
+    steps = 2
+    tot = np.empty((steps, n_rank), dtype=float)
+    com = np.empty((steps, n_rank), dtype=float)
+    for r in range(n_rank):
+        tot[:, r] = [total[r] * 0.25, total[r] * 0.75]
+        com[:, r] = [compute[r] * 0.25, compute[r] * 0.75]
+    for r in nan_ranks:
+        tot[0, r] = np.nan
     return xr.Dataset(
         {
-            "Total": (("Rank",), np.asarray(total, dtype=float)),
-            "Compute": (("Rank",), np.asarray(compute, dtype=float)),
+            "Total": (("timestep_min", "Rank"), tot),
+            "Compute": (("timestep_min", "Rank"), com),
         },
-        coords={"Rank": np.arange(len(total))},
+        coords={"timestep_min": np.arange(steps, dtype=float), "Rank": np.arange(n_rank)},
     )
-
-
-def _reduce_inline(summed):
-    """Apply the inline site's reduction to an ALREADY-time-summed frame.
-
-    The inline site consumes a timeseries and sums it first; these NaN-class fixtures are
-    already summed, so this helper feeds the rank half only. It is a transcription of the
-    shipped block and is NOT the equivalence check -- that is
-    ``test_both_reduction_sites_agree_on_one_input``, which calls the two production
-    functions themselves.
-    """
-    out = summed.max(dim="Rank")
-    rank_pos = xr.DataArray(np.arange(summed.sizes["Rank"]), dims="Rank")
-    selectable = summed["Total"].notnull().any(dim="Rank")
-    chosen = rank_pos == summed["Total"].fillna(-np.inf).argmax(dim="Rank")
-    coherent = summed.where(chosen).max(dim="Rank")
-    for name in summed.data_vars:
-        out[f"{name}_coherent"] = coherent[name].where(selectable)
-        out[f"{name}_min"] = summed[name].min(dim="Rank")
-    out["coherent_rank"] = summed["Rank"].where(chosen).max(dim="Rank").where(selectable)
-    out["n_ranks"] = xr.full_like(selectable, summed.sizes["Rank"], dtype="int64")
-    return out
 
 
 #: Per-rank, per-unit-timestep rates. Two properties are deliberate and the test is vacuous
@@ -130,40 +130,45 @@ def two_rank_perf_dir(tmp_path):
 # --------------------------------------------------------------------------------------
 
 
-def test_no_nan_reads_every_column_at_the_rank_attaining_max_total():
+def test_no_nan_reads_every_column_at_the_rank_attaining_max_total(tmp_path):
     """The coherent row is read at ONE rank, and it is not the per-column max row."""
-    out = _reduce_inline(_summed_over_ranks([1.0, 2.0, 1.5], [9.0, 5.0, 7.0]))
+    out = _run_inline_site(_tseries_summing_to([1.0, 2.0, 1.5], [9.0, 5.0, 7.0]), tmp_path)
 
     assert float(out["coherent_rank"]) == 1.0, "rank 1 attains max(Total)"
-    assert float(out["Total_coherent"]) == 2.0
-    assert float(out["Compute_coherent"]) == 5.0, (
+    assert float(out["Total_coherent"]) == pytest.approx(2.0)
+    assert float(out["Compute_coherent"]) == pytest.approx(5.0), (
         "Compute must be read at the COHERENT rank (5.0), not at its own argmax (9.0) -- "
-        "a coherent family that reported 9.0 here would be the defect under a new name"
+        "a coherent family reporting 9.0 here would be the defect under a new name"
     )
-    assert float(out["Compute"]) == 9.0, "the published max is untouched"
-    assert float(out["Compute_min"]) == 5.0
+    assert float(out["Compute"]) == pytest.approx(9.0), "the published max is untouched"
+    assert float(out["Compute_min"]) == pytest.approx(5.0)
     assert int(out["n_ranks"]) == 3
 
 
-def test_partial_nan_selects_the_highest_valid_rank_not_the_nan_rank():
+def test_partial_nan_selects_the_highest_valid_rank_not_the_nan_rank(tmp_path):
     """The default `skipna` is CORRECT for the partial-NaN class, and the control proves it."""
-    summed = _summed_over_ranks([1.0, np.nan, 2.0], [9.0, 5.0, 7.0])
-    out = _reduce_inline(summed)
+    ds = _tseries_summing_to([1.0, 3.0, 2.0], [9.0, 5.0, 7.0], nan_ranks=(1,))
+    out = _run_inline_site(ds, tmp_path)
 
+    summed = ds.sum(dim="timestep_min", skipna=False)
+    assert math.isnan(float(summed["Total"].isel(Rank=1))), (
+        "rank 1 must be the NaN rank AND the one that would have won on value (3.0 > 2.0), "
+        "or the two selector forms would agree and this test would not discriminate"
+    )
     assert float(out["coherent_rank"]) == 2.0, "rank 2 is the highest VALID Total"
-    assert float(out["Compute_coherent"]) == 7.0, "read at rank 2, the rank actually chosen"
+    assert float(out["Compute_coherent"]) == pytest.approx(7.0), "read at rank 2"
+    assert float(out["Total"]) == pytest.approx(2.0), "the sibling max skips the NaN rank too"
 
     # CONTROL -- the named trap. Forcing `skipna=False` onto the selector returns the NaN
     # rank, which would read the whole coherent row at a rank the selector did not choose.
     assert int(summed["Total"].argmax(dim="Rank", skipna=False)) == 1
     assert int(summed["Total"].argmax(dim="Rank")) == 2
-    assert math.isnan(float(summed["Total"].isel(Rank=1))), "rank 1 is the NaN rank"
 
 
-def test_all_nan_degrades_to_nan_exactly_as_the_sibling_max_does():
+def test_all_nan_degrades_to_nan_exactly_as_the_sibling_max_does(tmp_path):
     """The guard's whole job: degrade, do not raise."""
-    summed = _summed_over_ranks([np.nan, np.nan, np.nan], [9.0, 5.0, 7.0])
-    out = _reduce_inline(summed)
+    ds = _tseries_summing_to([1.0, 2.0, 1.5], [9.0, 5.0, 7.0], nan_ranks=(0, 1, 2))
+    out = _run_inline_site(ds, tmp_path)
 
     assert math.isnan(float(out["Total"])), "the sibling max degrades to NaN"
     assert math.isnan(float(out["Total_coherent"])), "and so must the coherent value"
@@ -177,7 +182,7 @@ def test_all_nan_degrades_to_nan_exactly_as_the_sibling_max_does():
 
     # CONTROL -- the guard is load-bearing, not decorative: unguarded, this input raises.
     with pytest.raises(ValueError, match="All-NaN slice"):
-        summed["Total"].argmax(dim="Rank")
+        ds.sum(dim="timestep_min", skipna=False)["Total"].argmax(dim="Rank")
 
 
 # --------------------------------------------------------------------------------------
