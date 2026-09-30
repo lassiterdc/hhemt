@@ -2414,3 +2414,112 @@ non_breaking_allowlist:
       reader to infer that this path's shape changes are a non-breaking class. Any FURTHER
       change to this file's emitted variable set, dtypes, coordinates, paths or log fields is
       NOT this class and must ride its own bump.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: bada3c4d99247bce33e1afa46d054140d581ee67f9867dd294b77e21f2564804
+    justification: >-
+      SEQUENCING ONLY, AND THIS ROW IS NOT THE NON-BREAKING CLASS THE PRIOR cf_conventions.py
+      ROWS ARE. Read those first, because each asserts that only descriptive strings move and
+      this one CANNOT: WP-3B stamps `cell_methods = "Rank: maximum"` onto the thirteen
+      performance-summary columns, and the stamp is only ADMISSIBLE because its sibling edit
+      retains `Rank` as a size-one DIMENSION on that artifact -- so the on-disk artifact SHAPE
+      changes and a LAYOUT_VERSION bump IS owed. Adding an attr alone would be the
+      non-breaking class; adding an attr whose validity depends on a retained axis is not.
+      The bump is not omitted -- it is WP-3E, a 23 -> 24 no-op V0024 stamp migration plus v24/
+      fixtures as `cp -r v23/`, and it lands LAST by developer ruling because one bump covers
+      WP-3A, WP-3B and WP-3C's provenance half in a single stamp. Check B is wired at
+      pre-commit as `check-b HEAD`, so a layout-relevant edit committed AHEAD of its bump is
+      refused at commit time; this row is what lets the covered edits land in their own
+      commits first. It is a scheduling device with an expiry, never a claim that no migration
+      is owed.
+      WHAT ACTUALLY CHANGES IN THIS FILE. The two performance mode keys are SPLIT. The
+      unsuffixed `tritonswmm_performance` / `triton_only_performance` keys now resolve to a
+      new `_CF_PERFORMANCE_SUMMARY_VARIABLES` dict carrying the reduction, and two NEW
+      write-path-only keys `*_performance_tseries` resolve to the existing
+      `_CF_PERFORMANCE_VARIABLES` dict, which is unchanged and still carries no
+      `cell_methods`. The summary dict is DERIVED from the series dict rather than copied, so
+      `standard_name` / `long_name` / `units` are physically incapable of drifting between the
+      two artifacts. No existing key is removed and no existing string is edited.
+      WHY THE STRING IS `Rank: maximum` AND NOT THE FULL `timestep_min: sum Rank: maximum`
+      THAT THIS FILE'S OWN HEADER COMMENT NAMED. CF-1.13 section 7.3 admits a cell_methods
+      name only if it is "a dimension of the variable, a scalar coordinate variable, a valid
+      standard name, or the word `area`". After the summary's `sum(dim="timestep_min")`,
+      `timestep_min` is none of those four -- measured: the sum drops both the dimension and
+      the coordinate, and `timestep_min` occurs ZERO times in the CF-1.13 document, so it is
+      not a standard name either. Naming it would have shipped the same inadmissible form that
+      decision 6.2 rejected for a scalar `Rank`. The time sum is documented on the channels
+      with grammar for it: the dataset-level `notes` attr and `_QUANTITY_PROVENANCE`.
+      WHY IT IS SAFE TO LAND AHEAD OF THE STAMP. It is additive on NEWLY-PRODUCED artifacts
+      only, and it adds an ATTR rather than a name or a value. An artifact that predates this
+      change carries no `cell_methods` on these columns and is read exactly as before --
+      `apply_cf_attributes` is called at read/consolidation time and stamps whatever it is
+      given, so nothing on disk needs transforming. That is precisely the condition V0011 /
+      V0016 / V0023 were written for and is why V0024's body is a no-op rather than a
+      backfill.
+      CHANGE-SCOPED via layout_signature, and APPENDED rather than edited in place so the
+      prior rows' ground stays readable. The signature was derived from the file's post-edit
+      content by two independent implementations that agreed; a row omitting the field would
+      have INHERITED the stale signature and kept failing.
+      EXPIRY CONDITION. This row covers the mode split and the summary `cell_methods` at
+      exactly this content and nothing else. It is superseded the moment WP-3E stamps
+      LAYOUT_VERSION 24; WP-3E should annotate it as spent rather than leave a reader to infer
+      that this path's shape-bearing changes are a non-breaking class. Any FURTHER change to a
+      mode key, to a `cell_methods` string, or to the axis a `cell_methods` string names is NOT
+      this class and must ride its own bump.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 40faaaf05777ae477470e35f876723b6a00877080d451ccc87982eaae8025602
+    justification: >-
+      SEQUENCING ONLY, AND THIS ROW IS NOT THE NON-BREAKING CLASS THE SEVENTEEN ROWS ABOVE IT
+      ARE -- it is the SECOND consecutive row for this path that is not, the first being
+      WP-3A's immediately above. WP-3B retains `Rank` as a size-one DIMENSION on the
+      performance summary at BOTH reduction sites (`_export_performance_summary` inline and
+      the module-level `_aggregate_perf_summary`), so every one of the thirteen published
+      columns changes shape from 0-d to `("Rank",)` in the per-member store and from
+      `("event_iloc",)` to `("event_iloc", "Rank")` after consolidation. The on-disk artifact
+      SHAPE changes and a LAYOUT_VERSION bump IS owed. The bump is WP-3E, a 23 -> 24 no-op
+      V0024 stamp migration plus v24/ fixtures as `cp -r v23/`, landing LAST by developer
+      ruling so one stamp covers WP-3A, WP-3B and WP-3C's provenance half. This row is a
+      scheduling device with an expiry, never a claim that no migration is owed.
+      WHY THE AXIS IS RETAINED AT ALL, since a shape change for its own sake would not be
+      worth a row. It is the CARRIER for the summary's CF `cell_methods` domain. CF-1.13
+      section 7.3 admits a cell_methods name only if it is "a dimension of the variable, a
+      scalar coordinate variable, a valid standard name, or the word `area`", and section 7.3.2
+      states that a size-one dimension "may be the result of 'collapsing' an axis by some
+      statistical operation" and that "It is strongly recommended that dimensions of size one
+      be retained (or scalar coordinate variables be defined) to enable documentation of the
+      method (through the `cell_methods` attribute)". With the axis fully collapsed, the
+      sibling edit's `"Rank: maximum"` would name nothing and be inadmissible.
+      WHY NOT THE SCALAR COORDINATE THE SAME CF SENTENCE ALSO PERMITS, which would not have
+      changed any variable's shape and would therefore not have needed this row. Measured to
+      fail twice. A scalar documents a collapsed domain of ONE rank, true of a selection and
+      false of a maximum over N. And a DIFFERING scalar does not survive: at the real
+      consolidation concat it is promoted to `ndim=1, dims=("event_iloc",)`, which is none of
+      CF's four admissible names, so the annotation would resolve in every per-member store and
+      STOP resolving in the consolidated product a reader is given. The retained dimension was
+      measured surviving that same concat as a dimension.
+      WHY IT IS SAFE TO LAND AHEAD OF THE STAMP. `keepdims=True` changes shape and NOTHING
+      else -- no name is renamed, relocated or retyped, and no value moves, which
+      `tests/test_perf_summary_rank_axis.py::test_retaining_the_axis_changes_no_published_value`
+      pins by recomputing the fully-collapsing form from the same input rather than
+      hard-coding a control. Both readers of these columns reduce through `.item()`, which
+      accepts a shape-(1,) array identically to a 0-d one, and both were RUN against the
+      post-change shape and returned the pre-change value:
+      `analysis._perf_row_from_dataset` (per member) and
+      `report_renderers/sensitivity_benchmarking._scalar_at_event` (consolidated). NO PUBLISHED
+      FIGURE MOVES. An artifact that predates this change is 0-d and is read by the same
+      `.item()`, so nothing on disk needs transforming and V0024's body stays a no-op.
+      ALSO IN THIS EDIT, and smaller: the two `_export_performance_tseries` call sites now pass
+      `mode="*_performance_tseries"` instead of the unsuffixed name. That is what makes the
+      summary separately addressable, and it is why the summary's new `cell_methods` cannot
+      reach the per-rank series, which has collapsed neither axis. The `mode` string is a
+      write-path argument, not on-disk content; the unsuffixed names remain the
+      `processing_analysis._MODE_CONFIG` keys and no tree path, group or file name changes.
+      CHANGE-SCOPED via layout_signature, and APPENDED rather than edited in place so the
+      prior rows' ground -- including WP-3A's -- stays readable. The signature was derived from
+      the file's post-edit content by two independent implementations that agreed; a row
+      omitting the field would have INHERITED WP-3A's signature and kept failing.
+      EXPIRY CONDITION. This row covers the WP-3B axis retention and the tseries mode retarget
+      at exactly this content and nothing else; it does NOT re-cover WP-3A's row above, which
+      expires on its own terms. Both are superseded the moment WP-3E stamps LAYOUT_VERSION 24,
+      and WP-3E should annotate both as spent. Any FURTHER change to this file's emitted
+      variable set, dtypes, dims, coordinates, paths or log fields is NOT this class and must
+      ride its own bump.

@@ -726,7 +726,12 @@ class TRITONSWMM_sim_post_processing:
             comp_level=comp_level,
             verbose=verbose,
             log_field=self.log.performance_timeseries_written,
-            mode="tritonswmm_performance",
+            # `_tseries`-SUFFIXED, and the suffix is what keeps the summary's `cell_methods`
+            # off this artifact. The series has collapsed NEITHER `timestep_min` nor `Rank`,
+            # so the reduction string the summary carries would mislabel it. Not a
+            # `processing_analysis._MODE_CONFIG` key, because the per-rank series is never
+            # consolidated; it reaches only `cf_conventions._CF_VARIABLE_OVERRIDES_BY_MODE`.
+            mode="tritonswmm_performance_tseries",
         )
         return
 
@@ -747,7 +752,8 @@ class TRITONSWMM_sim_post_processing:
             comp_level=comp_level,
             verbose=verbose,
             log_field=self.log.performance_timeseries_written,
-            mode="triton_only_performance",
+            # `_tseries`-SUFFIXED -- see the coupled sibling above for why.
+            mode="triton_only_performance_tseries",
         )
         return
 
@@ -945,8 +951,45 @@ class TRITONSWMM_sim_post_processing:
         # A WHOLLY-ABSENT COLUMN STAYS DISTINGUISHABLE and is not touched by this: it has no
         # entry in `ds` at all, so it is absent from the summary rather than NaN in it. The
         # two cases must not collapse into one another, and under this form they do not.
+        # `keepdims=True` RETAINS `Rank` AS A SIZE-ONE DIMENSION, and it is the carrier for
+        # this reduction's CF `cell_methods` domain rather than a formatting preference.
+        # CF-1.13 section 7.3 admits a cell_methods name only if it is "a dimension of the
+        # variable, a scalar coordinate variable, a valid standard name, or the word `area`",
+        # and section 7.3.2 states that a size-one dimension "may be the result of
+        # 'collapsing' an axis" and that retaining it is what enables "documentation of the
+        # method (through the cell_methods attribute)". Fully collapsing the axis leaves
+        # `Rank: maximum` naming nothing, so `cf_conventions._PERF_SUMMARY_CELL_METHODS`
+        # would be inadmissible the moment it were stamped.
+        #
+        # WHY A RETAINED DIMENSION AND NOT A SCALAR COORDINATE, which the same CF sentence
+        # also permits and which is the smaller-looking change. A scalar was measured to fail
+        # twice. It documents a collapsed domain of ONE rank, which is true of a selection and
+        # false of a maximum over N -- and false again for every column whose own winning rank
+        # differs, which is most of them. And a DIFFERING scalar does not survive: at the real
+        # consolidation concat (`processing_analysis.py`, `dim="event_iloc"`) it is promoted to
+        # `ndim=1, dims=("event_iloc",)` -- measured -- which is none of CF's four admissible
+        # names, so the annotation would resolve in this store and STOP resolving in the
+        # consolidated product a reader is actually given. The retained DIMENSION was measured
+        # surviving that same concat as a dimension: `("event_iloc", "Rank")`, with
+        # `"Rank" in tree.dims` True.
+        #
+        # NO CONSUMER MOVES, measured rather than assumed. `keepdims` changes only the shape,
+        # never a value, and both readers of these columns reduce through `.item()`, which
+        # accepts a shape-(1,) array identically to a 0-d one: `analysis._perf_row_from_
+        # dataset` does `float(ds[v].values.item())` per member, and
+        # `report_renderers/sensitivity_benchmarking._scalar_at_event` does
+        # `float(da.sel(event_iloc=...).values.item())` on the consolidated node. Both were
+        # run against the post-change shape and returned the pre-change value.
+        #
+        # THE COHERENT AND `min` FAMILIES BELOW STAY 0-d, deliberately. `<Col>_coherent` is a
+        # SELECTION at one named rank, not a reduction over the axis, so it must not sit on an
+        # axis whose whole meaning is "this domain was collapsed by a method" -- and the
+        # coherent rank id is carried by `coherent_rank` as its own scalar that no
+        # cell_methods string names. `<Col>_min` IS a reduction over the same domain and could
+        # share the axis, but its descriptor is not supplied in this change, and a retained
+        # axis with no documented method is worse than no axis at all.
         _summed = ds.sum(dim="timestep_min", skipna=False)
-        ds = _summed.max(dim="Rank")
+        ds = _summed.max(dim="Rank", keepdims=True)
 
         # THE RANK-COHERENT AND MIN FAMILIES, plus the two scalars that name the selection.
         # DUPLICATED, DELIBERATELY, in the module-level `_aggregate_perf_summary` -- see the
@@ -3028,8 +3071,15 @@ def _aggregate_perf_summary(
     # a tree those migrations exist to repair. The full rationale for the asymmetry between
     # the two reductions is at the inline site; it is not restated here so the two cannot
     # drift as prose.
+    # `keepdims=True` MUST MATCH the inline site's form. The full rationale for retaining
+    # `Rank` as a size-one dimension -- the CF-1.13 section 7.3 / 7.3.2 admissibility
+    # argument, the two measured defects in the scalar alternative, and the measured
+    # shape-tolerance of both consumers -- is at the inline site and is not restated here so
+    # the two cannot drift as prose. This is the arm the V0008 and V0018 migrations call, so a
+    # form applied to only one of the two would re-write the OTHER shape onto a tree those
+    # migrations exist to repair.
     _summed = ds.sum(dim="timestep_min", skipna=False)
-    _out = _summed.max(dim="Rank")
+    _out = _summed.max(dim="Rank", keepdims=True)
 
     # THE RANK-COHERENT AND MIN FAMILIES, DUPLICATED FROM `_export_performance_summary` FOR
     # THE SAME REASON THE REDUCTION ABOVE IS. The full rationale -- why the selector stays at

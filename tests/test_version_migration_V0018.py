@@ -47,12 +47,24 @@ def _copy_variant(name: str, tmp_path: Path) -> Path:
 
 
 def _summary(work: Path) -> xr.Dataset:
+    """Open a per-scenario performance summary from the fixture tree.
+
+    NOTE FOR EVERY READER BELOW: this is `open_zarr`, so variables arrive DASK-backed, and
+    `DataArray.item()` raises `NotImplementedError: 'item' is not yet a valid method on dask
+    arrays`. Read values through `.values.item()` -- which is also what both production readers
+    use (`analysis._perf_row_from_dataset` and
+    `report_renderers/sensitivity_benchmarking._scalar_at_event`).
+
+    The bare `.item()` form worked here only by accident of SHAPE: a 0-d zarr array is left
+    numpy-backed by the default chunking while a shape-(1,) one is dask-ified -- measured. The
+    summary now retains `Rank` at size one as the carrier for its CF `cell_methods` domain, so
+    the accident no longer holds and the seeded-fixture sites would break identically the first
+    time a fixture is regenerated with the current producer.
+    """
     return xr.open_zarr(next(work.rglob("*_perf_summary.zarr")), consolidated=False)
 
 
-@pytest.mark.parametrize(
-    "variant", ["regenerate_triton_only", "regenerate_coupled"]
-)
+@pytest.mark.parametrize("variant", ["regenerate_triton_only", "regenerate_coupled"])
 def test_v0018_regenerates_both_model_families(variant, tmp_path):
     """BOTH-FAMILY COVERAGE, made falsifiable.
 
@@ -71,7 +83,7 @@ def test_v0018_regenerates_both_model_families(variant, tmp_path):
     summary = _summary(work)
     mismatches = []
     for col, want in CORRECTED.items():
-        got = float(summary[col].item())
+        got = float(summary[col].values.item())
         if got != pytest.approx(want, rel=1e-3, abs=1e-6):
             mismatches.append(f"{col}: got {got!r}, expected {want!r}")
     assert not mismatches, (
@@ -83,9 +95,7 @@ def test_v0018_regenerates_both_model_families(variant, tmp_path):
     assert "V0018-regenerated" in str(summary.attrs.get("notes", ""))
 
 
-@pytest.mark.parametrize(
-    "variant", ["regenerate_triton_only", "regenerate_coupled"]
-)
+@pytest.mark.parametrize("variant", ["regenerate_triton_only", "regenerate_coupled"])
 def test_pre_fix_zarr_is_actually_wrong(variant, tmp_path):
     """The differential's PRE arm. Without this the test above could pass vacuously.
 
@@ -95,11 +105,11 @@ def test_pre_fix_zarr_is_actually_wrong(variant, tmp_path):
     """
     work = _copy_variant(variant, tmp_path)
     ds = _summary(work)
-    assert float(ds["Total"].item()) == pytest.approx(PRE_FIX_TOTAL, rel=1e-3), (
+    assert float(ds["Total"].values.item()) == pytest.approx(PRE_FIX_TOTAL, rel=1e-3), (
         "the fixture must be seeded with the PRE-FIX value; regenerating it with the "
         "corrected aggregator makes the regeneration test vacuous"
     )
-    assert float(ds["Init"].item()) == pytest.approx(PRE_FIX_INIT, rel=1e-3), (
+    assert float(ds["Init"].values.item()) == pytest.approx(PRE_FIX_INIT, rel=1e-3), (
         "Init is the column whose INCREASE at a boundary defeated the retired predicate; "
         "its pre-fix value is what makes this differential specific rather than generic"
     )
@@ -115,7 +125,7 @@ def test_v0018_is_a_noop_on_dry_run(tmp_path):
     work = _copy_variant("regenerate_triton_only", tmp_path)
     runner.run_migration(work, target=18, apply=False)
 
-    assert float(_summary(work)["Total"].item()) == pytest.approx(PRE_FIX_TOTAL, rel=1e-3), (
+    assert float(_summary(work)["Total"].values.item()) == pytest.approx(PRE_FIX_TOTAL, rel=1e-3), (
         "a dry run must not regenerate zarrs -- upgrade() runs on the dry-run path, so "
         "every write must be gated on ctx.dry_run"
     )
@@ -154,7 +164,7 @@ def test_v0018_stamps_uncorrectable_when_raw_perf_is_cleared(tmp_path):
     )
     assert json.loads(marker.read_text())["resume_reporting_tsteps"] == [36, 72, 108]
     # The un-regenerable values are left ALONE, not overwritten with a guess.
-    assert float(_summary(work)["Total"].item()) == pytest.approx(PRE_FIX_TOTAL, rel=1e-3)
+    assert float(_summary(work)["Total"].values.item()) == pytest.approx(PRE_FIX_TOTAL, rel=1e-3)
 
 
 def test_v0018_invalidates_consolidation_signals(tmp_path):
@@ -179,8 +189,7 @@ def test_v0018_invalidates_consolidation_signals(tmp_path):
     assert not (status / "e_consolidate_sa-0_complete.flag").exists()
     assert not (status / "f_consolidate_master_complete.flag").exists()
     assert (status / "d_process_evt0_complete.flag").exists(), (
-        "only the consolidate flag families may be cleared; touching d_process_* would "
-        "re-arm clear-raw on the next run"
+        "only the consolidate flag families may be cleared; touching d_process_* would re-arm clear-raw on the next run"
     )
     assert json.loads((work / "log.json").read_text())["datatree_consolidation_complete"] is None, (
         "clearing the flags alone only makes Snakemake re-fire the rule; the rule would "

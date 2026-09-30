@@ -114,18 +114,28 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
 #
 # MODE-SCOPED, NOT GLOBAL, and deliberately. These names -- `Total`, `MPI`, `IO`, `Other`
 # -- are generic enough to collide with a variable of a different quantity in some other
-# mode, and `_CF_VARIABLE_MAP` is consulted for every mode. Scoping them to the two
-# performance modes means they can only stamp the artifact they describe.
+# mode, and `_CF_VARIABLE_MAP` is consulted for every mode. Scoping them to the four
+# performance modes -- two artifacts x two model types -- means they can only stamp the
+# artifact they describe.
 #
-# NO `cell_methods`, and that omission is load-bearing. Both performance artifacts share
-# one mode string: `_export_performance_tseries` writes the per-(timestep_min, Rank)
-# series and `_export_performance_summary` writes `ds.sum(dim="timestep_min").max(dim=
-# "Rank")` of it, and BOTH pass `mode="tritonswmm_performance"` / `"triton_only_
-# performance"` through `_write_output`. A `cell_methods` accurate for the summary
-# ("timestep_min: sum Rank: maximum") would therefore be stamped onto the tseries, which
-# has collapsed neither dim -- mislabelling it. `long_name` and `units` are true of both,
-# so only those are declared here. The summary's reduction semantics are already carried
-# by the dataset-level `notes` attr that `_export_performance_summary` writes.
+# NO `cell_methods` ON THIS DICT, and the omission is still load-bearing -- but it is now
+# load-bearing for the TIMESERIES ALONE rather than for both artifacts. This dict describes
+# the per-(timestep_min, Rank) series written by `_export_performance_tseries`, which has
+# collapsed NEITHER dim, so no reduction has been applied to any column here and any
+# `cell_methods` would mislabel it. `long_name` and `units` are true of the series and of
+# every reduction of it, which is why they are declared once here and inherited below.
+#
+# UNTIL 2026-09-29 THE TWO ARTIFACTS SHARED ONE MODE STRING, which is what forced this
+# omission onto the summary as well: `_export_performance_tseries` and
+# `_export_performance_summary` both passed `mode="tritonswmm_performance"` /
+# `"triton_only_performance"` through `_write_output`, so a string accurate for the summary
+# would have been stamped onto the series. The mode strings are now SPLIT -- the series
+# passes `..._performance_tseries` and the summary keeps the unsuffixed name that
+# `processing_analysis._MODE_CONFIG` already binds to the summary artifact exclusively --
+# so the summary is separately addressable and carries its reduction in `cell_methods`
+# (see `_CF_PERFORMANCE_SUMMARY_VARIABLES` below). The `notes` attr that
+# `_export_performance_summary` writes is retained: it carries the per-column attribution
+# caveats, which `cell_methods` has no grammar to express.
 #
 # ALL THIRTEEN COLUMNS, not just the four new ones. Uncovered variables fall through to
 # `_auto_long_name`, which renders `IO` as "Io" and `SWMM` as "Swmm" and supplies no
@@ -236,12 +246,78 @@ _CF_PERFORMANCE_VARIABLES: dict[str, dict[str, str | None]] = {
 }
 
 
+# The performance SUMMARY's reduction, as a CF cell_methods string.
+#
+# WHY `Rank: maximum` AND NOT `"timestep_min: sum Rank: maximum"`, which is the accurate
+# description of the computation and is what this module's own header comment named until
+# 2026-09-29. CF-1.13 section 7.3 constrains what a cell_methods NAME may be: "In the
+# specification of this attribute, name can be a dimension of the variable, a scalar
+# coordinate variable, a valid standard name, or the word `area`." After
+# `_export_performance_summary`'s `ds.sum(dim="timestep_min")`, `timestep_min` is none of
+# those four -- measured: the sum drops both the dimension and the coordinate, `timestep_min`
+# does not occur anywhere in the CF-1.13 document, and it is not `area`. Naming it would be
+# the SAME inadmissible form that the stored-coordinate design rejected for a scalar `Rank`.
+# `Rank` IS admissible, and only because it is RETAINED: section 7.3.2 states that "A
+# dimension of size one may be the result of 'collapsing' an axis by some statistical
+# operation" and that "It is strongly recommended that dimensions of size one be retained
+# (or scalar coordinate variables be defined) to enable documentation of the method (through
+# the cell_methods attribute) and its domain (through the bounds attribute)." The retained
+# size-one `Rank` dimension is that carrier, and it is a "dimension of the variable" both in
+# the per-member store and after the consolidation concat (measured).
+#
+# THE TIME SUM IS NOT UNDOCUMENTED, it is documented on a channel with the grammar for it:
+# the dataset-level `notes` attr states the full reduction, and `_QUANTITY_PROVENANCE` is
+# the human-facing table. Section 7.3's "the method applies only to the axis designated in
+# cell_methods by name" means omitting an axis asserts nothing false about it.
+#
+# `bounds` IS DELIBERATELY NOT SUPPLIED, and the decision is recorded rather than defaulted.
+# Section 7.3 pairs a non-`point` method with bounds ("should also be provided"), and section
+# 7.1 makes the shape a MUST: "A boundary variable must have one more dimension than its
+# associated coordinate or auxiliary coordinate variable." Both available forms fail. A
+# PER-MEMBER `Rank_bnds` of [0, n_ranks-1] concatenates to dims (event_iloc, Rank, nv) --
+# measured -- which is TWO more dimensions than the 1-d `Rank` coordinate it would be
+# attached to, violating that must in the consolidated product for structurally the same
+# reason the scalar-`Rank` form failed. An INVARIANT `Rank_bnds` does concatenate to the
+# conformant (Rank, nv), but a single literal extent is false for any member whose rank
+# count differs from it, and members in this corpus do differ -- `_export_performance_
+# summary`'s own comment handles "a 2-rank then 4-rank member". A shape-conformant lie and a
+# truthful shape violation are both worse than the omission, so the axis carries the method
+# and not the domain. `n_ranks` carries the extent as an ordinary variable instead.
+_PERF_SUMMARY_CELL_METHODS = "Rank: maximum"
+
+
+# The performance SUMMARY's variable descriptions: the timeseries entries above plus the
+# reduction. DERIVED rather than a second literal dict, so `long_name` and `units` cannot
+# drift between the two artifacts that share them -- which is the drift a hand-copied
+# thirteen-entry duplicate would invite on the next wording fix. Only `cell_methods`
+# differs, and it differs uniformly because every one of these thirteen columns is the same
+# `max(dim="Rank")` of the same time sum.
+#
+# THE COHERENT AND `min` FAMILIES ARE DELIBERATELY ABSENT. `<Col>_coherent` is a SELECTION
+# at the single rank attaining max(Total), not a reduction over the rank axis, so
+# `Rank: maximum` would misdescribe it; `<Col>_min` is a reduction but names a different
+# method. Both fall through to `_auto_long_name` exactly as they did before this split, and
+# supplying their descriptors is the mode-scoped-provenance work, not this one.
+_CF_PERFORMANCE_SUMMARY_VARIABLES: dict[str, dict[str, str | None]] = {
+    _name: {**_entry, "cell_methods": _PERF_SUMMARY_CELL_METHODS} for _name, _entry in _CF_PERFORMANCE_VARIABLES.items()
+}
+
+
 # Conduit velocity shares the scalar-speed standard_name with TRITON's max speed,
 # but uses `time:` rather than `timestep_min:` in cell_methods. When applied to
 # the SWMM link mode, this overrides the base entry above.
 _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
-    "tritonswmm_performance": _CF_PERFORMANCE_VARIABLES,
-    "triton_only_performance": _CF_PERFORMANCE_VARIABLES,
+    # The unsuffixed performance modes are the SUMMARY, not a shared name for both
+    # artifacts. `processing_analysis._MODE_CONFIG` already binds each of these two keys to
+    # `output_*_performance_summary` and to nothing else, so the consolidation stamp reaches
+    # the summary entries below without any mode remapping at that site.
+    "tritonswmm_performance": _CF_PERFORMANCE_SUMMARY_VARIABLES,
+    "triton_only_performance": _CF_PERFORMANCE_SUMMARY_VARIABLES,
+    # The `_tseries` modes are write-path-only: they are passed by
+    # `_export_performance_tseries` and are NOT `_MODE_CONFIG` keys, because the per-rank
+    # series is never consolidated.
+    "tritonswmm_performance_tseries": _CF_PERFORMANCE_VARIABLES,
+    "triton_only_performance_tseries": _CF_PERFORMANCE_VARIABLES,
     "tritonswmm_swmm_link": {
         "max_velocity_mps": {
             "standard_name": "sea_water_speed",
@@ -419,8 +495,11 @@ def apply_cf_attributes(ds: xr.Dataset, mode: str) -> xr.Dataset:
     ds
         Dataset to annotate. Attrs are mutated in place; the same dataset is returned.
     mode
-        One of the processing_analysis `_MODE_CONFIG` keys. Selects the mode-specific
-        override when present (e.g., SWMM link's cell_methods differs from TRITON).
+        A processing_analysis `_MODE_CONFIG` key, or one of the write-path-only
+        `*_performance_tseries` modes, which name an artifact that is never consolidated and
+        therefore has no `_MODE_CONFIG` entry. Selects the mode-specific override when
+        present (e.g., SWMM link's cell_methods differs from TRITON, and the performance
+        summary carries a reduction the per-rank series must not).
     """
     overrides = _CF_VARIABLE_OVERRIDES_BY_MODE.get(mode, {})
     for var_name, da in ds.data_vars.items():

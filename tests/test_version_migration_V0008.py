@@ -24,6 +24,7 @@ file covers the V0008 migration-orchestration logic that delegates to those
 helpers and writes the regenerated zarr stores plus the migration_history
 stamp.
 """
+
 from __future__ import annotations
 
 import json
@@ -66,7 +67,18 @@ def test_v0008_regenerates_when_raw_perf_present(tmp_path: Path) -> None:
     assert "Total" in ds.data_vars, "regenerated summary must expose the Total variable"
     assert "Simulation" in ds.data_vars, "regenerated summary must expose the Simulation variable"
     assert "SWMM" in ds.data_vars, "regenerated summary must expose the SWMM variable"
-    assert float(ds["Total"].item()) > 0.0, "Total wallclock must be positive for a real run"
+    # `.values.item()`, NOT `DataArray.item()`, and the difference is load-bearing rather than
+    # stylistic. `DataArray.item()` raises `NotImplementedError: 'item' is not yet a valid
+    # method on dask arrays` at EVERY shape; it worked here only because a 0-d zarr array is
+    # left numpy-backed by `chunks="auto"` while a shape-(1,) one is dask-ified -- measured.
+    # The summary now retains `Rank` at size one as the carrier for its CF `cell_methods`
+    # domain, so this variable arrives dask-backed and the incidental numpy-backing this line
+    # relied on is gone. `.values.item()` is what BOTH production readers use
+    # (`analysis._perf_row_from_dataset` and
+    # `report_renderers/sensitivity_benchmarking._scalar_at_event`), so this is the form the
+    # assertion should always have taken: same value, and shape-tolerant the way the
+    # consumers it stands in for are.
+    assert float(ds["Total"].values.item()) > 0.0, "Total wallclock must be positive for a real run"
     notes = ds.attrs.get("notes", "")
     assert "V0008-regenerated" in notes, (
         f"regenerated summary notes attr should mention V0008-regenerated; got {notes!r}"
@@ -75,9 +87,7 @@ def test_v0008_regenerates_when_raw_perf_present(tmp_path: Path) -> None:
     # The regenerate branch does NOT write a stale-marker sidecar — that
     # marker is reserved for the stamp_stale branch (raw perf absent).
     stale_marker = perf_summary_path.parent / "_V0008_legacy_perf_summary_stale.json"
-    assert not stale_marker.exists(), (
-        f"regenerate branch must not emit a stale marker sidecar; got {stale_marker}"
-    )
+    assert not stale_marker.exists(), f"regenerate branch must not emit a stale marker sidecar; got {stale_marker}"
 
     # And the layout_version is now 8.
     state = json.loads((work / "_version.json").read_text())
@@ -104,9 +114,7 @@ def test_v0008_stamps_stale_when_raw_perf_absent(tmp_path: Path) -> None:
     # A sidecar stale-marker file is written next to the un-regeneratable
     # legacy zarr.
     stale_marker = perf_summary_path.parent / "_V0008_legacy_perf_summary_stale.json"
-    assert stale_marker.is_file(), (
-        f"stamp_stale branch must write a sidecar marker at {stale_marker}"
-    )
+    assert stale_marker.is_file(), f"stamp_stale branch must write a sidecar marker at {stale_marker}"
     marker_payload = json.loads(stale_marker.read_text())
     assert marker_payload["version_from"] == 7
     assert marker_payload["version_to"] == 8
@@ -131,7 +139,5 @@ def test_v0008_idempotent_on_rerun(tmp_path: Path) -> None:
 
     # The runner detects layout_version is already 8 on the second pass and
     # plans no migrations; migration_history therefore doesn't grow.
-    assert len(state_second.get("migration_history", [])) == len(
-        state_first.get("migration_history", [])
-    )
+    assert len(state_second.get("migration_history", [])) == len(state_first.get("migration_history", []))
     assert state_first == state_second

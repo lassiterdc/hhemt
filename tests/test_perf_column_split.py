@@ -20,7 +20,12 @@ import pytest
 import xarray as xr
 
 from hhemt.analysis import PERF_VARS, PERF_VARS_ORDERED, _perf_row_from_dataset
-from hhemt.cf_conventions import _CF_PERFORMANCE_VARIABLES, _auto_long_name, apply_cf_attributes
+from hhemt.cf_conventions import (
+    _CF_PERFORMANCE_SUMMARY_VARIABLES,
+    _CF_PERFORMANCE_VARIABLES,
+    _auto_long_name,
+    apply_cf_attributes,
+)
 
 # The column set TRITON emitted BEFORE the SWMM-timer split, verbatim from the pre-split
 # header literal that `tests/test_synth_03_perf_tseries_diff.py` and
@@ -67,12 +72,38 @@ SWMM_CHILDREN = ["SWMM_XFER", "SWMM_MPI", "SWMM_STEP", "SWMM_OTHER"]
 
 
 def _summary_ds(var_names: list[str], value: float = 1.0) -> xr.Dataset:
-    """A performance SUMMARY dataset: scalar per variable, dims already reduced away.
+    """A performance SUMMARY dataset: one value per variable on a RETAINED size-one `Rank`.
 
-    `_export_performance_summary` writes `ds.sum(dim="timestep_min").max(dim="Rank")`, so
-    the object `_get_performance_summary_row` reads carries one scalar per variable.
+    `_export_performance_summary` writes `ds.sum(dim="timestep_min").max(dim="Rank",
+    keepdims=True)`, so `timestep_min` is gone entirely while `Rank` survives at size one --
+    it is the carrier for the summary's CF `cell_methods` domain, which has no admissible
+    name if the axis is fully collapsed.
+
+    THE SHAPE IS PART OF WHAT THESE TESTS COVER. This helper carried 0-d variables until the
+    axis was retained; keeping it 0-d would have left every test below asserting against a
+    shape the producer no longer writes, and would in particular have let
+    `_perf_row_from_dataset`'s `.values.item()` pass here while an axis it had never seen
+    reached it in production.
     """
-    return xr.Dataset({name: xr.DataArray(np.float64(value)) for name in var_names})
+    return xr.Dataset({name: (("Rank",), np.array([value], dtype=np.float64)) for name in var_names})
+
+
+def _tseries_ds(var_names: list[str], value: float = 1.0) -> xr.Dataset:
+    """A performance TIMESERIES dataset: both `timestep_min` and `Rank` intact.
+
+    The artifact `_export_performance_tseries` writes. It has collapsed no axis, which is why
+    no `cell_methods` may be stamped on it.
+    """
+    return xr.Dataset(
+        {name: (("timestep_min", "Rank"), np.full((3, 2), value, dtype=np.float64)) for name in var_names}
+    )
+
+
+#: The two artifacts' mode strings, split so each can be addressed separately. The unsuffixed
+#: names are the SUMMARY -- `processing_analysis._MODE_CONFIG` already binds them to
+#: `output_*_performance_summary` -- and the `_tseries` names are write-path-only.
+PERF_SUMMARY_MODES = ["tritonswmm_performance", "triton_only_performance"]
+PERF_TSERIES_MODES = ["tritonswmm_performance_tseries", "triton_only_performance_tseries"]
 
 
 # --------------------------------------------------------------------------------------
@@ -178,13 +209,17 @@ def test_each_swmm_child_sits_adjacent_to_its_parent_in_the_display_order():
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("mode", ["tritonswmm_performance", "triton_only_performance"])
+@pytest.mark.parametrize("mode", PERF_SUMMARY_MODES + PERF_TSERIES_MODES)
 def test_every_performance_column_carries_cf_long_name_and_units(mode):
-    """All thirteen, not just the four new ones.
+    """All thirteen, not just the four new ones, and now on all FOUR modes.
 
     An uncovered variable falls through to `_auto_long_name`, which renders `IO` as "Io"
     and supplies no `units`. Covering only the split columns would leave the artifact's
     four newest variables with real CF attrs beside nine auto-humanized placeholders.
+
+    WIDENED to the `_tseries` modes when the mode strings split: `long_name` and `units` are
+    true of the series and of every reduction of it, so a split that dropped them from either
+    artifact would be a regression this test is the only one positioned to catch.
     """
     ds = apply_cf_attributes(_summary_ds(POST_SPLIT_VARS), mode)
 
@@ -197,22 +232,72 @@ def test_every_performance_column_carries_cf_long_name_and_units(mode):
         )
 
 
-@pytest.mark.parametrize("mode", ["tritonswmm_performance", "triton_only_performance"])
-def test_performance_columns_declare_no_cell_methods(mode):
-    """The omission is load-bearing, so it is asserted rather than left to inspection.
+@pytest.mark.parametrize("mode", PERF_TSERIES_MODES)
+def test_performance_tseries_columns_declare_no_cell_methods(mode):
+    """The omission is load-bearing FOR THE SERIES, so it is asserted rather than inspected.
 
-    Both performance artifacts share one mode string: `_export_performance_tseries` writes
-    the per-(timestep_min, Rank) series and `_export_performance_summary` writes
-    `ds.sum(dim="timestep_min").max(dim="Rank")` of it, and both reach `apply_cf_attributes`
-    through `_write_output` with that same mode. A `cell_methods` accurate for the summary
-    would therefore be stamped onto the tseries, which has collapsed neither dim.
+    RE-TARGETED, NOT WEAKENED. This assertion previously ran on the two unsuffixed modes,
+    because both performance artifacts shared one mode string and a `cell_methods` accurate
+    for the summary would have been stamped onto the series. The mode strings are now split,
+    so the same claim is asserted where it is still true -- the per-(timestep_min, Rank)
+    series, which has collapsed NEITHER dim and to which no reduction applies -- and its
+    complement is asserted for the summary modes in the sibling test below. The pair covers
+    four modes where the single assertion covered two.
+    """
+    ds = apply_cf_attributes(_tseries_ds(POST_SPLIT_VARS), mode)
+
+    for name in POST_SPLIT_VARS:
+        assert "cell_methods" not in ds[name].attrs, (
+            f"{name} declares cell_methods on the per-timestep series, which has collapsed neither dim"
+        )
+
+
+@pytest.mark.parametrize("mode", PERF_SUMMARY_MODES)
+def test_performance_summary_columns_declare_the_rank_reduction(mode):
+    """The summary's whole reason for being separately addressable.
+
+    Asserts the CF-1.13 admissibility condition, not merely the string: section 7.3 allows a
+    cell_methods name only if it is "a dimension of the variable, a scalar coordinate
+    variable, a valid standard name, or the word `area`", so the name is checked against the
+    variable's own dims. That is what makes the retained size-one `Rank` load-bearing rather
+    than decorative -- fully collapsing the axis would leave this string naming nothing.
+
+    `timestep_min` IS DELIBERATELY NOT NAMED and its absence is asserted. The time sum is
+    real, but after it `timestep_min` is neither a dim, nor a coord, nor a CF standard name,
+    nor `area`, so naming it would be inadmissible in exactly the way a scalar `Rank` was.
     """
     ds = apply_cf_attributes(_summary_ds(POST_SPLIT_VARS), mode)
 
     for name in POST_SPLIT_VARS:
-        assert "cell_methods" not in ds[name].attrs, (
-            f"{name} declares cell_methods, which would mislabel the per-timestep series that shares this mode string"
+        cm = ds[name].attrs.get("cell_methods")
+        assert cm == "Rank: maximum", f"{name} carries cell_methods {cm!r}, not the summary's rank reduction"
+        named_axis = cm.split(":")[0]
+        assert named_axis in ds[name].dims, (
+            f"{name} names axis {named_axis!r} in cell_methods but does not carry it as a dimension; "
+            "CF-1.13 section 7.3 admits only a dimension, a scalar coordinate variable, a standard name, or 'area'"
         )
+        assert "timestep_min" not in cm, (
+            f"{name} names timestep_min, which the time sum removed and which is not a CF standard name"
+        )
+
+
+def test_the_two_performance_artifacts_agree_on_long_name_and_units():
+    """The summary descriptors are DERIVED from the series', so only `cell_methods` may differ.
+
+    Pins the derivation rather than the two dicts' contents: a hand-copied second literal
+    would drift on the next wording fix, and that drift is invisible to every other test here
+    because each one reads only one of the two dicts.
+    """
+    assert set(_CF_PERFORMANCE_SUMMARY_VARIABLES) == set(_CF_PERFORMANCE_VARIABLES)
+    for name, summary_entry in _CF_PERFORMANCE_SUMMARY_VARIABLES.items():
+        base_entry = _CF_PERFORMANCE_VARIABLES[name]
+        assert base_entry["cell_methods"] is None, f"{name}'s series entry gained a cell_methods"
+        assert summary_entry["cell_methods"] == "Rank: maximum"
+        for field in ("standard_name", "long_name", "units"):
+            assert summary_entry[field] == base_entry[field], (
+                f"{name}'s {field} differs between the series and summary descriptors; "
+                "the summary dict is derived and only cell_methods may diverge"
+            )
 
 
 def test_performance_cf_entries_are_scoped_to_the_performance_modes():
