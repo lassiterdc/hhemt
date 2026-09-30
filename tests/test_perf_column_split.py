@@ -311,3 +311,56 @@ def test_performance_cf_entries_are_scoped_to_the_performance_modes():
 def test_cf_coverage_tracks_perf_vars_exactly():
     """The CF block and the mint list must not drift apart in either direction."""
     assert sorted(_CF_PERFORMANCE_VARIABLES) == sorted(PERF_VARS)
+
+
+def test_the_rank_axis_family_carries_units_without_cell_methods():
+    """`units` is inherited from the parent column; `cell_methods` is declined; neither implies the other.
+
+    The defect this pins had ONE cause and THREE faces. The coherent family is a SELECTION and the
+    `min` family names a different method, so neither may carry the summary's `Rank: maximum` --
+    correct, and asserted by its own sibling. What that reasoning does NOT reach is `units`: a
+    selection from a seconds-valued column, and a minimum over it, are both still seconds. CF-1.13
+    section 3.1.1 makes the omission an assertion rather than a gap ("A variable with no units
+    attribute is assumed to be dimensionless"), so dropping `units` alongside `cell_methods`
+    publishes 26 durations as dimensionless quantities.
+
+    The `slowest rank` assertion is the third face and the one no other test can see. Seven of the
+    thirteen parent `long_name` strings END in ", slowest rank", which is true of a maximum and false
+    of both derived families, so a mechanical suffix onto the raw parent string yields seven
+    self-contradictions that read as ordinary prose.
+
+    ASSERTED THROUGH `apply_cf_attributes`, NOT BY IMPORTING THE DESCRIPTOR TABLE. The resolved
+    attributes are a property of both the pre-fix and post-fix trees, so this test RUNS and FAILS on
+    a tree that has no rank-axis table at all. Importing the table instead would make the pre-fix
+    failure an ImportError -- a discrimination on the symbol's existence rather than on the
+    behaviour, which is green for any table that merely exists. Measured both ways.
+    """
+    derived = [f"{n}{s}" for n in POST_SPLIT_VARS for s in ("_coherent", "_min")]
+    scalars = ["coherent_rank", "n_ranks"]
+    ds = apply_cf_attributes(_summary_ds(POST_SPLIT_VARS + derived + scalars), PERF_SUMMARY_MODES[0])
+
+    for name in POST_SPLIT_VARS:
+        parent_units = _CF_PERFORMANCE_VARIABLES[name]["units"]
+        for suffix in ("_coherent", "_min"):
+            attrs = ds[f"{name}{suffix}"].attrs
+            assert attrs.get("units") == parent_units, (
+                f"{name}{suffix} does not inherit its parent's units {parent_units!r}; "
+                "CF reads an absent units as a positive claim that the variable is dimensionless"
+            )
+            assert "cell_methods" not in attrs, (
+                f"{name}{suffix} declares cell_methods; a selection and a minimum are not Rank: maximum"
+            )
+            assert "slowest rank" not in attrs.get("long_name", ""), (
+                f"{name}{suffix} attributes itself to the slowest rank, which is the parent's reduction"
+            )
+
+    for name in scalars:
+        attrs = ds[name].attrs
+        assert attrs.get("units") == "1", f"{name} is dimensionless and must declare it explicitly"
+        assert "cell_methods" not in attrs, f"{name} declares cell_methods"
+
+    for name in derived + scalars:
+        long_name = ds[name].attrs.get("long_name")
+        assert long_name and long_name != _auto_long_name(name), (
+            f"{name} fell through to the auto-humanized fallback rather than a declared long_name"
+        )

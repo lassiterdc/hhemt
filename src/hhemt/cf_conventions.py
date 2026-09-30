@@ -303,6 +303,91 @@ _CF_PERFORMANCE_SUMMARY_VARIABLES: dict[str, dict[str, str | None]] = {
 }
 
 
+_RANK_ATTRIBUTION_SUFFIX = ", slowest rank"
+
+
+def _perf_quantity_phrase(long_name: str) -> str:
+    """Strip the parent column's rank attribution, leaving the quantity it names.
+
+    Seven of the thirteen parent `long_name` strings end in `", slowest rank"`, which is true of
+    `max(dim="Rank")` and false of BOTH derived families. Suffixing a family qualifier onto the raw
+    parent string would yield seven self-contradictions that read as ordinary prose, which is the
+    same invisibility class as the `_auto_long_name` fallback this table exists to replace. The
+    strip is a string operation and therefore fragile to a reworded parent, which is why
+    `test_the_rank_axis_family_carries_units_without_cell_methods` asserts no derived `long_name`
+    carries the suffix -- the fragility is loud rather than silent.
+    """
+    if long_name.endswith(_RANK_ATTRIBUTION_SUFFIX):
+        return long_name[: -len(_RANK_ATTRIBUTION_SUFFIX)]
+    return long_name
+
+
+# The rank-axis family's descriptors: the `_coherent` family, the `_min` family, and the two scalars
+# that name the selection. SUMMARY-MODE ONLY -- the family is produced after `max(dim="Rank")` and
+# does not exist in the per-rank series, so these entries are merged into the two unsuffixed mode
+# keys and NOT into the `_tseries` keys.
+#
+# `units` IS INHERITED AND `cell_methods` IS DECLINED, and the two are independent CF attributes.
+# The reasoning that correctly keeps `Rank: maximum` off this family -- a selection is not a
+# reduction, and a minimum names a different method -- says nothing whatever about `units`, and a
+# selection from a seconds-valued column is still seconds. CF-1.13 section 3.1 makes `units`
+# REQUIRED for a dimensional quantity, and section 3.1.1 makes its absence a positive claim rather
+# than a silence: "A variable with no units attribute is assumed to be dimensionless." Dropping
+# `units` alongside `cell_methods` therefore published 26 durations as dimensionless quantities.
+# `cell_methods: None` is skipped by `_set_attrs`, so the exclusion holds by construction.
+#
+# DERIVED, not a literal dict, for the reason the summary table above gives for the same choice: the
+# producer loop is `for _name in _summed.data_vars` and the parse is header-driven, so a future
+# solver column reaches the store with no toolkit edit. A comprehension over
+# `_CF_PERFORMANCE_VARIABLES` -- which `test_cf_coverage_tracks_perf_vars_exactly` forces to track
+# `PERF_VARS` -- generates that column's two family members automatically; a hand-enumerated table
+# would silently fall behind it.
+#
+# THE `long_name` VALUES HERE ARE MINIMAL AND TRUE, NOT INFORMATIVE. Making them informative is the
+# mode-scoped-provenance work, which `_QUANTITY_PROVENANCE` carries and which
+# `test_advertised_performance_names_have_no_provenance_descriptor_yet` already pins as owed. One
+# named residual for that work: `SWMM_STEP` is nonzero on rank 0 only, so `SWMM_STEP_min` is
+# identically zero for any multi-rank member and "fastest rank" describes the statistic truthfully
+# while describing the quantity hollowly.
+_CF_PERFORMANCE_RANK_AXIS_VARIABLES: dict[str, dict[str, str | None]] = {
+    **{
+        f"{_name}_coherent": {
+            "standard_name": _entry["standard_name"],
+            "long_name": f"{_perf_quantity_phrase(_entry['long_name'])}, read at the rank attaining max(Total)",
+            "units": _entry["units"],
+            "cell_methods": None,
+        }
+        for _name, _entry in _CF_PERFORMANCE_VARIABLES.items()
+    },
+    **{
+        f"{_name}_min": {
+            "standard_name": _entry["standard_name"],
+            "long_name": f"{_perf_quantity_phrase(_entry['long_name'])}, fastest rank",
+            "units": _entry["units"],
+            "cell_methods": None,
+        }
+        for _name, _entry in _CF_PERFORMANCE_VARIABLES.items()
+    },
+    # Dimensionless, so CF section 3.1.1 makes `units` optional and puts the description in
+    # `long_name`. `"1"` is declared EXPLICITLY rather than left to the default, because
+    # absence-of-`units` is exactly the signal the 26 durations beside these were emitting wrongly --
+    # leaving these two on absence would make one byte-level state carry both "declared
+    # dimensionless" and "nobody supplied it" inside a single artifact.
+    "coherent_rank": {
+        "standard_name": None,
+        "long_name": "Index on the Rank axis of the rank attaining max(Total); NaN when no rank was selectable",
+        "units": "1",
+        "cell_methods": None,
+    },
+    "n_ranks": {
+        "standard_name": None,
+        "long_name": "Length of this member's Rank axis, the union across allocations",
+        "units": "1",
+        "cell_methods": None,
+    },
+}
+
+
 # Conduit velocity shares the scalar-speed standard_name with TRITON's max speed,
 # but uses `time:` rather than `timestep_min:` in cell_methods. When applied to
 # the SWMM link mode, this overrides the base entry above.
@@ -311,8 +396,8 @@ _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
     # artifacts. `processing_analysis._MODE_CONFIG` already binds each of these two keys to
     # `output_*_performance_summary` and to nothing else, so the consolidation stamp reaches
     # the summary entries below without any mode remapping at that site.
-    "tritonswmm_performance": _CF_PERFORMANCE_SUMMARY_VARIABLES,
-    "triton_only_performance": _CF_PERFORMANCE_SUMMARY_VARIABLES,
+    "tritonswmm_performance": {**_CF_PERFORMANCE_SUMMARY_VARIABLES, **_CF_PERFORMANCE_RANK_AXIS_VARIABLES},
+    "triton_only_performance": {**_CF_PERFORMANCE_SUMMARY_VARIABLES, **_CF_PERFORMANCE_RANK_AXIS_VARIABLES},
     # The `_tseries` modes are write-path-only: they are passed by
     # `_export_performance_tseries` and are NOT `_MODE_CONFIG` keys, because the per-rank
     # series is never consolidated.

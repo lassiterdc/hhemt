@@ -2523,3 +2523,46 @@ non_breaking_allowlist:
       and WP-3E should annotate both as spent. Any FURTHER change to this file's emitted
       variable set, dtypes, dims, coordinates, paths or log fields is NOT this class and must
       ride its own bump.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 2f9c5dd6e682935f5da54d22f006376a70efc66c101aed853d535dcb4ffd4228
+    justification: >-
+      DESCRIPTIVE STRINGS ONLY -- this row IS the non-breaking class the WP-3A row asserts and
+      the WP-3B row explicitly disclaims. WP-3B could not claim it because its `cell_methods`
+      stamp was admissible only on a retained size-one `Rank` DIMENSION, so the artifact SHAPE
+      moved. Nothing here touches a shape. This edit supplies CF `units` and a declared
+      `long_name` to the 28 rank-axis derived names (the `_coherent` and `_min` families over
+      the 13 performance columns, plus the two scalars `coherent_rank` and `n_ranks`) by
+      merging a new DERIVED `_CF_PERFORMANCE_RANK_AXIS_VARIABLES` table into the two unsuffixed
+      summary mode keys. The emitted variable set, dtypes, dims, coordinates, tree paths, group
+      names and log fields are all byte-unchanged; only attrs on variables that were ALREADY
+      being written move.
+      WHY IT IS A CONFORMANCE FIX RATHER THAN A DOCUMENTATION ONE. CF-1.13 section 3.1 makes
+      `units` REQUIRED for a dimensional quantity and section 3.1.1 makes its ABSENCE a
+      positive assertion ("A variable with no units attribute is assumed to be
+      dimensionless"). All 28 names resolved with no `units` before this edit, so 26
+      seconds-valued durations were asserting dimensionlessness in the deposited artifact.
+      Measured on the live tree: 28-of-28 missing `units` before, 0-of-28 after, with 26
+      resolving to `'s'` and the two genuinely dimensionless scalars declaring `'1'`
+      EXPLICITLY rather than by omission.
+      THE `cell_methods` EXCLUSION IS UNCHANGED AND DELIBERATE. A selection is not a reduction
+      and a minimum names a different method, so no member of this family may carry the
+      summary's `Rank: maximum`. Measured 0-of-28 carrying `cell_methods` BOTH before and
+      after; `cell_methods: None` is skipped by `_set_attrs`, so the exclusion holds by
+      construction rather than by discipline. `units` and `cell_methods` are independent CF
+      attributes and the reasoning that correctly declines the second says nothing about the
+      first -- conflating them is what produced the defect.
+      NO CRATE BYTES MOVE. `metadata.py` builds `_advertisable` from `_CF_VARIABLE_MAP` and
+      `_CF_PERFORMANCE_VARIABLES` and reads `_CF_VARIABLE_OVERRIDES_BY_MODE` not at all
+      (grep count 0 in that file), so the deposited crate is structurally unreachable from this
+      edit; measured 25 keys and 0-of-28 intersection both before and after. `PERF_VARS` and
+      `_CF_PERFORMANCE_VARIABLES` are byte-identical to HEAD, and no shipped test is modified.
+      CHANGE-SCOPED via layout_signature, APPENDED rather than edited in place so the prior
+      rows' ground stays readable. The signature is this file's post-edit sha256, set
+      explicitly: omitting the field would INHERIT the WP-3B signature, which no longer matches
+      the content, and the check would keep failing.
+      EXPIRY CONDITION. This row covers the rank-axis `units`/`long_name` supply at exactly
+      this content and nothing else; it re-covers neither row above, each of which expires on
+      its own terms. All three are superseded the moment WP-3E stamps LAYOUT_VERSION 24, and
+      WP-3E should annotate all three as spent. Any FURTHER change to this file's emitted
+      variable set, dtypes, dims, coordinates, paths or log fields is NOT this class and must
+      ride its own bump.
